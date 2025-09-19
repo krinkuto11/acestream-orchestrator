@@ -1,0 +1,24 @@
+services:
+  orchestrator:
+    build: .
+    env_file: .env
+    volumes:
+      - ./app:/app/app
+      - ./orchestrator.db:/app/orchestrator.db
+    ports:
+      - "8000:8000"
+    environment:
+      DOCKER_HOST: tcp://docker:2375
+    depends_on:
+      - docker
+  docker:
+    image: docker:27.3.1-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    ports:
+      - "2375:2375"
+    volumes:
+      - docker-data:/var/lib/docker
+volumes:
+  docker-data:
