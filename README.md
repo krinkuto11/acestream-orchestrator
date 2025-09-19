@@ -3,19 +3,21 @@
 Endpoints: /provision, /provision/acestream, /events/*, /engines, /streams, /streams/{id}/stats, /containers/{id}, /by-label, /metrics, /panel.
 
 Quickstart:
+```bash
 cp .env.example .env
+```
 
-Abre `http://localhost:8000/panel`.
+Open `http://localhost:8000/panel`.
 
-# Requisitos
+# Requirements
 
- - Docker 24+ y docker:dind en compose.
+ - Docker 24+ and docker:dind in compose.
 
- - Python 3.12 en imagen.
+ - Python 3.12 in image.
 
- - Puertos libres dentro de los rangos definidos en .env.
+ - Free ports within the ranges defined in .env.
 
-# Estructura
+# Structure
 
 ```md
 app/
@@ -30,18 +32,18 @@ requirements.txt
 .env.example
 ```
 
-# Documentación
+# Documentation
 * [README](README.md)
-* [Visión general](docs/OVERVIEW.md)
-* [Configuración](docs/CONFIG.md)
+* [Overview](docs/OVERVIEW.md)
+* [Configuration](docs/CONFIG.md)
 * [API](docs/API.md)
-* [Eventos](docs/EVENTS.md)
+* [Events](docs/EVENTS.md)
 * [Panel](docs/PANEL.md)
-* [Esquema de BD](docs/DB_SCHEMA.md)
-* [Despliegue](docs/DEPLOY.md)
-* [Operación](docs/OPERATIONS.md)
+* [Database Schema](docs/DB_SCHEMA.md)
+* [Deployment](docs/DEPLOY.md)
+* [Operations](docs/OPERATIONS.md)
 * [Troubleshooting](docs/TROUBLESHOOTING.md)
-* [Seguridad](docs/SECURITY.md)
-* [Integración con el proxy](docs/PROXY_INTEGRATION.md)
+* [Security](docs/SECURITY.md)
+* [Proxy Integration](docs/PROXY_INTEGRATION.md)
 
 

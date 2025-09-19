@@ -1,26 +1,26 @@
 # Troubleshooting
 
-## 1) 409/500 al provisionar
-Causa: sin puertos libres.
-Acción: ajusta `PORT_RANGE_HOST` y rangos `ACE_*`.
+## 1) 409/500 when provisioning
+Cause: no free ports.
+Action: adjust `PORT_RANGE_HOST` and `ACE_*` ranges.
 
-## 2) Engine arranca pero no sirve HLS
-- Verifica que el proxy llama `.../ace/manifest.m3u8?...&format=json`.
-- Comprueba que el contenedor tiene `CONF` con `--http-port` y `--bind-all`.
+## 2) Engine starts but doesn't serve HLS
+- Verify the proxy calls `.../ace/manifest.m3u8?...&format=json`.
+- Check the container has `CONF` with `--http-port` and `--bind-all`.
 
-## 3) El panel no puede parar el stream
-- El botón “Stop” llama al `command_url` del engine. Puede fallar por CORS si accedes desde otro origen. Usa el panel desde el mismo host o un reverse proxy que permita el paso.
+## 3) Panel can't stop the stream
+- The "Stop" button calls the engine's `command_url`. May fail due to CORS if accessing from another origin. Use the panel from the same host or a reverse proxy that allows passthrough.
 
-## 4) 401/403 en `/provision/*` o `/events/*`
-- Añade `Authorization: Bearer <API_KEY>`.
-- Verifica que `API_KEY` está definido en `.env` del orquestador.
+## 4) 401/403 on `/provision/*` or `/events/*`
+- Add `Authorization: Bearer <API_KEY>`.
+- Verify `API_KEY` is defined in orchestrator's `.env`.
 
-## 5) El orquestador no ve Docker
-- En compose, `DOCKER_HOST=tcp://docker:2375` y servicio `docker` en modo dind.
-- Si usas Docker del host: exporta `DOCKER_HOST=unix:///var/run/docker.sock` y monta el socket.
+## 5) Orchestrator doesn't see Docker
+- In compose, `DOCKER_HOST=tcp://docker:2375` and `docker` service in dind mode.
+- If using host Docker: export `DOCKER_HOST=unix:///var/run/docker.sock` and mount the socket.
 
-## 6) Reindex no refleja puertos
-- Asegúrate de que los contenedores gestionados tienen labels `acestream.http_port` y `host.http_port`.
+## 6) Reindex doesn't reflect ports
+- Ensure managed containers have labels `acestream.http_port` and `host.http_port`.
 
 Logs:
-- Uvicorn en STDOUT. Docker events en el host Docker.
+- Uvicorn on STDOUT. Docker events on Docker host.

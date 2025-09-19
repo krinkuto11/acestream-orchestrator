@@ -1,24 +1,24 @@
-# Despliegue
+# Deployment
 
-## Desarrollo
+## Development
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-## Producción
+## Production
 
- - Fija API_KEY.
+ - Set API_KEY.
 
- - Limita rangos de puertos a los permitidos por tu firewall.
+ - Limit port ranges to those allowed by your firewall.
 
- - Monta volumen para orchestrator.db.
+ - Mount volume for orchestrator.db.
 
- - Reverse proxy delante de Uvicorn si necesitas TLS.
+ - Reverse proxy in front of Uvicorn if you need TLS.
 
- - Si no usas docker:dind, apunta DOCKER_HOST al Docker del host y elimina el servicio docker del compose.
+ - If not using docker:dind, point DOCKER_HOST to host Docker and remove docker service from compose.
 
-## Variables mínimas
+## Minimum variables
 
  - `TARGET_IMAGE`
  - `CONTAINER_LABEL`

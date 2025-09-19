@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -32,21 +32,21 @@
     <div style="display:flex;gap:12px;align-items:center"><strong>Orchestrator Panel</strong><span class="muted" id="status">ok</span></div>
     <div class="controls">
       <input id="orch" placeholder="http://localhost:8000" title="Orchestrator base URL" />
-      <input id="apikey" placeholder="API key (Bearer)" title="API key para Authorization" />
-      <select id="interval" title="Intervalo de refresco">
+      <input id="apikey" placeholder="API key (Bearer)" title="API key for Authorization" />
+      <select id="interval" title="Refresh interval">
         <option value="2000">2s</option>
         <option value="5000" selected>5s</option>
         <option value="10000">10s</option>
         <option value="30000">30s</option>
       </select>
-      <button id="refresh" class="btn">Actualizar</button>
+      <button id="refresh" class="btn">Refresh</button>
     </div>
   </header>
 
   <section class="grid g3">
     <div class="card"><div class="muted">Engines</div><div id="kpi-engines" style="font-size:28px;font-weight:700">0</div></div>
     <div class="card"><div class="muted">Streams</div><div id="kpi-streams" style="font-size:28px;font-weight:700">0</div></div>
-    <div class="card"><div class="muted">Última actualización</div><div id="kpi-upd" style="font-size:28px;font-weight:700">-</div></div>
+    <div class="card"><div class="muted">Last update</div><div id="kpi-upd" style="font-size:28px;font-weight:700">-</div></div>
   </section>
 
   <section class="grid g2">
@@ -61,9 +61,9 @@
   </section>
 
   <section>
-    <h3 class="muted" style="margin:8px 0">Detalle de stream</h3>
+    <h3 class="muted" style="margin:8px 0">Stream detail</h3>
     <div id="detail" class="card">
-      <div id="detail-meta" class="muted">Selecciona un stream.</div>
+      <div id="detail-meta" class="muted">Select a stream.</div>
       <div style="height:320px;margin-top:8px"><canvas id="chart"></canvas></div>
       <div id="detail-links" class="muted" style="margin-top:8px"></div>
       <div class="row" style="margin-top:8px">
@@ -201,14 +201,14 @@
         const u = new URL(selectedStream.command_url);
         if(!u.searchParams.has('method')) u.searchParams.set('method','stop');
         await fetch(u.toString(), { method:'GET' });
-      }catch(err){ showError('Stop falló: '+(err.message||String(err))); }
+      }catch(err){ showError('Stop failed: '+(err.message||String(err))); }
     };
     btnDel.onclick = async ()=>{
       if(!selectedStream) return;
       try{
         await fetchJSON(`${orchInput.value}/containers/${encodeURIComponent(selectedStream.container_id)}`, { method:'DELETE' });
         await refreshAll();
-      }catch(err){ showError('Delete falló: '+(err.message||String(err))); }
+      }catch(err){ showError('Delete failed: '+(err.message||String(err))); }
     };
 
     loadPrefs(); refreshAll(); restartTimer();

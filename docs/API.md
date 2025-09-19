@@ -1,10 +1,10 @@
 # API
 
-Auth: añadir `Authorization: Bearer <API_KEY>` en endpoints protegidos.
+Auth: add `Authorization: Bearer <API_KEY>` in protected endpoints.
 
 ## Provisioning
 ### POST /provision
-Crea contenedor con parámetros genéricos (no AceStream).
+Creates container with generic parameters (not AceStream).
 Body:
 ```json
 {
@@ -14,13 +14,13 @@ Body:
   "ports": {"40001/tcp": 19001}
 }
 ```
-Resp:
+Response:
 ```json
 {"container_id": "…"}
 ```
 ### POST /provision/acestream
 
-Arranca AceStream con puertos dinámicos y `CONF` construido.
+Starts AceStream with dynamic ports and built `CONF`.
 Body:
 ```json
 {
@@ -30,7 +30,7 @@ Body:
   "host_port": null
 }
 ```
-Resp:
+Response:
 ```json
 {
   "container_id":"…",
@@ -56,17 +56,17 @@ Body:
   "labels":{"stream_id":"ch-42"}
 }
 ```
-Resp: `StreamState`
+Response: `StreamState`
 ### POST /events/stream_ended
 Body:
 ```json
 {"container_id":"…","stream_id":"ch-42","reason":"player_stopped"}
 ```
-Resp:
+Response:
 ```json
 {"updated": true, "stream": {…}}
 ```
-### Lectura
+### Read Operations
 
  - GET /engines → EngineState[]
 
@@ -76,16 +76,16 @@ Resp:
 
  - GET /streams/{stream_id}/stats?since=<ISO8601> → StreamStatSnapshot[]
 
- - GET /containers/{container_id} → inspección Docker
+ - GET /containers/{container_id} → Docker inspection
 
- - GET /by-label?key=stream_id&value=ch-42 (protegido)
+ - GET /by-label?key=stream_id&value=ch-42 (protected)
 
 ### Control
- - DELETE /containers/{container_id} (protegido)
- - POST /gc (protegido)
- - POST /scale/{demand:int} (protegido)
+ - DELETE /containers/{container_id} (protected)
+ - POST /gc (protected)
+ - POST /scale/{demand:int} (protected)
 
-### Métricas
+### Metrics
  - GET /metrics Prometheus:
    - orch_events_started_total
    - orch_events_ended_total

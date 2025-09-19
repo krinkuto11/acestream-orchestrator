@@ -1,26 +1,26 @@
 
-# Contrato de eventos
+# Event Contract
 
 ## stream_started
-- Crea o actualiza `EngineState`.
-- Registra `StreamState` con `status="started"`.
-- Persiste en SQLite.
+- Creates or updates `EngineState`.
+- Records `StreamState` with `status="started"`.
+- Persists in SQLite.
 
-Campos obligatorios:
+Required fields:
 - `engine.host`, `engine.port`
 - `stream.key_type` ∈ {content_id, infohash, url, magnet}
 - `stream.key`
 - `session.playback_session_id`, `stat_url`, `command_url`
 
-Recomendado:
-- `labels.stream_id` estable para relacionar con tu sistema.
+Recommended:
+- `labels.stream_id` stable to relate to your system.
 
 ## stream_ended
-- Marca `StreamState.status="ended"` y `ended_at`.
-- Si `AUTO_DELETE=true` borra el contenedor. Backoff 1s, 2s, 3s.
-- Fallbacks: busca por `labels.stream_id` o por `host.http_port` extraído de `stat_url`.
+- Marks `StreamState.status="ended"` and `ended_at`.
+- If `AUTO_DELETE=true` deletes the container. Backoff 1s, 2s, 3s.
+- Fallbacks: search by `labels.stream_id` or by `host.http_port` extracted from `stat_url`.
 
-Idempotencia:
-- Repetir `stream_started` con misma `labels.stream_id` sobrescribe estado.
-- `stream_ended` sobre stream ya finalizado devuelve `updated:false`.
+Idempotency:
+- Repeating `stream_started` with same `labels.stream_id` overwrites state.
+- `stream_ended` on already finished stream returns `updated:false`.
 
