@@ -1,8 +1,11 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List
 from datetime import datetime
+import asyncio
+import os
 
 from .utils.logging import setup
 from .core.config import cfg
@@ -21,7 +24,21 @@ from .services.reindex import reindex_existing
 
 setup()
 
-app = FastAPI(title="On-Demand Orchestrator")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    Base.metadata.create_all(bind=engine)
+    ensure_minimum()
+    asyncio.create_task(collector.start())
+    load_state_from_db()
+    reindex_existing()
+    
+    yield
+    
+    # Shutdown
+    await collector.stop()
+
+app = FastAPI(title="On-Demand Orchestrator", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,21 +46,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/panel", StaticFiles(directory="app/static/panel", html=True), name="panel")
+# Mount static files with validation
+panel_dir = "app/static/panel"
+if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
+    app.mount("/panel", StaticFiles(directory=panel_dir, html=True), name="panel")
+else:
+    import logging
+    logging.warning(f"Panel directory {panel_dir} not found. /panel endpoint will not be available.")
+
 app.mount("/metrics", metrics_app)
-
-@app.on_event("startup")
-def boot():
-    Base.metadata.create_all(bind=engine)
-    ensure_minimum()
-    import asyncio
-    asyncio.get_event_loop().create_task(collector.start())
-    load_state_from_db()
-    reindex_existing()
-
-@app.on_event("shutdown")
-async def shutdown():
-    await collector.stop()
 
 # Provisioning
 @app.post("/provision", dependencies=[Depends(require_api_key)])

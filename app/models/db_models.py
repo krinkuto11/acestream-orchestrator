@@ -1,7 +1,7 @@
 from __future__ import annotations
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import String, Integer, DateTime, Boolean, Text, JSON
-from datetime import datetime
+from datetime import datetime, timezone
 
 class Base(DeclarativeBase):
     pass
@@ -13,8 +13,8 @@ class EngineRow(Base):
     host: Mapped[str] = mapped_column(String(128))
     port: Mapped[int] = mapped_column(Integer)
     labels: Mapped[dict | None] = mapped_column(JSON, default={})
-    first_seen: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    last_seen: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    first_seen: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 class StreamRow(Base):
     __tablename__ = "streams"
@@ -26,7 +26,7 @@ class StreamRow(Base):
     stat_url: Mapped[str] = mapped_column(Text)
     command_url: Mapped[str] = mapped_column(Text)
     is_live: Mapped[bool] = mapped_column(Boolean, default=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String(16), default="started")
 
