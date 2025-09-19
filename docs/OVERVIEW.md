@@ -1,24 +1,24 @@
 
 
-# Visión general
+# Overview
 
-Objetivo: levantar contenedores AceStream on-demand para servir streams que solicita un proxy. El orquestador:
-- Provisiona contenedores con puertos internos y externos dinámicos.
-- Recibe eventos `stream_started` y `stream_ended`.
-- Recolecta estadísticas periódicas desde `stat_url`.
-- Persiste engines, streams y estadísticas en SQLite.
-- Expone un panel simple y métricas Prometheus.
+Objective: launch AceStream containers on-demand to serve streams requested by a proxy. The orchestrator:
+- Provisions containers with dynamic internal and external ports.
+- Receives `stream_started` and `stream_ended` events.
+- Collects periodic statistics from `stat_url`.
+- Persists engines, streams and statistics in SQLite.
+- Exposes a simple panel and Prometheus metrics.
 
-Componentes:
-- **Orchestrator API**: FastAPI sobre Uvicorn.
-- **Docker host**: `docker:dind` en Compose o Docker del host vía `DOCKER_HOST`.
-- **Panel**: HTML estático en `/panel`.
-- **Proxy**: cliente que habla con el engine AceStream y con el orquestador.
+Components:
+- **Orchestrator API**: FastAPI over Uvicorn.
+- **Docker host**: `docker:dind` in Compose or host Docker via `DOCKER_HOST`.
+- **Panel**: Static HTML at `/panel`.
+- **Proxy**: client that talks to the AceStream engine and the orchestrator.
 
-Flujo típico:
-1. Proxy pide `POST /provision/acestream` si no hay engine disponible.
-2. Orquestador arranca contenedor con flags `--http-port`, `--https-port` y binding host.
-3. Proxy inicia playback contra `http://<host>:<host_http_port>/ace/manifest.m3u8?...&format=json`.
-4. Proxy obtiene `stat_url` y `command_url` del engine y envía `POST /events/stream_started`.
-5. Orquestador recolecta stats periódicamente desde `stat_url`.
-6. Al acabar, el proxy envía `POST /events/stream_ended`. Si `AUTO_DELETE=true`, el orquestador borra el contenedor.
+Typical flow:
+1. Proxy requests `POST /provision/acestream` if no engine is available.
+2. Orchestrator starts container with `--http-port`, `--https-port` flags and host binding.
+3. Proxy initiates playback against `http://<host>:<host_http_port>/ace/manifest.m3u8?...&format=json`.
+4. Proxy obtains `stat_url` and `command_url` from engine and sends `POST /events/stream_started`.
+5. Orchestrator collects stats periodically from `stat_url`.
+6. When finished, proxy sends `POST /events/stream_ended`. If `AUTO_DELETE=true`, orchestrator deletes the container.

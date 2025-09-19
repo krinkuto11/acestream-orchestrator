@@ -1,17 +1,17 @@
 # Panel
 
-Ruta: `/panel`.
+Route: `/panel`.
 
-Funciones:
-- KPI de engines y streams.
-- Lista de engines y streams activos.
-- Detalle de un stream con gráfica de `down/up/peers` en la última hora.
-- Botones: **Stop stream** (llama `command_url?method=stop` directamente al engine) y **Delete engine** (DELETE al orquestador).
+Functions:
+- KPI of engines and streams.
+- List of active engines and streams.
+- Detail of a stream with `down/up/peers` chart in the last hour.
+- Buttons: **Stop stream** (calls `command_url?method=stop` directly to the engine) and **Delete engine** (DELETE to the orchestrator).
 
-Parámetros:
-- Caja `orch`: base URL del orquestador.
-- Caja `API key`: Bearer para endpoints protegidos.
-- Intervalo de refresco: 2–30 s.
+Parameters:
+- `orch` box: orchestrator base URL.
+- `API key` box: Bearer for protected endpoints.
+- Refresh interval: 2–30 s.
 
 CORS:
-- El panel se sirve desde el mismo host. Si lo separas, habilita CORS en `main.py`.
+- The panel is served from the same host. If you separate it, enable CORS in `main.py`.

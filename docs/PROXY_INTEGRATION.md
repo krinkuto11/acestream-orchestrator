@@ -1,19 +1,19 @@
-# Integración con el Proxy
+# Proxy Integration
 
-### 1) Provisionar engine (opcional on-demand)
+### 1) Provision engine (optional on-demand)
 ```bash
 curl -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
   -d '{"labels":{"stream_id":"ch-42"}}' \
   http://localhost:8000/provision/acestream
-# → host_http_port p.ej. 19023
+# → host_http_port e.g. 19023
 ```
-### 2) Iniciar playback contra el engine
-El proxy llama al engine con `format=json` para obtener URLs de control.
+### 2) Start playback against the engine
+The proxy calls the engine with `format=json` to get control URLs.
 ```bash
 curl "http://127.0.0.1:19023/ace/manifest.m3u8?format=json&infohash=0a48..."
 # response.playback_url, response.stat_url, response.command_url
 ```
-### 3) Emitir `stream_started`
+### 3) Emit `stream_started`
 ```bash
 curl -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
   -d '{
@@ -30,16 +30,16 @@ curl -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
   }' \
   http://localhost:8000/events/stream_started
 ```
-### 4) Emitir `stream_ended`
+### 4) Emit `stream_ended`
 ```bash
 curl -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
   -d '{"container_id":"<docker_id>","stream_id":"ch-42","reason":"player_stopped"}' \
   http://localhost:8000/events/stream_ended
 ```
-### 5) Consultar
+### 5) Query
  - `GET /streams?status=started`
  - `GET /streams/{id}/stats`
- - `GET /by-label?key=stream_id&value=ch-42` (protegido)
-Notas:
- - `stream_id` en `labels` ayuda a correlacionar.
- - Si no envías `stream_id`, el orquestador generará uno con `key|playback_session_id`.
+ - `GET /by-label?key=stream_id&value=ch-42` (protected)
+Notes:
+ - `stream_id` in `labels` helps correlate.
+ - If you don't send `stream_id`, the orchestrator will generate one with `key|playback_session_id`.

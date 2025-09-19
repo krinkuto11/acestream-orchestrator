@@ -1,20 +1,20 @@
 
-# Operación
+# Operations
 
-Arranque:
-- Crea tablas, reindexa contenedores existentes, lanza colector.
+Startup:
+- Creates tables, reindexes existing containers, launches collector.
 
-Autoescalado:
-- `ensure_minimum()` garantiza `MIN_REPLICAS`.
-- `POST /scale/{demand}` para fijar demanda.
+Autoscaling:
+- `ensure_minimum()` guarantees `MIN_REPLICAS`.
+- `POST /scale/{demand}` to set demand.
 
-Recolección de stats:
-- Cada `COLLECT_INTERVAL_S` GET a `stat_url`.
-- Los datos se guardan en memoria y en SQLite.
+Stats collection:
+- Every `COLLECT_INTERVAL_S` GET to `stat_url`.
+- Data is saved in memory and SQLite.
 
 GC:
-- `AUTO_DELETE=true`: al `stream_ended` borra contenedor con backoff 1/2/3 s.
-- `POST /gc`: gancho para GC por inactividad (placeholder).
+- `AUTO_DELETE=true`: on `stream_ended` deletes container with backoff 1/2/3 s.
+- `POST /gc`: hook for inactivity GC (placeholder).
 
 Backups:
-- Copia `orchestrator.db` con política de rotación de tu host.
+- Copy `orchestrator.db` with your host's rotation policy.

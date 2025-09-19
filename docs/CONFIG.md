@@ -1,37 +1,37 @@
-# Configuración (.env)
+# Configuration (.env)
 
-Variables y valores por defecto:
+Variables and default values:
 
 - `APP_PORT=8000`
-- `DOCKER_NETWORK=` nombre de red Docker. Vacío → red por defecto.
+- `DOCKER_NETWORK=` Docker network name. Empty → default network.
 - `TARGET_IMAGE=acestream/engine:latest`
 - `MIN_REPLICAS=0` · `MAX_REPLICAS=20`
-- `CONTAINER_LABEL=ondemand.app=myservice` etiqueta de gestión.
-- `STARTUP_TIMEOUT_S=25` tiempo máx. de arranque contenedor.
-- `IDLE_TTL_S=600` reservado para GC por inactividad.
+- `CONTAINER_LABEL=ondemand.app=myservice` management label.
+- `STARTUP_TIMEOUT_S=25` max container startup time.
+- `IDLE_TTL_S=600` reserved for inactivity GC.
 
-Colector:
+Collector:
 - `COLLECT_INTERVAL_S=5`
-- `STATS_HISTORY_MAX=720` muestras guardadas en memoria por stream.
+- `STATS_HISTORY_MAX=720` samples stored in memory per stream.
 
-Puertos:
-- `PORT_RANGE_HOST=19000-19999` puertos host disponibles.
-- `ACE_HTTP_RANGE=40000-44999` puertos internos para `--http-port`.
-- `ACE_HTTPS_RANGE=45000-49999` puertos internos para `--https-port`.
-- `ACE_MAP_HTTPS=false` si `true` mapea también el HTTPS a host.
+Ports:
+- `PORT_RANGE_HOST=19000-19999` available host ports.
+- `ACE_HTTP_RANGE=40000-44999` internal ports for `--http-port`.
+- `ACE_HTTPS_RANGE=45000-49999` internal ports for `--https-port`.
+- `ACE_MAP_HTTPS=false` if `true` also maps HTTPS to host.
 
-Seguridad:
-- `API_KEY=...` API Bearer para `/provision/*` y `/events/*`.
+Security:
+- `API_KEY=...` API Bearer for `/provision/*` and `/events/*`.
 
-Persistencia:
+Persistence:
 - `DB_URL=sqlite:///./orchestrator.db`
 
 Auto-GC:
-- `AUTO_DELETE=false` si `true`, borra contenedor al `stream_ended`.
+- `AUTO_DELETE=false` if `true`, deletes container on `stream_ended`.
 
-Etiquetas en contenedores creados:
+Labels on created containers:
 - `acestream.http_port=<int>`
 - `acestream.https_port=<int>`
 - `host.http_port=<int>`
-- `host.https_port=<int>` opcional si `ACE_MAP_HTTPS=true`
-- y `CONTAINER_LABEL` (clave=valor) para identificar los gestionados.
+- `host.https_port=<int>` optional if `ACE_MAP_HTTPS=true`
+- and `CONTAINER_LABEL` (key=value) to identify managed ones.
