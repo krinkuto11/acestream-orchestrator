@@ -10,7 +10,9 @@ services:
     environment:
       DOCKER_HOST: tcp://docker:2375
     depends_on:
-      - docker
+      docker:
+        condition: service_healthy
+    restart: on-failure
   docker:
     image: docker:27.3.1-dind
     privileged: true
@@ -20,5 +22,10 @@ services:
       - "2375:2375"
     volumes:
       - docker-data:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 volumes:
   docker-data:
