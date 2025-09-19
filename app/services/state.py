@@ -102,12 +102,18 @@ class State:
         from ..models.db_models import EngineRow, StreamRow
         with SessionLocal() as s:
             for e in s.query(EngineRow).all():
+                # Ensure datetime objects are timezone-aware when loaded from database
+                first_seen = e.first_seen.replace(tzinfo=timezone.utc) if e.first_seen.tzinfo is None else e.first_seen
+                last_seen = e.last_seen.replace(tzinfo=timezone.utc) if e.last_seen.tzinfo is None else e.last_seen
                 self.engines[e.engine_key] = EngineState(container_id=e.engine_key, host=e.host, port=e.port,
-                                                         labels=e.labels or {}, first_seen=e.first_seen, last_seen=e.last_seen, streams=[])
+                                                         labels=e.labels or {}, first_seen=first_seen, last_seen=last_seen, streams=[])
             for r in s.query(StreamRow).filter(StreamRow.status=="started").all():
+                # Ensure datetime objects are timezone-aware when loaded from database
+                started_at = r.started_at.replace(tzinfo=timezone.utc) if r.started_at.tzinfo is None else r.started_at
+                ended_at = r.ended_at.replace(tzinfo=timezone.utc) if r.ended_at and r.ended_at.tzinfo is None else r.ended_at
                 st = StreamState(id=r.id, key_type=r.key_type, key=r.key, container_id=r.engine_key,
                                  playback_session_id=r.playback_session_id, stat_url=r.stat_url, command_url=r.command_url,
-                                 is_live=r.is_live, started_at=r.started_at, status=r.status)
+                                 is_live=r.is_live, started_at=started_at, ended_at=ended_at, status=r.status)
                 self.streams[st.id] = st
                 eng = self.engines.get(r.engine_key)
                 if eng and st.id not in eng.streams: eng.streams.append(st.id)
