@@ -111,6 +111,6 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         time.sleep(0.5); cont.reload()
     if cont.status != "running":
         _release_ports_from_labels(labels)
-        cont.remove(forcefully=True)  # si tu versión no admite 'forcefully', cambia a force=True
+        cont.remove(force=True)
         raise RuntimeError("Arranque AceStream fallido")
     return AceProvisionResponse(container_id=cont.id, host_http_port=host_http, container_http_port=c_http, container_https_port=c_https)
