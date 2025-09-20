@@ -14,7 +14,7 @@ import threading
 from unittest.mock import Mock, patch
 
 # Add app to path for imports
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 def test_stream_ending_behavior():
     """Test that stream ending with AUTO_DELETE properly manages state and replicas."""
