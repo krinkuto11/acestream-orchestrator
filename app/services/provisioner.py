@@ -92,10 +92,16 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     c_http = alloc.alloc_http()
     c_https = alloc.alloc_https(avoid=c_http)
 
-    conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
-    extra_conf = req.env.get("CONF")
-    if extra_conf: conf_lines.append(extra_conf)
-    env = {**req.env, "CONF": "\n".join(conf_lines)}
+    # Use user-provided CONF if available, otherwise use default configuration
+    if "CONF" in req.env:
+        # User explicitly provided CONF (even if empty), use it as-is
+        final_conf = req.env["CONF"]
+    else:
+        # No user CONF, use default orchestrator configuration
+        conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
+        final_conf = "\n".join(conf_lines)
+    
+    env = {**req.env, "CONF": final_conf}
 
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val,
