@@ -99,10 +99,14 @@ class State:
             if eng and st.id in eng.streams:
                 eng.streams.remove(st.id)
                 
-        with SessionLocal() as s:
-            row = s.get(StreamRow, st.id)
-            if row:
-                row.ended_at = st.ended_at; row.status = st.status; s.commit()
+        try:
+            with SessionLocal() as s:
+                row = s.get(StreamRow, st.id)
+                if row:
+                    row.ended_at = st.ended_at; row.status = st.status; s.commit()
+        except Exception:
+            # Database operation failed, but we can continue since we've updated memory state
+            pass
         return st
 
     def list_engines(self) -> List[EngineState]:
@@ -112,6 +116,34 @@ class State:
     def get_engine(self, container_id: str) -> Optional[EngineState]:
         with self._lock:
             return self.engines.get(container_id)
+
+    def remove_engine(self, container_id: str) -> Optional[EngineState]:
+        """Remove an engine from the state and return it if it existed."""
+        with self._lock:
+            removed_engine = self.engines.pop(container_id, None)
+            if removed_engine:
+                # Also remove any associated streams that are still active
+                streams_to_remove = [s_id for s_id, stream in self.streams.items() 
+                                   if stream.container_id == container_id and stream.status != "ended"]
+                for s_id in streams_to_remove:
+                    if s_id in self.streams:
+                        self.streams[s_id].status = "ended"
+                        self.streams[s_id].ended_at = self.now()
+        
+        # Remove from database as well (if database is available)
+        if removed_engine:
+            try:
+                with SessionLocal() as s:
+                    # Remove engine from database
+                    engine_row = s.get(EngineRow, container_id)
+                    if engine_row:
+                        s.delete(engine_row)
+                        s.commit()
+            except Exception:
+                # Database operation failed, but we can continue since we've updated memory state
+                pass
+        
+        return removed_engine
 
     def list_streams(self, status: Optional[str] = None, container_id: Optional[str] = None) -> List[StreamState]:
         with self._lock:
