@@ -21,12 +21,21 @@ class State:
         with self._lock:
             key = evt.container_id or f"{evt.engine.host}:{evt.engine.port}"
             eng = self.engines.get(key)
+            
+            # Get container name from Docker if we have a container_id
+            container_name = None
+            if evt.container_id:
+                from ..services.inspect import get_container_name
+                container_name = get_container_name(evt.container_id)
+            
             if not eng:
-                eng = EngineState(container_id=key, host=evt.engine.host, port=evt.engine.port,
+                eng = EngineState(container_id=key, container_name=container_name, host=evt.engine.host, port=evt.engine.port,
                                   labels=evt.labels or {}, first_seen=self.now(), last_seen=self.now(), streams=[])
                 self.engines[key] = eng
             else:
                 eng.host = evt.engine.host; eng.port = evt.engine.port; eng.last_seen = self.now()
+                if container_name and not eng.container_name:
+                    eng.container_name = container_name
                 if evt.labels: eng.labels.update(evt.labels)
 
             stream_id = (evt.labels.get("stream_id") if evt.labels else None) or f"{evt.stream.key}|{evt.session.playback_session_id}"
@@ -38,8 +47,8 @@ class State:
             if stream_id not in eng.streams: eng.streams.append(stream_id)
 
         with SessionLocal() as s:
-            s.merge(EngineRow(engine_key=eng.container_id, container_id=evt.container_id, host=eng.host, port=eng.port,
-                              labels=eng.labels, first_seen=eng.first_seen, last_seen=eng.last_seen))
+            s.merge(EngineRow(engine_key=eng.container_id, container_id=evt.container_id, container_name=container_name,
+                              host=eng.host, port=eng.port, labels=eng.labels, first_seen=eng.first_seen, last_seen=eng.last_seen))
             s.merge(StreamRow(id=stream_id, engine_key=eng.container_id, key_type=st.key_type, key=st.key,
                               playback_session_id=st.playback_session_id, stat_url=st.stat_url, command_url=st.command_url,
                               is_live=st.is_live, started_at=st.started_at, status=st.status))
@@ -105,8 +114,16 @@ class State:
                 # Ensure datetime objects are timezone-aware when loaded from database
                 first_seen = e.first_seen.replace(tzinfo=timezone.utc) if e.first_seen.tzinfo is None else e.first_seen
                 last_seen = e.last_seen.replace(tzinfo=timezone.utc) if e.last_seen.tzinfo is None else e.last_seen
-                self.engines[e.engine_key] = EngineState(container_id=e.engine_key, host=e.host, port=e.port,
-                                                         labels=e.labels or {}, first_seen=first_seen, last_seen=last_seen, streams=[])
+                
+                # Get container_name from the database or try to fetch from Docker if not available
+                container_name = getattr(e, 'container_name', None)
+                if not container_name and e.container_id:
+                    from ..services.inspect import get_container_name
+                    container_name = get_container_name(e.container_id)
+                
+                self.engines[e.engine_key] = EngineState(container_id=e.engine_key, container_name=container_name,
+                                                         host=e.host, port=e.port, labels=e.labels or {}, 
+                                                         first_seen=first_seen, last_seen=last_seen, streams=[])
             for r in s.query(StreamRow).filter(StreamRow.status=="started").all():
                 # Ensure datetime objects are timezone-aware when loaded from database
                 started_at = r.started_at.replace(tzinfo=timezone.utc) if r.started_at.tzinfo is None else r.started_at
