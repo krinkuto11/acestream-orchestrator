@@ -101,7 +101,14 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
         final_conf = "\n".join(conf_lines)
     
-    env = {**req.env, "CONF": final_conf}
+    # Set environment variables required by acestream-http-proxy image
+    env = {
+        **req.env, 
+        "CONF": final_conf,
+        "HTTP_PORT": str(c_http),
+        "HTTPS_PORT": str(c_https),
+        "BIND_ALL": "true"
+    }
 
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val,
