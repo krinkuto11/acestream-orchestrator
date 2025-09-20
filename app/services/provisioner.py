@@ -145,7 +145,9 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     else:
         # No user http port - use orchestrator allocation
         host_http = req.host_port or alloc.alloc_host()
-        c_http = alloc.alloc_http()
+        c_http = host_http  # Use same port for internal container to match acestream-http-proxy expectations
+        # Reserve this port to avoid conflicts
+        alloc.reserve_http(c_http)
     
     if user_https_port is not None:
         # User specified https port in CONF - use it
