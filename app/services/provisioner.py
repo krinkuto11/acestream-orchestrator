@@ -32,21 +32,34 @@ def start_container(req: StartRequest) -> str:
     cli = get_client()
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val}
-    cont = safe(cli.containers.run,
-        req.image or cfg.TARGET_IMAGE,
-        detach=True,
-        environment=req.env or None,
-        labels=labels,
-        network=cfg.DOCKER_NETWORK if cfg.DOCKER_NETWORK else None,
-        ports=req.ports or None,
-        restart_policy={"Name": "unless-stopped"})
+    image_name = req.image or cfg.TARGET_IMAGE
+    
+    try:
+        cont = safe(cli.containers.run,
+            image_name,
+            detach=True,
+            environment=req.env or None,
+            labels=labels,
+            network=cfg.DOCKER_NETWORK if cfg.DOCKER_NETWORK else None,
+            ports=req.ports or None,
+            restart_policy={"Name": "unless-stopped"})
+    except RuntimeError as e:
+        # Provide more helpful error messages for common image issues
+        error_msg = str(e).lower()
+        if "not found" in error_msg or "pull access denied" in error_msg:
+            raise RuntimeError(f"Image '{image_name}' not found. Please check TARGET_IMAGE setting or pull the image manually: docker pull {image_name}")
+        elif "network" in error_msg:
+            raise RuntimeError(f"Network error starting container with image '{image_name}': {e}")
+        else:
+            raise RuntimeError(f"Failed to start container with image '{image_name}': {e}")
+    
     deadline = time.time() + cfg.STARTUP_TIMEOUT_S
     cont.reload()
     while cont.status not in ("running",) and time.time() < deadline:
         time.sleep(0.5); cont.reload()
     if cont.status != "running":
         cont.remove(force=True)
-        raise RuntimeError("Arranque fallido")
+        raise RuntimeError(f"Container failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status})")
     return cont.id
 
 def _release_ports_from_labels(labels: dict):
