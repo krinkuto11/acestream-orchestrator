@@ -99,12 +99,62 @@ def stop_container(container_id: str):
     finally:
         cont.remove()
 
+def _parse_conf_port(conf_string, port_type="http"):
+    """
+    Parse a CONF string to extract port number for given type.
+    
+    Args:
+        conf_string: String like "--http-port=6879\n--https-port=6880\n--bind-all"
+        port_type: "http" or "https"
+    
+    Returns:
+        int: Port number or None if not found or invalid
+    """
+    if not conf_string:
+        return None
+        
+    lines = conf_string.split('\n')
+    for line in lines:
+        line = line.strip()
+        if line.startswith(f"--{port_type}-port="):
+            try:
+                port_str = line.split('=', 1)[1]
+                port = int(port_str)
+                # Validate port range (1-65535)
+                if 1 <= port <= 65535:
+                    return port
+            except (IndexError, ValueError):
+                continue
+    return None
+
 def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     from .naming import generate_container_name
     
-    host_http = req.host_port or alloc.alloc_host()
-    c_http = alloc.alloc_http()
-    c_https = alloc.alloc_https(avoid=c_http)
+    # Check if user provided CONF and extract ports from it
+    user_conf = req.env.get("CONF")
+    user_http_port = _parse_conf_port(user_conf, "http") if user_conf else None
+    user_https_port = _parse_conf_port(user_conf, "https") if user_conf else None
+    
+    # Determine ports to use
+    if user_http_port is not None:
+        # User specified http port in CONF - use it for both container and host binding
+        c_http = user_http_port
+        host_http = req.host_port or user_http_port  # Use same port for host binding
+        # Reserve this port to avoid conflicts
+        alloc.reserve_http(c_http)
+    else:
+        # No user http port - use orchestrator allocation
+        host_http = req.host_port or alloc.alloc_host()
+        c_http = alloc.alloc_http()
+    
+    if user_https_port is not None:
+        # User specified https port in CONF - use it
+        c_https = user_https_port
+        # Reserve this port to avoid conflicts
+        alloc.reserve_https(c_https)
+    else:
+        # No user https port - use orchestrator allocation
+        c_https = alloc.alloc_https(avoid=c_http)
 
     # Use user-provided CONF if available, otherwise use default configuration
     if "CONF" in req.env:
