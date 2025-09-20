@@ -24,11 +24,12 @@ class AceProvisionRequest(BaseModel):
 
 class AceProvisionResponse(BaseModel):
     container_id: str
+    container_name: str
     host_http_port: int
     container_http_port: int
     container_https_port: int
 
-def start_container(req: StartRequest) -> str:
+def start_container(req: StartRequest) -> dict:
     cli = get_client()
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val}
@@ -60,7 +61,12 @@ def start_container(req: StartRequest) -> str:
     if cont.status != "running":
         cont.remove(force=True)
         raise RuntimeError(f"Container failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status})")
-    return cont.id
+    
+    # Get container name
+    cont.reload()
+    container_name = cont.attrs.get("Name", "").lstrip("/")
+    
+    return {"container_id": cont.id, "container_name": container_name}
 
 def _release_ports_from_labels(labels: dict):
     try:
@@ -139,4 +145,15 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         _release_ports_from_labels(labels)
         cont.remove(force=True)
         raise RuntimeError("Arranque AceStream fallido")
-    return AceProvisionResponse(container_id=cont.id, host_http_port=host_http, container_http_port=c_http, container_https_port=c_https)
+    
+    # Get container name
+    cont.reload()
+    container_name = cont.attrs.get("Name", "").lstrip("/")
+    
+    return AceProvisionResponse(
+        container_id=cont.id, 
+        container_name=container_name,
+        host_http_port=host_http, 
+        container_http_port=c_http, 
+        container_https_port=c_https
+    )

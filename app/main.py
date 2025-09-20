@@ -59,9 +59,9 @@ app.mount("/metrics", metrics_app)
 # Provisioning
 @app.post("/provision", dependencies=[Depends(require_api_key)])
 def provision(req: StartRequest):
-    cid = start_container(req)
+    result = start_container(req)
     orch_provision_total.labels("generic").inc()
-    return {"container_id": cid}
+    return result
 
 @app.post("/provision/acestream", response_model=AceProvisionResponse, dependencies=[Depends(require_api_key)])
 def provision_acestream(req: AceProvisionRequest):
