@@ -27,6 +27,13 @@ class State:
             if evt.container_id:
                 from ..services.inspect import get_container_name
                 container_name = get_container_name(evt.container_id)
+                # If we can't get the name from Docker, but we have a container_id,
+                # use a truncated version of the container_id as a fallback
+                if not container_name:
+                    container_name = f"container-{evt.container_id[:12]}"
+            else:
+                # If no container_id provided, use host:port as a descriptive name
+                container_name = f"engine-{evt.engine.host}-{evt.engine.port}"
             
             if not eng:
                 eng = EngineState(container_id=key, container_name=container_name, host=evt.engine.host, port=evt.engine.port,
@@ -120,6 +127,13 @@ class State:
                 if not container_name and e.container_id:
                     from ..services.inspect import get_container_name
                     container_name = get_container_name(e.container_id)
+                    # If we can't get the name from Docker, but we have a container_id,
+                    # use a truncated version of the container_id as a fallback
+                    if not container_name:
+                        container_name = f"container-{e.container_id[:12]}"
+                elif not container_name:
+                    # If no container_name and no container_id, use host:port as fallback
+                    container_name = f"engine-{e.host}-{e.port}"
                 
                 self.engines[e.engine_key] = EngineState(container_id=e.engine_key, container_name=container_name,
                                                          host=e.host, port=e.port, labels=e.labels or {}, 
