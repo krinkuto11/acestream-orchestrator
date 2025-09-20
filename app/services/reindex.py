@@ -2,6 +2,7 @@ from .ports import alloc
 from .health import list_managed
 from .provisioner import ACESTREAM_LABEL_HTTP, ACESTREAM_LABEL_HTTPS, HOST_LABEL_HTTP, HOST_LABEL_HTTPS
 from .state import state
+from .inspect import get_container_name
 from ..models.schemas import EngineState
 
 def reindex_existing():
@@ -39,4 +40,10 @@ def reindex_existing():
                     pass
             
             now = state.now()
-            state.engines[key] = EngineState(container_id=key, host=host, port=port, labels=lbl, first_seen=now, last_seen=now, streams=[])
+            # Get container name from Docker
+            container_name = get_container_name(key)
+            # If we can't get the name from Docker, use a truncated version of the container_id as fallback
+            if not container_name:
+                container_name = f"container-{key[:12]}"
+            
+            state.engines[key] = EngineState(container_id=key, container_name=container_name, host=host, port=port, labels=lbl, first_seen=now, last_seen=now, streams=[])
