@@ -5,6 +5,7 @@ import re
 from typing import Optional
 from .db import SessionLocal
 from ..models.db_models import EngineRow
+from .docker_client import get_client
 
 
 def generate_engine_name() -> str:
@@ -55,7 +56,7 @@ def generate_container_name(prefix: str = "engine") -> str:
             EngineRow.container_name.like(f'{prefix}-%')
         ).all()
         
-        # Extract numbers from existing container names
+        # Extract numbers from existing container names in database
         numbers = []
         pattern = re.compile(rf'^{re.escape(prefix)}-(\d+)$')
         
@@ -64,6 +65,23 @@ def generate_container_name(prefix: str = "engine") -> str:
                 match = pattern.match(engine.container_name)
                 if match:
                     numbers.append(int(match.group(1)))
+        
+        # Also check Docker for existing containers with the same pattern
+        # This prevents naming conflicts when containers exist in Docker but not in database
+        try:
+            cli = get_client()
+            docker_containers = cli.containers.list(all=True)
+            
+            for container in docker_containers:
+                container_name = container.name
+                if container_name:
+                    match = pattern.match(container_name)
+                    if match:
+                        numbers.append(int(match.group(1)))
+        except Exception:
+            # If Docker check fails, continue with database-only numbers
+            # This ensures the function still works even if Docker is unavailable
+            pass
         
         # Find the next available number
         if not numbers:
