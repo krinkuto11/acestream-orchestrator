@@ -106,23 +106,38 @@ def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
     if cfg.AUTO_DELETE and st:
         def _auto():
             cid = st.container_id
+            stopped_container_id = None
             for i in range(3):
                 try:
-                    stop_container(cid); return
+                    stop_container(cid)
+                    stopped_container_id = cid
+                    break
                 except Exception:
                     from .services.health import list_managed
                     try:
                         for c in list_managed():
                             if (c.labels or {}).get("stream_id") == st.id:
-                                stop_container(c.id); return
+                                stop_container(c.id)
+                                stopped_container_id = c.id
+                                break
                             import urllib.parse
                             pu = urllib.parse.urlparse(st.stat_url)
                             host_port = pu.port
                             if (c.labels or {}).get(HOST_LABEL_HTTP) == str(host_port):
-                                stop_container(c.id); return
+                                stop_container(c.id)
+                                stopped_container_id = c.id
+                                break
                     except Exception:
                         pass
                     import time; time.sleep(1 * (i+1))
+            
+            # If we successfully stopped a container, update state and ensure minimum replicas
+            if stopped_container_id:
+                # Remove the engine from state
+                state.remove_engine(stopped_container_id)
+                # Ensure minimum number of replicas are maintained
+                from .services.autoscaler import ensure_minimum
+                ensure_minimum()
         bg.add_task(_auto)
     return {"updated": bool(st), "stream": st}
 
