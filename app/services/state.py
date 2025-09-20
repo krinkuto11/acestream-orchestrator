@@ -73,6 +73,12 @@ class State:
                         st = s; break
             if not st: return None
             st.ended_at = self.now(); st.status = "ended"
+            
+            # Remove the stream from the engine's streams list
+            eng = self.engines.get(st.container_id)
+            if eng and st.id in eng.streams:
+                eng.streams.remove(st.id)
+                
         with SessionLocal() as s:
             row = s.get(StreamRow, st.id)
             if row:
