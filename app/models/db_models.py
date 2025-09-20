@@ -10,6 +10,7 @@ class EngineRow(Base):
     __tablename__ = "engines"
     engine_key: Mapped[str] = mapped_column(String(128), primary_key=True)
     container_id: Mapped[str | None] = mapped_column(String(128))
+    container_name: Mapped[str | None] = mapped_column(String(128))
     host: Mapped[str] = mapped_column(String(128))
     port: Mapped[int] = mapped_column(Integer)
     labels: Mapped[dict | None] = mapped_column(JSON, default={})

@@ -4,6 +4,17 @@ from .docker_client import get_client
 class ContainerNotFound(Exception):
     pass
 
+def get_container_name(container_id: str) -> str | None:
+    """Get container name from container ID. Returns None if not found."""
+    try:
+        cli = get_client()
+        c = cli.containers.get(container_id)
+        c.reload()
+        attrs = c.attrs or {}
+        return attrs.get("Name", "").lstrip("/") or None
+    except (NotFound, Exception):
+        return None
+
 def inspect_container(container_id: str):
     cli = get_client()
     try:

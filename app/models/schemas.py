@@ -31,6 +31,7 @@ class StreamEndedEvent(BaseModel):
 
 class EngineState(BaseModel):
     container_id: str
+    container_name: Optional[str] = None
     host: str
     port: int
     labels: Dict[str, str] = {}
