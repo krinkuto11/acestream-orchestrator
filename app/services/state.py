@@ -120,8 +120,7 @@ class State:
             for e in s.query(EngineRow).all():
                 # Ensure datetime objects are timezone-aware when loaded from database
                 first_seen = e.first_seen.replace(tzinfo=timezone.utc) if e.first_seen.tzinfo is None else e.first_seen
-                last_seen = e.last_seen.replace(tzinfo=timezone.utc) if e.last_seen.tzinfo is None else e.last_seen
-                
+                last_seen = e.last_seen.replace(tzinfo=timezone.utc) if e.last_seen.tzinfo is None else e.last_seen 
                 # Get container_name from the database or try to fetch from Docker if not available
                 container_name = getattr(e, 'container_name', None)
                 if not container_name and e.container_id:
@@ -138,6 +137,7 @@ class State:
                 self.engines[e.engine_key] = EngineState(container_id=e.engine_key, container_name=container_name,
                                                          host=e.host, port=e.port, labels=e.labels or {}, 
                                                          first_seen=first_seen, last_seen=last_seen, streams=[])
+
             for r in s.query(StreamRow).filter(StreamRow.status=="started").all():
                 # Ensure datetime objects are timezone-aware when loaded from database
                 started_at = r.started_at.replace(tzinfo=timezone.utc) if r.started_at.tzinfo is None else r.started_at
