@@ -30,15 +30,21 @@ class AceProvisionResponse(BaseModel):
     container_https_port: int
 
 def start_container(req: StartRequest) -> dict:
+    from .naming import generate_container_name
+    
     cli = get_client()
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val}
     image_name = req.image or cfg.TARGET_IMAGE
     
+    # Generate a meaningful container name
+    container_name = generate_container_name(req.name_prefix)
+    
     try:
         cont = safe(cli.containers.run,
             image_name,
             detach=True,
+            name=container_name,
             environment=req.env or None,
             labels=labels,
             network=cfg.DOCKER_NETWORK if cfg.DOCKER_NETWORK else None,
@@ -62,11 +68,11 @@ def start_container(req: StartRequest) -> dict:
         cont.remove(force=True)
         raise RuntimeError(f"Container failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status})")
     
-    # Get container name
+    # Get container name - should match what we set
     cont.reload()
-    container_name = cont.attrs.get("Name", "").lstrip("/")
+    actual_container_name = cont.attrs.get("Name", "").lstrip("/")
     
-    return {"container_id": cont.id, "container_name": container_name}
+    return {"container_id": cont.id, "container_name": actual_container_name}
 
 def _release_ports_from_labels(labels: dict):
     try:
@@ -94,6 +100,8 @@ def stop_container(container_id: str):
         cont.remove()
 
 def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
+    from .naming import generate_container_name
+    
     host_http = req.host_port or alloc.alloc_host()
     c_http = alloc.alloc_http()
     c_https = alloc.alloc_https(avoid=c_http)
@@ -128,10 +136,14 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         ports[f"{c_https}/tcp"] = host_https
         labels[HOST_LABEL_HTTPS] = str(host_https)
 
+    # Generate a meaningful container name
+    container_name = generate_container_name("acestream")
+
     cli = get_client()
     cont = safe(cli.containers.run,
         req.image or cfg.TARGET_IMAGE,
         detach=True,
+        name=container_name,
         environment=env,
         labels=labels,
         network=cfg.DOCKER_NETWORK if cfg.DOCKER_NETWORK else None,
@@ -146,13 +158,13 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         cont.remove(force=True)
         raise RuntimeError("Arranque AceStream fallido")
     
-    # Get container name
+    # Get container name - should match what we set
     cont.reload()
-    container_name = cont.attrs.get("Name", "").lstrip("/")
+    actual_container_name = cont.attrs.get("Name", "").lstrip("/")
     
     return AceProvisionResponse(
         container_id=cont.id, 
-        container_name=container_name,
+        container_name=actual_container_name,
         host_http_port=host_http, 
         container_http_port=c_http, 
         container_https_port=c_https
