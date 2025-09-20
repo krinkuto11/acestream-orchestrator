@@ -13,7 +13,7 @@ from .services.autoscaler import ensure_minimum, scale_to
 from .services.provisioner import StartRequest, start_container, stop_container, AceProvisionRequest, AceProvisionResponse, start_acestream, HOST_LABEL_HTTP
 from .services.health import sweep_idle
 from .services.inspect import inspect_container, ContainerNotFound
-from .services.state import state, load_state_from_db
+from .services.state import state, load_state_from_db, cleanup_on_shutdown
 from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot
 from .services.collector import collector
 from .services.metrics import metrics_app, orch_events_started, orch_events_ended, orch_streams_active, orch_provision_total
@@ -26,8 +26,10 @@ setup()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # Startup - Ensure clean start (dry run)
     Base.metadata.create_all(bind=engine)
+    cleanup_on_shutdown()  # Clean any existing state and containers after DB is ready
+    
     ensure_minimum()
     asyncio.create_task(collector.start())
     load_state_from_db()
@@ -37,6 +39,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     await collector.stop()
+    cleanup_on_shutdown()
 
 app = FastAPI(title="On-Demand Orchestrator", lifespan=lifespan)
 app.add_middleware(
