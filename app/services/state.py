@@ -19,8 +19,28 @@ class State:
 
     def on_stream_started(self, evt: StreamStartedEvent) -> StreamState:
         with self._lock:
-            key = evt.container_id or f"{evt.engine.host}:{evt.engine.port}"
-            eng = self.engines.get(key)
+            # Try to find existing engine using multiple approaches
+            eng = None
+            if evt.container_id:
+                # First try by container_id
+                eng = self.engines.get(evt.container_id)
+
+            if not eng:
+                # If not found, search for engine with matching host:port
+                target_host = evt.engine.host
+                target_port = evt.engine.port
+                for existing_eng in self.engines.values():
+                    if existing_eng.host == target_host and existing_eng.port == target_port:
+                        eng = existing_eng
+                        break
+
+            # Determine the final key to use for this engine
+            if eng:
+                # Use existing engine's key
+                key = eng.container_id
+            else:
+                # Create new engine with appropriate key
+                key = evt.container_id or f"{evt.engine.host}:{evt.engine.port}"
             
             # Get container name from Docker if we have a container_id
             container_name = None
