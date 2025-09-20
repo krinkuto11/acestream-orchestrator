@@ -155,7 +155,60 @@ class State:
                 eng = self.engines.get(r.engine_key)
                 if eng and st.id not in eng.streams: eng.streams.append(st.id)
 
+    def clear_state(self):
+        """Clear all in-memory state."""
+        with self._lock:
+            self.engines.clear()
+            self.streams.clear()
+            self.stream_stats.clear()
+
+    def clear_database(self):
+        """Clear all database state."""
+        from ..models.db_models import EngineRow, StreamRow, StatRow
+        with SessionLocal() as s:
+            try:
+                # Delete all records in reverse dependency order
+                s.query(StatRow).delete()
+                s.query(StreamRow).delete()
+                s.query(EngineRow).delete()
+                s.commit()
+            except Exception as e:
+                # If tables don't exist or other database error, continue silently
+                # This can happen during startup before tables are created
+                s.rollback()
+                import logging
+                logging.debug(f"Database cleanup skipped (tables may not exist): {e}")
+
+    def cleanup_all(self):
+        """Full cleanup: stop containers, clear database and memory state."""
+        # Stop all managed containers
+        try:
+            from ..services.health import list_managed
+            from ..services.provisioner import stop_container
+            
+            managed_containers = list_managed()
+            for container in managed_containers:
+                try:
+                    stop_container(container.id)
+                except Exception as e:
+                    # Log error but continue cleanup
+                    import logging
+                    logging.warning(f"Failed to stop container {container.id}: {e}")
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to list or stop managed containers: {e}")
+        
+        # Clear database state
+        self.clear_database()
+        
+        # Clear in-memory state
+        self.clear_state()
+
 state = State()
 
 def load_state_from_db():
     state.load_from_db()
+
+def cleanup_on_shutdown():
+    """Cleanup function for application shutdown."""
+    state.cleanup_all()
