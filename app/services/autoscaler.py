@@ -1,25 +1,26 @@
 from ..core.config import cfg
-from .provisioner import StartRequest, start_container
+from .provisioner import StartRequest, start_container, AceProvisionRequest, start_acestream
 from .health import list_managed
 import logging
 
 logger = logging.getLogger(__name__)
 
 def ensure_minimum():
-    """Ensure minimum number of replicas are running."""
+    """Ensure minimum number of replicas are running as AceStream-ready containers."""
     try:
         running = [c for c in list_managed() if c.status == "running"]
         deficit = cfg.MIN_REPLICAS - len(running)
         
         if deficit > 0:
-            logger.info(f"Starting {deficit} containers to meet MIN_REPLICAS={cfg.MIN_REPLICAS} (currently running: {len(running)})")
+            logger.info(f"Starting {deficit} AceStream containers to meet MIN_REPLICAS={cfg.MIN_REPLICAS} (currently running: {len(running)})")
             
         for i in range(max(deficit, 0)):
             try:
-                container_id = start_container(StartRequest(image=cfg.TARGET_IMAGE))
-                logger.info(f"Successfully started container {container_id[:12]} ({i+1}/{deficit})")
+                # Create AceStream-ready containers with proper port configuration
+                response = start_acestream(AceProvisionRequest(image=cfg.TARGET_IMAGE))
+                logger.info(f"Successfully started AceStream container {response.container_id[:12]} with HTTP port {response.host_http_port} ({i+1}/{deficit})")
             except Exception as e:
-                logger.error(f"Failed to start container {i+1}/{deficit}: {e}")
+                logger.error(f"Failed to start AceStream container {i+1}/{deficit}: {e}")
                 # Continue trying to start remaining containers
                 
     except Exception as e:
@@ -31,13 +32,14 @@ def scale_to(demand: int):
     running = [c for c in current if c.status == "running"]
     if len(running) < desired:
         deficit = desired - len(running)
-        logger.info(f"Scaling up: starting {deficit} containers (current: {len(running)}, desired: {desired})")
+        logger.info(f"Scaling up: starting {deficit} AceStream containers (current: {len(running)}, desired: {desired})")
         for i in range(deficit):
             try:
-                container_id = start_container(StartRequest(image=cfg.TARGET_IMAGE))
-                logger.info(f"Started container {container_id[:12]} for scale-up ({i+1}/{deficit})")
+                # Create AceStream-ready containers for scaling up as well
+                response = start_acestream(AceProvisionRequest(image=cfg.TARGET_IMAGE))
+                logger.info(f"Started AceStream container {response.container_id[:12]} with HTTP port {response.host_http_port} for scale-up ({i+1}/{deficit})")
             except Exception as e:
-                logger.error(f"Failed to start container for scale-up: {e}")
+                logger.error(f"Failed to start AceStream container for scale-up: {e}")
     elif len(running) > desired:
         excess = len(running) - desired
         logger.info(f"Scaling down: stopping {excess} containers (current: {len(running)}, desired: {desired})")

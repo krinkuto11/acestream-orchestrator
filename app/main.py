@@ -6,12 +6,15 @@ from typing import Optional, List
 from datetime import datetime
 import asyncio
 import os
+import logging
+import signal
+import atexit
 
 from .utils.logging import setup
 from .core.config import cfg
 from .services.autoscaler import ensure_minimum, scale_to
 from .services.provisioner import StartRequest, start_container, stop_container, AceProvisionRequest, AceProvisionResponse, start_acestream, HOST_LABEL_HTTP
-from .services.health import sweep_idle
+from .services.health import sweep_idle, list_managed
 from .services.inspect import inspect_container, ContainerNotFound
 from .services.state import state, load_state_from_db
 from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot
@@ -24,6 +27,42 @@ from .services.reindex import reindex_existing
 
 setup()
 
+logger = logging.getLogger(__name__)
+
+def cleanup_containers():
+    """Clean up all managed containers."""
+    try:
+        managed_containers = list_managed()
+        if managed_containers:
+            logger.info(f"Shutting down {len(managed_containers)} managed containers...")
+            for container in managed_containers:
+                try:
+                    if container.status == "running":
+                        container.stop(timeout=5)  # Use direct container method to avoid port cleanup issues during shutdown
+                        container.remove()
+                        logger.info(f"Stopped container {container.id[:12]}")
+                except Exception as e:
+                    logger.error(f"Failed to stop container {container.id[:12]}: {e}")
+    except Exception as e:
+        # Don't let cleanup errors prevent shutdown
+        logger.error(f"Error during container cleanup: {e}")
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals."""
+    logger.info(f"Received signal {signum}, cleaning up containers...")
+    try:
+        cleanup_containers()
+        logger.info("Container cleanup completed")
+    except Exception as e:
+        logger.error(f"Error in signal handler: {e}")
+    # Don't prevent normal shutdown
+    os._exit(0 if signum == signal.SIGINT else 1)
+
+# Register signal handlers and atexit cleanup
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
+atexit.register(cleanup_containers)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -35,8 +74,9 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Shutdown
+    # Shutdown - clean up all managed containers
     await collector.stop()
+    cleanup_containers()
 
 app = FastAPI(title="On-Demand Orchestrator", lifespan=lifespan)
 app.add_middleware(
