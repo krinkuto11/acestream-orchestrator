@@ -3,6 +3,12 @@
 Test the enhanced reliability features for the /engines endpoint.
 """
 
+import os
+import sys
+
+# Add app to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 def test_docker_monitoring():
     """Test that Docker monitoring service properly syncs state."""
     

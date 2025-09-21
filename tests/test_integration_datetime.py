@@ -12,9 +12,9 @@ import os
 from datetime import datetime, timezone
 
 # Add app to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'app'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from models.schemas import EngineState, StreamState
+from app.models.schemas import EngineState, StreamState
 
 # Create a minimal test without full state import
 from datetime import datetime, timezone
