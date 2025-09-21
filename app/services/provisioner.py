@@ -127,8 +127,40 @@ def _parse_conf_port(conf_string, port_type="http"):
                 continue
     return None
 
+
+def _get_network_config():
+    """Get network configuration for container based on Gluetun setup."""
+    if cfg.GLUETUN_CONTAINER_NAME:
+        # Use Gluetun container's network stack
+        return {
+            "network_mode": f"container:{cfg.GLUETUN_CONTAINER_NAME}"
+        }
+    elif cfg.DOCKER_NETWORK:
+        # Use specified Docker network
+        return {
+            "network": cfg.DOCKER_NETWORK
+        }
+    else:
+        # Use default network
+        return {
+            "network": None
+        }
+
 def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     from .naming import generate_container_name
+    
+    # Check Gluetun health if configured
+    if cfg.GLUETUN_CONTAINER_NAME:
+        import asyncio
+        from .gluetun import gluetun_monitor
+        
+        # Check if Gluetun is healthy before starting engine
+        try:
+            loop = asyncio.get_event_loop()
+            if not loop.run_until_complete(gluetun_monitor.wait_for_healthy(timeout=30)):
+                raise RuntimeError(f"Gluetun VPN container '{cfg.GLUETUN_CONTAINER_NAME}' is not healthy - cannot start AceStream engine")
+        except Exception as e:
+            raise RuntimeError(f"Failed to verify Gluetun health: {e}")
     
     # Check if user provided CONF and extract ports from it
     user_conf = req.env.get("CONF")
@@ -191,6 +223,9 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Generate a meaningful container name
     container_name = generate_container_name("acestream")
 
+    # Determine network configuration based on Gluetun setup
+    network_config = _get_network_config()
+
     cli = get_client()
     cont = safe(cli.containers.run,
         req.image or cfg.TARGET_IMAGE,
@@ -198,7 +233,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         name=container_name,
         environment=env,
         labels=labels,
-        network=cfg.DOCKER_NETWORK if cfg.DOCKER_NETWORK else None,
+        **network_config,
         ports=ports,
         restart_policy={"Name": "unless-stopped"})
     deadline = time.time() + cfg.STARTUP_TIMEOUT_S
