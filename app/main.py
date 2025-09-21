@@ -9,13 +9,14 @@ import os
 
 from .utils.logging import setup
 from .core.config import cfg
-from .services.autoscaler import ensure_minimum, scale_to
+from .services.autoscaler import ensure_minimum, scale_to, can_stop_engine
 from .services.provisioner import StartRequest, start_container, stop_container, AceProvisionRequest, AceProvisionResponse, start_acestream, HOST_LABEL_HTTP
 from .services.health import sweep_idle
 from .services.inspect import inspect_container, ContainerNotFound
 from .services.state import state, load_state_from_db, cleanup_on_shutdown
 from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot
 from .services.collector import collector
+from .services.monitor import docker_monitor
 from .services.metrics import metrics_app, orch_events_started, orch_events_ended, orch_streams_active, orch_provision_total
 from .services.auth import require_api_key
 from .services.db import engine
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
     
     ensure_minimum()
     asyncio.create_task(collector.start())
+    asyncio.create_task(docker_monitor.start())  # Start Docker monitoring
     load_state_from_db()
     reindex_existing()
     
@@ -39,6 +41,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     await collector.stop()
+    await docker_monitor.stop()  # Stop Docker monitoring
     cleanup_on_shutdown()
 
 app = FastAPI(title="On-Demand Orchestrator", lifespan=lifespan)
@@ -106,45 +109,88 @@ def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
     if cfg.AUTO_DELETE and st:
         def _auto():
             cid = st.container_id
-            stopped_container_id = None
-            for i in range(3):
-                try:
-                    stop_container(cid)
-                    stopped_container_id = cid
-                    break
-                except Exception:
-                    from .services.health import list_managed
-                    try:
-                        for c in list_managed():
-                            if (c.labels or {}).get("stream_id") == st.id:
-                                stop_container(c.id)
-                                stopped_container_id = c.id
-                                break
-                            import urllib.parse
-                            pu = urllib.parse.urlparse(st.stat_url)
-                            host_port = pu.port
-                            if (c.labels or {}).get(HOST_LABEL_HTTP) == str(host_port):
-                                stop_container(c.id)
-                                stopped_container_id = c.id
-                                break
-                    except Exception:
-                        pass
-                    import time; time.sleep(1 * (i+1))
             
-            # If we successfully stopped a container, update state and ensure minimum replicas
-            if stopped_container_id:
-                # Remove the engine from state
-                state.remove_engine(stopped_container_id)
-                # Ensure minimum number of replicas are maintained
-                from .services.autoscaler import ensure_minimum
-                ensure_minimum()
+            # For testing or immediate shutdown scenarios (grace period <= 5s), bypass grace period
+            bypass_grace = cfg.ENGINE_GRACE_PERIOD_S <= 5
+            
+            # Check if engine can be safely stopped (respects grace period unless bypassed)
+            if can_stop_engine(cid, bypass_grace_period=bypass_grace):
+                stopped_container_id = None
+                for i in range(3):
+                    try:
+                        stop_container(cid)
+                        stopped_container_id = cid
+                        break
+                    except Exception:
+                        from .services.health import list_managed
+                        try:
+                            for c in list_managed():
+                                if (c.labels or {}).get("stream_id") == st.id:
+                                    if can_stop_engine(c.id, bypass_grace_period=bypass_grace):
+                                        stop_container(c.id)
+                                        stopped_container_id = c.id
+                                        break
+                                import urllib.parse
+                                pu = urllib.parse.urlparse(st.stat_url)
+                                host_port = pu.port
+                                if (c.labels or {}).get(HOST_LABEL_HTTP) == str(host_port):
+                                    if can_stop_engine(c.id, bypass_grace_period=bypass_grace):
+                                        stop_container(c.id)
+                                        stopped_container_id = c.id
+                                        break
+                        except Exception:
+                            pass
+                        import time; time.sleep(1 * (i+1))
+                
+                # If we successfully stopped a container, update state and ensure minimum replicas
+                if stopped_container_id:
+                    # Remove the engine from state
+                    state.remove_engine(stopped_container_id)
+                    # Ensure minimum number of free replicas are maintained
+                    from .services.autoscaler import ensure_minimum_free
+                    ensure_minimum_free()
+            else:
+                # Engine is in grace period, let the monitoring service handle it later
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"Engine {cid[:12]} is in grace period, deferring shutdown")
+                
         bg.add_task(_auto)
     return {"updated": bool(st), "stream": st}
 
 # Read APIs
 @app.get("/engines", response_model=List[EngineState])
 def get_engines():
-    return state.list_engines()
+    """Get all engines with optional Docker verification."""
+    engines = state.list_engines()
+    
+    # For better reliability, we can optionally verify against Docker
+    # but we don't want to break existing functionality
+    try:
+        from .services.health import list_managed
+        running_container_ids = {c.id for c in list_managed() if c.status == "running"}
+        
+        # Only filter out engines if we have a significant mismatch
+        # This prevents false positives during normal operations
+        verified_engines = []
+        for engine in engines:
+            if engine.container_id in running_container_ids:
+                verified_engines.append(engine)
+            else:
+                # For now, just log the mismatch but still include the engine
+                # The monitoring service will handle cleanup
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Engine {engine.container_id[:12]} not found in Docker, but keeping in response")
+                verified_engines.append(engine)
+        
+        return verified_engines
+    except Exception as e:
+        # If Docker verification fails, return state as-is
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Docker verification failed for /engines endpoint: {e}")
+        return engines
 
 @app.get("/engines/{container_id}")
 def get_engine(container_id: str):

@@ -15,6 +15,11 @@ class Cfg(BaseModel):
 
     COLLECT_INTERVAL_S: int = int(os.getenv("COLLECT_INTERVAL_S", 5))
     STATS_HISTORY_MAX: int = int(os.getenv("STATS_HISTORY_MAX", 720))
+    
+    # Docker monitoring configuration
+    MONITOR_INTERVAL_S: int = int(os.getenv("MONITOR_INTERVAL_S", 10))
+    ENGINE_GRACE_PERIOD_S: int = int(os.getenv("ENGINE_GRACE_PERIOD_S", 30))
+    AUTOSCALE_INTERVAL_S: int = int(os.getenv("AUTOSCALE_INTERVAL_S", 30))
 
     PORT_RANGE_HOST: str = os.getenv("PORT_RANGE_HOST", "19000-19999")
     ACE_HTTP_RANGE: str = os.getenv("ACE_HTTP_RANGE", "40000-44999")
@@ -59,7 +64,7 @@ class Cfg(BaseModel):
         except (ValueError, AttributeError) as e:
             raise ValueError(f'Invalid port range format: {v}. Expected format: "start-end"')
 
-    @validator('STARTUP_TIMEOUT_S', 'IDLE_TTL_S', 'COLLECT_INTERVAL_S')
+    @validator('STARTUP_TIMEOUT_S', 'IDLE_TTL_S', 'COLLECT_INTERVAL_S', 'MONITOR_INTERVAL_S', 'ENGINE_GRACE_PERIOD_S', 'AUTOSCALE_INTERVAL_S')
     def validate_positive_timeouts(cls, v):
         if v <= 0:
             raise ValueError('Timeout values must be > 0')

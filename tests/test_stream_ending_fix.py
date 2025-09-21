@@ -31,8 +31,10 @@ def test_stream_ending_behavior():
         # Mock configuration for testing
         original_auto_delete = cfg.AUTO_DELETE
         original_min_replicas = cfg.MIN_REPLICAS
+        original_grace_period = cfg.ENGINE_GRACE_PERIOD_S
         cfg.AUTO_DELETE = True
         cfg.MIN_REPLICAS = 2
+        cfg.ENGINE_GRACE_PERIOD_S = 0  # Disable grace period for immediate deletion
         
         print(f"✓ Set AUTO_DELETE={cfg.AUTO_DELETE}, MIN_REPLICAS={cfg.MIN_REPLICAS}")
         
@@ -77,7 +79,7 @@ def test_stream_ending_behavior():
         
         # Mock the container operations and autoscaler
         with patch('app.main.stop_container') as mock_stop, \
-             patch('app.services.autoscaler.ensure_minimum') as mock_ensure:
+             patch('app.services.autoscaler.ensure_minimum_free') as mock_ensure:
             
             # Create event for stream ending
             event = StreamEndedEvent(
@@ -143,6 +145,8 @@ def test_stream_ending_behavior():
             cfg.AUTO_DELETE = original_auto_delete
         if 'original_min_replicas' in locals():
             cfg.MIN_REPLICAS = original_min_replicas
+        if 'original_grace_period' in locals():
+            cfg.ENGINE_GRACE_PERIOD_S = original_grace_period
 
 def test_engines_endpoint_consistency():
     """Test that /engines endpoint returns consistent data after container deletion."""
