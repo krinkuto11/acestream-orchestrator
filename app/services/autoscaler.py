@@ -32,7 +32,7 @@ def ensure_minimum():
         logger.error(f"Error in ensure_minimum: {e}")
 
 def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> bool:
-    """Check if an engine can be safely stopped based on grace period."""
+    """Check if an engine can be safely stopped based on grace period and minimum replicas."""
     now = datetime.now()
     
     # Check if engine has any active streams
@@ -42,6 +42,19 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
         if container_id in _empty_engine_timestamps:
             del _empty_engine_timestamps[container_id]
         return False
+    
+    # Check if stopping this engine would violate MIN_REPLICAS constraint
+    if cfg.MIN_REPLICAS > 0:
+        try:
+            running_containers = [c for c in list_managed() if c.status == "running"]
+            # If stopping this engine would bring us below MIN_REPLICAS, don't stop it
+            if len(running_containers) - 1 < cfg.MIN_REPLICAS:
+                logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_REPLICAS={cfg.MIN_REPLICAS} (currently: {len(running_containers)} running, would become: {len(running_containers) - 1})")
+                return False
+        except Exception as e:
+            logger.error(f"Error checking MIN_REPLICAS constraint: {e}")
+            # On error, err on the side of caution and don't stop the engine
+            return False
     
     # If bypassing grace period (for testing or immediate shutdown), allow stopping
     if bypass_grace_period or cfg.ENGINE_GRACE_PERIOD_S == 0:
