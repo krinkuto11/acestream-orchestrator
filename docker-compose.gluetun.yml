@@ -1,0 +1,92 @@
+# Example Docker Compose with Gluetun VPN Integration
+# This demonstrates a complete setup with VPN routing
+
+services:
+  # Gluetun VPN Container
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    environment:
+      # Example for NordVPN - adjust for your VPN provider
+      # See https://github.com/qdm12/gluetun/wiki for other providers
+      - VPN_SERVICE_PROVIDER=nordvpn
+      - VPN_TYPE=openvpn
+      - OPENVPN_USER=${VPN_USER}
+      - OPENVPN_PASSWORD=${VPN_PASSWORD}
+      - SERVER_COUNTRIES=United States
+      # Optional: Enable built-in HTTP proxy
+      - HTTP_PROXY=on
+      - HTTP_PROXY_LOG=on
+      # Optional: DNS settings
+      - DOT=off
+    volumes:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      # Map AceStream orchestrator port range through VPN
+      - "19000-19999:19000-19999"
+      # Optional: HTTP proxy port
+      - "8888:8888"
+    healthcheck:
+      # Test internet connectivity through VPN
+      test: ["CMD", "wget", "-q", "--spider", "http://ipinfo.io"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - orchestrator
+
+  # AceStream Orchestrator with Gluetun integration
+  orchestrator:
+    build: .
+    env_file: .env
+    environment:
+      # Docker connection
+      - DOCKER_HOST=tcp://docker:2375
+      # Gluetun integration
+      - GLUETUN_CONTAINER_NAME=gluetun
+      - GLUETUN_HEALTH_CHECK_INTERVAL_S=5
+      - VPN_RESTART_ENGINES_ON_RECONNECT=true
+      # Network configuration
+      - DOCKER_NETWORK=orchestrator
+    volumes:
+      - orchestrator-db:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+      docker:
+        condition: service_healthy
+    restart: on-failure
+    networks:
+      - orchestrator
+
+  # Docker-in-Docker for container management
+  docker:
+    image: docker:27.3.1-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    ports:
+      - "2375:2375"
+    volumes:
+      - docker-data:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - orchestrator
+
+networks:
+  orchestrator:
+    name: orchestrator
+
+volumes:
+  docker-data:
+  orchestrator-db:
