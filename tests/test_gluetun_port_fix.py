@@ -143,7 +143,7 @@ def test_edge_cases():
         with patch('app.services.provisioner.get_client', return_value=mock_client):
             with patch('app.services.provisioner.safe', side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)):
                 with patch('app.services.naming.generate_container_name', return_value="test-acestream-edge"):
-                    with patch('app.services.provisioner.alloc.alloc_gluetun_port', return_value=19004):
+                    with patch('app.services.provisioner.alloc.alloc_gluetun_port', side_effect=[19004, 19005]):
                         with patch('app.services.provisioner._check_gluetun_health_sync', return_value=True):
                             with patch('app.services.gluetun.get_forwarded_port_sync', return_value=5914):
                                 with patch('app.services.gluetun.gluetun_monitor') as mock_monitor:

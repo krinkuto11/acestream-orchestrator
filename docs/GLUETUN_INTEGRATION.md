@@ -23,6 +23,11 @@ GLUETUN_HEALTH_CHECK_INTERVAL_S=5
 
 # Optional: Restart engines on VPN reconnect (default: true)
 VPN_RESTART_ENGINES_ON_RECONNECT=true
+
+# Optional: Maximum number of active engine replicas when using Gluetun (default: 20)
+# This limits the number of engine instances that can run simultaneously
+# Ports will be allocated starting from 19000
+MAX_ACTIVE_REPLICAS=20
 ```
 
 ## Docker Compose Setup
@@ -111,18 +116,35 @@ When `GLUETUN_CONTAINER_NAME` is set, the orchestrator:
 2. This routes all engine traffic through Gluetun's network stack
 3. Engines inherit Gluetun's IP address and VPN connection
 4. **Port Management**: Engines share Gluetun's port mappings - no individual port mapping is performed
-5. **Host Configuration**: Engines use `localhost` for inter-service communication since they share the same network stack
+5. **Port Allocation**: Engines are allocated ports from the range starting at 19000, limited by `MAX_ACTIVE_REPLICAS`
+6. **Host Configuration**: Engines use the Gluetun container name as hostname for service discovery
 
 ### Host Resolution Behavior
 
 The orchestrator automatically adjusts how engines resolve hostnames:
 
 - **Without Gluetun**: Engines use their container names as hostnames for communication
-- **With Gluetun**: Engines use `localhost` as hostname since they share Gluetun's network stack
+- **With Gluetun**: Engines use the Gluetun container name as hostname since they share Gluetun's network stack
 
 This ensures that:
 - Services can communicate properly within the VPN container network
 - No manual hostname configuration is required
+- Service discovery works correctly in both VPN and non-VPN modes
+
+### VPN Port Forwarding
+
+When using Gluetun with port forwarding enabled, the orchestrator:
+1. Queries Gluetun's API at `/v1/openvpn/portforwarded` to get the forwarded port
+2. Sets the `P2P_PORT` environment variable in AceStream engines with the forwarded port
+3. This allows AceStream engines to use the VPN's forwarded port for P2P traffic
+
+### Port Management
+
+The orchestrator implements intelligent port management:
+- **Standard Mode**: Uses configurable port ranges for HTTP/HTTPS
+- **Gluetun Mode**: Allocates sequential ports starting from 19000
+- **Max Replicas**: Limits concurrent engines to `MAX_ACTIVE_REPLICAS` when using Gluetun
+- **Automatic Cleanup**: Releases ports when engines are stopped
 - Seamless transition between VPN and non-VPN modes
 
 ### Health Monitoring
