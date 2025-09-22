@@ -110,6 +110,19 @@ When `GLUETUN_CONTAINER_NAME` is set, the orchestrator:
 1. Uses `network_mode: container:gluetun` for all AceStream engines
 2. This routes all engine traffic through Gluetun's network stack
 3. Engines inherit Gluetun's IP address and VPN connection
+4. **Host Configuration**: Engines use `localhost` for inter-service communication since they share the same network stack
+
+### Host Resolution Behavior
+
+The orchestrator automatically adjusts how engines resolve hostnames:
+
+- **Without Gluetun**: Engines use their container names as hostnames for communication
+- **With Gluetun**: Engines use `localhost` as hostname since they share Gluetun's network stack
+
+This ensures that:
+- Services can communicate properly within the VPN container network
+- No manual hostname configuration is required
+- Seamless transition between VPN and non-VPN modes
 
 ### Health Monitoring
 
