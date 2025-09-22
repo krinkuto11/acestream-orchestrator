@@ -45,5 +45,6 @@ requirements.txt
 * [Troubleshooting](docs/TROUBLESHOOTING.md)
 * [Security](docs/SECURITY.md)
 * [Proxy Integration](docs/PROXY_INTEGRATION.md)
+* [Gluetun VPN Integration](docs/GLUETUN_INTEGRATION.md)
 
 

@@ -14,6 +14,16 @@ Collector:
 - `COLLECT_INTERVAL_S=5`
 - `STATS_HISTORY_MAX=720` samples stored in memory per stream.
 
+Monitoring:
+- `MONITOR_INTERVAL_S=10` Docker container monitoring interval.
+- `ENGINE_GRACE_PERIOD_S=30` grace period before stopping empty engines.
+- `AUTOSCALE_INTERVAL_S=30` autoscaling check interval.
+
+Gluetun VPN Integration:
+- `GLUETUN_CONTAINER_NAME=` Name of Gluetun VPN container. When set, all AceStream engines will route through this VPN container.
+- `GLUETUN_HEALTH_CHECK_INTERVAL_S=5` Frequency of VPN health checks (in seconds). High frequency is recommended for availability.
+- `VPN_RESTART_ENGINES_ON_RECONNECT=true` If `true`, restarts all engines when VPN reconnects after a disconnection.
+
 Ports:
 - `PORT_RANGE_HOST=19000-19999` available host ports.
 - `ACE_HTTP_RANGE=40000-44999` internal ports for `--http-port`.

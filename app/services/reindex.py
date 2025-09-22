@@ -4,6 +4,7 @@ from .provisioner import ACESTREAM_LABEL_HTTP, ACESTREAM_LABEL_HTTPS, HOST_LABEL
 from .state import state
 from .inspect import get_container_name
 from ..models.schemas import EngineState
+from ..core.config import cfg
 
 def reindex_existing():
     for c in list_managed():
@@ -30,8 +31,13 @@ def reindex_existing():
             if not container_name:
                 container_name = f"container-{key[:12]}"
             
-            # Use container name as host for Docker containers, fallback to 127.0.0.1
-            host = container_name or "127.0.0.1"
+            # Determine host based on Gluetun configuration
+            # When using Gluetun VPN, containers share the same network stack and must use localhost
+            if cfg.GLUETUN_CONTAINER_NAME:
+                host = "localhost"
+            else:
+                # Use container name as host for Docker containers, fallback to 127.0.0.1
+                host = container_name or "127.0.0.1"
             
             # If port is 0 (missing or empty label), try to extract from Docker port mappings
             if port == 0:

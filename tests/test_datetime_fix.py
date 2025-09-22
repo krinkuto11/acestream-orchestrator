@@ -9,9 +9,9 @@ import json
 from datetime import datetime, timezone
 
 # Add the app directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'app'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from models.schemas import EngineState, StreamState
+from app.models.schemas import EngineState, StreamState
 
 def test_datetime_serialization():
     """Test that datetime objects are properly serialized with timezone info"""

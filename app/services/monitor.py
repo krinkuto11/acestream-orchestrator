@@ -6,6 +6,7 @@ from .state import state
 from .health import list_managed
 from .reindex import reindex_existing
 from .autoscaler import ensure_minimum
+from .gluetun import gluetun_monitor
 from ..core.config import cfg
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ class DockerMonitor:
         self._task = asyncio.create_task(self._monitor_docker())
         self._autoscale_task = asyncio.create_task(self._periodic_autoscale())
         
+        # Start Gluetun monitoring if configured
+        await gluetun_monitor.start()
+        
         logger.info(f"Docker monitor started with {cfg.MONITOR_INTERVAL_S}s interval")
 
     async def stop(self):
@@ -38,6 +42,9 @@ class DockerMonitor:
             await self._task
         if self._autoscale_task:
             await self._autoscale_task
+        
+        # Stop Gluetun monitoring
+        await gluetun_monitor.stop()
 
     async def _monitor_docker(self):
         """Main monitoring loop that syncs state with Docker."""
