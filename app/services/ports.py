@@ -14,6 +14,10 @@ class PortAllocator:
         self._used_host: set[int] = set()
         self._used_http: set[int] = set()
         self._used_https: set[int] = set()
+        
+        # Gluetun-specific port allocation starting from 19000
+        self._gluetun_port_base = 19000
+        self._used_gluetun_ports: set[int] = set()
 
     def _parse(self, s: str) -> Tuple[int, int]:
         a, b = s.split("-")
@@ -79,5 +83,31 @@ class PortAllocator:
         if p is None: return
         with self._lock:
             self._used_https.discard(p)
+
+    def alloc_gluetun_port(self) -> int:
+        """Allocate a port for Gluetun from the range starting at 19000."""
+        with self._lock:
+            # Check if we've reached the maximum number of active replicas
+            if len(self._used_gluetun_ports) >= cfg.MAX_ACTIVE_REPLICAS:
+                raise RuntimeError(f"Maximum active replicas limit reached ({cfg.MAX_ACTIVE_REPLICAS})")
+            
+            # Find the next available port starting from 19000
+            for port in range(self._gluetun_port_base, self._gluetun_port_base + cfg.MAX_ACTIVE_REPLICAS):
+                if port not in self._used_gluetun_ports:
+                    self._used_gluetun_ports.add(port)
+                    return port
+            
+            raise RuntimeError("No available ports in Gluetun port range")
+
+    def reserve_gluetun_port(self, p: int):
+        """Reserve a specific Gluetun port."""
+        with self._lock:
+            self._used_gluetun_ports.add(p)
+
+    def free_gluetun_port(self, p: Optional[int]):
+        """Free a Gluetun port."""
+        if p is None: return
+        with self._lock:
+            self._used_gluetun_ports.discard(p)
 
 alloc = PortAllocator()

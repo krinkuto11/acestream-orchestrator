@@ -78,17 +78,13 @@ def test_port_mapping_with_gluetun():
         with patch('app.services.provisioner.get_client', return_value=mock_client_gluetun):
             with patch('app.services.provisioner.safe', side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)):
                 with patch('app.services.naming.generate_container_name', return_value="test-acestream-2"):
-                    with patch('app.services.provisioner.alloc.alloc_host', return_value=19003):
-                        with patch('app.services.provisioner.alloc.alloc_http', return_value=6879):
-                            with patch('app.services.provisioner.alloc.alloc_https', return_value=6880):
-                                with patch('asyncio.get_event_loop') as mock_loop:
-                                    mock_monitor = MagicMock()
-                                    mock_monitor.wait_for_healthy.return_value = True
-                                    mock_loop.return_value.run_until_complete.return_value = True
-                                    
-                                    with patch('app.services.gluetun.gluetun_monitor', mock_monitor):
-                                        req = AceProvisionRequest()
-                                        start_acestream(req)
+                    with patch('app.services.provisioner.alloc.alloc_gluetun_port', side_effect=[19001, 19002]):
+                        with patch('app.services.provisioner._check_gluetun_health_sync', return_value=True):
+                            with patch('app.services.gluetun.get_forwarded_port_sync', return_value=5914):
+                                with patch('app.services.gluetun.gluetun_monitor') as mock_monitor:
+                                    mock_monitor.is_healthy.return_value = True
+                                    req = AceProvisionRequest()
+                                    start_acestream(req)
         
         # Verify ports were NOT passed to container creation
         call_args, call_kwargs = mock_client_gluetun.containers.run.call_args
@@ -147,14 +143,11 @@ def test_edge_cases():
         with patch('app.services.provisioner.get_client', return_value=mock_client):
             with patch('app.services.provisioner.safe', side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)):
                 with patch('app.services.naming.generate_container_name', return_value="test-acestream-edge"):
-                    with patch('app.services.provisioner.alloc.alloc_host', return_value=19004):
-                        with patch('app.services.provisioner.alloc.alloc_http', return_value=6879):
-                            with patch('asyncio.get_event_loop') as mock_loop:
-                                mock_monitor = MagicMock()
-                                mock_monitor.wait_for_healthy.return_value = True
-                                mock_loop.return_value.run_until_complete.return_value = True
-                                
-                                with patch('app.services.gluetun.gluetun_monitor', mock_monitor):
+                    with patch('app.services.provisioner.alloc.alloc_gluetun_port', return_value=19004):
+                        with patch('app.services.provisioner._check_gluetun_health_sync', return_value=True):
+                            with patch('app.services.gluetun.get_forwarded_port_sync', return_value=5914):
+                                with patch('app.services.gluetun.gluetun_monitor') as mock_monitor:
+                                    mock_monitor.is_healthy.return_value = True
                                     req = AceProvisionRequest()
                                     start_acestream(req)
         

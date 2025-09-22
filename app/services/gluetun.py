@@ -5,10 +5,12 @@ This module provides:
 - Gluetun container health monitoring
 - VPN connection status tracking  
 - Integration with AceStream engine lifecycle
+- VPN port forwarding support
 """
 
 import asyncio
 import logging
+import httpx
 from datetime import datetime, timezone
 from typing import Optional
 from .docker_client import get_client
@@ -180,6 +182,51 @@ class GluetunMonitor:
             await asyncio.sleep(1)
         
         return False
+
+    async def get_forwarded_port(self) -> Optional[int]:
+        """Get the VPN forwarded port from Gluetun API."""
+        if not cfg.GLUETUN_CONTAINER_NAME:
+            return None
+            
+        try:
+            # Gluetun API endpoint for port forwarding
+            # The API is accessible from containers sharing the network stack
+            async with httpx.AsyncClient() as client:
+                response = await client.get("http://localhost:8000/v1/openvpn/portforwarded", timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                port = data.get("port")
+                if port:
+                    logger.info(f"Retrieved VPN forwarded port: {port}")
+                    return int(port)
+                else:
+                    logger.warning("No port forwarding information available from Gluetun")
+                    return None
+        except Exception as e:
+            logger.error(f"Failed to get forwarded port from Gluetun: {e}")
+            return None
+
+def get_forwarded_port_sync() -> Optional[int]:
+    """Synchronous version of get_forwarded_port for use in non-async contexts."""
+    if not cfg.GLUETUN_CONTAINER_NAME:
+        return None
+        
+    try:
+        import httpx
+        with httpx.Client() as client:
+            response = client.get("http://localhost:8000/v1/openvpn/portforwarded", timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            port = data.get("port")
+            if port:
+                logger.info(f"Retrieved VPN forwarded port: {port}")
+                return int(port)
+            else:
+                logger.warning("No port forwarding information available from Gluetun")
+                return None
+    except Exception as e:
+        logger.error(f"Failed to get forwarded port from Gluetun: {e}")
+        return None
 
 
 # Global Gluetun monitor instance

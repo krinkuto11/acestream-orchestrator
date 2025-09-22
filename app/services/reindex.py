@@ -21,6 +21,13 @@ def reindex_existing():
             if HOST_LABEL_HTTP in lbl: alloc.reserve_host(int(lbl[HOST_LABEL_HTTP]))
             if HOST_LABEL_HTTPS in lbl: alloc.reserve_host(int(lbl[HOST_LABEL_HTTPS]))
         except Exception: pass
+        
+        # Reserve Gluetun ports if using Gluetun
+        if cfg.GLUETUN_CONTAINER_NAME:
+            try:
+                if HOST_LABEL_HTTP in lbl: alloc.reserve_gluetun_port(int(lbl[HOST_LABEL_HTTP]))
+                if ACESTREAM_LABEL_HTTP in lbl: alloc.reserve_gluetun_port(int(lbl[ACESTREAM_LABEL_HTTP]))
+            except Exception: pass
         key = c.id
         if key not in state.engines:
             port = int(lbl.get(HOST_LABEL_HTTP) or 0)
@@ -32,9 +39,9 @@ def reindex_existing():
                 container_name = f"container-{key[:12]}"
             
             # Determine host based on Gluetun configuration
-            # When using Gluetun VPN, containers share the same network stack and must use localhost
+            # When using Gluetun VPN, use Gluetun container's name as host
             if cfg.GLUETUN_CONTAINER_NAME:
-                host = "localhost"
+                host = cfg.GLUETUN_CONTAINER_NAME
             else:
                 # Use container name as host for Docker containers, fallback to 127.0.0.1
                 host = container_name or "127.0.0.1"

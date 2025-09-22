@@ -25,6 +25,9 @@ class Cfg(BaseModel):
     GLUETUN_CONTAINER_NAME: str | None = os.getenv("GLUETUN_CONTAINER_NAME")
     GLUETUN_HEALTH_CHECK_INTERVAL_S: int = int(os.getenv("GLUETUN_HEALTH_CHECK_INTERVAL_S", 5))
     VPN_RESTART_ENGINES_ON_RECONNECT: bool = os.getenv("VPN_RESTART_ENGINES_ON_RECONNECT", "true").lower() == "true"
+    
+    # Maximum active replicas when using Gluetun (port range allocation)
+    MAX_ACTIVE_REPLICAS: int = int(os.getenv("MAX_ACTIVE_REPLICAS", 20))
 
     PORT_RANGE_HOST: str = os.getenv("PORT_RANGE_HOST", "19000-19999")
     ACE_HTTP_RANGE: str = os.getenv("ACE_HTTP_RANGE", "40000-44999")
@@ -48,6 +51,12 @@ class Cfg(BaseModel):
         min_replicas = values.get('MIN_REPLICAS', 0)
         if v < min_replicas:
             raise ValueError('MAX_REPLICAS must be >= MIN_REPLICAS')
+        return v
+
+    @validator('MAX_ACTIVE_REPLICAS')
+    def validate_max_active_replicas(cls, v):
+        if v <= 0:
+            raise ValueError('MAX_ACTIVE_REPLICAS must be > 0')
         return v
 
     @validator('CONTAINER_LABEL')
