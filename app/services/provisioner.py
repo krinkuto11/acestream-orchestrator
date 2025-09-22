@@ -146,19 +146,75 @@ def _get_network_config():
             "network": None
         }
 
+def _check_gluetun_health_sync() -> bool:
+    """Synchronous version of Gluetun health check."""
+    try:
+        from ..core.config import cfg
+        from .docker_client import get_client
+        from docker.errors import NotFound
+        
+        cli = get_client()
+        container = cli.containers.get(cfg.GLUETUN_CONTAINER_NAME)
+        container.reload()
+        
+        # Check container status
+        if container.status != "running":
+            return False
+        
+        # Check Docker health status if available
+        health = container.attrs.get("State", {}).get("Health", {})
+        if health:
+            health_status = health.get("Status")
+            if health_status == "unhealthy":
+                return False
+            elif health_status == "healthy":
+                return True
+            else:
+                # Health status might be "starting" or "none"
+                # Consider container healthy if running but health status is starting/none
+                return True
+        else:
+            # No health check configured, consider healthy if running
+            return True
+            
+    except NotFound:
+        return False
+    except Exception:
+        return False
+
 def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     from .naming import generate_container_name
     
     # Check Gluetun health if configured
     if cfg.GLUETUN_CONTAINER_NAME:
-        import asyncio
+        import time
         from .gluetun import gluetun_monitor
         
         # Check if Gluetun is healthy before starting engine
         try:
-            loop = asyncio.get_event_loop()
-            if not loop.run_until_complete(gluetun_monitor.wait_for_healthy(timeout=30)):
+            # Use synchronous health checking to avoid event loop conflicts
+            timeout = 30
+            start_time = time.time()
+            
+            while (time.time() - start_time) < timeout:
+                current_health = gluetun_monitor.is_healthy()
+                if current_health is True:
+                    break
+                elif current_health is False:
+                    # Force a fresh health check
+                    import asyncio
+                    try:
+                        # Try to get health status synchronously
+                        if _check_gluetun_health_sync():
+                            break
+                    except Exception:
+                        pass
+                
+                time.sleep(1)
+            else:
+                # Timeout reached without becoming healthy
                 raise RuntimeError(f"Gluetun VPN container '{cfg.GLUETUN_CONTAINER_NAME}' is not healthy - cannot start AceStream engine")
+                
         except Exception as e:
             raise RuntimeError(f"Failed to verify Gluetun health: {e}")
     
