@@ -110,7 +110,8 @@ When `GLUETUN_CONTAINER_NAME` is set, the orchestrator:
 1. Uses `network_mode: container:gluetun` for all AceStream engines
 2. This routes all engine traffic through Gluetun's network stack
 3. Engines inherit Gluetun's IP address and VPN connection
-4. **Host Configuration**: Engines use `localhost` for inter-service communication since they share the same network stack
+4. **Port Management**: Engines share Gluetun's port mappings - no individual port mapping is performed
+5. **Host Configuration**: Engines use `localhost` for inter-service communication since they share the same network stack
 
 ### Host Resolution Behavior
 
@@ -198,6 +199,8 @@ For better availability:
 ## Limitations
 
 - Engines cannot start if Gluetun is unhealthy
-- Port mappings must be configured through Gluetun
+- Port mappings must be configured through Gluetun (orchestrator automatically handles this)
 - Some VPN providers may have bandwidth limitations
 - Network performance depends on VPN server quality
+
+**Note**: The orchestrator automatically detects when Gluetun is in use and skips individual container port mappings to prevent "port already allocated" errors. All port access is handled through the Gluetun container's port mappings.

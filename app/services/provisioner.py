@@ -214,11 +214,15 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
               ACESTREAM_LABEL_HTTPS: str(c_https),
               HOST_LABEL_HTTP: str(host_http)}
 
-    ports = {f"{c_http}/tcp": host_http}
-    if cfg.ACE_MAP_HTTPS:
-        host_https = alloc.alloc_host()
-        ports[f"{c_https}/tcp"] = host_https
-        labels[HOST_LABEL_HTTPS] = str(host_https)
+    # Skip port mappings when using Gluetun - ports are already mapped through Gluetun container
+    if cfg.GLUETUN_CONTAINER_NAME:
+        ports = None
+    else:
+        ports = {f"{c_http}/tcp": host_http}
+        if cfg.ACE_MAP_HTTPS:
+            host_https = alloc.alloc_host()
+            ports[f"{c_https}/tcp"] = host_https
+            labels[HOST_LABEL_HTTPS] = str(host_https)
 
     # Generate a meaningful container name
     container_name = generate_container_name("acestream")
@@ -227,15 +231,23 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     network_config = _get_network_config()
 
     cli = get_client()
-    cont = safe(cli.containers.run,
-        req.image or cfg.TARGET_IMAGE,
-        detach=True,
-        name=container_name,
-        environment=env,
-        labels=labels,
+    
+    # Build container arguments, conditionally including ports
+    container_args = {
+        "image": req.image or cfg.TARGET_IMAGE,
+        "detach": True,
+        "name": container_name,
+        "environment": env,
+        "labels": labels,
         **network_config,
-        ports=ports,
-        restart_policy={"Name": "unless-stopped"})
+        "restart_policy": {"Name": "unless-stopped"}
+    }
+    
+    # Only add ports if not using Gluetun (ports are handled by Gluetun container)
+    if ports is not None:
+        container_args["ports"] = ports
+    
+    cont = safe(cli.containers.run, **container_args)
     deadline = time.time() + cfg.STARTUP_TIMEOUT_S
     cont.reload()
     while cont.status not in ("running",) and time.time() < deadline:
