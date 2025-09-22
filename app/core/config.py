@@ -23,8 +23,12 @@ class Cfg(BaseModel):
 
     # Gluetun VPN integration
     GLUETUN_CONTAINER_NAME: str | None = os.getenv("GLUETUN_CONTAINER_NAME")
+    GLUETUN_API_PORT: int = int(os.getenv("GLUETUN_API_PORT", 8000))
     GLUETUN_HEALTH_CHECK_INTERVAL_S: int = int(os.getenv("GLUETUN_HEALTH_CHECK_INTERVAL_S", 5))
     VPN_RESTART_ENGINES_ON_RECONNECT: bool = os.getenv("VPN_RESTART_ENGINES_ON_RECONNECT", "true").lower() == "true"
+    
+    # Maximum active replicas when using Gluetun (port range allocation)
+    MAX_ACTIVE_REPLICAS: int = int(os.getenv("MAX_ACTIVE_REPLICAS", 20))
 
     PORT_RANGE_HOST: str = os.getenv("PORT_RANGE_HOST", "19000-19999")
     ACE_HTTP_RANGE: str = os.getenv("ACE_HTTP_RANGE", "40000-44999")
@@ -50,6 +54,12 @@ class Cfg(BaseModel):
             raise ValueError('MAX_REPLICAS must be >= MIN_REPLICAS')
         return v
 
+    @validator('MAX_ACTIVE_REPLICAS')
+    def validate_max_active_replicas(cls, v):
+        if v <= 0:
+            raise ValueError('MAX_ACTIVE_REPLICAS must be > 0')
+        return v
+
     @validator('CONTAINER_LABEL')
     def validate_container_label(cls, v):
         if '=' not in v:
@@ -68,6 +78,12 @@ class Cfg(BaseModel):
             return v
         except (ValueError, AttributeError) as e:
             raise ValueError(f'Invalid port range format: {v}. Expected format: "start-end"')
+
+    @validator('GLUETUN_API_PORT')
+    def validate_gluetun_api_port(cls, v):
+        if not (1 <= v <= 65535):
+            raise ValueError('GLUETUN_API_PORT must be between 1-65535')
+        return v
 
     @validator('STARTUP_TIMEOUT_S', 'IDLE_TTL_S', 'COLLECT_INTERVAL_S', 'MONITOR_INTERVAL_S', 'ENGINE_GRACE_PERIOD_S', 'AUTOSCALE_INTERVAL_S', 'GLUETUN_HEALTH_CHECK_INTERVAL_S')
     def validate_positive_timeouts(cls, v):

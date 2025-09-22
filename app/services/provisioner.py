@@ -88,6 +88,15 @@ def _release_ports_from_labels(labels: dict):
     try:
         sp = labels.get(ACESTREAM_LABEL_HTTPS); alloc.free_https(int(sp) if sp else None)
     except Exception: pass
+    
+    # Release Gluetun ports if using Gluetun
+    if cfg.GLUETUN_CONTAINER_NAME:
+        try:
+            hp = labels.get(HOST_LABEL_HTTP); alloc.free_gluetun_port(int(hp) if hp else None)
+        except Exception: pass
+        try:
+            cp = labels.get(ACESTREAM_LABEL_HTTP); alloc.free_gluetun_port(int(cp) if cp else None)
+        except Exception: pass
 
 def stop_container(container_id: str):
     cli = get_client()
@@ -184,10 +193,10 @@ def _check_gluetun_health_sync() -> bool:
 
 def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     from .naming import generate_container_name
+    import time
     
     # Check Gluetun health if configured
     if cfg.GLUETUN_CONTAINER_NAME:
-        import time
         from .gluetun import gluetun_monitor
         
         # Check if Gluetun is healthy before starting engine
@@ -229,22 +238,44 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         c_http = user_http_port
         host_http = req.host_port or user_http_port  # Use same port for host binding
         # Reserve this port to avoid conflicts
-        alloc.reserve_http(c_http)
+        if cfg.GLUETUN_CONTAINER_NAME:
+            alloc.reserve_gluetun_port(c_http)
+        else:
+            alloc.reserve_http(c_http)
     else:
         # No user http port - use orchestrator allocation
-        host_http = req.host_port or alloc.alloc_host()
-        c_http = host_http  # Use same port for internal container to match acestream-http-proxy expectations
-        # Reserve this port to avoid conflicts
-        alloc.reserve_http(c_http)
+        if cfg.GLUETUN_CONTAINER_NAME:
+            # When using Gluetun, allocate from the Gluetun port range
+            host_http = alloc.alloc_gluetun_port()
+            c_http = host_http  # Same port for container and host
+        else:
+            # Normal allocation
+            host_http = req.host_port or alloc.alloc_host()
+            c_http = host_http  # Use same port for internal container to match acestream-http-proxy expectations
+            # Reserve this port to avoid conflicts
+            alloc.reserve_http(c_http)
     
     if user_https_port is not None:
         # User specified https port in CONF - use it
         c_https = user_https_port
         # Reserve this port to avoid conflicts
-        alloc.reserve_https(c_https)
+        if cfg.GLUETUN_CONTAINER_NAME:
+            alloc.reserve_gluetun_port(c_https)
+        else:
+            alloc.reserve_https(c_https)
     else:
         # No user https port - use orchestrator allocation
-        c_https = alloc.alloc_https(avoid=c_http)
+        if cfg.GLUETUN_CONTAINER_NAME:
+            # When using Gluetun, use a port in the Gluetun range (avoid HTTP port)
+            for attempt in range(cfg.MAX_ACTIVE_REPLICAS):
+                c_https = alloc.alloc_gluetun_port()
+                if c_https != c_http:  # Ensure HTTPS port is different from HTTP
+                    break
+            else:
+                raise RuntimeError("Could not allocate HTTPS port different from HTTP port")
+        else:
+            # Normal allocation
+            c_https = alloc.alloc_https(avoid=c_http)
 
     # Use user-provided CONF if available, otherwise use default configuration
     if "CONF" in req.env:
@@ -263,6 +294,17 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         "HTTPS_PORT": str(c_https),
         "BIND_ALL": "true"
     }
+    
+    # Add P2P_PORT when using Gluetun
+    if cfg.GLUETUN_CONTAINER_NAME:
+        from .gluetun import get_forwarded_port_sync
+        p2p_port = get_forwarded_port_sync()
+        if p2p_port:
+            env["P2P_PORT"] = str(p2p_port)
+        else:
+            # If we can't get the forwarded port, we'll continue without it
+            # The AceStream engine will use its default P2P port behavior
+            pass
 
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val,
