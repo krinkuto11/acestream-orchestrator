@@ -23,6 +23,7 @@ class Cfg(BaseModel):
 
     # Gluetun VPN integration
     GLUETUN_CONTAINER_NAME: str | None = os.getenv("GLUETUN_CONTAINER_NAME")
+    GLUETUN_API_PORT: int = int(os.getenv("GLUETUN_API_PORT", 8000))
     GLUETUN_HEALTH_CHECK_INTERVAL_S: int = int(os.getenv("GLUETUN_HEALTH_CHECK_INTERVAL_S", 5))
     VPN_RESTART_ENGINES_ON_RECONNECT: bool = os.getenv("VPN_RESTART_ENGINES_ON_RECONNECT", "true").lower() == "true"
     
@@ -77,6 +78,12 @@ class Cfg(BaseModel):
             return v
         except (ValueError, AttributeError) as e:
             raise ValueError(f'Invalid port range format: {v}. Expected format: "start-end"')
+
+    @validator('GLUETUN_API_PORT')
+    def validate_gluetun_api_port(cls, v):
+        if not (1 <= v <= 65535):
+            raise ValueError('GLUETUN_API_PORT must be between 1-65535')
+        return v
 
     @validator('STARTUP_TIMEOUT_S', 'IDLE_TTL_S', 'COLLECT_INTERVAL_S', 'MONITOR_INTERVAL_S', 'ENGINE_GRACE_PERIOD_S', 'AUTOSCALE_INTERVAL_S', 'GLUETUN_HEALTH_CHECK_INTERVAL_S')
     def validate_positive_timeouts(cls, v):

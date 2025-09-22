@@ -18,6 +18,9 @@ Add these variables to your `.env` file:
 # Required: Name of your Gluetun container
 GLUETUN_CONTAINER_NAME=gluetun
 
+# Optional: Gluetun API port (default: 8000)
+GLUETUN_API_PORT=8000
+
 # Optional: Health check frequency (default: 5 seconds)
 GLUETUN_HEALTH_CHECK_INTERVAL_S=5
 
@@ -134,9 +137,11 @@ This ensures that:
 ### VPN Port Forwarding
 
 When using Gluetun with port forwarding enabled, the orchestrator:
-1. Queries Gluetun's API at `/v1/openvpn/portforwarded` to get the forwarded port
+1. Queries Gluetun's API at `http://localhost:{GLUETUN_API_PORT}/v1/openvpn/portforwarded` to get the forwarded port
 2. Sets the `P2P_PORT` environment variable in AceStream engines with the forwarded port
 3. This allows AceStream engines to use the VPN's forwarded port for P2P traffic
+
+The Gluetun API port is configurable via the `GLUETUN_API_PORT` environment variable (default: 8000).
 
 ### Port Management
 

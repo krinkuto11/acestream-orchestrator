@@ -58,7 +58,7 @@ def get_forwarded_port_sync() -> Optional[int]:
     """Get the VPN forwarded port from Gluetun API."""
     try:
         with httpx.Client() as client:
-            response = client.get("http://localhost:8000/v1/openvpn/portforwarded", timeout=10)
+            response = client.get(f"http://localhost:{cfg.GLUETUN_API_PORT}/v1/openvpn/portforwarded", timeout=10)
             response.raise_for_status()
             data = response.json()
             return int(data.get("port")) if data.get("port") else None
@@ -66,6 +66,8 @@ def get_forwarded_port_sync() -> Optional[int]:
         logger.error(f"Failed to get forwarded port from Gluetun: {e}")
         return None
 ```
+
+The API endpoint is now configurable via the `GLUETUN_API_PORT` environment variable.
 
 ## Testing
 
@@ -82,6 +84,9 @@ Update your `.env` file:
 ```bash
 # Enable Gluetun integration
 GLUETUN_CONTAINER_NAME=gluetun
+
+# Optional: Gluetun API port (default: 8000)
+GLUETUN_API_PORT=8000
 
 # Optional: Limit concurrent engine instances (default: 20)
 MAX_ACTIVE_REPLICAS=10
