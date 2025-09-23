@@ -11,7 +11,7 @@ Open `http://localhost:8000/panel`.
 
 # Requirements
 
- - Docker 24+ and docker:dind in compose.
+ - Docker 24+ and docker:dind in compose (or direct access to docker socket).
 
  - Python 3.12 in image.
 
