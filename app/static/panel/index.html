@@ -278,6 +278,13 @@
       margin-top: 12px;
     }
     
+    .stream-analytics {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    
     .detail-item {
       display: flex;
       flex-direction: column;
@@ -303,6 +310,10 @@
       justify-content: space-between;
     }
     
+    .stream-main {
+      flex: 1;
+    }
+    
     .stream-id {
       font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
       font-size: 14px;
@@ -312,6 +323,20 @@
     .stream-meta {
       font-size: 12px;
       color: var(--text-secondary);
+    }
+    
+    .stream-stats {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      align-items: flex-end;
+      font-size: 11px;
+      font-weight: 500;
+      min-width: 100px;
+    }
+    
+    .stat-item {
+      white-space: nowrap;
     }
     
     .actions {
@@ -638,16 +663,33 @@
       return div;
     }
 
-    function streamRow(s) {
+    function streamRow(s, stats = null) {
       const div = document.createElement('div');
       div.className = 'stream-item';
       
+      // Format stats if available
+      let statsDisplay = '';
+      if (stats) {
+        const peers = stats.peers || 0;
+        const downSpeed = stats.speed_down ? (stats.speed_down / 1024).toFixed(1) : '0.0';
+        const upSpeed = stats.speed_up ? (stats.speed_up / 1024).toFixed(1) : '0.0';
+        
+        statsDisplay = `
+          <div class="stream-stats">
+            <div class="stat-item peers" style="color: var(--accent-orange);">${peers} peers</div>
+            <div class="stat-item download" style="color: var(--accent-blue);">↓ ${downSpeed} MB/s</div>
+            <div class="stat-item upload" style="color: var(--accent-green);">↑ ${upSpeed} MB/s</div>
+          </div>
+        `;
+      }
+      
       div.innerHTML = `
         <div class="stream-info">
-          <div>
+          <div class="stream-main">
             <div class="stream-id">${s.id}</div>
             <div class="stream-meta">${s.key_type} • ${s.container_id.slice(0, 12)}</div>
           </div>
+          ${statsDisplay}
         </div>
       `;
       
@@ -670,7 +712,7 @@
     async function selectStream(s) {
       selectedStream = s;
       detailMeta.innerHTML = `
-        <div class="engine-details">
+        <div class="stream-analytics">
           <div class="detail-item">
             <div class="detail-label">Stream ID</div>
             <div class="detail-value">${s.id}</div>
@@ -851,9 +893,27 @@
       kHealthy.textContent = healthyCount;
     }
 
-    function renderStreams(arr) {
+    async function renderStreams(arr) {
       strList.innerHTML = '';
-      arr.forEach(s => strList.appendChild(streamRow(s)));
+      
+      // Fetch latest stats for each stream in parallel
+      const streamPromises = arr.map(async (s) => {
+        try {
+          const stats = await fetchJSON(`${orchInput.value}/streams/${encodeURIComponent(s.id)}/stats`);
+          const latestStat = stats && stats.length > 0 ? stats[stats.length - 1] : null;
+          return { stream: s, stats: latestStat };
+        } catch (err) {
+          console.warn(`Failed to fetch stats for stream ${s.id}:`, err);
+          return { stream: s, stats: null };
+        }
+      });
+      
+      const streamData = await Promise.all(streamPromises);
+      
+      streamData.forEach(({ stream, stats }) => {
+        strList.appendChild(streamRow(stream, stats));
+      });
+      
       kStr.textContent = arr.length;
     }
 
