@@ -161,6 +161,15 @@ class State:
     def get_stream_stats(self, stream_id: str):
         with self._lock:
             return self.stream_stats.get(stream_id, [])
+    
+    def get_realtime_snapshot(self):
+        """Get a snapshot of all data for realtime updates with minimal lock time"""
+        with self._lock:
+            return {
+                "engines": list(self.engines.values()),
+                "streams": list(self.streams.values()),
+                "stream_stats": dict(self.stream_stats)
+            }
 
     def append_stat(self, stream_id: str, snap: StreamStatSnapshot):
         with self._lock:
