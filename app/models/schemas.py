@@ -38,6 +38,9 @@ class EngineState(BaseModel):
     first_seen: datetime
     last_seen: datetime
     streams: List[str] = []
+    health_status: Optional[Literal["healthy", "unhealthy", "unknown"]] = "unknown"
+    last_health_check: Optional[datetime] = None
+    last_stream_usage: Optional[datetime] = None
 
 class StreamState(BaseModel):
     id: str

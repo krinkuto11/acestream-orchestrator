@@ -3,216 +3,846 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Orchestrator Panel</title>
+  <title>Acestream Orchestrator Dashboard</title>
   <style>
-    :root{color-scheme:dark;}
-    body{margin:0;background:#0a0a0a;color:#eaeaea;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
-    header,section{padding:16px}
-    header{display:flex;gap:12px;align-items:center;justify-content:space-between;border-bottom:1px solid #222}
-    .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-    input,select,button{background:#111;border:1px solid #333;color:#eaeaea;border-radius:6px;padding:8px}
-    button{cursor:pointer}
-    .grid{display:grid;gap:12px}
-    .g2{grid-template-columns:repeat(2,minmax(0,1fr))}
-    .g3{grid-template-columns:repeat(3,minmax(0,1fr))}
-    .card{border:1px solid #222;border-radius:10px;padding:12px;background:#0f0f0f}
-    .list{display:grid;gap:8px}
-    .item{border:1px solid #222;border-radius:8px;padding:10px;background:#0e0e0e;display:flex;justify-content:space-between;gap:10px;align-items:center}
-    .muted{opacity:.7;font-size:.9em}
-    a{color:#6aa9ff}
-    .error{border:1px solid #611;background:#2a0000;color:#ffb4ae;padding:8px;border-radius:8px}
-    .row{display:flex;gap:10px;align-items:center}
-    .btn{padding:6px 10px;border:1px solid #333;border-radius:8px;background:#131313}
-    .btn.red{border-color:#652a2a;background:#2a0000}
+    :root {
+      color-scheme: dark;
+      --bg-primary: #0a0a0a;
+      --bg-secondary: #1a1a1a;
+      --bg-card: #1e1e1e;
+      --bg-card-hover: #252525;
+      --border-color: #333;
+      --text-primary: #eaeaea;
+      --text-secondary: #aaa;
+      --text-muted: #666;
+      --accent-blue: #4a90e2;
+      --accent-green: #4caf50;
+      --accent-red: #f44336;
+      --accent-orange: #ff9800;
+      --accent-purple: #9c27b0;
+      --shadow: 0 2px 8px rgba(0,0,0,0.3);
+      --radius: 8px;
+      --transition: all 0.2s ease;
+    }
+    
+    * { box-sizing: border-box; }
+    
+    body {
+      margin: 0;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      line-height: 1.5;
+    }
+    
+    .header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      box-shadow: var(--shadow);
+    }
+    
+    .header h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 600;
+      color: var(--accent-blue);
+    }
+    
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+    }
+    
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-green);
+    }
+    
+    .status-dot.error { background: var(--accent-red); }
+    
+    .controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 120px;
+    }
+    
+    .input-group label {
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+    
+    input, select, button {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      font-size: 14px;
+      transition: var(--transition);
+    }
+    
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
+    }
+    
+    button {
+      cursor: pointer;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    
+    button:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--accent-blue);
+    }
+    
+    button.primary {
+      background: var(--accent-blue);
+      border-color: var(--accent-blue);
+      color: white;
+    }
+    
+    button.primary:hover {
+      background: #3a7bc8;
+    }
+    
+    button.danger {
+      background: var(--accent-red);
+      border-color: var(--accent-red);
+      color: white;
+    }
+    
+    button.danger:hover {
+      background: #d32f2f;
+    }
+    
+    .main-content {
+      padding: 24px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    
+    .dashboard-grid {
+      display: grid;
+      gap: 24px;
+      margin-bottom: 32px;
+    }
+    
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+    }
+    
+    .content-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    
+    @media (max-width: 1024px) {
+      .content-row {
+        grid-template-columns: 1fr;
+      }
+    }
+    
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow);
+      transition: var(--transition);
+    }
+    
+    .card:hover {
+      border-color: var(--accent-blue);
+    }
+    
+    .kpi-card {
+      text-align: center;
+      padding: 16px;
+    }
+    
+    .kpi-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--accent-blue);
+      display: block;
+      margin-bottom: 4px;
+    }
+    
+    .kpi-label {
+      font-size: 14px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    
+    .section-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0;
+      color: var(--text-primary);
+    }
+    
+    .engine-list, .stream-list {
+      display: grid;
+      gap: 12px;
+    }
+    
+    .engine-item, .stream-item {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 16px;
+      transition: var(--transition);
+      cursor: pointer;
+    }
+    
+    .engine-item:hover, .stream-item:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--accent-blue);
+    }
+    
+    .engine-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    
+    .engine-name {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    
+    .health-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 4px 8px;
+      border-radius: 12px;
+      text-transform: uppercase;
+    }
+    
+    .health-healthy {
+      background: rgba(76, 175, 80, 0.2);
+      color: var(--accent-green);
+    }
+    
+    .health-unhealthy {
+      background: rgba(244, 67, 54, 0.2);
+      color: var(--accent-red);
+    }
+    
+    .health-unknown {
+      background: rgba(158, 158, 158, 0.2);
+      color: var(--text-secondary);
+    }
+    
+    .engine-details {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    
+    .detail-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    
+    .detail-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .detail-value {
+      font-size: 13px;
+      color: var(--text-secondary);
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+    }
+    
+    .stream-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    
+    .stream-id {
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+      font-size: 14px;
+      color: var(--text-primary);
+    }
+    
+    .stream-meta {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    
+    .actions {
+      display: flex;
+      gap: 8px;
+    }
+    
+    .btn-small {
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+    
+    .detail-section {
+      grid-column: 1 / -1;
+    }
+    
+    .chart-container {
+      height: 300px;
+      margin-top: 16px;
+      background: var(--bg-secondary);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    
+    .error-message {
+      background: rgba(244, 67, 54, 0.1);
+      border: 1px solid var(--accent-red);
+      color: var(--accent-red);
+      padding: 12px 16px;
+      border-radius: var(--radius);
+      margin-bottom: 16px;
+      display: none;
+    }
+    
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: var(--bg-secondary);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    
+    .progress-fill {
+      height: 100%;
+      background: var(--accent-blue);
+      transition: width 0.3s ease;
+    }
+    
+    .collapsible {
+      cursor: pointer;
+    }
+    
+    .collapsible:after {
+      content: ' ▼';
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    
+    .collapsible.collapsed:after {
+      content: ' ▶';
+    }
+    
+    .collapsible-content {
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+    
+    .collapsible-content.collapsed {
+      max-height: 0;
+    }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <header>
-    <div style="display:flex;gap:12px;align-items:center"><strong>Orchestrator Panel</strong><span class="muted" id="status">ok</span></div>
+  <header class="header">
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <h1>Acestream Orchestrator</h1>
+      <div class="status-indicator">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-text">Connected</span>
+      </div>
+    </div>
+    
     <div class="controls">
-      <input id="orch" placeholder="http://localhost:8000" title="Orchestrator base URL" />
-      <input id="apikey" placeholder="API key (Bearer)" title="API key for Authorization" />
-      <select id="interval" title="Refresh interval">
-        <option value="2000">2s</option>
-        <option value="5000" selected>5s</option>
-        <option value="10000">10s</option>
-        <option value="30000">30s</option>
-      </select>
-      <button id="refresh" class="btn">Refresh</button>
+      <div class="input-group">
+        <label>Server URL</label>
+        <input id="orch" placeholder="http://localhost:8000" style="min-width: 200px;" />
+      </div>
+      <div class="input-group">
+        <label>API Key</label>
+        <input id="apikey" type="password" placeholder="Bearer token" style="min-width: 150px;" />
+      </div>
+      <div class="input-group">
+        <label>Refresh</label>
+        <select id="interval">
+          <option value="2000">2s</option>
+          <option value="5000" selected>5s</option>
+          <option value="10000">10s</option>
+          <option value="30000">30s</option>
+        </select>
+      </div>
+      <button id="refresh" class="primary">Refresh</button>
     </div>
   </header>
 
-  <section class="grid g3">
-    <div class="card"><div class="muted">Engines</div><div id="kpi-engines" style="font-size:28px;font-weight:700">0</div></div>
-    <div class="card"><div class="muted">Streams</div><div id="kpi-streams" style="font-size:28px;font-weight:700">0</div></div>
-    <div class="card"><div class="muted">Last update</div><div id="kpi-upd" style="font-size:28px;font-weight:700">-</div></div>
-  </section>
-
-  <section class="grid g2">
-    <div>
-      <h3 class="muted" style="margin:8px 0">Engines</h3>
-      <div id="engines" class="list"></div>
-    </div>
-    <div>
-      <h3 class="muted" style="margin:8px 0">Streams</h3>
-      <div id="streams" class="list"></div>
-    </div>
-  </section>
-
-  <section>
-    <h3 class="muted" style="margin:8px 0">Stream detail</h3>
-    <div id="detail" class="card">
-      <div id="detail-meta" class="muted">Select a stream.</div>
-      <div style="height:320px;margin-top:8px"><canvas id="chart"></canvas></div>
-      <div id="detail-links" class="muted" style="margin-top:8px"></div>
-      <div class="row" style="margin-top:8px">
-        <button id="btn-stop" class="btn">Stop stream</button>
-        <button id="btn-del" class="btn red">Delete engine</button>
+  <div class="main-content">
+    <div id="error-message" class="error-message"></div>
+    
+    <div class="dashboard-grid">
+      <div class="kpi-row">
+        <div class="card kpi-card">
+          <span class="kpi-value" id="kpi-engines">0</span>
+          <span class="kpi-label">Engines</span>
+        </div>
+        <div class="card kpi-card">
+          <span class="kpi-value" id="kpi-streams">0</span>
+          <span class="kpi-label">Active Streams</span>
+        </div>
+        <div class="card kpi-card">
+          <span class="kpi-value" id="kpi-healthy">0</span>
+          <span class="kpi-label">Healthy Engines</span>
+        </div>
+        <div class="card kpi-card">
+          <span class="kpi-value" id="kpi-upd">-</span>
+          <span class="kpi-label">Last Update</span>
+        </div>
+      </div>
+      
+      <div class="content-row">
+        <div class="card">
+          <div class="section-header">
+            <h3 class="section-title">Engines</h3>
+          </div>
+          <div id="engines" class="engine-list"></div>
+        </div>
+        
+        <div class="card">
+          <div class="section-header">
+            <h3 class="section-title">Active Streams</h3>
+          </div>
+          <div id="streams" class="stream-list"></div>
+        </div>
+      </div>
+      
+      <div class="card detail-section">
+        <div class="section-header">
+          <h3 class="section-title">Stream Analytics</h3>
+        </div>
+        <div id="detail">
+          <div id="detail-meta" style="color: var(--text-secondary); text-align: center; padding: 40px;">
+            Select a stream to view detailed analytics
+          </div>
+          <div class="chart-container" style="display: none;">
+            <canvas id="chart"></canvas>
+          </div>
+          <div id="detail-actions" class="actions" style="margin-top: 16px; display: none;">
+            <button id="btn-stop" class="danger">Stop Stream</button>
+            <button id="btn-del" class="danger">Delete Engine</button>
+          </div>
+        </div>
       </div>
     </div>
-  </section>
-
-  <section id="errors" style="display:none" class="error"></section>
+  </div>
 
   <script>
-    const $ = (s)=>document.querySelector(s);
+    const $ = (s) => document.querySelector(s);
     const orchInput = $('#orch');
     const keyInput = $('#apikey');
     const intervalSel = $('#interval');
-    const statusEl = $('#status');
-    const errEl = $('#errors');
+    const statusDot = $('#status-dot');
+    const statusText = $('#status-text');
+    const errEl = $('#error-message');
     const kEng = $('#kpi-engines');
     const kStr = $('#kpi-streams');
+    const kHealthy = $('#kpi-healthy');
     const kUpd = $('#kpi-upd');
     const engList = $('#engines');
     const strList = $('#streams');
     const detailMeta = $('#detail-meta');
-    const detailLinks = $('#detail-links');
-    const chartCtx = document.getElementById('chart');
-    const btnStop = document.getElementById('btn-stop');
-    const btnDel = document.getElementById('btn-del');
+    const detailActions = $('#detail-actions');
+    const chartContainer = $('.chart-container');
+    const chartCtx = $('#chart');
+    const btnStop = $('#btn-stop');
+    const btnDel = $('#btn-del');
 
     let chart;
     let selectedStream = null;
 
-    function loadPrefs(){
+    function loadPrefs() {
       const params = new URLSearchParams(location.search);
       orchInput.value = params.get('orch') || localStorage.getItem('orch_url') || 'http://localhost:8000';
       keyInput.value = localStorage.getItem('orch_apikey') || '';
     }
-    function savePrefs(){
+
+    function savePrefs() {
       localStorage.setItem('orch_url', orchInput.value.trim());
       localStorage.setItem('orch_apikey', keyInput.value.trim());
     }
 
-    async function fetchJSON(url, opts={}){
+    async function fetchJSON(url, opts = {}) {
       const headers = Object.assign({}, opts.headers || {});
-      const key = (keyInput.value||'').trim();
+      const key = (keyInput.value || '').trim();
       if (key) headers['Authorization'] = 'Bearer ' + key;
       const res = await fetch(url, Object.assign({}, opts, { headers }));
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       return res.json();
     }
 
-    function showError(msg){ errEl.textContent = msg; errEl.style.display='block'; statusEl.textContent='error'; }
-    function clearError(){ errEl.style.display='none'; statusEl.textContent='ok'; }
+    function showError(msg) {
+      errEl.textContent = msg;
+      errEl.style.display = 'block';
+      statusDot.className = 'status-dot error';
+      statusText.textContent = 'Error';
+    }
 
-    function engineRow(e){
-      const d = document.createElement('div');
-      d.className = 'item';
-      const left = document.createElement('div');
-      left.innerHTML = `<div class="muted">${e.container_id.slice(0,12)}</div><div><strong>${e.host}:${e.port}</strong></div><div class="muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">labels: ${Object.entries(e.labels||{}).map(([k,v])=>`${k}=${v}`).join(', ')}</div>`;
-      const right = document.createElement('div');
-      const del = document.createElement('button'); del.className='btn red'; del.textContent='Delete';
-      del.onclick = async ()=>{
-        try{ await fetchJSON(`${orchInput.value}/containers/${encodeURIComponent(e.container_id)}`, { method:'DELETE' }); await refreshAll(); } catch(err){ showError(err.message||String(err)); }
+    function clearError() {
+      errEl.style.display = 'none';
+      statusDot.className = 'status-dot';
+      statusText.textContent = 'Connected';
+    }
+
+    function formatTime(dateStr) {
+      if (!dateStr) return 'Never';
+      return new Date(dateStr).toLocaleString();
+    }
+
+    function timeAgo(dateStr) {
+      if (!dateStr) return 'Never';
+      const now = new Date();
+      const date = new Date(dateStr);
+      const diff = now - date;
+      const minutes = Math.floor(diff / 60000);
+      if (minutes < 1) return 'Just now';
+      if (minutes < 60) return `${minutes}m ago`;
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return `${hours}h ago`;
+      const days = Math.floor(hours / 24);
+      return `${days}d ago`;
+    }
+
+    function engineRow(e) {
+      const div = document.createElement('div');
+      div.className = 'engine-item';
+      
+      const healthClass = `health-${e.health_status || 'unknown'}`;
+      const healthText = (e.health_status || 'unknown').toUpperCase();
+      
+      div.innerHTML = `
+        <div class="engine-header">
+          <div class="engine-name">${e.container_name || e.container_id.slice(0, 12)}</div>
+          <div class="health-indicator ${healthClass}">
+            <div class="status-dot"></div>
+            ${healthText}
+          </div>
+        </div>
+        <div class="engine-details">
+          <div class="detail-item">
+            <div class="detail-label">Endpoint</div>
+            <div class="detail-value">${e.host}:${e.port}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Active Streams</div>
+            <div class="detail-value">${e.streams.length}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Last Used</div>
+            <div class="detail-value">${timeAgo(e.last_stream_usage)}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Health Check</div>
+            <div class="detail-value">${timeAgo(e.last_health_check)}</div>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn-small danger" onclick="deleteEngine('${e.container_id}')">Delete</button>
+        </div>
+      `;
+      
+      div.onclick = (ev) => {
+        if (ev.target.tagName === 'BUTTON') return;
+        selectEngine(e);
       };
-      right.appendChild(del);
-      d.appendChild(left); d.appendChild(right);
-      d.onclick = async (ev)=>{ if(ev.target===del) return; await selectEngine(e); };
-      return d;
+      
+      return div;
     }
 
-    function streamRow(s){
-      const d = document.createElement('button');
-      d.className = 'item';
-      d.innerHTML = `<div><div><strong>${s.id}</strong></div><div class="muted">${s.key_type} · ${s.container_id.slice(0,12)}</div></div>`;
-      d.onclick = ()=> selectStream(s);
-      return d;
+    function streamRow(s) {
+      const div = document.createElement('div');
+      div.className = 'stream-item';
+      
+      div.innerHTML = `
+        <div class="stream-info">
+          <div>
+            <div class="stream-id">${s.id}</div>
+            <div class="stream-meta">${s.key_type} • ${s.container_id.slice(0, 12)}</div>
+          </div>
+        </div>
+      `;
+      
+      div.onclick = () => selectStream(s);
+      return div;
     }
 
-    async function selectEngine(e){
-      try{
+    async function selectEngine(e) {
+      try {
         const data = await fetchJSON(`${orchInput.value}/engines/${encodeURIComponent(e.container_id)}`);
-        renderStreams(data.streams||[]);
-        if(data.streams && data.streams.length) selectStream(data.streams[0]);
-      }catch(err){ showError(err.message||String(err)); }
+        renderStreams(data.streams || []);
+        if (data.streams && data.streams.length) {
+          selectStream(data.streams[0]);
+        }
+      } catch (err) {
+        showError(err.message || String(err));
+      }
     }
 
-    async function selectStream(s){
+    async function selectStream(s) {
       selectedStream = s;
-      detailMeta.innerHTML = `<div class="row"><div><div class="muted">Stream</div><div><code>${s.id}</code></div></div><div><div class="muted">Session</div><div><code>${s.playback_session_id}</code></div></div></div>`+
-        `<div class="row"><div><div class="muted">Key</div><div><code>${s.key}</code></div></div><div><div class="muted">Engine</div><div><code>${s.container_id}</code></div></div></div>`;
-      detailLinks.innerHTML = `stat: <a href="${s.stat_url}" target="_blank">abrir</a> · cmd: <a href="${s.command_url}" target="_blank">abrir</a>`;
+      detailMeta.innerHTML = `
+        <div class="engine-details">
+          <div class="detail-item">
+            <div class="detail-label">Stream ID</div>
+            <div class="detail-value">${s.id}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Session</div>
+            <div class="detail-value">${s.playback_session_id}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Content Key</div>
+            <div class="detail-value">${s.key}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Engine</div>
+            <div class="detail-value">${s.container_id}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Type</div>
+            <div class="detail-value">${s.key_type}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Started</div>
+            <div class="detail-value">${formatTime(s.started_at)}</div>
+          </div>
+        </div>
+        <div style="margin-top: 12px; font-size: 12px; color: var(--text-secondary);">
+          <a href="${s.stat_url}" target="_blank" style="color: var(--accent-blue);">Statistics URL</a> • 
+          <a href="${s.command_url}" target="_blank" style="color: var(--accent-blue);">Command URL</a>
+        </div>
+      `;
+      
+      chartContainer.style.display = 'block';
+      detailActions.style.display = 'flex';
       await loadStatsAndDraw();
     }
 
-    async function loadStatsAndDraw(){
-      if(!selectedStream){ return; }
-      try{
-        const since = new Date(Date.now() - 60*60*1000).toISOString();
+    async function loadStatsAndDraw() {
+      if (!selectedStream) return;
+      
+      try {
+        const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
         const data = await fetchJSON(`${orchInput.value}/streams/${encodeURIComponent(selectedStream.id)}/stats?since=${encodeURIComponent(since)}`);
-        const labels = data.map(x=> new Date(x.ts).toLocaleTimeString());
-        const down = data.map(x=> x.speed_down);
-        const up = data.map(x=> x.speed_up);
-        const peers = data.map(x=> x.peers);
-        if(chart){ chart.destroy(); }
-        chart = new Chart(chartCtx, { type:'line', data:{ labels, datasets:[
-          { label:'down kB/s', data:down, borderWidth:2, tension:.2 },
-          { label:'up kB/s', data:up, borderWidth:2, tension:.2 },
-          { label:'peers', data:peers, borderWidth:1, tension:.2 },
-        ] }, options:{ responsive:true, scales:{ x:{ ticks:{ color:'#aaa' } }, y:{ ticks:{ color:'#aaa' } } }, plugins:{ legend:{ labels:{ color:'#ddd' } } } } });
-      }catch(err){ /* ignore */ }
+        
+        const labels = data.map(x => new Date(x.ts).toLocaleTimeString());
+        const down = data.map(x => (x.speed_down || 0) / 1024); // Convert to MB/s
+        const up = data.map(x => (x.speed_up || 0) / 1024);
+        const peers = data.map(x => x.peers || 0);
+        
+        if (chart) chart.destroy();
+        
+        chart = new Chart(chartCtx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [
+              {
+                label: 'Download (MB/s)',
+                data: down,
+                borderColor: '#4a90e2',
+                backgroundColor: 'rgba(74, 144, 226, 0.1)',
+                borderWidth: 2,
+                tension: 0.3,
+                fill: true
+              },
+              {
+                label: 'Upload (MB/s)',
+                data: up,
+                borderColor: '#4caf50',
+                backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                borderWidth: 2,
+                tension: 0.3,
+                fill: true
+              },
+              {
+                label: 'Peers',
+                data: peers,
+                borderColor: '#ff9800',
+                backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                borderWidth: 2,
+                tension: 0.3,
+                yAxisID: 'y1'
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                labels: { color: '#eaeaea' }
+              }
+            },
+            scales: {
+              x: {
+                ticks: { color: '#aaa' },
+                grid: { color: '#333' }
+              },
+              y: {
+                type: 'linear',
+                display: true,
+                position: 'left',
+                ticks: { color: '#aaa' },
+                grid: { color: '#333' },
+                title: {
+                  display: true,
+                  text: 'Speed (MB/s)',
+                  color: '#aaa'
+                }
+              },
+              y1: {
+                type: 'linear',
+                display: true,
+                position: 'right',
+                ticks: { color: '#aaa' },
+                grid: { drawOnChartArea: false },
+                title: {
+                  display: true,
+                  text: 'Peers',
+                  color: '#aaa'
+                }
+              }
+            }
+          }
+        });
+      } catch (err) {
+        console.error('Failed to load stats:', err);
+      }
     }
 
-    function renderEngines(arr){ engList.innerHTML=''; arr.forEach(e=> engList.appendChild(engineRow(e))); kEng.textContent = arr.length; }
-    function renderStreams(arr){ strList.innerHTML=''; arr.forEach(s=> strList.appendChild(streamRow(s))); kStr.textContent = arr.length; }
+    function renderEngines(arr) {
+      engList.innerHTML = '';
+      let healthyCount = 0;
+      
+      arr.forEach(e => {
+        engList.appendChild(engineRow(e));
+        if (e.health_status === 'healthy') healthyCount++;
+      });
+      
+      kEng.textContent = arr.length;
+      kHealthy.textContent = healthyCount;
+    }
 
-    async function refreshAll(){
-      clearError(); savePrefs();
-      try{
+    function renderStreams(arr) {
+      strList.innerHTML = '';
+      arr.forEach(s => strList.appendChild(streamRow(s)));
+      kStr.textContent = arr.length;
+    }
+
+    async function refreshAll() {
+      clearError();
+      savePrefs();
+      
+      try {
         const [eng, str] = await Promise.all([
           fetchJSON(`${orchInput.value}/engines`),
-          fetchJSON(`${orchInput.value}/streams?status=started`),
+          fetchJSON(`${orchInput.value}/streams?status=started`)
         ]);
-        renderEngines(eng); renderStreams(str);
+        
+        renderEngines(eng);
+        renderStreams(str);
         kUpd.textContent = new Date().toLocaleTimeString();
-        if(selectedStream){ await loadStatsAndDraw(); }
-      }catch(err){ showError(err.message||String(err)); }
+        
+        if (selectedStream) {
+          await loadStatsAndDraw();
+        }
+      } catch (err) {
+        showError(err.message || String(err));
+      }
+    }
+
+    async function deleteEngine(containerId) {
+      if (!confirm('Are you sure you want to delete this engine?')) return;
+      
+      try {
+        await fetchJSON(`${orchInput.value}/containers/${encodeURIComponent(containerId)}`, { method: 'DELETE' });
+        await refreshAll();
+      } catch (err) {
+        showError('Delete failed: ' + (err.message || String(err)));
+      }
     }
 
     let timer;
-    function restartTimer(){ if(timer) clearInterval(timer); timer = setInterval(refreshAll, Number(intervalSel.value||5000)); }
+    function restartTimer() {
+      if (timer) clearInterval(timer);
+      timer = setInterval(refreshAll, Number(intervalSel.value || 5000));
+    }
 
-    btnStop.onclick = async ()=>{
-      if(!selectedStream) return;
-      try{
+    btnStop.onclick = async () => {
+      if (!selectedStream) return;
+      
+      try {
         const u = new URL(selectedStream.command_url);
-        if(!u.searchParams.has('method')) u.searchParams.set('method','stop');
-        await fetch(u.toString(), { method:'GET' });
-      }catch(err){ showError('Stop failed: '+(err.message||String(err))); }
-    };
-    btnDel.onclick = async ()=>{
-      if(!selectedStream) return;
-      try{
-        await fetchJSON(`${orchInput.value}/containers/${encodeURIComponent(selectedStream.container_id)}`, { method:'DELETE' });
-        await refreshAll();
-      }catch(err){ showError('Delete failed: '+(err.message||String(err))); }
+        if (!u.searchParams.has('method')) u.searchParams.set('method', 'stop');
+        await fetch(u.toString(), { method: 'GET' });
+        setTimeout(refreshAll, 1000); // Refresh after 1 second
+      } catch (err) {
+        showError('Stop failed: ' + (err.message || String(err)));
+      }
     };
 
-    loadPrefs(); refreshAll(); restartTimer();
-    document.getElementById('refresh').onclick = refreshAll;
+    btnDel.onclick = async () => {
+      if (!selectedStream) return;
+      await deleteEngine(selectedStream.container_id);
+    };
+
+    // Initialize
+    loadPrefs();
+    refreshAll();
+    restartTimer();
+
+    $('#refresh').onclick = refreshAll;
     intervalSel.onchange = restartTimer;
   </script>
 </body>
