@@ -85,18 +85,42 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
 def ensure_minimum_free():
     """Ensure minimum number of free (unused) engines are available."""
     try:
-        # Get current state
+        # Get current state from both sources
         all_engines = state.list_engines()
         active_streams = state.list_streams(status="started")
+        running_containers = [c for c in list_managed() if c.status == "running"]
         
         # Find engines that are currently in use
         used_container_ids = {stream.container_id for stream in active_streams}
         
-        # Calculate free engines
-        running_containers = [c for c in list_managed() if c.status == "running"]
+        # Use Docker containers as the source of truth for total running count
+        # This ensures we count all actual running containers, not just those tracked in state
         total_running = len(running_containers)
         used_engines = len(used_container_ids)
         free_count = total_running - used_engines
+        
+        # Check for state/Docker discrepancies and trigger reindex if needed
+        state_engine_count = len(all_engines)
+        if state_engine_count != total_running:
+            logger.warning(f"State/Docker engine count mismatch: state={state_engine_count}, docker={total_running}. Triggering reindex...")
+            # Trigger reindex to sync state with Docker
+            from .reindex import reindex_existing
+            reindex_existing()
+            
+            # Also check for orphaned engines in state that don't exist in Docker
+            running_container_ids = {c.id for c in running_containers}
+            state_container_ids = {engine.container_id for engine in all_engines}
+            orphaned_engines = state_container_ids - running_container_ids
+            
+            if orphaned_engines:
+                logger.info(f"Removing {len(orphaned_engines)} orphaned engines from state")
+                for container_id in orphaned_engines:
+                    state.remove_engine(container_id)
+            
+            # Recalculate after reindex
+            all_engines = state.list_engines()
+            total_running = len(running_containers)
+            free_count = total_running - used_engines
         
         deficit = cfg.MIN_REPLICAS - free_count
         
