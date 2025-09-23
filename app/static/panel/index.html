@@ -435,6 +435,10 @@
           <span class="kpi-value" id="kpi-healthy">0</span>
           <span class="kpi-label">Healthy Engines</span>
         </div>
+        <div class="card kpi-card" id="vpn-card">
+          <span class="kpi-value" id="kpi-vpn">-</span>
+          <span class="kpi-label">VPN Status</span>
+        </div>
         <div class="card kpi-card">
           <span class="kpi-value" id="kpi-upd">-</span>
           <span class="kpi-label">Last Update</span>
@@ -454,6 +458,34 @@
             <h3 class="section-title">Active Streams</h3>
           </div>
           <div id="streams" class="stream-list"></div>
+        </div>
+      </div>
+      
+      <div class="card">
+        <div class="section-header">
+          <h3 class="section-title">VPN Information</h3>
+        </div>
+        <div id="vpn-info" class="engine-details">
+          <div class="detail-item">
+            <div class="detail-label">Status</div>
+            <div class="detail-value" id="vpn-status">-</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Health</div>
+            <div class="detail-value" id="vpn-health">-</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Container</div>
+            <div class="detail-value" id="vpn-container">-</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Forwarded Port</div>
+            <div class="detail-value" id="vpn-port">-</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Last Check</div>
+            <div class="detail-value" id="vpn-last-check">-</div>
+          </div>
         </div>
       </div>
       
@@ -488,9 +520,16 @@
     const kEng = $('#kpi-engines');
     const kStr = $('#kpi-streams');
     const kHealthy = $('#kpi-healthy');
+    const kVpn = $('#kpi-vpn');
     const kUpd = $('#kpi-upd');
     const engList = $('#engines');
     const strList = $('#streams');
+    const vpnStatus = $('#vpn-status');
+    const vpnHealth = $('#vpn-health');
+    const vpnContainer = $('#vpn-container');
+    const vpnPort = $('#vpn-port');
+    const vpnLastCheck = $('#vpn-last-check');
+    const vpnCard = $('#vpn-card');
     const detailMeta = $('#detail-meta');
     const detailActions = $('#detail-actions');
     const chartContainer = $('.chart-container');
@@ -761,6 +800,44 @@
       }
     }
 
+    function renderVpnInfo(vpnData) {
+      if (!vpnData.enabled) {
+        kVpn.textContent = 'Disabled';
+        kVpn.style.color = 'var(--text-secondary)';
+        vpnCard.style.borderColor = 'var(--border-color)';
+        
+        vpnStatus.textContent = 'VPN not configured';
+        vpnHealth.textContent = 'N/A';
+        vpnContainer.textContent = 'None';
+        vpnPort.textContent = 'N/A';
+        vpnLastCheck.textContent = 'N/A';
+        return;
+      }
+      
+      // Update KPI card
+      let statusText = vpnData.status || 'Unknown';
+      if (statusText === 'running' && vpnData.health === 'healthy') {
+        kVpn.textContent = 'Connected';
+        kVpn.style.color = 'var(--accent-green)';
+        vpnCard.style.borderColor = 'var(--accent-green)';
+      } else if (statusText === 'running') {
+        kVpn.textContent = 'Starting';
+        kVpn.style.color = 'var(--accent-orange)';
+        vpnCard.style.borderColor = 'var(--accent-orange)';
+      } else {
+        kVpn.textContent = 'Disconnected';
+        kVpn.style.color = 'var(--accent-red)';
+        vpnCard.style.borderColor = 'var(--accent-red)';
+      }
+      
+      // Update detailed info
+      vpnStatus.textContent = statusText.charAt(0).toUpperCase() + statusText.slice(1);
+      vpnHealth.textContent = vpnData.health ? vpnData.health.charAt(0).toUpperCase() + vpnData.health.slice(1) : 'Unknown';
+      vpnContainer.textContent = vpnData.container_name || 'Unknown';
+      vpnPort.textContent = vpnData.forwarded_port ? vpnData.forwarded_port.toString() : 'Not forwarded';
+      vpnLastCheck.textContent = vpnData.last_check ? timeAgo(vpnData.last_check) : 'Never';
+    }
+
     function renderEngines(arr) {
       engList.innerHTML = '';
       let healthyCount = 0;
@@ -785,13 +862,15 @@
       savePrefs();
       
       try {
-        const [eng, str] = await Promise.all([
+        const [eng, str, vpn] = await Promise.all([
           fetchJSON(`${orchInput.value}/engines`),
-          fetchJSON(`${orchInput.value}/streams?status=started`)
+          fetchJSON(`${orchInput.value}/streams?status=started`),
+          fetchJSON(`${orchInput.value}/vpn/status`).catch(() => ({ enabled: false }))
         ]);
         
         renderEngines(eng);
         renderStreams(str);
+        renderVpnInfo(vpn);
         kUpd.textContent = new Date().toLocaleTimeString();
         
         if (selectedStream) {

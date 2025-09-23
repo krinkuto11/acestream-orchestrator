@@ -221,6 +221,7 @@ def get_stream_stats(stream_id: str, since: Optional[datetime] = None):
 # by-label
 from .services.inspect import inspect_container
 from .services.health import list_managed
+from .services.gluetun import get_vpn_status
 @app.get("/by-label", dependencies=[Depends(require_api_key)])
 def by_label(key: str, value: str):
     res = []
@@ -231,3 +232,8 @@ def by_label(key: str, value: str):
             except Exception:
                 continue
     return res
+
+@app.get("/vpn/status")
+def get_vpn_status_endpoint():
+    """Get VPN (Gluetun) status information."""
+    return get_vpn_status()
