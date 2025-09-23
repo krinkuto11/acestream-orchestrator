@@ -95,6 +95,11 @@ Response:
      "last_check": "2023-09-23T13:45:30.123Z"
    }
    ```
+   
+   **Note**: The VPN health check now includes double-checking via engine network connectivity.
+   When Gluetun container health appears "unhealthy", the system verifies actual network 
+   connectivity by testing engines' `/server/api?api_version=3&method=get_network_connection_status` 
+   endpoint. If any engine reports `{"result": {"connected": true}}`, the VPN is considered healthy.
 
 ### Control
  - DELETE /containers/{container_id} (protected)

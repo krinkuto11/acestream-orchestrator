@@ -228,6 +228,71 @@ def get_forwarded_port_sync() -> Optional[int]:
         logger.error(f"Failed to get forwarded port from Gluetun: {e}")
         return None
 
+def _double_check_connectivity_via_engines() -> str:
+    """
+    Double-check VPN connectivity by testing engine network connection status.
+    This is used when Gluetun container health appears unhealthy but the issue
+    might be unrelated to actual network connectivity.
+    
+    Returns "healthy" if any engine reports connected=true, "unhealthy" otherwise.
+    """
+    try:
+        from .health import list_managed, check_engine_network_connection
+        
+        # Get all managed containers (engines)
+        managed_containers = list_managed()
+        running_engines = [c for c in managed_containers if c.status == "running"]
+        
+        if not running_engines:
+            logger.debug("No running engines to test network connectivity")
+            return "unhealthy"
+        
+        # Test connectivity on a few engines (max 3 to avoid excessive load)
+        test_engines = running_engines[:3]
+        connected_count = 0
+        
+        for container in test_engines:
+            try:
+                # Extract host and port from container
+                # Engines typically run on localhost with different ports
+                host = "127.0.0.1"  # Engines run locally
+                port_env = container.attrs.get("Config", {}).get("Env", [])
+                port = None
+                
+                # Look for port in environment variables
+                for env_var in port_env:
+                    if env_var.startswith("ACE_PORT="):
+                        port = int(env_var.split("=")[1])
+                        break
+                
+                if not port:
+                    # Try to get from port mappings
+                    ports = container.attrs.get("NetworkSettings", {}).get("Ports", {})
+                    for port_spec in ports.keys():
+                        if "/tcp" in port_spec:
+                            port = int(port_spec.split("/")[0])
+                            break
+                
+                if port and check_engine_network_connection(host, port):
+                    connected_count += 1
+                    logger.debug(f"Engine {container.id[:12]} reports network connected")
+                
+            except Exception as e:
+                logger.debug(f"Error checking network connectivity for engine {container.id[:12]}: {e}")
+                continue
+        
+        # If any engine reports connectivity, consider VPN healthy
+        if connected_count > 0:
+            logger.info(f"VPN double-check: {connected_count}/{len(test_engines)} engines report network connectivity - considering VPN healthy")
+            return "healthy"
+        else:
+            logger.warning(f"VPN double-check: No engines report network connectivity")
+            return "unhealthy"
+            
+    except Exception as e:
+        logger.error(f"Error during VPN connectivity double-check: {e}")
+        return "unhealthy"
+
 def get_vpn_status() -> dict:
     """Get comprehensive VPN status information."""
     if not cfg.GLUETUN_CONTAINER_NAME:
@@ -255,7 +320,8 @@ def get_vpn_status() -> dict:
         if health_info:
             health_status = health_info.get("Status", "unknown")
             if health_status == "unhealthy":
-                health = "unhealthy"
+                # Double-check with engine network connectivity if container is unhealthy
+                health = _double_check_connectivity_via_engines() 
             elif health_status == "healthy":
                 health = "healthy"
             else:

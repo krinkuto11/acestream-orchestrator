@@ -42,5 +42,30 @@ def check_acestream_health(host: str, port: int) -> Literal["healthy", "unhealth
     except Exception:
         return "unknown"
 
+def check_engine_network_connection(host: str, port: int) -> bool:
+    """
+    Check if the engine has a working network connection by querying the network status endpoint.
+    This is used to double-check VPN connectivity when Gluetun container health appears unhealthy.
+    
+    Returns True if the engine reports connected=true, False otherwise.
+    """
+    network_endpoint = "/server/api?api_version=3&method=get_network_connection_status"
+    try:
+        url = f"http://{host}:{port}{network_endpoint}"
+        response = httpx.get(url, timeout=5)
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                result = data.get("result", {})
+                return result.get("connected", False) is True
+            except:
+                return False
+        else:
+            return False
+    except (httpx.RequestError, httpx.TimeoutException):
+        return False
+    except Exception:
+        return False
+
 def sweep_idle():
     return {"ok": True}
