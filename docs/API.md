@@ -69,6 +69,10 @@ Response:
 ### Read Operations
 
  - GET /engines → EngineState[]
+   - Now includes health monitoring fields:
+     - `health_status`: "healthy" | "unhealthy" | "unknown"
+     - `last_health_check`: ISO8601 timestamp of last health check
+     - `last_stream_usage`: ISO8601 timestamp when stream was last loaded
 
  - GET /engines/{container_id} → {engine, streams[]}
 
@@ -79,6 +83,18 @@ Response:
  - GET /containers/{container_id} → Docker inspection
 
  - GET /by-label?key=stream_id&value=ch-42 (protected)
+
+ - GET /vpn/status → VPN status information
+   ```json
+   {
+     "enabled": true,
+     "status": "running",
+     "container_name": "gluetun",
+     "health": "healthy",
+     "forwarded_port": 12345,
+     "last_check": "2023-09-23T13:45:30.123Z"
+   }
+   ```
 
 ### Control
  - DELETE /containers/{container_id} (protected)

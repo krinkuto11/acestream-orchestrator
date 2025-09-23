@@ -1,13 +1,52 @@
-# Orchestrator + Panel
+# Acestream Orchestrator + Dashboard
 
-Endpoints: /provision, /provision/acestream, /events/*, /engines, /streams, /streams/{id}/stats, /containers/{id}, /by-label, /metrics, /panel.
+Modern orchestration platform for Acestream engines with intelligent health monitoring, usage tracking, and a professional dashboard interface.
 
-Quickstart:
+**Key Features:**
+- 🩺 **Smart Health Monitoring**: Automatic detection of hanging engines using Acestream API endpoints
+- ⏱️ **Usage Tracking**: Track engine idle time for intelligent proxy selection
+- 🎨 **Modern Dashboard**: Professional UI with real-time monitoring and VPN integration
+- 🌐 **VPN Integration**: Comprehensive Gluetun VPN monitoring with port forwarding
+- 📊 **Advanced Analytics**: Enhanced stream statistics with dual-axis charts
+
+## Quick Start
+
 ```bash
 cp .env.example .env
+docker-compose up
 ```
 
-Open `http://localhost:8000/panel`.
+Open the dashboard at `http://localhost:8000/panel`.
+
+![Dashboard Overview](docs/images/dashboard_overview.png)
+
+## API Endpoints
+
+Core endpoints: `/provision`, `/provision/acestream`, `/events/*`, `/engines`, `/streams`, `/streams/{id}/stats`, `/containers/{id}`, `/by-label`, `/vpn/status`, `/metrics`, `/panel`.
+
+## Features
+
+### Health Monitoring
+- **Intelligent detection** of hanging engines via `/server/api?api_version=3&method=get_status`
+- **Background monitoring** every 30 seconds with status indicators
+- **Visual health indicators** in dashboard (green/red/gray status)
+
+### Usage Tracking
+- **Last stream usage** timestamps for each engine
+- **Idle time tracking** for proxy load balancing decisions
+- **Real-time usage patterns** in dashboard
+
+### Modern Dashboard
+- **Professional dark theme** with responsive design
+- **Real-time KPIs** for engines, streams, health, and VPN status
+- **Enhanced engine cards** with health status and usage info
+- **Advanced stream analytics** with dual-axis charts
+- **VPN monitoring panel** with connection status and port forwarding
+
+### VPN Integration
+- **Gluetun integration** with health monitoring
+- **Port forwarding status** for proxy configuration
+- **Real-time connection monitoring** in dashboard
 
 # Requirements
 
@@ -39,6 +78,7 @@ requirements.txt
 * [API](docs/API.md)
 * [Events](docs/EVENTS.md)
 * [Panel](docs/PANEL.md)
+* [Health Monitoring](docs/HEALTH_MONITORING.md)
 * [Database Schema](docs/DB_SCHEMA.md)
 * [Deployment](docs/DEPLOY.md)
 * [Operations](docs/OPERATIONS.md)
