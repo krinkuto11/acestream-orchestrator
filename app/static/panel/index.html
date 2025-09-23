@@ -671,8 +671,8 @@
       let statsDisplay = '';
       if (stats) {
         const peers = stats.peers || 0;
-        const downSpeed = stats.speed_down ? (stats.speed_down / (1024 * 1024)).toFixed(1) : '0.0';
-        const upSpeed = stats.speed_up ? (stats.speed_up / (1024 * 1024)).toFixed(1) : '0.0';
+        const downSpeed = stats.speed_down ? (stats.speed_down / 1024).toFixed(1) : '0.0';
+        const upSpeed = stats.speed_up ? (stats.speed_up / 1024).toFixed(1) : '0.0';
         
         statsDisplay = `
           <div class="stream-stats">
