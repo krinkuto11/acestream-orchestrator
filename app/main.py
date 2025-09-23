@@ -1,11 +1,13 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List
 from datetime import datetime
 import asyncio
 import os
+import json
+import logging
 
 from .utils.logging import setup
 from .core.config import cfg
@@ -23,6 +25,8 @@ from .services.auth import require_api_key
 from .services.db import engine
 from .models.db_models import Base
 from .services.reindex import reindex_existing
+from .services.realtime import realtime_service
+from .websockets.websocket_manager import manager
 
 setup()
 
@@ -36,12 +40,14 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(collector.start())
     asyncio.create_task(docker_monitor.start())  # Start Docker monitoring
     asyncio.create_task(health_monitor.start())  # Start health monitoring
+    asyncio.create_task(realtime_service.start())  # Start WebSocket real-time service
     load_state_from_db()
     reindex_existing()
     
     yield
     
     # Shutdown
+    realtime_service.stop()  # Stop real-time service
     await collector.stop()
     await docker_monitor.stop()  # Stop Docker monitoring
     await health_monitor.stop()  # Stop health monitoring
@@ -237,3 +243,33 @@ def by_label(key: str, value: str):
 def get_vpn_status_endpoint():
     """Get VPN (Gluetun) status information."""
     return get_vpn_status()
+
+# WebSocket endpoint for real-time updates
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time panel updates"""
+    await manager.connect(websocket)
+    try:
+        # Send initial data
+        initial_data = await realtime_service.collect_all_data()
+        await websocket.send_text(json.dumps({
+            "type": "initial",
+            "data": initial_data,
+            "timestamp": datetime.utcnow().isoformat()
+        }))
+        
+        # Keep connection alive and handle any client messages
+        while True:
+            try:
+                # Wait for any client message (heartbeat, etc.)
+                await asyncio.wait_for(websocket.receive_text(), timeout=30)
+            except asyncio.TimeoutError:
+                # Send a ping to keep connection alive
+                await websocket.send_text(json.dumps({"type": "ping"}))
+                
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"WebSocket error: {e}")
+        manager.disconnect(websocket)

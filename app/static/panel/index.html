@@ -671,8 +671,8 @@
       let statsDisplay = '';
       if (stats) {
         const peers = stats.peers || 0;
-        const downSpeed = stats.speed_down ? (stats.speed_down / (1024 * 1024)).toFixed(1) : '0.0';
-        const upSpeed = stats.speed_up ? (stats.speed_up / (1024 * 1024)).toFixed(1) : '0.0';
+        const downSpeed = stats.speed_down ? (stats.speed_down / 1024).toFixed(1) : '0.0';
+        const upSpeed = stats.speed_up ? (stats.speed_up / 1024).toFixed(1) : '0.0';
         
         statsDisplay = `
           <div class="stream-stats">
@@ -976,8 +976,163 @@
       await deleteEngine(selectedStream.container_id);
     };
 
+    // WebSocket functionality
+    class WebSocketManager {
+      constructor() {
+        this.ws = null;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+        this.reconnectDelay = 1000;
+        this.isConnected = false;
+        this.useWebSocket = true; // Enable WebSocket by default
+      }
+      
+      connect() {
+        if (!this.useWebSocket) return;
+        
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        
+        try {
+          this.ws = new WebSocket(wsUrl);
+          
+          this.ws.onopen = () => {
+            console.log('WebSocket connected');
+            this.reconnectAttempts = 0;
+            this.isConnected = true;
+            statusDot.style.background = 'var(--accent-green)';
+            statusText.textContent = 'Connected (Real-time)';
+            
+            // Stop polling when WebSocket is connected
+            if (timer) {
+              clearInterval(timer);
+              timer = null;
+            }
+          };
+          
+          this.ws.onmessage = (event) => {
+            try {
+              const message = JSON.parse(event.data);
+              this.handleMessage(message);
+            } catch (err) {
+              console.error('Error parsing WebSocket message:', err);
+            }
+          };
+          
+          this.ws.onclose = () => {
+            console.log('WebSocket disconnected');
+            this.isConnected = false;
+            statusDot.style.background = 'var(--accent-red)';
+            statusText.textContent = 'Connecting...';
+            this.reconnect();
+          };
+          
+          this.ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            this.isConnected = false;
+          };
+          
+        } catch (err) {
+          console.error('Failed to create WebSocket:', err);
+          this.fallbackToPolling();
+        }
+      }
+      
+      handleMessage(message) {
+        switch (message.type) {
+          case 'initial':
+          case 'update':
+            this.updateUI(message.data);
+            kUpd.textContent = new Date(message.timestamp).toLocaleTimeString();
+            break;
+          case 'ping':
+            // Respond to ping
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+              this.ws.send(JSON.stringify({ type: 'pong' }));
+            }
+            break;
+        }
+      }
+      
+      updateUI(data) {
+        // Update engines without clearing the list
+        this.updateEnginesRealtime(data.engines);
+        
+        // Update streams with stats
+        this.updateStreamsRealtime(data.streams, data.stream_stats);
+        
+        // Update VPN info
+        renderVpnInfo(data.vpn);
+        
+        // Update KPIs
+        kEng.textContent = data.engines.length;
+        kStr.textContent = data.streams.length;
+        
+        const healthyCount = data.engines.filter(e => e.health_status === 'healthy').length;
+        kHealthy.textContent = healthyCount;
+      }
+      
+      updateEnginesRealtime(engines) {
+        // Clear the list and rebuild (can be optimized later for smoother updates)
+        engList.innerHTML = '';
+        
+        engines.forEach(engine => {
+          engList.appendChild(engineRow(engine));
+        });
+      }
+      
+      updateStreamsRealtime(streams, streamStats) {
+        // Clear the list and rebuild with latest stats
+        strList.innerHTML = '';
+        
+        streams.forEach(stream => {
+          const stats = streamStats[stream.id] || null;
+          strList.appendChild(streamRow(stream, stats));
+        });
+      }
+      
+      reconnect() {
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+          setTimeout(() => {
+            this.reconnectAttempts++;
+            console.log(`Reconnecting WebSocket (attempt ${this.reconnectAttempts})`);
+            this.connect();
+          }, this.reconnectDelay * Math.pow(2, this.reconnectAttempts));
+        } else {
+          console.log('Max reconnection attempts reached, falling back to polling');
+          this.fallbackToPolling();
+        }
+      }
+      
+      fallbackToPolling() {
+        this.useWebSocket = false;
+        this.isConnected = false;
+        statusDot.style.background = 'var(--accent-orange)';
+        statusText.textContent = 'Connected (Polling)';
+        
+        // Restart polling
+        refreshAll();
+        restartTimer();
+      }
+      
+      disconnect() {
+        if (this.ws) {
+          this.ws.close();
+          this.ws = null;
+        }
+        this.isConnected = false;
+      }
+    }
+    
+    const wsManager = new WebSocketManager();
+
     // Initialize
     loadPrefs();
+    
+    // Try WebSocket first, fallback to polling if needed
+    wsManager.connect();
+    
+    // Keep polling as fallback (will be disabled when WebSocket connects)
     refreshAll();
     restartTimer();
 
