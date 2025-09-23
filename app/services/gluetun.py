@@ -228,6 +228,74 @@ def get_forwarded_port_sync() -> Optional[int]:
         logger.error(f"Failed to get forwarded port from Gluetun: {e}")
         return None
 
+def get_vpn_status() -> dict:
+    """Get comprehensive VPN status information."""
+    if not cfg.GLUETUN_CONTAINER_NAME:
+        return {
+            "enabled": False,
+            "status": "disabled",
+            "container_name": None,
+            "health": "unknown",
+            "forwarded_port": None,
+            "last_check": None
+        }
+    
+    try:
+        from .docker_client import get_client
+        from docker.errors import NotFound
+        
+        cli = get_client()
+        container = cli.containers.get(cfg.GLUETUN_CONTAINER_NAME)
+        container.reload()
+        
+        # Get container health
+        container_running = container.status == "running"
+        health_info = container.attrs.get("State", {}).get("Health", {})
+        
+        if health_info:
+            health_status = health_info.get("Status", "unknown")
+            if health_status == "unhealthy":
+                health = "unhealthy"
+            elif health_status == "healthy":
+                health = "healthy"
+            else:
+                health = "starting" if container_running else "unknown"
+        else:
+            health = "healthy" if container_running else "unhealthy"
+        
+        # Get forwarded port
+        forwarded_port = get_forwarded_port_sync() if container_running else None
+        
+        return {
+            "enabled": True,
+            "status": container.status,
+            "container_name": cfg.GLUETUN_CONTAINER_NAME,
+            "health": health,
+            "forwarded_port": forwarded_port,
+            "last_check": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except NotFound:
+        return {
+            "enabled": True,
+            "status": "not_found",
+            "container_name": cfg.GLUETUN_CONTAINER_NAME,
+            "health": "unhealthy",
+            "forwarded_port": None,
+            "last_check": datetime.now(timezone.utc).isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting VPN status: {e}")
+        return {
+            "enabled": True,
+            "status": "error",
+            "container_name": cfg.GLUETUN_CONTAINER_NAME,
+            "health": "unknown",
+            "forwarded_port": None,
+            "last_check": datetime.now(timezone.utc).isoformat(),
+            "error": str(e)
+        }
+
 
 # Global Gluetun monitor instance
 gluetun_monitor = GluetunMonitor()

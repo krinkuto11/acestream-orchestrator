@@ -12,6 +12,7 @@ from .core.config import cfg
 from .services.autoscaler import ensure_minimum, scale_to, can_stop_engine
 from .services.provisioner import StartRequest, start_container, stop_container, AceProvisionRequest, AceProvisionResponse, start_acestream, HOST_LABEL_HTTP
 from .services.health import sweep_idle
+from .services.health_monitor import health_monitor
 from .services.inspect import inspect_container, ContainerNotFound
 from .services.state import state, load_state_from_db, cleanup_on_shutdown
 from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
     ensure_minimum()
     asyncio.create_task(collector.start())
     asyncio.create_task(docker_monitor.start())  # Start Docker monitoring
+    asyncio.create_task(health_monitor.start())  # Start health monitoring
     load_state_from_db()
     reindex_existing()
     
@@ -42,6 +44,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await collector.stop()
     await docker_monitor.stop()  # Stop Docker monitoring
+    await health_monitor.stop()  # Stop health monitoring
     
     # Give a small delay to ensure any pending operations complete
     await asyncio.sleep(0.1)
@@ -218,6 +221,7 @@ def get_stream_stats(stream_id: str, since: Optional[datetime] = None):
 # by-label
 from .services.inspect import inspect_container
 from .services.health import list_managed
+from .services.gluetun import get_vpn_status
 @app.get("/by-label", dependencies=[Depends(require_api_key)])
 def by_label(key: str, value: str):
     res = []
@@ -228,3 +232,8 @@ def by_label(key: str, value: str):
             except Exception:
                 continue
     return res
+
+@app.get("/vpn/status")
+def get_vpn_status_endpoint():
+    """Get VPN (Gluetun) status information."""
+    return get_vpn_status()

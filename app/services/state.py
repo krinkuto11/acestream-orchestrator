@@ -57,10 +57,12 @@ class State:
             
             if not eng:
                 eng = EngineState(container_id=key, container_name=container_name, host=evt.engine.host, port=evt.engine.port,
-                                  labels=evt.labels or {}, first_seen=self.now(), last_seen=self.now(), streams=[])
+                                  labels=evt.labels or {}, first_seen=self.now(), last_seen=self.now(), streams=[],
+                                  health_status="unknown", last_health_check=None, last_stream_usage=self.now())
                 self.engines[key] = eng
             else:
                 eng.host = evt.engine.host; eng.port = evt.engine.port; eng.last_seen = self.now()
+                eng.last_stream_usage = self.now()  # Update last stream usage when stream starts
                 if container_name and not eng.container_name:
                     eng.container_name = container_name
                 if evt.labels: eng.labels.update(evt.labels)
@@ -194,7 +196,8 @@ class State:
                 
                 self.engines[e.engine_key] = EngineState(container_id=e.engine_key, container_name=container_name,
                                                          host=e.host, port=e.port, labels=e.labels or {}, 
-                                                         first_seen=first_seen, last_seen=last_seen, streams=[])
+                                                         first_seen=first_seen, last_seen=last_seen, streams=[],
+                                                         health_status="unknown", last_health_check=None, last_stream_usage=None)
 
             for r in s.query(StreamRow).filter(StreamRow.status=="started").all():
                 # Ensure datetime objects are timezone-aware when loaded from database
@@ -269,6 +272,23 @@ class State:
         self.clear_state()
         
         logger.info("Full cleanup completed")
+    
+    def update_engine_health(self, container_id: str, health_status: str):
+        """Update engine health status."""
+        with self._lock:
+            engine = self.engines.get(container_id)
+            if engine:
+                engine.health_status = health_status
+                engine.last_health_check = self.now()
+    
+    def update_engines_health(self):
+        """Update health status for all engines."""
+        from ..services.health import check_acestream_health
+        with self._lock:
+            for engine in self.engines.values():
+                health_status = check_acestream_health(engine.host, engine.port)
+                engine.health_status = health_status
+                engine.last_health_check = self.now()
 
 state = State()
 
