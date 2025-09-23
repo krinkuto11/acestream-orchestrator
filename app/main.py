@@ -42,6 +42,10 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await collector.stop()
     await docker_monitor.stop()  # Stop Docker monitoring
+    
+    # Give a small delay to ensure any pending operations complete
+    await asyncio.sleep(0.1)
+    
     cleanup_on_shutdown()
 
 app = FastAPI(title="On-Demand Orchestrator", lifespan=lifespan)

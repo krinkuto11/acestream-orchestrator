@@ -233,28 +233,42 @@ class State:
 
     def cleanup_all(self):
         """Full cleanup: stop containers, clear database and memory state."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Starting full cleanup: stopping all managed containers")
+        
         # Stop all managed containers
+        containers_stopped = 0
         try:
             from ..services.health import list_managed
             from ..services.provisioner import stop_container
             
             managed_containers = list_managed()
+            logger.info(f"Found {len(managed_containers)} managed containers to stop")
+            
             for container in managed_containers:
                 try:
+                    logger.info(f"Stopping container {container.id[:12]}")
                     stop_container(container.id)
+                    containers_stopped += 1
+                    logger.info(f"Successfully stopped container {container.id[:12]}")
                 except Exception as e:
                     # Log error but continue cleanup
-                    import logging
-                    logging.warning(f"Failed to stop container {container.id}: {e}")
+                    logger.warning(f"Failed to stop container {container.id}: {e}")
         except Exception as e:
-            import logging
-            logging.warning(f"Failed to list or stop managed containers: {e}")
+            logger.warning(f"Failed to list or stop managed containers: {e}")
+        
+        logger.info(f"Stopped {containers_stopped} containers during cleanup")
         
         # Clear database state
+        logger.info("Clearing database state")
         self.clear_database()
         
         # Clear in-memory state
+        logger.info("Clearing in-memory state")
         self.clear_state()
+        
+        logger.info("Full cleanup completed")
 
 state = State()
 

@@ -190,9 +190,9 @@ class GluetunMonitor:
             
         try:
             # Gluetun API endpoint for port forwarding
-            # The API is accessible from containers sharing the network stack
+            # Connect to Gluetun container by name since we're in the same Docker network
             async with httpx.AsyncClient() as client:
-                response = await client.get(f"http://localhost:{cfg.GLUETUN_API_PORT}/v1/openvpn/portforwarded", timeout=10)
+                response = await client.get(f"http://{cfg.GLUETUN_CONTAINER_NAME}:{cfg.GLUETUN_API_PORT}/v1/openvpn/portforwarded", timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 port = data.get("port")
@@ -214,7 +214,7 @@ def get_forwarded_port_sync() -> Optional[int]:
     try:
         import httpx
         with httpx.Client() as client:
-            response = client.get(f"http://localhost:{cfg.GLUETUN_API_PORT}/v1/openvpn/portforwarded", timeout=10)
+            response = client.get(f"http://{cfg.GLUETUN_CONTAINER_NAME}:{cfg.GLUETUN_API_PORT}/v1/openvpn/portforwarded", timeout=10)
             response.raise_for_status()
             data = response.json()
             port = data.get("port")
