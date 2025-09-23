@@ -7,3 +7,4 @@ tenacity==9.0.0
 prometheus-client==0.20.0
 python-dotenv==1.0.1
 SQLAlchemy==2.0.32
+websockets==15.0.1
