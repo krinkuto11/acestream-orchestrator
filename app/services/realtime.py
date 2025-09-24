@@ -18,13 +18,13 @@ class RealtimeService:
     def __init__(self):
         self.last_data: Dict[str, Any] = {}
         self.running = False
-        self.update_interval = 0.5  # 500ms for better responsiveness
+        self.update_interval = 1.0  # 1 second for better responsiveness 
         self.last_hash = None  # For better change detection
         
         # VPN status cache to reduce blocking calls
         self._vpn_cache: Dict[str, Any] = {"enabled": False}
         self._vpn_cache_time: Optional[datetime] = None
-        self._vpn_cache_ttl_seconds: int = 5  # 5 second cache for VPN status
+        self._vpn_cache_ttl_seconds: int = 10  # 10 second cache for VPN status
     
     async def start(self):
         """Start the real-time data collection and broadcasting service"""
