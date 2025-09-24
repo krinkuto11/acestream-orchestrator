@@ -11,6 +11,7 @@ This module provides:
 import asyncio
 import logging
 import httpx
+import os
 from datetime import datetime, timezone
 from typing import Optional
 from .docker_client import get_client
@@ -28,6 +29,11 @@ class GluetunMonitor:
         self._stop = asyncio.Event()
         self._last_health_status: Optional[bool] = None
         self._health_transition_callbacks = []
+        
+        # Port forwarding cache to reduce API calls
+        self._cached_port: Optional[int] = None
+        self._port_cache_time: Optional[datetime] = None
+        self._port_cache_ttl_seconds: int = cfg.GLUETUN_PORT_CACHE_TTL_S  # Use config value
         
     async def start(self):
         """Start the Gluetun monitoring task."""
@@ -53,7 +59,7 @@ class GluetunMonitor:
         self._health_transition_callbacks.append(callback)
     
     async def _monitor_gluetun(self):
-        """Main monitoring loop for Gluetun health status."""
+        """Main monitoring loop for Gluetun health status and port caching."""
         while not self._stop.is_set():
             try:
                 current_health = await self._check_gluetun_health()
@@ -63,6 +69,13 @@ class GluetunMonitor:
                     await self._handle_health_transition(self._last_health_status, current_health)
                 
                 self._last_health_status = current_health
+                
+                # Background refresh of port cache if it's getting stale
+                if current_health and not self._is_port_cache_valid():
+                    try:
+                        await self._fetch_and_cache_port()
+                    except Exception as e:
+                        logger.debug(f"Background port cache refresh failed: {e}")
                 
             except Exception as e:
                 logger.error(f"Error monitoring Gluetun health: {e}")
@@ -115,8 +128,12 @@ class GluetunMonitor:
         """Handle Gluetun health status transitions."""
         if old_status and not new_status:
             logger.warning("Gluetun VPN became unhealthy")
+            # Invalidate port cache when VPN becomes unhealthy
+            self.invalidate_port_cache()
         elif not old_status and new_status:
             logger.info("Gluetun VPN recovered and is now healthy")
+            # Invalidate port cache to force fresh port check on VPN reconnection
+            self.invalidate_port_cache()
             
             # If configured, trigger engine restart on VPN reconnection
             if cfg.VPN_RESTART_ENGINES_ON_RECONNECT:
@@ -184,10 +201,27 @@ class GluetunMonitor:
         return False
 
     async def get_forwarded_port(self) -> Optional[int]:
-        """Get the VPN forwarded port from Gluetun API."""
+        """Get the VPN forwarded port from Gluetun API with caching."""
         if not cfg.GLUETUN_CONTAINER_NAME:
             return None
+        
+        # Check if we have a valid cached port
+        if self._is_port_cache_valid():
+            logger.debug(f"Using cached forwarded port: {self._cached_port}")
+            return self._cached_port
             
+        return await self._fetch_and_cache_port()
+    
+    def _is_port_cache_valid(self) -> bool:
+        """Check if the cached port is still valid based on TTL."""
+        if self._cached_port is None or self._port_cache_time is None:
+            return False
+        
+        cache_age = (datetime.now(timezone.utc) - self._port_cache_time).total_seconds()
+        return cache_age < self._port_cache_ttl_seconds
+    
+    async def _fetch_and_cache_port(self) -> Optional[int]:
+        """Fetch the forwarded port from Gluetun API and cache it."""
         try:
             # Gluetun API endpoint for port forwarding
             # Connect to Gluetun container by name since we're in the same Docker network
@@ -197,20 +231,45 @@ class GluetunMonitor:
                 data = response.json()
                 port = data.get("port")
                 if port:
-                    logger.info(f"Retrieved VPN forwarded port: {port}")
-                    return int(port)
+                    port = int(port)
+                    # Update cache
+                    self._cached_port = port
+                    self._port_cache_time = datetime.now(timezone.utc)
+                    logger.info(f"Retrieved and cached VPN forwarded port: {port}")
+                    return port
                 else:
                     logger.warning("No port forwarding information available from Gluetun")
+                    # Don't cache None values to allow retries
                     return None
         except Exception as e:
             logger.error(f"Failed to get forwarded port from Gluetun: {e}")
+            # Don't cache errors to allow retries
             return None
+    
+    def get_cached_forwarded_port(self) -> Optional[int]:
+        """Get the cached forwarded port without making API calls (synchronous)."""
+        if self._is_port_cache_valid():
+            return self._cached_port
+        return None
+    
+    def invalidate_port_cache(self):
+        """Invalidate the port cache to force a fresh API call on next request."""
+        self._cached_port = None
+        self._port_cache_time = None
+        logger.debug("Port cache invalidated")
 
 def get_forwarded_port_sync() -> Optional[int]:
-    """Synchronous version of get_forwarded_port for use in non-async contexts."""
+    """Synchronous version of get_forwarded_port with caching support."""
     if not cfg.GLUETUN_CONTAINER_NAME:
         return None
+    
+    # First try to get from cache if available
+    cached_port = gluetun_monitor.get_cached_forwarded_port()
+    if cached_port is not None:
+        logger.debug(f"Using cached forwarded port (sync): {cached_port}")
+        return cached_port
         
+    # If no cached port available, make API call
     try:
         import httpx
         with httpx.Client() as client:
@@ -219,8 +278,12 @@ def get_forwarded_port_sync() -> Optional[int]:
             data = response.json()
             port = data.get("port")
             if port:
-                logger.info(f"Retrieved VPN forwarded port: {port}")
-                return int(port)
+                port = int(port)
+                # Update the monitor's cache
+                gluetun_monitor._cached_port = port
+                gluetun_monitor._port_cache_time = datetime.now(timezone.utc)
+                logger.info(f"Retrieved and cached VPN forwarded port (sync): {port}")
+                return port
             else:
                 logger.warning("No port forwarding information available from Gluetun")
                 return None
@@ -329,8 +392,13 @@ def get_vpn_status() -> dict:
         else:
             health = "healthy" if container_running else "unhealthy"
         
-        # Get forwarded port
-        forwarded_port = get_forwarded_port_sync() if container_running else None
+        # Get forwarded port (try cache first, fallback to API call)
+        forwarded_port = None
+        if container_running:
+            forwarded_port = gluetun_monitor.get_cached_forwarded_port()
+            if forwarded_port is None:
+                # Only make API call if cache is empty
+                forwarded_port = get_forwarded_port_sync()
         
         return {
             "enabled": True,

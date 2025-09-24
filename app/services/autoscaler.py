@@ -1,17 +1,69 @@
+import os
 from ..core.config import cfg
 from .provisioner import StartRequest, start_container, AceProvisionRequest, start_acestream
 from .health import list_managed
 from .state import state
 import logging
+import asyncio
 from datetime import datetime, timedelta
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 # Track when engines became empty for grace period implementation
 _empty_engine_timestamps = {}
 
+# Rate limiting for engine provisioning
+_provision_semaphore: Optional[asyncio.Semaphore] = None
+_provision_queue = asyncio.Queue(maxsize=100)  # Queue for engine requests
+_last_provision_time = 0
+
+def _get_provision_semaphore() -> asyncio.Semaphore:
+    """Get or create the provision semaphore for rate limiting."""
+    global _provision_semaphore
+    if _provision_semaphore is None:
+        # Use config value for max concurrent provisions
+        _provision_semaphore = asyncio.Semaphore(cfg.MAX_CONCURRENT_PROVISIONS)
+    return _provision_semaphore
+
+async def _provision_engine_rate_limited(req: AceProvisionRequest) -> Optional[dict]:
+    """Provision an engine with rate limiting and concurrency control."""
+    global _last_provision_time
+    
+    semaphore = _get_provision_semaphore()
+    
+    async with semaphore:
+        try:
+            # Rate limiting - ensure minimum interval between provisions
+            current_time = asyncio.get_event_loop().time()
+            time_since_last = current_time - _last_provision_time
+            
+            if time_since_last < cfg.MIN_PROVISION_INTERVAL_S:
+                sleep_time = cfg.MIN_PROVISION_INTERVAL_S - time_since_last
+                logger.debug(f"Rate limiting: sleeping {sleep_time:.3f}s")
+                await asyncio.sleep(sleep_time)
+            
+            # Update timestamp before starting provision to ensure proper spacing
+            _last_provision_time = asyncio.get_event_loop().time()
+            
+            # Run the actual provisioning in a thread to avoid blocking
+            def sync_provision():
+                return start_acestream(req)
+            
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                response = await asyncio.get_event_loop().run_in_executor(
+                    executor, sync_provision
+                )
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Rate-limited provisioning failed: {e}")
+            return None
+
 def ensure_minimum():
-    """Ensure minimum number of replicas are running."""
+    """Ensure minimum number of replicas are running with improved error handling."""
     try:
         running = [c for c in list_managed() if c.status == "running"]
         deficit = cfg.MIN_REPLICAS - len(running)
@@ -19,14 +71,46 @@ def ensure_minimum():
         if deficit > 0:
             logger.info(f"Starting {deficit} AceStream containers to meet MIN_REPLICAS={cfg.MIN_REPLICAS} (currently running: {len(running)})")
             
-        for i in range(max(deficit, 0)):
+            # Create an async task to handle provision requests concurrently
+            async def provision_engines():
+                tasks = []
+                for i in range(deficit):
+                    task = _provision_engine_rate_limited(AceProvisionRequest(image=cfg.TARGET_IMAGE))
+                    tasks.append(task)
+                
+                # Execute all provisions concurrently but rate-limited
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                success_count = 0
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        logger.error(f"Failed to start AceStream container {i+1}/{deficit}: {result}")
+                    elif result:
+                        logger.info(f"Successfully started AceStream container {result.container_id[:12]} ({success_count+1}/{deficit}) - HTTP port: {result.host_http_port}")
+                        success_count += 1
+                    else:
+                        logger.error(f"Failed to start AceStream container {i+1}/{deficit}: Unknown error")
+                
+                return success_count
+            
+            # Run the async provisioning
             try:
-                # Use AceStream provisioning to ensure containers are AceStream-ready with proper ports
-                response = start_acestream(AceProvisionRequest(image=cfg.TARGET_IMAGE))
-                logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({i+1}/{deficit}) - HTTP port: {response.host_http_port}")
-            except Exception as e:
-                logger.error(f"Failed to start AceStream container {i+1}/{deficit}: {e}")
-                # Continue trying to start remaining containers
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If we're already in an event loop, create a task
+                    asyncio.create_task(provision_engines())
+                else:
+                    # If not in event loop, run it
+                    loop.run_until_complete(provision_engines())
+            except RuntimeError:
+                # Fallback to synchronous provisioning if async fails
+                logger.warning("Async provisioning not available, falling back to synchronous")
+                for i in range(max(deficit, 0)):
+                    try:
+                        response = start_acestream(AceProvisionRequest(image=cfg.TARGET_IMAGE))
+                        logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({i+1}/{deficit}) - HTTP port: {response.host_http_port}")
+                    except Exception as e:
+                        logger.error(f"Failed to start AceStream container {i+1}/{deficit}: {e}")
                 
     except Exception as e:
         logger.error(f"Error in ensure_minimum: {e}")
@@ -83,7 +167,7 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
     return False
 
 def ensure_minimum_free():
-    """Ensure minimum number of free (unused) engines are available."""
+    """Ensure minimum number of free (unused) engines are available with rate limiting."""
     try:
         # Get current state from both sources
         all_engines = state.list_engines()
@@ -127,13 +211,41 @@ def ensure_minimum_free():
         if deficit > 0:
             logger.info(f"Need {deficit} more free engines (total: {total_running}, used: {used_engines}, free: {free_count}, min_free: {cfg.MIN_REPLICAS})")
             
-            # Start new containers to meet the free engine requirement
-            for i in range(deficit):
-                try:
-                    response = start_acestream(AceProvisionRequest(image=cfg.TARGET_IMAGE))
-                    logger.info(f"Started AceStream container {response.container_id[:12]} for free pool ({i+1}/{deficit}) - HTTP port: {response.host_http_port}")
-                except Exception as e:
-                    logger.error(f"Failed to start AceStream container for free pool: {e}")
+            # Use rate-limited provisioning
+            async def provision_free_engines():
+                tasks = []
+                for i in range(deficit):
+                    task = _provision_engine_rate_limited(AceProvisionRequest(image=cfg.TARGET_IMAGE))
+                    tasks.append(task)
+                
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                success_count = 0
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        logger.error(f"Failed to start AceStream container for free pool: {result}")
+                    elif result:
+                        logger.info(f"Started AceStream container {result.container_id[:12]} for free pool ({success_count+1}/{deficit}) - HTTP port: {result.host_http_port}")
+                        success_count += 1
+                
+                return success_count
+            
+            # Run async provisioning
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(provision_free_engines())
+                else:
+                    loop.run_until_complete(provision_free_engines())
+            except RuntimeError:
+                # Fallback to synchronous
+                logger.warning("Async provisioning not available for free engines, falling back to synchronous")
+                for i in range(deficit):
+                    try:
+                        response = start_acestream(AceProvisionRequest(image=cfg.TARGET_IMAGE))
+                        logger.info(f"Started AceStream container {response.container_id[:12]} for free pool ({i+1}/{deficit}) - HTTP port: {response.host_http_port}")
+                    except Exception as e:
+                        logger.error(f"Failed to start AceStream container for free pool: {e}")
         else:
             logger.debug(f"Sufficient free engines: {free_count} free, {cfg.MIN_REPLICAS} required")
                 
