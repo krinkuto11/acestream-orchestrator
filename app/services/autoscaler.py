@@ -65,11 +65,16 @@ async def _provision_engine_rate_limited(req: AceProvisionRequest) -> Optional[d
 def ensure_minimum():
     """Ensure minimum number of replicas are running with improved error handling."""
     try:
-        running = [c for c in list_managed() if c.status == "running"]
-        deficit = cfg.MIN_REPLICAS - len(running)
+        from .replica_validator import replica_validator
+        
+        # Get fresh Docker status to ensure accurate count
+        docker_status = replica_validator.get_docker_container_status()
+        running_count = docker_status['total_running']
+        
+        deficit = cfg.MIN_REPLICAS - running_count
         
         if deficit > 0:
-            logger.info(f"Starting {deficit} AceStream containers to meet MIN_REPLICAS={cfg.MIN_REPLICAS} (currently running: {len(running)})")
+            logger.info(f"Starting {deficit} AceStream containers to meet MIN_REPLICAS={cfg.MIN_REPLICAS} (currently running: {running_count})")
             
             # Create an async task to handle provision requests concurrently
             async def provision_engines():
@@ -130,10 +135,14 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
     # Check if stopping this engine would violate MIN_REPLICAS constraint
     if cfg.MIN_REPLICAS > 0:
         try:
-            running_containers = [c for c in list_managed() if c.status == "running"]
+            from .replica_validator import replica_validator
+            # Use reliable Docker count for MIN_REPLICAS check
+            docker_status = replica_validator.get_docker_container_status()
+            running_count = docker_status['total_running']
+            
             # If stopping this engine would bring us below MIN_REPLICAS, don't stop it
-            if len(running_containers) - 1 < cfg.MIN_REPLICAS:
-                logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_REPLICAS={cfg.MIN_REPLICAS} (currently: {len(running_containers)} running, would become: {len(running_containers) - 1})")
+            if running_count - 1 < cfg.MIN_REPLICAS:
+                logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_REPLICAS={cfg.MIN_REPLICAS} (currently: {running_count} running, would become: {running_count - 1})")
                 return False
         except Exception as e:
             logger.error(f"Error checking MIN_REPLICAS constraint: {e}")
@@ -169,42 +178,10 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
 def ensure_minimum_free():
     """Ensure minimum number of free (unused) engines are available with rate limiting."""
     try:
-        # Get current state from both sources
-        all_engines = state.list_engines()
-        active_streams = state.list_streams(status="started")
-        running_containers = [c for c in list_managed() if c.status == "running"]
+        from .replica_validator import replica_validator
         
-        # Find engines that are currently in use
-        used_container_ids = {stream.container_id for stream in active_streams}
-        
-        # Use Docker containers as the source of truth for total running count
-        # This ensures we count all actual running containers, not just those tracked in state
-        total_running = len(running_containers)
-        used_engines = len(used_container_ids)
-        free_count = total_running - used_engines
-        
-        # Check for state/Docker discrepancies and trigger reindex if needed
-        state_engine_count = len(all_engines)
-        if state_engine_count != total_running:
-            logger.warning(f"State/Docker engine count mismatch: state={state_engine_count}, docker={total_running}. Triggering reindex...")
-            # Trigger reindex to sync state with Docker
-            from .reindex import reindex_existing
-            reindex_existing()
-            
-            # Also check for orphaned engines in state that don't exist in Docker
-            running_container_ids = {c.id for c in running_containers}
-            state_container_ids = {engine.container_id for engine in all_engines}
-            orphaned_engines = state_container_ids - running_container_ids
-            
-            if orphaned_engines:
-                logger.info(f"Removing {len(orphaned_engines)} orphaned engines from state")
-                for container_id in orphaned_engines:
-                    state.remove_engine(container_id)
-            
-            # Recalculate after reindex
-            all_engines = state.list_engines()
-            total_running = len(running_containers)
-            free_count = total_running - used_engines
+        # Use centralized validation to get reliable counts
+        total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
         
         deficit = cfg.MIN_REPLICAS - free_count
         
@@ -253,12 +230,18 @@ def ensure_minimum_free():
         logger.error(f"Error ensuring minimum free engines: {e}")
 
 def scale_to(demand: int):
+    from .replica_validator import replica_validator
+    
     desired = min(max(cfg.MIN_REPLICAS, demand), cfg.MAX_REPLICAS)
-    current = list_managed()
-    running = [c for c in current if c.status == "running"]
-    if len(running) < desired:
-        deficit = desired - len(running)
-        logger.info(f"Scaling up: starting {deficit} AceStream containers (current: {len(running)}, desired: {desired})")
+    
+    # Use reliable Docker count
+    docker_status = replica_validator.get_docker_container_status()
+    running_count = docker_status['total_running']
+    running_containers = docker_status['containers']
+    
+    if running_count < desired:
+        deficit = desired - running_count
+        logger.info(f"Scaling up: starting {deficit} AceStream containers (current: {running_count}, desired: {desired})")
         for i in range(deficit):
             try:
                 # Use AceStream provisioning to ensure containers are AceStream-ready with proper ports
@@ -266,13 +249,13 @@ def scale_to(demand: int):
                 logger.info(f"Started AceStream container {response.container_id[:12]} for scale-up ({i+1}/{deficit}) - HTTP port: {response.host_http_port}")
             except Exception as e:
                 logger.error(f"Failed to start AceStream container for scale-up: {e}")
-    elif len(running) > desired:
-        excess = len(running) - desired
-        logger.info(f"Scaling down: checking {excess} containers for safe removal (current: {len(running)}, desired: {desired})")
+    elif running_count > desired:
+        excess = running_count - desired
+        logger.info(f"Scaling down: checking {excess} containers for safe removal (current: {running_count}, desired: {desired})")
         
         # Only stop containers that can be safely stopped (respecting grace period)
         stopped_count = 0
-        for c in running:
+        for c in running_containers:
             if stopped_count >= excess:
                 break
             
