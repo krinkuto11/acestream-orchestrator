@@ -106,6 +106,8 @@ class DockerMonitor:
     async def _sync_with_docker(self):
         """Synchronize state with actual Docker containers."""
         try:
+            from .replica_validator import replica_validator
+            
             # Get current container IDs from Docker
             current_containers = list_managed()
             current_container_ids = {c.id for c in current_containers if c.status == 'running'}
@@ -132,6 +134,9 @@ class DockerMonitor:
                     await loop.run_in_executor(None, reindex_existing)
                 
                 self._last_container_ids = current_container_ids
+                
+                # Force validation after changes to ensure consistency
+                replica_validator.validate_and_sync_state(force_reindex=True)
             else:
                 # Even if no changes, update last_seen timestamps for existing engines
                 now = state.now()
@@ -139,6 +144,11 @@ class DockerMonitor:
                     for container_id in current_container_ids:
                         if container_id in state.engines:
                             state.engines[container_id].last_seen = now
+                
+                # Periodic consistency check (less frequent)
+                if not replica_validator.is_state_consistent():
+                    logger.warning("State inconsistency detected during periodic check")
+                    replica_validator.validate_and_sync_state(force_reindex=True)
                             
         except Exception as e:
             logger.error(f"Error syncing with Docker: {e}")
@@ -146,42 +156,10 @@ class DockerMonitor:
     def _ensure_minimum_free_engines(self):
         """Ensure minimum number of free (unused) engines are available."""
         try:
-            # Get current state from both sources
-            all_engines = state.list_engines()
-            active_streams = state.list_streams(status="started")
-            running_containers = [c for c in list_managed() if c.status == "running"]
+            from .replica_validator import replica_validator
             
-            # Find engines that are currently in use
-            used_container_ids = {stream.container_id for stream in active_streams}
-            
-            # Use Docker containers as the source of truth for total running count
-            # This ensures we count all actual running containers, not just those tracked in state
-            total_running = len(running_containers)
-            used_engines = len(used_container_ids)
-            free_count = total_running - used_engines
-            
-            # Check for state/Docker discrepancies and trigger reindex if needed
-            state_engine_count = len(all_engines)
-            if state_engine_count != total_running:
-                logger.warning(f"State/Docker engine count mismatch: state={state_engine_count}, docker={total_running}. Triggering reindex...")
-                # Trigger reindex to sync state with Docker
-                from .reindex import reindex_existing
-                reindex_existing()
-                
-                # Also check for orphaned engines in state that don't exist in Docker
-                running_container_ids = {c.id for c in running_containers}
-                state_container_ids = {engine.container_id for engine in all_engines}
-                orphaned_engines = state_container_ids - running_container_ids
-                
-                if orphaned_engines:
-                    logger.info(f"Removing {len(orphaned_engines)} orphaned engines from state")
-                    for container_id in orphaned_engines:
-                        state.remove_engine(container_id)
-                
-                # Recalculate after reindex
-                all_engines = state.list_engines()
-                total_running = len(running_containers)
-                free_count = total_running - used_engines
+            # Use centralized validation to get reliable counts
+            total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
             
             deficit = cfg.MIN_REPLICAS - free_count
             
