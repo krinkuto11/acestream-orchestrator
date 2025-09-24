@@ -28,6 +28,8 @@ from .services.reindex import reindex_existing
 from .services.realtime import realtime_service
 from .websockets.websocket_manager import manager
 
+logger = logging.getLogger(__name__)
+
 setup()
 
 @asynccontextmanager
@@ -71,8 +73,7 @@ panel_dir = "app/static/panel"
 if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
     app.mount("/panel", StaticFiles(directory=panel_dir, html=True), name="panel")
 else:
-    import logging
-    logging.warning(f"Panel directory {panel_dir} not found. /panel endpoint will not be available.")
+    logger.warning(f"Panel directory {panel_dir} not found. /panel endpoint will not be available.")
 
 app.mount("/metrics", metrics_app)
 
@@ -165,8 +166,6 @@ def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
                     ensure_minimum_free()
             else:
                 # Engine is in grace period, let the monitoring service handle it later
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.info(f"Engine {cid[:12]} is in grace period, deferring shutdown")
                 
         bg.add_task(_auto)
@@ -193,16 +192,12 @@ def get_engines():
             else:
                 # For now, just log the mismatch but still include the engine
                 # The monitoring service will handle cleanup
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.debug(f"Engine {engine.container_id[:12]} not found in Docker, but keeping in response")
                 verified_engines.append(engine)
         
         return verified_engines
     except Exception as e:
         # If Docker verification fails, return state as-is
-        import logging
-        logger = logging.getLogger(__name__)
         logger.debug(f"Docker verification failed for /engines endpoint: {e}")
         return engines
 
@@ -249,7 +244,6 @@ def get_vpn_status_endpoint():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time panel updates"""
-    logger = logging.getLogger(__name__)
     try:
         await manager.connect(websocket)
         

@@ -1,10 +1,13 @@
 from __future__ import annotations
 import threading
+import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
 from ..models.schemas import EngineState, StreamState, StreamStartedEvent, StreamEndedEvent, StreamStatSnapshot
 from ..services.db import SessionLocal
 from ..models.db_models import EngineRow, StreamRow, StatRow
+
+logger = logging.getLogger(__name__)
 
 class State:
     def __init__(self):
@@ -240,13 +243,10 @@ class State:
                 # If tables don't exist or other database error, continue silently
                 # This can happen during startup before tables are created
                 s.rollback()
-                import logging
-                logging.debug(f"Database cleanup skipped (tables may not exist): {e}")
+                logger.debug(f"Database cleanup skipped (tables may not exist): {e}")
 
     def cleanup_all(self):
         """Full cleanup: stop containers, clear database and memory state."""
-        import logging
-        logger = logging.getLogger(__name__)
         logger.info("Starting full cleanup: stopping all managed containers")
         
         # Stop all managed containers
