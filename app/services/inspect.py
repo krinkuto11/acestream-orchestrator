@@ -1,13 +1,14 @@
 from docker.errors import NotFound
 from .docker_client import get_client
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ContainerNotFound(Exception):
     pass
 
 def get_container_name(container_id: str) -> str | None:
     """Get container name from container ID. Returns None if not found."""
-    import logging
-    logger = logging.getLogger(__name__)
     
     if not container_id:
         logger.debug(f"get_container_name: empty or None container_id provided")
