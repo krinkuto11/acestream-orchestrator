@@ -33,10 +33,10 @@ def test_stream_ending_behavior():
         original_min_replicas = cfg.MIN_REPLICAS
         original_grace_period = cfg.ENGINE_GRACE_PERIOD_S
         cfg.AUTO_DELETE = True
-        cfg.MIN_REPLICAS = 2
+        cfg.MIN_REPLICAS = 0  # Disable MIN_REPLICAS constraint for this test
         cfg.ENGINE_GRACE_PERIOD_S = 0  # Disable grace period for immediate deletion
         
-        print(f"✓ Set AUTO_DELETE={cfg.AUTO_DELETE}, MIN_REPLICAS={cfg.MIN_REPLICAS}")
+        print(f"✓ Set AUTO_DELETE={cfg.AUTO_DELETE}, MIN_REPLICAS={cfg.MIN_REPLICAS}, GRACE_PERIOD={cfg.ENGINE_GRACE_PERIOD_S}")
         
         # Clear state first
         state.engines.clear()
