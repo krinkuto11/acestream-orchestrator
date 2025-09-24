@@ -19,6 +19,8 @@ class DockerMonitor:
         self._autoscale_task = None
         self._stop = asyncio.Event()
         self._last_container_ids: Set[str] = set()
+        self._last_change_time = None
+        self._debounce_interval_s = 1.0  # Debounce rapid changes
 
     async def start(self):
         """Start the monitoring tasks."""
@@ -117,6 +119,15 @@ class DockerMonitor:
             removed = self._last_container_ids - current_container_ids
             
             if added or removed:
+                now = datetime.now(timezone.utc)
+                
+                # Debounce rapid changes to prevent excessive operations
+                if (self._last_change_time and 
+                    (now - self._last_change_time).total_seconds() < self._debounce_interval_s):
+                    logger.info(f"Debouncing rapid Docker state changes - skipping (last change: {self._last_change_time})")
+                    return
+                
+                self._last_change_time = now
                 logger.info(f"Docker state change detected: +{len(added)}, -{len(removed)} containers")
                 
                 # Remove engines that no longer exist in Docker
@@ -126,17 +137,23 @@ class DockerMonitor:
                         logger.info(f"Removing engine {container_id[:12]} - container no longer exists")
                         state.remove_engine(container_id)
                 
-                # Re-index to pick up new containers
+                # Update tracking before reindex to prevent race conditions
+                self._last_container_ids = current_container_ids
+                
+                # Re-index to pick up new containers (only if there are new ones)
                 if added:
                     logger.info("Re-indexing to pick up new containers")
                     # Run reindex in a thread to avoid blocking
                     loop = asyncio.get_event_loop()
                     await loop.run_in_executor(None, reindex_existing)
                 
-                self._last_container_ids = current_container_ids
-                
-                # Force validation after changes to ensure consistency
-                replica_validator.validate_and_sync_state(force_reindex=True)
+                # Do a lightweight validation check instead of full reindex
+                # Let replica_validator handle the heavy lifting with its own coordination
+                if replica_validator.request_sync_coordination("monitor"):
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, lambda: replica_validator.validate_and_sync_state(force_reindex=False))
+                else:
+                    logger.info("Monitor sync request denied by coordination - another sync in progress")
             else:
                 # Even if no changes, update last_seen timestamps for existing engines
                 now = state.now()
@@ -148,7 +165,13 @@ class DockerMonitor:
                 # Periodic consistency check (less frequent)
                 if not replica_validator.is_state_consistent():
                     logger.warning("State inconsistency detected during periodic check")
-                    replica_validator.validate_and_sync_state(force_reindex=True)
+                    # Use coordination to prevent conflicts
+                    if replica_validator.request_sync_coordination("monitor_periodic"):
+                        # Use async execution to prevent blocking
+                        loop = asyncio.get_event_loop()
+                        await loop.run_in_executor(None, lambda: replica_validator.validate_and_sync_state(force_reindex=True))
+                    else:
+                        logger.info("Monitor periodic sync request denied by coordination - another sync in progress")
                             
         except Exception as e:
             logger.error(f"Error syncing with Docker: {e}")
