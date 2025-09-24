@@ -249,6 +249,7 @@ def get_vpn_status_endpoint():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time panel updates"""
+    logger = logging.getLogger(__name__)
     try:
         await manager.connect(websocket)
         
