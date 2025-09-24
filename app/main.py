@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List
@@ -25,8 +25,6 @@ from .services.auth import require_api_key
 from .services.db import engine
 from .models.db_models import Base
 from .services.reindex import reindex_existing
-from .services.realtime import realtime_service
-from .websockets.websocket_manager import manager
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +42,11 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(collector.start())
     asyncio.create_task(docker_monitor.start())  # Start Docker monitoring
     asyncio.create_task(health_monitor.start())  # Start health monitoring
-    asyncio.create_task(realtime_service.start())  # Start WebSocket real-time service
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
     yield
     
     # Shutdown
-    realtime_service.stop()  # Stop real-time service
     await collector.stop()
     await docker_monitor.stop()  # Stop Docker monitoring
     await health_monitor.stop()  # Stop health monitoring
@@ -161,9 +157,9 @@ def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
                 if stopped_container_id:
                     # Remove the engine from state
                     state.remove_engine(stopped_container_id)
-                    # Ensure minimum number of free replicas are maintained
-                    from .services.autoscaler import ensure_minimum_free
-                    ensure_minimum_free()
+                    # Ensure minimum number of replicas are maintained
+                    from .services.autoscaler import ensure_minimum
+                    ensure_minimum()
             else:
                 # Engine is in grace period, let the monitoring service handle it later
                 logger.info(f"Engine {cid[:12]} is in grace period, deferring shutdown")
@@ -240,48 +236,4 @@ def get_vpn_status_endpoint():
     """Get VPN (Gluetun) status information."""
     return get_vpn_status()
 
-# WebSocket endpoint for real-time updates
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time panel updates"""
-    try:
-        await manager.connect(websocket)
-        
-        # Send initial data immediately after connection
-        try:
-            initial_data = await realtime_service.collect_all_data()
-            await websocket.send_text(json.dumps({
-                "type": "initial",
-                "data": initial_data,
-                "timestamp": datetime.utcnow().isoformat()
-            }))
-            logger.info("Sent initial WebSocket data to client")
-        except Exception as e:
-            logger.error(f"Failed to send initial WebSocket data: {e}")
-        
-        # Keep connection alive and handle any client messages
-        while True:
-            try:
-                # Wait for any client message (heartbeat, pong, etc.)
-                message = await asyncio.wait_for(websocket.receive_text(), timeout=30)
-                try:
-                    data = json.loads(message)
-                    if data.get("type") == "pong":
-                        logger.debug("Received pong from WebSocket client")
-                except json.JSONDecodeError:
-                    logger.debug(f"Received non-JSON message from WebSocket client: {message}")
-            except asyncio.TimeoutError:
-                # Send a ping to keep connection alive
-                try:
-                    await websocket.send_text(json.dumps({"type": "ping"}))
-                    logger.debug("Sent ping to WebSocket client")
-                except Exception as e:
-                    logger.warning(f"Failed to send ping to WebSocket client: {e}")
-                    break
-                
-    except WebSocketDisconnect:
-        logger.info("WebSocket client disconnected normally")
-        manager.disconnect(websocket)
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-        manager.disconnect(websocket)
+# WebSocket endpoint removed - using simple polling approach

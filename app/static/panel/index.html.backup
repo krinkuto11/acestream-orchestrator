@@ -977,15 +977,238 @@
     };
 
     // Polling-only implementation - WebSocket removed for simplification
+    class WebSocketManager {
+      constructor() {
+        this.ws = null;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+        this.reconnectDelay = 1000;
+        this.isConnected = false;
+        this.useWebSocket = true; // Enable WebSocket by default
+      }
+      
+      connect() {
+        if (!this.useWebSocket) return;
+        
+        // Use the configured orchestrator URL instead of window.location.host
+        const orchUrl = orchInput.value.trim() || 'http://localhost:8000';
+        const url = new URL(orchUrl);
+        const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${url.host}/ws`;
+        
+        console.log(`Attempting WebSocket connection to: ${wsUrl}`);
+        
+        try {
+          this.ws = new WebSocket(wsUrl);
+          
+          this.ws.onopen = () => {
+            console.log('WebSocket connected');
+            this.reconnectAttempts = 0;
+            this.isConnected = true;
+            statusDot.style.background = 'var(--accent-green)';
+            statusText.textContent = 'Connected (Real-time)';
+            
+            // Stop polling when WebSocket is connected, but keep a slower backup poll
+            if (timer) {
+              clearInterval(timer);
+              // Keep a slow backup poll in case WebSocket misses updates
+              timer = setInterval(refreshAll, 30000); // 30 second backup
+            }
+          };
+          
+          this.ws.onmessage = (event) => {
+            try {
+              const message = JSON.parse(event.data);
+              this.handleMessage(message);
+            } catch (err) {
+              console.error('Error parsing WebSocket message:', err);
+            }
+          };
+          
+          this.ws.onclose = () => {
+            console.log('WebSocket disconnected');
+            this.isConnected = false;
+            statusDot.style.background = 'var(--accent-red)';
+            statusText.textContent = 'Connecting...';
+            this.reconnect();
+          };
+          
+          this.ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            this.isConnected = false;
+            statusDot.style.background = 'var(--accent-red)';
+            statusText.textContent = 'Connection Error';
+          };
+          
+        } catch (err) {
+          console.error('Failed to create WebSocket:', err);
+          statusDot.style.background = 'var(--accent-red)';
+          statusText.textContent = 'WebSocket Failed';
+          this.fallbackToPolling();
+        }
+      }
+      
+      handleMessage(message) {
+        switch (message.type) {
+          case 'initial':
+          case 'update':
+            this.updateUI(message.data);
+            kUpd.textContent = new Date(message.timestamp).toLocaleTimeString();
+            break;
+          case 'ping':
+            // Respond to ping
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+              this.ws.send(JSON.stringify({ type: 'pong' }));
+            }
+            break;
+        }
+      }
+      
+      updateUI(data) {
+        // Update engines without clearing the list
+        this.updateEnginesRealtime(data.engines);
+        
+        // Update streams with stats
+        this.updateStreamsRealtime(data.streams, data.stream_stats);
+        
+        // Update VPN info
+        renderVpnInfo(data.vpn);
+        
+        // Update KPIs
+        kEng.textContent = data.engines.length;
+        kStr.textContent = data.streams.length;
+        
+        const healthyCount = data.engines.filter(e => e.health_status === 'healthy').length;
+        kHealthy.textContent = healthyCount;
+      }
+      
+      updateEnginesRealtime(engines) {
+        // More efficient update: only rebuild if engine count changed significantly
+        const currentCount = engList.children.length;
+        if (Math.abs(currentCount - engines.length) > 2) {
+          // Large change, rebuild completely
+          engList.innerHTML = '';
+          engines.forEach(engine => {
+            engList.appendChild(engineRow(engine));
+          });
+        } else {
+          // Small change, try to update existing items
+          const existingEngines = Array.from(engList.children);
+          const engineMap = new Map(engines.map(e => [e.container_id, e]));
+          
+          // Update existing and remove obsolete
+          existingEngines.forEach(engineEl => {
+            const containerId = engineEl.querySelector('.actions button')?.onclick?.toString().match(/'([^']+)'/)?.[1];
+            if (containerId && engineMap.has(containerId)) {
+              // Update existing engine element
+              const engine = engineMap.get(containerId);
+              const newEl = engineRow(engine);
+              engineEl.replaceWith(newEl);
+              engineMap.delete(containerId);
+            } else {
+              // Remove obsolete engine
+              engineEl.remove();
+            }
+          });
+          
+          // Add new engines
+          engineMap.forEach(engine => {
+            engList.appendChild(engineRow(engine));
+          });
+        }
+      }
+      
+      updateStreamsRealtime(streams, streamStats) {
+        // More efficient update: only rebuild if stream count changed significantly
+        const currentCount = strList.children.length;
+        if (Math.abs(currentCount - streams.length) > 2) {
+          // Large change, rebuild completely
+          strList.innerHTML = '';
+          streams.forEach(stream => {
+            const stats = streamStats[stream.id] || null;
+            strList.appendChild(streamRow(stream, stats));
+          });
+        } else {
+          // Small change, try to update existing items
+          const existingStreams = Array.from(strList.children);
+          const streamMap = new Map(streams.map(s => [s.id, s]));
+          
+          // Update existing and remove obsolete
+          existingStreams.forEach(streamEl => {
+            const streamId = streamEl.querySelector('.stream-id')?.textContent;
+            if (streamId && streamMap.has(streamId)) {
+              // Update existing stream element
+              const stream = streamMap.get(streamId);
+              const stats = streamStats[stream.id] || null;
+              const newEl = streamRow(stream, stats);
+              streamEl.replaceWith(newEl);
+              streamMap.delete(streamId);
+            } else {
+              // Remove obsolete stream
+              streamEl.remove();
+            }
+          });
+          
+          // Add new streams
+          streamMap.forEach(stream => {
+            const stats = streamStats[stream.id] || null;
+            strList.appendChild(streamRow(stream, stats));
+          });
+        }
+      }
+      
+      reconnect() {
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+          setTimeout(() => {
+            this.reconnectAttempts++;
+            console.log(`Reconnecting WebSocket (attempt ${this.reconnectAttempts})`);
+            this.connect();
+          }, this.reconnectDelay * Math.pow(2, this.reconnectAttempts));
+        } else {
+          console.log('Max reconnection attempts reached, falling back to polling');
+          this.fallbackToPolling();
+        }
+      }
+      
+      fallbackToPolling() {
+        this.useWebSocket = false;
+        this.isConnected = false;
+        statusDot.style.background = 'var(--accent-orange)';
+        statusText.textContent = 'Connected (Polling)';
+        
+        // Restart polling
+        refreshAll();
+        restartTimer();
+      }
+      
+      disconnect() {
+        if (this.ws) {
+          this.ws.close();
+          this.ws = null;
+        }
+        this.isConnected = false;
+      }
+      
+      reconnectIfNeeded() {
+        // Reconnect WebSocket when URL changes
+        if (this.useWebSocket) {
+          this.disconnect();
+          setTimeout(() => this.connect(), 100);
+        }
+      }
+    }
+    
+    const wsManager = new WebSocketManager();
 
     // Initialize
     loadPrefs();
     
-    // Set status to polling mode
-    statusDot.style.background = 'var(--accent-green)';
-    statusText.textContent = 'Connected (Polling)';
+    // Try WebSocket connection after preferences are loaded
+    setTimeout(() => {
+      wsManager.connect();
+    }, 100);
     
-    // Start polling
+    // Keep polling as fallback (will be modified when WebSocket connects)
     refreshAll();
     restartTimer();
 

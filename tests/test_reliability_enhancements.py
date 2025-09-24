@@ -166,7 +166,7 @@ def test_free_engines_logic():
     print("\n🧪 Testing free engines autoscaling logic...")
     
     try:
-        from app.services.autoscaler import ensure_minimum_free
+        from app.services.autoscaler import ensure_minimum
         from app.services.state import state
         from app.models.schemas import EngineState, StreamState
         from app.core.config import cfg
@@ -245,7 +245,7 @@ def test_free_engines_logic():
             assert free_count == 1, f"Expected 1 free engine, got {free_count}"
             assert len(used_container_ids) == 1, f"Expected 1 used engine, got {len(used_container_ids)}"
             
-            # The ensure_minimum_free function would normally start more containers here
+            # The ensure_minimum function would normally start more containers here
             # but we're not testing actual container creation, just the logic
             
             print("✓ Free engines calculation is correct")

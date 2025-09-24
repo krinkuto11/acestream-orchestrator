@@ -69,7 +69,7 @@ class DockerMonitor:
                 
                 # Run autoscaling in a thread to avoid blocking
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._ensure_minimum_free_engines)
+                await loop.run_in_executor(None, ensure_minimum)
                 
                 # Also check for engines that can be cleaned up after grace period
                 if cfg.AUTO_DELETE:
@@ -152,25 +152,6 @@ class DockerMonitor:
                             
         except Exception as e:
             logger.error(f"Error syncing with Docker: {e}")
-
-    def _ensure_minimum_free_engines(self):
-        """Ensure minimum number of free (unused) engines are available."""
-        try:
-            from .replica_validator import replica_validator
-            
-            # Use centralized validation to get reliable counts
-            total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
-            
-            deficit = cfg.MIN_REPLICAS - free_count
-            
-            if deficit > 0:
-                logger.info(f"Need {deficit} more free engines (total: {total_running}, used: {used_engines}, free: {free_count}, min_free: {cfg.MIN_REPLICAS})")
-                ensure_minimum()
-            else:
-                logger.debug(f"Sufficient free engines: {free_count} free, {cfg.MIN_REPLICAS} required")
-                
-        except Exception as e:
-            logger.error(f"Error ensuring minimum free engines: {e}")
 
 # Global monitor instance
 docker_monitor = DockerMonitor()
