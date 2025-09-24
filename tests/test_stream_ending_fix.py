@@ -79,7 +79,7 @@ def test_stream_ending_behavior():
         
         # Mock the container operations and autoscaler
         with patch('app.main.stop_container') as mock_stop, \
-             patch('app.services.autoscaler.ensure_minimum_free') as mock_ensure:
+             patch('app.services.autoscaler.ensure_minimum') as mock_ensure:
             
             # Create event for stream ending
             event = StreamEndedEvent(
