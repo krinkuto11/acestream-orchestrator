@@ -22,22 +22,20 @@ Intelligent port caching system:
 - **After**: ~1 API call per minute with cached responses
 - **Improvement**: 50x+ reduction in API calls
 
-## WebSocket Performance
+## Simplified Architecture
 
-### Problem
-Real-time WebSocket service was making blocking VPN status calls every 500ms, regardless of whether clients were connected.
+### Changes Made
+The system has been simplified by removing WebSocket functionality:
+- **Removed WebSocket Service**: Eliminated real-time WebSocket updates
+- **Polling Only**: Panel now uses simple HTTP polling for updates
+- **Reduced Complexity**: Fewer moving parts and dependencies
+- **Improved Reliability**: Less prone to connection issues
 
-### Solution
-Multiple optimizations:
-- **Asynchronous VPN Status**: VPN status calls run in thread pool to avoid blocking
-- **VPN Status Caching**: 5-second cache for VPN status to reduce redundant calls
-- **Client-Aware Processing**: Skip data collection when no WebSocket clients are connected
-- **Timeout Protection**: 1-second timeout prevents hanging on VPN status calls
-
-### Performance Impact
-- **Before**: Potential blocking every 500ms, unnecessary work without clients
-- **After**: Sub-millisecond data collection, no work without clients connected
-- **Improvement**: Non-blocking + resource optimization
+### Benefits
+- **Simpler Deployment**: No WebSocket infrastructure needed
+- **Better Reliability**: HTTP polling is more resilient
+- **Reduced Resource Usage**: Less memory and CPU overhead
+- **Easier Debugging**: Simpler request/response patterns
 
 ## Engine Provisioning Rate Limiting
 
