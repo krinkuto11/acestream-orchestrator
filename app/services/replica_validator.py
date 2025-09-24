@@ -18,8 +18,23 @@ class ReplicaValidator:
         self._last_validation = None
         self._validation_cache_ttl_s = 5  # Cache validation results for 5 seconds
         self._cached_result = None
+        self._sync_lock = None  # Will be initialized as RLock when needed
+        self._last_sync_time = None
+        self._min_sync_interval_s = 2  # Minimum time between synchronization operations
     
-    def get_docker_container_status(self) -> Dict[str, any]:
+    def _get_sync_lock(self):
+        """Get or create the synchronization lock."""
+        if self._sync_lock is None:
+            import threading
+            self._sync_lock = threading.RLock()
+        return self._sync_lock
+    
+    def _get_sync_lock(self):
+        """Get or create the synchronization lock."""
+        if self._sync_lock is None:
+            import threading
+            self._sync_lock = threading.RLock()
+        return self._sync_lock
         """Get comprehensive status from Docker socket."""
         try:
             managed_containers = list_managed()
@@ -59,69 +74,101 @@ class ReplicaValidator:
         Validate state against Docker socket and sync if needed.
         Returns: (total_running, used_engines, free_count)
         """
-        now = datetime.now(timezone.utc)
-        
-        # Use cached result if recent enough and not forcing
-        if (not force_reindex and 
-            self._cached_result and 
-            self._last_validation and 
-            (now - self._last_validation).total_seconds() < self._validation_cache_ttl_s):
-            return self._cached_result
-        
-        # Get current state
-        all_engines = state.list_engines()
-        active_streams = state.list_streams(status="started")
-        docker_status = self.get_docker_container_status()
-        
-        # Find engines currently in use
-        used_container_ids = {stream.container_id for stream in active_streams}
-        
-        # Docker containers as source of truth for total running count
-        total_running = docker_status['total_running']
-        used_engines = len(used_container_ids)
-        free_count = total_running - used_engines
-        
-        # Check for state/Docker discrepancies
-        state_engine_count = len(all_engines)
-        running_container_ids = docker_status['running_container_ids']
-        state_container_ids = {engine.container_id for engine in all_engines}
-        
-        sync_needed = False
-        
-        # Check if counts don't match
-        if state_engine_count != total_running:
-            logger.warning(f"State/Docker engine count mismatch: state={state_engine_count}, docker={total_running}")
-            sync_needed = True
-        
-        # Check for orphaned engines in state
-        orphaned_engines = state_container_ids - running_container_ids
-        if orphaned_engines:
-            logger.info(f"Found {len(orphaned_engines)} orphaned engines in state: {orphaned_engines}")
-            sync_needed = True
-        
-        # Check for engines missing from state
-        missing_engines = running_container_ids - state_container_ids
-        if missing_engines:
-            logger.info(f"Found {len(missing_engines)} Docker containers missing from state: {missing_engines}")
-            sync_needed = True
-        
-        # Perform synchronization if needed
-        if sync_needed or force_reindex:
-            logger.info("Triggering state synchronization with Docker")
-            self._sync_state_with_docker(orphaned_engines, docker_status)
+        # Use synchronization lock to prevent concurrent modifications
+        with self._get_sync_lock():
+            now = datetime.now(timezone.utc)
             
-            # Recalculate after sync
+            # Check if we need to throttle synchronization operations
+            if (not force_reindex and 
+                self._last_sync_time and 
+                (now - self._last_sync_time).total_seconds() < self._min_sync_interval_s):
+                logger.debug("Throttling sync operation - too frequent")
+                if self._cached_result:
+                    return self._cached_result
+            
+            # Use cached result if recent enough and not forcing
+            if (not force_reindex and 
+                self._cached_result and 
+                self._last_validation and 
+                (now - self._last_validation).total_seconds() < self._validation_cache_ttl_s):
+                return self._cached_result
+            
+            # Get current state
             all_engines = state.list_engines()
-            total_running = docker_status['total_running']  # Docker count remains the same
+            active_streams = state.list_streams(status="started")
+            docker_status = self.get_docker_container_status()
+            
+            # Find engines currently in use
+            used_container_ids = {stream.container_id for stream in active_streams}
+            
+            # Docker containers as source of truth for total running count
+            total_running = docker_status['total_running']
+            used_engines = len(used_container_ids)
             free_count = total_running - used_engines
             
-            logger.info(f"After sync: state_engines={len(all_engines)}, docker_running={total_running}, free={free_count}")
-        
-        result = (total_running, used_engines, free_count)
-        self._cached_result = result
-        self._last_validation = now
-        
-        return result
+            # Check for state/Docker discrepancies
+            state_engine_count = len(all_engines)
+            running_container_ids = docker_status['running_container_ids']
+            state_container_ids = {engine.container_id for engine in all_engines}
+            
+            sync_needed = False
+            
+            # Check if counts don't match
+            if state_engine_count != total_running:
+                logger.warning(f"State/Docker engine count mismatch: state={state_engine_count}, docker={total_running}")
+                sync_needed = True
+            
+            # Check for orphaned engines in state
+            orphaned_engines = state_container_ids - running_container_ids
+            if orphaned_engines:
+                logger.info(f"Found {len(orphaned_engines)} orphaned engines in state: {orphaned_engines}")
+                sync_needed = True
+            
+            # Check for engines missing from state
+            missing_engines = running_container_ids - state_container_ids
+            if missing_engines:
+                logger.info(f"Found {len(missing_engines)} Docker containers missing from state: {missing_engines}")
+                sync_needed = True
+            
+            # Perform synchronization if needed
+            if sync_needed or force_reindex:
+                logger.info("Triggering state synchronization with Docker")
+                self._sync_state_with_docker(orphaned_engines, docker_status)
+                # Note: _last_sync_time is updated in request_sync_coordination or here if called directly
+                if not self._last_sync_time or (now - self._last_sync_time).total_seconds() >= self._min_sync_interval_s:
+                    self._last_sync_time = now
+                
+                # Recalculate after sync
+                all_engines = state.list_engines()
+                total_running = docker_status['total_running']  # Docker count remains the same
+                free_count = total_running - used_engines
+                
+                logger.info(f"After sync: state_engines={len(all_engines)}, docker_running={total_running}, free={free_count}")
+            
+            result = (total_running, used_engines, free_count)
+            self._cached_result = result
+            self._last_validation = now
+            
+            return result
+    
+    def request_sync_coordination(self, source: str) -> bool:
+        """
+        Request coordination for sync operations.
+        Returns True if the caller should proceed with sync, False if another sync is in progress.
+        """
+        with self._get_sync_lock():
+            now = datetime.now(timezone.utc)
+            
+            # If a sync happened very recently, skip this one
+            if (self._last_sync_time and 
+                (now - self._last_sync_time).total_seconds() < self._min_sync_interval_s):
+                logger.debug(f"Sync coordination: denying request from {source} - too frequent (last sync: {self._last_sync_time})")
+                return False
+            
+            logger.debug(f"Sync coordination: allowing request from {source}")
+            # Update the last sync time to prevent other rapid requests
+            self._last_sync_time = now
+            return True
     
     def _sync_state_with_docker(self, orphaned_engines: Set[str], docker_status: Dict[str, any]):
         """Synchronize state with Docker containers."""
