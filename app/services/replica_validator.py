@@ -29,36 +29,46 @@ class ReplicaValidator:
             self._sync_lock = threading.RLock()
         return self._sync_lock
     
-    def _get_sync_lock(self):
-        """Get or create the synchronization lock."""
-        if self._sync_lock is None:
-            import threading
-            self._sync_lock = threading.RLock()
-        return self._sync_lock
+    def get_docker_container_status(self) -> Dict[str, any]:
         """Get comprehensive status from Docker socket."""
         try:
             managed_containers = list_managed()
             running_containers = [c for c in managed_containers if c.status == "running"]
             
             container_ids = {c.id for c in running_containers}
-            container_details = {
-                c.id: {
-                    'status': c.status,
-                    'name': c.name,
-                    'labels': c.labels or {},
-                    'created': c.attrs.get('Created', ''),
-                    'ports': c.attrs.get('NetworkSettings', {}).get('Ports', {})
-                }
-                for c in managed_containers
-            }
+            container_details = {}
             
-            return {
+            # Build container details with error handling for each container
+            for c in managed_containers:
+                try:
+                    container_details[c.id] = {
+                        'status': c.status,
+                        'name': c.name,
+                        'labels': c.labels or {},
+                        'created': c.attrs.get('Created', '') if hasattr(c, 'attrs') else '',
+                        'ports': c.attrs.get('NetworkSettings', {}).get('Ports', {}) if hasattr(c, 'attrs') else {}
+                    }
+                except Exception as e:
+                    logger.warning(f"Failed to get details for container {c.id[:12]}: {e}")
+                    container_details[c.id] = {
+                        'status': getattr(c, 'status', 'unknown'),
+                        'name': getattr(c, 'name', 'unknown'),
+                        'labels': {},
+                        'created': '',
+                        'ports': {}
+                    }
+            
+            result = {
                 'total_managed': len(managed_containers),
                 'total_running': len(running_containers),
                 'running_container_ids': container_ids,
                 'container_details': container_details,
                 'containers': running_containers
             }
+            
+            logger.debug(f"Docker status: managed={result['total_managed']}, running={result['total_running']}")
+            return result
+            
         except Exception as e:
             logger.error(f"Failed to get Docker container status: {e}")
             return {
@@ -121,18 +131,18 @@ class ReplicaValidator:
             # Check for orphaned engines in state
             orphaned_engines = state_container_ids - running_container_ids
             if orphaned_engines:
-                logger.info(f"Found {len(orphaned_engines)} orphaned engines in state: {orphaned_engines}")
+                logger.info(f"Found {len(orphaned_engines)} orphaned engines in state: {[e[:12] for e in orphaned_engines]}")
                 sync_needed = True
             
             # Check for engines missing from state
             missing_engines = running_container_ids - state_container_ids
             if missing_engines:
-                logger.info(f"Found {len(missing_engines)} Docker containers missing from state: {missing_engines}")
+                logger.info(f"Found {len(missing_engines)} Docker containers missing from state: {[e[:12] for e in missing_engines]}")
                 sync_needed = True
             
             # Perform synchronization if needed
             if sync_needed or force_reindex:
-                logger.info("Triggering state synchronization with Docker")
+                logger.info(f"Triggering state synchronization with Docker (sync_needed={sync_needed}, force_reindex={force_reindex})")
                 self._sync_state_with_docker(orphaned_engines, docker_status)
                 # Note: _last_sync_time is updated in request_sync_coordination or here if called directly
                 if not self._last_sync_time or (now - self._last_sync_time).total_seconds() >= self._min_sync_interval_s:
@@ -144,6 +154,8 @@ class ReplicaValidator:
                 free_count = total_running - used_engines
                 
                 logger.info(f"After sync: state_engines={len(all_engines)}, docker_running={total_running}, free={free_count}")
+            else:
+                logger.debug(f"No sync needed: state_engines={state_engine_count}, docker_running={total_running}, orphaned={len(orphaned_engines)}, missing={len(missing_engines)}")
             
             result = (total_running, used_engines, free_count)
             self._cached_result = result

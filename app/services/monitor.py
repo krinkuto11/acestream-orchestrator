@@ -124,7 +124,7 @@ class DockerMonitor:
                 # Debounce rapid changes to prevent excessive operations
                 if (self._last_change_time and 
                     (now - self._last_change_time).total_seconds() < self._debounce_interval_s):
-                    logger.debug("Debouncing rapid Docker state changes")
+                    logger.info(f"Debouncing rapid Docker state changes - skipping (last change: {self._last_change_time})")
                     return
                 
                 self._last_change_time = now
@@ -152,6 +152,8 @@ class DockerMonitor:
                 if replica_validator.request_sync_coordination("monitor"):
                     loop = asyncio.get_event_loop()
                     await loop.run_in_executor(None, lambda: replica_validator.validate_and_sync_state(force_reindex=False))
+                else:
+                    logger.info("Monitor sync request denied by coordination - another sync in progress")
             else:
                 # Even if no changes, update last_seen timestamps for existing engines
                 now = state.now()
@@ -168,6 +170,8 @@ class DockerMonitor:
                         # Use async execution to prevent blocking
                         loop = asyncio.get_event_loop()
                         await loop.run_in_executor(None, lambda: replica_validator.validate_and_sync_state(force_reindex=True))
+                    else:
+                        logger.info("Monitor periodic sync request denied by coordination - another sync in progress")
                             
         except Exception as e:
             logger.error(f"Error syncing with Docker: {e}")
