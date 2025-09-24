@@ -20,7 +20,7 @@ class DockerMonitor:
         self._stop = asyncio.Event()
         self._last_container_ids: Set[str] = set()
         self._last_change_time = None
-        self._debounce_interval_s = 1.0  # Debounce rapid changes
+        self._debounce_interval_s = 3.0  # Increased from 1.0 to 3.0 seconds to reduce noise
 
     async def start(self):
         """Start the monitoring tasks."""
