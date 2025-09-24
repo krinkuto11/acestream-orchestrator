@@ -35,6 +35,11 @@ class GluetunMonitor:
         self._port_cache_time: Optional[datetime] = None
         self._port_cache_ttl_seconds: int = cfg.GLUETUN_PORT_CACHE_TTL_S  # Use config value
         
+        # Track health stability to prevent engine restarts during initial startup
+        self._startup_grace_period_s = 60  # 60 second grace period after first healthy status
+        self._first_healthy_time: Optional[datetime] = None
+        self._consecutive_healthy_count = 0
+        
     async def start(self):
         """Start the Gluetun monitoring task."""
         if not cfg.GLUETUN_CONTAINER_NAME:
@@ -63,6 +68,16 @@ class GluetunMonitor:
         while not self._stop.is_set():
             try:
                 current_health = await self._check_gluetun_health()
+                now = datetime.now(timezone.utc)
+                
+                # Track first healthy status and consecutive healthy checks
+                if current_health:
+                    if self._first_healthy_time is None:
+                        self._first_healthy_time = now
+                        logger.info(f"Gluetun first became healthy at {now} - starting startup grace period")
+                    self._consecutive_healthy_count += 1
+                else:
+                    self._consecutive_healthy_count = 0
                 
                 # Detect health status transitions
                 if self._last_health_status is not None and current_health != self._last_health_status:
@@ -126,6 +141,8 @@ class GluetunMonitor:
     
     async def _handle_health_transition(self, old_status: bool, new_status: bool):
         """Handle Gluetun health status transitions."""
+        now = datetime.now(timezone.utc)
+        
         if old_status and not new_status:
             logger.warning("Gluetun VPN became unhealthy")
             # Invalidate port cache when VPN becomes unhealthy
@@ -135,10 +152,14 @@ class GluetunMonitor:
             # Invalidate port cache to force fresh port check on VPN reconnection
             self.invalidate_port_cache()
             
-            # If configured, trigger engine restart on VPN reconnection
-            if cfg.VPN_RESTART_ENGINES_ON_RECONNECT:
-                logger.info("VPN reconnected - triggering AceStream engine restart")
+            # Only restart engines if this is a real reconnection, not initial startup
+            should_restart_engines = self._should_restart_engines_on_reconnection(now)
+            
+            if cfg.VPN_RESTART_ENGINES_ON_RECONNECT and should_restart_engines:
+                logger.info("VPN reconnected after stable period - triggering AceStream engine restart")
                 await self._restart_acestream_engines()
+            elif cfg.VPN_RESTART_ENGINES_ON_RECONNECT and not should_restart_engines:
+                logger.info("VPN became healthy but skipping engine restart (startup grace period or insufficient stability)")
         
         # Call registered callbacks
         for callback in self._health_transition_callbacks:
@@ -149,6 +170,34 @@ class GluetunMonitor:
                     callback(old_status, new_status)
             except Exception as e:
                 logger.error(f"Error in health transition callback: {e}")
+    
+    def _should_restart_engines_on_reconnection(self, now: datetime) -> bool:
+        """
+        Determine if engines should be restarted on VPN reconnection.
+        
+        This prevents unnecessary engine restarts during initial startup by requiring:
+        1. A minimum grace period since first healthy status
+        2. Sufficient consecutive healthy checks before the unhealthy period
+        """
+        # If we've never been healthy before, this is initial startup
+        if self._first_healthy_time is None:
+            return False
+        
+        # Check if we're still in the startup grace period
+        time_since_first_healthy = (now - self._first_healthy_time).total_seconds()
+        if time_since_first_healthy < self._startup_grace_period_s:
+            logger.debug(f"Still in startup grace period ({time_since_first_healthy:.1f}s < {self._startup_grace_period_s}s)")
+            return False
+        
+        # Additional check: only restart if we had sufficient stability before going unhealthy
+        # This prevents restarts from brief network blips during startup
+        min_stable_checks = 5  # At least 5 consecutive healthy checks (25s at 5s intervals)
+        if self._consecutive_healthy_count < min_stable_checks:
+            logger.debug(f"Insufficient stability before reconnection ({self._consecutive_healthy_count} < {min_stable_checks} checks)")
+            return False
+        
+        logger.info(f"VPN reconnection detected: stable for {time_since_first_healthy:.1f}s with {self._consecutive_healthy_count} healthy checks")
+        return True
     
     async def _restart_acestream_engines(self):
         """Restart all managed AceStream engines after VPN reconnection."""
