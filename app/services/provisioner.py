@@ -292,7 +292,8 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         "CONF": final_conf,
         "HTTP_PORT": str(c_http),
         "HTTPS_PORT": str(c_https),
-        "BIND_ALL": "true"
+        "BIND_ALL": "true",
+        "INTERNAL_BUFFERING":"true"
     }
     
     # Add P2P_PORT when using Gluetun
