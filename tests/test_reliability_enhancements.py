@@ -82,9 +82,11 @@ def test_grace_period():
         state.streams.clear()
         _empty_engine_timestamps.clear()
         
-        # Set short grace period for testing
+        # Set short grace period for testing and temporarily disable MIN_REPLICAS constraint
         original_grace = cfg.ENGINE_GRACE_PERIOD_S
+        original_min_replicas = cfg.MIN_REPLICAS
         cfg.ENGINE_GRACE_PERIOD_S = 2
+        cfg.MIN_REPLICAS = 0  # Disable MIN_REPLICAS constraint for this test
         
         container_id = "test_grace_container"
         
@@ -143,16 +145,18 @@ def test_grace_period():
         assert container_id not in _empty_engine_timestamps, "Grace period tracking should be cleared"
         print("✓ Engine can be stopped after grace period")
         
-        # Restore original grace period
+        # Restore original grace period and MIN_REPLICAS
         cfg.ENGINE_GRACE_PERIOD_S = original_grace
+        cfg.MIN_REPLICAS = original_min_replicas
         
         print("\n🎯 Test PASSED: Grace period functionality works correctly")
         return True
         
     except Exception as e:
-        # Restore original grace period
+        # Restore original grace period and MIN_REPLICAS
         try:
             cfg.ENGINE_GRACE_PERIOD_S = original_grace
+            cfg.MIN_REPLICAS = original_min_replicas
         except:
             pass
         print(f"\n💥 Test FAILED: {e}")
