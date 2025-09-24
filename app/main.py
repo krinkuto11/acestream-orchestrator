@@ -36,13 +36,14 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     cleanup_on_shutdown()  # Clean any existing state and containers after DB is ready
     
+    # Load state from database first, then provision, then reindex to ensure consistency
+    load_state_from_db()
     ensure_minimum()
     asyncio.create_task(collector.start())
     asyncio.create_task(docker_monitor.start())  # Start Docker monitoring
     asyncio.create_task(health_monitor.start())  # Start health monitoring
     asyncio.create_task(realtime_service.start())  # Start WebSocket real-time service
-    load_state_from_db()
-    reindex_existing()
+    reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
     yield
     

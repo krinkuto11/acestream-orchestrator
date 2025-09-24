@@ -102,11 +102,32 @@ def ensure_minimum():
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    # If we're already in an event loop, create a task
-                    asyncio.create_task(provision_engines())
+                    # If we're already in an event loop, create a task and add reindexing callback
+                    async def provision_and_reindex():
+                        await provision_engines()
+                        # Reindex after async provisioning
+                        if deficit > 0:
+                            logger.info("Reindexing after async provisioning to pick up new containers")
+                            try:
+                                from .reindex import reindex_existing
+                                reindex_existing()
+                            except Exception as e:
+                                logger.error(f"Failed to reindex after async provisioning: {e}")
+                    
+                    asyncio.create_task(provision_and_reindex())
                 else:
-                    # If not in event loop, run it
+                    # If not in event loop, run it and then reindex
                     loop.run_until_complete(provision_engines())
+                    
+                    # Reindex after provisioning
+                    if deficit > 0:
+                        logger.info("Reindexing after provisioning to pick up new containers")
+                        try:
+                            from .reindex import reindex_existing
+                            reindex_existing()
+                        except Exception as e:
+                            logger.error(f"Failed to reindex after provisioning: {e}")
+                            
             except RuntimeError:
                 # Fallback to synchronous provisioning if async fails
                 logger.warning("Async provisioning not available, falling back to synchronous")
@@ -116,6 +137,15 @@ def ensure_minimum():
                         logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({i+1}/{deficit}) - HTTP port: {response.host_http_port}")
                     except Exception as e:
                         logger.error(f"Failed to start AceStream container {i+1}/{deficit}: {e}")
+            
+            # After provisioning, immediately reindex to pick up new containers
+            if deficit > 0:
+                logger.info("Reindexing after provisioning to pick up new containers")
+                try:
+                    from .reindex import reindex_existing
+                    reindex_existing()
+                except Exception as e:
+                    logger.error(f"Failed to reindex after provisioning: {e}")
                 
     except Exception as e:
         logger.error(f"Error in ensure_minimum: {e}")
@@ -211,9 +241,31 @@ def ensure_minimum_free():
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    asyncio.create_task(provision_free_engines())
+                    # If we're already in an event loop, create a task and add reindexing callback
+                    async def provision_free_and_reindex():
+                        await provision_free_engines()
+                        # Reindex after async provisioning
+                        if deficit > 0:
+                            logger.info("Reindexing after free engine provisioning to pick up new containers")
+                            try:
+                                from .reindex import reindex_existing
+                                reindex_existing()
+                            except Exception as e:
+                                logger.error(f"Failed to reindex after free engine provisioning: {e}")
+                    
+                    asyncio.create_task(provision_free_and_reindex())
                 else:
                     loop.run_until_complete(provision_free_engines())
+                    
+                    # Reindex after provisioning
+                    if deficit > 0:
+                        logger.info("Reindexing after free engine provisioning to pick up new containers")
+                        try:
+                            from .reindex import reindex_existing
+                            reindex_existing()
+                        except Exception as e:
+                            logger.error(f"Failed to reindex after free engine provisioning: {e}")
+                            
             except RuntimeError:
                 # Fallback to synchronous
                 logger.warning("Async provisioning not available for free engines, falling back to synchronous")
@@ -223,6 +275,15 @@ def ensure_minimum_free():
                         logger.info(f"Started AceStream container {response.container_id[:12]} for free pool ({i+1}/{deficit}) - HTTP port: {response.host_http_port}")
                     except Exception as e:
                         logger.error(f"Failed to start AceStream container for free pool: {e}")
+                
+                # Reindex after synchronous provisioning
+                if deficit > 0:
+                    logger.info("Reindexing after synchronous free engine provisioning to pick up new containers")
+                    try:
+                        from .reindex import reindex_existing
+                        reindex_existing()
+                    except Exception as e:
+                        logger.error(f"Failed to reindex after synchronous free engine provisioning: {e}")
         else:
             logger.debug(f"Sufficient free engines: {free_count} free, {cfg.MIN_REPLICAS} required")
                 
@@ -249,6 +310,16 @@ def scale_to(demand: int):
                 logger.info(f"Started AceStream container {response.container_id[:12]} for scale-up ({i+1}/{deficit}) - HTTP port: {response.host_http_port}")
             except Exception as e:
                 logger.error(f"Failed to start AceStream container for scale-up: {e}")
+        
+        # Reindex after scaling up to pick up new containers
+        if deficit > 0:
+            logger.info("Reindexing after scale-up to pick up new containers")
+            try:
+                from .reindex import reindex_existing
+                reindex_existing()
+            except Exception as e:
+                logger.error(f"Failed to reindex after scale-up: {e}")
+                
     elif running_count > desired:
         excess = running_count - desired
         logger.info(f"Scaling down: checking {excess} containers for safe removal (current: {running_count}, desired: {desired})")

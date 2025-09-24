@@ -322,7 +322,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
             ports[f"{c_https}/tcp"] = host_https
             labels[HOST_LABEL_HTTPS] = str(host_https)
 
-    # Generate a meaningful container name
+    # Generate a meaningful container name with retry logic for conflicts
     container_name = generate_container_name("acestream")
 
     # Determine network configuration based on Gluetun setup
@@ -345,7 +345,24 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     if ports is not None:
         container_args["ports"] = ports
     
-    cont = safe(cli.containers.run, **container_args)
+    # Retry container creation with different names if there are conflicts
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            cont = safe(cli.containers.run, **container_args)
+            break
+        except RuntimeError as e:
+            # Check if this is a naming conflict
+            if "Conflict" in str(e) and "name" in str(e).lower() and attempt < max_retries - 1:
+                # Generate a new name and try again
+                import time
+                time.sleep(0.1)  # Small delay to avoid rapid conflicts
+                container_name = generate_container_name("acestream")
+                container_args["name"] = container_name
+                continue
+            else:
+                # Not a naming conflict or max retries reached, re-raise
+                raise
     deadline = time.time() + cfg.STARTUP_TIMEOUT_S
     cont.reload()
     while cont.status not in ("running",) and time.time() < deadline:
