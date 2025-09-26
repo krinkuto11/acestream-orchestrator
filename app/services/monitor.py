@@ -32,8 +32,8 @@ class DockerMonitor:
         self._task = asyncio.create_task(self._monitor_docker())
         self._autoscale_task = asyncio.create_task(self._periodic_autoscale())
         
-        # Start Gluetun monitoring if configured
-        await gluetun_monitor.start()
+        # Gluetun monitoring is now started earlier in main.py to avoid race condition
+        # with ensure_minimum() during startup
         
         logger.info(f"Docker monitor started with {cfg.MONITOR_INTERVAL_S}s interval")
 
@@ -45,8 +45,7 @@ class DockerMonitor:
         if self._autoscale_task:
             await self._autoscale_task
         
-        # Stop Gluetun monitoring
-        await gluetun_monitor.stop()
+        # Gluetun monitoring is now stopped in main.py
 
     async def _monitor_docker(self):
         """Main monitoring loop that syncs state with Docker."""
