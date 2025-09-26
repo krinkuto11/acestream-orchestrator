@@ -25,6 +25,7 @@ from .services.auth import require_api_key
 from .services.db import engine
 from .models.db_models import Base
 from .services.reindex import reindex_existing
+from .services.gluetun import gluetun_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,17 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     cleanup_on_shutdown()  # Clean any existing state and containers after DB is ready
     
-    # Load state from database first, then provision, then reindex to ensure consistency
+    # Load state from database first
     load_state_from_db()
+    
+    # Start Gluetun monitoring BEFORE provisioning to avoid race condition
+    # This ensures health checks work when ensure_minimum() tries to start engines
+    await gluetun_monitor.start()
+    
+    # Now provision engines with Gluetun health checks working
     ensure_minimum()
+    
+    # Start remaining monitoring services
     asyncio.create_task(collector.start())
     asyncio.create_task(docker_monitor.start())  # Start Docker monitoring
     asyncio.create_task(health_monitor.start())  # Start health monitoring
@@ -50,6 +59,7 @@ async def lifespan(app: FastAPI):
     await collector.stop()
     await docker_monitor.stop()  # Stop Docker monitoring
     await health_monitor.stop()  # Stop health monitoring
+    await gluetun_monitor.stop()  # Stop Gluetun monitoring
     
     # Give a small delay to ensure any pending operations complete
     await asyncio.sleep(0.1)
