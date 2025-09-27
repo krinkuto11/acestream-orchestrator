@@ -45,6 +45,21 @@ async def lifespan(app: FastAPI):
     # This ensures health checks work when ensure_minimum() tries to start engines
     await gluetun_monitor.start()
     
+    # Wait for Gluetun to become healthy before provisioning engines
+    # This prevents the slow startup issue where each engine creation waits 30s
+    if cfg.GLUETUN_CONTAINER_NAME:
+        logger.info("Waiting for Gluetun to become healthy before provisioning engines...")
+        max_wait_time = 60  # Maximum 60 seconds to wait for Gluetun
+        wait_start = asyncio.get_event_loop().time()
+        
+        while (asyncio.get_event_loop().time() - wait_start) < max_wait_time:
+            if gluetun_monitor.is_healthy() is True:
+                logger.info("Gluetun is healthy - proceeding with engine provisioning")
+                break
+            await asyncio.sleep(1)
+        else:
+            logger.warning(f"Gluetun did not become healthy within {max_wait_time}s - proceeding anyway")
+    
     # Now provision engines with Gluetun health checks working
     ensure_minimum()
     
