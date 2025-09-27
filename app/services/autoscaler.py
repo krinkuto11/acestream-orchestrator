@@ -4,6 +4,7 @@ from ..core.config import cfg
 from .provisioner import StartRequest, start_container, AceProvisionRequest, start_acestream
 from .health import list_managed
 from .state import state
+from .circuit_breaker import circuit_breaker_manager
 import logging
 import asyncio
 from datetime import datetime, timedelta
@@ -14,22 +15,55 @@ logger = logging.getLogger(__name__)
 # Track when engines became empty for grace period implementation
 _empty_engine_timestamps = {}
 
+def _count_healthy_engines() -> int:
+    """Count engines that are currently healthy."""
+    try:
+        from .health import check_acestream_health
+        engines = state.list_engines()
+        healthy_count = 0
+        
+        for engine in engines:
+            if check_acestream_health(engine.host, engine.port) == "healthy":
+                healthy_count += 1
+        
+        return healthy_count
+    except Exception as e:
+        logger.debug(f"Error counting healthy engines: {e}")
+        # Fallback to total engine count if health check fails
+        return len(state.list_engines())
+
 def ensure_minimum():
     """Ensure minimum number of replicas are running with resilient synchronous provisioning."""
     try:
         from .replica_validator import replica_validator
         
+        # Check circuit breaker before attempting provisioning
+        if not circuit_breaker_manager.can_provision("general"):
+            logger.warning("Circuit breaker is OPEN - skipping provisioning attempt")
+            return
+        
         # Get fresh Docker status to ensure accurate count
         docker_status = replica_validator.get_docker_container_status()
         running_count = docker_status['total_running']
         
-        deficit = cfg.MIN_REPLICAS - running_count
+        # Consider health status when calculating need
+        healthy_count = _count_healthy_engines()
+        
+        # Prioritize healthy engines over total count for service availability
+        if healthy_count < cfg.MIN_REPLICAS:
+            deficit = cfg.MIN_REPLICAS - healthy_count
+            logger.info(f"Starting {deficit} AceStream containers for health availability (healthy: {healthy_count}, total running: {running_count}, min required: {cfg.MIN_REPLICAS})")
+        else:
+            deficit = cfg.MIN_REPLICAS - running_count
+            if deficit <= 0:
+                return  # Already have enough engines
+            logger.info(f"Starting {deficit} AceStream containers to meet MIN_REPLICAS={cfg.MIN_REPLICAS} (currently running: {running_count})")
         
         if deficit > 0:
-            logger.info(f"Starting {deficit} AceStream containers to meet MIN_REPLICAS={cfg.MIN_REPLICAS} (currently running: {running_count})")
-            
             # Use simple synchronous provisioning for reliability
             success_count = 0
+            failure_count = 0
+            
             for i in range(deficit):
                 try:
                     logger.debug(f"Attempting to start container {i+1}/{deficit}")
@@ -37,6 +71,7 @@ def ensure_minimum():
                     
                     if response and response.container_id:
                         success_count += 1
+                        circuit_breaker_manager.record_provisioning_success("general")
                         logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({success_count}/{deficit}) - HTTP port: {response.host_http_port}")
                         
                         # Immediately verify the container is running
@@ -49,9 +84,13 @@ def ensure_minimum():
                         else:
                             logger.warning(f"Container {response.container_id[:12]} may not be running yet")
                     else:
+                        failure_count += 1
+                        circuit_breaker_manager.record_provisioning_failure("general")
                         logger.error(f"Failed to start AceStream container {i+1}/{deficit}: No response or container ID")
                         
                 except Exception as e:
+                    failure_count += 1
+                    circuit_breaker_manager.record_provisioning_failure("general")
                     logger.error(f"Failed to start AceStream container {i+1}/{deficit}: {e}")
                     # Continue with next container instead of failing completely
                     continue
@@ -68,6 +107,11 @@ def ensure_minimum():
                     logger.error(f"Failed to reindex after provisioning: {e}")
             else:
                 logger.error(f"Failed to start any containers out of {deficit} needed")
+                
+            # Log circuit breaker status if there were failures
+            if failure_count > 0:
+                breaker_status = circuit_breaker_manager.get_status()
+                logger.debug(f"Circuit breaker status after {failure_count} failures: {breaker_status['general']['state']}")
                 
     except Exception as e:
         logger.error(f"Error in ensure_minimum: {e}")

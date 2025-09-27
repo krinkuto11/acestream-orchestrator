@@ -201,8 +201,8 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         
         # Check if Gluetun is healthy before starting engine
         try:
-            # Use synchronous health checking to avoid event loop conflicts
-            timeout = 30
+            # Use a shorter timeout since we should have verified Gluetun health during startup
+            timeout = 5  # Reduced from 30 to 5 seconds
             start_time = time.time()
             
             while (time.time() - start_time) < timeout:
@@ -219,7 +219,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
                     except Exception:
                         pass
                 
-                time.sleep(1)
+                time.sleep(0.5)  # Check more frequently since timeout is shorter
             else:
                 # Timeout reached without becoming healthy
                 raise RuntimeError(f"Gluetun VPN container '{cfg.GLUETUN_CONTAINER_NAME}' is not healthy - cannot start AceStream engine")

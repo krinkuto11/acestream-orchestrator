@@ -15,6 +15,7 @@ from .services.autoscaler import ensure_minimum, scale_to, can_stop_engine
 from .services.provisioner import StartRequest, start_container, stop_container, AceProvisionRequest, AceProvisionResponse, start_acestream, HOST_LABEL_HTTP
 from .services.health import sweep_idle
 from .services.health_monitor import health_monitor
+from .services.health_manager import health_manager
 from .services.inspect import inspect_container, ContainerNotFound
 from .services.state import state, load_state_from_db, cleanup_on_shutdown
 from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot
@@ -44,13 +45,29 @@ async def lifespan(app: FastAPI):
     # This ensures health checks work when ensure_minimum() tries to start engines
     await gluetun_monitor.start()
     
+    # Wait for Gluetun to become healthy before provisioning engines
+    # This prevents the slow startup issue where each engine creation waits 30s
+    if cfg.GLUETUN_CONTAINER_NAME:
+        logger.info("Waiting for Gluetun to become healthy before provisioning engines...")
+        max_wait_time = 60  # Maximum 60 seconds to wait for Gluetun
+        wait_start = asyncio.get_event_loop().time()
+        
+        while (asyncio.get_event_loop().time() - wait_start) < max_wait_time:
+            if gluetun_monitor.is_healthy() is True:
+                logger.info("Gluetun is healthy - proceeding with engine provisioning")
+                break
+            await asyncio.sleep(1)
+        else:
+            logger.warning(f"Gluetun did not become healthy within {max_wait_time}s - proceeding anyway")
+    
     # Now provision engines with Gluetun health checks working
     ensure_minimum()
     
     # Start remaining monitoring services
     asyncio.create_task(collector.start())
     asyncio.create_task(docker_monitor.start())  # Start Docker monitoring
-    asyncio.create_task(health_monitor.start())  # Start health monitoring
+    asyncio.create_task(health_monitor.start())  # Start health monitoring  
+    asyncio.create_task(health_manager.start())  # Start proactive health management
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
     yield
@@ -59,6 +76,7 @@ async def lifespan(app: FastAPI):
     await collector.stop()
     await docker_monitor.stop()  # Stop Docker monitoring
     await health_monitor.stop()  # Stop health monitoring
+    await health_manager.stop()  # Stop health management
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
     
     # Give a small delay to ensure any pending operations complete
@@ -245,5 +263,17 @@ def by_label(key: str, value: str):
 def get_vpn_status_endpoint():
     """Get VPN (Gluetun) status information."""
     return get_vpn_status()
+
+@app.get("/health/status")
+def get_health_status_endpoint():
+    """Get detailed health status and management information."""
+    return health_manager.get_health_summary()
+
+@app.post("/health/circuit-breaker/reset", dependencies=[Depends(require_api_key)])
+def reset_circuit_breaker(operation_type: Optional[str] = None):
+    """Reset circuit breakers (for manual intervention)."""
+    from .services.circuit_breaker import circuit_breaker_manager
+    circuit_breaker_manager.force_reset(operation_type)
+    return {"message": f"Circuit breaker {'for ' + operation_type if operation_type else 'all'} reset successfully"}
 
 # WebSocket endpoint removed - using simple polling approach
