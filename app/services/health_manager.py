@@ -15,6 +15,7 @@ from .state import state
 from .health import check_acestream_health, list_managed
 from .provisioner import AceProvisionRequest, start_acestream, stop_container
 from .autoscaler import ensure_minimum
+from .circuit_breaker import circuit_breaker_manager
 from ..core.config import cfg
 
 logger = logging.getLogger(__name__)
@@ -201,6 +202,12 @@ class HealthManager:
         """Start new engines to replace unhealthy ones or meet minimum requirements."""
         loop = asyncio.get_event_loop()
         
+        # Check circuit breaker before attempting replacement
+        if not circuit_breaker_manager.can_provision("replacement"):
+            logger.warning("Replacement circuit breaker is OPEN - skipping replacement attempt")
+            return
+        
+        success_count = 0
         for i in range(count):
             try:
                 logger.info(f"Starting replacement engine {i+1}/{count}")
@@ -213,21 +220,31 @@ class HealthManager:
                 )
                 
                 if response and response.container_id:
+                    success_count += 1
+                    circuit_breaker_manager.record_provisioning_success("replacement")
                     logger.info(f"Successfully started replacement engine {response.container_id[:12]}")
                     # Initialize health tracking for new engine
                     self._engine_health[response.container_id] = EngineHealthStatus(response.container_id)
                 else:
+                    circuit_breaker_manager.record_provisioning_failure("replacement")
                     logger.error(f"Failed to start replacement engine {i+1}/{count}")
                     
             except Exception as e:
+                circuit_breaker_manager.record_provisioning_failure("replacement")
                 logger.error(f"Error starting replacement engine {i+1}/{count}: {e}")
                 
         # Trigger reindexing to pick up new containers
-        try:
-            from .reindex import reindex_existing
-            await loop.run_in_executor(None, reindex_existing)
-        except Exception as e:
-            logger.error(f"Failed to reindex after starting replacement engines: {e}")
+        if success_count > 0:
+            try:
+                from .reindex import reindex_existing
+                await loop.run_in_executor(None, reindex_existing)
+            except Exception as e:
+                logger.error(f"Failed to reindex after starting replacement engines: {e}")
+        
+        # Log circuit breaker status
+        if success_count < count:
+            breaker_status = circuit_breaker_manager.get_status()
+            logger.debug(f"Replacement circuit breaker status: {breaker_status['replacement']['state']}")
     
     async def _replace_engine(self, engine_to_replace):
         """Replace a specific unhealthy engine."""
@@ -302,7 +319,8 @@ class HealthManager:
             "unhealthy_engines": unhealthy_count,
             "marked_for_replacement": marked_for_replacement,
             "minimum_required": cfg.MIN_REPLICAS,
-            "health_check_interval": self.check_interval
+            "health_check_interval": self.check_interval,
+            "circuit_breakers": circuit_breaker_manager.get_status()
         }
 
 # Global health manager instance

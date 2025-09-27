@@ -254,4 +254,11 @@ def get_health_status_endpoint():
     """Get detailed health status and management information."""
     return health_manager.get_health_summary()
 
+@app.post("/health/circuit-breaker/reset", dependencies=[Depends(require_api_key)])
+def reset_circuit_breaker(operation_type: Optional[str] = None):
+    """Reset circuit breakers (for manual intervention)."""
+    from .services.circuit_breaker import circuit_breaker_manager
+    circuit_breaker_manager.force_reset(operation_type)
+    return {"message": f"Circuit breaker {'for ' + operation_type if operation_type else 'all'} reset successfully"}
+
 # WebSocket endpoint removed - using simple polling approach

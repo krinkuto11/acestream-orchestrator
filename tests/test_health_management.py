@@ -145,9 +145,12 @@ def test_health_summary():
     from app.models.schemas import EngineState
     
     with patch('app.services.health_manager.state') as mock_state, \
-         patch('app.services.health_manager.cfg') as mock_cfg:
+         patch('app.services.health_manager.cfg') as mock_cfg, \
+         patch('app.services.health_manager.circuit_breaker_manager') as mock_cb:
         
         mock_cfg.MIN_REPLICAS = 3
+        mock_cfg.HEALTH_FAILURE_THRESHOLD = 3
+        mock_cb.get_status.return_value = {"general": {"state": "closed"}}
         
         # Create mock engines
         engines = [
