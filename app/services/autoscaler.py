@@ -14,6 +14,23 @@ logger = logging.getLogger(__name__)
 # Track when engines became empty for grace period implementation
 _empty_engine_timestamps = {}
 
+def _count_healthy_engines() -> int:
+    """Count engines that are currently healthy."""
+    try:
+        from .health import check_acestream_health
+        engines = state.list_engines()
+        healthy_count = 0
+        
+        for engine in engines:
+            if check_acestream_health(engine.host, engine.port) == "healthy":
+                healthy_count += 1
+        
+        return healthy_count
+    except Exception as e:
+        logger.debug(f"Error counting healthy engines: {e}")
+        # Fallback to total engine count if health check fails
+        return len(state.list_engines())
+
 def ensure_minimum():
     """Ensure minimum number of replicas are running with resilient synchronous provisioning."""
     try:
@@ -23,11 +40,20 @@ def ensure_minimum():
         docker_status = replica_validator.get_docker_container_status()
         running_count = docker_status['total_running']
         
-        deficit = cfg.MIN_REPLICAS - running_count
+        # Consider health status when calculating need
+        healthy_count = _count_healthy_engines()
+        
+        # Prioritize healthy engines over total count for service availability
+        if healthy_count < cfg.MIN_REPLICAS:
+            deficit = cfg.MIN_REPLICAS - healthy_count
+            logger.info(f"Starting {deficit} AceStream containers for health availability (healthy: {healthy_count}, total running: {running_count}, min required: {cfg.MIN_REPLICAS})")
+        else:
+            deficit = cfg.MIN_REPLICAS - running_count
+            if deficit <= 0:
+                return  # Already have enough engines
+            logger.info(f"Starting {deficit} AceStream containers to meet MIN_REPLICAS={cfg.MIN_REPLICAS} (currently running: {running_count})")
         
         if deficit > 0:
-            logger.info(f"Starting {deficit} AceStream containers to meet MIN_REPLICAS={cfg.MIN_REPLICAS} (currently running: {running_count})")
-            
             # Use simple synchronous provisioning for reliability
             success_count = 0
             for i in range(deficit):

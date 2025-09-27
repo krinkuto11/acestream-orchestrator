@@ -5,6 +5,12 @@ from .state import state
 logger = logging.getLogger(__name__)
 
 class HealthMonitor:
+    """
+    Basic health monitoring service that updates engine health status.
+    
+    Note: This works alongside the HealthManager service which handles
+    proactive engine replacement and availability management.
+    """
     def __init__(self, check_interval: int = 30):
         self.check_interval = check_interval
         self._task = None

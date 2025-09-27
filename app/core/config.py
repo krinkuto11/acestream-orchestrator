@@ -20,6 +20,12 @@ class Cfg(BaseModel):
     MONITOR_INTERVAL_S: int = int(os.getenv("MONITOR_INTERVAL_S", 10))
     ENGINE_GRACE_PERIOD_S: int = int(os.getenv("ENGINE_GRACE_PERIOD_S", 30))
     AUTOSCALE_INTERVAL_S: int = int(os.getenv("AUTOSCALE_INTERVAL_S", 30))
+    
+    # Health management configuration
+    HEALTH_CHECK_INTERVAL_S: int = int(os.getenv("HEALTH_CHECK_INTERVAL_S", 20))
+    HEALTH_FAILURE_THRESHOLD: int = int(os.getenv("HEALTH_FAILURE_THRESHOLD", 3))
+    HEALTH_UNHEALTHY_GRACE_PERIOD_S: int = int(os.getenv("HEALTH_UNHEALTHY_GRACE_PERIOD_S", 60))
+    HEALTH_REPLACEMENT_COOLDOWN_S: int = int(os.getenv("HEALTH_REPLACEMENT_COOLDOWN_S", 60))
 
     # Gluetun VPN integration
     GLUETUN_CONTAINER_NAME: str | None = os.getenv("GLUETUN_CONTAINER_NAME")
