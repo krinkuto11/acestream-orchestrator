@@ -88,6 +88,9 @@ class State:
         return st
 
     def on_stream_ended(self, evt: StreamEndedEvent) -> Optional[StreamState]:
+        engine_became_idle = False
+        container_id_for_cleanup = None
+        
         with self._lock:
             st: Optional[StreamState] = None
             if evt.stream_id and evt.stream_id in self.streams:
@@ -103,6 +106,10 @@ class State:
             eng = self.engines.get(st.container_id)
             if eng and st.id in eng.streams:
                 eng.streams.remove(st.id)
+                # Check if engine has no more active streams
+                if len(eng.streams) == 0:
+                    engine_became_idle = True
+                    container_id_for_cleanup = st.container_id
                 
         try:
             with SessionLocal() as s:
@@ -112,6 +119,16 @@ class State:
         except Exception:
             # Database operation failed, but we can continue since we've updated memory state
             pass
+        
+        # Clear AceStream cache when engine becomes idle (outside of lock to avoid blocking)
+        if engine_became_idle and container_id_for_cleanup:
+            try:
+                from ..services.provisioner import clear_acestream_cache
+                logger.info(f"Engine {container_id_for_cleanup[:12]} has no active streams, clearing cache")
+                clear_acestream_cache(container_id_for_cleanup)
+            except Exception as e:
+                logger.warning(f"Failed to clear cache for idle engine {container_id_for_cleanup[:12]}: {e}")
+        
         return st
 
     def list_engines(self) -> List[EngineState]:

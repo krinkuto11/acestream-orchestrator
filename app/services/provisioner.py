@@ -1,8 +1,11 @@
 import time
+import logging
 from pydantic import BaseModel
 from .docker_client import get_client, safe
 from ..core.config import cfg
 from .ports import alloc
+
+logger = logging.getLogger(__name__)
 
 ACESTREAM_LABEL_HTTP = "acestream.http_port"
 ACESTREAM_LABEL_HTTPS = "acestream.https_port"
@@ -97,6 +100,39 @@ def _release_ports_from_labels(labels: dict):
         try:
             cp = labels.get(ACESTREAM_LABEL_HTTP); alloc.free_gluetun_port(int(cp) if cp else None)
         except Exception: pass
+
+def clear_acestream_cache(container_id: str) -> bool:
+    """
+    Clear the AceStream cache in a container.
+    
+    Args:
+        container_id: The ID of the container to clear cache in
+        
+    Returns:
+        bool: True if cache was cleared successfully, False otherwise
+    """
+    try:
+        cli = get_client()
+        cont = cli.containers.get(container_id)
+        
+        # Check if container is running
+        if cont.status != "running":
+            logger.debug(f"Container {container_id[:12]} is not running, skipping cache cleanup")
+            return False
+        
+        # Execute cache cleanup command
+        logger.info(f"Clearing AceStream cache for container {container_id[:12]}")
+        result = cont.exec_run("rm -rf /home/appuser/.ACEStream/.acestream_cache", demux=False)
+        
+        if result.exit_code == 0:
+            logger.info(f"Successfully cleared AceStream cache for container {container_id[:12]}")
+            return True
+        else:
+            logger.warning(f"Cache cleanup command returned non-zero exit code {result.exit_code} for container {container_id[:12]}")
+            return False
+    except Exception as e:
+        logger.warning(f"Failed to clear AceStream cache for container {container_id[:12]}: {e}")
+        return False
 
 def stop_container(container_id: str):
     cli = get_client()
