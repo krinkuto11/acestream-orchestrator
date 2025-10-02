@@ -100,10 +100,11 @@ requirements.txt
 
 ## Operations & Monitoring
 * [Health Monitoring](docs/HEALTH_MONITORING.md)
+* [Troubleshooting](docs/TROUBLESHOOTING.md)
+* **[Troubleshooting Integration Issues](docs/TROUBLESHOOTING_INTEGRATION.md)** - Fix communication issues under load
 * [Database Schema](docs/DB_SCHEMA.md)
 * [Deployment](docs/DEPLOY.md)
 * [Operations](docs/OPERATIONS.md)
-* [Troubleshooting](docs/TROUBLESHOOTING.md)
 * [Security](docs/SECURITY.md)
 * [Gluetun VPN Integration](docs/GLUETUN_INTEGRATION.md)
 * [Performance Optimizations](docs/PERFORMANCE.md)
