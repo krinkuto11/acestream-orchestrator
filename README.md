@@ -29,7 +29,13 @@ This orchestrator works seamlessly with **[Acexy](acexy/)**, a high-performance 
 - **Auto-Provisioning**: Orchestrator provisions engines on-demand
 - **High Availability**: Graceful fallback and fault isolation
 
-**Architecture Decision:** Acexy and Orchestrator are **intentionally separate services** for optimal performance, scalability, and reliability. See [Architecture Analysis](docs/RECOMMENDATION_SUMMARY.md) for details.
+**Architecture Decision:** Acexy and Orchestrator are **intentionally separate services** for optimal performance, scalability, and reliability.
+
+> 📖 **New to the integration?** Start with the **[Quick Reference](docs/QUICK_REFERENCE.md)** for essential commands and configuration templates.
+> 
+> 🔍 **Investigating merger?** Read **[Architecture Analysis](docs/RECOMMENDATION_SUMMARY.md)** - TL;DR: Keep them separate.
+>
+> ⚠️ **Having issues?** Check **[Troubleshooting Integration](docs/TROUBLESHOOTING_INTEGRATION.md)** for solutions to common problems.
 
 ## API Endpoints
 
@@ -93,6 +99,7 @@ requirements.txt
 * [Panel](docs/PANEL.md)
 
 ## Architecture & Integration
+* **[Quick Reference](docs/QUICK_REFERENCE.md)** - ⚡ Essential commands, configs, and decision tree
 * **[Acexy-Orchestrator Analysis](docs/RECOMMENDATION_SUMMARY.md)** - Should Acexy and Orchestrator be merged?
 * **[Architecture Comparison](docs/ARCHITECTURE_COMPARISON.md)** - Visual comparison of separate vs merged
 * **[Integration Improvements](docs/INTEGRATION_IMPROVEMENTS.md)** - Practical improvements for better integration
