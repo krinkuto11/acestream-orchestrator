@@ -20,6 +20,17 @@ Open the dashboard at `http://localhost:8000/panel`.
 
 ![Dashboard Overview](docs/images/dashboard_overview.png)
 
+## Acexy Integration
+
+This orchestrator works seamlessly with **[Acexy](acexy/)**, a high-performance Go proxy for AceStream streams. Together they provide:
+
+- **Dynamic Engine Selection**: Acexy queries orchestrator for best available engine
+- **Load Balancing**: Intelligent distribution across multiple engines  
+- **Auto-Provisioning**: Orchestrator provisions engines on-demand
+- **High Availability**: Graceful fallback and fault isolation
+
+**Architecture Decision:** Acexy and Orchestrator are **intentionally separate services** for optimal performance, scalability, and reliability. See [Architecture Analysis](docs/RECOMMENDATION_SUMMARY.md) for details.
+
 ## API Endpoints
 
 Core endpoints: `/provision`, `/provision/acestream`, `/events/*`, `/engines`, `/streams`, `/streams/{id}/stats`, `/containers/{id}`, `/by-label`, `/vpn/status`, `/metrics`, `/panel`.
@@ -72,19 +83,30 @@ requirements.txt
 ```
 
 # Documentation
+
+## Core Documentation
 * [README](README.md)
 * [Overview](docs/OVERVIEW.md)
 * [Configuration](docs/CONFIG.md)
 * [API](docs/API.md)
 * [Events](docs/EVENTS.md)
 * [Panel](docs/PANEL.md)
+
+## Architecture & Integration
+* **[Acexy-Orchestrator Analysis](docs/RECOMMENDATION_SUMMARY.md)** - Should Acexy and Orchestrator be merged?
+* **[Architecture Comparison](docs/ARCHITECTURE_COMPARISON.md)** - Visual comparison of separate vs merged
+* **[Integration Improvements](docs/INTEGRATION_IMPROVEMENTS.md)** - Practical improvements for better integration
+* [Proxy Integration](docs/PROXY_INTEGRATION.md)
+
+## Operations & Monitoring
 * [Health Monitoring](docs/HEALTH_MONITORING.md)
 * [Database Schema](docs/DB_SCHEMA.md)
 * [Deployment](docs/DEPLOY.md)
 * [Operations](docs/OPERATIONS.md)
 * [Troubleshooting](docs/TROUBLESHOOTING.md)
 * [Security](docs/SECURITY.md)
-* [Proxy Integration](docs/PROXY_INTEGRATION.md)
 * [Gluetun VPN Integration](docs/GLUETUN_INTEGRATION.md)
+* [Performance Optimizations](docs/PERFORMANCE.md)
+* [Reliability Features](docs/RELIABILITY.md)
 
 
