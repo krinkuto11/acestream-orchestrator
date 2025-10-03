@@ -61,7 +61,8 @@ class State:
             if not eng:
                 eng = EngineState(container_id=key, container_name=container_name, host=evt.engine.host, port=evt.engine.port,
                                   labels=evt.labels or {}, first_seen=self.now(), last_seen=self.now(), streams=[],
-                                  health_status="unknown", last_health_check=None, last_stream_usage=self.now())
+                                  health_status="unknown", last_health_check=None, last_stream_usage=self.now(),
+                                  last_cache_cleanup=None, cache_size_bytes=None)
                 self.engines[key] = eng
             else:
                 eng.host = evt.engine.host; eng.port = evt.engine.port; eng.last_seen = self.now()
@@ -125,7 +126,26 @@ class State:
             try:
                 from ..services.provisioner import clear_acestream_cache
                 logger.info(f"Engine {container_id_for_cleanup[:12]} has no active streams, clearing cache")
-                clear_acestream_cache(container_id_for_cleanup)
+                success, cache_size = clear_acestream_cache(container_id_for_cleanup)
+                
+                # Update engine state with cleanup info
+                if success:
+                    with self._lock:
+                        eng = self.engines.get(container_id_for_cleanup)
+                        if eng:
+                            eng.last_cache_cleanup = self.now()
+                            eng.cache_size_bytes = cache_size
+                    
+                    # Update database as well
+                    try:
+                        with SessionLocal() as s:
+                            engine_row = s.get(EngineRow, container_id_for_cleanup)
+                            if engine_row:
+                                engine_row.last_cache_cleanup = self.now()
+                                engine_row.cache_size_bytes = cache_size
+                                s.commit()
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.warning(f"Failed to clear cache for idle engine {container_id_for_cleanup[:12]}: {e}")
         
@@ -223,10 +243,17 @@ class State:
                     # If no container_name and no container_id, use host:port as fallback
                     container_name = f"engine-{e.host}-{e.port}"
                 
+                # Handle new cache cleanup fields with proper timezone handling
+                last_cache_cleanup = None
+                if hasattr(e, 'last_cache_cleanup') and e.last_cache_cleanup:
+                    last_cache_cleanup = e.last_cache_cleanup.replace(tzinfo=timezone.utc) if e.last_cache_cleanup.tzinfo is None else e.last_cache_cleanup
+                cache_size_bytes = getattr(e, 'cache_size_bytes', None)
+                
                 self.engines[e.engine_key] = EngineState(container_id=e.engine_key, container_name=container_name,
                                                          host=e.host, port=e.port, labels=e.labels or {}, 
                                                          first_seen=first_seen, last_seen=last_seen, streams=[],
-                                                         health_status="unknown", last_health_check=None, last_stream_usage=None)
+                                                         health_status="unknown", last_health_check=None, last_stream_usage=None,
+                                                         last_cache_cleanup=last_cache_cleanup, cache_size_bytes=cache_size_bytes)
 
             for r in s.query(StreamRow).filter(StreamRow.status=="started").all():
                 # Ensure datetime objects are timezone-aware when loaded from database

@@ -101,7 +101,7 @@ def _release_ports_from_labels(labels: dict):
             cp = labels.get(ACESTREAM_LABEL_HTTP); alloc.free_gluetun_port(int(cp) if cp else None)
         except Exception: pass
 
-def clear_acestream_cache(container_id: str) -> bool:
+def clear_acestream_cache(container_id: str) -> tuple[bool, int]:
     """
     Clear the AceStream cache in a container.
     
@@ -109,7 +109,8 @@ def clear_acestream_cache(container_id: str) -> bool:
         container_id: The ID of the container to clear cache in
         
     Returns:
-        bool: True if cache was cleared successfully, False otherwise
+        tuple[bool, int]: (success, cache_size_bytes) - True if cache was cleared successfully, 
+                         and the size of the cache before cleanup in bytes (0 if unknown)
     """
     try:
         cli = get_client()
@@ -118,21 +119,34 @@ def clear_acestream_cache(container_id: str) -> bool:
         # Check if container is running
         if cont.status != "running":
             logger.debug(f"Container {container_id[:12]} is not running, skipping cache cleanup")
-            return False
+            return (False, 0)
+        
+        # Get cache size before cleanup
+        cache_size = 0
+        try:
+            size_result = cont.exec_run("du -sb /home/appuser/.ACEStream/.acestream_cache 2>/dev/null || echo 0", demux=False)
+            if size_result.exit_code == 0:
+                output = size_result.output.decode('utf-8').strip()
+                if output and output != '0':
+                    # Parse output like "12345\t/path/to/cache"
+                    cache_size = int(output.split()[0])
+                    logger.info(f"Cache size for container {container_id[:12]}: {cache_size} bytes ({cache_size / 1024 / 1024:.2f} MB)")
+        except Exception as e:
+            logger.debug(f"Failed to get cache size for container {container_id[:12]}: {e}")
         
         # Execute cache cleanup command
         logger.info(f"Clearing AceStream cache for container {container_id[:12]}")
         result = cont.exec_run("rm -rf /home/appuser/.ACEStream/.acestream_cache", demux=False)
         
         if result.exit_code == 0:
-            logger.info(f"Successfully cleared AceStream cache for container {container_id[:12]}")
-            return True
+            logger.info(f"Successfully cleared AceStream cache for container {container_id[:12]} (freed {cache_size / 1024 / 1024:.2f} MB)")
+            return (True, cache_size)
         else:
             logger.warning(f"Cache cleanup command returned non-zero exit code {result.exit_code} for container {container_id[:12]}")
-            return False
+            return (False, cache_size)
     except Exception as e:
         logger.warning(f"Failed to clear AceStream cache for container {container_id[:12]}: {e}")
-        return False
+        return (False, 0)
 
 def stop_container(container_id: str):
     cli = get_client()

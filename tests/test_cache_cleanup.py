@@ -176,7 +176,11 @@ def test_clear_acestream_cache_function():
     # Create a mock container
     mock_container = MagicMock()
     mock_container.status = "running"
-    mock_container.exec_run.return_value = MagicMock(exit_code=0, output=b"")
+    # Mock both size check and cleanup commands
+    mock_container.exec_run.side_effect = [
+        MagicMock(exit_code=0, output=b"1048576\t/home/appuser/.ACEStream/.acestream_cache"),  # size check
+        MagicMock(exit_code=0, output=b"")  # cleanup command
+    ]
     
     # Mock get_client
     with patch('app.services.provisioner.get_client') as mock_get_client:
@@ -185,15 +189,12 @@ def test_clear_acestream_cache_function():
         mock_get_client.return_value = mock_client
         
         # Call the function
-        result = clear_acestream_cache("test_container_789")
+        success, cache_size = clear_acestream_cache("test_container_789")
         
         # Verify the function was called correctly
-        assert result is True, "Function should return True on success"
-        mock_container.exec_run.assert_called_once_with(
-            "rm -rf /home/appuser/.ACEStream/.acestream_cache",
-            demux=False
-        )
-        print(f"✅ Cache cleanup command executed successfully")
+        assert success is True, "Function should return True on success"
+        assert cache_size == 1048576, f"Cache size should be 1048576, got {cache_size}"
+        print(f"✅ Cache cleanup command executed successfully, cache size: {cache_size} bytes")
     
     # Test with non-running container
     mock_container.status = "stopped"
@@ -202,8 +203,9 @@ def test_clear_acestream_cache_function():
         mock_client.containers.get.return_value = mock_container
         mock_get_client.return_value = mock_client
         
-        result = clear_acestream_cache("test_container_stopped")
-        assert result is False, "Function should return False for non-running container"
+        success, cache_size = clear_acestream_cache("test_container_stopped")
+        assert success is False, "Function should return False for non-running container"
+        assert cache_size == 0, "Cache size should be 0 for non-running container"
         print(f"✅ Function correctly skipped non-running container")
     
     print("\n✅ Direct function test passed!")

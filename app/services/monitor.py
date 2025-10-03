@@ -72,6 +72,9 @@ class DockerMonitor:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, ensure_minimum)
                 
+                # Periodic cache cleanup for idle engines (0 streams)
+                await loop.run_in_executor(None, self._periodic_cache_cleanup)
+                
                 # Also check for engines that can be cleaned up after grace period
                 if cfg.AUTO_DELETE:
                     await loop.run_in_executor(None, self._cleanup_empty_engines)
@@ -79,6 +82,50 @@ class DockerMonitor:
             except Exception as e:
                 logger.error(f"Error in periodic autoscaling: {e}")
 
+    def _periodic_cache_cleanup(self):
+        """Periodically clean cache for engines with 0 active streams."""
+        try:
+            from .provisioner import clear_acestream_cache
+            from ..services.db import SessionLocal
+            from ..models.db_models import EngineRow
+            
+            # Get all engines
+            all_engines = state.list_engines()
+            active_streams = state.list_streams(status="started")
+            used_container_ids = {stream.container_id for stream in active_streams}
+            
+            # Find idle engines (0 streams) and clean their cache
+            for engine in all_engines:
+                if engine.container_id not in used_container_ids:
+                    try:
+                        logger.info(f"Running periodic cache cleanup for idle engine {engine.container_id[:12]}")
+                        success, cache_size = clear_acestream_cache(engine.container_id)
+                        
+                        # Update engine state with cleanup info
+                        if success:
+                            with state._lock:
+                                eng = state.engines.get(engine.container_id)
+                                if eng:
+                                    eng.last_cache_cleanup = state.now()
+                                    eng.cache_size_bytes = cache_size
+                            
+                            # Update database as well
+                            try:
+                                with SessionLocal() as s:
+                                    engine_row = s.get(EngineRow, engine.container_id)
+                                    if engine_row:
+                                        engine_row.last_cache_cleanup = state.now()
+                                        engine_row.cache_size_bytes = cache_size
+                                        s.commit()
+                            except Exception:
+                                pass
+                                
+                    except Exception as e:
+                        logger.error(f"Failed to cleanup cache for engine {engine.container_id[:12]}: {e}")
+                            
+        except Exception as e:
+            logger.error(f"Error in periodic cache cleanup: {e}")
+    
     def _cleanup_empty_engines(self):
         """Clean up engines that have been empty past their grace period."""
         try:
