@@ -7,12 +7,10 @@ import {
   TextField,
   Select,
   MenuItem,
-  IconButton,
   Chip,
   FormControl,
   InputLabel
 } from '@mui/material'
-import RefreshIcon from '@mui/icons-material/Refresh'
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord'
 
 function Header({
@@ -22,7 +20,6 @@ function Header({
   setApiKey,
   refreshInterval,
   setRefreshInterval,
-  onRefresh,
   isConnected
 }) {
   return (
@@ -70,9 +67,6 @@ function Header({
               <MenuItem value={30000}>30s</MenuItem>
             </Select>
           </FormControl>
-          <IconButton onClick={onRefresh} color="primary">
-            <RefreshIcon />
-          </IconButton>
         </Box>
       </Toolbar>
     </AppBar>
