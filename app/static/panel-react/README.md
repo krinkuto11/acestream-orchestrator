@@ -47,6 +47,8 @@ npm run build
 ```
 This builds the app and outputs to `../panel/` directory, which is served by FastAPI at `/panel`.
 
+**Note**: When deploying via Docker, the build is performed automatically during image creation. You only need to build manually for local development.
+
 ## Architecture
 
 ### Tech Stack

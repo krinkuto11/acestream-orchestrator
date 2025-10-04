@@ -152,13 +152,9 @@ The development server runs at http://localhost:3000 with API proxy configured.
 
 ### Production Build
 
-To build the dashboard for production:
+To build the dashboard for production (local development only):
 
 ```bash
-# Using the build script (recommended)
-./build-panel.sh
-
-# Or manually
 cd app/static/panel-react
 npm install
 npm run build
@@ -168,10 +164,16 @@ The built files are placed in `app/static/panel/` and served by FastAPI at `/pan
 
 ### Deployment
 
-The dashboard is built and included in the Docker image. No additional setup is required when deploying via Docker.
+The dashboard is built automatically during Docker image creation. The Dockerfile includes steps to:
+1. Install Node.js and npm
+2. Copy the React source files from `app/static/panel-react/`
+3. Run `npm install` and `npm run build`
+4. The built files are placed in `app/static/panel/` and served by FastAPI
+
+No additional setup is required when deploying via Docker - the dashboard is built as part of the image build process.
 
 For non-Docker deployments:
-1. Run `./build-panel.sh` before starting the FastAPI server
+1. Build the dashboard manually using `npm run build` in `app/static/panel-react/`
 2. The server will automatically serve the built files from `app/static/panel/`
 
 ## Architecture
