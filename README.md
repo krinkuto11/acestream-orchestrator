@@ -36,12 +36,13 @@ Core endpoints: `/provision`, `/provision/acestream`, `/events/*`, `/engines`, `
 - **Idle time tracking** for proxy load balancing decisions
 - **Real-time usage patterns** in dashboard
 
-### Modern Dashboard
-- **Professional dark theme** with responsive design
+### Modern React Dashboard
+- **React + Material-UI** for high performance and professional design
 - **Real-time KPIs** for engines, streams, health, and VPN status
 - **Enhanced engine cards** with health status and usage info
-- **Advanced stream analytics** with dual-axis charts
+- **Advanced stream analytics** with interactive Chart.js visualizations
 - **VPN monitoring panel** with connection status and port forwarding
+- **Performance optimizations** with React hooks, localStorage caching, and efficient rendering
 
 ### VPN Integration
 - **Gluetun integration** with health monitoring
