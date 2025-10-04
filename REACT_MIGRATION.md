@@ -131,11 +131,7 @@ Development server runs at http://localhost:3000 with hot reload.
 
 ### Production
 
-```bash
-./build-panel.sh
-```
-
-Or manually:
+For local development:
 
 ```bash
 cd app/static/panel-react
@@ -147,14 +143,18 @@ The built files are placed in `app/static/panel/` and served by FastAPI at `/pan
 
 ### Docker Integration
 
-The pre-built dashboard files are included in the Docker image automatically. The Dockerfile copies the entire `app` directory, which includes the built dashboard files in `app/static/panel/`.
+The dashboard is now built automatically during Docker image creation. The Dockerfile:
+1. Installs Node.js and npm in the build image
+2. Copies the `app/static/panel-react` source files
+3. Runs `npm install` and `npm run build` to build the dashboard
+4. The built files are placed in `app/static/panel/` and served by FastAPI at `/panel`
 
 To update the dashboard in Docker:
-1. Run `./build-panel.sh` locally to rebuild the dashboard
-2. Commit the updated files in `app/static/panel/`
-3. Rebuild the Docker image
+1. Make changes to the React source code in `app/static/panel-react/`
+2. Commit the changes
+3. Rebuild the Docker image - the dashboard will be built automatically
 
-This approach avoids Node.js installation in the Docker image, resulting in a smaller image size and faster builds.
+This approach ensures the dashboard is always built from source and stays in sync with the code.
 
 ## Migration Benefits
 

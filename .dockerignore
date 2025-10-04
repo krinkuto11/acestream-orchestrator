@@ -41,9 +41,10 @@ tests/
 # Node.js
 **/node_modules/
 **/yarn.lock
+**/package-lock.json
 
-# React source (only include built files in app/static/panel/)
-app/static/panel-react/
+# React build output (will be generated during Docker build)
+app/static/panel/
 
 # Docker
 docker-compose*.yml

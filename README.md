@@ -65,7 +65,9 @@ app/
   core/config.py
   models/{schemas.py,db_models.py}
   services/*.py
-  static/panel/index.html
+  static/
+    panel/            # Built dashboard (generated during Docker build)
+    panel-react/      # React source code
 docker-compose.yml
 Dockerfile
 requirements.txt
