@@ -60,3 +60,6 @@ yarn.lock
 # Build artifacts
 dist/
 build/
+
+# React dashboard build output (generated during Docker build)
+app/static/panel/
