@@ -13,10 +13,12 @@ Modern orchestration platform for Acestream engines with intelligent health moni
 
 ```bash
 cp .env.example .env
-docker-compose up
+docker-compose up --build
 ```
 
 Open the dashboard at `http://localhost:8000/panel`.
+
+> **Note:** Use `--build` flag to ensure you get the latest panel version. The React dashboard is built during the Docker image build process.
 
 ![Dashboard Overview](docs/images/dashboard_overview.png)
 

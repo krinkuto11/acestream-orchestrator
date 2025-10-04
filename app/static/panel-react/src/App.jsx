@@ -112,7 +112,6 @@ function App() {
         setApiKey={setApiKey}
         refreshInterval={refreshInterval}
         setRefreshInterval={setRefreshInterval}
-        onRefresh={fetchData}
         isConnected={isConnected}
       />
       
