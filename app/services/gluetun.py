@@ -412,9 +412,12 @@ def get_vpn_status() -> dict:
             "enabled": False,
             "status": "disabled",
             "container_name": None,
+            "container": None,  # Add for frontend compatibility
             "health": "unknown",
+            "connected": False,  # Add boolean connected field
             "forwarded_port": None,
-            "last_check": None
+            "last_check": None,
+            "last_check_at": None  # Add for frontend compatibility
         }
     
     try:
@@ -453,9 +456,12 @@ def get_vpn_status() -> dict:
             "enabled": True,
             "status": container.status,
             "container_name": cfg.GLUETUN_CONTAINER_NAME,
+            "container": cfg.GLUETUN_CONTAINER_NAME,  # Add for frontend compatibility
             "health": health,
+            "connected": health == "healthy",  # Add boolean connected field based on health
             "forwarded_port": forwarded_port,
-            "last_check": datetime.now(timezone.utc).isoformat()
+            "last_check": datetime.now(timezone.utc).isoformat(),
+            "last_check_at": datetime.now(timezone.utc).isoformat()  # Add for frontend compatibility
         }
         
     except NotFound:
@@ -463,9 +469,12 @@ def get_vpn_status() -> dict:
             "enabled": True,
             "status": "not_found",
             "container_name": cfg.GLUETUN_CONTAINER_NAME,
+            "container": cfg.GLUETUN_CONTAINER_NAME,  # Add for frontend compatibility
             "health": "unhealthy",
+            "connected": False,  # Add boolean connected field
             "forwarded_port": None,
-            "last_check": datetime.now(timezone.utc).isoformat()
+            "last_check": datetime.now(timezone.utc).isoformat(),
+            "last_check_at": datetime.now(timezone.utc).isoformat()  # Add for frontend compatibility
         }
     except Exception as e:
         logger.error(f"Error getting VPN status: {e}")
@@ -473,9 +482,12 @@ def get_vpn_status() -> dict:
             "enabled": True,
             "status": "error",
             "container_name": cfg.GLUETUN_CONTAINER_NAME,
+            "container": cfg.GLUETUN_CONTAINER_NAME,  # Add for frontend compatibility
             "health": "unknown",
+            "connected": False,  # Add boolean connected field
             "forwarded_port": None,
             "last_check": datetime.now(timezone.utc).isoformat(),
+            "last_check_at": datetime.now(timezone.utc).isoformat(),  # Add for frontend compatibility
             "error": str(e)
         }
 
