@@ -230,7 +230,7 @@ def get_engine(container_id: str):
     eng = state.get_engine(container_id)
     if not eng:
         return {"error": "not found"}
-    streams = state.list_streams(container_id=container_id)
+    streams = state.list_streams(status="started", container_id=container_id)
     return {"engine": eng, "streams": streams}
 
 @app.get("/streams", response_model=List[StreamState])
