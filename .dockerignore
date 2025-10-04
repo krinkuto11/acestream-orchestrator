@@ -42,6 +42,9 @@ tests/
 **/node_modules/
 **/yarn.lock
 
+# React source (only include built files in app/static/panel/)
+app/static/panel-react/
+
 # Docker
 docker-compose*.yml
 Dockerfile
