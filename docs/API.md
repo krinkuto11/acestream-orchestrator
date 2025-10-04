@@ -73,6 +73,8 @@ Response:
      - `health_status`: "healthy" | "unhealthy" | "unknown"
      - `last_health_check`: ISO8601 timestamp of last health check
      - `last_stream_usage`: ISO8601 timestamp when stream was last loaded
+     - `last_cache_cleanup`: ISO8601 timestamp of last cache cleanup (null if never cleaned)
+     - `cache_size_bytes`: Size of cache that was cleared in bytes (null if never cleaned)
 
  - GET /engines/{container_id} → {engine, streams[]}
 

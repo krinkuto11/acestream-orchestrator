@@ -16,6 +16,8 @@ class EngineRow(Base):
     labels: Mapped[dict | None] = mapped_column(JSON, default={})
     first_seen: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_seen: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_cache_cleanup: Mapped[datetime | None] = mapped_column(DateTime)
+    cache_size_bytes: Mapped[int | None] = mapped_column(Integer)
 
 class StreamRow(Base):
     __tablename__ = "streams"

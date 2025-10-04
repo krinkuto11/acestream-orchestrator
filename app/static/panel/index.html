@@ -617,6 +617,14 @@
       return `${days}d ago`;
     }
 
+    function formatBytes(bytes) {
+      if (bytes == null || bytes === 0) return 'N/A';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+    }
+
     function engineRow(e) {
       const div = document.createElement('div');
       div.className = 'engine-item';
@@ -648,6 +656,14 @@
           <div class="detail-item">
             <div class="detail-label">Health Check</div>
             <div class="detail-value">${timeAgo(e.last_health_check)}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Cache Cleanup</div>
+            <div class="detail-value">${timeAgo(e.last_cache_cleanup)}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Cache Size</div>
+            <div class="detail-value">${formatBytes(e.cache_size_bytes)}</div>
           </div>
         </div>
         <div class="actions">
