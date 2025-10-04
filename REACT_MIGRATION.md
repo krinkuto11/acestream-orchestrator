@@ -147,16 +147,14 @@ The built files are placed in `app/static/panel/` and served by FastAPI at `/pan
 
 ### Docker Integration
 
-The dashboard can be built during Docker image creation by adding to Dockerfile:
+The pre-built dashboard files are included in the Docker image automatically. The Dockerfile copies the entire `app` directory, which includes the built dashboard files in `app/static/panel/`.
 
-```dockerfile
-# Install Node.js for building React dashboard
-RUN apt-get update && apt-get install -y nodejs npm
+To update the dashboard in Docker:
+1. Run `./build-panel.sh` locally to rebuild the dashboard
+2. Commit the updated files in `app/static/panel/`
+3. Rebuild the Docker image
 
-# Build React dashboard
-COPY app/static/panel-react /app/static/panel-react
-RUN cd /app/static/panel-react && npm install && npm run build
-```
+This approach avoids Node.js installation in the Docker image, resulting in a smaller image size and faster builds.
 
 ## Migration Benefits
 
