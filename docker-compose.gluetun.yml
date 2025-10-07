@@ -1,92 +1,81 @@
-# Example Docker Compose with Gluetun VPN Integration
-# This demonstrates a complete setup with VPN routing
-
 services:
-  # Gluetun VPN Container
   gluetun:
-    image: qmcgaw/gluetun:latest
+    image: qmcgaw/gluetun
     container_name: gluetun
     cap_add:
       - NET_ADMIN
-    environment:
-      # Example for NordVPN - adjust for your VPN provider
-      # See https://github.com/qdm12/gluetun/wiki for other providers
-      - VPN_SERVICE_PROVIDER=nordvpn
-      - VPN_TYPE=openvpn
-      - OPENVPN_USER=${VPN_USER}
-      - OPENVPN_PASSWORD=${VPN_PASSWORD}
-      - SERVER_COUNTRIES=United States
-      # Optional: Enable built-in HTTP proxy
-      - HTTP_PROXY=on
-      - HTTP_PROXY_LOG=on
-      # Optional: DNS settings
-      - DOT=off
-    volumes:
+      - SYS_ADMIN
+    devices:
       - /dev/net/tun:/dev/net/tun
     ports:
-      # Map AceStream orchestrator port range through VPN
-      - "19000-19999:19000-19999"
-      # Optional: HTTP proxy port
-      - "8888:8888"
-    healthcheck:
-      # Test internet connectivity through VPN
-      test: ["CMD", "wget", "-q", "--spider", "http://ipinfo.io"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      - "19000-19019:19000-19019"
+      - "8001:8001"
+    environment:
+      - PGID=1000
+      - PUID=1000
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=
+      - VPN_PORT_FORWARDING=on
+      - SERVER_COUNTRIES=Spain,France, Germany, Portugal
+      - HTTP_CONTROL_SERVER_ADDRESS=:8001     
+      - DOT=off
+      - HEALTH_VPN_DURATION_INITIAL=120s
+      - HEALTH_TARGET_ADDRESS=cloudflare.com:80
+      - TZ=Europe/Madrid
     restart: unless-stopped
     networks:
-      - orchestrator
+      - aceserver
 
-  # AceStream Orchestrator with Gluetun integration
   orchestrator:
-    build: .
+    privileged: true
+    container_name: orchestrator
+    image: ghcr.io/krinkuto11/acestream-orchestrator:latest
     env_file: .env
-    environment:
-      # Docker connection
-      - DOCKER_HOST=tcp://docker:2375
-      # Gluetun integration
-      - GLUETUN_CONTAINER_NAME=gluetun
-      - GLUETUN_HEALTH_CHECK_INTERVAL_S=5
-      - VPN_RESTART_ENGINES_ON_RECONNECT=true
-      # Network configuration
-      - DOCKER_NETWORK=orchestrator
     volumes:
       - orchestrator-db:/app
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8000:8000"
+    restart: on-failure
     depends_on:
       gluetun:
         condition: service_healthy
-      docker:
-        condition: service_healthy
-    restart: on-failure
     networks:
-      - orchestrator
+      - aceserver
 
-  # Docker-in-Docker for container management
-  docker:
-    image: docker:27.3.1-dind
-    privileged: true
-    environment:
-      DOCKER_TLS_CERTDIR: ""
+  acexy:
+    container_name: acexy
+    image: ghcr.io/krinkuto11/acexy-orchestrator:latest
+    restart: unless-stopped
     ports:
-      - "2375:2375"
-    volumes:
-      - docker-data:/var/lib/docker
-    healthcheck:
-      test: ["CMD", "docker", "info"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - "8080:8080"
+    environment:
+      ACEXY_ADDR: ":8080"            # Listen on port 8080
+      ACEXY_SCHEME: "http"           # Use HTTP
+      ACEXY_HOST: "acestream"        # Host is "acestream" or the name of the AceStream service
+      ACEXY_PORT: "6878"             # Port is 6878
+      ACEXY_TIMEOUT: "60s"           # Stream timeout when in M3U8 mode
+      ACEXY_M3U8: "false"            # Disable M3U8 mode
+      ACEXY_EMPTY_TIMEOUT: "60s"     # Timeout to close the connection if no data is received
+      ACEXY_BUFFER: "4MB"            # Buffer size is 4MB
+      ACEXY_NO_RESPONSE_TIMEOUT: "10s"  # Timeout to close the connection if no response is received
+      # Orchestrator integration (optional)
+      ACEXY_ORCH_URL: "http://orchestrator:8000"           # Base URL for orchestrator API (leave empty to disable orchestrator integration)
+      ACEXY_ORCH_APIKEY: "holaholahola"        # API key for orchestrator authentication (optional)
+      # ACEXY_CONTAINER_ID: ""       # Container ID for orchestrator identification (auto-detected if empty)
+      LOG_LEVEL: DEBUG
+      TZ: Europe/Madrid
+      ACEXY_MAX_STREAMS_PER_ENGINE: 2
     networks:
+      - aceserver
+    depends_on:
       - orchestrator
-
-networks:
-  orchestrator:
-    name: orchestrator
 
 volumes:
   docker-data:
   orchestrator-db:
+
+networks:
+  aceserver:
+    external: true
