@@ -30,13 +30,16 @@ def test_min_replicas_respected_in_can_stop_engine():
         
         # Mock Docker containers to avoid actual container operations
         # We need to import the module and patch the imported reference
-        from app.services import autoscaler
+        from app.services import autoscaler, replica_validator as rv_module
         original_list_managed = autoscaler.list_managed
+        original_rv_list_managed = rv_module.list_managed
         
         class MockContainer:
             def __init__(self, container_id, status="running"):
                 self.id = container_id
                 self.status = status
+                self.name = f"mock-{container_id}"
+                self.labels = {}
         
         # Test scenario: 3 running engines, MIN_REPLICAS=3
         mock_containers = [
@@ -48,8 +51,13 @@ def test_min_replicas_respected_in_can_stop_engine():
         def mock_list_managed():
             return mock_containers
         
-        # Patch the imported reference in the autoscaler module
+        # Patch the imported reference in both autoscaler and replica_validator modules
         autoscaler.list_managed = mock_list_managed
+        rv_module.list_managed = mock_list_managed
+        
+        # Clear any cached results
+        rv_module.replica_validator._cached_result = None
+        rv_module.replica_validator._last_validation = None
         
         # Set MIN_REPLICAS for testing
         original_min = cfg.MIN_REPLICAS
@@ -58,38 +66,45 @@ def test_min_replicas_respected_in_can_stop_engine():
         cfg.ENGINE_GRACE_PERIOD_S = 0  # Bypass grace period for immediate testing
         
         try:
-            # Test 1: With MIN_REPLICAS=3 and 3 running engines, none should be stoppable
-            print("\nTest 1: MIN_REPLICAS=3, 3 running engines")
+            # Test 1: With MIN_REPLICAS=3 and 3 running engines (all free), none should be stoppable
+            print("\nTest 1: MIN_REPLICAS=3, 3 free engines")
+            # Clear cache before each test
+            rv_module.replica_validator._cached_result = None
             can_stop_1 = can_stop_engine("engine_1", bypass_grace_period=True)
+            rv_module.replica_validator._cached_result = None
             can_stop_2 = can_stop_engine("engine_2", bypass_grace_period=True) 
+            rv_module.replica_validator._cached_result = None
             can_stop_3 = can_stop_engine("engine_3", bypass_grace_period=True)
             
-            assert not can_stop_1, "Engine 1 should not be stoppable (would violate MIN_REPLICAS)"
-            assert not can_stop_2, "Engine 2 should not be stoppable (would violate MIN_REPLICAS)"
-            assert not can_stop_3, "Engine 3 should not be stoppable (would violate MIN_REPLICAS)"
+            assert not can_stop_1, "Engine 1 should not be stoppable (would leave 2 free, need 3)"
+            assert not can_stop_2, "Engine 2 should not be stoppable (would leave 2 free, need 3)"
+            assert not can_stop_3, "Engine 3 should not be stoppable (would leave 2 free, need 3)"
             print("✅ All engines correctly protected by MIN_REPLICAS constraint")
             
-            # Test 2: With 5 running engines, 1 should be stoppable (would leave 4, which is > MIN_REPLICAS=3)
-            print("\nTest 2: MIN_REPLICAS=3, 5 running engines")
+            # Test 2: With 5 free engines, 1 should be stoppable (would leave 4 free, which is > MIN_REPLICAS=3)
+            print("\nTest 2: MIN_REPLICAS=3, 5 free engines")
             mock_containers.append(MockContainer("engine_4", "running"))
             mock_containers.append(MockContainer("engine_5", "running"))
             
+            rv_module.replica_validator._cached_result = None
             can_stop_5 = can_stop_engine("engine_5", bypass_grace_period=True)
-            assert can_stop_5, "Engine 5 should be stoppable (would leave 4 engines, above MIN_REPLICAS=3)"
-            print("✅ Extra engine above MIN_REPLICAS can be stopped")
+            assert can_stop_5, "Engine 5 should be stoppable (would leave 4 free, above MIN_REPLICAS=3)"
+            print("✅ Extra free engine above MIN_REPLICAS can be stopped")
             
-            # Test 2b: With 4 running engines, 1 should be stoppable (would leave 3, which equals MIN_REPLICAS)
-            print("\nTest 2b: MIN_REPLICAS=3, 4 running engines")
+            # Test 2b: With 4 free engines, 1 should be stoppable (would leave 3 free, which equals MIN_REPLICAS)
+            print("\nTest 2b: MIN_REPLICAS=3, 4 free engines")
             mock_containers.pop()  # Remove engine_5, leaving 4 engines
             
+            rv_module.replica_validator._cached_result = None
             can_stop_4 = can_stop_engine("engine_4", bypass_grace_period=True)
-            assert can_stop_4, "Engine 4 should be stoppable (would leave 3 engines, which satisfies MIN_REPLICAS=3)"
-            print("✅ Engine that would leave exactly MIN_REPLICAS can be stopped")
+            assert can_stop_4, "Engine 4 should be stoppable (would leave 3 free, which satisfies MIN_REPLICAS=3)"
+            print("✅ Engine that would leave exactly MIN_REPLICAS free can be stopped")
             
             # Test 3: With MIN_REPLICAS=0, all empty engines should be stoppable
             print("\nTest 3: MIN_REPLICAS=0, engines should be stoppable")
             cfg.MIN_REPLICAS = 0
             
+            rv_module.replica_validator._cached_result = None
             can_stop_1_zero = can_stop_engine("engine_1", bypass_grace_period=True)
             assert can_stop_1_zero, "Engine 1 should be stoppable when MIN_REPLICAS=0"
             print("✅ Engines can be stopped when MIN_REPLICAS=0")
@@ -101,6 +116,7 @@ def test_min_replicas_respected_in_can_stop_engine():
             mock_containers = mock_containers[:4]  # Reset to 4 engines (above MIN_REPLICAS=2)
             
             # First call should start grace period (not bypass it)
+            rv_module.replica_validator._cached_result = None
             can_stop_first = can_stop_engine("engine_4", bypass_grace_period=False)
             assert not can_stop_first, "Engine should be in grace period"
             assert "engine_4" in _empty_engine_timestamps, "Grace period should be tracked"
@@ -109,8 +125,9 @@ def test_min_replicas_respected_in_can_stop_engine():
             past_time = datetime.now() - timedelta(seconds=31)
             _empty_engine_timestamps["engine_4"] = past_time
             
+            rv_module.replica_validator._cached_result = None
             can_stop_after_grace = can_stop_engine("engine_4", bypass_grace_period=False)
-            assert can_stop_after_grace, "Engine should be stoppable after grace period (would leave 3 engines, above MIN_REPLICAS=2)"
+            assert can_stop_after_grace, "Engine should be stoppable after grace period (would leave 3 free, above MIN_REPLICAS=2)"
             print("✅ Grace period still works correctly with MIN_REPLICAS")
             
             print("\n🎯 All tests PASSED: MIN_REPLICAS constraint is properly respected")
@@ -122,6 +139,8 @@ def test_min_replicas_respected_in_can_stop_engine():
             cfg.ENGINE_GRACE_PERIOD_S = original_grace
             if original_list_managed:
                 autoscaler.list_managed = original_list_managed
+            if original_rv_list_managed:
+                rv_module.list_managed = original_rv_list_managed
         
     except Exception as e:
         print(f"\n💥 Test FAILED: {e}")
@@ -148,18 +167,23 @@ def test_min_replicas_with_active_streams():
         _empty_engine_timestamps.clear()
         
         # Mock containers
-        from app.services import autoscaler
+        from app.services import autoscaler, replica_validator as rv_module
         original_list_managed = autoscaler.list_managed
+        original_rv_list_managed = rv_module.list_managed
         
         class MockContainer:
             def __init__(self, container_id, status="running"):
                 self.id = container_id
                 self.status = status
+                self.name = f"mock-{container_id}"
+                self.labels = {}
         
         def mock_list_managed():
             return [MockContainer("engine_with_stream", "running")]
         
         autoscaler.list_managed = mock_list_managed
+        rv_module.list_managed = mock_list_managed
+        rv_module.replica_validator._cached_result = None
         
         # Set MIN_REPLICAS=1 
         original_min = cfg.MIN_REPLICAS
@@ -192,6 +216,8 @@ def test_min_replicas_with_active_streams():
             cfg.MIN_REPLICAS = original_min
             if original_list_managed:
                 autoscaler.list_managed = original_list_managed
+            if original_rv_list_managed:
+                rv_module.list_managed = original_rv_list_managed
         
     except Exception as e:
         print(f"\n💥 Test FAILED: {e}")

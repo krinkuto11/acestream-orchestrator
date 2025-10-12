@@ -33,7 +33,7 @@ def _count_healthy_engines() -> int:
         return len(state.list_engines())
 
 def ensure_minimum():
-    """Ensure minimum number of replicas are running with resilient synchronous provisioning."""
+    """Ensure minimum number of free/empty replicas are available with resilient synchronous provisioning."""
     try:
         from .replica_validator import replica_validator
         
@@ -42,22 +42,18 @@ def ensure_minimum():
             logger.warning("Circuit breaker is OPEN - skipping provisioning attempt")
             return
         
-        # Get fresh Docker status to ensure accurate count
-        docker_status = replica_validator.get_docker_container_status()
-        running_count = docker_status['total_running']
+        # Use replica_validator to get accurate counts including free engines
+        total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
         
-        # Consider health status when calculating need
-        healthy_count = _count_healthy_engines()
+        # Calculate deficit based on free engines (not total engines)
+        # MIN_REPLICAS now represents minimum FREE replicas, not total replicas
+        deficit = cfg.MIN_REPLICAS - free_count
         
-        # Prioritize healthy engines over total count for service availability
-        if healthy_count < cfg.MIN_REPLICAS:
-            deficit = cfg.MIN_REPLICAS - healthy_count
-            logger.info(f"Starting {deficit} AceStream containers for health availability (healthy: {healthy_count}, total running: {running_count}, min required: {cfg.MIN_REPLICAS})")
-        else:
-            deficit = cfg.MIN_REPLICAS - running_count
-            if deficit <= 0:
-                return  # Already have enough engines
-            logger.info(f"Starting {deficit} AceStream containers to meet MIN_REPLICAS={cfg.MIN_REPLICAS} (currently running: {running_count})")
+        if deficit <= 0:
+            logger.debug(f"Sufficient free engines available (free: {free_count}, min required: {cfg.MIN_REPLICAS}, total: {total_running}, used: {used_engines})")
+            return  # Already have enough free engines
+        
+        logger.info(f"Starting {deficit} AceStream containers to maintain MIN_REPLICAS={cfg.MIN_REPLICAS} free engines (currently: total={total_running}, used={used_engines}, free={free_count})")
         
         if deficit > 0:
             # Use simple synchronous provisioning for reliability
@@ -79,7 +75,7 @@ def ensure_minimum():
                         
                         # Get updated Docker status to verify the container is actually running
                         updated_status = replica_validator.get_docker_container_status()
-                        if updated_status['total_running'] > running_count + success_count - 1:
+                        if updated_status['total_running'] > total_running + success_count - 1:
                             logger.debug(f"Container {response.container_id[:12]} verified as running")
                         else:
                             logger.warning(f"Container {response.container_id[:12]} may not be running yet")
@@ -119,7 +115,7 @@ def ensure_minimum():
         logger.debug(f"Traceback: {traceback.format_exc()}")
 
 def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> bool:
-    """Check if an engine can be safely stopped based on grace period and minimum replicas."""
+    """Check if an engine can be safely stopped based on grace period and minimum free replicas."""
     now = datetime.now()
     
     # Check if engine has any active streams
@@ -128,19 +124,21 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
         # Engine has active streams, remove from empty tracking
         if container_id in _empty_engine_timestamps:
             del _empty_engine_timestamps[container_id]
+        logger.debug(f"Engine {container_id[:12]} cannot be stopped - has {len(active_streams)} active streams")
         return False
     
     # Check if stopping this engine would violate MIN_REPLICAS constraint
+    # MIN_REPLICAS now represents minimum FREE engines, not total engines
     if cfg.MIN_REPLICAS > 0:
         try:
             from .replica_validator import replica_validator
-            # Use reliable Docker count for MIN_REPLICAS check
-            docker_status = replica_validator.get_docker_container_status()
-            running_count = docker_status['total_running']
+            # Get accurate counts including free engines
+            total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
             
-            # If stopping this engine would bring us below MIN_REPLICAS, don't stop it
-            if running_count - 1 < cfg.MIN_REPLICAS:
-                logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_REPLICAS={cfg.MIN_REPLICAS} (currently: {running_count} running, would become: {running_count - 1})")
+            # If stopping this empty engine would leave us with fewer than MIN_REPLICAS free engines, don't stop it
+            # Since this engine is already empty (has no active streams), stopping it reduces free count by 1
+            if free_count - 1 < cfg.MIN_REPLICAS:
+                logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_REPLICAS={cfg.MIN_REPLICAS} (currently: {free_count} free, would become: {free_count - 1})")
                 return False
         except Exception as e:
             logger.error(f"Error checking MIN_REPLICAS constraint: {e}")
