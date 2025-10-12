@@ -84,7 +84,7 @@ def ensure_minimum():
                     if response and response.container_id:
                         success_count += 1
                         circuit_breaker_manager.record_provisioning_success("general")
-                        logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({success_count}/{deficit}) - HTTP port: {response.host_http_port}")
+                        logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({success_count}/{deficit})")
                         
                         # Immediately verify the container is running
                         time.sleep(1)  # Brief pause to let container start
@@ -208,7 +208,7 @@ def scale_to(demand: int):
             try:
                 # Use AceStream provisioning to ensure containers are AceStream-ready with proper ports
                 response = start_acestream(AceProvisionRequest(image=cfg.TARGET_IMAGE))
-                logger.info(f"Started AceStream container {response.container_id[:12]} for scale-up ({i+1}/{deficit}) - HTTP port: {response.host_http_port}")
+                logger.info(f"Started AceStream container {response.container_id[:12]} for scale-up ({i+1}/{deficit})")
             except Exception as e:
                 logger.error(f"Failed to start AceStream container for scale-up: {e}")
         
