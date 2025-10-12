@@ -130,14 +130,16 @@ def clear_acestream_cache(container_id: str) -> tuple[bool, int]:
                 if output and output != '0':
                     # Parse output like "12345\t/path/to/cache"
                     cache_size = int(output.split()[0])
-                    logger.debug(f"Cache size for container {container_id[:12]}: {cache_size} bytes ({cache_size / 1024 / 1024:.2f} MB)")
+                    logger.info(f"Cache size for container {container_id[:12]}: {cache_size} bytes ({cache_size / 1024 / 1024:.2f} MB)")
         except Exception as e:
             logger.debug(f"Failed to get cache size for container {container_id[:12]}: {e}")
         
         # Execute cache cleanup command
+        logger.info(f"Clearing AceStream cache for container {container_id[:12]}")
         result = cont.exec_run("rm -rf /home/appuser/.ACEStream/.acestream_cache", demux=False)
         
         if result.exit_code == 0:
+            logger.info(f"Successfully cleared AceStream cache for container {container_id[:12]} (freed {cache_size / 1024 / 1024:.2f} MB)")
             return (True, cache_size)
         else:
             logger.warning(f"Cache cleanup command returned non-zero exit code {result.exit_code} for container {container_id[:12]}")
