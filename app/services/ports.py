@@ -109,5 +109,13 @@ class PortAllocator:
         if p is None: return
         with self._lock:
             self._used_gluetun_ports.discard(p)
+    
+    def clear_all_allocations(self):
+        """Clear all port allocations. Used during cleanup to reset state."""
+        with self._lock:
+            self._used_host.clear()
+            self._used_http.clear()
+            self._used_https.clear()
+            self._used_gluetun_ports.clear()
 
 alloc = PortAllocator()
