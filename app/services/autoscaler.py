@@ -46,18 +46,35 @@ def ensure_minimum():
         docker_status = replica_validator.get_docker_container_status()
         running_count = docker_status['total_running']
         
+        # When using Gluetun, respect MAX_ACTIVE_REPLICAS as a hard limit
+        effective_min_replicas = cfg.MIN_REPLICAS
+        if cfg.GLUETUN_CONTAINER_NAME:
+            effective_min_replicas = min(cfg.MIN_REPLICAS, cfg.MAX_ACTIVE_REPLICAS)
+            if effective_min_replicas < cfg.MIN_REPLICAS:
+                logger.debug(f"MIN_REPLICAS capped at MAX_ACTIVE_REPLICAS={cfg.MAX_ACTIVE_REPLICAS} when using Gluetun")
+        
         # Consider health status when calculating need
         healthy_count = _count_healthy_engines()
         
         # Prioritize healthy engines over total count for service availability
-        if healthy_count < cfg.MIN_REPLICAS:
-            deficit = cfg.MIN_REPLICAS - healthy_count
-            logger.info(f"Starting {deficit} AceStream containers for health availability (healthy: {healthy_count}, total running: {running_count}, min required: {cfg.MIN_REPLICAS})")
+        if healthy_count < effective_min_replicas:
+            deficit = effective_min_replicas - healthy_count
+            logger.info(f"Starting {deficit} AceStream containers for health availability (healthy: {healthy_count}, total running: {running_count}, min required: {effective_min_replicas})")
         else:
-            deficit = cfg.MIN_REPLICAS - running_count
+            deficit = effective_min_replicas - running_count
             if deficit <= 0:
                 return  # Already have enough engines
-            logger.info(f"Starting {deficit} AceStream containers to meet MIN_REPLICAS={cfg.MIN_REPLICAS} (currently running: {running_count})")
+            logger.info(f"Starting {deficit} AceStream containers to meet MIN_REPLICAS={effective_min_replicas} (currently running: {running_count})")
+        
+        # When using Gluetun, ensure we don't exceed MAX_ACTIVE_REPLICAS
+        if cfg.GLUETUN_CONTAINER_NAME and deficit > 0:
+            max_new_containers = cfg.MAX_ACTIVE_REPLICAS - running_count
+            if max_new_containers <= 0:
+                logger.warning(f"Cannot start containers - already at MAX_ACTIVE_REPLICAS limit ({cfg.MAX_ACTIVE_REPLICAS})")
+                return
+            if deficit > max_new_containers:
+                logger.warning(f"Reducing deficit from {deficit} to {max_new_containers} to respect MAX_ACTIVE_REPLICAS={cfg.MAX_ACTIVE_REPLICAS}")
+                deficit = max_new_containers
         
         if deficit > 0:
             # Use simple synchronous provisioning for reliability
@@ -177,6 +194,10 @@ def scale_to(demand: int):
     from .replica_validator import replica_validator
     
     desired = min(max(cfg.MIN_REPLICAS, demand), cfg.MAX_REPLICAS)
+    
+    # When using Gluetun, also respect MAX_ACTIVE_REPLICAS
+    if cfg.GLUETUN_CONTAINER_NAME:
+        desired = min(desired, cfg.MAX_ACTIVE_REPLICAS)
     
     # Use reliable Docker count
     docker_status = replica_validator.get_docker_container_status()
