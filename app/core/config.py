@@ -1,5 +1,5 @@
 import os
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, validator, field_validator, model_validator
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -7,7 +7,7 @@ class Cfg(BaseModel):
     APP_PORT: int = int(os.getenv("APP_PORT", 8000))
     DOCKER_NETWORK: str | None = os.getenv("DOCKER_NETWORK")
     TARGET_IMAGE: str = os.getenv("TARGET_IMAGE", "acestream/engine:latest")
-    MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 0))
+    MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 1))
     MAX_REPLICAS: int = int(os.getenv("MAX_REPLICAS", 20))
     CONTAINER_LABEL: str = os.getenv("CONTAINER_LABEL", "ondemand.app=myservice")
     STARTUP_TIMEOUT_S: int = int(os.getenv("STARTUP_TIMEOUT_S", 25))
@@ -56,11 +56,11 @@ class Cfg(BaseModel):
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
     AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "false").lower() == "true"
 
-    @validator('MIN_REPLICAS')
-    def validate_min_replicas(cls, v):
-        if v < 0:
-            raise ValueError('MIN_REPLICAS must be >= 0')
-        return v
+    @model_validator(mode='after')
+    def validate_min_replicas(self):
+        if self.MIN_REPLICAS < 1:
+            raise ValueError('MIN_REPLICAS must be >= 1 to ensure at least 1 free replica is always available')
+        return self
 
     @validator('MAX_REPLICAS')
     def validate_max_replicas(cls, v, values):
