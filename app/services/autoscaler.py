@@ -1,7 +1,7 @@
 import os
 import time
 from ..core.config import cfg
-from .provisioner import StartRequest, start_container, AceProvisionRequest, start_acestream
+from .provisioner import StartRequest, start_container, AceProvisionRequest, start_acestream, stop_container
 from .health import list_managed
 from .state import state
 from .circuit_breaker import circuit_breaker_manager
@@ -84,7 +84,7 @@ def ensure_minimum():
                     if response and response.container_id:
                         success_count += 1
                         circuit_breaker_manager.record_provisioning_success("general")
-                        logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({success_count}/{deficit}) - HTTP port: {response.host_http_port}")
+                        logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({success_count}/{deficit})")
                         
                         # Immediately verify the container is running
                         time.sleep(1)  # Brief pause to let container start
@@ -208,7 +208,7 @@ def scale_to(demand: int):
             try:
                 # Use AceStream provisioning to ensure containers are AceStream-ready with proper ports
                 response = start_acestream(AceProvisionRequest(image=cfg.TARGET_IMAGE))
-                logger.info(f"Started AceStream container {response.container_id[:12]} for scale-up ({i+1}/{deficit}) - HTTP port: {response.host_http_port}")
+                logger.info(f"Started AceStream container {response.container_id[:12]} for scale-up ({i+1}/{deficit})")
             except Exception as e:
                 logger.error(f"Failed to start AceStream container for scale-up: {e}")
         
@@ -233,8 +233,7 @@ def scale_to(demand: int):
             
             if can_stop_engine(c.id, bypass_grace_period=False):
                 try:
-                    c.stop(timeout=5)
-                    c.remove()
+                    stop_container(c.id)
                     stopped_count += 1
                     logger.info(f"Stopped and removed container {c.id[:12]} ({stopped_count}/{excess})")
                 except Exception as e:
