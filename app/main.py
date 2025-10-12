@@ -111,7 +111,17 @@ def provision(req: StartRequest):
 @app.post("/provision/acestream", response_model=AceProvisionResponse, dependencies=[Depends(require_api_key)])
 def provision_acestream(req: AceProvisionRequest):
     orch_provision_total.labels("acestream").inc()
-    return start_acestream(req)
+    response = start_acestream(req)
+    
+    # Immediately add the new engine to state so it's available to proxies
+    # This ensures the engine appears in /engines endpoint right after provisioning
+    try:
+        reindex_existing()
+        logger.info(f"Reindexed after provisioning engine {response.container_id[:12]}")
+    except Exception as e:
+        logger.error(f"Failed to reindex after provisioning: {e}")
+    
+    return response
 
 @app.post("/scale/{demand}", dependencies=[Depends(require_api_key)])
 def scale(demand: int):
@@ -275,5 +285,74 @@ def reset_circuit_breaker(operation_type: Optional[str] = None):
     from .services.circuit_breaker import circuit_breaker_manager
     circuit_breaker_manager.force_reset(operation_type)
     return {"message": f"Circuit breaker {'for ' + operation_type if operation_type else 'all'} reset successfully"}
+
+@app.get("/orchestrator/status")
+def get_orchestrator_status():
+    """
+    Get comprehensive orchestrator status for proxy integration.
+    This endpoint provides all the information a proxy needs to understand
+    the orchestrator's current state including VPN, provisioning, and health status.
+    """
+    from .services.replica_validator import replica_validator
+    from .services.circuit_breaker import circuit_breaker_manager
+    
+    # Get engine and stream counts
+    engines = state.list_engines()
+    active_streams = state.list_streams(status="started")
+    
+    # Get Docker container status
+    docker_status = replica_validator.get_docker_container_status()
+    
+    # Get VPN status
+    vpn_status = get_vpn_status()
+    
+    # Get health summary
+    health_summary = health_manager.get_health_summary()
+    
+    # Get circuit breaker status
+    circuit_breaker_status = circuit_breaker_manager.get_status()
+    
+    # Calculate capacity
+    total_capacity = len(engines)
+    used_capacity = len(active_streams)
+    available_capacity = max(0, total_capacity - used_capacity)
+    
+    return {
+        "status": "healthy" if docker_status['total_running'] > 0 else "degraded",
+        "engines": {
+            "total": len(engines),
+            "running": docker_status['total_running'],
+            "healthy": health_summary.get("healthy_engines", 0),
+            "unhealthy": health_summary.get("unhealthy_engines", 0)
+        },
+        "streams": {
+            "active": len(active_streams),
+            "total": len(state.list_streams())
+        },
+        "capacity": {
+            "total": total_capacity,
+            "used": used_capacity,
+            "available": available_capacity,
+            "max_replicas": cfg.MAX_REPLICAS,
+            "min_replicas": cfg.MIN_REPLICAS
+        },
+        "vpn": {
+            "enabled": vpn_status.get("enabled", False),
+            "connected": vpn_status.get("connected", False),
+            "health": vpn_status.get("health", "unknown"),
+            "container": vpn_status.get("container"),
+            "forwarded_port": vpn_status.get("forwarded_port")
+        },
+        "provisioning": {
+            "can_provision": circuit_breaker_status.get("general", {}).get("state") == "closed",
+            "circuit_breaker_state": circuit_breaker_status.get("general", {}).get("state"),
+            "last_failure": circuit_breaker_status.get("general", {}).get("last_failure_time")
+        },
+        "config": {
+            "auto_delete": cfg.AUTO_DELETE,
+            "grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
+            "target_image": cfg.TARGET_IMAGE
+        }
+    }
 
 # WebSocket endpoint removed - using simple polling approach
