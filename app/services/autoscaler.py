@@ -165,22 +165,28 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
         logger.debug(f"Engine {container_id[:12]} cannot be stopped - has {len(active_streams)} active streams")
         return False
     
-    # Check if stopping this engine would violate MIN_FREE_REPLICAS constraint
-    if cfg.MIN_FREE_REPLICAS > 0:
-        try:
-            from .replica_validator import replica_validator
-            # Get accurate counts including free engines
-            total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
-            
+    # Check if stopping this engine would violate replica constraints
+    try:
+        from .replica_validator import replica_validator
+        # Get accurate counts including free engines
+        total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
+        
+        # Check 1: Never go below MIN_REPLICAS total containers
+        if total_running - 1 < cfg.MIN_REPLICAS:
+            logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_REPLICAS={cfg.MIN_REPLICAS} (currently: {total_running} total, would become: {total_running - 1})")
+            return False
+        
+        # Check 2: Maintain MIN_FREE_REPLICAS free engines
+        if cfg.MIN_FREE_REPLICAS > 0:
             # If stopping this empty engine would leave us with fewer than MIN_FREE_REPLICAS free engines, don't stop it
             # Since this engine is already empty (has no active streams), stopping it reduces free count by 1
             if free_count - 1 < cfg.MIN_FREE_REPLICAS:
                 logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} (currently: {free_count} free, would become: {free_count - 1})")
                 return False
-        except Exception as e:
-            logger.error(f"Error checking MIN_FREE_REPLICAS constraint: {e}")
-            # On error, err on the side of caution and don't stop the engine
-            return False
+    except Exception as e:
+        logger.error(f"Error checking replica constraints: {e}")
+        # On error, err on the side of caution and don't stop the engine
+        return False
     
     # If bypassing grace period (for testing or immediate shutdown), allow stopping
     if bypass_grace_period or cfg.ENGINE_GRACE_PERIOD_S == 0:
