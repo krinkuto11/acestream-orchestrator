@@ -91,5 +91,6 @@ requirements.txt
 * [Security](docs/SECURITY.md)
 * [Proxy Integration](docs/PROXY_INTEGRATION.md)
 * [Gluetun VPN Integration](docs/GLUETUN_INTEGRATION.md)
+* [Gluetun Port Fix](docs/GLUETUN_PORT_FIX.md)
 
 
