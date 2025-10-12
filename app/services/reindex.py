@@ -7,6 +7,10 @@ from ..models.schemas import EngineState
 from ..core.config import cfg
 
 def reindex_existing():
+    # Clear all port allocations before reindexing to prevent double-counting
+    # This ensures that we start fresh and only count actually running containers
+    alloc.clear_all_allocations()
+    
     for c in list_managed():
         # Only process running containers to avoid stale state
         if c.status != 'running':

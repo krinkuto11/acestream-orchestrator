@@ -324,6 +324,14 @@ class State:
         logger.info("Clearing in-memory state")
         self.clear_state()
         
+        # Clear port allocations to prevent double-counting during reindex
+        logger.info("Clearing port allocations")
+        try:
+            from ..services.ports import alloc
+            alloc.clear_all_allocations()
+        except Exception as e:
+            logger.warning(f"Failed to clear port allocations: {e}")
+        
         logger.info("Full cleanup completed")
     
     def update_engine_health(self, container_id: str, health_status: str):
