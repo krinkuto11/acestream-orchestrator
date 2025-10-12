@@ -93,12 +93,11 @@ def _release_ports_from_labels(labels: dict):
     except Exception: pass
     
     # Release Gluetun ports if using Gluetun
+    # Only free one port per container (use HOST_LABEL_HTTP as the primary port)
+    # to match the reserve behavior and avoid double-counting
     if cfg.GLUETUN_CONTAINER_NAME:
         try:
             hp = labels.get(HOST_LABEL_HTTP); alloc.free_gluetun_port(int(hp) if hp else None)
-        except Exception: pass
-        try:
-            cp = labels.get(ACESTREAM_LABEL_HTTP); alloc.free_gluetun_port(int(cp) if cp else None)
         except Exception: pass
 
 def clear_acestream_cache(container_id: str) -> tuple[bool, int]:

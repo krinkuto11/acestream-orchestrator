@@ -62,11 +62,20 @@ def ensure_minimum():
         if cfg.GLUETUN_CONTAINER_NAME and deficit > 0:
             max_new_containers = cfg.MAX_ACTIVE_REPLICAS - total_running
             if max_new_containers <= 0:
-                logger.warning(f"Cannot start containers - already at MAX_ACTIVE_REPLICAS limit ({cfg.MAX_ACTIVE_REPLICAS})")
+                logger.warning(
+                    f"Cannot start containers - already at MAX_ACTIVE_REPLICAS limit ({cfg.MAX_ACTIVE_REPLICAS}). "
+                    f"Current state: total={total_running}, used={used_engines}, free={free_count}. "
+                    f"To maintain MIN_REPLICAS={cfg.MIN_REPLICAS} free engines with current usage, "
+                    f"increase MAX_ACTIVE_REPLICAS or reduce MIN_REPLICAS."
+                )
                 return
             # Adjust deficit to not exceed the limit
             if deficit > max_new_containers:
-                logger.info(f"Reducing planned containers from {deficit} to {max_new_containers} to stay within MAX_ACTIVE_REPLICAS limit")
+                logger.info(
+                    f"Reducing planned containers from {deficit} to {max_new_containers} to stay within "
+                    f"MAX_ACTIVE_REPLICAS limit ({cfg.MAX_ACTIVE_REPLICAS}). "
+                    f"Current state: total={total_running}, used={used_engines}, free={free_count}"
+                )
                 deficit = max_new_containers
         
         logger.info(f"Starting {deficit} AceStream containers to maintain MIN_REPLICAS={cfg.MIN_REPLICAS} free engines (currently: total={total_running}, used={used_engines}, free={free_count})")

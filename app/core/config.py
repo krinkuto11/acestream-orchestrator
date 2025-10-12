@@ -7,7 +7,7 @@ class Cfg(BaseModel):
     APP_PORT: int = int(os.getenv("APP_PORT", 8000))
     DOCKER_NETWORK: str | None = os.getenv("DOCKER_NETWORK")
     TARGET_IMAGE: str = os.getenv("TARGET_IMAGE", "acestream/engine:latest")
-    MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 0))
+    MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 1))
     MAX_REPLICAS: int = int(os.getenv("MAX_REPLICAS", 20))
     CONTAINER_LABEL: str = os.getenv("CONTAINER_LABEL", "ondemand.app=myservice")
     STARTUP_TIMEOUT_S: int = int(os.getenv("STARTUP_TIMEOUT_S", 25))
@@ -58,8 +58,8 @@ class Cfg(BaseModel):
 
     @validator('MIN_REPLICAS')
     def validate_min_replicas(cls, v):
-        if v < 0:
-            raise ValueError('MIN_REPLICAS must be >= 0')
+        if v < 1:
+            raise ValueError('MIN_REPLICAS must be >= 1 to ensure at least 1 free replica is always available')
         return v
 
     @validator('MAX_REPLICAS')
