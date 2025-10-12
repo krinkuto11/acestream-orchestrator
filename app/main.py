@@ -111,7 +111,30 @@ def provision(req: StartRequest):
 @app.post("/provision/acestream", response_model=AceProvisionResponse, dependencies=[Depends(require_api_key)])
 def provision_acestream(req: AceProvisionRequest):
     orch_provision_total.labels("acestream").inc()
-    response = start_acestream(req)
+    
+    try:
+        response = start_acestream(req)
+    except RuntimeError as e:
+        error_msg = str(e)
+        # Provide clear error messages for common failure scenarios
+        if "Gluetun" in error_msg or "VPN" in error_msg:
+            logger.error(f"Provisioning failed due to VPN issue: {error_msg}")
+            raise HTTPException(
+                status_code=503, 
+                detail=f"Cannot provision engine: VPN not available - {error_msg}"
+            )
+        elif "circuit breaker" in error_msg.lower():
+            logger.error(f"Provisioning failed due to circuit breaker: {error_msg}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Provisioning temporarily unavailable: {error_msg}"
+            )
+        else:
+            logger.error(f"Provisioning failed: {error_msg}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to provision engine: {error_msg}"
+            )
     
     # Immediately add the new engine to state so it's available to proxies
     # This ensures the engine appears in /engines endpoint right after provisioning
@@ -344,9 +367,10 @@ def get_orchestrator_status():
             "forwarded_port": vpn_status.get("forwarded_port")
         },
         "provisioning": {
-            "can_provision": circuit_breaker_status.get("general", {}).get("state") == "closed",
+            "can_provision": circuit_breaker_status.get("general", {}).get("state") == "closed" and (not vpn_status.get("enabled", False) or vpn_status.get("connected", False)),
             "circuit_breaker_state": circuit_breaker_status.get("general", {}).get("state"),
-            "last_failure": circuit_breaker_status.get("general", {}).get("last_failure_time")
+            "last_failure": circuit_breaker_status.get("general", {}).get("last_failure_time"),
+            "blocked_reason": None if circuit_breaker_status.get("general", {}).get("state") == "closed" else "Circuit breaker is open" if circuit_breaker_status.get("general", {}).get("state") != "closed" else ("VPN not connected" if vpn_status.get("enabled", False) and not vpn_status.get("connected", False) else None)
         },
         "config": {
             "auto_delete": cfg.AUTO_DELETE,
