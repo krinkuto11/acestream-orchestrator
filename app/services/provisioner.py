@@ -309,23 +309,14 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         # User specified https port in CONF - use it
         c_https = user_https_port
         # Reserve this port to avoid conflicts
-        if cfg.GLUETUN_CONTAINER_NAME:
-            alloc.reserve_gluetun_port(c_https)
-        else:
-            alloc.reserve_https(c_https)
+        # HTTPS ports always use the regular HTTPS range, not Gluetun ports
+        # HTTPS ports don't count against MAX_ACTIVE_REPLICAS
+        alloc.reserve_https(c_https)
     else:
         # No user https port - use orchestrator allocation
-        if cfg.GLUETUN_CONTAINER_NAME:
-            # When using Gluetun, use a port in the Gluetun range (avoid HTTP port)
-            for attempt in range(cfg.MAX_ACTIVE_REPLICAS):
-                c_https = alloc.alloc_gluetun_port()
-                if c_https != c_http:  # Ensure HTTPS port is different from HTTP
-                    break
-            else:
-                raise RuntimeError("Could not allocate HTTPS port different from HTTP port")
-        else:
-            # Normal allocation
-            c_https = alloc.alloc_https(avoid=c_http)
+        # HTTPS ports always use the regular HTTPS range, regardless of Gluetun
+        # HTTPS ports don't count against MAX_ACTIVE_REPLICAS
+        c_https = alloc.alloc_https(avoid=c_http)
 
     # Use user-provided CONF if available, otherwise use default configuration
     if "CONF" in req.env:
