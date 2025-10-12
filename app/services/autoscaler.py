@@ -1,7 +1,7 @@
 import os
 import time
 from ..core.config import cfg
-from .provisioner import StartRequest, start_container, AceProvisionRequest, start_acestream
+from .provisioner import StartRequest, start_container, AceProvisionRequest, start_acestream, stop_container
 from .health import list_managed
 from .state import state
 from .circuit_breaker import circuit_breaker_manager
@@ -233,8 +233,7 @@ def scale_to(demand: int):
             
             if can_stop_engine(c.id, bypass_grace_period=False):
                 try:
-                    c.stop(timeout=5)
-                    c.remove()
+                    stop_container(c.id)
                     stopped_count += 1
                     logger.info(f"Stopped and removed container {c.id[:12]} ({stopped_count}/{excess})")
                 except Exception as e:
