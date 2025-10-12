@@ -61,7 +61,8 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Gluetun did not become healthy within {max_wait_time}s - proceeding anyway")
     
     # Now provision engines with Gluetun health checks working
-    ensure_minimum()
+    # On startup, provision MIN_REPLICAS total containers
+    ensure_minimum(initial_startup=True)
     
     # Start remaining monitoring services
     asyncio.create_task(collector.start())

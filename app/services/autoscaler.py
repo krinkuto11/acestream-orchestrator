@@ -32,8 +32,13 @@ def _count_healthy_engines() -> int:
         # Fallback to total engine count if health check fails
         return len(state.list_engines())
 
-def ensure_minimum():
-    """Ensure minimum number of free/empty replicas are available with resilient synchronous provisioning."""
+def ensure_minimum(initial_startup: bool = False):
+    """Ensure minimum number of replicas are available.
+    
+    Args:
+        initial_startup: If True, provisions MIN_REPLICAS total containers on startup.
+                        If False, maintains MIN_FREE_REPLICAS free/empty containers during runtime.
+    """
     try:
         from .replica_validator import replica_validator
         
@@ -45,18 +50,27 @@ def ensure_minimum():
         # Use replica_validator to get accurate counts including free engines
         total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
         
-        # When using Gluetun, respect MAX_ACTIVE_REPLICAS as a hard limit
-        effective_min_replicas = cfg.MIN_REPLICAS
-        if cfg.GLUETUN_CONTAINER_NAME:
-            effective_min_replicas = min(cfg.MIN_REPLICAS, cfg.MAX_ACTIVE_REPLICAS)
+        # Determine target based on startup vs runtime
+        if initial_startup:
+            # On startup: ensure we have MIN_REPLICAS total containers
+            target = cfg.MIN_REPLICAS
+            deficit = target - total_running
+            target_description = f"MIN_REPLICAS={cfg.MIN_REPLICAS} total containers"
+        else:
+            # During runtime: ensure we have MIN_FREE_REPLICAS free containers
+            target = cfg.MIN_FREE_REPLICAS
+            deficit = target - free_count
+            target_description = f"MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} free engines"
         
-        # Calculate deficit based on free engines (not total engines)
-        # MIN_REPLICAS now represents minimum FREE replicas, not total replicas
-        deficit = effective_min_replicas - free_count
+        # When using Gluetun, respect MAX_ACTIVE_REPLICAS as a hard limit
+        if cfg.GLUETUN_CONTAINER_NAME:
+            max_new_containers = cfg.MAX_ACTIVE_REPLICAS - total_running
+            if deficit > max_new_containers:
+                deficit = max_new_containers
         
         if deficit <= 0:
-            logger.debug(f"Sufficient free engines available (free: {free_count}, min required: {effective_min_replicas}, total: {total_running}, used: {used_engines})")
-            return  # Already have enough free engines
+            logger.debug(f"Sufficient replicas available for {target_description} (total: {total_running}, used: {used_engines}, free: {free_count})")
+            return  # Already have enough
         
         # Check if already at MAX_ACTIVE_REPLICAS limit (when using Gluetun)
         if cfg.GLUETUN_CONTAINER_NAME and deficit > 0:
@@ -65,8 +79,7 @@ def ensure_minimum():
                 logger.warning(
                     f"Cannot start containers - already at MAX_ACTIVE_REPLICAS limit ({cfg.MAX_ACTIVE_REPLICAS}). "
                     f"Current state: total={total_running}, used={used_engines}, free={free_count}. "
-                    f"To maintain MIN_REPLICAS={cfg.MIN_REPLICAS} free engines with current usage, "
-                    f"increase MAX_ACTIVE_REPLICAS or reduce MIN_REPLICAS."
+                    f"To maintain {target_description}, increase MAX_ACTIVE_REPLICAS."
                 )
                 return
             # Adjust deficit to not exceed the limit
@@ -78,7 +91,7 @@ def ensure_minimum():
                 )
                 deficit = max_new_containers
         
-        logger.info(f"Starting {deficit} AceStream containers to maintain MIN_REPLICAS={cfg.MIN_REPLICAS} free engines (currently: total={total_running}, used={used_engines}, free={free_count})")
+        logger.info(f"Starting {deficit} AceStream containers to maintain {target_description} (currently: total={total_running}, used={used_engines}, free={free_count})")
         
         if deficit > 0:
             # Use simple synchronous provisioning for reliability
@@ -152,21 +165,20 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
         logger.debug(f"Engine {container_id[:12]} cannot be stopped - has {len(active_streams)} active streams")
         return False
     
-    # Check if stopping this engine would violate MIN_REPLICAS constraint
-    # MIN_REPLICAS now represents minimum FREE engines, not total engines
-    if cfg.MIN_REPLICAS > 0:
+    # Check if stopping this engine would violate MIN_FREE_REPLICAS constraint
+    if cfg.MIN_FREE_REPLICAS > 0:
         try:
             from .replica_validator import replica_validator
             # Get accurate counts including free engines
             total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
             
-            # If stopping this empty engine would leave us with fewer than MIN_REPLICAS free engines, don't stop it
+            # If stopping this empty engine would leave us with fewer than MIN_FREE_REPLICAS free engines, don't stop it
             # Since this engine is already empty (has no active streams), stopping it reduces free count by 1
-            if free_count - 1 < cfg.MIN_REPLICAS:
-                logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_REPLICAS={cfg.MIN_REPLICAS} (currently: {free_count} free, would become: {free_count - 1})")
+            if free_count - 1 < cfg.MIN_FREE_REPLICAS:
+                logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} (currently: {free_count} free, would become: {free_count - 1})")
                 return False
         except Exception as e:
-            logger.error(f"Error checking MIN_REPLICAS constraint: {e}")
+            logger.error(f"Error checking MIN_FREE_REPLICAS constraint: {e}")
             # On error, err on the side of caution and don't stop the engine
             return False
     
