@@ -125,7 +125,7 @@ class State:
         if engine_became_idle and container_id_for_cleanup:
             try:
                 from ..services.provisioner import clear_acestream_cache
-                logger.info(f"Engine {container_id_for_cleanup[:12]} has no active streams, clearing cache")
+                logger.debug(f"Engine {container_id_for_cleanup[:12]} has no active streams, clearing cache")
                 success, cache_size = clear_acestream_cache(container_id_for_cleanup)
                 
                 # Update engine state with cleanup info

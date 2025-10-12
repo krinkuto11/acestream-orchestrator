@@ -45,13 +45,29 @@ def ensure_minimum():
         # Use replica_validator to get accurate counts including free engines
         total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
         
+        # When using Gluetun, respect MAX_ACTIVE_REPLICAS as a hard limit
+        effective_min_replicas = cfg.MIN_REPLICAS
+        if cfg.GLUETUN_CONTAINER_NAME:
+            effective_min_replicas = min(cfg.MIN_REPLICAS, cfg.MAX_ACTIVE_REPLICAS)
+        
         # Calculate deficit based on free engines (not total engines)
         # MIN_REPLICAS now represents minimum FREE replicas, not total replicas
-        deficit = cfg.MIN_REPLICAS - free_count
+        deficit = effective_min_replicas - free_count
         
         if deficit <= 0:
-            logger.debug(f"Sufficient free engines available (free: {free_count}, min required: {cfg.MIN_REPLICAS}, total: {total_running}, used: {used_engines})")
+            logger.debug(f"Sufficient free engines available (free: {free_count}, min required: {effective_min_replicas}, total: {total_running}, used: {used_engines})")
             return  # Already have enough free engines
+        
+        # Check if already at MAX_ACTIVE_REPLICAS limit (when using Gluetun)
+        if cfg.GLUETUN_CONTAINER_NAME and deficit > 0:
+            max_new_containers = cfg.MAX_ACTIVE_REPLICAS - total_running
+            if max_new_containers <= 0:
+                logger.warning(f"Cannot start containers - already at MAX_ACTIVE_REPLICAS limit ({cfg.MAX_ACTIVE_REPLICAS})")
+                return
+            # Adjust deficit to not exceed the limit
+            if deficit > max_new_containers:
+                logger.info(f"Reducing planned containers from {deficit} to {max_new_containers} to stay within MAX_ACTIVE_REPLICAS limit")
+                deficit = max_new_containers
         
         logger.info(f"Starting {deficit} AceStream containers to maintain MIN_REPLICAS={cfg.MIN_REPLICAS} free engines (currently: total={total_running}, used={used_engines}, free={free_count})")
         
@@ -175,6 +191,10 @@ def scale_to(demand: int):
     from .replica_validator import replica_validator
     
     desired = min(max(cfg.MIN_REPLICAS, demand), cfg.MAX_REPLICAS)
+    
+    # When using Gluetun, also cap at MAX_ACTIVE_REPLICAS
+    if cfg.GLUETUN_CONTAINER_NAME:
+        desired = min(desired, cfg.MAX_ACTIVE_REPLICAS)
     
     # Use reliable Docker count
     docker_status = replica_validator.get_docker_container_status()
