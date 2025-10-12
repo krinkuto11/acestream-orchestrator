@@ -84,11 +84,24 @@ class PortAllocator:
         with self._lock:
             self._used_https.discard(p)
 
+    def get_docker_active_replicas_count(self) -> int:
+        """Get actual number of running containers from Docker socket (most reliable)."""
+        try:
+            from .replica_validator import replica_validator
+            docker_status = replica_validator.get_docker_container_status()
+            return docker_status['total_running']
+        except Exception:
+            # Fallback to port allocator count if Docker query fails
+            return len(self._used_gluetun_ports)
+    
     def alloc_gluetun_port(self) -> int:
         """Allocate a port for Gluetun from the range starting at 19000."""
         with self._lock:
-            # Check if we've reached the maximum number of active replicas
-            if len(self._used_gluetun_ports) >= cfg.MAX_ACTIVE_REPLICAS:
+            # Use Docker socket as source of truth for active replicas count
+            actual_running = self.get_docker_active_replicas_count()
+            
+            # Check if we've reached the maximum number of active replicas based on Docker
+            if actual_running >= cfg.MAX_ACTIVE_REPLICAS:
                 raise RuntimeError(f"Maximum active replicas limit reached ({cfg.MAX_ACTIVE_REPLICAS})")
             
             # Find the next available port starting from 19000
