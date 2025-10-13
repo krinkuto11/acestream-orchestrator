@@ -70,15 +70,10 @@ class OrchestratorStatusResponse(BaseModel):
     """
     Comprehensive orchestrator status for proxy integration.
     Provides all information needed to make intelligent decisions about retries and fallbacks.
+    
+    Note: This is a documentation model. The actual endpoint returns a dict.
     """
-    status: Literal["healthy", "degraded", "unavailable"]
-    engines: Dict[str, int]  # total, running, healthy, unhealthy
-    streams: Dict[str, int]  # active, total
-    capacity: Dict[str, int]  # total, used, available, max_replicas, min_replicas
-    vpn: Dict[str, any]  # enabled, connected, health, container, forwarded_port
-    provisioning: Dict[str, any]  # can_provision, circuit_breaker_state, blocked_reason, estimated_recovery_time
-    config: Dict[str, any]  # auto_delete, grace_period_s, target_image
-    timestamp: datetime  # When this status was generated
+    pass  # Placeholder for documentation
 
 class ProvisioningBlockedReason(BaseModel):
     """Detailed reason why provisioning is blocked with recovery guidance."""
