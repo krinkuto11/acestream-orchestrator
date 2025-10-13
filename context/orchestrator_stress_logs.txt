@@ -1,0 +1,372 @@
+orchestrator  | 2025-10-13T09:16:18.377273884Z INFO:     Started server process [1]\
+orchestrator  | 2025-10-13T09:16:18.377299720Z INFO:     Waiting for application startup.\
+orchestrator  | 2025-10-13T09:16:18.379065470Z 2025-10-13 11:16:18,378 INFO app.services.state: Starting full cleanup: stopping all managed containers\
+orchestrator  | 2025-10-13T09:16:18.402372024Z 2025-10-13 11:16:18,402 INFO app.services.state: Found 0 managed containers to stop\
+orchestrator  | 2025-10-13T09:16:18.402392268Z 2025-10-13 11:16:18,402 INFO app.services.state: Stopped 0 containers during cleanup\
+orchestrator  | 2025-10-13T09:16:18.402399545Z 2025-10-13 11:16:18,402 INFO app.services.state: Clearing database state\
+orchestrator  | 2025-10-13T09:16:18.419788363Z 2025-10-13 11:16:18,419 INFO app.services.state: Clearing in-memory state\
+orchestrator  | 2025-10-13T09:16:18.419806333Z 2025-10-13 11:16:18,419 INFO app.services.state: Clearing port allocations\
+orchestrator  | 2025-10-13T09:16:18.419811272Z 2025-10-13 11:16:18,419 INFO app.services.state: Full cleanup completed\
+orchestrator  | 2025-10-13T09:16:18.424164894Z 2025-10-13 11:16:18,423 INFO app.services.gluetun: Gluetun monitor started for container 'gluetun' with 3s interval\
+orchestrator  | 2025-10-13T09:16:18.424179112Z 2025-10-13 11:16:18,424 INFO app.main: Waiting for Gluetun to become healthy before provisioning engines...\
+orchestrator  | 2025-10-13T09:16:18.434698508Z 2025-10-13 11:16:18,434 INFO app.services.gluetun: Gluetun first became healthy at 2025-10-13 09:16:18.434453+00:00 - starting startup grace period\
+orchestrator  | 2025-10-13T09:16:18.452444456Z 2025-10-13 11:16:18,452 WARNING app.services.gluetun: No port forwarding information available from Gluetun\
+orchestrator  | 2025-10-13T09:16:19.425977324Z 2025-10-13 11:16:19,425 INFO app.main: Gluetun is healthy - proceeding with engine provisioning\
+orchestrator  | 2025-10-13T09:16:19.449429348Z 2025-10-13 11:16:19,449 INFO app.services.autoscaler: Starting 10 AceStream containers to maintain MIN_REPLICAS=10 total containers (currently: total=0, used=0, free=0)\
+orchestrator  | 2025-10-13T09:16:19.459161436Z 2025-10-13 11:16:19,458 WARNING app.services.gluetun: No port forwarding information available from Gluetun\
+orchestrator  | 2025-10-13T09:16:19.626432710Z 2025-10-13 11:16:19,626 INFO app.services.autoscaler: Successfully started AceStream container 2ec9442076c1 (1/10)\
+orchestrator  | 2025-10-13T09:16:20.659552265Z 2025-10-13 11:16:20,659 INFO app.services.gluetun: Retrieved and cached VPN forwarded port (sync): 33638\
+orchestrator  | 2025-10-13T09:16:20.816953286Z 2025-10-13 11:16:20,816 INFO app.services.autoscaler: Successfully started AceStream container db92d763a207 (2/10)\
+orchestrator  | 2025-10-13T09:16:22.050759089Z 2025-10-13 11:16:22,050 INFO app.services.autoscaler: Successfully started AceStream container 423bc407ce9a (3/10)\
+orchestrator  | 2025-10-13T09:16:23.376290029Z 2025-10-13 11:16:23,373 INFO app.services.autoscaler: Successfully started AceStream container c3550d540832 (4/10)\
+orchestrator  | 2025-10-13T09:16:24.728204690Z 2025-10-13 11:16:24,727 INFO app.services.autoscaler: Successfully started AceStream container c2d22bb4c22d (5/10)\
+orchestrator  | 2025-10-13T09:16:26.068189074Z 2025-10-13 11:16:26,061 INFO app.services.autoscaler: Successfully started AceStream container ca1c4790e04d (6/10)\
+orchestrator  | 2025-10-13T09:16:27.367401737Z 2025-10-13 11:16:27,364 INFO app.services.autoscaler: Successfully started AceStream container 4947a41d4aa8 (7/10)\
+orchestrator  | 2025-10-13T09:16:28.644157446Z 2025-10-13 11:16:28,643 INFO app.services.autoscaler: Successfully started AceStream container 8321248efa2f (8/10)\
+orchestrator  | 2025-10-13T09:16:29.973074156Z 2025-10-13 11:16:29,972 INFO app.services.autoscaler: Successfully started AceStream container 361d984caf4b (9/10)\
+orchestrator  | 2025-10-13T09:16:31.346210792Z 2025-10-13 11:16:31,345 INFO app.services.autoscaler: Successfully started AceStream container a217e6acaf25 (10/10)\
+orchestrator  | 2025-10-13T09:16:32.401656561Z 2025-10-13 11:16:32,401 INFO app.services.autoscaler: Successfully started 10/10 containers\
+orchestrator  | 2025-10-13T09:16:32.402129064Z 2025-10-13 11:16:32,402 INFO app.services.autoscaler: Reindexing after provisioning to pick up new containers\
+orchestrator  | 2025-10-13T09:16:32.660549905Z 2025-10-13 11:16:32,660 INFO app.services.monitor: Docker monitor started with 3s interval\
+orchestrator  | 2025-10-13T09:16:32.660742386Z 2025-10-13 11:16:32,660 INFO app.services.health_monitor: Health monitor started with 30s interval\
+orchestrator  | 2025-10-13T09:16:32.660888947Z 2025-10-13 11:16:32,660 INFO app.services.health_manager: Health manager started with 20s interval\
+orchestrator  | 2025-10-13T09:16:32.661061798Z INFO:     Application startup complete.\
+orchestrator  | 2025-10-13T09:16:32.706908258Z 2025-10-13 11:16:32,706 INFO app.services.monitor: Docker state change detected: +10, -0 containers\
+orchestrator  | 2025-10-13T09:16:32.706952971Z 2025-10-13 11:16:32,706 INFO app.services.monitor: Re-indexing to pick up new containers\
+orchestrator  | 2025-10-13T09:16:32.976347100Z INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)\
+orchestrator  | 2025-10-13T09:17:21.170008885Z 2025-10-13 11:17:21,169 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:17:25.379413207Z 2025-10-13 11:17:25,379 INFO app.main: Engine a217e6acaf25 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T09:18:21.487322795Z 2025-10-13 11:18:21,487 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:19:22.080363099Z 2025-10-13 11:19:22,080 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:20:23.487809041Z 2025-10-13 11:20:23,487 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:21:24.024550196Z 2025-10-13 11:21:24,024 INFO app.services.gluetun: Retrieved and cached VPN forwarded port (sync): 33638\
+orchestrator  | 2025-10-13T09:22:24.057288562Z 2025-10-13 11:22:24,056 INFO app.services.gluetun: Retrieved and cached VPN forwarded port (sync): 33638\
+orchestrator  | 2025-10-13T09:23:24.710650558Z 2025-10-13 11:23:24,710 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:24:26.147556722Z 2025-10-13 11:24:26,147 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:25:27.640932651Z 2025-10-13 11:25:27,640 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:26:29.088699053Z 2025-10-13 11:26:29,088 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:27:30.569590841Z 2025-10-13 11:27:30,569 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:28:32.028640126Z 2025-10-13 11:28:32,028 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:29:33.456880953Z 2025-10-13 11:29:33,456 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:30:34.892862140Z 2025-10-13 11:30:34,892 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:31:36.353707224Z 2025-10-13 11:31:36,353 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:31:51.743249528Z 2025-10-13 11:31:51,743 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T09:31:51.743459429Z 2025-10-13 11:31:51,743 WARNING app.services.gluetun: Gluetun VPN became unhealthy\
+orchestrator  | 2025-10-13T09:31:54.042429519Z 2025-10-13 11:31:54,042 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T09:31:54.052635401Z 2025-10-13 11:31:54,052 INFO app.services.gluetun: Retrieved and cached VPN forwarded port (sync): 33638\
+orchestrator  | 2025-10-13T09:31:54.808746372Z 2025-10-13 11:31:54,808 INFO app.services.gluetun: Gluetun VPN recovered and is now healthy\
+orchestrator  | 2025-10-13T09:31:54.808776149Z 2025-10-13 11:31:54,808 INFO app.services.gluetun: VPN became healthy but skipping engine restart (startup grace period or insufficient stability)\
+orchestrator  | 2025-10-13T09:31:54.819271662Z 2025-10-13 11:31:54,819 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:32:56.229143646Z 2025-10-13 11:32:56,229 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:33:57.649216040Z 2025-10-13 11:33:57,649 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:34:59.173790812Z 2025-10-13 11:34:59,173 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:36:00.812350370Z 2025-10-13 11:36:00,812 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:37:02.237279140Z 2025-10-13 11:37:02,237 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:38:03.710940771Z 2025-10-13 11:38:03,710 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:39:05.159161429Z 2025-10-13 11:39:05,159 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:40:06.579831553Z 2025-10-13 11:40:06,579 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:41:08.152047875Z 2025-10-13 11:41:08,151 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:42:09.560717161Z 2025-10-13 11:42:09,560 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:43:10.982393574Z 2025-10-13 11:43:10,982 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:44:12.388106506Z 2025-10-13 11:44:12,388 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:45:13.841589661Z 2025-10-13 11:45:13,841 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:46:15.248676738Z 2025-10-13 11:46:15,248 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:47:16.739972136Z 2025-10-13 11:47:16,739 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:48:18.181802633Z 2025-10-13 11:48:18,181 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:49:19.603236483Z 2025-10-13 11:49:19,603 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:50:21.024054952Z 2025-10-13 11:50:21,023 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:51:22.568365636Z 2025-10-13 11:51:22,568 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:52:24.050698057Z 2025-10-13 11:52:24,050 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:53:25.565391442Z 2025-10-13 11:53:25,565 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:54:27.003863813Z 2025-10-13 11:54:27,003 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:55:28.517324412Z 2025-10-13 11:55:28,517 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:56:29.931059820Z 2025-10-13 11:56:29,930 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:57:31.562688605Z 2025-10-13 11:57:31,562 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:58:32.963732447Z 2025-10-13 11:58:32,963 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T09:59:34.519484990Z 2025-10-13 11:59:34,519 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:00:35.915742290Z 2025-10-13 12:00:35,915 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:01:37.531180895Z 2025-10-13 12:01:37,531 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:02:38.916801515Z 2025-10-13 12:02:38,916 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:03:40.340223792Z 2025-10-13 12:03:40,340 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:04:41.744736971Z 2025-10-13 12:04:41,744 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:05:43.298707575Z 2025-10-13 12:05:43,298 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:06:28.137873333Z 2025-10-13 12:06:28,137 INFO app.main: Engine ca1c4790e04d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:06:39.587644286Z 2025-10-13 12:06:39,587 INFO app.main: Engine 423bc407ce9a is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:06:44.914412878Z 2025-10-13 12:06:44,912 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:06:50.967418195Z 2025-10-13 12:06:50,966 INFO app.main: Engine a217e6acaf25 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:06:51.098248791Z 2025-10-13 12:06:51,098 INFO app.main: Engine 4947a41d4aa8 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:07:03.103923700Z 2025-10-13 12:07:03,103 INFO app.main: Engine 4947a41d4aa8 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:07:07.129701885Z 2025-10-13 12:07:07,129 INFO app.services.autoscaler: Starting 1 AceStream containers to maintain MIN_FREE_REPLICAS=1 free engines (currently: total=10, used=10, free=0)\
+orchestrator  | 2025-10-13T10:07:07.576219018Z 2025-10-13 12:07:07,575 INFO app.services.autoscaler: Successfully started AceStream container 061f967284cb (1/1)\
+orchestrator  | 2025-10-13T10:07:08.642046869Z 2025-10-13 12:07:08,641 INFO app.services.autoscaler: Successfully started 1/1 containers\
+orchestrator  | 2025-10-13T10:07:08.642158956Z 2025-10-13 12:07:08,641 INFO app.services.autoscaler: Reindexing after provisioning to pick up new containers\
+orchestrator  | 2025-10-13T10:07:09.608158249Z 2025-10-13 12:07:09,607 INFO app.services.monitor: Docker state change detected: +1, -0 containers\
+orchestrator  | 2025-10-13T10:07:09.608329472Z 2025-10-13 12:07:09,608 INFO app.services.monitor: Re-indexing to pick up new containers\
+orchestrator  | 2025-10-13T10:07:15.022816702Z 2025-10-13 12:07:15,022 INFO app.main: Engine 4947a41d4aa8 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:07:16.149052578Z 2025-10-13 12:07:16,148 INFO app.main: Engine a217e6acaf25 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:07:29.938927112Z 2025-10-13 12:07:29,938 INFO app.services.autoscaler: Starting 1 AceStream containers to maintain MIN_FREE_REPLICAS=1 free engines (currently: total=11, used=11, free=0)\
+orchestrator  | 2025-10-13T10:07:30.357040738Z 2025-10-13 12:07:30,355 INFO app.services.autoscaler: Successfully started AceStream container e1211ae2efe9 (1/1)\
+orchestrator  | 2025-10-13T10:07:31.434763289Z 2025-10-13 12:07:31,434 INFO app.services.autoscaler: Successfully started 1/1 containers\
+orchestrator  | 2025-10-13T10:07:31.434859643Z 2025-10-13 12:07:31,434 INFO app.services.autoscaler: Reindexing after provisioning to pick up new containers\
+orchestrator  | 2025-10-13T10:07:31.572002508Z 2025-10-13 12:07:31,571 INFO app.services.monitor: Docker state change detected: +1, -0 containers\
+orchestrator  | 2025-10-13T10:07:31.572020958Z 2025-10-13 12:07:31,571 INFO app.services.monitor: Re-indexing to pick up new containers\
+orchestrator  | 2025-10-13T10:07:45.486709350Z 2025-10-13 12:07:45,485 INFO app.services.gluetun: Retrieved and cached VPN forwarded port (sync): 33638\
+orchestrator  | 2025-10-13T10:07:52.385508399Z 2025-10-13 12:07:52,385 INFO app.services.autoscaler: Starting 1 AceStream containers to maintain MIN_FREE_REPLICAS=1 free engines (currently: total=12, used=12, free=0)\
+orchestrator  | 2025-10-13T10:07:52.687371764Z 2025-10-13 12:07:52,687 INFO app.services.autoscaler: Successfully started AceStream container 3e2695086cd4 (1/1)\
+orchestrator  | 2025-10-13T10:07:53.713712935Z 2025-10-13 12:07:53,713 INFO app.services.monitor: Docker state change detected: +1, -0 containers\
+orchestrator  | 2025-10-13T10:07:53.713763162Z 2025-10-13 12:07:53,713 INFO app.services.monitor: Re-indexing to pick up new containers\
+orchestrator  | 2025-10-13T10:07:53.911085971Z 2025-10-13 12:07:53,888 INFO app.services.autoscaler: Successfully started 1/1 containers\
+orchestrator  | 2025-10-13T10:07:53.911095932Z 2025-10-13 12:07:53,889 INFO app.services.autoscaler: Reindexing after provisioning to pick up new containers\
+orchestrator  | 2025-10-13T10:08:03.767794582Z 2025-10-13 12:08:03,767 WARNING app.services.monitor: State inconsistency detected during periodic check\
+orchestrator  | 2025-10-13T10:08:03.872881212Z 2025-10-13 12:08:03,872 INFO app.main: Engine 4947a41d4aa8 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:03.881670549Z 2025-10-13 12:08:03,877 INFO app.main: Reindexed after provisioning engine dc26239250af\
+orchestrator  | 2025-10-13T10:08:04.030895505Z 2025-10-13 12:08:04,030 WARNING app.services.replica_validator: State/Docker engine count mismatch: state=13, docker=14\
+orchestrator  | 2025-10-13T10:08:04.031085791Z 2025-10-13 12:08:04,030 INFO app.services.replica_validator: Found 1 Docker containers missing from state: ['dc26239250af']\
+orchestrator  | 2025-10-13T10:08:04.031095194Z 2025-10-13 12:08:04,031 INFO app.services.replica_validator: Triggering state synchronization with Docker (sync_needed=True, force_reindex=True)\
+orchestrator  | 2025-10-13T10:08:04.031203899Z 2025-10-13 12:08:04,031 INFO app.services.replica_validator: Running reindex to sync with Docker containers\
+orchestrator  | 2025-10-13T10:08:04.154014934Z 2025-10-13 12:08:04,153 INFO app.services.replica_validator: After sync: state_engines=14, docker_running=14, free=2\
+orchestrator  | 2025-10-13T10:08:04.771990231Z 2025-10-13 12:08:04,771 INFO app.main: Reindexed after provisioning engine 731852a330fe\
+orchestrator  | 2025-10-13T10:08:07.274705135Z 2025-10-13 12:08:07,274 INFO app.services.monitor: Docker state change detected: +2, -0 containers\
+orchestrator  | 2025-10-13T10:08:07.276121594Z 2025-10-13 12:08:07,275 INFO app.services.monitor: Re-indexing to pick up new containers\
+orchestrator  | 2025-10-13T10:08:11.734351281Z 2025-10-13 12:08:11,734 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:13.135850561Z 2025-10-13 12:08:13,135 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:13.136397580Z 2025-10-13 12:08:13,136 WARNING app.services.gluetun: Gluetun VPN became unhealthy\
+orchestrator  | 2025-10-13T10:08:13.750423143Z 2025-10-13 12:08:13,750 INFO app.main: Engine ca1c4790e04d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:13.878836170Z 2025-10-13 12:08:13,878 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:13.900840148Z 2025-10-13 12:08:13,900 INFO app.services.gluetun: Retrieved and cached VPN forwarded port (sync): 33638\
+orchestrator  | 2025-10-13T10:08:13.938764478Z 2025-10-13 12:08:13,938 INFO app.main: Engine e1211ae2efe9 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:15.904776289Z 2025-10-13 12:08:15,903 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:16.167956602Z 2025-10-13 12:08:16,167 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:16.353779833Z 2025-10-13 12:08:16,352 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:17.952470150Z 2025-10-13 12:08:17,952 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:19.181089618Z 2025-10-13 12:08:19,180 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:20.238687746Z 2025-10-13 12:08:20,238 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:22.277205190Z 2025-10-13 12:08:22,276 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:22.394032993Z 2025-10-13 12:08:22,392 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:23.623603592Z 2025-10-13 12:08:23,623 INFO app.main: Engine a217e6acaf25 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:23.733964585Z 2025-10-13 12:08:23,733 INFO app.main: Engine ca1c4790e04d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:24.305726519Z 2025-10-13 12:08:24,305 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:25.288308311Z 2025-10-13 12:08:25,288 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:26.341486675Z 2025-10-13 12:08:26,341 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:28.376557827Z 2025-10-13 12:08:28,375 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:28.442447120Z 2025-10-13 12:08:28,441 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:30.394586424Z 2025-10-13 12:08:30,394 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:31.389938234Z 2025-10-13 12:08:31,389 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:32.360828186Z 2025-10-13 12:08:32,360 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:33.634114939Z 2025-10-13 12:08:33,633 INFO app.main: Engine a217e6acaf25 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:33.641222386Z 2025-10-13 12:08:33,641 INFO app.main: Engine 061f967284cb is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:34.390264921Z 2025-10-13 12:08:34,389 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:34.416722802Z 2025-10-13 12:08:34,416 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:37.367139068Z 2025-10-13 12:08:37,366 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:37.432684188Z 2025-10-13 12:08:37,432 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:38.889817798Z 2025-10-13 12:08:38,889 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:40.458524478Z 2025-10-13 12:08:40,458 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:40.508676943Z 2025-10-13 12:08:40,507 INFO app.services.autoscaler: Engine 3e2695086cd4 has been empty for 30s, can be stopped\
+orchestrator  | 2025-10-13T10:08:40.508699855Z 2025-10-13 12:08:40,507 INFO app.services.monitor: Cleaning up empty engine 3e2695086cd4 after grace period\
+orchestrator  | 2025-10-13T10:08:40.841068458Z 2025-10-13 12:08:40,840 INFO app.services.autoscaler: Engine dc26239250af has been empty for 30s, can be stopped\
+orchestrator  | 2025-10-13T10:08:40.845415877Z 2025-10-13 12:08:40,844 INFO app.services.monitor: Cleaning up empty engine dc26239250af after grace period\
+orchestrator  | 2025-10-13T10:08:41.024372945Z 2025-10-13 12:08:41,023 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:41.108226541Z 2025-10-13 12:08:41,107 INFO app.services.autoscaler: Engine 731852a330fe has been empty for 30s, can be stopped\
+orchestrator  | 2025-10-13T10:08:41.108258893Z 2025-10-13 12:08:41,107 INFO app.services.monitor: Cleaning up empty engine 731852a330fe after grace period\
+orchestrator  | 2025-10-13T10:08:42.094280868Z 2025-10-13 12:08:42,094 INFO app.services.monitor: Docker state change detected: +0, -3 containers\
+orchestrator  | 2025-10-13T10:08:42.828796524Z 2025-10-13 12:08:42,828 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:43.496151955Z 2025-10-13 12:08:43,492 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:43.739058226Z 2025-10-13 12:08:43,738 INFO app.main: Engine 423bc407ce9a is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:43.739076712Z 2025-10-13 12:08:43,738 INFO app.main: Engine 2ec9442076c1 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:43.961355516Z 2025-10-13 12:08:43,961 INFO app.main: Engine 4947a41d4aa8 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:43.969039017Z 2025-10-13 12:08:43,968 INFO app.main: Engine a217e6acaf25 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:44.014565904Z 2025-10-13 12:08:44,014 INFO app.main: Engine 061f967284cb is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:44.832239644Z 2025-10-13 12:08:44,832 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:46.232839267Z 2025-10-13 12:08:46,232 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:46.513209041Z 2025-10-13 12:08:46,512 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:46.888300617Z 2025-10-13 12:08:46,888 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:47.048194874Z 2025-10-13 12:08:47,047 INFO app.services.autoscaler: Engine e1211ae2efe9 has been empty for 30s, can be stopped\
+orchestrator  | 2025-10-13T10:08:47.048217563Z 2025-10-13 12:08:47,047 INFO app.services.monitor: Cleaning up empty engine e1211ae2efe9 after grace period\
+orchestrator  | 2025-10-13T10:08:48.327564430Z 2025-10-13 12:08:48,327 INFO app.services.monitor: Docker state change detected: +0, -1 containers\
+orchestrator  | 2025-10-13T10:08:49.040577756Z 2025-10-13 12:08:49,040 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:49.533379196Z 2025-10-13 12:08:49,533 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:50.901860742Z 2025-10-13 12:08:50,901 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:52.547740942Z 2025-10-13 12:08:52,547 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:52.857123129Z 2025-10-13 12:08:52,856 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:53.635964573Z 2025-10-13 12:08:53,635 INFO app.main: Engine db92d763a207 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:54.001655253Z 2025-10-13 12:08:54,001 INFO app.main: Engine c2d22bb4c22d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:54.022762617Z 2025-10-13 12:08:54,021 WARNING app.services.provisioner: Failed to clear AceStream cache for container gluetun:1901: 404 Client Error for http+docker://localhost/v1.51/containers/gluetun:19011/json: Not Found ("No such container: gluetun:19011")\
+orchestrator  | 2025-10-13T10:08:54.025977823Z 2025-10-13 12:08:54,025 INFO app.main: Engine gluetun:1901 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:54.031936980Z 2025-10-13 12:08:54,031 INFO app.main: Engine c3550d540832 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:54.044072540Z 2025-10-13 12:08:54,043 INFO app.main: Engine a217e6acaf25 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:54.060624239Z 2025-10-13 12:08:54,060 INFO app.main: Engine 8321248efa2f is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:54.561815624Z 2025-10-13 12:08:54,561 WARNING app.services.monitor: State inconsistency detected during periodic check\
+orchestrator  | 2025-10-13T10:08:54.640980798Z 2025-10-13 12:08:54,640 WARNING app.services.replica_validator: State/Docker engine count mismatch: state=12, docker=11\
+orchestrator  | 2025-10-13T10:08:54.641201879Z 2025-10-13 12:08:54,640 INFO app.services.replica_validator: Found 1 orphaned engines in state: ['gluetun:1901']\
+orchestrator  | 2025-10-13T10:08:54.641209868Z 2025-10-13 12:08:54,641 INFO app.services.replica_validator: Triggering state synchronization with Docker (sync_needed=True, force_reindex=True)\
+orchestrator  | 2025-10-13T10:08:54.641277437Z 2025-10-13 12:08:54,641 INFO app.services.replica_validator: Removing orphaned engine gluetun:1901 from state\
+orchestrator  | 2025-10-13T10:08:54.650117391Z 2025-10-13 12:08:54,649 INFO app.services.replica_validator: Running reindex to sync with Docker containers\
+orchestrator  | 2025-10-13T10:08:54.855130203Z 2025-10-13 12:08:54,854 INFO app.services.replica_validator: After sync: state_engines=12, docker_running=11, free=3\
+orchestrator  | 2025-10-13T10:08:54.972720672Z 2025-10-13 12:08:54,972 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:55.562407852Z 2025-10-13 12:08:55,561 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:56.462480453Z 2025-10-13 12:08:56,461 INFO app.main: Engine e1211ae2efe9 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.191348664Z 2025-10-13 12:08:57,191 INFO app.main: Engine c2d22bb4c22d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.198435594Z 2025-10-13 12:08:57,198 INFO app.main: Engine db92d763a207 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.221185512Z 2025-10-13 12:08:57,221 INFO app.main: Engine 2ec9442076c1 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.283925960Z 2025-10-13 12:08:57,283 INFO app.main: Engine 2ec9442076c1 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.297094423Z 2025-10-13 12:08:57,296 INFO app.main: Engine 361d984caf4b is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.321967292Z 2025-10-13 12:08:57,321 INFO app.main: Engine c3550d540832 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.330028771Z 2025-10-13 12:08:57,329 INFO app.main: Engine 061f967284cb is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.340897544Z 2025-10-13 12:08:57,340 INFO app.main: Engine gluetun:1901 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.349950094Z 2025-10-13 12:08:57,349 INFO app.main: Engine 423bc407ce9a is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.358681807Z 2025-10-13 12:08:57,357 INFO app.main: Engine 423bc407ce9a is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.391501971Z 2025-10-13 12:08:57,390 INFO app.main: Engine 061f967284cb is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.441779748Z 2025-10-13 12:08:57,441 INFO app.main: Engine c2d22bb4c22d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:08:57.605985297Z 2025-10-13 12:08:57,605 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:08:57.921435051Z 2025-10-13 12:08:57,919 WARNING app.services.provisioner: Failed to clear AceStream cache for container gluetun:1901: 404 Client Error for http+docker://localhost/v1.51/containers/gluetun:19012/json: Not Found ("No such container: gluetun:19012")\
+orchestrator  | 2025-10-13T10:08:57.992349097Z 2025-10-13 12:08:57,992 WARNING app.services.monitor: State inconsistency detected during periodic check\
+orchestrator  | 2025-10-13T10:08:58.090162031Z 2025-10-13 12:08:58,090 WARNING app.services.replica_validator: State/Docker engine count mismatch: state=12, docker=11\
+orchestrator  | 2025-10-13T10:08:58.090503308Z 2025-10-13 12:08:58,090 INFO app.services.replica_validator: Found 1 orphaned engines in state: ['gluetun:1901']\
+orchestrator  | 2025-10-13T10:08:58.090931571Z 2025-10-13 12:08:58,090 INFO app.services.replica_validator: Triggering state synchronization with Docker (sync_needed=True, force_reindex=True)\
+orchestrator  | 2025-10-13T10:08:58.092375777Z 2025-10-13 12:08:58,091 INFO app.services.replica_validator: Removing orphaned engine gluetun:1901 from state\
+orchestrator  | 2025-10-13T10:08:58.108864791Z 2025-10-13 12:08:58,108 INFO app.services.replica_validator: Running reindex to sync with Docker containers\
+orchestrator  | 2025-10-13T10:08:58.364271459Z 2025-10-13 12:08:58,363 INFO app.services.replica_validator: After sync: state_engines=11, docker_running=11, free=1\
+orchestrator  | 2025-10-13T10:08:58.585631537Z 2025-10-13 12:08:58,585 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:08:59.590204944Z 2025-10-13 12:08:59,587 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:09:01.597744284Z 2025-10-13 12:09:01,597 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:04.616178116Z 2025-10-13 12:09:04,613 INFO app.services.gluetun: Gluetun VPN recovered and is now healthy\
+orchestrator  | 2025-10-13T10:09:04.616206260Z 2025-10-13 12:09:04,613 INFO app.services.gluetun: VPN became healthy but skipping engine restart (startup grace period or insufficient stability)\
+orchestrator  | 2025-10-13T10:09:04.627989993Z 2025-10-13 12:09:04,627 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:09:07.402563375Z 2025-10-13 12:09:07,402 INFO app.main: Engine 4947a41d4aa8 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:09:07.739957350Z 2025-10-13 12:09:07,739 INFO app.main: Engine c3550d540832 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:09:07.740808395Z 2025-10-13 12:09:07,740 INFO app.main: Engine 361d984caf4b is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:09:17.056749324Z 2025-10-13 12:09:17,056 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:17.056773334Z 2025-10-13 12:09:17,056 WARNING app.services.gluetun: Gluetun VPN became unhealthy\
+orchestrator  | 2025-10-13T10:09:17.649217671Z 2025-10-13 12:09:17,649 INFO app.main: Engine 4947a41d4aa8 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:09:18.193348099Z 2025-10-13 12:09:18,193 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:09:18.213736485Z 2025-10-13 12:09:18,213 INFO app.services.gluetun: Retrieved and cached VPN forwarded port (sync): 33638\
+orchestrator  | 2025-10-13T10:09:20.197668463Z 2025-10-13 12:09:20,196 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:20.228415183Z 2025-10-13 12:09:20,228 INFO app.services.autoscaler: Engine a217e6acaf25 has been empty for 30s, can be stopped\
+orchestrator  | 2025-10-13T10:09:20.228473038Z 2025-10-13 12:09:20,228 INFO app.services.monitor: Cleaning up empty engine a217e6acaf25 after grace period\
+orchestrator  | 2025-10-13T10:09:20.336628066Z 2025-10-13 12:09:20,336 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:09:23.222846479Z 2025-10-13 12:09:23,222 INFO app.services.monitor: Docker state change detected: +0, -1 containers\
+orchestrator  | 2025-10-13T10:09:23.236053369Z 2025-10-13 12:09:23,234 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:23.954446008Z 2025-10-13 12:09:23,954 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:24.154582027Z 2025-10-13 12:09:24,154 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:24.257517855Z 2025-10-13 12:09:24,257 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:24.307783392Z 2025-10-13 12:09:24,307 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:24.424341055Z 2025-10-13 12:09:24,423 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:24.475368289Z 2025-10-13 12:09:24,475 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:24.556478425Z 2025-10-13 12:09:24,556 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:24.604830034Z 2025-10-13 12:09:24,604 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:24.681850282Z 2025-10-13 12:09:24,681 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:26.248412697Z 2025-10-13 12:09:26,246 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:27.649989075Z 2025-10-13 12:09:27,649 INFO app.main: Engine db92d763a207 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:09:27.675885641Z 2025-10-13 12:09:27,675 INFO app.main: Engine c2d22bb4c22d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:09:28.221672645Z 2025-10-13 12:09:28,221 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:28.975016521Z 2025-10-13 12:09:28,974 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:29.161434628Z 2025-10-13 12:09:29,161 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:29.251424892Z 2025-10-13 12:09:29,251 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:29.258818853Z 2025-10-13 12:09:29,258 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:29.293148676Z 2025-10-13 12:09:29,292 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:29.414140289Z 2025-10-13 12:09:29,413 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:29.474915938Z 2025-10-13 12:09:29,474 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:29.539805620Z 2025-10-13 12:09:29,539 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:29.595439277Z 2025-10-13 12:09:29,595 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:29.665213124Z 2025-10-13 12:09:29,665 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:32.272794589Z 2025-10-13 12:09:32,272 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:33.263970803Z 2025-10-13 12:09:33,263 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:35.284520798Z 2025-10-13 12:09:35,284 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:35.931968987Z 2025-10-13 12:09:35,931 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:36.150268727Z 2025-10-13 12:09:36,149 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:36.249546832Z 2025-10-13 12:09:36,249 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:36.286049382Z 2025-10-13 12:09:36,285 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:36.414151406Z 2025-10-13 12:09:36,413 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:36.461198631Z 2025-10-13 12:09:36,460 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:36.546711784Z 2025-10-13 12:09:36,546 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:36.583380084Z 2025-10-13 12:09:36,583 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:36.658208997Z 2025-10-13 12:09:36,657 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:37.489012724Z 2025-10-13 12:09:37,488 INFO app.main: Engine 061f967284cb is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:09:38.295696611Z 2025-10-13 12:09:38,295 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:40.222215977Z 2025-10-13 12:09:40,221 ERROR app.main: Provisioning failed due to VPN issue: Failed to verify Gluetun health: Gluetun VPN container 'gluetun' is not healthy - cannot start AceStream engine\
+orchestrator  | 2025-10-13T10:09:41.308141879Z 2025-10-13 12:09:41,307 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:44.329827873Z 2025-10-13 12:09:44,329 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:46.151748869Z 2025-10-13 12:09:46,151 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:09:47.341754918Z 2025-10-13 12:09:47,341 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:50.370036486Z 2025-10-13 12:09:50,369 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:53.381339166Z 2025-10-13 12:09:53,381 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:56.391566547Z 2025-10-13 12:09:56,391 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:09:57.614555992Z 2025-10-13 12:09:57,614 INFO app.main: Engine 423bc407ce9a is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:09:59.404523392Z 2025-10-13 12:09:59,404 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:02.284141954Z 2025-10-13 12:10:02,282 INFO app.main: Engine 423bc407ce9a is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:02.318348898Z 2025-10-13 12:10:02,318 INFO app.main: Engine 8321248efa2f is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:02.363162864Z 2025-10-13 12:10:02,362 INFO app.main: Engine 8321248efa2f is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:02.425207558Z 2025-10-13 12:10:02,423 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:02.425231437Z 2025-10-13 12:10:02,424 INFO app.main: Engine ca1c4790e04d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:02.790256275Z 2025-10-13 12:10:02,790 INFO app.main: Engine 4947a41d4aa8 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:02.803888436Z 2025-10-13 12:10:02,803 WARNING app.services.provisioner: Failed to clear AceStream cache for container gluetun:1900: 404 Client Error for http+docker://localhost/v1.51/containers/gluetun:19009/json: Not Found ("No such container: gluetun:19009")\
+orchestrator  | 2025-10-13T10:10:02.807434030Z 2025-10-13 12:10:02,807 INFO app.main: Engine gluetun:1900 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:02.849925690Z 2025-10-13 12:10:02,849 INFO app.main: Engine c3550d540832 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:02.886793359Z 2025-10-13 12:10:02,881 INFO app.main: Engine 2ec9442076c1 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:03.013523327Z 2025-10-13 12:10:03,013 INFO app.main: Engine db92d763a207 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:03.024691774Z 2025-10-13 12:10:03,024 INFO app.main: Engine c2d22bb4c22d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:03.053725191Z 2025-10-13 12:10:03,053 INFO app.main: Engine 423bc407ce9a is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:03.118689625Z 2025-10-13 12:10:03,118 INFO app.main: Engine 4947a41d4aa8 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:03.572415984Z 2025-10-13 12:10:03,572 WARNING app.services.monitor: State inconsistency detected during periodic check\
+orchestrator  | 2025-10-13T10:10:03.673179996Z 2025-10-13 12:10:03,672 WARNING app.services.replica_validator: State/Docker engine count mismatch: state=11, docker=10\
+orchestrator  | 2025-10-13T10:10:03.673349514Z 2025-10-13 12:10:03,673 INFO app.services.replica_validator: Found 1 orphaned engines in state: ['gluetun:1900']\
+orchestrator  | 2025-10-13T10:10:03.673432732Z 2025-10-13 12:10:03,673 INFO app.services.replica_validator: Triggering state synchronization with Docker (sync_needed=True, force_reindex=True)\
+orchestrator  | 2025-10-13T10:10:03.673438637Z 2025-10-13 12:10:03,673 INFO app.services.replica_validator: Removing orphaned engine gluetun:1900 from state\
+orchestrator  | 2025-10-13T10:10:03.685229653Z 2025-10-13 12:10:03,684 INFO app.services.replica_validator: Running reindex to sync with Docker containers\
+orchestrator  | 2025-10-13T10:10:03.742731484Z 2025-10-13 12:10:03,741 INFO app.services.replica_validator: After sync: state_engines=10, docker_running=10, free=7\
+orchestrator  | 2025-10-13T10:10:05.440197738Z 2025-10-13 12:10:05,438 INFO app.services.gluetun: Gluetun VPN recovered and is now healthy\
+orchestrator  | 2025-10-13T10:10:05.440220375Z 2025-10-13 12:10:05,438 INFO app.services.gluetun: VPN became healthy but skipping engine restart (startup grace period or insufficient stability)\
+orchestrator  | 2025-10-13T10:10:05.450379342Z 2025-10-13 12:10:05,450 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:10:14.088134518Z 2025-10-13 12:10:14,086 INFO app.main: Engine c2d22bb4c22d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:14.096674930Z 2025-10-13 12:10:14,096 INFO app.main: Engine 4947a41d4aa8 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:14.110396636Z 2025-10-13 12:10:14,110 INFO app.main: Engine c2d22bb4c22d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:14.117407632Z 2025-10-13 12:10:14,117 INFO app.main: Engine c3550d540832 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:14.129622649Z 2025-10-13 12:10:14,129 INFO app.main: Engine 061f967284cb is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:14.177862088Z 2025-10-13 12:10:14,177 INFO app.main: Engine 2ec9442076c1 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:23.525639965Z 2025-10-13 12:10:23,525 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:23.525826259Z 2025-10-13 12:10:23,525 WARNING app.services.gluetun: Gluetun VPN became unhealthy\
+orchestrator  | 2025-10-13T10:10:24.091509116Z 2025-10-13 12:10:24,091 INFO app.main: Engine gluetun:1900 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:26.538509678Z 2025-10-13 12:10:26,538 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:29.551187785Z 2025-10-13 12:10:29,550 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:32.563595314Z 2025-10-13 12:10:32,563 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:34.100064406Z 2025-10-13 12:10:34,099 INFO app.main: Engine c2d22bb4c22d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:35.573874701Z 2025-10-13 12:10:35,573 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:38.584707257Z 2025-10-13 12:10:38,584 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:41.597586657Z 2025-10-13 12:10:41,597 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:44.175956725Z 2025-10-13 12:10:44,175 INFO app.main: Engine c2d22bb4c22d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:44.184428030Z 2025-10-13 12:10:44,184 INFO app.main: Engine 2ec9442076c1 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:44.193899997Z 2025-10-13 12:10:44,193 INFO app.main: Engine 4947a41d4aa8 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:44.210142674Z 2025-10-13 12:10:44,209 INFO app.main: Engine db92d763a207 is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:44.230280099Z 2025-10-13 12:10:44,230 INFO app.main: Engine c2d22bb4c22d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:44.342898436Z 2025-10-13 12:10:44,342 INFO app.main: Engine c2d22bb4c22d is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:44.379765360Z 2025-10-13 12:10:44,379 INFO app.main: Engine 361d984caf4b is in grace period, deferring shutdown\
+orchestrator  | 2025-10-13T10:10:44.608926649Z 2025-10-13 12:10:44,608 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:46.125862506Z 2025-10-13 12:10:46,125 WARNING app.services.gluetun: VPN double-check: No engines report network connectivity\
+orchestrator  | 2025-10-13T10:10:46.137471558Z 2025-10-13 12:10:46,137 WARNING app.services.gluetun: No port forwarding information available from Gluetun\
+orchestrator  | 2025-10-13T10:10:47.619981422Z 2025-10-13 12:10:47,619 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:50.646908759Z 2025-10-13 12:10:50,646 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:53.657325085Z 2025-10-13 12:10:53,657 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:56.668871710Z 2025-10-13 12:10:56,668 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:10:59.679389781Z 2025-10-13 12:10:59,679 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:11:02.693370422Z 2025-10-13 12:11:02,692 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:11:05.703900672Z 2025-10-13 12:11:05,703 WARNING app.services.gluetun: Gluetun container 'gluetun' is unhealthy\
+orchestrator  | 2025-10-13T10:11:08.715958137Z 2025-10-13 12:11:08,714 INFO app.services.gluetun: Gluetun VPN recovered and is now healthy\
+orchestrator  | 2025-10-13T10:11:08.715981147Z 2025-10-13 12:11:08,714 INFO app.services.gluetun: VPN became healthy but skipping engine restart (startup grace period or insufficient stability)\
+orchestrator  | 2025-10-13T10:11:08.726540439Z 2025-10-13 12:11:08,726 WARNING app.services.gluetun: No port forwarding information available from Gluetun\
+orchestrator  | 2025-10-13T10:11:11.750755183Z 2025-10-13 12:11:11,750 WARNING app.services.gluetun: No port forwarding information available from Gluetun\
+orchestrator  | 2025-10-13T10:11:14.776129333Z 2025-10-13 12:11:14,775 WARNING app.services.gluetun: No port forwarding information available from Gluetun\
+orchestrator  | 2025-10-13T10:11:16.113158563Z 2025-10-13 12:11:16,113 WARNING app.services.gluetun: No port forwarding information available from Gluetun\
+orchestrator  | 2025-10-13T10:11:17.797101824Z 2025-10-13 12:11:17,796 WARNING app.services.gluetun: No port forwarding information available from Gluetun\
+orchestrator  | 2025-10-13T10:11:20.820294972Z 2025-10-13 12:11:20,820 WARNING app.services.gluetun: No port forwarding information available from Gluetun\
+orchestrator  | 2025-10-13T10:11:23.840945717Z 2025-10-13 12:11:23,840 WARNING app.services.gluetun: No port forwarding information available from Gluetun\
+orchestrator  | 2025-10-13T10:11:26.866168061Z 2025-10-13 12:11:26,866 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:12:28.411599386Z 2025-10-13 12:12:28,411 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:13:29.921624690Z 2025-10-13 12:13:29,921 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:14:31.517904868Z 2025-10-13 12:14:31,517 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:15:32.956271069Z 2025-10-13 12:15:32,954 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:16:34.554558668Z 2025-10-13 12:16:34,554 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:17:35.963220520Z 2025-10-13 12:17:35,962 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:18:37.367182911Z 2025-10-13 12:18:37,367 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:19:38.780254490Z 2025-10-13 12:19:38,780 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+orchestrator  | 2025-10-13T10:20:40.277823406Z 2025-10-13 12:20:40,277 INFO app.services.gluetun: Retrieved and cached VPN forwarded port: 33638\
+}

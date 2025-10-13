@@ -1,0 +1,263 @@
+Timestamps
+Poll
+
+acexy  | 2025-10-12T22:34:39.725663265Z 2025/10/12 22:34:39 INFO Orchestrator integration enabled url=http://orchestrator:8000 max_streams_per_engine=2
+acexy  | 2025-10-12T22:34:39.725934485Z 2025/10/12 22:34:39 INFO Starting server addr=:8080
+acexy  | 2025-10-12T22:34:39.726791157Z 2025/10/12 22:34:39 WARN Health check failed error="Get \"http://orchestrator:8000/orchestrator/status\": dial tcp 172.18.0.6:8000: connect: connection refused"
+acexy  | 2025-10-12T22:34:58.130153022Z 2025/10/12 22:34:58 INFO Orchestrator integration enabled url=http://orchestrator:8000 max_streams_per_engine=2
+acexy  | 2025-10-12T22:34:58.130170202Z 2025/10/12 22:34:58 INFO Starting server addr=:8080
+acexy  | 2025-10-12T22:36:01.329384680Z 2025/10/12 22:36:01 INFO Selected best available engine container_id=317e9f5dc46db6bb370eb452f9f80a7b7e29883915d9e11233a6c5716c19ec4a container_name=acestream-10 host=gluetun port=19009 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:35:55Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:36:01.329413208Z 2025/10/12 22:36:01 INFO Selected engine from orchestrator host=gluetun port=19009
+acexy  | 2025-10-12T22:36:01.707618654Z 2025/10/12 22:36:01 INFO Started new stream id="{id: 31c19ffb3472c289c5bbbbc174449c8ed0d19e38}" clients=0
+acexy  | 2025-10-12T22:36:06.149535761Z 2025/10/12 22:36:06 INFO Selected best available engine container_id=ee8b15b7df99566df11b0aaadf870686851c1703117fbeeaff7e5f65af7db290 container_name=acestream-9 host=gluetun port=19008 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:35:55Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:36:06.149559390Z 2025/10/12 22:36:06 INFO Selected engine from orchestrator host=gluetun port=19008
+acexy  | 2025-10-12T22:36:06.451490967Z 2025/10/12 22:36:06 INFO Started new stream id="{id: 911ad127726234b97658498a8b790fdd7516541d}" clients=0
+acexy  | 2025-10-12T22:36:11.163882093Z 2025/10/12 22:36:11 INFO Selected best available engine container_id=22009faad6d042e6ff5ad72dec453313c77acc30e0b80620e3fdb7badd6eede6 container_name=acestream-8 host=gluetun port=19007 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:35:55Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:36:11.163907021Z 2025/10/12 22:36:11 INFO Selected engine from orchestrator host=gluetun port=19007
+acexy  | 2025-10-12T22:36:11.423469723Z 2025/10/12 22:36:11 INFO Started new stream id="{id: 571ce113b9d600a145766443d7417eccab2e1846}" clients=0
+acexy  | 2025-10-12T22:36:16.185221217Z 2025/10/12 22:36:16 INFO Selected best available engine container_id=6550e9afec8859eac35d5147e42c9aa800c94913831baa434fbba8222fb5d656 container_name=acestream-7 host=gluetun port=19006 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:15Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:36:16.185245055Z 2025/10/12 22:36:16 INFO Selected engine from orchestrator host=gluetun port=19006
+acexy  | 2025-10-12T22:36:16.494187179Z 2025/10/12 22:36:16 INFO Started new stream id="{id: 0e50439e68aa2435b38f0563bb2f2e98f32ff4b1}" clients=0
+acexy  | 2025-10-12T22:36:21.276979869Z 2025/10/12 22:36:21 INFO Selected best available engine container_id=833c921f3c2d4fa60ca5a10562df9ff87ea1bc8cd15832598466aa7b38dc8e79 container_name=acestream-6 host=gluetun port=19005 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:15Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:36:21.277032641Z 2025/10/12 22:36:21 INFO Selected engine from orchestrator host=gluetun port=19005
+acexy  | 2025-10-12T22:36:21.618144927Z 2025/10/12 22:36:21 INFO Started new stream id="{id: c976c7b37964322752db562b4ad65515509c8d36}" clients=0
+acexy  | 2025-10-12T22:36:26.199685516Z 2025/10/12 22:36:26 INFO Selected best available engine container_id=d219d7c45b783a4eef01c1390ef8eee6799fe1a94f6348e1c32acab33288cbb1 container_name=acestream-5 host=gluetun port=19004 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:25Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:36:26.199711014Z 2025/10/12 22:36:26 INFO Selected engine from orchestrator host=gluetun port=19004
+acexy  | 2025-10-12T22:36:26.475057664Z 2025/10/12 22:36:26 INFO Started new stream id="{id: 8ee52f6208e33706171856f99d2ed2dabd317f3a}" clients=0
+acexy  | 2025-10-12T22:36:31.193743656Z 2025/10/12 22:36:31 INFO Selected best available engine container_id=ace46e75f087f4462fcf655b39a690c57a5eb5100697f3041ccc47925f9fab0b container_name=acestream-4 host=gluetun port=19003 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:25Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:36:31.193765921Z 2025/10/12 22:36:31 INFO Selected engine from orchestrator host=gluetun port=19003
+acexy  | 2025-10-12T22:36:31.527996786Z 2025/10/12 22:36:31 INFO Started new stream id="{id: 8a05571c0c8fe53f160fb7d116cdf97243679e86}" clients=0
+acexy  | 2025-10-12T22:36:36.213372554Z 2025/10/12 22:36:36 INFO Selected best available engine container_id=84ea46d4689e5364488a43c510d0862e4fbef5d520551c2825e140e2a4669f9e container_name=acestream-3 host=gluetun port=19002 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:35Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:36:36.213394400Z 2025/10/12 22:36:36 INFO Selected engine from orchestrator host=gluetun port=19002
+acexy  | 2025-10-12T22:36:36.573351089Z 2025/10/12 22:36:36 INFO Started new stream id="{id: 778d2f60bb7207addedcca0b9aed98f41529724e}" clients=0
+acexy  | 2025-10-12T22:36:41.208456808Z 2025/10/12 22:36:41 INFO Selected best available engine container_id=0d3d88e3b10d2e929673e5d5f7e54391ad0f9b56569dafe127a25ff67c7476a3 container_name=acestream-2 host=gluetun port=19001 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:35Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:36:41.208480728Z 2025/10/12 22:36:41 INFO Selected engine from orchestrator host=gluetun port=19001
+acexy  | 2025-10-12T22:36:41.536354222Z 2025/10/12 22:36:41 INFO Started new stream id="{id: 36394be1db2e20b5997d987c32fd38c7f0f194b7}" clients=0
+acexy  | 2025-10-12T22:36:46.224322834Z 2025/10/12 22:36:46 INFO Selected best available engine container_id=ec63ae0faf3f2d49e5bf5988c01f41cb68296ee41c334e0aa568aed25fa07b30 container_name=acestream-1 host=gluetun port=19000 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:35Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:36:46.224346719Z 2025/10/12 22:36:46 INFO Selected engine from orchestrator host=gluetun port=19000
+acexy  | 2025-10-12T22:36:46.441246704Z 2025/10/12 22:36:46 INFO Selected best available engine container_id=ec63ae0faf3f2d49e5bf5988c01f41cb68296ee41c334e0aa568aed25fa07b30 container_name=acestream-1 host=gluetun port=19000 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:35Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:36:46.441280829Z 2025/10/12 22:36:46 INFO Selected engine from orchestrator host=gluetun port=19000
+acexy  | 2025-10-12T22:36:46.569221510Z 2025/10/12 22:36:46 INFO Started new stream id="{id: b0eabe0fdd02fdd165896236765a9b753a2ff516}" clients=0
+acexy  | 2025-10-12T22:36:47.702267698Z 2025/10/12 22:36:47 INFO Client stopped stream="{id: 571ce113b9d600a145766443d7417eccab2e1846}" clients=0
+acexy  | 2025-10-12T22:36:47.703176008Z 2025/10/12 22:36:47 INFO Stream done stream="{id: 571ce113b9d600a145766443d7417eccab2e1846}"
+acexy  | 2025-10-12T22:36:48.057340804Z 2025/10/12 22:36:48 INFO Started new stream id="{id: 7ad14386deef2f45ffe17d30a631dbf79b6a1a87}" clients=0
+acexy  | 2025-10-12T22:36:51.289497763Z 2025/10/12 22:36:51 INFO Selected best available engine container_id=22009faad6d042e6ff5ad72dec453313c77acc30e0b80620e3fdb7badd6eede6 container_name=acestream-8 host=gluetun port=19007 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:35Z last_stream_usage=2025-10-12T22:36:11Z
+acexy  | 2025-10-12T22:36:51.289530305Z 2025/10/12 22:36:51 INFO Selected engine from orchestrator host=gluetun port=19007
+acexy  | 2025-10-12T22:36:51.665441190Z 2025/10/12 22:36:51 INFO Started new stream id="{id: d1d9ec2361a6ac8edc0b2841866383768cc28df9}" clients=0
+acexy  | 2025-10-12T22:36:56.265636437Z 2025/10/12 22:36:56 INFO Selected best available engine container_id=317e9f5dc46db6bb370eb452f9f80a7b7e29883915d9e11233a6c5716c19ec4a container_name=acestream-10 host=gluetun port=19009 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:55Z last_stream_usage=2025-10-12T22:36:01Z
+acexy  | 2025-10-12T22:36:56.265676130Z 2025/10/12 22:36:56 INFO Selected engine from orchestrator host=gluetun port=19009
+acexy  | 2025-10-12T22:36:56.556394733Z 2025/10/12 22:36:56 INFO Started new stream id="{id: 7e90956539f4e1318a63f3960e4f75c7c7c5a3b8}" clients=0
+acexy  | 2025-10-12T22:37:01.412207768Z 2025/10/12 22:37:01 INFO Selected best available engine container_id=ee8b15b7df99566df11b0aaadf870686851c1703117fbeeaff7e5f65af7db290 container_name=acestream-9 host=gluetun port=19008 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:55Z last_stream_usage=2025-10-12T22:36:06Z
+acexy  | 2025-10-12T22:37:01.412235145Z 2025/10/12 22:37:01 INFO Selected engine from orchestrator host=gluetun port=19008
+acexy  | 2025-10-12T22:37:01.761432109Z 2025/10/12 22:37:01 INFO Started new stream id="{id: 3f5b7e2f883fe4b4b973e198d147a513d5c7c32a}" clients=0
+acexy  | 2025-10-12T22:37:06.315833355Z 2025/10/12 22:37:06 INFO Selected best available engine container_id=6550e9afec8859eac35d5147e42c9aa800c94913831baa434fbba8222fb5d656 container_name=acestream-7 host=gluetun port=19006 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:55Z last_stream_usage=2025-10-12T22:36:16Z
+acexy  | 2025-10-12T22:37:06.315859707Z 2025/10/12 22:37:06 INFO Selected engine from orchestrator host=gluetun port=19006
+acexy  | 2025-10-12T22:37:06.645109399Z 2025/10/12 22:37:06 INFO Started new stream id="{id: ebca4a63ce3bfda7b272964a1acc5227218184a4}" clients=0
+acexy  | 2025-10-12T22:37:11.413412290Z 2025/10/12 22:37:11 INFO Selected best available engine container_id=833c921f3c2d4fa60ca5a10562df9ff87ea1bc8cd15832598466aa7b38dc8e79 container_name=acestream-6 host=gluetun port=19005 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:36:55Z last_stream_usage=2025-10-12T22:36:21Z
+acexy  | 2025-10-12T22:37:11.413456626Z 2025/10/12 22:37:11 INFO Selected engine from orchestrator host=gluetun port=19005
+acexy  | 2025-10-12T22:37:12.468773088Z 2025/10/12 22:37:12 INFO Started new stream id="{id: 3afe1af18f8ff78e9946856911b00c67477052b5}" clients=0
+acexy  | 2025-10-12T22:37:16.651080834Z 2025/10/12 22:37:16 INFO Selected best available engine container_id=217da4ad70b50c134aade5f847e5e336c6fd8fba63fa2025a1c72bca8cb5bfea container_name=acestream-11 host=gluetun port=19010 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:16Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:37:16.651108524Z 2025/10/12 22:37:16 INFO Selected engine from orchestrator host=gluetun port=19010
+acexy  | 2025-10-12T22:37:17.033355164Z 2025/10/12 22:37:17 INFO Started new stream id="{id: 799c6b5ee1cf41af077d14e3f9c45a32697eb903}" clients=0
+acexy  | 2025-10-12T22:37:21.489523692Z 2025/10/12 22:37:21 INFO Selected best available engine container_id=d219d7c45b783a4eef01c1390ef8eee6799fe1a94f6348e1c32acab33288cbb1 container_name=acestream-5 host=gluetun port=19004 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:16Z last_stream_usage=2025-10-12T22:36:26Z
+acexy  | 2025-10-12T22:37:21.489655450Z 2025/10/12 22:37:21 INFO Selected engine from orchestrator host=gluetun port=19004
+acexy  | 2025-10-12T22:37:21.842434581Z 2025/10/12 22:37:21 INFO Started new stream id="{id: b40e1de2dcbd7c665f54877b14c830ed67b32a96}" clients=0
+acexy  | 2025-10-12T22:37:26.464774848Z 2025/10/12 22:37:26 INFO Selected best available engine container_id=ace46e75f087f4462fcf655b39a690c57a5eb5100697f3041ccc47925f9fab0b container_name=acestream-4 host=gluetun port=19003 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:25Z last_stream_usage=2025-10-12T22:36:31Z
+acexy  | 2025-10-12T22:37:26.464802215Z 2025/10/12 22:37:26 INFO Selected engine from orchestrator host=gluetun port=19003
+acexy  | 2025-10-12T22:37:26.819590742Z 2025/10/12 22:37:26 INFO Started new stream id="{id: 3230cdca852a10325222e3c546e499e31d547a90}" clients=0
+acexy  | 2025-10-12T22:37:31.385374416Z 2025/10/12 22:37:31 INFO Selected best available engine container_id=84ea46d4689e5364488a43c510d0862e4fbef5d520551c2825e140e2a4669f9e container_name=acestream-3 host=gluetun port=19002 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:25Z last_stream_usage=2025-10-12T22:36:36Z
+acexy  | 2025-10-12T22:37:31.385397436Z 2025/10/12 22:37:31 INFO Selected engine from orchestrator host=gluetun port=19002
+acexy  | 2025-10-12T22:37:31.765376012Z 2025/10/12 22:37:31 INFO Started new stream id="{id: 1b0bc4d4dcd609d3c092712e721392b199f50a62}" clients=0
+acexy  | 2025-10-12T22:37:36.583794481Z 2025/10/12 22:37:36 INFO Selected best available engine container_id=c66d02327950d2dbdd40486411c01fbca234092570f0ed06a25484a2c4c6a0f9 container_name=acestream-12 host=gluetun port=19011 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:36Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:37:36.583820567Z 2025/10/12 22:37:36 INFO Selected engine from orchestrator host=gluetun port=19011
+acexy  | 2025-10-12T22:37:36.953162733Z 2025/10/12 22:37:36 INFO Started new stream id="{id: ac675c82d6dfd4a201532c18b42e48dacb7c32c6}" clients=0
+acexy  | 2025-10-12T22:37:37.355550462Z 2025/10/12 22:37:37 INFO Selected best available engine container_id=0d3d88e3b10d2e929673e5d5f7e54391ad0f9b56569dafe127a25ff67c7476a3 container_name=acestream-2 host=gluetun port=19001 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:36Z last_stream_usage=2025-10-12T22:36:41Z
+acexy  | 2025-10-12T22:37:37.355585796Z 2025/10/12 22:37:37 INFO Selected engine from orchestrator host=gluetun port=19001
+acexy  | 2025-10-12T22:37:38.037796392Z 2025/10/12 22:37:38 INFO Client stopped stream="{id: 3afe1af18f8ff78e9946856911b00c67477052b5}" clients=0
+acexy  | 2025-10-12T22:37:38.039758110Z 2025/10/12 22:37:38 INFO Stream done stream="{id: 3afe1af18f8ff78e9946856911b00c67477052b5}"
+acexy  | 2025-10-12T22:37:38.086868318Z 2025/10/12 22:37:38 INFO Selected best available engine container_id=0d3d88e3b10d2e929673e5d5f7e54391ad0f9b56569dafe127a25ff67c7476a3 container_name=acestream-2 host=gluetun port=19001 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:36Z last_stream_usage=2025-10-12T22:36:41Z
+acexy  | 2025-10-12T22:37:38.086890042Z 2025/10/12 22:37:38 INFO Selected engine from orchestrator host=gluetun port=19001
+acexy  | 2025-10-12T22:37:38.410104889Z 2025/10/12 22:37:38 INFO Started new stream id="{id: f0ee7a2b43c1df5ea9e4fac5bf876d5bef4372b0}" clients=0
+acexy  | 2025-10-12T22:37:39.733992042Z 2025/10/12 22:37:39 INFO Client stopped stream="{id: 778d2f60bb7207addedcca0b9aed98f41529724e}" clients=0
+acexy  | 2025-10-12T22:37:39.734013851Z 2025/10/12 22:37:39 INFO Stream done stream="{id: 778d2f60bb7207addedcca0b9aed98f41529724e}"
+acexy  | 2025-10-12T22:37:40.047064685Z 2025/10/12 22:37:40 INFO Started new stream id="{id: 778d2f60bb7207addedcca0b9aed98f41529724e}" clients=0
+acexy  | 2025-10-12T22:37:41.613844831Z 2025/10/12 22:37:41 INFO Selected best available engine container_id=22009faad6d042e6ff5ad72dec453313c77acc30e0b80620e3fdb7badd6eede6 container_name=acestream-8 host=gluetun port=19007 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:36Z last_stream_usage=2025-10-12T22:36:51Z
+acexy  | 2025-10-12T22:37:41.613913313Z 2025/10/12 22:37:41 INFO Selected engine from orchestrator host=gluetun port=19007
+acexy  | 2025-10-12T22:37:41.873507089Z 2025/10/12 22:37:41 INFO Selected best available engine container_id=22009faad6d042e6ff5ad72dec453313c77acc30e0b80620e3fdb7badd6eede6 container_name=acestream-8 host=gluetun port=19007 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:36Z last_stream_usage=2025-10-12T22:36:51Z
+acexy  | 2025-10-12T22:37:41.873532254Z 2025/10/12 22:37:41 INFO Selected engine from orchestrator host=gluetun port=19007
+acexy  | 2025-10-12T22:37:41.966722463Z 2025/10/12 22:37:41 INFO Started new stream id="{id: 1ba18731a8e18bb4b3a5dfa5bb7b0f05762849a6}" clients=0
+acexy  | 2025-10-12T22:37:44.112763359Z 2025/10/12 22:37:44 INFO Started new stream id="{id: 2b51710cee513e8939785fa3e7980f32d4e0415f}" clients=0
+acexy  | 2025-10-12T22:37:46.867458998Z 2025/10/12 22:37:46 INFO Selected best available engine container_id=833c921f3c2d4fa60ca5a10562df9ff87ea1bc8cd15832598466aa7b38dc8e79 container_name=acestream-6 host=gluetun port=19005 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:36Z last_stream_usage=2025-10-12T22:37:12Z
+acexy  | 2025-10-12T22:37:46.867488508Z 2025/10/12 22:37:46 INFO Selected engine from orchestrator host=gluetun port=19005
+acexy  | 2025-10-12T22:37:47.186337736Z 2025/10/12 22:37:47 INFO Started new stream id="{id: 338b5de78b0b40a6f9ca3cc0cf9be93341b9ceea}" clients=0
+acexy  | 2025-10-12T22:37:51.637364986Z 2025/10/12 22:37:51 INFO Selected best available engine container_id=217da4ad70b50c134aade5f847e5e336c6fd8fba63fa2025a1c72bca8cb5bfea container_name=acestream-11 host=gluetun port=19010 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:36Z last_stream_usage=2025-10-12T22:37:17Z
+acexy  | 2025-10-12T22:37:51.637393467Z 2025/10/12 22:37:51 INFO Selected engine from orchestrator host=gluetun port=19010
+acexy  | 2025-10-12T22:37:52.006467932Z 2025/10/12 22:37:52 INFO Started new stream id="{id: 90f7941c6bf7ca4b18084a1dca7bc15b9b179373}" clients=0
+acexy  | 2025-10-12T22:37:56.879676348Z 2025/10/12 22:37:56 INFO Selected best available engine container_id=bd369446acaab513d7a65588e1ddd4f38dbb793003b0c76bfcaab16ec304c626 container_name=acestream-13 host=gluetun port=19012 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:56Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:37:56.879703886Z 2025/10/12 22:37:56 INFO Selected engine from orchestrator host=gluetun port=19012
+acexy  | 2025-10-12T22:37:57.208845764Z 2025/10/12 22:37:57 INFO Started new stream id="{id: 6fbab1d8d6bf93c4bc7552714aa3bb54ebf7b661}" clients=0
+acexy  | 2025-10-12T22:38:01.782336628Z 2025/10/12 22:38:01 INFO Selected best available engine container_id=84ea46d4689e5364488a43c510d0862e4fbef5d520551c2825e140e2a4669f9e container_name=acestream-3 host=gluetun port=19002 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:56Z last_stream_usage=2025-10-12T22:37:31Z
+acexy  | 2025-10-12T22:38:01.782359071Z 2025/10/12 22:38:01 INFO Selected engine from orchestrator host=gluetun port=19002
+acexy  | 2025-10-12T22:38:02.180210997Z 2025/10/12 22:38:02 INFO Started new stream id="{id: 5620c0ce3dcbf14a6375cb2c2d681207f45eb97d}" clients=0
+acexy  | 2025-10-12T22:38:04.131183974Z 2025/10/12 22:38:04 INFO Client stopped stream="{id: 7ad14386deef2f45ffe17d30a631dbf79b6a1a87}" clients=0
+acexy  | 2025-10-12T22:38:04.134308428Z 2025/10/12 22:38:04 INFO Stream done stream="{id: 7ad14386deef2f45ffe17d30a631dbf79b6a1a87}"
+acexy  | 2025-10-12T22:38:04.380454463Z 2025/10/12 22:38:04 INFO Selected best available engine container_id=ec63ae0faf3f2d49e5bf5988c01f41cb68296ee41c334e0aa568aed25fa07b30 container_name=acestream-1 host=gluetun port=19000 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:56Z last_stream_usage=2025-10-12T22:36:48Z
+acexy  | 2025-10-12T22:38:04.380480160Z 2025/10/12 22:38:04 INFO Selected engine from orchestrator host=gluetun port=19000
+acexy  | 2025-10-12T22:38:04.708775069Z 2025/10/12 22:38:04 INFO Started new stream id="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" clients=0
+acexy  | 2025-10-12T22:38:11.678895488Z 2025/10/12 22:38:11 INFO Selected best available engine container_id=c66d02327950d2dbdd40486411c01fbca234092570f0ed06a25484a2c4c6a0f9 container_name=acestream-12 host=gluetun port=19011 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:56Z last_stream_usage=2025-10-12T22:37:36Z
+acexy  | 2025-10-12T22:38:11.678921561Z 2025/10/12 22:38:11 INFO Selected engine from orchestrator host=gluetun port=19011
+acexy  | 2025-10-12T22:38:14.709524947Z 2025/10/12 22:38:14 ERROR Failed to forward stream error="Get \"http://gluetun:19000/ace/r/f8cb5f57ac90d06a920818ac4e0b8b0915baf75c/a9334bd59d50b4c2e16190fbf3437915\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:38:14.710179196Z 2025/10/12 22:38:14 ERROR Failed to start stream stream="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" error="Get \"http://gluetun:19000/ace/r/f8cb5f57ac90d06a920818ac4e0b8b0915baf75c/a9334bd59d50b4c2e16190fbf3437915\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:38:14.742734996Z 2025/10/12 22:38:14 INFO Selected best available engine container_id=c66d02327950d2dbdd40486411c01fbca234092570f0ed06a25484a2c4c6a0f9 container_name=acestream-12 host=gluetun port=19011 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:56Z last_stream_usage=2025-10-12T22:37:36Z
+acexy  | 2025-10-12T22:38:14.742789310Z 2025/10/12 22:38:14 INFO Selected engine from orchestrator host=gluetun port=19011
+acexy  | 2025-10-12T22:38:15.102251053Z 2025/10/12 22:38:15 INFO Started new stream id="{id: aa31953b8af44b461102852d5b1247eea95b8050}" clients=0
+acexy  | 2025-10-12T22:38:15.811769678Z 2025/10/12 22:38:15 INFO Selected best available engine container_id=bd369446acaab513d7a65588e1ddd4f38dbb793003b0c76bfcaab16ec304c626 container_name=acestream-13 host=gluetun port=19012 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:56Z last_stream_usage=2025-10-12T22:37:57Z
+acexy  | 2025-10-12T22:38:15.811802984Z 2025/10/12 22:38:15 INFO Selected engine from orchestrator host=gluetun port=19012
+acexy  | 2025-10-12T22:38:15.916924847Z 2025/10/12 22:38:15 INFO Client stopped stream="{id: 3230cdca852a10325222e3c546e499e31d547a90}" clients=0
+acexy  | 2025-10-12T22:38:15.919154186Z 2025/10/12 22:38:15 INFO Stream done stream="{id: 3230cdca852a10325222e3c546e499e31d547a90}"
+acexy  | 2025-10-12T22:38:16.059079873Z 2025/10/12 22:38:16 INFO Selected best available engine container_id=ace46e75f087f4462fcf655b39a690c57a5eb5100697f3041ccc47925f9fab0b container_name=acestream-4 host=gluetun port=19003 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:37:56Z last_stream_usage=2025-10-12T22:37:26Z
+acexy  | 2025-10-12T22:38:16.059105731Z 2025/10/12 22:38:16 INFO Selected engine from orchestrator host=gluetun port=19003
+acexy  | 2025-10-12T22:38:16.392635073Z 2025/10/12 22:38:16 INFO Started new stream id="{id: 5913205fb6d6d162a50222709aab6129eb7cf916}" clients=0
+acexy  | 2025-10-12T22:38:16.392657144Z 2025/10/12 22:38:16 INFO Client stopped stream="{id: f0ee7a2b43c1df5ea9e4fac5bf876d5bef4372b0}" clients=0
+acexy  | 2025-10-12T22:38:16.396495335Z 2025/10/12 22:38:16 INFO Stream done stream="{id: f0ee7a2b43c1df5ea9e4fac5bf876d5bef4372b0}"
+acexy  | 2025-10-12T22:38:16.765302896Z 2025/10/12 22:38:16 INFO Started new stream id="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" clients=0
+acexy  | 2025-10-12T22:38:17.109204831Z 2025/10/12 22:38:17 INFO Started new stream id="{id: 73d38feaa770d788848ec098470e32670fe55a61}" clients=0
+acexy  | 2025-10-12T22:38:17.221290949Z 2025/10/12 22:38:17 INFO Selected best available engine container_id=613162e2cada047d5b05ec94cdba21e637f08511096d1e3645178b74040e6cba container_name=acestream-14 host=gluetun port=19013 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:17Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:38:17.221314604Z 2025/10/12 22:38:17 INFO Selected engine from orchestrator host=gluetun port=19013
+acexy  | 2025-10-12T22:38:21.579145781Z 2025/10/12 22:38:21 INFO Selected best available engine container_id=613162e2cada047d5b05ec94cdba21e637f08511096d1e3645178b74040e6cba container_name=acestream-14 host=gluetun port=19013 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:17Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:38:21.579178542Z 2025/10/12 22:38:21 INFO Selected engine from orchestrator host=gluetun port=19013
+acexy  | 2025-10-12T22:38:22.248672615Z 2025/10/12 22:38:22 INFO Selected best available engine container_id=613162e2cada047d5b05ec94cdba21e637f08511096d1e3645178b74040e6cba container_name=acestream-14 host=gluetun port=19013 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:17Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:38:22.248693616Z 2025/10/12 22:38:22 INFO Selected engine from orchestrator host=gluetun port=19013
+acexy  | 2025-10-12T22:38:23.556565851Z 2025/10/12 22:38:23 INFO Selected best available engine container_id=613162e2cada047d5b05ec94cdba21e637f08511096d1e3645178b74040e6cba container_name=acestream-14 host=gluetun port=19013 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:17Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:38:23.556590093Z 2025/10/12 22:38:23 INFO Selected engine from orchestrator host=gluetun port=19013
+acexy  | 2025-10-12T22:38:26.897260367Z 2025/10/12 22:38:26 INFO Selected best available engine container_id=613162e2cada047d5b05ec94cdba21e637f08511096d1e3645178b74040e6cba container_name=acestream-14 host=gluetun port=19013 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:26Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:38:26.897280342Z 2025/10/12 22:38:26 INFO Selected engine from orchestrator host=gluetun port=19013
+acexy  | 2025-10-12T22:38:27.117341660Z 2025/10/12 22:38:27 ERROR Failed to forward stream error="Get \"http://gluetun:19003/ace/r/f8cb5f57ac90d06a920818ac4e0b8b0915baf75c/e363b388da30e6ba530107781cfa3efa\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:38:27.120948954Z 2025/10/12 22:38:27 ERROR Failed to start stream stream="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" error="Get \"http://gluetun:19003/ace/r/f8cb5f57ac90d06a920818ac4e0b8b0915baf75c/e363b388da30e6ba530107781cfa3efa\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:38:27.476848836Z 2025/10/12 22:38:27 INFO Started new stream id="{id: 1ab443f5b4beb6d586f19e8b25b9f9646cf2ab78}" clients=0
+acexy  | 2025-10-12T22:38:27.848914065Z 2025/10/12 22:38:27 INFO Started new stream id="{id: efc60cfe5e3a349baa02bcc49f6647c21a9c3c5b}" clients=0
+acexy  | 2025-10-12T22:38:27.848944177Z 2025/10/12 22:38:27 INFO Client stopped stream="{id: 338b5de78b0b40a6f9ca3cc0cf9be93341b9ceea}" clients=0
+acexy  | 2025-10-12T22:38:27.850202460Z 2025/10/12 22:38:27 INFO Stream done stream="{id: 338b5de78b0b40a6f9ca3cc0cf9be93341b9ceea}"
+acexy  | 2025-10-12T22:38:28.220417633Z 2025/10/12 22:38:28 INFO Started new stream id="{id: 74ab4e4ec7e2da001f473ca40893b7307b8029c5}" clients=0
+acexy  | 2025-10-12T22:38:28.220439066Z 2025/10/12 22:38:28 INFO Client stopped stream="{id: b40e1de2dcbd7c665f54877b14c830ed67b32a96}" clients=0
+acexy  | 2025-10-12T22:38:28.220444597Z 2025/10/12 22:38:28 INFO Stream done stream="{id: b40e1de2dcbd7c665f54877b14c830ed67b32a96}"
+acexy  | 2025-10-12T22:38:28.523058416Z 2025/10/12 22:38:28 INFO Started new stream id="{id: 37825883ed185365e3194a79207347f6c7bd5ba5}" clients=0
+acexy  | 2025-10-12T22:38:28.822423348Z 2025/10/12 22:38:28 INFO Started new stream id="{id: d63d8a57cf471394bfa9f619bbd68b01ae27a801}" clients=0
+acexy  | 2025-10-12T22:38:29.394583327Z 2025/10/12 22:38:29 INFO Selected best available engine container_id=d219d7c45b783a4eef01c1390ef8eee6799fe1a94f6348e1c32acab33288cbb1 container_name=acestream-5 host=gluetun port=19004 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:26Z last_stream_usage=2025-10-12T22:37:21Z
+acexy  | 2025-10-12T22:38:29.394624938Z 2025/10/12 22:38:29 INFO Selected engine from orchestrator host=gluetun port=19004
+acexy  | 2025-10-12T22:38:32.808466768Z 2025/10/12 22:38:32 INFO Selected best available engine container_id=d219d7c45b783a4eef01c1390ef8eee6799fe1a94f6348e1c32acab33288cbb1 container_name=acestream-5 host=gluetun port=19004 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:26Z last_stream_usage=2025-10-12T22:37:21Z
+acexy  | 2025-10-12T22:38:32.808494430Z 2025/10/12 22:38:32 INFO Selected engine from orchestrator host=gluetun port=19004
+acexy  | 2025-10-12T22:38:33.057362066Z 2025/10/12 22:38:33 INFO Selected best available engine container_id=d219d7c45b783a4eef01c1390ef8eee6799fe1a94f6348e1c32acab33288cbb1 container_name=acestream-5 host=gluetun port=19004 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:26Z last_stream_usage=2025-10-12T22:37:21Z
+acexy  | 2025-10-12T22:38:33.057384804Z 2025/10/12 22:38:33 INFO Selected engine from orchestrator host=gluetun port=19004
+acexy  | 2025-10-12T22:38:38.700313698Z 2025/10/12 22:38:38 INFO Selected best available engine container_id=15497f49c45356f1cd266d8822b81b2868c83e138c050a2631697949f49c5bf0 container_name=acestream-15 host=gluetun port=19014 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:37Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:38:38.700340489Z 2025/10/12 22:38:38 INFO Selected engine from orchestrator host=gluetun port=19014
+acexy  | 2025-10-12T22:38:38.826094918Z 2025/10/12 22:38:38 ERROR Failed to forward stream error="Get \"http://gluetun:19013/ace/r/dd219b0d395b35613ff98974ce4bfd8faf5f4bc0/1b4166b9ed13439caaaf0640deeb5382\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:38:38.828269127Z 2025/10/12 22:38:38 ERROR Failed to start stream stream="{id: 1ab443f5b4beb6d586f19e8b25b9f9646cf2ab78}" error="Get \"http://gluetun:19013/ace/r/dd219b0d395b35613ff98974ce4bfd8faf5f4bc0/1b4166b9ed13439caaaf0640deeb5382\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:38:39.217092842Z 2025/10/12 22:38:39 INFO Started new stream id="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" clients=0
+acexy  | 2025-10-12T22:38:39.685139540Z 2025/10/12 22:38:39 INFO Started new stream id="{id: 5f966c123759de46dff29c379266b7a403452033}" clients=0
+acexy  | 2025-10-12T22:38:39.685163955Z 2025/10/12 22:38:39 INFO Client stopped stream="{id: 90f7941c6bf7ca4b18084a1dca7bc15b9b179373}" clients=0
+acexy  | 2025-10-12T22:38:39.688451969Z 2025/10/12 22:38:39 INFO Stream done stream="{id: 90f7941c6bf7ca4b18084a1dca7bc15b9b179373}"
+acexy  | 2025-10-12T22:38:40.036663946Z 2025/10/12 22:38:40 INFO Started new stream id="{id: 2b5129adc57d43790634d796fe3468b9fd061259}" clients=0
+acexy  | 2025-10-12T22:38:40.402560913Z 2025/10/12 22:38:40 INFO Started new stream id="{id: 8c67cdb5ba81976662c3a67984a9545d9cfb0f70}" clients=0
+acexy  | 2025-10-12T22:38:44.430621055Z 2025/10/12 22:38:44 INFO Selected best available engine container_id=833c921f3c2d4fa60ca5a10562df9ff87ea1bc8cd15832598466aa7b38dc8e79 container_name=acestream-6 host=gluetun port=19005 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:37Z last_stream_usage=2025-10-12T22:37:47Z
+acexy  | 2025-10-12T22:38:44.430656460Z 2025/10/12 22:38:44 INFO Selected engine from orchestrator host=gluetun port=19005
+acexy  | 2025-10-12T22:38:50.406372687Z 2025/10/12 22:38:50 ERROR Failed to forward stream error="Get \"http://gluetun:19014/ace/r/f8cb5f57ac90d06a920818ac4e0b8b0915baf75c/046a0c7ff56b166c85d42781413b1dd4\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:38:50.409069463Z 2025/10/12 22:38:50 ERROR Failed to start stream stream="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" error="Get \"http://gluetun:19014/ace/r/f8cb5f57ac90d06a920818ac4e0b8b0915baf75c/046a0c7ff56b166c85d42781413b1dd4\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:38:50.431128545Z 2025/10/12 22:38:50 INFO Client stopped stream="{id: 8ee52f6208e33706171856f99d2ed2dabd317f3a}" clients=0
+acexy  | 2025-10-12T22:38:50.431810813Z 2025/10/12 22:38:50 INFO Stream done stream="{id: 8ee52f6208e33706171856f99d2ed2dabd317f3a}"
+acexy  | 2025-10-12T22:38:51.807222788Z 2025/10/12 22:38:51 INFO Started new stream id="{id: a4f072c9b614323ac1258a175f868a909ea3c8cd}" clients=0
+acexy  | 2025-10-12T22:38:51.807245501Z 2025/10/12 22:38:51 INFO Client stopped stream="{id: efc60cfe5e3a349baa02bcc49f6647c21a9c3c5b}" clients=0
+acexy  | 2025-10-12T22:38:51.807250581Z 2025/10/12 22:38:51 INFO Stream done stream="{id: efc60cfe5e3a349baa02bcc49f6647c21a9c3c5b}"
+acexy  | 2025-10-12T22:38:52.062098091Z 2025/10/12 22:38:52 INFO Selected best available engine container_id=217da4ad70b50c134aade5f847e5e336c6fd8fba63fa2025a1c72bca8cb5bfea container_name=acestream-11 host=gluetun port=19010 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:37Z last_stream_usage=2025-10-12T22:37:52Z
+acexy  | 2025-10-12T22:38:52.062122378Z 2025/10/12 22:38:52 INFO Selected engine from orchestrator host=gluetun port=19010
+acexy  | 2025-10-12T22:38:52.539864478Z 2025/10/12 22:38:52 INFO Selected best available engine container_id=217da4ad70b50c134aade5f847e5e336c6fd8fba63fa2025a1c72bca8cb5bfea container_name=acestream-11 host=gluetun port=19010 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:37Z last_stream_usage=2025-10-12T22:37:52Z
+acexy  | 2025-10-12T22:38:52.539887205Z 2025/10/12 22:38:52 INFO Selected engine from orchestrator host=gluetun port=19010
+acexy  | 2025-10-12T22:38:53.484705276Z 2025/10/12 22:38:53 INFO Started new stream id="{id: fc5089d8e1519872fdf951779ccbca913acc9bce}" clients=0
+acexy  | 2025-10-12T22:38:53.944681834Z 2025/10/12 22:38:53 INFO Started new stream id="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" clients=0
+acexy  | 2025-10-12T22:38:57.992305427Z 2025/10/12 22:38:57 INFO Selected best available engine container_id=6a977c7378058707fa8ac6315ca7e4ae9fcc031ce162c55d98e168db20241447 container_name=acestream-16 host=gluetun port=19015 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:57Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:38:57.992331245Z 2025/10/12 22:38:57 INFO Selected engine from orchestrator host=gluetun port=19015
+acexy  | 2025-10-12T22:39:02.302465896Z 2025/10/12 22:39:02 INFO Selected best available engine container_id=6a977c7378058707fa8ac6315ca7e4ae9fcc031ce162c55d98e168db20241447 container_name=acestream-16 host=gluetun port=19015 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:57Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:39:02.302504327Z 2025/10/12 22:39:02 INFO Selected engine from orchestrator host=gluetun port=19015
+acexy  | 2025-10-12T22:39:02.621673851Z 2025/10/12 22:39:02 INFO Selected best available engine container_id=6a977c7378058707fa8ac6315ca7e4ae9fcc031ce162c55d98e168db20241447 container_name=acestream-16 host=gluetun port=19015 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:57Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:39:02.621700707Z 2025/10/12 22:39:02 INFO Selected engine from orchestrator host=gluetun port=19015
+acexy  | 2025-10-12T22:39:03.267619539Z 2025/10/12 22:39:03 INFO Selected best available engine container_id=6a977c7378058707fa8ac6315ca7e4ae9fcc031ce162c55d98e168db20241447 container_name=acestream-16 host=gluetun port=19015 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:57Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:39:03.267645188Z 2025/10/12 22:39:03 INFO Selected engine from orchestrator host=gluetun port=19015
+acexy  | 2025-10-12T22:39:03.419090186Z 2025/10/12 22:39:03 INFO Selected best available engine container_id=6a977c7378058707fa8ac6315ca7e4ae9fcc031ce162c55d98e168db20241447 container_name=acestream-16 host=gluetun port=19015 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:57Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:39:03.419146015Z 2025/10/12 22:39:03 INFO Selected engine from orchestrator host=gluetun port=19015
+acexy  | 2025-10-12T22:39:03.948053639Z 2025/10/12 22:39:03 ERROR Failed to forward stream error="Get \"http://gluetun:19010/ace/r/f8cb5f57ac90d06a920818ac4e0b8b0915baf75c/a7d538f475b2b91ba9d24c9fe962ad8c\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:39:03.957877709Z 2025/10/12 22:39:03 ERROR Failed to start stream stream="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" error="Get \"http://gluetun:19010/ace/r/f8cb5f57ac90d06a920818ac4e0b8b0915baf75c/a7d538f475b2b91ba9d24c9fe962ad8c\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:39:04.310906553Z 2025/10/12 22:39:04 INFO Started new stream id="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" clients=0
+acexy  | 2025-10-12T22:39:04.310944941Z 2025/10/12 22:39:04 INFO Client stopped stream="{id: 36394be1db2e20b5997d987c32fd38c7f0f194b7}" clients=0
+acexy  | 2025-10-12T22:39:04.315274797Z 2025/10/12 22:39:04 INFO Stream done stream="{id: 36394be1db2e20b5997d987c32fd38c7f0f194b7}"
+acexy  | 2025-10-12T22:39:04.315306381Z 2025/10/12 22:39:04 INFO Client stopped stream="{id: 8c67cdb5ba81976662c3a67984a9545d9cfb0f70}" clients=0
+acexy  | 2025-10-12T22:39:04.316547978Z 2025/10/12 22:39:04 INFO Stream done stream="{id: 8c67cdb5ba81976662c3a67984a9545d9cfb0f70}"
+acexy  | 2025-10-12T22:39:04.759432961Z 2025/10/12 22:39:04 INFO Started new stream id="{id: d5b2c6b940cf3df5e8f9dc6f000f0ea23a10b151}" clients=0
+acexy  | 2025-10-12T22:39:04.759486313Z 2025/10/12 22:39:04 INFO Client stopped stream="{id: ac675c82d6dfd4a201532c18b42e48dacb7c32c6}" clients=0
+acexy  | 2025-10-12T22:39:04.761169246Z 2025/10/12 22:39:04 INFO Stream done stream="{id: ac675c82d6dfd4a201532c18b42e48dacb7c32c6}"
+acexy  | 2025-10-12T22:39:05.284102276Z 2025/10/12 22:39:05 INFO Started new stream id="{id: b6ffbbc72a5b6b579faf79ebac229af7a25b933b}" clients=0
+acexy  | 2025-10-12T22:39:05.284128169Z 2025/10/12 22:39:05 INFO Client stopped stream="{id: 73d38feaa770d788848ec098470e32670fe55a61}" clients=0
+acexy  | 2025-10-12T22:39:05.284144533Z 2025/10/12 22:39:05 INFO Stream done stream="{id: 73d38feaa770d788848ec098470e32670fe55a61}"
+acexy  | 2025-10-12T22:39:05.803484904Z 2025/10/12 22:39:05 INFO Started new stream id="{id: edd06f11e1cef292a1d795e15207ef2f580e298c}" clients=0
+acexy  | 2025-10-12T22:39:06.246902861Z 2025/10/12 22:39:06 INFO Started new stream id="{id: 37d6f1aabcde81ee6e4873b4db6b7bb8964af8bf}" clients=0
+acexy  | 2025-10-12T22:39:06.246918776Z 2025/10/12 22:39:06 WARN Stream has no clients stream="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}"
+acexy  | 2025-10-12T22:39:06.255549126Z 2025/10/12 22:39:06 INFO Stream done stream="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}"
+acexy  | 2025-10-12T22:39:06.256650178Z 2025/10/12 22:39:06 ERROR Failed to start stream stream="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" error="stream \"{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}\" not found"
+acexy  | 2025-10-12T22:39:08.250165297Z 2025/10/12 22:39:08 INFO Selected best available engine container_id=15497f49c45356f1cd266d8822b81b2868c83e138c050a2631697949f49c5bf0 container_name=acestream-15 host=gluetun port=19014 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:57Z last_stream_usage=2025-10-12T22:38:40Z
+acexy  | 2025-10-12T22:39:08.250190176Z 2025/10/12 22:39:08 INFO Selected engine from orchestrator host=gluetun port=19014
+acexy  | 2025-10-12T22:39:08.337597036Z 2025/10/12 22:39:08 INFO Started new stream id="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" clients=0
+acexy  | 2025-10-12T22:39:11.139562035Z 2025/10/12 22:39:11 INFO Selected best available engine container_id=0d3d88e3b10d2e929673e5d5f7e54391ad0f9b56569dafe127a25ff67c7476a3 container_name=acestream-2 host=gluetun port=19001 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:38:57Z last_stream_usage=2025-10-12T22:37:40Z
+acexy  | 2025-10-12T22:39:11.139589415Z 2025/10/12 22:39:11 INFO Selected engine from orchestrator host=gluetun port=19001
+acexy  | 2025-10-12T22:39:18.340650672Z 2025/10/12 22:39:18 ERROR Failed to forward stream error="Get \"http://gluetun:19014/ace/r/f8cb5f57ac90d06a920818ac4e0b8b0915baf75c/768e97354612bf219f41c43a551275ec\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:39:18.341811223Z 2025/10/12 22:39:18 ERROR Failed to start stream stream="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" error="Get \"http://gluetun:19014/ace/r/f8cb5f57ac90d06a920818ac4e0b8b0915baf75c/768e97354612bf219f41c43a551275ec\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:39:18.341829917Z 2025/10/12 22:39:18 INFO Client stopped stream="{id: 7e90956539f4e1318a63f3960e4f75c7c7c5a3b8}" clients=0
+acexy  | 2025-10-12T22:39:18.350248766Z 2025/10/12 22:39:18 INFO Stream done stream="{id: 7e90956539f4e1318a63f3960e4f75c7c7c5a3b8}"
+acexy  | 2025-10-12T22:39:18.762483623Z 2025/10/12 22:39:18 INFO Started new stream id="{id: 7e27e46c25d4308d16098d9dc67fcd8736e8c1f0}" clients=0
+acexy  | 2025-10-12T22:39:19.593616715Z 2025/10/12 22:39:19 INFO Client stopped stream="{id: d5b2c6b940cf3df5e8f9dc6f000f0ea23a10b151}" clients=0
+acexy  | 2025-10-12T22:39:19.599801474Z 2025/10/12 22:39:19 INFO Stream done stream="{id: d5b2c6b940cf3df5e8f9dc6f000f0ea23a10b151}"
+acexy  | 2025-10-12T22:39:19.599824618Z 2025/10/12 22:39:19 INFO Client stopped stream="{id: c976c7b37964322752db562b4ad65515509c8d36}" clients=0
+acexy  | 2025-10-12T22:39:19.610750286Z 2025/10/12 22:39:19 INFO Stream done stream="{id: c976c7b37964322752db562b4ad65515509c8d36}"
+acexy  | 2025-10-12T22:39:19.988225509Z 2025/10/12 22:39:19 INFO Selected best available engine container_id=8b56902b63369c23a469db01093bff2c36673073fd587041fe9152065df6df37 container_name=acestream-17 host=gluetun port=19016 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:39:18Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:39:19.988248044Z 2025/10/12 22:39:19 INFO Selected engine from orchestrator host=gluetun port=19016
+acexy  | 2025-10-12T22:39:20.211533590Z 2025/10/12 22:39:20 INFO Selected best available engine container_id=8b56902b63369c23a469db01093bff2c36673073fd587041fe9152065df6df37 container_name=acestream-17 host=gluetun port=19016 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:39:18Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:39:20.211557456Z 2025/10/12 22:39:20 INFO Selected engine from orchestrator host=gluetun port=19016
+acexy  | 2025-10-12T22:39:20.225525698Z 2025/10/12 22:39:20 INFO Selected best available engine container_id=8b56902b63369c23a469db01093bff2c36673073fd587041fe9152065df6df37 container_name=acestream-17 host=gluetun port=19016 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:39:18Z last_stream_usage=0001-01-01T00:00:00Z
+acexy  | 2025-10-12T22:39:20.225561726Z 2025/10/12 22:39:20 INFO Selected engine from orchestrator host=gluetun port=19016
+acexy  | 2025-10-12T22:39:20.516251465Z 2025/10/12 22:39:20 INFO Started new stream id="{id: b03f9310155cf3b4eafc1dfba763781abc3ff025}" clients=0
+acexy  | 2025-10-12T22:39:21.576134971Z 2025/10/12 22:39:21 INFO Started new stream id="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" clients=0
+acexy  | 2025-10-12T22:39:21.936312517Z 2025/10/12 22:39:21 INFO Selected best available engine container_id=15497f49c45356f1cd266d8822b81b2868c83e138c050a2631697949f49c5bf0 container_name=acestream-15 host=gluetun port=19014 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:39:18Z last_stream_usage=2025-10-12T22:39:08Z
+acexy  | 2025-10-12T22:39:21.936335979Z 2025/10/12 22:39:21 INFO Selected engine from orchestrator host=gluetun port=19014
+acexy  | 2025-10-12T22:39:21.936836068Z 2025/10/12 22:39:21 INFO Selected best available engine container_id=15497f49c45356f1cd266d8822b81b2868c83e138c050a2631697949f49c5bf0 container_name=acestream-15 host=gluetun port=19014 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:39:18Z last_stream_usage=2025-10-12T22:39:08Z
+acexy  | 2025-10-12T22:39:21.936849710Z 2025/10/12 22:39:21 INFO Selected engine from orchestrator host=gluetun port=19014
+acexy  | 2025-10-12T22:39:22.000431516Z 2025/10/12 22:39:22 INFO Started new stream id="{id: a231b2fa1f7754433efeb8bb8d69d7b9096dcba8}" clients=0
+acexy  | 2025-10-12T22:39:22.000472354Z 2025/10/12 22:39:22 INFO Client stopped stream="{id: b6ffbbc72a5b6b579faf79ebac229af7a25b933b}" clients=0
+acexy  | 2025-10-12T22:39:22.002587116Z 2025/10/12 22:39:22 INFO Stream done stream="{id: b6ffbbc72a5b6b579faf79ebac229af7a25b933b}"
+acexy  | 2025-10-12T22:39:22.002609145Z 2025/10/12 22:39:22 INFO Client stopped stream="{id: 37d6f1aabcde81ee6e4873b4db6b7bb8964af8bf}" clients=0
+acexy  | 2025-10-12T22:39:22.044816657Z 2025/10/12 22:39:22 INFO Stream done stream="{id: 37d6f1aabcde81ee6e4873b4db6b7bb8964af8bf}"
+acexy  | 2025-10-12T22:39:22.494087259Z 2025/10/12 22:39:22 INFO Selected best available engine container_id=15497f49c45356f1cd266d8822b81b2868c83e138c050a2631697949f49c5bf0 container_name=acestream-15 host=gluetun port=19014 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:39:18Z last_stream_usage=2025-10-12T22:39:08Z
+acexy  | 2025-10-12T22:39:22.494111669Z 2025/10/12 22:39:22 INFO Selected engine from orchestrator host=gluetun port=19014
+acexy  | 2025-10-12T22:39:26.516960076Z 2025/10/12 22:39:26 INFO Selected best available engine container_id=15497f49c45356f1cd266d8822b81b2868c83e138c050a2631697949f49c5bf0 container_name=acestream-15 host=gluetun port=19014 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:39:18Z last_stream_usage=2025-10-12T22:39:08Z
+acexy  | 2025-10-12T22:39:26.516998820Z 2025/10/12 22:39:26 INFO Selected engine from orchestrator host=gluetun port=19014
+acexy  | 2025-10-12T22:39:27.108832806Z 2025/10/12 22:39:27 INFO Selected best available engine container_id=15497f49c45356f1cd266d8822b81b2868c83e138c050a2631697949f49c5bf0 container_name=acestream-15 host=gluetun port=19014 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:39:26Z last_stream_usage=2025-10-12T22:39:08Z
+acexy  | 2025-10-12T22:39:27.108897003Z 2025/10/12 22:39:27 INFO Selected engine from orchestrator host=gluetun port=19014
+acexy  | 2025-10-12T22:39:29.775995136Z 2025/10/12 22:39:29 INFO Selected best available engine container_id=15497f49c45356f1cd266d8822b81b2868c83e138c050a2631697949f49c5bf0 container_name=acestream-15 host=gluetun port=19014 active_streams=0 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:39:26Z last_stream_usage=2025-10-12T22:39:08Z
+acexy  | 2025-10-12T22:39:29.776028026Z 2025/10/12 22:39:29 INFO Selected engine from orchestrator host=gluetun port=19014
+acexy  | 2025-10-12T22:39:32.045806401Z 2025/10/12 22:39:32 ERROR Failed to forward stream error="Get \"http://gluetun:19016/ace/r/f8cb5f57ac90d06a920818ac4e0b8b0915baf75c/6b30585ad1859d880584178c5b60b7ad\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:39:32.047840792Z 2025/10/12 22:39:32 INFO Client stopped stream="{id: 2b51710cee513e8939785fa3e7980f32d4e0415f}" clients=0
+acexy  | 2025-10-12T22:39:32.047871451Z 2025/10/12 22:39:32 ERROR Failed to start stream stream="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" error="Get \"http://gluetun:19016/ace/r/f8cb5f57ac90d06a920818ac4e0b8b0915baf75c/6b30585ad1859d880584178c5b60b7ad\": net/http: timeout awaiting response headers"
+acexy  | 2025-10-12T22:39:32.048867941Z 2025/10/12 22:39:32 INFO Stream done stream="{id: 2b51710cee513e8939785fa3e7980f32d4e0415f}"
+acexy  | 2025-10-12T22:39:32.456972589Z 2025/10/12 22:39:32 INFO Started new stream id="{id: 5866e83279307bf919068ae7a0d250e4e424e464}" clients=0
+acexy  | 2025-10-12T22:39:32.789515019Z 2025/10/12 22:39:32 INFO Started new stream id="{id: 2773b39926d15dd3d9495d94c4050604792d7031}" clients=0
+acexy  | 2025-10-12T22:39:33.489417124Z 2025/10/12 22:39:33 INFO Started new stream id="{id: 0f7842f8b6c26571e5a974407b61623e56e6a052}" clients=0
+acexy  | 2025-10-12T22:39:33.489445350Z 2025/10/12 22:39:33 INFO Client stopped stream="{id: 0e50439e68aa2435b38f0563bb2f2e98f32ff4b1}" clients=0
+acexy  | 2025-10-12T22:39:33.492630280Z 2025/10/12 22:39:33 INFO Stream done stream="{id: 0e50439e68aa2435b38f0563bb2f2e98f32ff4b1}"
+acexy  | 2025-10-12T22:39:33.492662329Z 2025/10/12 22:39:33 INFO Client stopped stream="{id: d1d9ec2361a6ac8edc0b2841866383768cc28df9}" clients=0
+acexy  | 2025-10-12T22:39:33.552727246Z 2025/10/12 22:39:33 INFO Stream done stream="{id: d1d9ec2361a6ac8edc0b2841866383768cc28df9}"
+acexy  | 2025-10-12T22:39:33.916624012Z 2025/10/12 22:39:33 INFO Started new stream id="{id: 8a86cd6152154a25ad4b76523160552a40313b28}" clients=0
+acexy  | 2025-10-12T22:39:34.271335663Z 2025/10/12 22:39:34 INFO Started new stream id="{id: e2b8a4aba2f4ea3dd68992fcdb65c9e62d910b05}" clients=0
+acexy  | 2025-10-12T22:39:34.671832001Z 2025/10/12 22:39:34 INFO Started new stream id="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" clients=0
+acexy  | 2025-10-12T22:39:34.671851623Z 2025/10/12 22:39:34 WARN Stream has no clients stream="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}"
+acexy  | 2025-10-12T22:39:34.671856851Z 2025/10/12 22:39:34 INFO Stream done stream="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}"
+acexy  | 2025-10-12T22:39:35.734819573Z 2025/10/12 22:39:35 ERROR Failed to start stream stream="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" error="stream \"{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}\" not found"
+acexy  | 2025-10-12T22:39:36.695508629Z 2025/10/12 22:39:36 INFO Selected best available engine container_id=317e9f5dc46db6bb370eb452f9f80a7b7e29883915d9e11233a6c5716c19ec4a container_name=acestream-10 host=gluetun port=19009 active_streams=1 max_streams=2 health_status=healthy last_health_check=2025-10-12T22:39:26Z last_stream_usage=2025-10-12T22:36:56Z
+acexy  | 2025-10-12T22:39:36.695551331Z 2025/10/12 22:39:36 INFO Selected engine from orchestrator host=gluetun port=19009
+acexy  | 2025-10-12T22:39:37.121727618Z 2025/10/12 22:39:37 INFO Started new stream id="{id: 382b14499e3d76e557d449d2e5bbc4e4bd63bd39}" clients=0
