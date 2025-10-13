@@ -440,7 +440,6 @@ def get_orchestrator_status():
         last_failure = cb_info.get("last_failure_time")
         
         if last_failure:
-            from datetime import datetime, timezone
             try:
                 last_failure_dt = datetime.fromisoformat(last_failure.replace('Z', '+00:00'))
                 elapsed = (datetime.now(timezone.utc) - last_failure_dt).total_seconds()
