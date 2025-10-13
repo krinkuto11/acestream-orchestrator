@@ -65,3 +65,20 @@ class StreamStatSnapshot(BaseModel):
     downloaded: Optional[int] = None
     uploaded: Optional[int] = None
     status: Optional[str] = None
+
+class OrchestratorStatusResponse(BaseModel):
+    """
+    Comprehensive orchestrator status for proxy integration.
+    Provides all information needed to make intelligent decisions about retries and fallbacks.
+    
+    Note: This is a documentation model. The actual endpoint returns a dict.
+    """
+    pass  # Placeholder for documentation
+
+class ProvisioningBlockedReason(BaseModel):
+    """Detailed reason why provisioning is blocked with recovery guidance."""
+    code: Literal["circuit_breaker", "vpn_disconnected", "max_capacity", "general_error"]
+    message: str
+    recovery_eta_seconds: Optional[int] = None  # Estimated time until recovery
+    can_retry: bool = False  # Whether retrying makes sense
+    should_wait: bool = False  # Whether proxy should wait vs fail immediately
