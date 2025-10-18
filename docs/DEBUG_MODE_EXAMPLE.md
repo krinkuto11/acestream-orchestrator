@@ -34,7 +34,7 @@ INFO app.main: Debug mode enabled. Logs will be written to: ./debug_logs
 Trigger the slow provisioning scenario:
 
 ```bash
-# Provision multiple engines
+# Provision multiple engines (requires bash shell)
 for i in {1..5}; do
   curl -X POST http://localhost:8000/provision/acestream \
     -H "Authorization: Bearer your-api-key" \
@@ -43,6 +43,16 @@ for i in {1..5}; do
   echo ""
   sleep 2
 done
+
+# Alternative for sh/dash compatibility:
+# for i in $(seq 1 5); do
+#   curl -X POST http://localhost:8000/provision/acestream \
+#     -H "Authorization: Bearer your-api-key" \
+#     -H "Content-Type: application/json" \
+#     -d '{"labels":{"test":"stress"}}'
+#   echo ""
+#   sleep 2
+# done
 ```
 
 ### Step 4: Examine Debug Logs
@@ -77,9 +87,7 @@ cat debug_logs/*_provisioning.jsonl | jq 'select(.duration_ms > 10000)'
 Calculate average provisioning time:
 ```bash
 cat debug_logs/*_provisioning.jsonl | \
-  jq -s 'map(select(.operation == "start_acestream_success" and .duration_ms != null)) | 
-         map(.duration_ms) | 
-         add / length'
+  jq -s 'map(select(.operation == "start_acestream_success" and .duration_ms != null)) | map(.duration_ms) | add / length'
 ```
 
 ### Step 6: Check for Stress Events
@@ -109,8 +117,7 @@ Create a timeline of events:
 cat debug_logs/*.jsonl | jq -s 'sort_by(.timestamp)' > timeline.json
 
 # View critical events in order
-cat timeline.json | jq '.[] | select(.event_type or .operation) | 
-  {time: .timestamp, type: (.event_type // .operation), desc: .description}'
+cat timeline.json | jq '.[] | select(.event_type or .operation) | {time: .timestamp, type: (.event_type // .operation), desc: .description}'
 ```
 
 ## Example Output Analysis
@@ -129,7 +136,9 @@ cat timeline.json | jq '.[] | select(.event_type or .operation) |
 }
 ```
 
-**Observation**: Provisioning took 18.45 seconds (above the 25s timeout threshold of 70% = 17.5s)
+**Observation**: Provisioning took 18.45 seconds (exceeds 70% of 25s timeout = 17.5s threshold)
+
+**Note**: The code uses 70% threshold for AceStream provisioning (see `provisioner.py`: `cfg.STARTUP_TIMEOUT_S * 0.7`)
 
 **Action**: Check VPN status, Docker daemon load, image availability
 
