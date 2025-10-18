@@ -56,6 +56,10 @@ class Cfg(BaseModel):
     API_KEY: str | None = os.getenv("API_KEY")
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
     AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "false").lower() == "true"
+    
+    # Debug mode configuration
+    DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
+    DEBUG_LOG_DIR: str = os.getenv("DEBUG_LOG_DIR", "./debug_logs")
 
     @model_validator(mode='after')
     def validate_replicas(self):

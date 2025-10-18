@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import time
 from .state import state
+from ..utils.debug_logger import get_debug_logger
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +43,44 @@ class HealthMonitor:
 
     async def _monitor_loop(self):
         """Main monitoring loop."""
+        debug_log = get_debug_logger()
+        
         while self._running:
+            check_start = time.time()
             try:
                 # Update health for all engines
                 state.update_engines_health()
                 logger.debug("Updated health status for all engines")
+                
+                duration = time.time() - check_start
+                
+                # Log health check results
+                engines = state.list_engines()
+                healthy_count = sum(1 for e in engines if e.health_status == "healthy")
+                unhealthy_count = sum(1 for e in engines if e.health_status == "unhealthy")
+                
+                debug_log.log_health_check("health_monitor_cycle",
+                                          status="completed",
+                                          duration=duration,
+                                          total_engines=len(engines),
+                                          healthy=healthy_count,
+                                          unhealthy=unhealthy_count)
+                
+                # Detect stress situation (high proportion of unhealthy engines)
+                if len(engines) > 0 and unhealthy_count / len(engines) > 0.3:
+                    debug_log.log_stress_event("high_unhealthy_engines",
+                                              severity="warning",
+                                              description=f"{unhealthy_count}/{len(engines)} engines unhealthy (>30%)",
+                                              unhealthy_count=unhealthy_count,
+                                              total=len(engines))
+                
             except Exception as e:
+                duration = time.time() - check_start
                 logger.error(f"Error during health check: {e}")
+                debug_log.log_health_check("health_monitor_cycle",
+                                          status="error",
+                                          duration=duration,
+                                          error=str(e))
             
             try:
                 await asyncio.sleep(self.check_interval)

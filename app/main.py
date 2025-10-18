@@ -10,6 +10,7 @@ import json
 import logging
 
 from .utils.logging import setup
+from .utils.debug_logger import init_debug_logger, get_debug_logger
 from .core.config import cfg
 from .services.autoscaler import ensure_minimum, scale_to, can_stop_engine
 from .services.provisioner import StartRequest, start_container, stop_container, AceProvisionRequest, AceProvisionResponse, start_acestream, HOST_LABEL_HTTP
@@ -31,6 +32,11 @@ from .services.gluetun import gluetun_monitor
 logger = logging.getLogger(__name__)
 
 setup()
+
+# Initialize debug logger if enabled
+debug_logger = init_debug_logger(enabled=cfg.DEBUG_MODE, log_dir=cfg.DEBUG_LOG_DIR)
+if cfg.DEBUG_MODE:
+    logger.info(f"Debug mode enabled. Logs will be written to: {cfg.DEBUG_LOG_DIR}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
