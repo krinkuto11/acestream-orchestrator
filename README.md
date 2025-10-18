@@ -28,6 +28,13 @@ Core endpoints: `/provision`, `/provision/acestream`, `/events/*`, `/engines`, `
 
 ## Features
 
+### Debug Mode (NEW)
+- **Comprehensive logging** for troubleshooting performance issues during stress situations
+- **Session-based logs** with timing metrics and automatic stress detection
+- **Multiple log categories** (provisioning, health, VPN, circuit breaker, stress events)
+- **Correlation support** with proxy repository logs for end-to-end debugging
+- See [Debug Mode Documentation](docs/DEBUG_MODE.md) for details
+
 ### Health Monitoring
 - **Intelligent detection** of hanging engines via `/server/api?api_version=3&method=get_status`
 - **Background monitoring** every 30 seconds with status indicators
@@ -83,6 +90,7 @@ requirements.txt
 * [API](docs/API.md)
 * [Events](docs/EVENTS.md)
 * [Panel](docs/PANEL.md)
+* [Debug Mode](docs/DEBUG_MODE.md) **← NEW**
 * [Health Monitoring](docs/HEALTH_MONITORING.md)
 * [Database Schema](docs/DB_SCHEMA.md)
 * [Deployment](docs/DEPLOY.md)
@@ -90,6 +98,7 @@ requirements.txt
 * [Troubleshooting](docs/TROUBLESHOOTING.md)
 * [Security](docs/SECURITY.md)
 * [Proxy Integration](docs/PROXY_INTEGRATION.md)
+* [Proxy Debug Mode Prompt](docs/PROXY_DEBUG_MODE_PROMPT.md) **← NEW**
 * [Gluetun VPN Integration](docs/GLUETUN_INTEGRATION.md)
 * [Gluetun Port Fix](docs/GLUETUN_PORT_FIX.md)
 

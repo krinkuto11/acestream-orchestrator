@@ -12,10 +12,12 @@ import asyncio
 import logging
 import httpx
 import os
+import time
 from datetime import datetime, timezone
 from typing import Optional
 from .docker_client import get_client
 from ..core.config import cfg
+from ..utils.debug_logger import get_debug_logger
 from docker.errors import NotFound
 
 logger = logging.getLogger(__name__)
@@ -102,6 +104,9 @@ class GluetunMonitor:
     
     async def _check_gluetun_health(self) -> bool:
         """Check if Gluetun container is healthy."""
+        debug_log = get_debug_logger()
+        check_start = time.time()
+        
         try:
             cli = get_client()
             container = cli.containers.get(cfg.GLUETUN_CONTAINER_NAME)
@@ -109,46 +114,91 @@ class GluetunMonitor:
             
             # Check container status
             if container.status != "running":
+                duration = time.time() - check_start
                 logger.warning(f"Gluetun container '{cfg.GLUETUN_CONTAINER_NAME}' is not running (status: {container.status})")
+                debug_log.log_vpn("health_check",
+                                 status="not_running",
+                                 duration=duration,
+                                 container_status=container.status)
                 return False
             
             # Check Docker health status if available
             health = container.attrs.get("State", {}).get("Health", {})
             if health:
                 health_status = health.get("Status")
+                duration = time.time() - check_start
+                
                 if health_status == "unhealthy":
                     logger.warning(f"Gluetun container '{cfg.GLUETUN_CONTAINER_NAME}' is unhealthy")
+                    debug_log.log_vpn("health_check",
+                                     status="unhealthy",
+                                     duration=duration,
+                                     health_status=health_status)
                     return False
                 elif health_status == "healthy":
                     logger.debug(f"Gluetun container '{cfg.GLUETUN_CONTAINER_NAME}' is healthy")
+                    debug_log.log_vpn("health_check",
+                                     status="healthy",
+                                     duration=duration,
+                                     health_status=health_status)
                     return True
                 else:
                     # Health status might be "starting" or "none"
                     logger.debug(f"Gluetun container '{cfg.GLUETUN_CONTAINER_NAME}' health status: {health_status}")
+                    debug_log.log_vpn("health_check",
+                                     status=health_status,
+                                     duration=duration,
+                                     health_status=health_status)
                     # Consider container healthy if running but health status is starting/none
                     return True
             else:
+                duration = time.time() - check_start
                 # No health check configured, consider healthy if running
                 logger.debug(f"Gluetun container '{cfg.GLUETUN_CONTAINER_NAME}' has no health check, considering healthy")
+                debug_log.log_vpn("health_check",
+                                 status="healthy_no_healthcheck",
+                                 duration=duration)
                 return True
                 
         except NotFound:
+            duration = time.time() - check_start
             logger.error(f"Gluetun container '{cfg.GLUETUN_CONTAINER_NAME}' not found")
+            debug_log.log_vpn("health_check",
+                             status="not_found",
+                             duration=duration,
+                             error="Container not found")
             return False
         except Exception as e:
+            duration = time.time() - check_start
             logger.error(f"Error checking Gluetun health: {e}")
+            debug_log.log_vpn("health_check",
+                             status="error",
+                             duration=duration,
+                             error=str(e))
             return False
     
     async def _handle_health_transition(self, old_status: bool, new_status: bool):
         """Handle Gluetun health status transitions."""
+        debug_log = get_debug_logger()
         now = datetime.now(timezone.utc)
         
         if old_status and not new_status:
             logger.warning("Gluetun VPN became unhealthy")
+            debug_log.log_vpn("transition",
+                             status="unhealthy",
+                             old_status=old_status,
+                             new_status=new_status)
+            debug_log.log_stress_event("vpn_disconnection",
+                                      severity="critical",
+                                      description="Gluetun VPN became unhealthy")
             # Invalidate port cache when VPN becomes unhealthy
             self.invalidate_port_cache()
         elif not old_status and new_status:
             logger.info("Gluetun VPN recovered and is now healthy")
+            debug_log.log_vpn("transition",
+                             status="healthy",
+                             old_status=old_status,
+                             new_status=new_status)
             # Invalidate port cache to force fresh port check on VPN reconnection
             self.invalidate_port_cache()
             
@@ -157,9 +207,15 @@ class GluetunMonitor:
             
             if cfg.VPN_RESTART_ENGINES_ON_RECONNECT and should_restart_engines:
                 logger.info("VPN reconnected after stable period - triggering AceStream engine restart")
+                debug_log.log_vpn("restart_engines",
+                                 status="triggered",
+                                 reason="vpn_reconnection")
                 await self._restart_acestream_engines()
             elif cfg.VPN_RESTART_ENGINES_ON_RECONNECT and not should_restart_engines:
                 logger.info("VPN became healthy but skipping engine restart (startup grace period or insufficient stability)")
+                debug_log.log_vpn("restart_engines",
+                                 status="skipped",
+                                 reason="grace_period_or_instability")
         
         # Call registered callbacks
         for callback in self._health_transition_callbacks:

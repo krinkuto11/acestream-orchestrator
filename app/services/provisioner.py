@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from .docker_client import get_client, safe
 from ..core.config import cfg
 from .ports import alloc
+from ..utils.debug_logger import get_debug_logger
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ class AceProvisionResponse(BaseModel):
 def start_container(req: StartRequest) -> dict:
     from .naming import generate_container_name
     
+    debug_log = get_debug_logger()
+    start_time = time.time()
+    
     cli = get_client()
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val}
@@ -42,6 +46,11 @@ def start_container(req: StartRequest) -> dict:
     
     # Generate a meaningful container name
     container_name = generate_container_name(req.name_prefix)
+    
+    debug_log.log_provisioning("start_container_begin", 
+                               container_name=container_name,
+                               image=image_name,
+                               labels=labels)
     
     try:
         cont = safe(cli.containers.run,
@@ -54,6 +63,12 @@ def start_container(req: StartRequest) -> dict:
             ports=req.ports or None,
             restart_policy={"Name": "unless-stopped"})
     except RuntimeError as e:
+        duration = time.time() - start_time
+        debug_log.log_provisioning("start_container_failed",
+                                   container_name=container_name,
+                                   duration=duration,
+                                   success=False,
+                                   error=str(e))
         # Provide more helpful error messages for common image issues
         error_msg = str(e).lower()
         if "not found" in error_msg or "pull access denied" in error_msg:
@@ -68,12 +83,34 @@ def start_container(req: StartRequest) -> dict:
     while cont.status not in ("running",) and time.time() < deadline:
         time.sleep(0.5); cont.reload()
     if cont.status != "running":
+        duration = time.time() - start_time
+        debug_log.log_provisioning("start_container_timeout",
+                                   container_id=cont.id,
+                                   container_name=container_name,
+                                   duration=duration,
+                                   success=False,
+                                   error=f"Container failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status})")
         cont.remove(force=True)
         raise RuntimeError(f"Container failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status})")
     
     # Get container name - should match what we set
     cont.reload()
     actual_container_name = cont.attrs.get("Name", "").lstrip("/")
+    
+    duration = time.time() - start_time
+    debug_log.log_provisioning("start_container_success",
+                               container_id=cont.id,
+                               container_name=actual_container_name,
+                               duration=duration,
+                               success=True)
+    
+    # Check for slow provisioning (stress indicator)
+    if duration > cfg.STARTUP_TIMEOUT_S * 0.5:
+        debug_log.log_stress_event("slow_provisioning",
+                                   severity="warning",
+                                   description=f"Container provisioning took {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.5}s threshold)",
+                                   container_id=cont.id,
+                                   duration=duration)
     
     return {"container_id": cont.id, "container_name": actual_container_name}
 
@@ -245,6 +282,13 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     from .naming import generate_container_name
     import time
     
+    debug_log = get_debug_logger()
+    provision_start = time.time()
+    
+    debug_log.log_provisioning("start_acestream_begin",
+                               labels=req.labels,
+                               has_custom_env=bool(req.env))
+    
     # Check Gluetun health if configured
     if cfg.GLUETUN_CONTAINER_NAME:
         from .gluetun import gluetun_monitor
@@ -411,6 +455,13 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     while cont.status not in ("running",) and time.time() < deadline:
         time.sleep(0.5); cont.reload()
     if cont.status != "running":
+        duration = time.time() - provision_start
+        debug_log.log_provisioning("start_acestream_failed",
+                                   container_id=cont.id,
+                                   duration=duration,
+                                   success=False,
+                                   error="Container failed to start",
+                                   status=cont.status)
         _release_ports_from_labels(labels)
         cont.remove(force=True)
         raise RuntimeError("Arranque AceStream fallido")
@@ -419,6 +470,22 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Get container name - should match what we set
     cont.reload()
     actual_container_name = cont.attrs.get("Name", "").lstrip("/")
+    
+    duration = time.time() - provision_start
+    debug_log.log_provisioning("start_acestream_success",
+                               container_id=cont.id,
+                               container_name=actual_container_name,
+                               host_http_port=host_http,
+                               duration=duration,
+                               success=True)
+    
+    # Check for slow provisioning (stress indicator)
+    if duration > cfg.STARTUP_TIMEOUT_S * 0.7:
+        debug_log.log_stress_event("slow_acestream_provisioning",
+                                   severity="warning",
+                                   description=f"AceStream provisioning took {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.7}s threshold)",
+                                   container_id=cont.id,
+                                   duration=duration)
     
     return AceProvisionResponse(
         container_id=cont.id, 
