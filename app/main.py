@@ -414,8 +414,11 @@ def get_orchestrator_status():
     circuit_breaker_status = circuit_breaker_manager.get_status()
     
     # Calculate capacity
+    # Count unique engines that have active streams (not total streams)
+    # Multiple streams can run on the same engine
     total_capacity = len(engines)
-    used_capacity = len(active_streams)
+    engines_with_streams = len(set(stream.container_id for stream in active_streams))
+    used_capacity = engines_with_streams
     available_capacity = max(0, total_capacity - used_capacity)
     
     # Determine overall system status
