@@ -1,0 +1,88 @@
+name: Bug Report
+description: Report an issue with Acexy you've discovered
+title: "[BUG] "
+labels: [bug]
+assignees:
+  - Javinator9889
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please fill out the sections below to help us reproduce and fix the bug you've found.
+
+  - type: input
+    id: contact
+    attributes:
+      label: Contact Details
+      description: How can we get in touch with you if we need more info?
+      placeholder: ex. email@example.com or your GitHub username
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: Describe the issue you've found
+      placeholder: |
+        Tell us what you have seen. What did you expect to happen? What actually happened?
+        There are more details about how to fill the report in the
+        [CONTRIBUTING.md](/CONTRIBUTING.md) file.
+
+        Remember to include any error messages you received. Enable the debug mode in Acexy
+        - setting the ACEXY_LOG_LEVEL=DEBUG environment variable - to get more detailed logs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Provide a detailed list of steps that reproduce the issue
+      placeholder: |
+        1. Go to '...'
+        2. Click on '....'
+        3. Scroll down to '....'
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: Describe what you expected to happen
+      placeholder: Tell us what you expected to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: Describe what actually happened
+      placeholder: Tell us what actually happened
+    validations:
+      required: true
+
+  - type: dropdown
+    id: version
+    attributes:
+      label: Version
+      description: Acexy version you are using
+      multiple: false
+      options:
+        - 0.1.1
+        - 0.1.2
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: environment
+    attributes:
+      label: Environment
+      description: Where did you find the bug?
+      options:
+        - label: Windows
+        - label: macOS
+        - label: Linux
+        - label: Docker

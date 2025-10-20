@@ -1,0 +1,2 @@
+{"session_id": "20251020_162608", "timestamp": "2025-10-20T16:32:24.490666+00:00", "elapsed_seconds": 376.063, "event_type": "high_unhealthy_engines", "severity": "warning", "description": "4/7 engines unhealthy (>30%)", "unhealthy_count": 4, "total": 7}
+{"session_id": "20251020_162608", "timestamp": "2025-10-20T16:33:24.844929+00:00", "elapsed_seconds": 436.417, "event_type": "high_unhealthy_engines", "severity": "warning", "description": "5/10 engines unhealthy (>30%)", "unhealthy_count": 5, "total": 10}
