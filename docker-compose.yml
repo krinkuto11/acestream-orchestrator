@@ -2,8 +2,6 @@ services:
   orchestrator:
     build: .
     env_file: .env
-    volumes:
-      - orchestrator-db:/app
     ports:
       - "8000:8000"
     environment:
@@ -28,4 +26,3 @@ services:
       retries: 5
 volumes:
   docker-data:
-  orchestrator-db:
