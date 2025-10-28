@@ -43,6 +43,7 @@ venv.bak/
 
 # Logs
 *.log
+debug_logs/
 
 # Docker
 .docker/

@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional
 from enum import Enum
 from ..core.config import cfg
+from ..utils.debug_logger import get_debug_logger
 
 logger = logging.getLogger(__name__)
 
@@ -54,26 +55,45 @@ class CircuitBreaker:
     
     def record_success(self):
         """Record a successful operation."""
+        debug_log = get_debug_logger()
         self.failure_count = 0
         self.last_success_time = datetime.now(timezone.utc)
         
         if self.state != CircuitState.CLOSED:
             logger.info("Circuit breaker CLOSED - operations restored")
+            debug_log.log_circuit_breaker("unknown",
+                                         state="closed",
+                                         failure_count=0)
             self.state = CircuitState.CLOSED
     
     def record_failure(self):
         """Record a failed operation."""
+        debug_log = get_debug_logger()
         self.failure_count += 1
         self.last_failure_time = datetime.now(timezone.utc)
         
         if self.state == CircuitState.HALF_OPEN:
             # Failed during recovery test - back to open
             logger.warning("Circuit breaker back to OPEN - recovery failed")
+            debug_log.log_circuit_breaker("unknown",
+                                         state="open",
+                                         failure_count=self.failure_count,
+                                         reason="recovery_failed")
+            debug_log.log_stress_event("circuit_breaker_reopened",
+                                      severity="critical",
+                                      description="Circuit breaker reopened after recovery failure")
             self.state = CircuitState.OPEN
         elif (self.state == CircuitState.CLOSED and 
               self.failure_count >= self.failure_threshold):
             # Too many failures - open circuit
             logger.warning(f"Circuit breaker OPENED - {self.failure_count} consecutive failures")
+            debug_log.log_circuit_breaker("unknown",
+                                         state="open",
+                                         failure_count=self.failure_count,
+                                         threshold=self.failure_threshold)
+            debug_log.log_stress_event("circuit_breaker_opened",
+                                      severity="critical",
+                                      description=f"Circuit breaker opened after {self.failure_count} failures")
             self.state = CircuitState.OPEN
     
     def get_status(self) -> Dict:

@@ -72,8 +72,6 @@ services:
     environment:
       - DOCKER_HOST=tcp://docker:2375
       - GLUETUN_CONTAINER_NAME=gluetun
-    volumes:
-      - orchestrator-db:/app
     ports:
       - "8000:8000"
     depends_on:
@@ -100,7 +98,6 @@ services:
 
 volumes:
   docker-data:
-  orchestrator-db:
 ```
 
 ### Key Points

@@ -98,7 +98,7 @@ class DockerMonitor:
             for engine in all_engines:
                 if engine.container_id not in used_container_ids:
                     try:
-                        logger.info(f"Running periodic cache cleanup for idle engine {engine.container_id[:12]}")
+                        logger.debug(f"Running periodic cache cleanup for idle engine {engine.container_id[:12]}")
                         success, cache_size = clear_acestream_cache(engine.container_id)
                         
                         # Update engine state with cleanup info

@@ -125,7 +125,7 @@ class State:
         if engine_became_idle and container_id_for_cleanup:
             try:
                 from ..services.provisioner import clear_acestream_cache
-                logger.info(f"Engine {container_id_for_cleanup[:12]} has no active streams, clearing cache")
+                logger.debug(f"Engine {container_id_for_cleanup[:12]} has no active streams, clearing cache")
                 success, cache_size = clear_acestream_cache(container_id_for_cleanup)
                 
                 # Update engine state with cleanup info
@@ -323,6 +323,14 @@ class State:
         # Clear in-memory state
         logger.info("Clearing in-memory state")
         self.clear_state()
+        
+        # Clear port allocations to prevent double-counting during reindex
+        logger.info("Clearing port allocations")
+        try:
+            from ..services.ports import alloc
+            alloc.clear_all_allocations()
+        except Exception as e:
+            logger.warning(f"Failed to clear port allocations: {e}")
         
         logger.info("Full cleanup completed")
     

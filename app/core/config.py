@@ -1,5 +1,5 @@
 import os
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, validator, field_validator, model_validator
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -7,7 +7,8 @@ class Cfg(BaseModel):
     APP_PORT: int = int(os.getenv("APP_PORT", 8000))
     DOCKER_NETWORK: str | None = os.getenv("DOCKER_NETWORK")
     TARGET_IMAGE: str = os.getenv("TARGET_IMAGE", "acestream/engine:latest")
-    MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 0))
+    MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 1))
+    MIN_FREE_REPLICAS: int = int(os.getenv("MIN_FREE_REPLICAS", 1))
     MAX_REPLICAS: int = int(os.getenv("MAX_REPLICAS", 20))
     CONTAINER_LABEL: str = os.getenv("CONTAINER_LABEL", "ondemand.app=myservice")
     STARTUP_TIMEOUT_S: int = int(os.getenv("STARTUP_TIMEOUT_S", 25))
@@ -55,12 +56,20 @@ class Cfg(BaseModel):
     API_KEY: str | None = os.getenv("API_KEY")
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
     AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "false").lower() == "true"
+    
+    # Debug mode configuration
+    DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
+    DEBUG_LOG_DIR: str = os.getenv("DEBUG_LOG_DIR", "./debug_logs")
 
-    @validator('MIN_REPLICAS')
-    def validate_min_replicas(cls, v):
-        if v < 0:
+    @model_validator(mode='after')
+    def validate_replicas(self):
+        if self.MIN_REPLICAS < 0:
             raise ValueError('MIN_REPLICAS must be >= 0')
-        return v
+        if self.MIN_FREE_REPLICAS < 0:
+            raise ValueError('MIN_FREE_REPLICAS must be >= 0')
+        if self.MIN_FREE_REPLICAS > self.MAX_REPLICAS:
+            raise ValueError('MIN_FREE_REPLICAS must be <= MAX_REPLICAS')
+        return self
 
     @validator('MAX_REPLICAS')
     def validate_max_replicas(cls, v, values):

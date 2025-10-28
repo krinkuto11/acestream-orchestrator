@@ -11,7 +11,6 @@ orchestrator:
   image: ghcr.io/krinkuto11/acestream-orchestrator:latest
   env_file: .env
   volumes:
-    - orchestrator-db:/app
     - /var/run/docker.sock:/var/run/docker.sock
   ports:
     - "8000:8000"

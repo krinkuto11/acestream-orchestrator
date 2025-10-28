@@ -1,7 +1,7 @@
 import os
 import time
 from ..core.config import cfg
-from .provisioner import StartRequest, start_container, AceProvisionRequest, start_acestream
+from .provisioner import StartRequest, start_container, AceProvisionRequest, start_acestream, stop_container
 from .health import list_managed
 from .state import state
 from .circuit_breaker import circuit_breaker_manager
@@ -32,8 +32,13 @@ def _count_healthy_engines() -> int:
         # Fallback to total engine count if health check fails
         return len(state.list_engines())
 
-def ensure_minimum():
-    """Ensure minimum number of replicas are running with resilient synchronous provisioning."""
+def ensure_minimum(initial_startup: bool = False):
+    """Ensure minimum number of replicas are available.
+    
+    Args:
+        initial_startup: If True, provisions MIN_REPLICAS total containers on startup.
+                        If False, maintains MIN_FREE_REPLICAS free/empty containers during runtime.
+    """
     try:
         from .replica_validator import replica_validator
         
@@ -42,22 +47,51 @@ def ensure_minimum():
             logger.warning("Circuit breaker is OPEN - skipping provisioning attempt")
             return
         
-        # Get fresh Docker status to ensure accurate count
-        docker_status = replica_validator.get_docker_container_status()
-        running_count = docker_status['total_running']
+        # Use replica_validator to get accurate counts including free engines
+        total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
         
-        # Consider health status when calculating need
-        healthy_count = _count_healthy_engines()
-        
-        # Prioritize healthy engines over total count for service availability
-        if healthy_count < cfg.MIN_REPLICAS:
-            deficit = cfg.MIN_REPLICAS - healthy_count
-            logger.info(f"Starting {deficit} AceStream containers for health availability (healthy: {healthy_count}, total running: {running_count}, min required: {cfg.MIN_REPLICAS})")
+        # Determine target based on startup vs runtime
+        if initial_startup:
+            # On startup: ensure we have MIN_REPLICAS total containers
+            target = cfg.MIN_REPLICAS
+            deficit = target - total_running
+            target_description = f"MIN_REPLICAS={cfg.MIN_REPLICAS} total containers"
         else:
-            deficit = cfg.MIN_REPLICAS - running_count
-            if deficit <= 0:
-                return  # Already have enough engines
-            logger.info(f"Starting {deficit} AceStream containers to meet MIN_REPLICAS={cfg.MIN_REPLICAS} (currently running: {running_count})")
+            # During runtime: ensure we have MIN_FREE_REPLICAS free containers
+            target = cfg.MIN_FREE_REPLICAS
+            deficit = target - free_count
+            target_description = f"MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} free engines"
+        
+        # When using Gluetun, respect MAX_ACTIVE_REPLICAS as a hard limit
+        if cfg.GLUETUN_CONTAINER_NAME:
+            max_new_containers = cfg.MAX_ACTIVE_REPLICAS - total_running
+            if deficit > max_new_containers:
+                deficit = max_new_containers
+        
+        if deficit <= 0:
+            logger.debug(f"Sufficient replicas available for {target_description} (total: {total_running}, used: {used_engines}, free: {free_count})")
+            return  # Already have enough
+        
+        # Check if already at MAX_ACTIVE_REPLICAS limit (when using Gluetun)
+        if cfg.GLUETUN_CONTAINER_NAME and deficit > 0:
+            max_new_containers = cfg.MAX_ACTIVE_REPLICAS - total_running
+            if max_new_containers <= 0:
+                logger.warning(
+                    f"Cannot start containers - already at MAX_ACTIVE_REPLICAS limit ({cfg.MAX_ACTIVE_REPLICAS}). "
+                    f"Current state: total={total_running}, used={used_engines}, free={free_count}. "
+                    f"To maintain {target_description}, increase MAX_ACTIVE_REPLICAS."
+                )
+                return
+            # Adjust deficit to not exceed the limit
+            if deficit > max_new_containers:
+                logger.info(
+                    f"Reducing planned containers from {deficit} to {max_new_containers} to stay within "
+                    f"MAX_ACTIVE_REPLICAS limit ({cfg.MAX_ACTIVE_REPLICAS}). "
+                    f"Current state: total={total_running}, used={used_engines}, free={free_count}"
+                )
+                deficit = max_new_containers
+        
+        logger.info(f"Starting {deficit} AceStream containers to maintain {target_description} (currently: total={total_running}, used={used_engines}, free={free_count})")
         
         if deficit > 0:
             # Use simple synchronous provisioning for reliability
@@ -72,14 +106,14 @@ def ensure_minimum():
                     if response and response.container_id:
                         success_count += 1
                         circuit_breaker_manager.record_provisioning_success("general")
-                        logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({success_count}/{deficit}) - HTTP port: {response.host_http_port}")
+                        logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({success_count}/{deficit})")
                         
                         # Immediately verify the container is running
                         time.sleep(1)  # Brief pause to let container start
                         
                         # Get updated Docker status to verify the container is actually running
                         updated_status = replica_validator.get_docker_container_status()
-                        if updated_status['total_running'] > running_count + success_count - 1:
+                        if updated_status['total_running'] > total_running + success_count - 1:
                             logger.debug(f"Container {response.container_id[:12]} verified as running")
                         else:
                             logger.warning(f"Container {response.container_id[:12]} may not be running yet")
@@ -119,7 +153,7 @@ def ensure_minimum():
         logger.debug(f"Traceback: {traceback.format_exc()}")
 
 def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> bool:
-    """Check if an engine can be safely stopped based on grace period and minimum replicas."""
+    """Check if an engine can be safely stopped based on grace period and minimum free replicas."""
     now = datetime.now()
     
     # Check if engine has any active streams
@@ -128,24 +162,31 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
         # Engine has active streams, remove from empty tracking
         if container_id in _empty_engine_timestamps:
             del _empty_engine_timestamps[container_id]
+        logger.debug(f"Engine {container_id[:12]} cannot be stopped - has {len(active_streams)} active streams")
         return False
     
-    # Check if stopping this engine would violate MIN_REPLICAS constraint
-    if cfg.MIN_REPLICAS > 0:
-        try:
-            from .replica_validator import replica_validator
-            # Use reliable Docker count for MIN_REPLICAS check
-            docker_status = replica_validator.get_docker_container_status()
-            running_count = docker_status['total_running']
-            
-            # If stopping this engine would bring us below MIN_REPLICAS, don't stop it
-            if running_count - 1 < cfg.MIN_REPLICAS:
-                logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_REPLICAS={cfg.MIN_REPLICAS} (currently: {running_count} running, would become: {running_count - 1})")
-                return False
-        except Exception as e:
-            logger.error(f"Error checking MIN_REPLICAS constraint: {e}")
-            # On error, err on the side of caution and don't stop the engine
+    # Check if stopping this engine would violate replica constraints
+    try:
+        from .replica_validator import replica_validator
+        # Get accurate counts including free engines
+        total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
+        
+        # Check 1: Never go below MIN_REPLICAS total containers
+        if total_running - 1 < cfg.MIN_REPLICAS:
+            logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_REPLICAS={cfg.MIN_REPLICAS} (currently: {total_running} total, would become: {total_running - 1})")
             return False
+        
+        # Check 2: Maintain MIN_FREE_REPLICAS free engines
+        if cfg.MIN_FREE_REPLICAS > 0:
+            # If stopping this empty engine would leave us with fewer than MIN_FREE_REPLICAS free engines, don't stop it
+            # Since this engine is already empty (has no active streams), stopping it reduces free count by 1
+            if free_count - 1 < cfg.MIN_FREE_REPLICAS:
+                logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} (currently: {free_count} free, would become: {free_count - 1})")
+                return False
+    except Exception as e:
+        logger.error(f"Error checking replica constraints: {e}")
+        # On error, err on the side of caution and don't stop the engine
+        return False
     
     # If bypassing grace period (for testing or immediate shutdown), allow stopping
     if bypass_grace_period or cfg.ENGINE_GRACE_PERIOD_S == 0:
@@ -178,6 +219,10 @@ def scale_to(demand: int):
     
     desired = min(max(cfg.MIN_REPLICAS, demand), cfg.MAX_REPLICAS)
     
+    # When using Gluetun, also cap at MAX_ACTIVE_REPLICAS
+    if cfg.GLUETUN_CONTAINER_NAME:
+        desired = min(desired, cfg.MAX_ACTIVE_REPLICAS)
+    
     # Use reliable Docker count
     docker_status = replica_validator.get_docker_container_status()
     running_count = docker_status['total_running']
@@ -190,7 +235,7 @@ def scale_to(demand: int):
             try:
                 # Use AceStream provisioning to ensure containers are AceStream-ready with proper ports
                 response = start_acestream(AceProvisionRequest(image=cfg.TARGET_IMAGE))
-                logger.info(f"Started AceStream container {response.container_id[:12]} for scale-up ({i+1}/{deficit}) - HTTP port: {response.host_http_port}")
+                logger.info(f"Started AceStream container {response.container_id[:12]} for scale-up ({i+1}/{deficit})")
             except Exception as e:
                 logger.error(f"Failed to start AceStream container for scale-up: {e}")
         
@@ -215,8 +260,7 @@ def scale_to(demand: int):
             
             if can_stop_engine(c.id, bypass_grace_period=False):
                 try:
-                    c.stop(timeout=5)
-                    c.remove()
+                    stop_container(c.id)
                     stopped_count += 1
                     logger.info(f"Stopped and removed container {c.id[:12]} ({stopped_count}/{excess})")
                 except Exception as e:

@@ -3,13 +3,14 @@ from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 import os
 import json
 import logging
 
 from .utils.logging import setup
+from .utils.debug_logger import init_debug_logger, get_debug_logger
 from .core.config import cfg
 from .services.autoscaler import ensure_minimum, scale_to, can_stop_engine
 from .services.provisioner import StartRequest, start_container, stop_container, AceProvisionRequest, AceProvisionResponse, start_acestream, HOST_LABEL_HTTP
@@ -31,6 +32,11 @@ from .services.gluetun import gluetun_monitor
 logger = logging.getLogger(__name__)
 
 setup()
+
+# Initialize debug logger if enabled
+debug_logger = init_debug_logger(enabled=cfg.DEBUG_MODE, log_dir=cfg.DEBUG_LOG_DIR)
+if cfg.DEBUG_MODE:
+    logger.info(f"Debug mode enabled. Logs will be written to: {cfg.DEBUG_LOG_DIR}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -61,7 +67,8 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Gluetun did not become healthy within {max_wait_time}s - proceeding anyway")
     
     # Now provision engines with Gluetun health checks working
-    ensure_minimum()
+    # On startup, provision MIN_REPLICAS total containers
+    ensure_minimum(initial_startup=True)
     
     # Start remaining monitoring services
     asyncio.create_task(collector.start())
@@ -111,7 +118,109 @@ def provision(req: StartRequest):
 @app.post("/provision/acestream", response_model=AceProvisionResponse, dependencies=[Depends(require_api_key)])
 def provision_acestream(req: AceProvisionRequest):
     orch_provision_total.labels("acestream").inc()
-    return start_acestream(req)
+    
+    # Check provisioning status before attempting
+    from .services.circuit_breaker import circuit_breaker_manager
+    
+    vpn_status_check = get_vpn_status()
+    circuit_breaker_status = circuit_breaker_manager.get_status()
+    
+    # Build detailed error response if provisioning is blocked
+    if vpn_status_check.get("enabled", False) and not vpn_status_check.get("connected", False):
+        logger.error("Provisioning blocked: VPN not connected")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "provisioning_blocked",
+                "code": "vpn_disconnected",
+                "message": "VPN connection is required but currently disconnected",
+                "recovery_eta_seconds": 60,
+                "can_retry": True,
+                "should_wait": True
+            }
+        )
+    
+    if circuit_breaker_status.get("general", {}).get("state") != "closed":
+        cb_state = circuit_breaker_status.get("general", {}).get("state")
+        recovery_timeout = circuit_breaker_status.get("general", {}).get("recovery_timeout", 300)
+        last_failure = circuit_breaker_status.get("general", {}).get("last_failure_time")
+        
+        recovery_eta = recovery_timeout
+        if last_failure:
+            try:
+                last_failure_dt = datetime.fromisoformat(last_failure.replace('Z', '+00:00'))
+                elapsed = (datetime.now(timezone.utc) - last_failure_dt).total_seconds()
+                recovery_eta = max(0, int(recovery_timeout - elapsed))
+            except:
+                pass
+        
+        logger.error(f"Provisioning blocked: Circuit breaker is {cb_state}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "provisioning_blocked",
+                "code": "circuit_breaker",
+                "message": f"Circuit breaker is {cb_state} due to repeated failures",
+                "recovery_eta_seconds": recovery_eta,
+                "can_retry": cb_state == "half_open",
+                "should_wait": True
+            }
+        )
+    
+    try:
+        response = start_acestream(req)
+    except RuntimeError as e:
+        error_msg = str(e)
+        # Provide clear error messages for common failure scenarios
+        if "Gluetun" in error_msg or "VPN" in error_msg:
+            logger.error(f"Provisioning failed due to VPN issue: {error_msg}")
+            raise HTTPException(
+                status_code=503, 
+                detail={
+                    "error": "provisioning_failed",
+                    "code": "vpn_error",
+                    "message": f"VPN error during provisioning: {error_msg}",
+                    "recovery_eta_seconds": 60,
+                    "can_retry": True,
+                    "should_wait": True
+                }
+            )
+        elif "circuit breaker" in error_msg.lower():
+            logger.error(f"Provisioning failed due to circuit breaker: {error_msg}")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "provisioning_blocked",
+                    "code": "circuit_breaker",
+                    "message": error_msg,
+                    "recovery_eta_seconds": 300,
+                    "can_retry": False,
+                    "should_wait": True
+                }
+            )
+        else:
+            logger.error(f"Provisioning failed: {error_msg}")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "provisioning_failed",
+                    "code": "general_error",
+                    "message": f"Failed to provision engine: {error_msg}",
+                    "recovery_eta_seconds": None,
+                    "can_retry": False,
+                    "should_wait": False
+                }
+            )
+    
+    # Immediately add the new engine to state so it's available to proxies
+    # This ensures the engine appears in /engines endpoint right after provisioning
+    try:
+        reindex_existing()
+        logger.info(f"Reindexed after provisioning engine {response.container_id[:12]}")
+    except Exception as e:
+        logger.error(f"Failed to reindex after provisioning: {e}")
+    
+    return response
 
 @app.post("/scale/{demand}", dependencies=[Depends(require_api_key)])
 def scale(demand: int):
@@ -275,5 +384,146 @@ def reset_circuit_breaker(operation_type: Optional[str] = None):
     from .services.circuit_breaker import circuit_breaker_manager
     circuit_breaker_manager.force_reset(operation_type)
     return {"message": f"Circuit breaker {'for ' + operation_type if operation_type else 'all'} reset successfully"}
+
+@app.get("/orchestrator/status")
+def get_orchestrator_status():
+    """
+    Get comprehensive orchestrator status for proxy integration.
+    This endpoint provides all the information a proxy needs to understand
+    the orchestrator's current state including VPN, provisioning, and health status.
+    
+    Enhanced to provide detailed provisioning status with recovery guidance.
+    """
+    from .services.replica_validator import replica_validator
+    from .services.circuit_breaker import circuit_breaker_manager
+    
+    # Get engine and stream counts
+    engines = state.list_engines()
+    active_streams = state.list_streams(status="started")
+    
+    # Get Docker container status
+    docker_status = replica_validator.get_docker_container_status()
+    
+    # Get VPN status
+    vpn_status = get_vpn_status()
+    
+    # Get health summary
+    health_summary = health_manager.get_health_summary()
+    
+    # Get circuit breaker status
+    circuit_breaker_status = circuit_breaker_manager.get_status()
+    
+    # Calculate capacity
+    # Count unique engines that have active streams (not total streams)
+    # Multiple streams can run on the same engine
+    total_capacity = len(engines)
+    engines_with_streams = len(set(stream.container_id for stream in active_streams))
+    used_capacity = engines_with_streams
+    available_capacity = max(0, total_capacity - used_capacity)
+    
+    # Determine overall system status
+    vpn_enabled = vpn_status.get("enabled", False)
+    vpn_connected = vpn_status.get("connected", False)
+    circuit_breaker_state = circuit_breaker_status.get("general", {}).get("state")
+    
+    # Detailed provisioning status
+    can_provision = True
+    blocked_reason = None
+    blocked_reason_details = None
+    recovery_eta = None
+    
+    if vpn_enabled and not vpn_connected:
+        can_provision = False
+        blocked_reason = "VPN not connected"
+        blocked_reason_details = {
+            "code": "vpn_disconnected",
+            "message": "VPN connection is required but currently disconnected. Engines cannot be provisioned without VPN.",
+            "recovery_eta_seconds": 60,  # VPN typically reconnects within a minute
+            "can_retry": True,
+            "should_wait": True  # Proxy should wait for VPN to reconnect
+        }
+    elif circuit_breaker_state != "closed":
+        can_provision = False
+        cb_info = circuit_breaker_status.get("general", {})
+        recovery_timeout = cb_info.get("recovery_timeout", 300)
+        last_failure = cb_info.get("last_failure_time")
+        
+        if last_failure:
+            try:
+                last_failure_dt = datetime.fromisoformat(last_failure.replace('Z', '+00:00'))
+                elapsed = (datetime.now(timezone.utc) - last_failure_dt).total_seconds()
+                recovery_eta = max(0, int(recovery_timeout - elapsed))
+            except:
+                recovery_eta = recovery_timeout
+        else:
+            recovery_eta = recovery_timeout
+            
+        blocked_reason = f"Circuit breaker is {circuit_breaker_state}"
+        blocked_reason_details = {
+            "code": "circuit_breaker",
+            "message": f"Provisioning circuit breaker is {circuit_breaker_state} due to repeated failures. System is waiting for conditions to improve.",
+            "recovery_eta_seconds": recovery_eta,
+            "can_retry": False if circuit_breaker_state == "open" else True,
+            "should_wait": True  # Proxy should wait for circuit breaker to close
+        }
+    elif docker_status['total_running'] >= cfg.MAX_REPLICAS:
+        can_provision = False
+        blocked_reason = "Maximum capacity reached"
+        blocked_reason_details = {
+            "code": "max_capacity",
+            "message": f"Maximum number of engines ({cfg.MAX_REPLICAS}) already running. Wait for streams to end or increase MAX_REPLICAS.",
+            "recovery_eta_seconds": cfg.ENGINE_GRACE_PERIOD_S if cfg.AUTO_DELETE else None,
+            "can_retry": False,
+            "should_wait": True  # Proxy should wait for engines to free up
+        }
+    
+    # Overall system status
+    if docker_status['total_running'] == 0:
+        overall_status = "unavailable"
+    elif not can_provision and blocked_reason_details and blocked_reason_details["code"] in ["vpn_disconnected", "circuit_breaker"]:
+        overall_status = "degraded"
+    else:
+        overall_status = "healthy"
+    
+    return {
+        "status": overall_status,
+        "engines": {
+            "total": len(engines),
+            "running": docker_status['total_running'],
+            "healthy": health_summary.get("healthy_engines", 0),
+            "unhealthy": health_summary.get("unhealthy_engines", 0)
+        },
+        "streams": {
+            "active": len(active_streams),
+            "total": len(state.list_streams())
+        },
+        "capacity": {
+            "total": total_capacity,
+            "used": used_capacity,
+            "available": available_capacity,
+            "max_replicas": cfg.MAX_REPLICAS,
+            "min_replicas": cfg.MIN_REPLICAS
+        },
+        "vpn": {
+            "enabled": vpn_enabled,
+            "connected": vpn_connected,
+            "health": vpn_status.get("health", "unknown"),
+            "container": vpn_status.get("container"),
+            "forwarded_port": vpn_status.get("forwarded_port")
+        },
+        "provisioning": {
+            "can_provision": can_provision,
+            "circuit_breaker_state": circuit_breaker_state,
+            "last_failure": circuit_breaker_status.get("general", {}).get("last_failure_time"),
+            "blocked_reason": blocked_reason,
+            "blocked_reason_details": blocked_reason_details
+        },
+        "config": {
+            "auto_delete": cfg.AUTO_DELETE,
+            "grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
+            "target_image": cfg.TARGET_IMAGE
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
 # WebSocket endpoint removed - using simple polling approach

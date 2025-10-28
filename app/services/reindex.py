@@ -7,6 +7,10 @@ from ..models.schemas import EngineState
 from ..core.config import cfg
 
 def reindex_existing():
+    # Clear all port allocations before reindexing to prevent double-counting
+    # This ensures that we start fresh and only count actually running containers
+    alloc.clear_all_allocations()
+    
     for c in list_managed():
         # Only process running containers to avoid stale state
         if c.status != 'running':
@@ -23,10 +27,12 @@ def reindex_existing():
         except Exception: pass
         
         # Reserve Gluetun ports if using Gluetun
+        # Only reserve one port per container (use HOST_LABEL_HTTP as the primary port)
+        # to avoid double-counting which would cause MAX_ACTIVE_REPLICAS limit to be hit prematurely
         if cfg.GLUETUN_CONTAINER_NAME:
             try:
-                if HOST_LABEL_HTTP in lbl: alloc.reserve_gluetun_port(int(lbl[HOST_LABEL_HTTP]))
-                if ACESTREAM_LABEL_HTTP in lbl: alloc.reserve_gluetun_port(int(lbl[ACESTREAM_LABEL_HTTP]))
+                if HOST_LABEL_HTTP in lbl: 
+                    alloc.reserve_gluetun_port(int(lbl[HOST_LABEL_HTTP]))
             except Exception: pass
         key = c.id
         if key not in state.engines:

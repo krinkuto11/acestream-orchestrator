@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from .docker_client import get_client, safe
 from ..core.config import cfg
 from .ports import alloc
+from ..utils.debug_logger import get_debug_logger
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ class AceProvisionResponse(BaseModel):
 def start_container(req: StartRequest) -> dict:
     from .naming import generate_container_name
     
+    debug_log = get_debug_logger()
+    start_time = time.time()
+    
     cli = get_client()
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val}
@@ -42,6 +46,11 @@ def start_container(req: StartRequest) -> dict:
     
     # Generate a meaningful container name
     container_name = generate_container_name(req.name_prefix)
+    
+    debug_log.log_provisioning("start_container_begin", 
+                               container_name=container_name,
+                               image=image_name,
+                               labels=labels)
     
     try:
         cont = safe(cli.containers.run,
@@ -54,6 +63,12 @@ def start_container(req: StartRequest) -> dict:
             ports=req.ports or None,
             restart_policy={"Name": "unless-stopped"})
     except RuntimeError as e:
+        duration = time.time() - start_time
+        debug_log.log_provisioning("start_container_failed",
+                                   container_name=container_name,
+                                   duration=duration,
+                                   success=False,
+                                   error=str(e))
         # Provide more helpful error messages for common image issues
         error_msg = str(e).lower()
         if "not found" in error_msg or "pull access denied" in error_msg:
@@ -68,12 +83,34 @@ def start_container(req: StartRequest) -> dict:
     while cont.status not in ("running",) and time.time() < deadline:
         time.sleep(0.5); cont.reload()
     if cont.status != "running":
+        duration = time.time() - start_time
+        debug_log.log_provisioning("start_container_timeout",
+                                   container_id=cont.id,
+                                   container_name=container_name,
+                                   duration=duration,
+                                   success=False,
+                                   error=f"Container failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status})")
         cont.remove(force=True)
         raise RuntimeError(f"Container failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status})")
     
     # Get container name - should match what we set
     cont.reload()
     actual_container_name = cont.attrs.get("Name", "").lstrip("/")
+    
+    duration = time.time() - start_time
+    debug_log.log_provisioning("start_container_success",
+                               container_id=cont.id,
+                               container_name=actual_container_name,
+                               duration=duration,
+                               success=True)
+    
+    # Check for slow provisioning (stress indicator)
+    if duration > cfg.STARTUP_TIMEOUT_S * 0.5:
+        debug_log.log_stress_event("slow_provisioning",
+                                   severity="warning",
+                                   description=f"Container provisioning took {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.5}s threshold)",
+                                   container_id=cont.id,
+                                   duration=duration)
     
     return {"container_id": cont.id, "container_name": actual_container_name}
 
@@ -93,12 +130,11 @@ def _release_ports_from_labels(labels: dict):
     except Exception: pass
     
     # Release Gluetun ports if using Gluetun
+    # Only free one port per container (use HOST_LABEL_HTTP as the primary port)
+    # to match the reserve behavior and avoid double-counting
     if cfg.GLUETUN_CONTAINER_NAME:
         try:
             hp = labels.get(HOST_LABEL_HTTP); alloc.free_gluetun_port(int(hp) if hp else None)
-        except Exception: pass
-        try:
-            cp = labels.get(ACESTREAM_LABEL_HTTP); alloc.free_gluetun_port(int(cp) if cp else None)
         except Exception: pass
 
 def clear_acestream_cache(container_id: str) -> tuple[bool, int]:
@@ -130,16 +166,17 @@ def clear_acestream_cache(container_id: str) -> tuple[bool, int]:
                 if output and output != '0':
                     # Parse output like "12345\t/path/to/cache"
                     cache_size = int(output.split()[0])
-                    logger.info(f"Cache size for container {container_id[:12]}: {cache_size} bytes ({cache_size / 1024 / 1024:.2f} MB)")
         except Exception as e:
             logger.debug(f"Failed to get cache size for container {container_id[:12]}: {e}")
         
         # Execute cache cleanup command
-        logger.info(f"Clearing AceStream cache for container {container_id[:12]}")
         result = cont.exec_run("rm -rf /home/appuser/.ACEStream/.acestream_cache", demux=False)
         
         if result.exit_code == 0:
-            logger.info(f"Successfully cleared AceStream cache for container {container_id[:12]} (freed {cache_size / 1024 / 1024:.2f} MB)")
+            # Only log if meaningful amount of cache was cleared (>0MB)
+            cache_size_mb = cache_size / 1024 / 1024
+            if cache_size_mb > 0:
+                logger.info(f"Cleared {cache_size_mb:.1f}MB cache from {container_id[:12]}")
             return (True, cache_size)
         else:
             logger.warning(f"Cache cleanup command returned non-zero exit code {result.exit_code} for container {container_id[:12]}")
@@ -245,6 +282,13 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     from .naming import generate_container_name
     import time
     
+    debug_log = get_debug_logger()
+    provision_start = time.time()
+    
+    debug_log.log_provisioning("start_acestream_begin",
+                               labels=req.labels,
+                               has_custom_env=bool(req.env))
+    
     # Check Gluetun health if configured
     if cfg.GLUETUN_CONTAINER_NAME:
         from .gluetun import gluetun_monitor
@@ -309,23 +353,14 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         # User specified https port in CONF - use it
         c_https = user_https_port
         # Reserve this port to avoid conflicts
-        if cfg.GLUETUN_CONTAINER_NAME:
-            alloc.reserve_gluetun_port(c_https)
-        else:
-            alloc.reserve_https(c_https)
+        # HTTPS ports always use the regular HTTPS range, not Gluetun ports
+        # HTTPS ports don't count against MAX_ACTIVE_REPLICAS
+        alloc.reserve_https(c_https)
     else:
         # No user https port - use orchestrator allocation
-        if cfg.GLUETUN_CONTAINER_NAME:
-            # When using Gluetun, use a port in the Gluetun range (avoid HTTP port)
-            for attempt in range(cfg.MAX_ACTIVE_REPLICAS):
-                c_https = alloc.alloc_gluetun_port()
-                if c_https != c_http:  # Ensure HTTPS port is different from HTTP
-                    break
-            else:
-                raise RuntimeError("Could not allocate HTTPS port different from HTTP port")
-        else:
-            # Normal allocation
-            c_https = alloc.alloc_https(avoid=c_http)
+        # HTTPS ports always use the regular HTTPS range, regardless of Gluetun
+        # HTTPS ports don't count against MAX_ACTIVE_REPLICAS
+        c_https = alloc.alloc_https(avoid=c_http)
 
     # Use user-provided CONF if available, otherwise use default configuration
     if "CONF" in req.env:
@@ -420,6 +455,13 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     while cont.status not in ("running",) and time.time() < deadline:
         time.sleep(0.5); cont.reload()
     if cont.status != "running":
+        duration = time.time() - provision_start
+        debug_log.log_provisioning("start_acestream_failed",
+                                   container_id=cont.id,
+                                   duration=duration,
+                                   success=False,
+                                   error="Container failed to start",
+                                   status=cont.status)
         _release_ports_from_labels(labels)
         cont.remove(force=True)
         raise RuntimeError("Arranque AceStream fallido")
@@ -428,6 +470,22 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Get container name - should match what we set
     cont.reload()
     actual_container_name = cont.attrs.get("Name", "").lstrip("/")
+    
+    duration = time.time() - provision_start
+    debug_log.log_provisioning("start_acestream_success",
+                               container_id=cont.id,
+                               container_name=actual_container_name,
+                               host_http_port=host_http,
+                               duration=duration,
+                               success=True)
+    
+    # Check for slow provisioning (stress indicator)
+    if duration > cfg.STARTUP_TIMEOUT_S * 0.7:
+        debug_log.log_stress_event("slow_acestream_provisioning",
+                                   severity="warning",
+                                   description=f"AceStream provisioning took {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.7}s threshold)",
+                                   container_id=cont.id,
+                                   duration=duration)
     
     return AceProvisionResponse(
         container_id=cont.id, 
