@@ -135,3 +135,64 @@ curl -s "http://localhost:8000/engines" | jq '.[] | {id: .container_id, health: 
 - **Engine count**: Scales linearly with number of engines
 - **Check interval**: Configurable to balance monitoring vs resource usage
 - **Timeout handling**: Prevents hanging health checks from blocking other operations
+
+## Stale Stream Detection
+
+### Overview
+The orchestrator automatically detects and handles stale streams using the Acestream stat endpoint. When a stream stops or becomes invalid, the engine returns an error indicating the playback session is unknown.
+
+### Detection Mechanism
+- **Endpoint**: `/ace/stat/<playback_session_id>`
+- **Detection Pattern**: `{"response": null, "error": "unknown playback session id"}`
+- **Frequency**: Every `COLLECT_INTERVAL_S` (default: 5 seconds)
+- **Action**: Automatically ends the stream in the orchestrator state
+
+### How It Works
+1. **Periodic Polling**: The collector service polls the stat URL for each active stream
+2. **Response Analysis**: Checks if the response indicates a stale/stopped stream
+3. **Automatic Cleanup**: When detected, the stream is automatically marked as "ended"
+4. **Resource Management**: This triggers cleanup processes (cache clearing, container management)
+
+### Benefits
+- **Resilient Tracking**: Prevents orphaned stream records when streams stop unexpectedly
+- **Accurate State**: Ensures orchestrator state matches actual engine state
+- **Automatic Recovery**: No manual intervention needed when streams become stale
+- **Resource Efficiency**: Enables timely cleanup of idle engines
+
+### Metrics
+Monitor stale stream detection using Prometheus metrics:
+```
+# Total number of stale streams detected and auto-ended
+orch_stale_streams_detected_total
+```
+
+### Behavior
+- **Normal streams**: Continue to collect statistics as usual
+- **Stale streams**: Automatically ended and removed from active tracking
+- **HTTP errors**: Do not trigger stale detection (network issues handled separately)
+- **Other errors**: Only the specific "unknown playback session id" error triggers detection
+
+### Example Scenario
+```
+1. Stream starts: POST /events/stream_started
+2. Collector polls: GET /ace/stat/session_123 → {"response": {...stats...}}
+3. Stream stops on engine side (user disconnects, error, etc.)
+4. Collector polls: GET /ace/stat/session_123 → {"response": null, "error": "unknown playback session id"}
+5. Orchestrator detects stale stream
+6. Stream automatically ended: state.on_stream_ended(...)
+7. Cleanup processes triggered (cache clear, container management)
+```
+
+### Configuration
+Stale stream detection is always enabled and uses the existing `COLLECT_INTERVAL_S` configuration:
+```bash
+# .env
+COLLECT_INTERVAL_S=5  # How often to poll stream stats (default: 5 seconds)
+```
+
+### Logging
+Stale stream detection events are logged for monitoring:
+```
+INFO app.services.collector: Detected stale stream stream_id_123: unknown playback session id
+INFO app.services.collector: Automatically ending stale stream stream_id_123
+```
