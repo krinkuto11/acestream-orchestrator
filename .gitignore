@@ -64,3 +64,6 @@ build/
 
 # React dashboard build output (generated during Docker build)
 app/static/panel/
+
+# Testing tools
+actionlint
