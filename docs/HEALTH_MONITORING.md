@@ -163,6 +163,7 @@ The orchestrator automatically detects and handles stale streams using the Acest
 Monitor stale stream detection using Prometheus metrics:
 ```
 # Total number of stale streams detected and auto-ended
+# Note: Prometheus automatically adds the _total suffix to counters
 orch_stale_streams_detected_total
 ```
 
