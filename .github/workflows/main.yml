@@ -31,9 +31,9 @@ jobs:
       uses: actions/cache@v4
       with:
         path: /tmp/.buildx-cache
-        key: ${{ runner.os }}-${{ runner.arch }}-buildx-${{ github.sha }}
+        key: ${{ runner.os }}-${{ matrix.platform }}-buildx-${{ github.sha }}
         restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-buildx-
+          ${{ runner.os }}-${{ matrix.platform }}-buildx-
 
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
@@ -70,10 +70,17 @@ jobs:
         digest="${{ steps.build.outputs.digest }}"
         touch "/tmp/digests/${digest#sha256:}"
 
+    - name: Prepare artifact name
+      id: artifact_name
+      run: |
+        # Convert platform to valid artifact name (replace / with -)
+        PLATFORM_NAME=$(echo "${{ matrix.platform }}" | sed 's/\//-/g')
+        echo "name=digests-${PLATFORM_NAME}" >> "$GITHUB_OUTPUT"
+    
     - name: Upload digest
       uses: actions/upload-artifact@v4
       with:
-        name: digests-${{ strategy.job-index }}
+        name: ${{ steps.artifact_name.outputs.name }}
         path: /tmp/digests/*
         if-no-files-found: error
         retention-days: 1
