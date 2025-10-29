@@ -1,10 +1,13 @@
 import asyncio
 import httpx
+import logging
 from datetime import datetime, timezone
 from .state import state
-from ..models.schemas import StreamStatSnapshot
+from ..models.schemas import StreamStatSnapshot, StreamEndedEvent
 from ..core.config import cfg
-from .metrics import orch_collect_errors
+from .metrics import orch_collect_errors, orch_stale_streams_detected
+
+logger = logging.getLogger(__name__)
 
 class Collector:
     def __init__(self):
@@ -40,6 +43,26 @@ class Collector:
             if r.status_code >= 300:
                 return
             data = r.json()
+            
+            # Check if the stream has stopped/is stale
+            # When a stream has stopped, the engine returns: {"response": null, "error": "unknown playback session id"}
+            if data.get("response") is None and data.get("error"):
+                error_msg = data.get("error", "").lower()
+                if "unknown playback session id" in error_msg:
+                    logger.info(f"Detected stale stream {stream_id}: {data.get('error')}")
+                    # Get the stream to find its container_id
+                    stream = state.get_stream(stream_id)
+                    if stream and stream.status == "started":
+                        # Automatically end the stream
+                        logger.info(f"Automatically ending stale stream {stream_id}")
+                        state.on_stream_ended(StreamEndedEvent(
+                            container_id=stream.container_id,
+                            stream_id=stream_id,
+                            reason="stale_stream_detected"
+                        ))
+                        orch_stale_streams_detected.inc()
+                    return
+            
             payload = data.get("response") or {}
             snap = StreamStatSnapshot(
                 ts=datetime.now(timezone.utc),
