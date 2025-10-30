@@ -279,9 +279,14 @@ def _check_gluetun_health_sync() -> bool:
     except Exception:
         return False
 
-def _get_variant_config(variant: str):
+def get_variant_config(variant: str):
     """
     Get the configuration for a specific engine variant.
+    
+    This is a public API for retrieving variant configuration.
+    
+    Args:
+        variant: The engine variant name (e.g., 'krinkuto11-amd64', 'jopsis-amd64')
     
     Returns:
         dict with keys:
@@ -397,7 +402,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         c_https = alloc.alloc_https(avoid=c_http)
 
     # Get variant configuration
-    variant_config = _get_variant_config(cfg.ENGINE_VARIANT)
+    variant_config = get_variant_config(cfg.ENGINE_VARIANT)
     
     # Get P2P port if using Gluetun (needed for all variants)
     p2p_port = None

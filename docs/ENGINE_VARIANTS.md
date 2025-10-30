@@ -196,10 +196,11 @@ If you're upgrading from a version without variant support:
 To see how a variant is configured:
 
 ```python
-from app.services.provisioner import _get_variant_config
+from app.services.provisioner import get_variant_config
 
-config = _get_variant_config('jopsis-amd64')
+config = get_variant_config('jopsis-amd64')
 print(config)
+# Example output: {'image': 'jopsis/acestream:x64', 'config_type': 'env', ...}
 ```
 
 ## See Also

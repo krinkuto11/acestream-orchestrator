@@ -38,8 +38,8 @@ def test_acestream_min_replicas():
     })
     
     # Get the image from variant config
-    from app.services.provisioner import _get_variant_config
-    variant_config = _get_variant_config(test_env['ENGINE_VARIANT'])
+    from app.services.provisioner import get_variant_config
+    variant_config = get_variant_config(test_env['ENGINE_VARIANT'])
     target_image = variant_config['image']
     
     print(f"📋 Test Configuration:")

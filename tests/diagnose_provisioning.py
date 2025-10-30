@@ -270,10 +270,10 @@ def main():
     
     # Load config for further checks
     from app.core.config import cfg
-    from app.services.provisioner import _get_variant_config
+    from app.services.provisioner import get_variant_config
     
     # Get image from variant
-    variant_config = _get_variant_config(cfg.ENGINE_VARIANT)
+    variant_config = get_variant_config(cfg.ENGINE_VARIANT)
     target_image = variant_config['image']
     
     # Check 3: Image availability
