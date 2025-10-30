@@ -22,6 +22,7 @@ Access the dashboard at `http://localhost:8000/panel`
 
 ## Core Features
 
+- **Multiple Engine Variants**: Support for AMD64 and ARM architectures with optimized configurations
 - **Health Monitoring**: Automatic detection of engine issues
 - **Usage Tracking**: Track engine idle time for load balancing
 - **Web Dashboard**: Real-time monitoring interface
@@ -34,9 +35,9 @@ Copy `.env.example` to `.env` and adjust:
 - `API_KEY`: Protect endpoints
 - `MIN_REPLICAS`: Initial engine pool size
 - `PORT_RANGE_HOST`: External port range
-- `TARGET_IMAGE`: Acestream engine image
+- `ENGINE_VARIANT`: Engine variant (krinkuto11-amd64, jopsis-amd64, jopsis-arm32, jopsis-arm64)
 
-See [Configuration](docs/CONFIG.md) for all options.
+See [Configuration](docs/CONFIG.md) and [Engine Variants](docs/ENGINE_VARIANTS.md) for all options.
 
 ## API
 
@@ -54,6 +55,7 @@ See [API Documentation](docs/API.md) for details.
 ## Documentation
 
 - [Configuration](docs/CONFIG.md) - Environment variables
+- [Engine Variants](docs/ENGINE_VARIANTS.md) - Available engine variants and usage
 - [API](docs/API.md) - Endpoint reference
 - [Events](docs/EVENTS.md) - Event contracts
 - [Security](docs/SECURITY.md) - Security considerations
