@@ -332,7 +332,7 @@ def get_engines():
         verified_engines.sort(key=lambda e: e.port)
         return verified_engines
     except Exception as e:
-        # If Docker verification fails, return state as-is but still sorted
+        # If Docker verification fails, return state as is but still sorted
         logger.debug(f"Docker verification failed for /engines endpoint: {e}")
         engines.sort(key=lambda e: e.port)
         return engines
