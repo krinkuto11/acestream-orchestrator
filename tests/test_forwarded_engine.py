@@ -10,19 +10,20 @@ This test validates that:
 
 import sys
 import os
+import traceback
+from datetime import datetime, timezone
 
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from app.models.schemas import EngineState
-from app.services.state import State
-from datetime import datetime, timezone
 
 try:
     import pytest
     HAS_PYTEST = True
 except ImportError:
     HAS_PYTEST = False
+
+from app.models.schemas import EngineState
+from app.services.state import State
 
 
 def test_forwarded_flag_in_engine_state():
@@ -255,11 +256,9 @@ if __name__ == "__main__":
             sys.exit(0)
         except AssertionError as e:
             print(f"\n❌ TEST FAILED: {e}")
-            import traceback
             traceback.print_exc()
             sys.exit(1)
         except Exception as e:
             print(f"\n💥 ERROR: {e}")
-            import traceback
             traceback.print_exc()
             sys.exit(1)

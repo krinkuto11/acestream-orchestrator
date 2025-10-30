@@ -12,20 +12,21 @@ was not updated until after all provisioning completed.
 
 import sys
 import os
+import traceback
 from unittest import mock
 from datetime import datetime, timezone
 
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app.services.state import State
-from app.models.schemas import EngineState
-
 try:
     import pytest
     HAS_PYTEST = True
 except ImportError:
     HAS_PYTEST = False
+
+from app.services.state import State
+from app.models.schemas import EngineState
 
 
 def test_sequential_provisioning_only_first_is_forwarded():
@@ -246,9 +247,9 @@ if __name__ == "__main__":
             sys.exit(0)
         except AssertionError as e:
             print(f"\n❌ TEST FAILED: {e}")
+            traceback.print_exc()
             sys.exit(1)
         except Exception as e:
             print(f"\n💥 ERROR: {e}")
-            import traceback
             traceback.print_exc()
             sys.exit(1)
