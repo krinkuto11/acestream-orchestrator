@@ -14,6 +14,7 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
 - Uses `CONF` environment variable with newline-separated arguments
 - Port settings: `--http-port=<port>`, `--https-port=<port>`, `--bind-all`
 - Additional environment variables: `HTTP_PORT`, `HTTPS_PORT`, `BIND_ALL`, `INTERNAL_BUFFERING`, `CACHE_LIMIT`
+- When using Gluetun VPN: P2P port set via `P2P_PORT` environment variable
 
 ### 2. jopsis-amd64
 - **Image**: `jopsis/acestream:x64`
@@ -30,6 +31,7 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
   - Access tokens configured
   - Stats reporting enabled
 - Port settings appended: `--http-port <port> --https-port <port>`
+- When using Gluetun VPN: P2P port appended as `--port <port>`
 
 ### 3. jopsis-arm32
 - **Image**: `jopsis/acestream:arm32-v3.2.13`
@@ -40,6 +42,7 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
 **Configuration Method**:
 - Base command: `python main.py --bind-all --client-console --live-cache-type memory --live-mem-cache-size 104857600 --disable-sentry --log-stdout`
 - Port settings appended to command: `--http-port <port> --https-port <port>`
+- When using Gluetun VPN: P2P port appended as `--port <port>`
 
 ### 4. jopsis-arm64
 - **Image**: `jopsis/acestream:arm64-v3.2.13`
@@ -50,6 +53,7 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
 **Configuration Method**:
 - Base command: `python main.py --bind-all --client-console --live-cache-type memory --live-mem-cache-size 104857600 --disable-sentry --log-stdout`
 - Port settings appended to command: `--http-port <port> --https-port <port>`
+- When using Gluetun VPN: P2P port appended as `--port <port>`
 
 ## Usage
 
@@ -105,11 +109,22 @@ The orchestrator automatically configures each variant based on its type:
 All variants require HTTP and HTTPS ports:
 - **HTTP Port**: Used for the main AceStream HTTP API
 - **HTTPS Port**: Used for secure connections (optional mapping via `ACE_MAP_HTTPS`)
+- **P2P Port** (optional): Used for peer-to-peer connections when using Gluetun VPN
 
 The orchestrator automatically:
 1. Allocates available ports from configured ranges
 2. Injects port settings in the format appropriate for each variant
 3. Sets up port mappings (unless using Gluetun VPN)
+4. When Gluetun is configured, retrieves the forwarded P2P port and passes it to engines
+
+### P2P Port Handling by Variant
+
+- **krinkuto11-amd64**: P2P port set via `P2P_PORT` environment variable
+- **jopsis-amd64**: P2P port appended to `ACESTREAM_ARGS` as `--port <port>`
+- **jopsis-arm32**: P2P port appended to command as `--port <port>`
+- **jopsis-arm64**: P2P port appended to command as `--port <port>`
+
+When Gluetun is not configured, no P2P port is passed and engines use their default P2P behavior.
 
 ## Choosing a Variant
 
@@ -143,6 +158,12 @@ Run the demonstration to see how each variant is configured:
 
 ```bash
 python tests/demo_engine_variants.py
+```
+
+Run the P2P port handling tests:
+
+```bash
+python tests/test_p2p_port_variants.py
 ```
 
 ## Troubleshooting

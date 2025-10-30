@@ -398,6 +398,12 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Get variant configuration
     variant_config = _get_variant_config(cfg.ENGINE_VARIANT)
     
+    # Get P2P port if using Gluetun (needed for all variants)
+    p2p_port = None
+    if cfg.GLUETUN_CONTAINER_NAME:
+        from .gluetun import get_forwarded_port_sync
+        p2p_port = get_forwarded_port_sync()
+    
     # Prepare environment variables and command based on variant type
     env = {**req.env}
     cmd = None
@@ -409,6 +415,9 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
             # Use ACESTREAM_ARGS environment variable with base args + port settings
             base_args = variant_config.get("base_args", "")
             port_args = f" --http-port {c_http} --https-port {c_https}"
+            # Add P2P port if available
+            if p2p_port:
+                port_args += f" --port {p2p_port}"
             env["ACESTREAM_ARGS"] = base_args + port_args
         else:
             # krinkuto11-amd64: Use user-provided CONF if available, otherwise use default
@@ -426,23 +435,18 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
             env["BIND_ALL"] = "true"
             env["INTERNAL_BUFFERING"] = 60
             env["CACHE_LIMIT"] = 1
+            # Add P2P_PORT as environment variable for krinkuto11-amd64
+            if p2p_port:
+                env["P2P_PORT"] = str(p2p_port)
     else:
         # CMD-based variants (jopsis-arm32, jopsis-arm64)
         # Append port settings to base command
         base_cmd = variant_config.get("base_cmd", [])
         port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]
-        cmd = base_cmd + port_args
-    
-    # Add P2P_PORT when using Gluetun
-    if cfg.GLUETUN_CONTAINER_NAME:
-        from .gluetun import get_forwarded_port_sync
-        p2p_port = get_forwarded_port_sync()
+        # Add P2P port if available
         if p2p_port:
-            env["P2P_PORT"] = str(p2p_port)
-        else:
-            # If we can't get the forwarded port, we'll continue without it
-            # The AceStream engine will use its default P2P port behavior
-            pass
+            port_args.extend(["--port", str(p2p_port)])
+        cmd = base_cmd + port_args
 
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val,
