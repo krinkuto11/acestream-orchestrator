@@ -7,6 +7,7 @@ class Cfg(BaseModel):
     APP_PORT: int = int(os.getenv("APP_PORT", 8000))
     DOCKER_NETWORK: str | None = os.getenv("DOCKER_NETWORK")
     TARGET_IMAGE: str = os.getenv("TARGET_IMAGE", "acestream/engine:latest")
+    ENGINE_VARIANT: str = os.getenv("ENGINE_VARIANT", "krinkuto11-amd64")
     MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 1))
     MIN_FREE_REPLICAS: int = int(os.getenv("MIN_FREE_REPLICAS", 1))
     MAX_REPLICAS: int = int(os.getenv("MAX_REPLICAS", 20))
@@ -84,6 +85,13 @@ class Cfg(BaseModel):
     def validate_max_active_replicas(cls, v):
         if v <= 0:
             raise ValueError('MAX_ACTIVE_REPLICAS must be > 0')
+        return v
+
+    @validator('ENGINE_VARIANT')
+    def validate_engine_variant(cls, v):
+        valid_variants = ['krinkuto11-amd64', 'jopsis-amd64', 'jopsis-arm32', 'jopsis-arm64']
+        if v not in valid_variants:
+            raise ValueError(f'ENGINE_VARIANT must be one of: {", ".join(valid_variants)}')
         return v
 
     @validator('CONTAINER_LABEL')
