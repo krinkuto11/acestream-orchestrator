@@ -322,6 +322,9 @@ def get_variant_config(variant: str):
     }
     return configs.get(variant, configs["krinkuto11-amd64"])
 
+# Backward compatibility alias for tests
+_get_variant_config = get_variant_config
+
 def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     from .naming import generate_container_name
     import time
@@ -501,6 +504,13 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Only add ports if not using Gluetun (ports are handled by Gluetun container)
     if ports is not None:
         container_args["ports"] = ports
+    
+    # Add tmpfs mounts for jopsis-amd64 to prevent /dev/disk/by-id errors
+    if cfg.ENGINE_VARIANT == "jopsis-amd64":
+        container_args["tmpfs"] = {
+            "/dev/disk/by-id": "noexec,rw,size=4k",
+            "/tmp/fs": "noexec,rw,size=1024m"
+        }
     
     # Retry container creation with different names if there are conflicts
     max_retries = 5
