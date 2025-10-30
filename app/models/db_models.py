@@ -14,6 +14,7 @@ class EngineRow(Base):
     host: Mapped[str] = mapped_column(String(128))
     port: Mapped[int] = mapped_column(Integer)
     labels: Mapped[dict | None] = mapped_column(JSON, default={})
+    forwarded: Mapped[bool] = mapped_column(Boolean, default=False)
     first_seen: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_seen: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_cache_cleanup: Mapped[datetime | None] = mapped_column(DateTime)

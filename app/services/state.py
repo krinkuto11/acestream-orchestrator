@@ -60,7 +60,7 @@ class State:
             
             if not eng:
                 eng = EngineState(container_id=key, container_name=container_name, host=evt.engine.host, port=evt.engine.port,
-                                  labels=evt.labels or {}, first_seen=self.now(), last_seen=self.now(), streams=[],
+                                  labels=evt.labels or {}, forwarded=False, first_seen=self.now(), last_seen=self.now(), streams=[],
                                   health_status="unknown", last_health_check=None, last_stream_usage=self.now(),
                                   last_cache_cleanup=None, cache_size_bytes=None)
                 self.engines[key] = eng
@@ -81,7 +81,8 @@ class State:
 
         with SessionLocal() as s:
             s.merge(EngineRow(engine_key=eng.container_id, container_id=evt.container_id, container_name=container_name,
-                              host=eng.host, port=eng.port, labels=eng.labels, first_seen=eng.first_seen, last_seen=eng.last_seen))
+                              host=eng.host, port=eng.port, labels=eng.labels, forwarded=eng.forwarded, 
+                              first_seen=eng.first_seen, last_seen=eng.last_seen))
             s.merge(StreamRow(id=stream_id, engine_key=eng.container_id, key_type=st.key_type, key=st.key,
                               playback_session_id=st.playback_session_id, stat_url=st.stat_url, command_url=st.command_url,
                               is_live=st.is_live, started_at=st.started_at, status=st.status))
@@ -161,9 +162,11 @@ class State:
 
     def remove_engine(self, container_id: str) -> Optional[EngineState]:
         """Remove an engine from the state and return it if it existed."""
+        was_forwarded = False
         with self._lock:
             removed_engine = self.engines.pop(container_id, None)
             if removed_engine:
+                was_forwarded = removed_engine.forwarded
                 # Also remove any associated streams that are still active
                 streams_to_remove = [s_id for s_id, stream in self.streams.items() 
                                    if stream.container_id == container_id and stream.status != "ended"]
@@ -184,6 +187,18 @@ class State:
             except Exception:
                 # Database operation failed, but we can continue since we've updated memory state
                 pass
+        
+        # If the removed engine was forwarded, promote another engine if using Gluetun
+        if was_forwarded:
+            from ..core.config import cfg
+            if cfg.GLUETUN_CONTAINER_NAME and self.engines:
+                # Find the first available engine to promote
+                with self._lock:
+                    for engine_id, engine in self.engines.items():
+                        if not engine.forwarded:
+                            logger.info(f"Forwarded engine removed, promoting {engine_id[:12]} to forwarded")
+                            self.set_forwarded_engine(engine_id)
+                            break
         
         return removed_engine
 
@@ -248,9 +263,10 @@ class State:
                 if hasattr(e, 'last_cache_cleanup') and e.last_cache_cleanup:
                     last_cache_cleanup = e.last_cache_cleanup.replace(tzinfo=timezone.utc) if e.last_cache_cleanup.tzinfo is None else e.last_cache_cleanup
                 cache_size_bytes = getattr(e, 'cache_size_bytes', None)
+                forwarded = getattr(e, 'forwarded', False)
                 
                 self.engines[e.engine_key] = EngineState(container_id=e.engine_key, container_name=container_name,
-                                                         host=e.host, port=e.port, labels=e.labels or {}, 
+                                                         host=e.host, port=e.port, labels=e.labels or {}, forwarded=forwarded,
                                                          first_seen=first_seen, last_seen=last_seen, streams=[],
                                                          health_status="unknown", last_health_check=None, last_stream_usage=None,
                                                          last_cache_cleanup=last_cache_cleanup, cache_size_bytes=cache_size_bytes)
@@ -350,6 +366,48 @@ class State:
                 health_status = check_acestream_health(engine.host, engine.port)
                 engine.health_status = health_status
                 engine.last_health_check = self.now()
+    
+    def set_forwarded_engine(self, container_id: str):
+        """Mark an engine as the forwarded engine and clear forwarded flag from others."""
+        with self._lock:
+            # Clear forwarded flag from all engines
+            for engine in self.engines.values():
+                if engine.forwarded:
+                    engine.forwarded = False
+                    # Update database
+                    with SessionLocal() as s:
+                        s.merge(EngineRow(engine_key=engine.container_id, container_id=engine.container_id,
+                                        container_name=engine.container_name, host=engine.host, port=engine.port,
+                                        labels=engine.labels, forwarded=False, first_seen=engine.first_seen,
+                                        last_seen=engine.last_seen))
+                        s.commit()
+            
+            # Set forwarded flag on the specified engine
+            engine = self.engines.get(container_id)
+            if engine:
+                engine.forwarded = True
+                # Update database
+                with SessionLocal() as s:
+                    s.merge(EngineRow(engine_key=engine.container_id, container_id=engine.container_id,
+                                    container_name=engine.container_name, host=engine.host, port=engine.port,
+                                    labels=engine.labels, forwarded=True, first_seen=engine.first_seen,
+                                    last_seen=engine.last_seen))
+                    s.commit()
+                logger.info(f"Engine {container_id[:12]} is now the forwarded engine")
+            else:
+                logger.warning(f"Cannot set forwarded flag: engine {container_id[:12]} not found")
+    
+    def get_forwarded_engine(self) -> Optional[EngineState]:
+        """Get the engine marked as forwarded, if any."""
+        with self._lock:
+            for engine in self.engines.values():
+                if engine.forwarded:
+                    return engine
+            return None
+    
+    def has_forwarded_engine(self) -> bool:
+        """Check if there is a forwarded engine."""
+        return self.get_forwarded_engine() is not None
 
 state = State()
 

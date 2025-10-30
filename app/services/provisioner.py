@@ -12,6 +12,7 @@ ACESTREAM_LABEL_HTTP = "acestream.http_port"
 ACESTREAM_LABEL_HTTPS = "acestream.https_port"
 HOST_LABEL_HTTP = "host.http_port"
 HOST_LABEL_HTTPS = "host.https_port"
+FORWARDED_LABEL = "acestream.forwarded"
 
 class StartRequest(BaseModel):
     image: str | None = None
@@ -409,11 +410,21 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Get variant configuration
     variant_config = get_variant_config(cfg.ENGINE_VARIANT)
     
-    # Get P2P port if using Gluetun (needed for all variants)
+    # Determine if this engine should be the forwarded engine
+    # Only one engine should have the forwarded port when using Gluetun
+    is_forwarded = False
     p2p_port = None
     if cfg.GLUETUN_CONTAINER_NAME:
-        from .gluetun import get_forwarded_port_sync
-        p2p_port = get_forwarded_port_sync()
+        from .state import state
+        # Check if there's already a forwarded engine
+        if not state.has_forwarded_engine():
+            # This will be the forwarded engine
+            is_forwarded = True
+            from .gluetun import get_forwarded_port_sync
+            p2p_port = get_forwarded_port_sync()
+            logger.info(f"Provisioning new forwarded engine with P2P port {p2p_port}")
+        else:
+            logger.info("Forwarded engine already exists, provisioning non-forwarded engine")
     
     # Prepare environment variables and command based on variant type
     env = {**req.env}
@@ -464,6 +475,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
               ACESTREAM_LABEL_HTTP: str(c_http),
               ACESTREAM_LABEL_HTTPS: str(c_https),
               HOST_LABEL_HTTP: str(host_http)}
+    
+    # Add forwarded label if this is the forwarded engine
+    if is_forwarded:
+        labels[FORWARDED_LABEL] = "true"
 
     # Skip port mappings when using Gluetun - ports are already mapped through Gluetun container
     if cfg.GLUETUN_CONTAINER_NAME:
@@ -556,6 +571,13 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
                                    description=f"AceStream provisioning took {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.7}s threshold)",
                                    container_id=cont.id,
                                    duration=duration)
+    
+    # Mark this engine as forwarded in state if it was designated as such
+    if is_forwarded:
+        from .state import state
+        # The engine might not be in state yet, so we'll mark it during reindex
+        # The reindex that follows provisioning will pick up the label
+        logger.info(f"Engine {cont.id[:12]} provisioned as forwarded engine")
     
     return AceProvisionResponse(
         container_id=cont.id, 

@@ -30,6 +30,14 @@ function EngineCard({ engine, onDelete }) {
           <Box>
             <Typography variant="h6" component="div" sx={{ fontWeight: 600 }}>
               {engine.container_name || engine.container_id.slice(0, 12)}
+              {engine.forwarded && (
+                <Chip
+                  label="FORWARDED"
+                  color="primary"
+                  size="small"
+                  sx={{ ml: 1, fontWeight: 'bold' }}
+                />
+              )}
             </Typography>
             <Typography variant="body2" color="text.secondary">
               {engine.host}:{engine.port}
