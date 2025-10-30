@@ -572,11 +572,64 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
                                    container_id=cont.id,
                                    duration=duration)
     
+    # Add engine to state immediately to prevent race conditions during sequential provisioning
+    # This ensures that subsequent calls to has_forwarded_engine() will see this engine
+    from .state import state
+    from ..models.schemas import EngineState
+    from ..models.db_models import EngineRow
+    from .db import SessionLocal
+    
+    # Determine host based on Gluetun configuration
+    if cfg.GLUETUN_CONTAINER_NAME:
+        engine_host = cfg.GLUETUN_CONTAINER_NAME
+    else:
+        engine_host = actual_container_name or "127.0.0.1"
+    
+    # Create engine state immediately
+    now = state.now()
+    engine = EngineState(
+        container_id=cont.id,
+        container_name=actual_container_name,
+        host=engine_host,
+        port=host_http,
+        labels=labels,
+        forwarded=is_forwarded,
+        first_seen=now,
+        last_seen=now,
+        streams=[],
+        health_status="unknown",
+        last_health_check=None,
+        last_stream_usage=None,
+        last_cache_cleanup=None,
+        cache_size_bytes=None
+    )
+    
+    # Add to in-memory state
+    state.engines[cont.id] = engine
+    
+    # Persist to database
+    try:
+        with SessionLocal() as s:
+            s.merge(EngineRow(
+                engine_key=cont.id,
+                container_id=cont.id,
+                container_name=actual_container_name,
+                host=engine_host,
+                port=host_http,
+                labels=labels,
+                forwarded=is_forwarded,
+                first_seen=now,
+                last_seen=now
+            ))
+            s.commit()
+    except Exception as e:
+        # Log but don't fail provisioning if database write fails
+        logger.warning(f"Failed to persist engine to database: {e}")
+    
     # Mark this engine as forwarded in state if it was designated as such
+    # This must be done AFTER adding to state so set_forwarded_engine can find it
     if is_forwarded:
-        from .state import state
-        # The engine might not be in state yet, so we'll mark it during reindex
-        # The reindex that follows provisioning will pick up the label
+        state.set_forwarded_engine(cont.id)
         logger.info(f"Engine {cont.id[:12]} provisioned as forwarded engine")
     
     return AceProvisionResponse(

@@ -80,6 +80,7 @@ def reindex_existing():
                                             labels=lbl, forwarded=is_forwarded, first_seen=now, last_seen=now, streams=[])
             
             # If this is a forwarded engine, make sure it's marked in state
-            if is_forwarded:
+            # Only set if there isn't already a forwarded engine to avoid overwriting
+            if is_forwarded and not state.has_forwarded_engine():
                 state.set_forwarded_engine(key)
                 logger.info(f"Reindexed forwarded engine: {key[:12]}")
