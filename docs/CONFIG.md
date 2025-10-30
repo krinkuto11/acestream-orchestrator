@@ -5,6 +5,7 @@ Variables and default values:
 - `APP_PORT=8000`
 - `DOCKER_NETWORK=` Docker network name. Empty → default network.
 - `TARGET_IMAGE=acestream/engine:latest`
+- `ENGINE_VARIANT=krinkuto11-amd64` AceStream engine variant. Options: `krinkuto11-amd64`, `jopsis-amd64`, `jopsis-arm32`, `jopsis-arm64`
 - `MIN_REPLICAS=1` · `MAX_REPLICAS=20` (MIN_REPLICAS must be >= 1 to ensure at least 1 free replica)
 - `CONTAINER_LABEL=ondemand.app=myservice` management label.
 - `STARTUP_TIMEOUT_S=25` max container startup time.

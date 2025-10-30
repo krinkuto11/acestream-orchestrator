@@ -278,6 +278,39 @@ def _check_gluetun_health_sync() -> bool:
     except Exception:
         return False
 
+def _get_variant_config(variant: str):
+    """
+    Get the configuration for a specific engine variant.
+    
+    Returns:
+        dict with keys:
+            - image: Docker image name
+            - config_type: "env" (CONF-based) or "cmd" (CMD-based)
+            - base_args: Base arguments for the variant (for CMD-based variants)
+    """
+    configs = {
+        "krinkuto11-amd64": {
+            "image": "ghcr.io/krinkuto11/acestream-http-proxy:latest",
+            "config_type": "env"
+        },
+        "jopsis-amd64": {
+            "image": "jopsis/acestream:x64",
+            "config_type": "env",
+            "base_args": "--client-console --bind-all --service-remote-access --access-token acestream --service-access-token root --stats-report-peers --live-cache-type memory --live-cache-size 209715200 --vod-cache-type memory --cache-dir /acestream/.ACEStream --vod-drop-max-age 120 --max-file-size 2147483648 --live-buffer 25 --vod-buffer 10 --max-connections 500 --max-peers 50 --max-upload-slots 50 --auto-slots 0 --download-limit 0 --upload-limit 0 --stats-report-interval 2 --stats-report-peers --slots-manager-use-cpu-limit 1 --core-skip-have-before-playback-pos 1 --core-dlr-periodic-check-interval 5 --check-live-pos-interval 5 --refill-buffer-interval 1 --webrtc-allow-outgoing-connections 1 --allow-user-config --log-debug 0 --log-max-size 15000000 --log-backup-count 1"
+        },
+        "jopsis-arm32": {
+            "image": "jopsis/acestream:arm32-v3.2.13",
+            "config_type": "cmd",
+            "base_cmd": ["python", "main.py", "--bind-all", "--client-console", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout"]
+        },
+        "jopsis-arm64": {
+            "image": "jopsis/acestream:arm64-v3.2.13",
+            "config_type": "cmd",
+            "base_cmd": ["python", "main.py", "--bind-all", "--client-console", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout"]
+        }
+    }
+    return configs.get(variant, configs["krinkuto11-amd64"])
+
 def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     from .naming import generate_container_name
     import time
@@ -362,25 +395,43 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         # HTTPS ports don't count against MAX_ACTIVE_REPLICAS
         c_https = alloc.alloc_https(avoid=c_http)
 
-    # Use user-provided CONF if available, otherwise use default configuration
-    if "CONF" in req.env:
-        # User explicitly provided CONF (even if empty), use it as-is
-        final_conf = req.env["CONF"]
-    else:
-        # No user CONF, use default orchestrator configuration
-        conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
-        final_conf = "\n".join(conf_lines)
+    # Get variant configuration
+    variant_config = _get_variant_config(cfg.ENGINE_VARIANT)
     
-    # Set environment variables required by acestream-http-proxy image
-    env = {
-        **req.env, 
-        "CONF": final_conf,
-        "HTTP_PORT": str(c_http),
-        "HTTPS_PORT": str(c_https),
-        "BIND_ALL": "true",
-        "INTERNAL_BUFFERING": 60,
-        "CACHE_LIMIT": 1
-    }
+    # Prepare environment variables and command based on variant type
+    env = {**req.env}
+    cmd = None
+    
+    if variant_config["config_type"] == "env":
+        # ENV-based variants (krinkuto11-amd64, jopsis-amd64)
+        # Build ACESTREAM_ARGS for jopsis-amd64 or CONF for krinkuto11-amd64
+        if cfg.ENGINE_VARIANT == "jopsis-amd64":
+            # Use ACESTREAM_ARGS environment variable with base args + port settings
+            base_args = variant_config.get("base_args", "")
+            port_args = f" --http-port {c_http} --https-port {c_https}"
+            env["ACESTREAM_ARGS"] = base_args + port_args
+        else:
+            # krinkuto11-amd64: Use user-provided CONF if available, otherwise use default
+            if "CONF" in req.env:
+                # User explicitly provided CONF (even if empty), use it as-is
+                final_conf = req.env["CONF"]
+            else:
+                # No user CONF, use default orchestrator configuration
+                conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
+                final_conf = "\n".join(conf_lines)
+            
+            env["CONF"] = final_conf
+            env["HTTP_PORT"] = str(c_http)
+            env["HTTPS_PORT"] = str(c_https)
+            env["BIND_ALL"] = "true"
+            env["INTERNAL_BUFFERING"] = 60
+            env["CACHE_LIMIT"] = 1
+    else:
+        # CMD-based variants (jopsis-arm32, jopsis-arm64)
+        # Append port settings to base command
+        base_cmd = variant_config.get("base_cmd", [])
+        port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]
+        cmd = base_cmd + port_args
     
     # Add P2P_PORT when using Gluetun
     if cfg.GLUETUN_CONTAINER_NAME:
@@ -419,7 +470,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     
     # Build container arguments, conditionally including ports
     container_args = {
-        "image": req.image or cfg.TARGET_IMAGE,
+        "image": req.image or variant_config["image"],
         "detach": True,
         "name": container_name,
         "environment": env,
@@ -427,6 +478,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         **network_config,
         "restart_policy": {"Name": "unless-stopped"}
     }
+    
+    # Add command for CMD-based variants
+    if cmd is not None:
+        container_args["command"] = cmd
     
     # Only add ports if not using Gluetun (ports are handled by Gluetun container)
     if ports is not None:
