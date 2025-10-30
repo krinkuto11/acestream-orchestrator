@@ -275,6 +275,8 @@ Potential improvements:
 
 - Original Issue: Problem statement in PR description
 - Gluetun Documentation: https://github.com/qdm12/gluetun
+- Gluetun API (Port Forwarding): https://github.com/qdm12/gluetun-wiki/blob/main/setup/advanced/control-server.md
+- Gluetun Port Forwarding Endpoint: `GET /v1/openvpn/portforwarded`
 - AceStream Port Documentation: Engine variant docs
 
 ---

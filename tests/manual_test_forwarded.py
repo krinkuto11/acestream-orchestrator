@@ -26,7 +26,7 @@ def check_vpn_status():
     """Check VPN status."""
     print_section("VPN Status")
     try:
-        response = requests.get(f"{ORCHESTRATOR_URL}/vpn/status")
+        response = requests.get(f"{ORCHESTRATOR_URL}/vpn/status", headers=headers)
         response.raise_for_status()
         vpn_status = response.json()
         
@@ -43,7 +43,7 @@ def list_engines():
     """List all engines and their forwarded status."""
     print_section("Engine List")
     try:
-        response = requests.get(f"{ORCHESTRATOR_URL}/engines")
+        response = requests.get(f"{ORCHESTRATOR_URL}/engines", headers=headers)
         response.raise_for_status()
         engines = response.json()
         
