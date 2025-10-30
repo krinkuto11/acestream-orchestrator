@@ -8,16 +8,22 @@ This test validates that:
 4. When the forwarded engine is removed, a new one is created by autoscaler
 """
 
-import pytest
 import sys
 import os
+import traceback
+from datetime import datetime, timezone
 
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+try:
+    import pytest
+    HAS_PYTEST = True
+except ImportError:
+    HAS_PYTEST = False
+
 from app.models.schemas import EngineState
 from app.services.state import State
-from datetime import datetime, timezone
 
 
 def test_forwarded_flag_in_engine_state():
@@ -227,4 +233,32 @@ def test_forwarded_engine_removal():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    if HAS_PYTEST:
+        pytest.main([__file__, "-v"])
+    else:
+        # Run tests manually without pytest
+        print("\n" + "=" * 60)
+        print("Running tests without pytest")
+        print("=" * 60)
+        
+        try:
+            test_forwarded_flag_in_engine_state()
+            test_forwarded_flag_defaults_to_false()
+            test_set_forwarded_engine()
+            test_set_forwarded_engine_clears_previous()
+            test_no_forwarded_engine()
+            test_forwarded_label_constant()
+            test_forwarded_engine_removal()
+            
+            print("\n" + "=" * 60)
+            print("✅ ALL TESTS PASSED")
+            print("=" * 60)
+            sys.exit(0)
+        except AssertionError as e:
+            print(f"\n❌ TEST FAILED: {e}")
+            traceback.print_exc()
+            sys.exit(1)
+        except Exception as e:
+            print(f"\n💥 ERROR: {e}")
+            traceback.print_exc()
+            sys.exit(1)
