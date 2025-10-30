@@ -286,13 +286,18 @@ def get_variant_config(variant: str):
     This is a public API for retrieving variant configuration.
     
     Args:
-        variant: The engine variant name (e.g., 'krinkuto11-amd64', 'jopsis-amd64')
+        variant: The engine variant name. Valid values are:
+                 - 'krinkuto11-amd64' (default)
+                 - 'jopsis-amd64'
+                 - 'jopsis-arm32'
+                 - 'jopsis-arm64'
     
     Returns:
         dict with keys:
-            - image: Docker image name
-            - config_type: "env" (CONF-based) or "cmd" (CMD-based)
-            - base_args: Base arguments for the variant (for CMD-based variants)
+            - image: Docker image name (always present)
+            - config_type: "env" or "cmd" (always present)
+            - base_args: Base arguments string (for ENV-based jopsis-amd64 variant)
+            - base_cmd: Base command list (for CMD-based arm32/arm64 variants)
     """
     configs = {
         "krinkuto11-amd64": {
