@@ -21,7 +21,6 @@ class StartRequest(BaseModel):
     name_prefix: str = "svc"
 
 class AceProvisionRequest(BaseModel):
-    image: str | None = None
     labels: dict = {}
     env: dict = {}
     host_port: int | None = None  # optional fixed host port
@@ -42,7 +41,9 @@ def start_container(req: StartRequest) -> dict:
     cli = get_client()
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val}
-    image_name = req.image or cfg.TARGET_IMAGE
+    if not req.image:
+        raise ValueError("Image must be provided for container creation")
+    image_name = req.image
     
     # Generate a meaningful container name
     container_name = generate_container_name(req.name_prefix)
@@ -72,7 +73,7 @@ def start_container(req: StartRequest) -> dict:
         # Provide more helpful error messages for common image issues
         error_msg = str(e).lower()
         if "not found" in error_msg or "pull access denied" in error_msg:
-            raise RuntimeError(f"Image '{image_name}' not found. Please check TARGET_IMAGE setting or pull the image manually: docker pull {image_name}")
+            raise RuntimeError(f"Image '{image_name}' not found. Please pull the image manually: docker pull {image_name}")
         elif "network" in error_msg:
             raise RuntimeError(f"Network error starting container with image '{image_name}': {e}")
         else:
@@ -474,7 +475,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     
     # Build container arguments, conditionally including ports
     container_args = {
-        "image": req.image or variant_config["image"],
+        "image": variant_config["image"],
         "detach": True,
         "name": container_name,
         "environment": env,

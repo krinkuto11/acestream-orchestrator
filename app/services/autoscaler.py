@@ -101,7 +101,7 @@ def ensure_minimum(initial_startup: bool = False):
             for i in range(deficit):
                 try:
                     logger.debug(f"Attempting to start container {i+1}/{deficit}")
-                    response = start_acestream(AceProvisionRequest(image=cfg.TARGET_IMAGE))
+                    response = start_acestream(AceProvisionRequest())
                     
                     if response and response.container_id:
                         success_count += 1
@@ -234,7 +234,7 @@ def scale_to(demand: int):
         for i in range(deficit):
             try:
                 # Use AceStream provisioning to ensure containers are AceStream-ready with proper ports
-                response = start_acestream(AceProvisionRequest(image=cfg.TARGET_IMAGE))
+                response = start_acestream(AceProvisionRequest())
                 logger.info(f"Started AceStream container {response.container_id[:12]} for scale-up ({i+1}/{deficit})")
             except Exception as e:
                 logger.error(f"Failed to start AceStream container for scale-up: {e}")

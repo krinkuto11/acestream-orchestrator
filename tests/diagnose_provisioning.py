@@ -62,7 +62,7 @@ def check_configuration():
         # Check key settings
         print(f"   MIN_REPLICAS: {cfg.MIN_REPLICAS}")
         print(f"   MAX_REPLICAS: {cfg.MAX_REPLICAS}")
-        print(f"   TARGET_IMAGE: {cfg.TARGET_IMAGE}")
+        print(f"   ENGINE_VARIANT: {cfg.ENGINE_VARIANT}")
         print(f"   CONTAINER_LABEL: {cfg.CONTAINER_LABEL}")
         print(f"   STARTUP_TIMEOUT_S: {cfg.STARTUP_TIMEOUT_S}")
         print(f"   DOCKER_NETWORK: {cfg.DOCKER_NETWORK}")
@@ -270,9 +270,14 @@ def main():
     
     # Load config for further checks
     from app.core.config import cfg
+    from app.services.provisioner import _get_variant_config
+    
+    # Get image from variant
+    variant_config = _get_variant_config(cfg.ENGINE_VARIANT)
+    target_image = variant_config['image']
     
     # Check 3: Image availability
-    image_ok = check_image_availability(client, cfg.TARGET_IMAGE)
+    image_ok = check_image_availability(client, target_image)
     all_checks_passed &= image_ok
     
     print("\n" + "-" * 60)
@@ -283,7 +288,7 @@ def main():
     print("\n" + "-" * 60)
     
     # Check 5: Container startup test
-    startup_ok = test_container_startup(client, cfg.TARGET_IMAGE, cfg.CONTAINER_LABEL)
+    startup_ok = test_container_startup(client, target_image, cfg.CONTAINER_LABEL)
     all_checks_passed &= startup_ok
     
     print("\n" + "-" * 60)
@@ -304,7 +309,7 @@ def main():
         print("❌ SOME CHECKS FAILED - Please address the issues above")
         print("\nCommon solutions:")
         print("1. Ensure Docker daemon is running: sudo systemctl start docker")
-        print("2. Pull the target image manually: docker pull <TARGET_IMAGE>")
+        print(f"2. Pull the target image manually: docker pull {target_image}")
         print("3. Check .env file configuration")
         print("4. Verify user has Docker permissions: sudo usermod -aG docker $USER")
     

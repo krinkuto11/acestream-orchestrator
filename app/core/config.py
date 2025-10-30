@@ -6,7 +6,6 @@ load_dotenv()
 class Cfg(BaseModel):
     APP_PORT: int = int(os.getenv("APP_PORT", 8000))
     DOCKER_NETWORK: str | None = os.getenv("DOCKER_NETWORK")
-    TARGET_IMAGE: str = os.getenv("TARGET_IMAGE", "acestream/engine:latest")
     ENGINE_VARIANT: str = os.getenv("ENGINE_VARIANT", "krinkuto11-amd64")
     MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 1))
     MIN_FREE_REPLICAS: int = int(os.getenv("MIN_FREE_REPLICAS", 1))

@@ -26,7 +26,7 @@ def test_acestream_min_replicas():
         'MIN_REPLICAS': '3',
         'MAX_REPLICAS': '10',
         'APP_PORT': '8002',  # Use different port to avoid conflicts
-        'TARGET_IMAGE': 'ghcr.io/krinkuto11/acestream-http-proxy:latest',  # Image from .env.example
+        'ENGINE_VARIANT': 'krinkuto11-amd64',  # Use default variant
         'CONTAINER_LABEL': 'test.acestream=true',
         'STARTUP_TIMEOUT_S': '25',
         'API_KEY': 'test-acestream-key',
@@ -37,8 +37,14 @@ def test_acestream_min_replicas():
         'ACE_MAP_HTTPS': 'false'
     })
     
+    # Get the image from variant config
+    from app.services.provisioner import _get_variant_config
+    variant_config = _get_variant_config(test_env['ENGINE_VARIANT'])
+    target_image = variant_config['image']
+    
     print(f"📋 Test Configuration:")
-    print(f"   Target Image: {test_env['TARGET_IMAGE']}")
+    print(f"   Variant: {test_env['ENGINE_VARIANT']}")
+    print(f"   Target Image: {target_image}")
     print(f"   MIN_REPLICAS: {test_env['MIN_REPLICAS']}")
     print(f"   Docker Network: {test_env['DOCKER_NETWORK']}")
     print(f"   Expected AceStream containers: 3")
@@ -164,10 +170,10 @@ def test_acestream_min_replicas():
                     print(f"         HTTP port mapping: {labels.get('acestream.http_port', 'unknown')} -> {labels.get('host.http_port', 'unknown')}")
                     
                     # Verify image is correct
-                    if test_env['TARGET_IMAGE'] in image:
-                        print(f"      ✅ Using correct image: {test_env['TARGET_IMAGE']}")
+                    if target_image in image:
+                        print(f"      ✅ Using correct image: {target_image}")
                     else:
-                        print(f"      ❌ Wrong image! Expected: {test_env['TARGET_IMAGE']}, Found: {image}")
+                        print(f"      ❌ Wrong image! Expected: {target_image}, Found: {image}")
                         return False
                 elif any('40000' <= port.split('/')[0] <= '44999' for port in ports.keys() if '/' in port):
                     # Fallback: check if it has proper port mapping (for running containers)
@@ -175,10 +181,10 @@ def test_acestream_min_replicas():
                     print(f"      ✅ AceStream-ready container (has HTTP port mapping)")
                     
                     # Verify image is correct
-                    if test_env['TARGET_IMAGE'] in image:
-                        print(f"      ✅ Using correct image: {test_env['TARGET_IMAGE']}")
+                    if target_image in image:
+                        print(f"      ✅ Using correct image: {target_image}")
                     else:
-                        print(f"      ❌ Wrong image! Expected: {test_env['TARGET_IMAGE']}, Found: {image}")
+                        print(f"      ❌ Wrong image! Expected: {target_image}, Found: {image}")
                         return False
                 else:
                     print(f"      ❌ Not AceStream-ready (no AceStream labels or port mapping)")

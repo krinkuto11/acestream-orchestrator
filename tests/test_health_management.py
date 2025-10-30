@@ -81,7 +81,7 @@ async def test_health_management_with_mocked_engines():
         
         # Configure mocks
         mock_cfg.MIN_REPLICAS = 2
-        mock_cfg.TARGET_IMAGE = "test_image"
+        mock_cfg.ENGINE_VARIANT = "krinkuto11-amd64"
         
         # Create mock engines
         healthy_engine = EngineState(
@@ -209,7 +209,7 @@ async def test_engine_replacement_logic():
          patch('app.services.health_manager.cfg') as mock_cfg:
         
         mock_cfg.MIN_REPLICAS = 2
-        mock_cfg.TARGET_IMAGE = "test_image"
+        mock_cfg.ENGINE_VARIANT = "krinkuto11-amd64"
         
         # Mock successful provisioning
         mock_response = Mock()
