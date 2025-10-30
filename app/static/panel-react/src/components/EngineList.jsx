@@ -74,10 +74,10 @@ function EngineCard({ engine, onDelete }) {
               Last Used
             </Typography>
             <Typography variant="body2">
-              {timeAgo(engine.last_used_at)}
+              {timeAgo(engine.last_stream_usage)}
             </Typography>
           </Grid>
-          {engine.health_check_at && (
+          {engine.last_health_check && (
             <>
               <Grid item xs={12}>
                 <Divider sx={{ my: 0.5 }} />
@@ -87,7 +87,7 @@ function EngineCard({ engine, onDelete }) {
                   Last Health Check
                 </Typography>
                 <Typography variant="body2">
-                  {formatTime(engine.health_check_at)}
+                  {formatTime(engine.last_health_check)}
                 </Typography>
               </Grid>
             </>
