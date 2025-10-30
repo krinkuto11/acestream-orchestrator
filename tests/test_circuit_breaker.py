@@ -127,7 +127,7 @@ def test_autoscaler_with_circuit_breaker():
         
         # Configure mocks
         mock_cfg.MIN_REPLICAS = 2
-        mock_cfg.TARGET_IMAGE = "test_image"
+        mock_cfg.ENGINE_VARIANT = "krinkuto11-amd64"
         
         # Mock docker status showing deficit
         mock_status = Mock()
@@ -175,7 +175,7 @@ def test_health_manager_with_circuit_breaker():
              patch('app.services.health_manager.circuit_breaker_manager') as mock_breaker:
             
             mock_cfg.MIN_REPLICAS = 2
-            mock_cfg.TARGET_IMAGE = "test_image"
+            mock_cfg.ENGINE_VARIANT = "krinkuto11-amd64"
             
             # Mock circuit breaker initially blocking operations
             mock_breaker.can_provision.return_value = False

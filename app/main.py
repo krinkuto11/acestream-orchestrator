@@ -521,7 +521,7 @@ def get_orchestrator_status():
         "config": {
             "auto_delete": cfg.AUTO_DELETE,
             "grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
-            "target_image": cfg.TARGET_IMAGE
+            "engine_variant": cfg.ENGINE_VARIANT
         },
         "timestamp": datetime.now(timezone.utc).isoformat()
     }

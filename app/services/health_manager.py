@@ -216,7 +216,7 @@ class HealthManager:
                 response = await loop.run_in_executor(
                     None, 
                     start_acestream, 
-                    AceProvisionRequest(image=cfg.TARGET_IMAGE)
+                    AceProvisionRequest()
                 )
                 
                 if response and response.container_id:

@@ -29,7 +29,7 @@ def test_provision_and_state_sync():
         'MIN_REPLICAS': '0',  # Start with no engines
         'MAX_REPLICAS': '5',
         'APP_PORT': '8004',
-        'TARGET_IMAGE': 'ghcr.io/krinkuto11/acestream-http-proxy:latest',
+        'ENGINE_VARIANT': 'krinkuto11-amd64',
         'CONTAINER_LABEL': 'acestream.integration-test=true',
         'STARTUP_TIMEOUT_S': '25',
         'API_KEY': 'test-integration-123',

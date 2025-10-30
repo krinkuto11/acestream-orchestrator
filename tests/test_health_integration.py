@@ -32,7 +32,7 @@ async def test_complete_health_workflow():
         
         # Configure test settings
         mock_cfg.MIN_REPLICAS = 3
-        mock_cfg.TARGET_IMAGE = "test_image"
+        mock_cfg.ENGINE_VARIANT = "krinkuto11-amd64"
         mock_cfg.HEALTH_CHECK_INTERVAL_S = 1
         mock_cfg.HEALTH_FAILURE_THRESHOLD = 2  # Fail after 2 consecutive failures
         mock_cfg.HEALTH_UNHEALTHY_GRACE_PERIOD_S = 5  # Replace after 5 seconds

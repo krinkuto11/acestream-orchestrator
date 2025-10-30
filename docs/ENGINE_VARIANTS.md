@@ -72,13 +72,11 @@ Valid values: `krinkuto11-amd64`, `jopsis-amd64`, `jopsis-arm32`, `jopsis-arm64`
 #### Using the default variant (krinkuto11-amd64)
 ```bash
 ENGINE_VARIANT=krinkuto11-amd64
-TARGET_IMAGE=ghcr.io/krinkuto11/acestream-http-proxy:latest
 ```
 
 #### Using the optimized AMD64 variant
 ```bash
 ENGINE_VARIANT=jopsis-amd64
-# TARGET_IMAGE is automatically set based on variant
 ```
 
 #### Using ARM variants
@@ -189,30 +187,20 @@ If you're upgrading from a version without variant support:
 
 1. The default variant (`krinkuto11-amd64`) maintains backward compatibility
 2. No configuration changes required unless you want to use a different variant
-3. Existing `TARGET_IMAGE` setting is still respected when `ENGINE_VARIANT=krinkuto11-amd64`
+3. Each variant uses its predefined Docker image automatically
 
 ## Advanced Usage
-
-### Custom Image Override
-
-While variants have default images, you can override them:
-
-```bash
-ENGINE_VARIANT=jopsis-amd64
-TARGET_IMAGE=my-custom-registry/acestream:custom-tag
-```
-
-The variant's configuration method will still be used, but with your custom image.
 
 ### Debugging Variant Configuration
 
 To see how a variant is configured:
 
 ```python
-from app.services.provisioner import _get_variant_config
+from app.services.provisioner import get_variant_config
 
-config = _get_variant_config('jopsis-amd64')
+config = get_variant_config('jopsis-amd64')
 print(config)
+# Example output: {'image': 'jopsis/acestream:x64', 'config_type': 'env', ...}
 ```
 
 ## See Also

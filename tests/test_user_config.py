@@ -27,7 +27,7 @@ def test_user_configuration():
     test_env.update({
         'APP_PORT': '8000',
         'DOCKER_NETWORK': 'orchestrator',
-        'TARGET_IMAGE': 'ghcr.io/krinkuto11/acestream-http-proxy:latest',
+        'ENGINE_VARIANT': 'krinkuto11-amd64',
         'MIN_REPLICAS': '3',
         'MAX_REPLICAS': '20',
         'CONTAINER_LABEL': 'orchestrator.managed=acestream',
@@ -44,8 +44,14 @@ def test_user_configuration():
         'AUTO_DELETE': 'true'
     })
     
+    # Get the image from variant config
+    from app.services.provisioner import get_variant_config
+    variant_config = get_variant_config(test_env['ENGINE_VARIANT'])
+    target_image = variant_config['image']
+    
     print("\n📋 Configuration Summary:")
-    print(f"   Image: {test_env['TARGET_IMAGE']}")
+    print(f"   Variant: {test_env['ENGINE_VARIANT']}")
+    print(f"   Image: {target_image}")
     print(f"   MIN_REPLICAS: {test_env['MIN_REPLICAS']}")
     print(f"   Network: {test_env['DOCKER_NETWORK']}")
     print(f"   Port Range: {test_env['PORT_RANGE_HOST']}")
@@ -74,13 +80,13 @@ def test_user_configuration():
         # Step 2: Test image availability
         print(f"\n📋 Step 2: Testing image availability...")
         try:
-            client.images.get(test_env['TARGET_IMAGE'])
-            print(f"✅ Image {test_env['TARGET_IMAGE']} available locally")
+            client.images.get(target_image)
+            print(f"✅ Image {target_image} available locally")
         except docker.errors.ImageNotFound:
-            print(f"📥 Pulling {test_env['TARGET_IMAGE']}...")
+            print(f"📥 Pulling {target_image}...")
             try:
-                client.images.pull(test_env['TARGET_IMAGE'])
-                print(f"✅ Successfully pulled {test_env['TARGET_IMAGE']}")
+                client.images.pull(target_image)
+                print(f"✅ Successfully pulled {target_image}")
             except Exception as e:
                 print(f"❌ Failed to pull image: {e}")
                 return False
@@ -92,7 +98,7 @@ def test_user_configuration():
             labels = {key: val, 'test.manual': 'true'}
             
             container = client.containers.run(
-                test_env['TARGET_IMAGE'],
+                target_image,
                 detach=True,
                 labels=labels,
                 network=test_env['DOCKER_NETWORK'],

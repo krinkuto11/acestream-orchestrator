@@ -21,7 +21,6 @@ class StartRequest(BaseModel):
     name_prefix: str = "svc"
 
 class AceProvisionRequest(BaseModel):
-    image: str | None = None
     labels: dict = {}
     env: dict = {}
     host_port: int | None = None  # optional fixed host port
@@ -42,7 +41,9 @@ def start_container(req: StartRequest) -> dict:
     cli = get_client()
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val}
-    image_name = req.image or cfg.TARGET_IMAGE
+    if not req.image:
+        raise ValueError("Image must be provided for container creation")
+    image_name = req.image
     
     # Generate a meaningful container name
     container_name = generate_container_name(req.name_prefix)
@@ -72,7 +73,7 @@ def start_container(req: StartRequest) -> dict:
         # Provide more helpful error messages for common image issues
         error_msg = str(e).lower()
         if "not found" in error_msg or "pull access denied" in error_msg:
-            raise RuntimeError(f"Image '{image_name}' not found. Please check TARGET_IMAGE setting or pull the image manually: docker pull {image_name}")
+            raise RuntimeError(f"Image '{image_name}' not found. Please pull the image manually: docker pull {image_name}")
         elif "network" in error_msg:
             raise RuntimeError(f"Network error starting container with image '{image_name}': {e}")
         else:
@@ -278,15 +279,25 @@ def _check_gluetun_health_sync() -> bool:
     except Exception:
         return False
 
-def _get_variant_config(variant: str):
+def get_variant_config(variant: str):
     """
     Get the configuration for a specific engine variant.
     
+    This is a public API for retrieving variant configuration.
+    
+    Args:
+        variant: The engine variant name. Valid values are:
+                 - 'krinkuto11-amd64' (default)
+                 - 'jopsis-amd64'
+                 - 'jopsis-arm32'
+                 - 'jopsis-arm64'
+    
     Returns:
         dict with keys:
-            - image: Docker image name
-            - config_type: "env" (CONF-based) or "cmd" (CMD-based)
-            - base_args: Base arguments for the variant (for CMD-based variants)
+            - image: Docker image name (always present)
+            - config_type: "env" or "cmd" (always present)
+            - base_args: Base arguments string (for ENV-based jopsis-amd64 variant)
+            - base_cmd: Base command list (for CMD-based arm32/arm64 variants)
     """
     configs = {
         "krinkuto11-amd64": {
@@ -396,7 +407,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         c_https = alloc.alloc_https(avoid=c_http)
 
     # Get variant configuration
-    variant_config = _get_variant_config(cfg.ENGINE_VARIANT)
+    variant_config = get_variant_config(cfg.ENGINE_VARIANT)
     
     # Get P2P port if using Gluetun (needed for all variants)
     p2p_port = None
@@ -474,7 +485,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     
     # Build container arguments, conditionally including ports
     container_args = {
-        "image": req.image or variant_config["image"],
+        "image": variant_config["image"],
         "detach": True,
         "name": container_name,
         "environment": env,
