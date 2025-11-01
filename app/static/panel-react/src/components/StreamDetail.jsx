@@ -73,19 +73,20 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
     return () => clearInterval(interval)
   }, [fetchStats])
 
+  // AceStream API returns speed in KB/s, so we divide by 1024 to convert to MB/s
   const chartData = {
     labels: stats.map(s => new Date(s.ts).toLocaleTimeString()),
     datasets: [
       {
         label: 'Download (MB/s)',
-        data: stats.map(s => (s.speed_down || 0) / (1024 * 1024)),
+        data: stats.map(s => (s.speed_down || 0) / 1024),
         borderColor: 'rgb(75, 192, 192)',
         backgroundColor: 'rgba(75, 192, 192, 0.2)',
         yAxisID: 'y',
       },
       {
         label: 'Upload (MB/s)',
-        data: stats.map(s => (s.speed_up || 0) / (1024 * 1024)),
+        data: stats.map(s => (s.speed_up || 0) / 1024),
         borderColor: 'rgb(255, 99, 132)',
         backgroundColor: 'rgba(255, 99, 132, 0.2)',
         yAxisID: 'y',
