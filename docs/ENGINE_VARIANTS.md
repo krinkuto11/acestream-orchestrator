@@ -34,7 +34,7 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
 - When using Gluetun VPN: P2P port appended as `--port <port>`
 
 ### 3. jopsis-arm32
-- **Image**: `jopsis/acestream:arm32-v3.2.13`
+- **Image**: `jopsis/acestream:{ENGINE_ARM32_VERSION}` (default: `arm32-v3.2.13`)
 - **Architecture**: ARM32
 - **Configuration Type**: Docker CMD
 - **Description**: Variant for ARM32 devices (e.g., Raspberry Pi 2/3).
@@ -43,17 +43,19 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
 - Base command: `python main.py --bind-all --client-console --live-cache-type memory --live-mem-cache-size 104857600 --disable-sentry --log-stdout`
 - Port settings appended to command: `--http-port <port> --https-port <port>`
 - When using Gluetun VPN: P2P port appended as `--port <port>`
+- Image version can be customized via `ENGINE_ARM32_VERSION` environment variable
 
 ### 4. jopsis-arm64
-- **Image**: `jopsis/acestream:arm64-v3.2.13`
+- **Image**: `jopsis/acestream:{ENGINE_ARM64_VERSION}` (default: `arm64-v3.2.13`)
 - **Architecture**: ARM64
 - **Configuration Type**: Docker CMD
-- **Description**: Variant for ARM64 devices (e.g., Raspberry Pi 4).
+- **Description**: Variant for ARM64 devices (e.g., Raspberry Pi 4, Raspberry Pi 5).
 
 **Configuration Method**:
 - Base command: `python main.py --bind-all --client-console --live-cache-type memory --live-mem-cache-size 104857600 --disable-sentry --log-stdout`
 - Port settings appended to command: `--http-port <port> --https-port <port>`
 - When using Gluetun VPN: P2P port appended as `--port <port>`
+- Image version can be customized via `ENGINE_ARM64_VERSION` environment variable
 
 ## Usage
 
@@ -87,6 +89,25 @@ ENGINE_VARIANT=jopsis-arm32
 # For ARM64 devices
 ENGINE_VARIANT=jopsis-arm64
 ```
+
+#### Customizing ARM image versions
+The ARM variants support configurable image versions to ensure compatibility with newer releases:
+
+```bash
+# Using a specific ARM32 version
+ENGINE_VARIANT=jopsis-arm32
+ENGINE_ARM32_VERSION=arm32-v3.2.14
+
+# Using a specific ARM64 version
+ENGINE_VARIANT=jopsis-arm64
+ENGINE_ARM64_VERSION=arm64-v3.2.14
+```
+
+Available versions (as of documentation):
+- ARM32: `arm32-v3.2.13`, `arm32-v3.2.14`
+- ARM64: `arm64-v3.2.13`, `arm64-v3.2.14`
+
+Check [jopsis/acestream Docker Hub](https://hub.docker.com/r/jopsis/acestream/tags) for the latest available versions.
 
 ## How It Works
 
