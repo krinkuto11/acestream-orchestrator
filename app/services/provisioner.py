@@ -323,7 +323,8 @@ def get_variant_config(variant: str):
     }
     return configs.get(variant, configs["krinkuto11-amd64"])
 
-# Alias for backward compatibility with tests
+# Alias for backward compatibility with existing tests that import _get_variant_config
+# (test_engine_variants.py, demo_engine_variants.py, test_p2p_port_variants.py)
 _get_variant_config = get_variant_config
 
 def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:

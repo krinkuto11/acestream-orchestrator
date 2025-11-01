@@ -34,7 +34,7 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
 - When using Gluetun VPN: P2P port appended as `--port <port>`
 
 ### 3. jopsis-arm32
-- **Image**: `jopsis/acestream:{ENGINE_ARM32_VERSION}` (default: `arm32-v3.2.13`)
+- **Image**: `jopsis/acestream:${ENGINE_ARM32_VERSION}` (default: `arm32-v3.2.13`)
 - **Architecture**: ARM32
 - **Configuration Type**: Docker CMD
 - **Description**: Variant for ARM32 devices (e.g., Raspberry Pi 2/3).
@@ -46,7 +46,7 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
 - Image version can be customized via `ENGINE_ARM32_VERSION` environment variable
 
 ### 4. jopsis-arm64
-- **Image**: `jopsis/acestream:{ENGINE_ARM64_VERSION}` (default: `arm64-v3.2.13`)
+- **Image**: `jopsis/acestream:${ENGINE_ARM64_VERSION}` (default: `arm64-v3.2.13`)
 - **Architecture**: ARM64
 - **Configuration Type**: Docker CMD
 - **Description**: Variant for ARM64 devices (e.g., Raspberry Pi 4, Raspberry Pi 5).
