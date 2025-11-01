@@ -20,7 +20,7 @@ docker compose up --build
 
 ## Minimum variables
 
- - `TARGET_IMAGE`
+ - `ENGINE_VARIANT` (defaults to krinkuto11-amd64)
  - `CONTAINER_LABEL`
  - `PORT_RANGE_HOST`, `ACE_HTTP_RANGE`, `ACE_HTTPS_RANGE`
  - `API_KEY`

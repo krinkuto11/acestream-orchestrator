@@ -1,10 +1,13 @@
 from .ports import alloc
 from .health import list_managed
-from .provisioner import ACESTREAM_LABEL_HTTP, ACESTREAM_LABEL_HTTPS, HOST_LABEL_HTTP, HOST_LABEL_HTTPS
+from .provisioner import ACESTREAM_LABEL_HTTP, ACESTREAM_LABEL_HTTPS, HOST_LABEL_HTTP, HOST_LABEL_HTTPS, FORWARDED_LABEL
 from .state import state
 from .inspect import get_container_name
 from ..models.schemas import EngineState
 from ..core.config import cfg
+import logging
+
+logger = logging.getLogger(__name__)
 
 def reindex_existing():
     # Clear all port allocations before reindexing to prevent double-counting
@@ -70,4 +73,17 @@ def reindex_existing():
             
             now = state.now()
             
-            state.engines[key] = EngineState(container_id=key, container_name=container_name, host=host, port=port, labels=lbl, first_seen=now, last_seen=now, streams=[])
+            # Check if this container is marked as forwarded
+            is_forwarded_label = lbl.get(FORWARDED_LABEL, "false").lower() == "true"
+            
+            # Only mark as forwarded if no other engine is already forwarded
+            # This handles the case where multiple containers have the forwarded label (bug scenario)
+            should_be_forwarded = is_forwarded_label and not state.has_forwarded_engine()
+            
+            state.engines[key] = EngineState(container_id=key, container_name=container_name, host=host, port=port, 
+                                            labels=lbl, forwarded=should_be_forwarded, first_seen=now, last_seen=now, streams=[])
+            
+            # If this is a forwarded engine, make sure it's marked in state
+            if should_be_forwarded:
+                state.set_forwarded_engine(key)
+                logger.info(f"Reindexed forwarded engine: {key[:12]}")

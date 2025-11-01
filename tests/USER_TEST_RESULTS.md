@@ -22,7 +22,7 @@ orchestrator:
 ```bash
 # Environment (.env)
 MIN_REPLICAS=3
-TARGET_IMAGE=ghcr.io/krinkuto11/acestream-http-proxy:latest
+ENGINE_VARIANT=krinkuto11-amd64
 CONTAINER_LABEL=orchestrator.managed=acestream
 DOCKER_NETWORK="orchestrator"
 PORT_RANGE_HOST=19000-19999

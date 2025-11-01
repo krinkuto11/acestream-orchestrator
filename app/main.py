@@ -328,10 +328,13 @@ def get_engines():
                 logger.debug(f"Engine {engine.container_id[:12]} not found in Docker, but keeping in response")
                 verified_engines.append(engine)
         
+        # Sort engines by port number for consistent ordering
+        verified_engines.sort(key=lambda e: e.port)
         return verified_engines
     except Exception as e:
-        # If Docker verification fails, return state as-is
+        # If Docker verification fails, return state as is but still sorted
         logger.debug(f"Docker verification failed for /engines endpoint: {e}")
+        engines.sort(key=lambda e: e.port)
         return engines
 
 @app.get("/engines/{container_id}")
@@ -521,7 +524,7 @@ def get_orchestrator_status():
         "config": {
             "auto_delete": cfg.AUTO_DELETE,
             "grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
-            "target_image": cfg.TARGET_IMAGE
+            "engine_variant": cfg.ENGINE_VARIANT
         },
         "timestamp": datetime.now(timezone.utc).isoformat()
     }

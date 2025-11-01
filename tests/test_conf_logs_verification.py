@@ -28,7 +28,7 @@ def test_conf_logs_verification():
         'MIN_REPLICAS': '0',  # Don't auto-create containers
         'MAX_REPLICAS': '10',
         'APP_PORT': '8004',
-        'TARGET_IMAGE': 'ghcr.io/krinkuto11/acestream-http-proxy:latest',
+        'ENGINE_VARIANT': 'krinkuto11-amd64',
         'CONTAINER_LABEL': 'conf.test=true',
         'STARTUP_TIMEOUT_S': '30',
         'API_KEY': 'test-conf-fix-123',

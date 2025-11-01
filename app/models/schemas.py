@@ -35,6 +35,7 @@ class EngineState(BaseModel):
     host: str
     port: int
     labels: Dict[str, str] = {}
+    forwarded: bool = False
     first_seen: datetime
     last_seen: datetime
     streams: List[str] = []

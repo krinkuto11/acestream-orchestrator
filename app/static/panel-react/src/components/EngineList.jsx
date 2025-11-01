@@ -30,6 +30,14 @@ function EngineCard({ engine, onDelete }) {
           <Box>
             <Typography variant="h6" component="div" sx={{ fontWeight: 600 }}>
               {engine.container_name || engine.container_id.slice(0, 12)}
+              {engine.forwarded && (
+                <Chip
+                  label="FORWARDED"
+                  color="primary"
+                  size="small"
+                  sx={{ ml: 1, fontWeight: 'bold' }}
+                />
+              )}
             </Typography>
             <Typography variant="body2" color="text.secondary">
               {engine.host}:{engine.port}
@@ -66,10 +74,10 @@ function EngineCard({ engine, onDelete }) {
               Last Used
             </Typography>
             <Typography variant="body2">
-              {timeAgo(engine.last_used_at)}
+              {timeAgo(engine.last_stream_usage)}
             </Typography>
           </Grid>
-          {engine.health_check_at && (
+          {engine.last_health_check && (
             <>
               <Grid item xs={12}>
                 <Divider sx={{ my: 0.5 }} />
@@ -79,7 +87,7 @@ function EngineCard({ engine, onDelete }) {
                   Last Health Check
                 </Typography>
                 <Typography variant="body2">
-                  {formatTime(engine.health_check_at)}
+                  {formatTime(engine.last_health_check)}
                 </Typography>
               </Grid>
             </>

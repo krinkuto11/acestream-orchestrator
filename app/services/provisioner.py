@@ -12,6 +12,7 @@ ACESTREAM_LABEL_HTTP = "acestream.http_port"
 ACESTREAM_LABEL_HTTPS = "acestream.https_port"
 HOST_LABEL_HTTP = "host.http_port"
 HOST_LABEL_HTTPS = "host.https_port"
+FORWARDED_LABEL = "acestream.forwarded"
 
 class StartRequest(BaseModel):
     image: str | None = None
@@ -21,7 +22,6 @@ class StartRequest(BaseModel):
     name_prefix: str = "svc"
 
 class AceProvisionRequest(BaseModel):
-    image: str | None = None
     labels: dict = {}
     env: dict = {}
     host_port: int | None = None  # optional fixed host port
@@ -42,7 +42,9 @@ def start_container(req: StartRequest) -> dict:
     cli = get_client()
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val}
-    image_name = req.image or cfg.TARGET_IMAGE
+    if not req.image:
+        raise ValueError("Image must be provided for container creation")
+    image_name = req.image
     
     # Generate a meaningful container name
     container_name = generate_container_name(req.name_prefix)
@@ -72,7 +74,7 @@ def start_container(req: StartRequest) -> dict:
         # Provide more helpful error messages for common image issues
         error_msg = str(e).lower()
         if "not found" in error_msg or "pull access denied" in error_msg:
-            raise RuntimeError(f"Image '{image_name}' not found. Please check TARGET_IMAGE setting or pull the image manually: docker pull {image_name}")
+            raise RuntimeError(f"Image '{image_name}' not found. Please pull the image manually: docker pull {image_name}")
         elif "network" in error_msg:
             raise RuntimeError(f"Network error starting container with image '{image_name}': {e}")
         else:
@@ -278,6 +280,49 @@ def _check_gluetun_health_sync() -> bool:
     except Exception:
         return False
 
+def get_variant_config(variant: str):
+    """
+    Get the configuration for a specific engine variant.
+    
+    This is a public API for retrieving variant configuration.
+    
+    Args:
+        variant: The engine variant name. Valid values are:
+                 - 'krinkuto11-amd64' (default)
+                 - 'jopsis-amd64'
+                 - 'jopsis-arm32'
+                 - 'jopsis-arm64'
+    
+    Returns:
+        dict with keys:
+            - image: Docker image name (always present)
+            - config_type: "env" or "cmd" (always present)
+            - base_args: Base arguments string (for ENV-based jopsis-amd64 variant)
+            - base_cmd: Base command list (for CMD-based arm32/arm64 variants)
+    """
+    configs = {
+        "krinkuto11-amd64": {
+            "image": "ghcr.io/krinkuto11/acestream-http-proxy:latest",
+            "config_type": "env"
+        },
+        "jopsis-amd64": {
+            "image": "jopsis/acestream:x64",
+            "config_type": "env",
+            "base_args": "--client-console --bind-all --service-remote-access --access-token acestream --service-access-token root --stats-report-peers --live-cache-type memory --live-cache-size 209715200 --vod-cache-type memory --cache-dir /acestream/.ACEStream --vod-drop-max-age 120 --max-file-size 2147483648 --live-buffer 25 --vod-buffer 10 --max-connections 500 --max-peers 50 --max-upload-slots 50 --auto-slots 0 --download-limit 0 --upload-limit 0 --stats-report-interval 2 --stats-report-peers --slots-manager-use-cpu-limit 1 --core-skip-have-before-playback-pos 1 --core-dlr-periodic-check-interval 5 --check-live-pos-interval 5 --refill-buffer-interval 1 --webrtc-allow-outgoing-connections 1 --allow-user-config --log-debug 0 --log-max-size 15000000 --log-backup-count 1"
+        },
+        "jopsis-arm32": {
+            "image": "jopsis/acestream:arm32-v3.2.13",
+            "config_type": "cmd",
+            "base_cmd": ["python", "main.py", "--bind-all", "--client-console", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout"]
+        },
+        "jopsis-arm64": {
+            "image": "jopsis/acestream:arm64-v3.2.13",
+            "config_type": "cmd",
+            "base_cmd": ["python", "main.py", "--bind-all", "--client-console", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout"]
+        }
+    }
+    return configs.get(variant, configs["krinkuto11-amd64"])
+
 def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     from .naming import generate_container_name
     import time
@@ -362,42 +407,78 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         # HTTPS ports don't count against MAX_ACTIVE_REPLICAS
         c_https = alloc.alloc_https(avoid=c_http)
 
-    # Use user-provided CONF if available, otherwise use default configuration
-    if "CONF" in req.env:
-        # User explicitly provided CONF (even if empty), use it as-is
-        final_conf = req.env["CONF"]
-    else:
-        # No user CONF, use default orchestrator configuration
-        conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
-        final_conf = "\n".join(conf_lines)
+    # Get variant configuration
+    variant_config = get_variant_config(cfg.ENGINE_VARIANT)
     
-    # Set environment variables required by acestream-http-proxy image
-    env = {
-        **req.env, 
-        "CONF": final_conf,
-        "HTTP_PORT": str(c_http),
-        "HTTPS_PORT": str(c_https),
-        "BIND_ALL": "true",
-        "INTERNAL_BUFFERING": 60,
-        "CACHE_LIMIT": 1
-    }
-    
-    # Add P2P_PORT when using Gluetun
+    # Determine if this engine should be the forwarded engine
+    # Only one engine should have the forwarded port when using Gluetun
+    is_forwarded = False
+    p2p_port = None
     if cfg.GLUETUN_CONTAINER_NAME:
-        from .gluetun import get_forwarded_port_sync
-        p2p_port = get_forwarded_port_sync()
-        if p2p_port:
-            env["P2P_PORT"] = str(p2p_port)
+        from .state import state
+        # Check if there's already a forwarded engine
+        if not state.has_forwarded_engine():
+            # This will be the forwarded engine
+            is_forwarded = True
+            from .gluetun import get_forwarded_port_sync
+            p2p_port = get_forwarded_port_sync()
+            logger.info(f"Provisioning new forwarded engine with P2P port {p2p_port}")
         else:
-            # If we can't get the forwarded port, we'll continue without it
-            # The AceStream engine will use its default P2P port behavior
-            pass
+            logger.info("Forwarded engine already exists, provisioning non-forwarded engine")
+    
+    # Prepare environment variables and command based on variant type
+    env = {**req.env}
+    cmd = None
+    
+    if variant_config["config_type"] == "env":
+        # ENV-based variants (krinkuto11-amd64, jopsis-amd64)
+        # Build ACESTREAM_ARGS for jopsis-amd64 or CONF for krinkuto11-amd64
+        if cfg.ENGINE_VARIANT == "jopsis-amd64":
+            # Use ACESTREAM_ARGS environment variable with base args + port settings
+            base_args = variant_config.get("base_args", "")
+            port_args = f" --http-port {c_http} --https-port {c_https}"
+            # Add P2P port if available
+            if p2p_port:
+                port_args += f" --port {p2p_port}"
+            env["ACESTREAM_ARGS"] = base_args + port_args
+        else:
+            # krinkuto11-amd64: Use user-provided CONF if available, otherwise use default
+            if "CONF" in req.env:
+                # User explicitly provided CONF (even if empty), use it as-is
+                final_conf = req.env["CONF"]
+            else:
+                # No user CONF, use default orchestrator configuration
+                conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
+                final_conf = "\n".join(conf_lines)
+            
+            env["CONF"] = final_conf
+            env["HTTP_PORT"] = str(c_http)
+            env["HTTPS_PORT"] = str(c_https)
+            env["BIND_ALL"] = "true"
+            env["INTERNAL_BUFFERING"] = 60
+            env["CACHE_LIMIT"] = 1
+            # Add P2P_PORT as environment variable for krinkuto11-amd64
+            if p2p_port:
+                env["P2P_PORT"] = str(p2p_port)
+    else:
+        # CMD-based variants (jopsis-arm32, jopsis-arm64)
+        # Append port settings to base command
+        base_cmd = variant_config.get("base_cmd", [])
+        port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]
+        # Add P2P port if available
+        if p2p_port:
+            port_args.extend(["--port", str(p2p_port)])
+        cmd = base_cmd + port_args
 
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val,
               ACESTREAM_LABEL_HTTP: str(c_http),
               ACESTREAM_LABEL_HTTPS: str(c_https),
               HOST_LABEL_HTTP: str(host_http)}
+    
+    # Add forwarded label if this is the forwarded engine
+    if is_forwarded:
+        labels[FORWARDED_LABEL] = "true"
 
     # Skip port mappings when using Gluetun - ports are already mapped through Gluetun container
     if cfg.GLUETUN_CONTAINER_NAME:
@@ -419,7 +500,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     
     # Build container arguments, conditionally including ports
     container_args = {
-        "image": req.image or cfg.TARGET_IMAGE,
+        "image": variant_config["image"],
         "detach": True,
         "name": container_name,
         "environment": env,
@@ -427,6 +508,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         **network_config,
         "restart_policy": {"Name": "unless-stopped"}
     }
+    
+    # Add command for CMD-based variants
+    if cmd is not None:
+        container_args["command"] = cmd
     
     # Only add ports if not using Gluetun (ports are handled by Gluetun container)
     if ports is not None:
@@ -486,6 +571,66 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
                                    description=f"AceStream provisioning took {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.7}s threshold)",
                                    container_id=cont.id,
                                    duration=duration)
+    
+    # Add engine to state immediately to prevent race conditions during sequential provisioning
+    # This ensures that subsequent calls to has_forwarded_engine() will see this engine
+    from .state import state
+    from ..models.schemas import EngineState
+    from ..models.db_models import EngineRow
+    from .db import SessionLocal
+    
+    # Determine host based on Gluetun configuration
+    if cfg.GLUETUN_CONTAINER_NAME:
+        engine_host = cfg.GLUETUN_CONTAINER_NAME
+    else:
+        engine_host = actual_container_name or "127.0.0.1"
+    
+    # Create engine state immediately
+    now = state.now()
+    engine = EngineState(
+        container_id=cont.id,
+        container_name=actual_container_name,
+        host=engine_host,
+        port=host_http,
+        labels=labels,
+        forwarded=is_forwarded,
+        first_seen=now,
+        last_seen=now,
+        streams=[],
+        health_status="unknown",
+        last_health_check=None,
+        last_stream_usage=None,
+        last_cache_cleanup=None,
+        cache_size_bytes=None
+    )
+    
+    # Add to in-memory state
+    state.engines[cont.id] = engine
+    
+    # Persist to database
+    try:
+        with SessionLocal() as s:
+            s.merge(EngineRow(
+                engine_key=cont.id,
+                container_id=cont.id,
+                container_name=actual_container_name,
+                host=engine_host,
+                port=host_http,
+                labels=labels,
+                forwarded=is_forwarded,
+                first_seen=now,
+                last_seen=now
+            ))
+            s.commit()
+    except Exception as e:
+        # Log but don't fail provisioning if database write fails
+        logger.warning(f"Failed to persist engine to database: {e}")
+    
+    # Mark this engine as forwarded in state if it was designated as such
+    # This must be done AFTER adding to state so set_forwarded_engine can find it
+    if is_forwarded:
+        state.set_forwarded_engine(cont.id)
+        logger.info(f"Engine {cont.id[:12]} provisioned as forwarded engine")
     
     return AceProvisionResponse(
         container_id=cont.id, 
