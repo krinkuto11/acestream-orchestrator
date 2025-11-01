@@ -7,6 +7,8 @@ class Cfg(BaseModel):
     APP_PORT: int = int(os.getenv("APP_PORT", 8000))
     DOCKER_NETWORK: str | None = os.getenv("DOCKER_NETWORK")
     ENGINE_VARIANT: str = os.getenv("ENGINE_VARIANT", "krinkuto11-amd64")
+    ENGINE_ARM32_VERSION: str = os.getenv("ENGINE_ARM32_VERSION", "arm32-v3.2.13")
+    ENGINE_ARM64_VERSION: str = os.getenv("ENGINE_ARM64_VERSION", "arm64-v3.2.13")
     MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 1))
     MIN_FREE_REPLICAS: int = int(os.getenv("MIN_FREE_REPLICAS", 1))
     MAX_REPLICAS: int = int(os.getenv("MAX_REPLICAS", 20))
