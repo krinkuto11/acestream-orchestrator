@@ -65,7 +65,7 @@ function StreamCard({ stream, isSelected, onSelect }) {
               <Typography variant="caption" color="text.secondary">
                 Download
               </Typography>
-              <Typography variant="body2" sx={{ color: '#4caf50', fontWeight: 600 }}>
+              <Typography variant="body2" sx={{ color: 'secondary.main', fontWeight: 600 }}>
                 {stream.speed_down != null ? `${formatBytes(stream.speed_down)}/s` : 'N/A'}
               </Typography>
             </Grid>
@@ -73,7 +73,7 @@ function StreamCard({ stream, isSelected, onSelect }) {
               <Typography variant="caption" color="text.secondary">
                 Upload
               </Typography>
-              <Typography variant="body2" sx={{ color: '#f44336', fontWeight: 600 }}>
+              <Typography variant="body2" sx={{ color: 'error.main', fontWeight: 600 }}>
                 {stream.speed_up != null ? `${formatBytes(stream.speed_up)}/s` : 'N/A'}
               </Typography>
             </Grid>
@@ -81,7 +81,7 @@ function StreamCard({ stream, isSelected, onSelect }) {
               <Typography variant="caption" color="text.secondary">
                 Peers
               </Typography>
-              <Typography variant="body2" sx={{ color: '#9c27b0', fontWeight: 600 }}>
+              <Typography variant="body2" sx={{ color: 'info.main', fontWeight: 600 }}>
                 {stream.peers != null ? stream.peers : 'N/A'}
               </Typography>
             </Grid>
