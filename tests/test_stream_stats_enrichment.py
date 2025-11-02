@@ -81,17 +81,8 @@ def test_stream_enrichment_with_stats():
     )
     test_state.append_stat(stream_id, stat2)
     
-    # Get streams and enrich with latest stats (simulating the endpoint behavior)
-    streams = test_state.list_streams(status="started")
-    for stream in streams:
-        stats = test_state.get_stream_stats(stream.id)
-        if stats:
-            latest_stat = stats[-1]  # Get the most recent stat
-            stream.peers = latest_stat.peers
-            stream.speed_down = latest_stat.speed_down
-            stream.speed_up = latest_stat.speed_up
-            stream.downloaded = latest_stat.downloaded
-            stream.uploaded = latest_stat.uploaded
+    # Get streams with stats (simulating the endpoint behavior)
+    streams = test_state.list_streams_with_stats(status="started")
     
     # Verify enrichment with latest stats (stat2)
     assert len(streams) == 1
@@ -130,17 +121,8 @@ def test_stream_without_stats():
     
     stream_state = test_state.on_stream_started(evt)
     
-    # Get streams and try to enrich (simulating the endpoint behavior)
-    streams = test_state.list_streams(status="started")
-    for stream in streams:
-        stats = test_state.get_stream_stats(stream.id)
-        if stats:
-            latest_stat = stats[-1]
-            stream.peers = latest_stat.peers
-            stream.speed_down = latest_stat.speed_down
-            stream.speed_up = latest_stat.speed_up
-            stream.downloaded = latest_stat.downloaded
-            stream.uploaded = latest_stat.uploaded
+    # Get streams with stats (simulating the endpoint behavior)
+    streams = test_state.list_streams_with_stats(status="started")
     
     # Verify stream exists but stats remain None
     assert len(streams) == 1
