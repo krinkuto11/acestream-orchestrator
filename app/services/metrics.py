@@ -1,6 +1,6 @@
-from prometheus_client import Counter, Gauge, make_asgi_app
+from prometheus_client import Counter, Gauge, make_asgi_app, Info, Enum
 
-# Keep old Prometheus metrics for backward compatibility in code
+# Keep old internal metrics for backward compatibility in code
 orch_events_started = Counter("orch_events_started_total", "stream_started events")
 orch_events_ended = Counter("orch_events_ended_total", "stream_ended events")
 orch_collect_errors = Counter("orch_collector_errors_total", "collector errors")
@@ -8,25 +8,38 @@ orch_stale_streams_detected = Counter("orch_stale_streams_detected_total", "stal
 orch_streams_active = Gauge("orch_streams_active", "active streams")
 orch_provision_total = Counter("orch_provision_total", "provision requests", ["kind"])
 
+# New aggregated metrics replacing the old metrics
+orch_total_uploaded_bytes = Gauge("orch_total_uploaded_bytes", "Total bytes uploaded from all engines")
+orch_total_downloaded_bytes = Gauge("orch_total_downloaded_bytes", "Total bytes downloaded from all engines")
+orch_total_upload_speed_mbps = Gauge("orch_total_upload_speed_mbps", "Current sum of upload speeds from all engines in MB/s")
+orch_total_download_speed_mbps = Gauge("orch_total_download_speed_mbps", "Current sum of download speeds from all engines in MB/s")
+orch_total_peers = Gauge("orch_total_peers", "Current total peers across all engines")
+orch_total_streams = Gauge("orch_total_streams", "Current number of active streams")
+orch_healthy_engines = Gauge("orch_healthy_engines", "Number of healthy engines")
+orch_unhealthy_engines = Gauge("orch_unhealthy_engines", "Number of unhealthy engines")
+orch_used_engines = Gauge("orch_used_engines", "Number of engines currently handling streams")
+orch_vpn_health = Enum("orch_vpn_health", "Current health status of VPN container", states=["healthy", "unhealthy", "unknown", "disabled"])
+orch_extra_engines = Gauge("orch_extra_engines", "Number of engines beyond MIN_REPLICAS")
+
 metrics_app = make_asgi_app()
 
 
-def get_custom_metrics() -> dict:
+def update_custom_metrics():
     """
-    Generate custom metrics aggregated from all engines.
+    Update custom Prometheus metrics with aggregated data from all engines.
     
-    Returns a dictionary with:
-    - total_uploaded: Total bytes uploaded from all engines
-    - total_downloaded: Total bytes downloaded from all engines
-    - total_upload_speed_mbps: Current sum of upload speeds in MB/s
-    - total_download_speed_mbps: Current sum of download speeds in MB/s
-    - total_peers: Current total peers across all engines
-    - total_streams: Current number of active streams
-    - healthy_engines: Number of healthy engines
-    - unhealthy_engines: Number of unhealthy engines
-    - used_engines: Number of engines currently handling streams
-    - vpn_health: Current health status of VPN container
-    - extra_engines: Number of engines beyond MIN_REPLICAS
+    This function collects data from all engines and updates the following metrics:
+    - orch_total_uploaded_bytes: Total bytes uploaded from all engines
+    - orch_total_downloaded_bytes: Total bytes downloaded from all engines
+    - orch_total_upload_speed_mbps: Current sum of upload speeds in MB/s
+    - orch_total_download_speed_mbps: Current sum of download speeds in MB/s
+    - orch_total_peers: Current total peers across all engines
+    - orch_total_streams: Current number of active streams
+    - orch_healthy_engines: Number of healthy engines
+    - orch_unhealthy_engines: Number of unhealthy engines
+    - orch_used_engines: Number of engines currently handling streams
+    - orch_vpn_health: Current health status of VPN container
+    - orch_extra_engines: Number of engines beyond MIN_REPLICAS
     """
     from .state import state
     from .gluetun import get_vpn_status
@@ -70,21 +83,22 @@ def get_custom_metrics() -> dict:
     
     # Get VPN health status
     vpn_status = get_vpn_status()
-    vpn_health = vpn_status.get("health", "unknown")
+    vpn_health_str = vpn_status.get("health", "unknown")
+    if not vpn_status.get("enabled", False):
+        vpn_health_str = "disabled"
     
     # Calculate extra engines (beyond minimum)
     extra_engines = max(0, total_engines - cfg.MIN_REPLICAS)
     
-    return {
-        "total_uploaded": total_uploaded,
-        "total_downloaded": total_downloaded,
-        "total_upload_speed_mbps": total_upload_speed_mbps,
-        "total_download_speed_mbps": total_download_speed_mbps,
-        "total_peers": total_peers,
-        "total_streams": len(streams),
-        "healthy_engines": healthy_engines,
-        "unhealthy_engines": unhealthy_engines,
-        "used_engines": used_engines,
-        "vpn_health": vpn_health,
-        "extra_engines": extra_engines
-    }
+    # Update all metrics
+    orch_total_uploaded_bytes.set(total_uploaded)
+    orch_total_downloaded_bytes.set(total_downloaded)
+    orch_total_upload_speed_mbps.set(total_upload_speed_mbps)
+    orch_total_download_speed_mbps.set(total_download_speed_mbps)
+    orch_total_peers.set(total_peers)
+    orch_total_streams.set(len(streams))
+    orch_healthy_engines.set(healthy_engines)
+    orch_unhealthy_engines.set(unhealthy_engines)
+    orch_used_engines.set(used_engines)
+    orch_vpn_health.state(vpn_health_str)
+    orch_extra_engines.set(extra_engines)
