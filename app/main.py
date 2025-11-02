@@ -22,7 +22,7 @@ from .services.state import state, load_state_from_db, cleanup_on_shutdown
 from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot
 from .services.collector import collector
 from .services.monitor import docker_monitor
-from .services.metrics import metrics_app, orch_events_started, orch_events_ended, orch_streams_active, orch_provision_total
+from .services.metrics import metrics_app, orch_events_started, orch_events_ended, orch_streams_active, orch_provision_total, get_custom_metrics
 from .services.auth import require_api_key
 from .services.db import engine
 from .models.db_models import Base
@@ -106,7 +106,14 @@ if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
 else:
     logger.warning(f"Panel directory {panel_dir} not found. /panel endpoint will not be available.")
 
-app.mount("/metrics", metrics_app)
+# Keep old Prometheus metrics endpoint for backward compatibility
+app.mount("/metrics_prometheus", metrics_app)
+
+# New custom metrics endpoint
+@app.get("/metrics")
+def get_metrics():
+    """Get custom aggregated metrics from all engines."""
+    return get_custom_metrics()
 
 # Provisioning
 @app.post("/provision", dependencies=[Depends(require_api_key)])
