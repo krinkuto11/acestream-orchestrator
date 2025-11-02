@@ -347,7 +347,18 @@ def get_engine(container_id: str):
 
 @app.get("/streams", response_model=List[StreamState])
 def get_streams(status: Optional[str] = Query(None, pattern="^(started|ended)$"), container_id: Optional[str] = None):
-    return state.list_streams(status=status, container_id=container_id)
+    streams = state.list_streams(status=status, container_id=container_id)
+    # Enrich streams with latest stats
+    for stream in streams:
+        stats = state.get_stream_stats(stream.id)
+        if stats:
+            latest_stat = stats[-1]  # Get the most recent stat
+            stream.peers = latest_stat.peers
+            stream.speed_down = latest_stat.speed_down
+            stream.speed_up = latest_stat.speed_up
+            stream.downloaded = latest_stat.downloaded
+            stream.uploaded = latest_stat.uploaded
+    return streams
 
 @app.get("/streams/{stream_id}/stats", response_model=List[StreamStatSnapshot])
 def get_stream_stats(stream_id: str, since: Optional[datetime] = None):

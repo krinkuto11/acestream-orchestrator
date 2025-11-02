@@ -85,6 +85,22 @@ function StreamCard({ stream, isSelected, onSelect }) {
                 {stream.peers != null ? stream.peers : 'N/A'}
               </Typography>
             </Grid>
+            <Grid item xs={6}>
+              <Typography variant="caption" color="text.secondary">
+                Total Downloaded
+              </Typography>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                {stream.downloaded != null ? formatBytes(stream.downloaded) : 'N/A'}
+              </Typography>
+            </Grid>
+            <Grid item xs={6}>
+              <Typography variant="caption" color="text.secondary">
+                Total Uploaded
+              </Typography>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                {stream.uploaded != null ? formatBytes(stream.uploaded) : 'N/A'}
+              </Typography>
+            </Grid>
           </Grid>
         </CardContent>
       </CardActionArea>
