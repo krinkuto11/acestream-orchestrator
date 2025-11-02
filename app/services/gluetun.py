@@ -380,7 +380,6 @@ def get_forwarded_port_sync() -> Optional[int]:
         
     # If no cached port available, make API call
     try:
-        import httpx
         with httpx.Client() as client:
             response = client.get(f"http://{cfg.GLUETUN_CONTAINER_NAME}:{cfg.GLUETUN_API_PORT}/v1/openvpn/portforwarded", timeout=10)
             response.raise_for_status()
@@ -540,7 +539,6 @@ def get_vpn_public_ip() -> Optional[str]:
         return None
     
     try:
-        import httpx
         with httpx.Client() as client:
             response = client.get(f"http://{cfg.GLUETUN_CONTAINER_NAME}:{cfg.GLUETUN_API_PORT}/v1/publicip/ip", timeout=10)
             response.raise_for_status()

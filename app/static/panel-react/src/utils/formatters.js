@@ -30,7 +30,7 @@ export function formatBytesPerSecond(bytesPerSecond) {
   if (bytesPerSecond == null) return 'N/A'
   if (bytesPerSecond === 0) return '0 B/s'
   const k = 1024
-  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s']
+  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s']
   const i = Math.floor(Math.log(bytesPerSecond) / Math.log(k))
   return Math.round((bytesPerSecond / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
 }
