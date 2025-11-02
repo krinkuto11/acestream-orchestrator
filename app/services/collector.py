@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from .state import state
 from ..models.schemas import StreamStatSnapshot, StreamEndedEvent
 from ..core.config import cfg
-from .metrics import orch_collect_errors, orch_stale_streams_detected
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +59,6 @@ class Collector:
                             stream_id=stream_id,
                             reason="stale_stream_detected"
                         ))
-                        orch_stale_streams_detected.inc()
                     return
             
             payload = data.get("response") or {}
@@ -75,7 +73,6 @@ class Collector:
             )
             state.append_stat(stream_id, snap)
         except Exception:
-            orch_collect_errors.inc()
             return
 
 collector = Collector()

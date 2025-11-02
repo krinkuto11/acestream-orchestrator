@@ -1,14 +1,6 @@
-from prometheus_client import Counter, Gauge, make_asgi_app, Enum
+from prometheus_client import Gauge, make_asgi_app, Enum
 
-# Keep old internal metrics for backward compatibility in code
-orch_events_started = Counter("orch_events_started_total", "stream_started events")
-orch_events_ended = Counter("orch_events_ended_total", "stream_ended events")
-orch_collect_errors = Counter("orch_collector_errors_total", "collector errors")
-orch_stale_streams_detected = Counter("orch_stale_streams_detected_total", "stale streams detected and auto-ended")
-orch_streams_active = Gauge("orch_streams_active", "active streams")
-orch_provision_total = Counter("orch_provision_total", "provision requests", ["kind"])
-
-# New aggregated metrics replacing the old metrics
+# Aggregated metrics from all engines
 orch_total_uploaded_bytes = Gauge("orch_total_uploaded_bytes", "Total bytes uploaded from all engines")
 orch_total_downloaded_bytes = Gauge("orch_total_downloaded_bytes", "Total bytes downloaded from all engines")
 orch_total_upload_speed_mbps = Gauge("orch_total_upload_speed_mbps", "Current sum of upload speeds from all engines in MB/s")
