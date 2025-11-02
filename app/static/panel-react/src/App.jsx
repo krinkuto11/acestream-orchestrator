@@ -50,9 +50,21 @@ function App() {
         fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false }))
       ])
       
+      // Fetch VPN public IP if VPN is enabled and connected
+      let vpnDataWithIp = vpnData
+      if (vpnData.enabled && vpnData.connected) {
+        try {
+          const publicIpData = await fetchJSON(`${orchUrl}/vpn/publicip`)
+          vpnDataWithIp = { ...vpnData, public_ip: publicIpData.public_ip }
+        } catch (err) {
+          // If public IP fetch fails, continue without it
+          console.warn('Failed to fetch VPN public IP:', err)
+        }
+      }
+      
       setEngines(enginesData)
       setStreams(streamsData)
-      setVpnStatus(vpnData)
+      setVpnStatus(vpnDataWithIp)
       setLastUpdate(new Date())
       setIsConnected(true)
     } catch (err) {
@@ -135,16 +147,16 @@ function App() {
             </Grid>
           )}
 
-          {/* Engines */}
-          <Grid item xs={12} md={selectedStream ? 6 : 12}>
+          {/* Engines - Left Side */}
+          <Grid item xs={12} md={6}>
             <EngineList
               engines={engines}
               onDeleteEngine={handleDeleteEngine}
             />
           </Grid>
 
-          {/* Streams */}
-          <Grid item xs={12} md={selectedStream ? 6 : 12}>
+          {/* Streams - Right Side */}
+          <Grid item xs={12} md={6}>
             <StreamList
               streams={streams}
               selectedStream={selectedStream}

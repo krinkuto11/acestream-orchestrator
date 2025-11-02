@@ -347,7 +347,7 @@ def get_engine(container_id: str):
 
 @app.get("/streams", response_model=List[StreamState])
 def get_streams(status: Optional[str] = Query(None, pattern="^(started|ended)$"), container_id: Optional[str] = None):
-    return state.list_streams(status=status, container_id=container_id)
+    return state.list_streams_with_stats(status=status, container_id=container_id)
 
 @app.get("/streams/{stream_id}/stats", response_model=List[StreamStatSnapshot])
 def get_stream_stats(stream_id: str, since: Optional[datetime] = None):
@@ -375,6 +375,16 @@ def by_label(key: str, value: str):
 def get_vpn_status_endpoint():
     """Get VPN (Gluetun) status information."""
     return get_vpn_status()
+
+@app.get("/vpn/publicip")
+def get_vpn_publicip_endpoint():
+    """Get VPN public IP address."""
+    from .services.gluetun import get_vpn_public_ip
+    public_ip = get_vpn_public_ip()
+    if public_ip:
+        return {"public_ip": public_ip}
+    else:
+        raise HTTPException(status_code=503, detail="Unable to retrieve VPN public IP")
 
 @app.get("/health/status")
 def get_health_status_endpoint():

@@ -57,6 +57,12 @@ class StreamState(BaseModel):
     started_at: datetime
     ended_at: Optional[datetime] = None
     status: Literal["started", "ended"] = "started"
+    # Latest stats from the most recent snapshot
+    peers: Optional[int] = None
+    speed_down: Optional[int] = None
+    speed_up: Optional[int] = None
+    downloaded: Optional[int] = None
+    uploaded: Optional[int] = None
 
 class StreamStatSnapshot(BaseModel):
     ts: datetime

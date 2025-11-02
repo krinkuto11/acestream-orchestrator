@@ -217,6 +217,35 @@ class State:
         with self._lock:
             return self.stream_stats.get(stream_id, [])
     
+    def list_streams_with_stats(self, status: Optional[str] = None, container_id: Optional[str] = None) -> List[StreamState]:
+        """
+        Get streams enriched with their latest stats.
+        Returns copies of stream objects with stats attached to avoid mutating the originals.
+        """
+        with self._lock:
+            streams = list(self.streams.values())
+            if status:
+                streams = [s for s in streams if s.status == status]
+            if container_id:
+                streams = [s for s in streams if s.container_id == container_id]
+            
+            # Create enriched copies of streams with latest stats
+            enriched_streams = []
+            for stream in streams:
+                # Create a copy using model_copy to avoid mutating the original
+                enriched = stream.model_copy()
+                stats = self.stream_stats.get(stream.id, [])
+                if stats:
+                    latest_stat = stats[-1]  # Get the most recent stat
+                    enriched.peers = latest_stat.peers
+                    enriched.speed_down = latest_stat.speed_down
+                    enriched.speed_up = latest_stat.speed_up
+                    enriched.downloaded = latest_stat.downloaded
+                    enriched.uploaded = latest_stat.uploaded
+                enriched_streams.append(enriched)
+            
+            return enriched_streams
+    
     def get_realtime_snapshot(self):
         """Get a snapshot of all data for realtime updates with minimal lock time"""
         with self._lock:

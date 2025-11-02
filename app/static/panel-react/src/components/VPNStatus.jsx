@@ -54,6 +54,14 @@ function VPNStatus({ vpnStatus }) {
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
             <Typography variant="caption" color="text.secondary">
+              Public IP
+            </Typography>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+              {vpnStatus.public_ip || 'N/A'}
+            </Typography>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="caption" color="text.secondary">
               Forwarded Port
             </Typography>
             <Typography variant="body2">
@@ -66,20 +74,6 @@ function VPNStatus({ vpnStatus }) {
             </Typography>
             <Typography variant="body2">
               {formatTime(vpnStatus.last_check_at)}
-            </Typography>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Typography variant="caption" color="text.secondary">
-              Status URL
-            </Typography>
-            <Typography variant="body2">
-              {vpnStatus.status_url ? (
-                <Link href={vpnStatus.status_url} target="_blank" rel="noopener">
-                  View Status
-                </Link>
-              ) : (
-                'N/A'
-              )}
             </Typography>
           </Grid>
         </Grid>
