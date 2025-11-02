@@ -398,30 +398,44 @@ def get_forwarded_port_sync() -> Optional[int]:
 
 def _double_check_connectivity_via_engines() -> str:
     """
-    Double-check VPN connectivity by checking if there are active streams.
+    Double-check VPN connectivity by checking if engines can connect to the internet.
     This is used when Gluetun container health appears unhealthy but the issue
     might be unrelated to actual network connectivity.
     
-    If there are active streams (streams with recent activity), it indicates
-    that the network connectivity is actually working despite the Gluetun
-    health check reporting unhealthy status.
+    Uses the engine's /server/api?api_version=3&method=get_network_connection_status
+    endpoint which returns {"result": {"connected": true}} when the engine has
+    internet connectivity through the VPN.
     
-    Returns "healthy" if there are active streams, "unhealthy" otherwise.
+    Returns "healthy" if any running engine reports connected=true, "unhealthy" otherwise.
     """
     try:
         from .state import state
+        from .health import check_engine_network_connection
         
-        # Check if there are any active streams
-        active_streams = [s for s in state.streams.values() if s.status == "started"]
+        # Get all running engines
+        all_engines = state.list_engines()
         
-        if not active_streams:
-            logger.debug("VPN double-check: No active streams to verify connectivity")
+        if not all_engines:
+            logger.debug("VPN double-check: No engines available to verify connectivity")
             return "unhealthy"
         
-        # If there are active streams, it means engines are receiving data
-        # and the VPN is likely working, even if Gluetun reports unhealthy
-        logger.info(f"VPN double-check: {len(active_streams)} active stream(s) found - considering VPN healthy")
-        return "healthy"
+        # Check network connectivity on each engine
+        connected_engines = 0
+        for engine in all_engines:
+            try:
+                if check_engine_network_connection(engine.host, engine.port):
+                    connected_engines += 1
+                    logger.info(f"VPN double-check: Engine {engine.container_id[:12]} reports internet connectivity")
+            except Exception as e:
+                logger.debug(f"VPN double-check: Failed to check engine {engine.container_id[:12]}: {e}")
+                continue
+        
+        if connected_engines > 0:
+            logger.info(f"VPN double-check: {connected_engines}/{len(all_engines)} engine(s) have internet connectivity - considering VPN healthy")
+            return "healthy"
+        else:
+            logger.warning(f"VPN double-check: None of {len(all_engines)} engine(s) have internet connectivity")
+            return "unhealthy"
             
     except Exception as e:
         logger.error(f"Error during VPN connectivity double-check: {e}")
