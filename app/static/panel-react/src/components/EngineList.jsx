@@ -24,69 +24,71 @@ function EngineCard({ engine, onDelete }) {
   const healthColor = healthColors[healthStatus] || 'default'
 
   return (
-    <Card sx={{ mb: 2, '&:hover': { bgcolor: 'action.hover' } }}>
-      <CardContent>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+    <Card sx={{ mb: 1.5, '&:hover': { bgcolor: 'action.hover' } }}>
+      <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
           <Box>
-            <Typography variant="h6" component="div" sx={{ fontWeight: 600 }}>
+            <Typography variant="subtitle1" component="div" sx={{ fontWeight: 600, lineHeight: 1.3 }}>
               {engine.container_name || engine.container_id.slice(0, 12)}
               {engine.forwarded && (
                 <Chip
                   label="FORWARDED"
                   color="primary"
                   size="small"
-                  sx={{ ml: 1, fontWeight: 'bold' }}
+                  sx={{ ml: 1, fontWeight: 'bold', height: 20 }}
                 />
               )}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
               {engine.host}:{engine.port}
             </Typography>
           </Box>
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+          <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
             <Chip
-              icon={<FiberManualRecordIcon />}
+              icon={<FiberManualRecordIcon sx={{ fontSize: 12 }} />}
               label={healthStatus.toUpperCase()}
               color={healthColor}
               size="small"
+              sx={{ height: 24, fontSize: '0.7rem' }}
             />
             <IconButton
               onClick={() => onDelete(engine.container_id)}
               color="error"
               size="small"
+              sx={{ p: 0.5 }}
             >
-              <DeleteIcon />
+              <DeleteIcon fontSize="small" />
             </IconButton>
           </Box>
         </Box>
 
-        <Grid container spacing={2}>
+        <Grid container spacing={1.5}>
           <Grid item xs={6}>
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
               Active Streams
             </Typography>
-            <Typography variant="body2">
+            <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
               {engine.streams.length}
             </Typography>
           </Grid>
           <Grid item xs={6}>
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
               Last Used
             </Typography>
-            <Typography variant="body2">
+            <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
               {timeAgo(engine.last_stream_usage)}
             </Typography>
           </Grid>
           {engine.last_health_check && (
             <>
               <Grid item xs={12}>
-                <Divider sx={{ my: 0.5 }} />
+                <Divider sx={{ my: 0 }} />
               </Grid>
               <Grid item xs={12}>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                   Last Health Check
                 </Typography>
-                <Typography variant="body2">
+                <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
                   {formatTime(engine.last_health_check)}
                 </Typography>
               </Grid>
