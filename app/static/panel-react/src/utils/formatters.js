@@ -18,9 +18,19 @@ export function timeAgo(dateStr) {
 }
 
 export function formatBytes(bytes) {
-  if (bytes == null || bytes === 0) return 'N/A'
+  if (bytes == null) return 'N/A'
+  if (bytes === 0) return '0 B'
   const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
+}
+
+export function formatBytesPerSecond(bytesPerSecond) {
+  if (bytesPerSecond == null) return 'N/A'
+  if (bytesPerSecond === 0) return '0 B/s'
+  const k = 1024
+  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s']
+  const i = Math.floor(Math.log(bytesPerSecond) / Math.log(k))
+  return Math.round((bytesPerSecond / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
 }

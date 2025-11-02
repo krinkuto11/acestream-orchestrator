@@ -36,6 +36,7 @@ class GluetunMonitor:
         self._cached_port: Optional[int] = None
         self._port_cache_time: Optional[datetime] = None
         self._port_cache_ttl_seconds: int = cfg.GLUETUN_PORT_CACHE_TTL_S  # Use config value
+        self._last_logged_port: Optional[int] = None  # Track last logged port to reduce logging noise
         
         # Track health stability to prevent engine restarts during initial startup
         self._startup_grace_period_s = 60  # 60 second grace period after first healthy status
@@ -340,7 +341,10 @@ class GluetunMonitor:
                     # Update cache
                     self._cached_port = port
                     self._port_cache_time = datetime.now(timezone.utc)
-                    logger.info(f"Retrieved and cached VPN forwarded port: {port}")
+                    # Only log if port has changed to reduce logging noise
+                    if self._last_logged_port != port:
+                        logger.info(f"Retrieved and cached VPN forwarded port: {port}")
+                        self._last_logged_port = port
                     return port
                 else:
                     logger.warning("No port forwarding information available from Gluetun")
@@ -376,7 +380,6 @@ def get_forwarded_port_sync() -> Optional[int]:
         
     # If no cached port available, make API call
     try:
-        import httpx
         with httpx.Client() as client:
             response = client.get(f"http://{cfg.GLUETUN_CONTAINER_NAME}:{cfg.GLUETUN_API_PORT}/v1/openvpn/portforwarded", timeout=10)
             response.raise_for_status()
@@ -387,7 +390,10 @@ def get_forwarded_port_sync() -> Optional[int]:
                 # Update the monitor's cache
                 gluetun_monitor._cached_port = port
                 gluetun_monitor._port_cache_time = datetime.now(timezone.utc)
-                logger.info(f"Retrieved and cached VPN forwarded port (sync): {port}")
+                # Only log if port has changed to reduce logging noise
+                if gluetun_monitor._last_logged_port != port:
+                    logger.info(f"Retrieved and cached VPN forwarded port (sync): {port}")
+                    gluetun_monitor._last_logged_port = port
                 return port
             else:
                 logger.warning("No port forwarding information available from Gluetun")
@@ -527,6 +533,26 @@ def get_vpn_status() -> dict:
             "error": str(e)
         }
 
+def get_vpn_public_ip() -> Optional[str]:
+    """Get the public IP address of the VPN connection from Gluetun."""
+    if not cfg.GLUETUN_CONTAINER_NAME:
+        return None
+    
+    try:
+        with httpx.Client() as client:
+            response = client.get(f"http://{cfg.GLUETUN_CONTAINER_NAME}:{cfg.GLUETUN_API_PORT}/v1/publicip/ip", timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            public_ip = data.get("public_ip")
+            if public_ip:
+                logger.debug(f"Retrieved VPN public IP: {public_ip}")
+                return public_ip
+            else:
+                logger.warning("No public IP information available from Gluetun")
+                return None
+    except Exception as e:
+        logger.error(f"Failed to get public IP from Gluetun: {e}")
+        return None
 
 # Global Gluetun monitor instance
 gluetun_monitor = GluetunMonitor()

@@ -10,7 +10,7 @@ import {
   Grid
 } from '@mui/material'
 import PlayCircleFilledIcon from '@mui/icons-material/PlayCircleFilled'
-import { formatTime, formatBytes } from '../utils/formatters'
+import { formatTime, formatBytes, formatBytesPerSecond } from '../utils/formatters'
 
 function StreamCard({ stream, isSelected, onSelect }) {
   return (
@@ -66,7 +66,7 @@ function StreamCard({ stream, isSelected, onSelect }) {
                 Download
               </Typography>
               <Typography variant="body2" sx={{ color: 'secondary.main', fontWeight: 600 }}>
-                {stream.speed_down != null ? `${formatBytes(stream.speed_down)}/s` : 'N/A'}
+                {formatBytesPerSecond(stream.speed_down)}
               </Typography>
             </Grid>
             <Grid item xs={4}>
@@ -74,7 +74,7 @@ function StreamCard({ stream, isSelected, onSelect }) {
                 Upload
               </Typography>
               <Typography variant="body2" sx={{ color: 'error.main', fontWeight: 600 }}>
-                {stream.speed_up != null ? `${formatBytes(stream.speed_up)}/s` : 'N/A'}
+                {formatBytesPerSecond(stream.speed_up)}
               </Typography>
             </Grid>
             <Grid item xs={4}>
