@@ -90,7 +90,7 @@ function StreamCard({ stream, isSelected, onSelect }) {
                 Total Downloaded
               </Typography>
               <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                {stream.downloaded != null ? formatBytes(stream.downloaded) : 'N/A'}
+                {formatBytes(stream.downloaded)}
               </Typography>
             </Grid>
             <Grid item xs={6}>
@@ -98,7 +98,7 @@ function StreamCard({ stream, isSelected, onSelect }) {
                 Total Uploaded
               </Typography>
               <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                {stream.uploaded != null ? formatBytes(stream.uploaded) : 'N/A'}
+                {formatBytes(stream.uploaded)}
               </Typography>
             </Grid>
           </Grid>
