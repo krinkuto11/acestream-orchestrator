@@ -82,6 +82,8 @@ def test_metrics_with_mock_data():
     state.on_stream_started(evt)
     
     # Add some stats
+    # Use the same stream_id format as the state module (key|playback_session_id)
+    stream_id = f"{evt.stream.key}|{evt.session.playback_session_id}"
     snap = StreamStatSnapshot(
         ts=datetime.now(timezone.utc),
         peers=10,
@@ -91,7 +93,7 @@ def test_metrics_with_mock_data():
         uploaded=5242880,     # 5 MB in bytes
         status="active"
     )
-    state.append_stat(evt.stream.key + "|" + evt.session.playback_session_id, snap)
+    state.append_stat(stream_id, snap)
     
     # Update metrics
     update_custom_metrics()

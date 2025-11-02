@@ -1,4 +1,4 @@
-from prometheus_client import Counter, Gauge, make_asgi_app, Info, Enum
+from prometheus_client import Counter, Gauge, make_asgi_app, Enum
 
 # Keep old internal metrics for backward compatibility in code
 orch_events_started = Counter("orch_events_started_total", "stream_started events")
