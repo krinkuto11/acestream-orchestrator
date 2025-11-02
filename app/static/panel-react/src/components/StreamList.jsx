@@ -45,7 +45,7 @@ function StreamCard({ stream, isSelected, onSelect }) {
           <Divider sx={{ my: 1.5 }} />
 
           <Grid container spacing={1}>
-            <Grid item xs={6}>
+            <Grid item xs={12}>
               <Typography variant="caption" color="text.secondary">
                 Engine
               </Typography>
@@ -53,7 +53,7 @@ function StreamCard({ stream, isSelected, onSelect }) {
                 {stream.container_name || stream.container_id?.slice(0, 12) || 'N/A'}
               </Typography>
             </Grid>
-            <Grid item xs={6}>
+            <Grid item xs={12}>
               <Typography variant="caption" color="text.secondary">
                 Started
               </Typography>
@@ -61,26 +61,30 @@ function StreamCard({ stream, isSelected, onSelect }) {
                 {formatTime(stream.started_at)}
               </Typography>
             </Grid>
-            {stream.peers != null && (
-              <Grid item xs={6}>
-                <Typography variant="caption" color="text.secondary">
-                  Peers
-                </Typography>
-                <Typography variant="body2">
-                  {stream.peers}
-                </Typography>
-              </Grid>
-            )}
-            {stream.speed_down != null && (
-              <Grid item xs={6}>
-                <Typography variant="caption" color="text.secondary">
-                  Download
-                </Typography>
-                <Typography variant="body2">
-                  {formatBytes(stream.speed_down)}/s
-                </Typography>
-              </Grid>
-            )}
+            <Grid item xs={4}>
+              <Typography variant="caption" color="text.secondary">
+                Download
+              </Typography>
+              <Typography variant="body2" sx={{ color: 'secondary.main', fontWeight: 600 }}>
+                {stream.speed_down != null ? `${formatBytes(stream.speed_down)}/s` : 'N/A'}
+              </Typography>
+            </Grid>
+            <Grid item xs={4}>
+              <Typography variant="caption" color="text.secondary">
+                Upload
+              </Typography>
+              <Typography variant="body2" sx={{ color: 'error.main', fontWeight: 600 }}>
+                {stream.speed_up != null ? `${formatBytes(stream.speed_up)}/s` : 'N/A'}
+              </Typography>
+            </Grid>
+            <Grid item xs={4}>
+              <Typography variant="caption" color="text.secondary">
+                Peers
+              </Typography>
+              <Typography variant="body2" sx={{ color: 'info.main', fontWeight: 600 }}>
+                {stream.peers != null ? stream.peers : 'N/A'}
+              </Typography>
+            </Grid>
           </Grid>
         </CardContent>
       </CardActionArea>
