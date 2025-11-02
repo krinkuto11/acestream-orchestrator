@@ -9,6 +9,7 @@ status endpoint to verify VPN connectivity when Gluetun reports unhealthy.
 import sys
 import os
 from unittest.mock import patch, MagicMock
+from datetime import datetime, timezone
 
 # Add app to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -16,7 +17,26 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from app.services.gluetun import _double_check_connectivity_via_engines
 from app.services.state import State
 from app.models.schemas import EngineState
-from datetime import datetime, timezone
+
+
+def create_test_engine(container_id: str, container_name: str, port: int) -> EngineState:
+    """Helper function to create a test engine with standard defaults."""
+    return EngineState(
+        container_id=container_id,
+        container_name=container_name,
+        host="127.0.0.1",
+        port=port,
+        labels={},
+        forwarded=False,
+        first_seen=datetime.now(timezone.utc),
+        last_seen=datetime.now(timezone.utc),
+        streams=[],
+        health_status="healthy",
+        last_health_check=None,
+        last_stream_usage=datetime.now(timezone.utc),
+        last_cache_cleanup=None,
+        cache_size_bytes=None
+    )
 
 
 def test_no_engines_available():
@@ -39,41 +59,8 @@ def test_all_engines_connected():
     
     # Create state with engines
     test_state = State()
-    
-    # Add test engines
-    engine1 = EngineState(
-        container_id="test_engine_1",
-        container_name="engine1",
-        host="127.0.0.1",
-        port=8080,
-        labels={},
-        forwarded=False,
-        first_seen=datetime.now(timezone.utc),
-        last_seen=datetime.now(timezone.utc),
-        streams=[],
-        health_status="healthy",
-        last_health_check=None,
-        last_stream_usage=datetime.now(timezone.utc),
-        last_cache_cleanup=None,
-        cache_size_bytes=None
-    )
-    
-    engine2 = EngineState(
-        container_id="test_engine_2",
-        container_name="engine2",
-        host="127.0.0.1",
-        port=8081,
-        labels={},
-        forwarded=False,
-        first_seen=datetime.now(timezone.utc),
-        last_seen=datetime.now(timezone.utc),
-        streams=[],
-        health_status="healthy",
-        last_health_check=None,
-        last_stream_usage=datetime.now(timezone.utc),
-        last_cache_cleanup=None,
-        cache_size_bytes=None
-    )
+    engine1 = create_test_engine("test_engine_1", "engine1", 8080)
+    engine2 = create_test_engine("test_engine_2", "engine2", 8081)
     
     test_state.engines = {
         "test_engine_1": engine1,
@@ -98,41 +85,8 @@ def test_some_engines_connected():
     
     # Create state with engines
     test_state = State()
-    
-    # Add test engines
-    engine1 = EngineState(
-        container_id="test_engine_1",
-        container_name="engine1",
-        host="127.0.0.1",
-        port=8080,
-        labels={},
-        forwarded=False,
-        first_seen=datetime.now(timezone.utc),
-        last_seen=datetime.now(timezone.utc),
-        streams=[],
-        health_status="healthy",
-        last_health_check=None,
-        last_stream_usage=datetime.now(timezone.utc),
-        last_cache_cleanup=None,
-        cache_size_bytes=None
-    )
-    
-    engine2 = EngineState(
-        container_id="test_engine_2",
-        container_name="engine2",
-        host="127.0.0.1",
-        port=8081,
-        labels={},
-        forwarded=False,
-        first_seen=datetime.now(timezone.utc),
-        last_seen=datetime.now(timezone.utc),
-        streams=[],
-        health_status="healthy",
-        last_health_check=None,
-        last_stream_usage=datetime.now(timezone.utc),
-        last_cache_cleanup=None,
-        cache_size_bytes=None
-    )
+    engine1 = create_test_engine("test_engine_1", "engine1", 8080)
+    engine2 = create_test_engine("test_engine_2", "engine2", 8081)
     
     test_state.engines = {
         "test_engine_1": engine1,
@@ -159,41 +113,8 @@ def test_no_engines_connected():
     
     # Create state with engines
     test_state = State()
-    
-    # Add test engines
-    engine1 = EngineState(
-        container_id="test_engine_1",
-        container_name="engine1",
-        host="127.0.0.1",
-        port=8080,
-        labels={},
-        forwarded=False,
-        first_seen=datetime.now(timezone.utc),
-        last_seen=datetime.now(timezone.utc),
-        streams=[],
-        health_status="healthy",
-        last_health_check=None,
-        last_stream_usage=datetime.now(timezone.utc),
-        last_cache_cleanup=None,
-        cache_size_bytes=None
-    )
-    
-    engine2 = EngineState(
-        container_id="test_engine_2",
-        container_name="engine2",
-        host="127.0.0.1",
-        port=8081,
-        labels={},
-        forwarded=False,
-        first_seen=datetime.now(timezone.utc),
-        last_seen=datetime.now(timezone.utc),
-        streams=[],
-        health_status="healthy",
-        last_health_check=None,
-        last_stream_usage=datetime.now(timezone.utc),
-        last_cache_cleanup=None,
-        cache_size_bytes=None
-    )
+    engine1 = create_test_engine("test_engine_1", "engine1", 8080)
+    engine2 = create_test_engine("test_engine_2", "engine2", 8081)
     
     test_state.engines = {
         "test_engine_1": engine1,
@@ -218,41 +139,8 @@ def test_check_with_exceptions():
     
     # Create state with engines
     test_state = State()
-    
-    # Add test engines
-    engine1 = EngineState(
-        container_id="test_engine_1",
-        container_name="engine1",
-        host="127.0.0.1",
-        port=8080,
-        labels={},
-        forwarded=False,
-        first_seen=datetime.now(timezone.utc),
-        last_seen=datetime.now(timezone.utc),
-        streams=[],
-        health_status="healthy",
-        last_health_check=None,
-        last_stream_usage=datetime.now(timezone.utc),
-        last_cache_cleanup=None,
-        cache_size_bytes=None
-    )
-    
-    engine2 = EngineState(
-        container_id="test_engine_2",
-        container_name="engine2",
-        host="127.0.0.1",
-        port=8081,
-        labels={},
-        forwarded=False,
-        first_seen=datetime.now(timezone.utc),
-        last_seen=datetime.now(timezone.utc),
-        streams=[],
-        health_status="healthy",
-        last_health_check=None,
-        last_stream_usage=datetime.now(timezone.utc),
-        last_cache_cleanup=None,
-        cache_size_bytes=None
-    )
+    engine1 = create_test_engine("test_engine_1", "engine1", 8080)
+    engine2 = create_test_engine("test_engine_2", "engine2", 8081)
     
     test_state.engines = {
         "test_engine_1": engine1,
