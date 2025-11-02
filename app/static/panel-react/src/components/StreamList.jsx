@@ -61,12 +61,13 @@ function StreamCard({ stream, isSelected, onSelect }) {
                 {formatTime(stream.started_at)}
               </Typography>
             </Grid>
+            {/* AceStream API returns speeds in KB/s, convert to B/s for formatter */}
             <Grid item xs={4}>
               <Typography variant="caption" color="text.secondary">
                 Download
               </Typography>
               <Typography variant="body2" sx={{ color: 'secondary.main', fontWeight: 600 }}>
-                {formatBytesPerSecond(stream.speed_down)}
+                {formatBytesPerSecond((stream.speed_down || 0) * 1024)}
               </Typography>
             </Grid>
             <Grid item xs={4}>
@@ -74,7 +75,7 @@ function StreamCard({ stream, isSelected, onSelect }) {
                 Upload
               </Typography>
               <Typography variant="body2" sx={{ color: 'error.main', fontWeight: 600 }}>
-                {formatBytesPerSecond(stream.speed_up)}
+                {formatBytesPerSecond((stream.speed_up || 0) * 1024)}
               </Typography>
             </Grid>
             <Grid item xs={4}>
