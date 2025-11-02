@@ -135,16 +135,16 @@ function App() {
             </Grid>
           )}
 
-          {/* Engines */}
-          <Grid item xs={12} md={selectedStream ? 6 : 12}>
+          {/* Engines - Left Side */}
+          <Grid item xs={12} md={6}>
             <EngineList
               engines={engines}
               onDeleteEngine={handleDeleteEngine}
             />
           </Grid>
 
-          {/* Streams */}
-          <Grid item xs={12} md={selectedStream ? 6 : 12}>
+          {/* Streams - Right Side */}
+          <Grid item xs={12} md={6}>
             <StreamList
               streams={streams}
               selectedStream={selectedStream}
