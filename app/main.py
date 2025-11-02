@@ -22,7 +22,7 @@ from .services.state import state, load_state_from_db, cleanup_on_shutdown
 from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot
 from .services.collector import collector
 from .services.monitor import docker_monitor
-from .services.metrics import metrics_app, orch_events_started, orch_events_ended, orch_streams_active, orch_provision_total
+from .services.metrics import update_custom_metrics
 from .services.auth import require_api_key
 from .services.db import engine
 from .models.db_models import Base
@@ -106,19 +106,30 @@ if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
 else:
     logger.warning(f"Panel directory {panel_dir} not found. /panel endpoint will not be available.")
 
-app.mount("/metrics", metrics_app)
+# Prometheus metrics endpoint with custom aggregated metrics
+from starlette.responses import Response
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+@app.get("/metrics")
+def get_metrics():
+    """
+    Prometheus metrics endpoint with custom aggregated metrics.
+    Updates aggregated metrics before serving Prometheus format.
+    """
+    # Update custom metrics with current aggregated data
+    update_custom_metrics()
+    
+    # Generate and return Prometheus metrics
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 # Provisioning
 @app.post("/provision", dependencies=[Depends(require_api_key)])
 def provision(req: StartRequest):
     result = start_container(req)
-    orch_provision_total.labels("generic").inc()
     return result
 
 @app.post("/provision/acestream", response_model=AceProvisionResponse, dependencies=[Depends(require_api_key)])
 def provision_acestream(req: AceProvisionRequest):
-    orch_provision_total.labels("acestream").inc()
-    
     # Check provisioning status before attempting
     from .services.circuit_breaker import circuit_breaker_manager
     
@@ -247,13 +258,11 @@ def get_container(container_id: str):
 # Events
 @app.post("/events/stream_started", response_model=StreamState, dependencies=[Depends(require_api_key)])
 def ev_stream_started(evt: StreamStartedEvent):
-    orch_events_started.inc(); orch_streams_active.inc()
     return state.on_stream_started(evt)
 
 @app.post("/events/stream_ended", dependencies=[Depends(require_api_key)])
 def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
     st = state.on_stream_ended(evt)
-    if st: orch_events_ended.inc(); orch_streams_active.dec()
     if cfg.AUTO_DELETE and st:
         def _auto():
             cid = st.container_id
