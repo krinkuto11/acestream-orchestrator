@@ -51,15 +51,15 @@ def update_custom_metrics():
     total_peers = 0
     
     for stream in streams:
-        if stream.uploaded:
+        if stream.uploaded is not None:
             total_uploaded += stream.uploaded
-        if stream.downloaded:
+        if stream.downloaded is not None:
             total_downloaded += stream.downloaded
-        if stream.speed_up:
+        if stream.speed_up is not None:
             total_speed_up += stream.speed_up
-        if stream.speed_down:
+        if stream.speed_down is not None:
             total_speed_down += stream.speed_down
-        if stream.peers:
+        if stream.peers is not None:
             total_peers += stream.peers
     
     # Convert speeds from bytes/s to MB/s
