@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from .state import state
 from ..models.schemas import StreamStatSnapshot, StreamEndedEvent
 from ..core.config import cfg
-from .metrics import orch_stale_streams_detected
+from .metrics import orch_stale_streams_detected, on_stream_stat_update
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,9 @@ class Collector:
                 status=payload.get("status"),
             )
             state.append_stat(stream_id, snap)
+            
+            # Update cumulative byte metrics
+            on_stream_stat_update(stream_id, snap.uploaded, snap.downloaded)
         except Exception:
             return
 

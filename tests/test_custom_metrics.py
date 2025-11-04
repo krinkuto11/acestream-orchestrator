@@ -11,6 +11,11 @@ import os
 # Add app to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+# Initialize database
+from app.models.db_models import Base
+from app.services.db import engine
+Base.metadata.create_all(bind=engine)
+
 def test_metrics_function():
     """Test that update_custom_metrics function works correctly."""
     from app.services.metrics import update_custom_metrics
@@ -51,7 +56,7 @@ def test_metrics_function():
 
 def test_metrics_with_mock_data():
     """Test metrics calculation with mock stream data."""
-    from app.services.metrics import update_custom_metrics
+    from app.services.metrics import update_custom_metrics, on_stream_stat_update
     from app.services.metrics import (
         orch_total_uploaded_bytes,
         orch_total_downloaded_bytes,
@@ -94,6 +99,9 @@ def test_metrics_with_mock_data():
         status="active"
     )
     state.append_stat(stream_id, snap)
+    
+    # Update cumulative metrics (simulating what collector does)
+    on_stream_stat_update(stream_id, snap.uploaded, snap.downloaded)
     
     # Update metrics
     update_custom_metrics()
