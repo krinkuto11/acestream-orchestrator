@@ -57,13 +57,17 @@ def test_metrics_with_zero_values():
     snap = StreamStatSnapshot(
         ts=datetime.now(timezone.utc),
         peers=5,
-        speed_down=524288,     # 0.5 MB/s in bytes (downloading)
+        speed_down=512,        # 0.5 MB/s = 512 KB/s (AceStream API returns speeds in KB/s)
         speed_up=0,            # ZERO upload speed (not uploading)
         downloaded=10485760,   # 10 MB downloaded
         uploaded=0,            # ZERO bytes uploaded
         status="active"
     )
     state.append_stat(stream_id, snap)
+    
+    # Update cumulative byte metrics (simulating what collector does)
+    from app.services.metrics import on_stream_stat_update
+    on_stream_stat_update(stream_id, snap.uploaded, snap.downloaded)
     
     # Update metrics
     update_custom_metrics()
@@ -77,8 +81,8 @@ def test_metrics_with_zero_values():
     assert orch_total_uploaded_bytes._value.get() == 0, "Should include 0 uploaded bytes (not skip it!)"
     assert orch_total_upload_speed_mbps._value.get() == 0.0, "Should include 0 upload speed (not skip it!)"
     
-    # Download speed should be calculated correctly
-    expected_download_speed = round(524288 / (1024 * 1024), 2)  # ~0.5 MB/s
+    # Download speed should be calculated correctly (512 KB/s = 0.5 MB/s)
+    expected_download_speed = 0.5  # 0.5 MB/s
     assert orch_total_download_speed_mbps._value.get() == expected_download_speed, \
         f"Should calculate download speed correctly: expected {expected_download_speed}, got {orch_total_download_speed_mbps._value.get()}"
     
@@ -89,7 +93,7 @@ def test_metrics_with_zero_values():
 
 def test_metrics_with_multiple_streams_mixed_zeros():
     """Test metrics aggregation with multiple streams having mixed zero/non-zero values."""
-    from app.services.metrics import update_custom_metrics
+    from app.services.metrics import update_custom_metrics, on_stream_stat_update
     from app.services.metrics import (
         orch_total_uploaded_bytes,
         orch_total_downloaded_bytes,
@@ -128,13 +132,14 @@ def test_metrics_with_multiple_streams_mixed_zeros():
     snap1 = StreamStatSnapshot(
         ts=datetime.now(timezone.utc),
         peers=3,
-        speed_down=1048576,    # 1 MB/s
-        speed_up=524288,       # 0.5 MB/s
+        speed_down=1024,       # 1 MB/s = 1024 KB/s (AceStream API returns speeds in KB/s)
+        speed_up=512,          # 0.5 MB/s = 512 KB/s (AceStream API returns speeds in KB/s)
         downloaded=5242880,    # 5 MB
         uploaded=2621440,      # 2.5 MB
         status="active"
     )
     state.append_stat(stream_id1, snap1)
+    on_stream_stat_update(stream_id1, snap1.uploaded, snap1.downloaded)
     
     # Stream 2: Has ZERO upload (but should still be counted!)
     evt2 = StreamStartedEvent(
@@ -154,13 +159,14 @@ def test_metrics_with_multiple_streams_mixed_zeros():
     snap2 = StreamStatSnapshot(
         ts=datetime.now(timezone.utc),
         peers=0,               # ZERO peers (leecher only)
-        speed_down=2097152,    # 2 MB/s
+        speed_down=2048,       # 2 MB/s = 2048 KB/s (AceStream API returns speeds in KB/s)
         speed_up=0,            # ZERO upload
         downloaded=10485760,   # 10 MB
         uploaded=0,            # ZERO uploaded
         status="active"
     )
     state.append_stat(stream_id2, snap2)
+    on_stream_stat_update(stream_id2, snap2.uploaded, snap2.downloaded)
     
     # Update metrics
     update_custom_metrics()
@@ -177,9 +183,9 @@ def test_metrics_with_multiple_streams_mixed_zeros():
     # Uploaded: 2.5MB + 0MB = 2.5MB (zero should be included!)
     assert orch_total_uploaded_bytes._value.get() == 2621440, "Should aggregate uploaded bytes including zeros"
     
-    # Speed calculations
-    expected_download_speed = round((1048576 + 2097152) / (1024 * 1024), 2)  # ~3.0 MB/s
-    expected_upload_speed = round((524288 + 0) / (1024 * 1024), 2)  # ~0.5 MB/s
+    # Speed calculations (1024 KB/s + 2048 KB/s = 3.0 MB/s, 512 KB/s + 0 KB/s = 0.5 MB/s)
+    expected_download_speed = 3.0  # 3.0 MB/s
+    expected_upload_speed = 0.5    # 0.5 MB/s
     
     assert orch_total_download_speed_mbps._value.get() == expected_download_speed, \
         f"Should aggregate download speeds: expected {expected_download_speed}, got {orch_total_download_speed_mbps._value.get()}"
