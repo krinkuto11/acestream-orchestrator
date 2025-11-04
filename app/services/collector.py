@@ -64,11 +64,18 @@ class Collector:
                     return
             
             payload = data.get("response") or {}
+            # Handle both snake_case and camelCase field names from AceStream API
+            # Some engine versions return speedDown/speedUp, others return speed_down/speed_up
+            # Use explicit None check to preserve 0 values (0 is valid speed)
+            speed_down_snake = payload.get("speed_down")
+            speed_down = speed_down_snake if speed_down_snake is not None else payload.get("speedDown")
+            speed_up_snake = payload.get("speed_up")
+            speed_up = speed_up_snake if speed_up_snake is not None else payload.get("speedUp")
             snap = StreamStatSnapshot(
                 ts=datetime.now(timezone.utc),
                 peers=payload.get("peers"),
-                speed_down=payload.get("speed_down"),
-                speed_up=payload.get("speed_up"),
+                speed_down=speed_down,
+                speed_up=speed_up,
                 downloaded=payload.get("downloaded"),
                 uploaded=payload.get("uploaded"),
                 status=payload.get("status"),
