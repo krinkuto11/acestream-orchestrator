@@ -110,7 +110,24 @@ def test_metrics_with_mock_data():
     
     print("✅ Custom metrics with mock data tests passed!")
 
+def test_vpn_health_enum_states():
+    """Test that VPN health enum metric accepts all possible states."""
+    from app.services.metrics import orch_vpn_health
+    
+    # Test all possible VPN health states
+    valid_states = ["healthy", "unhealthy", "unknown", "disabled", "starting"]
+    
+    for state in valid_states:
+        try:
+            orch_vpn_health.state(state)
+            print(f"  ✓ VPN health state '{state}' accepted")
+        except ValueError as e:
+            raise AssertionError(f"VPN health state '{state}' should be valid but got error: {e}")
+    
+    print("✅ VPN health enum states test passed!")
+
 if __name__ == "__main__":
     test_metrics_function()
     test_metrics_with_mock_data()
+    test_vpn_health_enum_states()
     print("\n✅ All custom metrics tests passed!")

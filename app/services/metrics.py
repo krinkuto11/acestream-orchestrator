@@ -13,7 +13,7 @@ orch_total_streams = Gauge("orch_total_streams", "Current number of active strea
 orch_healthy_engines = Gauge("orch_healthy_engines", "Number of healthy engines")
 orch_unhealthy_engines = Gauge("orch_unhealthy_engines", "Number of unhealthy engines")
 orch_used_engines = Gauge("orch_used_engines", "Number of engines currently handling streams")
-orch_vpn_health = Enum("orch_vpn_health", "Current health status of VPN container", states=["healthy", "unhealthy", "unknown", "disabled"])
+orch_vpn_health = Enum("orch_vpn_health", "Current health status of VPN container", states=["healthy", "unhealthy", "unknown", "disabled", "starting"])
 orch_extra_engines = Gauge("orch_extra_engines", "Number of engines beyond MIN_REPLICAS")
 
 metrics_app = make_asgi_app()
