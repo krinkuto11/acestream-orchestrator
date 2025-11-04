@@ -222,8 +222,8 @@ def test_speed_metrics_are_instantaneous():
     snap1 = StreamStatSnapshot(
         ts=datetime.now(timezone.utc),
         peers=5,
-        speed_down=1048576,  # 1 MB/s
-        speed_up=524288,     # 0.5 MB/s
+        speed_down=1024,     # 1 MB/s = 1024 KB/s (AceStream API returns speeds in KB/s)
+        speed_up=512,        # 0.5 MB/s = 512 KB/s (AceStream API returns speeds in KB/s)
         downloaded=1000,
         uploaded=500,
         status="active"
@@ -255,8 +255,8 @@ def test_speed_metrics_are_instantaneous():
     snap2 = StreamStatSnapshot(
         ts=datetime.now(timezone.utc),
         peers=8,
-        speed_down=2097152,  # 2 MB/s
-        speed_up=1048576,    # 1 MB/s
+        speed_down=2048,     # 2 MB/s = 2048 KB/s (AceStream API returns speeds in KB/s)
+        speed_up=1024,       # 1 MB/s = 1024 KB/s (AceStream API returns speeds in KB/s)
         downloaded=3000,
         uploaded=1500,
         status="active"
