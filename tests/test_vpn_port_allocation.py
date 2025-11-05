@@ -92,11 +92,11 @@ def test_vpn_port_reserve_and_free():
                         port2 = alloc.alloc_gluetun_port('gluetun')
                         assert port2 == 19002
                         
-                        # Allocate another - should wrap around and get 19000 now
+                        # Allocate another - continues sequentially
                         port3 = alloc.alloc_gluetun_port('gluetun')
                         assert port3 == 19003
                         
-                        # Continue allocating - will eventually wrap and use freed ports
+                        # Continue allocating - allocation continues sequentially and will wrap when range is exhausted
                         port4 = alloc.alloc_gluetun_port('gluetun')
                         assert port4 == 19004
 

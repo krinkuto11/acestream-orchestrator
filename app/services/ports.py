@@ -30,14 +30,25 @@ class PortAllocator:
     
     def _init_vpn_port_ranges(self):
         """Initialize VPN-specific port ranges for redundant mode."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # Set up port ranges for each VPN if configured
         if cfg.GLUETUN_CONTAINER_NAME and cfg.GLUETUN_PORT_RANGE_1:
-            min_port, max_port = self._parse(cfg.GLUETUN_PORT_RANGE_1)
-            self._vpn_port_ranges[cfg.GLUETUN_CONTAINER_NAME] = (min_port, max_port, min_port, set())
+            try:
+                min_port, max_port = self._parse(cfg.GLUETUN_PORT_RANGE_1)
+                self._vpn_port_ranges[cfg.GLUETUN_CONTAINER_NAME] = (min_port, max_port, min_port, set())
+                logger.info(f"VPN port range for {cfg.GLUETUN_CONTAINER_NAME}: {min_port}-{max_port}")
+            except (ValueError, AttributeError) as e:
+                logger.error(f"Invalid GLUETUN_PORT_RANGE_1 format '{cfg.GLUETUN_PORT_RANGE_1}': {e}. Expected format: 'min-max'")
         
         if cfg.GLUETUN_CONTAINER_NAME_2 and cfg.GLUETUN_PORT_RANGE_2:
-            min_port, max_port = self._parse(cfg.GLUETUN_PORT_RANGE_2)
-            self._vpn_port_ranges[cfg.GLUETUN_CONTAINER_NAME_2] = (min_port, max_port, min_port, set())
+            try:
+                min_port, max_port = self._parse(cfg.GLUETUN_PORT_RANGE_2)
+                self._vpn_port_ranges[cfg.GLUETUN_CONTAINER_NAME_2] = (min_port, max_port, min_port, set())
+                logger.info(f"VPN port range for {cfg.GLUETUN_CONTAINER_NAME_2}: {min_port}-{max_port}")
+            except (ValueError, AttributeError) as e:
+                logger.error(f"Invalid GLUETUN_PORT_RANGE_2 format '{cfg.GLUETUN_PORT_RANGE_2}': {e}. Expected format: 'min-max'")
 
     def _next_in(self, cur: int, lo: int, hi: int, used: set[int]) -> int:
         p = cur
