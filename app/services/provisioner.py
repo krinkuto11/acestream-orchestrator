@@ -14,6 +14,7 @@ ACESTREAM_LABEL_HTTPS = "acestream.https_port"
 HOST_LABEL_HTTP = "host.http_port"
 HOST_LABEL_HTTPS = "host.https_port"
 FORWARDED_LABEL = "acestream.forwarded"
+VPN_CONTAINER_LABEL = "acestream.vpn_container"
 
 class StartRequest(BaseModel):
     image: str | None = None
@@ -137,7 +138,9 @@ def _release_ports_from_labels(labels: dict):
     # to match the reserve behavior and avoid double-counting
     if cfg.GLUETUN_CONTAINER_NAME:
         try:
-            hp = labels.get(HOST_LABEL_HTTP); alloc.free_gluetun_port(int(hp) if hp else None)
+            hp = labels.get(HOST_LABEL_HTTP)
+            vpn_container = labels.get(VPN_CONTAINER_LABEL)
+            alloc.free_gluetun_port(int(hp) if hp else None, vpn_container)
         except Exception: pass
 
 def clear_acestream_cache(container_id: str) -> tuple[bool, int]:
@@ -419,14 +422,14 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         host_http = req.host_port or user_http_port  # Use same port for host binding
         # Reserve this port to avoid conflicts
         if cfg.GLUETUN_CONTAINER_NAME:
-            alloc.reserve_gluetun_port(c_http)
+            alloc.reserve_gluetun_port(c_http, vpn_container)
         else:
             alloc.reserve_http(c_http)
     else:
         # No user http port - use orchestrator allocation
         if cfg.GLUETUN_CONTAINER_NAME:
-            # When using Gluetun, allocate from the Gluetun port range
-            host_http = alloc.alloc_gluetun_port()
+            # When using Gluetun, allocate from the VPN-specific port range
+            host_http = alloc.alloc_gluetun_port(vpn_container)
             c_http = host_http  # Same port for container and host
         else:
             # Normal allocation
@@ -537,6 +540,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
               ACESTREAM_LABEL_HTTP: str(c_http),
               ACESTREAM_LABEL_HTTPS: str(c_https),
               HOST_LABEL_HTTP: str(host_http)}
+    
+    # Add VPN container label if using VPN
+    if vpn_container:
+        labels[VPN_CONTAINER_LABEL] = vpn_container
     
     # Add forwarded label if this is the forwarded engine
     if is_forwarded:

@@ -105,6 +105,9 @@ services:
       - GLUETUN_API_PORT=8001
       # Port range must cover both VPN port ranges
       - PORT_RANGE_HOST=19000-19999
+      # VPN-specific port ranges (must match the port mappings above)
+      - GLUETUN_PORT_RANGE_1=19000-19499  # Port range for gluetun1
+      - GLUETUN_PORT_RANGE_2=19500-19999  # Port range for gluetun2
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
