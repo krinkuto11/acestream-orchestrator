@@ -437,34 +437,57 @@ class State:
                 engine.last_health_check = self.now()
     
     def set_forwarded_engine(self, container_id: str):
-        """Mark an engine as the forwarded engine and clear forwarded flag from others."""
+        """Mark an engine as the forwarded engine and clear forwarded flag from others.
+        
+        In redundant VPN mode, only clears forwarded flag from engines on the same VPN.
+        In single VPN mode, clears forwarded flag from all engines.
+        """
         with self._lock:
-            # Clear forwarded flag from all engines
+            # Get the target engine first to determine its VPN
+            target_engine = self.engines.get(container_id)
+            if not target_engine:
+                logger.warning(f"Cannot set forwarded flag: engine {container_id[:12]} not found")
+                return
+            
+            target_vpn = target_engine.vpn_container
+            
+            # Determine if we're in redundant mode
+            from ..core.config import cfg
+            is_redundant_mode = (cfg.VPN_MODE == 'redundant' and 
+                               cfg.GLUETUN_CONTAINER_NAME and 
+                               cfg.GLUETUN_CONTAINER_NAME_2)
+            
+            # Clear forwarded flag from engines
             for engine in self.engines.values():
                 if engine.forwarded:
-                    engine.forwarded = False
-                    # Update database
-                    with SessionLocal() as s:
-                        s.merge(EngineRow(engine_key=engine.container_id, container_id=engine.container_id,
-                                        container_name=engine.container_name, host=engine.host, port=engine.port,
-                                        labels=engine.labels, forwarded=False, first_seen=engine.first_seen,
-                                        last_seen=engine.last_seen))
-                        s.commit()
+                    # In redundant mode, only clear if on the same VPN
+                    # In single mode, clear all forwarded engines
+                    should_clear = (not is_redundant_mode or engine.vpn_container == target_vpn)
+                    
+                    if should_clear:
+                        engine.forwarded = False
+                        # Update database
+                        with SessionLocal() as s:
+                            s.merge(EngineRow(engine_key=engine.container_id, container_id=engine.container_id,
+                                            container_name=engine.container_name, host=engine.host, port=engine.port,
+                                            labels=engine.labels, forwarded=False, first_seen=engine.first_seen,
+                                            last_seen=engine.last_seen, vpn_container=engine.vpn_container))
+                            s.commit()
             
             # Set forwarded flag on the specified engine
-            engine = self.engines.get(container_id)
-            if engine:
-                engine.forwarded = True
-                # Update database
-                with SessionLocal() as s:
-                    s.merge(EngineRow(engine_key=engine.container_id, container_id=engine.container_id,
-                                    container_name=engine.container_name, host=engine.host, port=engine.port,
-                                    labels=engine.labels, forwarded=True, first_seen=engine.first_seen,
-                                    last_seen=engine.last_seen))
-                    s.commit()
-                logger.info(f"Engine {container_id[:12]} is now the forwarded engine")
+            target_engine.forwarded = True
+            # Update database
+            with SessionLocal() as s:
+                s.merge(EngineRow(engine_key=target_engine.container_id, container_id=target_engine.container_id,
+                                container_name=target_engine.container_name, host=target_engine.host, port=target_engine.port,
+                                labels=target_engine.labels, forwarded=True, first_seen=target_engine.first_seen,
+                                last_seen=target_engine.last_seen, vpn_container=target_engine.vpn_container))
+                s.commit()
+            
+            if is_redundant_mode and target_vpn:
+                logger.info(f"Engine {container_id[:12]} is now the forwarded engine for VPN '{target_vpn}'")
             else:
-                logger.warning(f"Cannot set forwarded flag: engine {container_id[:12]} not found")
+                logger.info(f"Engine {container_id[:12]} is now the forwarded engine")
     
     def get_forwarded_engine(self) -> Optional[EngineState]:
         """Get the engine marked as forwarded, if any."""
