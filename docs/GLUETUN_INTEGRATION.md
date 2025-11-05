@@ -2,6 +2,8 @@
 
 The AceStream Orchestrator can integrate with [Gluetun](https://github.com/qdm12/gluetun) to route all AceStream engines through a VPN connection.
 
+**Note:** For detailed port configuration information, see [GLUETUN_PORT_CONFIGURATION.md](GLUETUN_PORT_CONFIGURATION.md).
+
 ## Overview
 
 When Gluetun integration is enabled:
