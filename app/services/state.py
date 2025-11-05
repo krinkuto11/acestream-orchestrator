@@ -173,10 +173,12 @@ class State:
     def remove_engine(self, container_id: str) -> Optional[EngineState]:
         """Remove an engine from the state and return it if it existed."""
         was_forwarded = False
+        removed_vpn_container = None
         with self._lock:
             removed_engine = self.engines.pop(container_id, None)
             if removed_engine:
                 was_forwarded = removed_engine.forwarded
+                removed_vpn_container = removed_engine.vpn_container
                 # Also remove any associated streams that are still active
                 streams_to_remove = [s_id for s_id, stream in self.streams.items() 
                                    if stream.container_id == container_id and stream.status != "ended"]
@@ -202,11 +204,24 @@ class State:
         if was_forwarded:
             from ..core.config import cfg
             if cfg.GLUETUN_CONTAINER_NAME and self.engines:
-                # Find the first available engine to promote
+                # In redundant mode, find an engine from the same VPN to promote
+                # In single mode, promote any available engine
+                is_redundant_mode = (cfg.VPN_MODE == 'redundant' and 
+                                   cfg.GLUETUN_CONTAINER_NAME and 
+                                   cfg.GLUETUN_CONTAINER_NAME_2)
+                
                 with self._lock:
                     for engine_id, engine in self.engines.items():
-                        if not engine.forwarded:
-                            logger.info(f"Forwarded engine removed, promoting {engine_id[:12]} to forwarded")
+                        # In redundant mode, only promote engines from the same VPN
+                        # In single mode, promote any non-forwarded engine
+                        should_promote = (not engine.forwarded and 
+                                        (not is_redundant_mode or engine.vpn_container == removed_vpn_container))
+                        
+                        if should_promote:
+                            if is_redundant_mode and removed_vpn_container:
+                                logger.info(f"Forwarded engine removed from VPN '{removed_vpn_container}', promoting {engine_id[:12]} to forwarded")
+                            else:
+                                logger.info(f"Forwarded engine removed, promoting {engine_id[:12]} to forwarded")
                             self.set_forwarded_engine(engine_id)
                             break
         

@@ -242,6 +242,74 @@ def test_single_mode_clears_all_forwarded():
         assert state.engines["engine2"].forwarded is True
 
 
+def test_redundant_mode_remove_forwarded_engine_promotes_same_vpn():
+    """Test that removing a forwarded engine promotes another engine from the same VPN."""
+    import unittest.mock as mock
+    
+    with mock.patch('app.services.state.SessionLocal'), \
+         mock.patch('app.core.config.cfg') as mock_cfg:
+        # Configure redundant mode
+        mock_cfg.VPN_MODE = 'redundant'
+        mock_cfg.GLUETUN_CONTAINER_NAME = 'gluetun'
+        mock_cfg.GLUETUN_CONTAINER_NAME_2 = 'gluetun_2'
+        
+        state = State()
+        state.clear_state()
+        
+        # Add engines for both VPNs
+        engine1_vpn1 = EngineState(
+            container_id="engine1_vpn1",
+            container_name="engine-1-vpn1",
+            host="gluetun",
+            port=19000,
+            forwarded=False,
+            vpn_container="gluetun",
+            first_seen=datetime.now(timezone.utc),
+            last_seen=datetime.now(timezone.utc)
+        )
+        engine2_vpn1 = EngineState(
+            container_id="engine2_vpn1",
+            container_name="engine-2-vpn1",
+            host="gluetun",
+            port=19001,
+            forwarded=False,
+            vpn_container="gluetun",
+            first_seen=datetime.now(timezone.utc),
+            last_seen=datetime.now(timezone.utc)
+        )
+        engine1_vpn2 = EngineState(
+            container_id="engine1_vpn2",
+            container_name="engine-1-vpn2",
+            host="gluetun_2",
+            port=19002,
+            forwarded=False,
+            vpn_container="gluetun_2",
+            first_seen=datetime.now(timezone.utc),
+            last_seen=datetime.now(timezone.utc)
+        )
+        
+        state.engines["engine1_vpn1"] = engine1_vpn1
+        state.engines["engine2_vpn1"] = engine2_vpn1
+        state.engines["engine1_vpn2"] = engine1_vpn2
+        
+        # Set forwarded engines for both VPNs
+        state.set_forwarded_engine("engine1_vpn1")
+        state.set_forwarded_engine("engine1_vpn2")
+        
+        # Both should be forwarded
+        assert state.engines["engine1_vpn1"].forwarded is True
+        assert state.engines["engine1_vpn2"].forwarded is True
+        
+        # Remove VPN1's forwarded engine
+        state.remove_engine("engine1_vpn1")
+        
+        # VPN1 should have promoted engine2_vpn1
+        # VPN2 should still have engine1_vpn2 as forwarded
+        assert "engine1_vpn1" not in state.engines  # Removed
+        assert state.engines["engine2_vpn1"].forwarded is True  # Promoted from same VPN
+        assert state.engines["engine1_vpn2"].forwarded is True  # Unchanged
+
+
 if __name__ == "__main__":
     if HAS_PYTEST:
         pytest.main([__file__, "-v"])
@@ -260,6 +328,9 @@ if __name__ == "__main__":
             
             test_single_mode_clears_all_forwarded()
             print("✅ test_single_mode_clears_all_forwarded passed")
+            
+            test_redundant_mode_remove_forwarded_engine_promotes_same_vpn()
+            print("✅ test_redundant_mode_remove_forwarded_engine_promotes_same_vpn passed")
             
             print("\n" + "=" * 60)
             print("✅ ALL TESTS PASSED")
