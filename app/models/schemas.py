@@ -44,6 +44,7 @@ class EngineState(BaseModel):
     last_stream_usage: Optional[datetime] = None
     last_cache_cleanup: Optional[datetime] = None
     cache_size_bytes: Optional[int] = None
+    vpn_container: Optional[str] = None  # VPN container name this engine is assigned to
 
 class StreamState(BaseModel):
     id: str
