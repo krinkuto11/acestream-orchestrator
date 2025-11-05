@@ -82,19 +82,21 @@ def test_multiple_forwarded_engines():
         state.clear_state()
         
         # Add multiple engines with different VPN assignments
-        engines = [
-            EngineState(
-                container_id=f"engine{i}",
-                container_name=f"engine-{i}",
-                host=f"gluetun{1 if i % 2 == 0 else 2}",
-                port=19000 + i,
-                forwarded=(i < 2),  # First two are forwarded
-                vpn_container=f"gluetun{1 if i % 2 == 0 else 2}",
-                first_seen=datetime.now(timezone.utc),
-                last_seen=datetime.now(timezone.utc)
+        engines = []
+        for i in range(4):
+            vpn_num = 1 if i % 2 == 0 else 2
+            engines.append(
+                EngineState(
+                    container_id=f"engine{i}",
+                    container_name=f"engine-{i}",
+                    host=f"gluetun{vpn_num}",
+                    port=19000 + i,
+                    forwarded=(i < 2),  # First two are forwarded
+                    vpn_container=f"gluetun{vpn_num}",
+                    first_seen=datetime.now(timezone.utc),
+                    last_seen=datetime.now(timezone.utc)
+                )
             )
-            for i in range(4)
-        ]
         
         for engine in engines:
             state.engines[engine.container_id] = engine
