@@ -316,33 +316,53 @@ def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
 # Read APIs
 @app.get("/engines", response_model=List[EngineState])
 def get_engines():
-    """Get all engines with optional Docker verification."""
+    """Get all engines with Docker verification and VPN health filtering."""
     engines = state.list_engines()
     
     # For better reliability, we can optionally verify against Docker
     # but we don't want to break existing functionality
     try:
         from .services.health import list_managed
+        from .services.gluetun import gluetun_monitor
+        
         running_container_ids = {c.id for c in list_managed() if c.status == "running"}
         
-        # Only filter out engines if we have a significant mismatch
-        # This prevents false positives during normal operations
+        # In redundant VPN mode, filter out engines assigned to unhealthy VPNs
+        # This hides engines from the proxy when their VPN is down
+        vpn_health_cache = {}
+        
         verified_engines = []
         for engine in engines:
-            if engine.container_id in running_container_ids:
-                verified_engines.append(engine)
-            else:
-                # For now, just log the mismatch but still include the engine
-                # The monitoring service will handle cleanup
+            # First verify the engine container is running
+            if engine.container_id not in running_container_ids:
                 logger.debug(f"Engine {engine.container_id[:12]} not found in Docker, but keeping in response")
+                # Still include for backwards compatibility - monitoring will handle cleanup
+                verified_engines.append(engine)
+                continue
+            
+            # In redundant mode, filter by VPN health
+            if cfg.VPN_MODE == 'redundant' and engine.vpn_container:
+                # Check VPN health (use cache to avoid repeated checks)
+                if engine.vpn_container not in vpn_health_cache:
+                    vpn_health_cache[engine.vpn_container] = gluetun_monitor.is_healthy(engine.vpn_container)
+                
+                vpn_healthy = vpn_health_cache.get(engine.vpn_container)
+                
+                # Only include engine if its VPN is healthy
+                if vpn_healthy:
+                    verified_engines.append(engine)
+                else:
+                    logger.debug(f"Engine {engine.container_id[:12]} filtered out - VPN '{engine.vpn_container}' is unhealthy")
+            else:
+                # Single VPN mode or no VPN - include the engine
                 verified_engines.append(engine)
         
         # Sort engines by port number for consistent ordering
         verified_engines.sort(key=lambda e: e.port)
         return verified_engines
     except Exception as e:
-        # If Docker verification fails, return state as is but still sorted
-        logger.debug(f"Docker verification failed for /engines endpoint: {e}")
+        # If verification fails, return state as is but still sorted
+        logger.debug(f"Engine verification failed for /engines endpoint: {e}")
         engines.sort(key=lambda e: e.port)
         return engines
 

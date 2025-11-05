@@ -107,6 +107,134 @@ volumes:
 3. **Dependencies**: Orchestrator should wait for Gluetun to be healthy
 4. **Container Name**: Must match `GLUETUN_CONTAINER_NAME` exactly
 
+## Redundant VPN Mode (High Availability)
+
+For mission-critical setups, you can configure two VPN containers for high availability. When one VPN fails, engines continue streaming through the healthy VPN without interruption.
+
+### Configuration
+
+```bash
+# Enable redundant VPN mode
+VPN_MODE=redundant
+
+# Primary VPN container
+GLUETUN_CONTAINER_NAME=gluetun1
+
+# Secondary VPN container
+GLUETUN_CONTAINER_NAME_2=gluetun2
+
+# Force restart unhealthy VPN after timeout
+VPN_UNHEALTHY_RESTART_TIMEOUT_S=60
+```
+
+### Docker Compose for Redundant Mode
+
+```yaml
+services:
+  gluetun1:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun1
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - VPN_SERVICE_PROVIDER=nordvpn
+      - VPN_TYPE=openvpn
+      - OPENVPN_USER=your_username
+      - OPENVPN_PASSWORD=your_password
+      - SERVER_COUNTRIES=United States
+    volumes:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - "19000-19499:19000-19499"  # Half the port range
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://ipinfo.io"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  gluetun2:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun2
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - VPN_SERVICE_PROVIDER=nordvpn
+      - VPN_TYPE=openvpn
+      - OPENVPN_USER=your_username
+      - OPENVPN_PASSWORD=your_password
+      - SERVER_COUNTRIES=Canada  # Use different server for redundancy
+    volumes:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - "19500-19999:19500-19999"  # Other half of port range
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://ipinfo.io"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  orchestrator:
+    build: .
+    env_file: .env
+    environment:
+      - DOCKER_HOST=tcp://docker:2375
+      - VPN_MODE=redundant
+      - GLUETUN_CONTAINER_NAME=gluetun1
+      - GLUETUN_CONTAINER_NAME_2=gluetun2
+    ports:
+      - "8000:8000"
+    depends_on:
+      gluetun1:
+        condition: service_healthy
+      gluetun2:
+        condition: service_healthy
+      docker:
+        condition: service_healthy
+    restart: on-failure
+
+  docker:
+    image: docker:27.3.1-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    ports:
+      - "2375:2375"
+    volumes:
+      - docker-data:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  docker-data:
+```
+
+### How Redundant Mode Works
+
+1. **Engine Distribution**: Engines are distributed evenly across both VPN containers using round-robin assignment
+2. **Health Monitoring**: Each VPN container is monitored independently every 5 seconds
+3. **Failover**: When a VPN becomes unhealthy:
+   - Engines assigned to that VPN are hidden from the proxy (not returned in `/engines` endpoint)
+   - Existing streams continue on healthy VPN's engines
+   - New streams are only assigned to healthy VPN's engines
+4. **Recovery**: When an unhealthy VPN recovers:
+   - Engines assigned to it are restarted to reconnect to the new VPN address
+   - Once engines are ready, they're made available to the proxy again
+5. **Force Restart**: If a VPN is unhealthy for more than 60 seconds, it's automatically restarted via Docker
+
+### Benefits
+
+- **Zero Downtime**: Streams continue without interruption when one VPN fails
+- **Automatic Recovery**: Failed VPN is restarted and engines reconnected automatically
+- **Load Distribution**: Engine load is balanced across both VPNs
+- **Failover Prevention**: Issues with one VPN provider don't affect the entire system
+
 ## How It Works
 
 ### Network Routing
