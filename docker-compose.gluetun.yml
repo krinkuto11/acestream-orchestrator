@@ -8,7 +8,10 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     ports:
+      # AceStream engine ports (must match PORT_RANGE_HOST in .env)
       - "19000-19019:19000-19019"
+      # Gluetun HTTP control server (for port forwarding API and health checks)
+      # Must match GLUETUN_API_PORT in .env (default: 8000, this example uses 8001)
       - "8001:8001"
     environment:
       - PGID=1000
