@@ -2,6 +2,8 @@
 
 The AceStream Orchestrator can integrate with [Gluetun](https://github.com/qdm12/gluetun) to route all AceStream engines through a VPN connection.
 
+**Note:** For detailed port configuration information, see [GLUETUN_PORT_CONFIGURATION.md](GLUETUN_PORT_CONFIGURATION.md).
+
 ## Overview
 
 When Gluetun integration is enabled:
@@ -18,8 +20,10 @@ Add these variables to your `.env` file:
 # Required: Name of your Gluetun container
 GLUETUN_CONTAINER_NAME=gluetun
 
-# Optional: Gluetun API port (default: 8000)
-GLUETUN_API_PORT=8000
+# Required: Gluetun HTTP control server port (must match HTTP_CONTROL_SERVER_ADDRESS in Gluetun)
+# This is the port where Gluetun's HTTP API is accessible
+# Default: 8000, but many examples use 8001
+GLUETUN_API_PORT=8001
 
 # Optional: Health check frequency (default: 5 seconds)
 GLUETUN_HEALTH_CHECK_INTERVAL_S=5
@@ -53,11 +57,16 @@ services:
       - OPENVPN_USER=your_username
       - OPENVPN_PASSWORD=your_password
       - SERVER_COUNTRIES=United States
+      # HTTP control server port - REQUIRED for orchestrator API access
+      # This must match GLUETUN_API_PORT in the orchestrator configuration
+      - HTTP_CONTROL_SERVER_ADDRESS=:8001
     volumes:
       - /dev/net/tun:/dev/net/tun
     ports:
-      # Map AceStream ports through Gluetun
+      # Map AceStream engine ports through Gluetun
       - "19000-19999:19000-19999"
+      # Expose HTTP control server port for API access (port forwarding, health)
+      - "8001:8001"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://ipinfo.io"]
       interval: 30s
@@ -72,6 +81,8 @@ services:
     environment:
       - DOCKER_HOST=tcp://docker:2375
       - GLUETUN_CONTAINER_NAME=gluetun
+      # Must match the HTTP_CONTROL_SERVER_ADDRESS port in Gluetun
+      - GLUETUN_API_PORT=8001
     ports:
       - "8000:8000"
     depends_on:
@@ -107,6 +118,47 @@ volumes:
 3. **Dependencies**: Orchestrator should wait for Gluetun to be healthy
 4. **Container Name**: Must match `GLUETUN_CONTAINER_NAME` exactly
 
+### Required Port Configuration
+
+The Gluetun integration requires two types of ports to be properly configured:
+
+#### 1. HTTP Control Server Port (REQUIRED)
+
+Gluetun's HTTP control server provides the API for:
+- Port forwarding information (`/v1/openvpn/portforwarded`)
+- Public IP information (`/v1/publicip/ip`)
+- Health status checks
+
+**Gluetun Configuration:**
+```yaml
+environment:
+  - HTTP_CONTROL_SERVER_ADDRESS=:8001  # Internal port for HTTP API
+ports:
+  - "8001:8001"  # Expose HTTP control server
+```
+
+**Orchestrator Configuration:**
+```bash
+GLUETUN_API_PORT=8001  # Must match HTTP_CONTROL_SERVER_ADDRESS
+```
+
+**Important:** The orchestrator accesses the Gluetun API using the container name (e.g., `http://gluetun:8001`), so the `GLUETUN_API_PORT` must match the internal port specified in `HTTP_CONTROL_SERVER_ADDRESS`.
+
+#### 2. AceStream Engine Ports (REQUIRED)
+
+These ports are used by the AceStream engines to serve content. The port range should match your `PORT_RANGE_HOST` configuration:
+
+**Gluetun Configuration:**
+```yaml
+ports:
+  - "19000-19999:19000-19999"  # Must match PORT_RANGE_HOST in .env
+```
+
+**Orchestrator Configuration:**
+```bash
+PORT_RANGE_HOST=19000-19999  # Must match Gluetun port mapping
+```
+
 ## Redundant VPN Mode (High Availability)
 
 For mission-critical setups, you can configure two VPN containers for high availability. When one VPN fails, engines continue streaming through the healthy VPN without interruption.
@@ -123,12 +175,27 @@ GLUETUN_CONTAINER_NAME=gluetun1
 # Secondary VPN container
 GLUETUN_CONTAINER_NAME_2=gluetun2
 
+# HTTP control server port (internal port, same for both containers)
+GLUETUN_API_PORT=8001
+
 # Force restart unhealthy VPN after timeout
 VPN_UNHEALTHY_RESTART_TIMEOUT_S=60
+
+# Port range must cover both VPN containers
+PORT_RANGE_HOST=19000-19999
 ```
 
 ### Docker Compose for Redundant Mode
 
+For a complete example, see `docker-compose.gluetun-redundant.yml` in the repository.
+
+Key configuration points for redundant mode:
+
+#### Port Distribution
+
+In redundant mode, the port range is split between two VPN containers:
+
+**Gluetun1 Configuration:**
 ```yaml
 services:
   gluetun1:
@@ -142,10 +209,15 @@ services:
       - OPENVPN_USER=your_username
       - OPENVPN_PASSWORD=your_password
       - SERVER_COUNTRIES=United States
+      # HTTP control server - REQUIRED
+      - HTTP_CONTROL_SERVER_ADDRESS=:8001
     volumes:
       - /dev/net/tun:/dev/net/tun
     ports:
-      - "19000-19499:19000-19499"  # Half the port range
+      # First half of engine port range (19000-19499)
+      - "19000-19499:19000-19499"
+      # HTTP control server API (external port 8001)
+      - "8001:8001"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://ipinfo.io"]
       interval: 30s
@@ -153,7 +225,10 @@ services:
       retries: 3
       start_period: 60s
     restart: unless-stopped
+```
 
+**Gluetun2 Configuration:**
+```yaml
   gluetun2:
     image: qmcgaw/gluetun:latest
     container_name: gluetun2
@@ -164,11 +239,16 @@ services:
       - VPN_TYPE=openvpn
       - OPENVPN_USER=your_username
       - OPENVPN_PASSWORD=your_password
-      - SERVER_COUNTRIES=Canada  # Use different server for redundancy
+      - SERVER_COUNTRIES=Canada  # Different server for redundancy
+      # HTTP control server - same internal port as gluetun1
+      - HTTP_CONTROL_SERVER_ADDRESS=:8001
     volumes:
       - /dev/net/tun:/dev/net/tun
     ports:
-      - "19500-19999:19500-19999"  # Other half of port range
+      # Second half of engine port range (19500-19999)
+      - "19500-19999:19500-19999"
+      # HTTP control server API (external port 8002, internal 8001)
+      - "8002:8001"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://ipinfo.io"]
       interval: 30s
@@ -176,7 +256,10 @@ services:
       retries: 3
       start_period: 60s
     restart: unless-stopped
+```
 
+**Orchestrator Configuration:**
+```yaml
   orchestrator:
     build: .
     env_file: .env
@@ -185,6 +268,10 @@ services:
       - VPN_MODE=redundant
       - GLUETUN_CONTAINER_NAME=gluetun1
       - GLUETUN_CONTAINER_NAME_2=gluetun2
+      # Internal port (same for both Gluetun containers)
+      - GLUETUN_API_PORT=8001
+      # Full port range covering both VPNs
+      - PORT_RANGE_HOST=19000-19999
     ports:
       - "8000:8000"
     depends_on:
@@ -195,25 +282,25 @@ services:
       docker:
         condition: service_healthy
     restart: on-failure
-
-  docker:
-    image: docker:27.3.1-dind
-    privileged: true
-    environment:
-      DOCKER_TLS_CERTDIR: ""
-    ports:
-      - "2375:2375"
-    volumes:
-      - docker-data:/var/lib/docker
-    healthcheck:
-      test: ["CMD", "docker", "info"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-volumes:
-  docker-data:
 ```
+
+**Important Notes for Redundant Mode:**
+
+1. **HTTP Control Server Ports:**
+   - Both Gluetun containers use the same **internal** port (`:8001` in `HTTP_CONTROL_SERVER_ADDRESS`)
+   - They can have different **external** ports (8001 and 8002 in the example)
+   - The orchestrator uses the internal port via container names: `http://gluetun1:8001` and `http://gluetun2:8001`
+   - Set `GLUETUN_API_PORT=8001` (the internal port) in the orchestrator
+
+2. **Engine Port Ranges:**
+   - Split your `PORT_RANGE_HOST` between the two VPN containers
+   - Example: 19000-19499 for VPN1, 19500-19999 for VPN2
+   - The orchestrator automatically distributes engines across both VPNs
+   - Total range in orchestrator must cover both splits: `PORT_RANGE_HOST=19000-19999`
+
+3. **VPN Server Selection:**
+   - Use different server locations for each VPN for true redundancy
+   - If one server/location has issues, the other VPN continues working
 
 ### How Redundant Mode Works
 

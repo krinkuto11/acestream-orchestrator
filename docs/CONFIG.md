@@ -25,7 +25,7 @@ Gluetun VPN Integration:
 - `VPN_MODE=single` VPN mode. Options: `single` (one VPN container), `redundant` (two VPN containers for high availability). Defaults to `single`.
 - `GLUETUN_CONTAINER_NAME=` Name of primary Gluetun VPN container. When set, AceStream engines will route through VPN container(s).
 - `GLUETUN_CONTAINER_NAME_2=` Name of secondary Gluetun VPN container. Required when `VPN_MODE=redundant`. Engines are distributed across both VPNs.
-- `GLUETUN_API_PORT=8000` Gluetun API port for health checks and port forwarding queries.
+- `GLUETUN_API_PORT=8001` Port for Gluetun HTTP control server API. Used for health checks and port forwarding queries. Must match the `HTTP_CONTROL_SERVER_ADDRESS` environment variable in your Gluetun container(s). For redundant mode, both Gluetun containers should use the same internal port (e.g., `:8001`).
 - `GLUETUN_HEALTH_CHECK_INTERVAL_S=5` Frequency of VPN health checks (in seconds). High frequency is recommended for availability.
 - `VPN_RESTART_ENGINES_ON_RECONNECT=true` If `true`, restarts engines assigned to a VPN when it reconnects after a disconnection.
 - `VPN_UNHEALTHY_RESTART_TIMEOUT_S=60` Force restart VPN container after being unhealthy for this many seconds. Defaults to 60.

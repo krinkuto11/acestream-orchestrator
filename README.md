@@ -56,6 +56,8 @@ See [API Documentation](docs/API.md) for details.
 
 - [Configuration](docs/CONFIG.md) - Environment variables
 - [Engine Variants](docs/ENGINE_VARIANTS.md) - Available engine variants and usage
+- [Gluetun Integration](docs/GLUETUN_INTEGRATION.md) - VPN integration guide
+- [Gluetun Port Configuration](docs/GLUETUN_PORT_CONFIGURATION.md) - Detailed port setup guide
 - [API](docs/API.md) - Endpoint reference
 - [Events](docs/EVENTS.md) - Event contracts
 - [Security](docs/SECURITY.md) - Security considerations
