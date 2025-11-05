@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from .state import state
 from ..models.schemas import StreamStatSnapshot, StreamEndedEvent
 from ..core.config import cfg
-from .metrics import orch_stale_streams_detected
+from .metrics import orch_stale_streams_detected, on_stream_stat_update
 
 logger = logging.getLogger(__name__)
 
@@ -64,16 +64,26 @@ class Collector:
                     return
             
             payload = data.get("response") or {}
+            # Handle both snake_case and camelCase field names from AceStream API
+            # Some engine versions return speedDown/speedUp, others return speed_down/speed_up
+            # Use explicit None check to preserve 0 values (0 is valid speed)
+            speed_down_snake = payload.get("speed_down")
+            speed_down = speed_down_snake if speed_down_snake is not None else payload.get("speedDown")
+            speed_up_snake = payload.get("speed_up")
+            speed_up = speed_up_snake if speed_up_snake is not None else payload.get("speedUp")
             snap = StreamStatSnapshot(
                 ts=datetime.now(timezone.utc),
                 peers=payload.get("peers"),
-                speed_down=payload.get("speed_down"),
-                speed_up=payload.get("speed_up"),
+                speed_down=speed_down,
+                speed_up=speed_up,
                 downloaded=payload.get("downloaded"),
                 uploaded=payload.get("uploaded"),
                 status=payload.get("status"),
             )
             state.append_stat(stream_id, snap)
+            
+            # Update cumulative byte metrics
+            on_stream_stat_update(stream_id, snap.uploaded, snap.downloaded)
         except Exception:
             return
 

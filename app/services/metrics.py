@@ -1,4 +1,6 @@
 from prometheus_client import Counter, Gauge, make_asgi_app, Enum
+import threading
+from typing import Dict, Optional
 
 # Stale stream detection metric
 orch_stale_streams_detected = Counter("orch_stale_streams_detected_total", "stale streams detected and auto-ended")
@@ -18,14 +20,88 @@ orch_extra_engines = Gauge("orch_extra_engines", "Number of engines beyond MIN_R
 
 metrics_app = make_asgi_app()
 
+# Cumulative byte tracking across all streams (active and ended)
+# Protected by lock for thread-safety
+_cumulative_lock = threading.Lock()
+_cumulative_uploaded_bytes = 0
+_cumulative_downloaded_bytes = 0
+_stream_last_values: Dict[str, Dict[str, Optional[int]]] = {}  # stream_id -> {uploaded, downloaded}
+
+
+def on_stream_stat_update(stream_id: str, uploaded: Optional[int], downloaded: Optional[int]):
+    """
+    Update cumulative byte totals when new stream stats arrive.
+    Calculates deltas from last known values and adds to cumulative totals.
+    
+    Args:
+        stream_id: Unique stream identifier
+        uploaded: Current total bytes uploaded for this stream
+        downloaded: Current total bytes downloaded for this stream
+    """
+    global _cumulative_uploaded_bytes, _cumulative_downloaded_bytes
+    
+    with _cumulative_lock:
+        # Get or initialize last known values for this stream
+        if stream_id not in _stream_last_values:
+            _stream_last_values[stream_id] = {'uploaded': None, 'downloaded': None}
+        
+        last_values = _stream_last_values[stream_id]
+        
+        # Calculate and add uploaded delta
+        if uploaded is not None:
+            if last_values['uploaded'] is not None:
+                delta = uploaded - last_values['uploaded']
+                if delta > 0:  # Only add positive deltas (handle counter resets gracefully)
+                    _cumulative_uploaded_bytes += delta
+            else:
+                # First time seeing this stream, add the initial value
+                _cumulative_uploaded_bytes += uploaded
+            last_values['uploaded'] = uploaded
+        
+        # Calculate and add downloaded delta
+        if downloaded is not None:
+            if last_values['downloaded'] is not None:
+                delta = downloaded - last_values['downloaded']
+                if delta > 0:  # Only add positive deltas (handle counter resets gracefully)
+                    _cumulative_downloaded_bytes += delta
+            else:
+                # First time seeing this stream, add the initial value
+                _cumulative_downloaded_bytes += downloaded
+            last_values['downloaded'] = downloaded
+
+
+def on_stream_ended(stream_id: str):
+    """
+    Clean up tracking data when a stream ends.
+    The cumulative totals are already updated, so we just remove the tracking entry.
+    
+    Args:
+        stream_id: Unique stream identifier
+    """
+    with _cumulative_lock:
+        # Remove the stream's last known values
+        _stream_last_values.pop(stream_id, None)
+
+
+def reset_cumulative_metrics():
+    """
+    Reset cumulative byte tracking. Used for testing or system resets.
+    """
+    global _cumulative_uploaded_bytes, _cumulative_downloaded_bytes
+    
+    with _cumulative_lock:
+        _cumulative_uploaded_bytes = 0
+        _cumulative_downloaded_bytes = 0
+        _stream_last_values.clear()
+
 
 def update_custom_metrics():
     """
     Update custom Prometheus metrics with aggregated data from all engines.
     
     This function collects data from all engines and updates the following metrics:
-    - orch_total_uploaded_bytes: Total bytes uploaded from all engines
-    - orch_total_downloaded_bytes: Total bytes downloaded from all engines
+    - orch_total_uploaded_bytes: Cumulative bytes uploaded from all engines (all-time total)
+    - orch_total_downloaded_bytes: Cumulative bytes downloaded from all engines (all-time total)
     - orch_total_upload_speed_mbps: Current sum of upload speeds in MB/s
     - orch_total_download_speed_mbps: Current sum of download speeds in MB/s
     - orch_total_peers: Current total peers across all engines
@@ -43,23 +119,21 @@ def update_custom_metrics():
     # Get all active streams with their latest stats
     streams = state.list_streams_with_stats(status="started")
     
-    # Aggregate stats from all streams
-    total_uploaded = 0
-    total_downloaded = 0
+    # Aggregate instantaneous stats from active streams
+    # (speeds and peers are point-in-time values)
+    # Note: AceStream API returns speeds in KB/s, so we need to convert to bytes/s first
     total_speed_up = 0  # bytes/s
     total_speed_down = 0  # bytes/s
     total_peers = 0
     
     for stream in streams:
-        if stream.uploaded:
-            total_uploaded += stream.uploaded
-        if stream.downloaded:
-            total_downloaded += stream.downloaded
-        if stream.speed_up:
-            total_speed_up += stream.speed_up
-        if stream.speed_down:
-            total_speed_down += stream.speed_down
-        if stream.peers:
+        if stream.speed_up is not None:
+            # Convert from KB/s to bytes/s
+            total_speed_up += stream.speed_up * 1024
+        if stream.speed_down is not None:
+            # Convert from KB/s to bytes/s
+            total_speed_down += stream.speed_down * 1024
+        if stream.peers is not None:
             total_peers += stream.peers
     
     # Convert speeds from bytes/s to MB/s
@@ -85,9 +159,14 @@ def update_custom_metrics():
     # Calculate extra engines (beyond minimum)
     extra_engines = max(0, total_engines - cfg.MIN_REPLICAS)
     
+    # Get cumulative byte totals (from all streams, active and ended)
+    with _cumulative_lock:
+        cumulative_uploaded = _cumulative_uploaded_bytes
+        cumulative_downloaded = _cumulative_downloaded_bytes
+    
     # Update all metrics
-    orch_total_uploaded_bytes.set(total_uploaded)
-    orch_total_downloaded_bytes.set(total_downloaded)
+    orch_total_uploaded_bytes.set(cumulative_uploaded)
+    orch_total_downloaded_bytes.set(cumulative_downloaded)
     orch_total_upload_speed_mbps.set(total_upload_speed_mbps)
     orch_total_download_speed_mbps.set(total_download_speed_mbps)
     orch_total_peers.set(total_peers)

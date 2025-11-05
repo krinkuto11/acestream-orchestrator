@@ -92,6 +92,7 @@ class State:
     def on_stream_ended(self, evt: StreamEndedEvent) -> Optional[StreamState]:
         engine_became_idle = False
         container_id_for_cleanup = None
+        stream_id_for_metrics = None
         
         with self._lock:
             st: Optional[StreamState] = None
@@ -103,6 +104,7 @@ class State:
                         st = s; break
             if not st: return None
             st.ended_at = self.now(); st.status = "ended"
+            stream_id_for_metrics = st.id
             
             # Remove the stream from the engine's streams list
             eng = self.engines.get(st.container_id)
@@ -149,6 +151,14 @@ class State:
                         pass
             except Exception as e:
                 logger.warning(f"Failed to clear cache for idle engine {container_id_for_cleanup[:12]}: {e}")
+        
+        # Clean up metrics tracking for ended stream
+        if stream_id_for_metrics:
+            try:
+                from ..services.metrics import on_stream_ended as metrics_stream_ended
+                metrics_stream_ended(stream_id_for_metrics)
+            except Exception as e:
+                logger.warning(f"Failed to clean up metrics for stream {stream_id_for_metrics}: {e}")
         
         return st
 
@@ -317,6 +327,13 @@ class State:
             self.engines.clear()
             self.streams.clear()
             self.stream_stats.clear()
+        
+        # Also clear cumulative metrics tracking
+        try:
+            from ..services.metrics import reset_cumulative_metrics
+            reset_cumulative_metrics()
+        except Exception as e:
+            logger.warning(f"Failed to reset cumulative metrics: {e}")
 
     def clear_database(self):
         """Clear all database state."""
