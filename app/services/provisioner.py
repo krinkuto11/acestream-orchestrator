@@ -452,20 +452,41 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     variant_config = get_variant_config(cfg.ENGINE_VARIANT)
     
     # Determine if this engine should be the forwarded engine
-    # Only one engine should have the forwarded port when using Gluetun
+    # Only one engine should have the forwarded port per VPN when using Gluetun
     is_forwarded = False
     p2p_port = None
     if cfg.GLUETUN_CONTAINER_NAME:
         from .state import state
-        # Check if there's already a forwarded engine
-        if not state.has_forwarded_engine():
-            # This will be the forwarded engine
-            is_forwarded = True
-            from .gluetun import get_forwarded_port_sync
-            p2p_port = get_forwarded_port_sync()
-            logger.info(f"Provisioning new forwarded engine with P2P port {p2p_port}")
+        
+        # In redundant mode, check if this VPN already has a forwarded engine
+        # In single mode, check if any forwarded engine exists
+        if cfg.VPN_MODE == 'redundant' and vpn_container:
+            if not state.has_forwarded_engine_for_vpn(vpn_container):
+                # This VPN doesn't have a forwarded engine yet
+                is_forwarded = True
+                from .gluetun import get_forwarded_port_sync
+                p2p_port = get_forwarded_port_sync(vpn_container)
+                if p2p_port:
+                    logger.info(f"Provisioning new forwarded engine for VPN '{vpn_container}' with P2P port {p2p_port}")
+                else:
+                    logger.warning(f"VPN '{vpn_container}' has no forwarded port available, provisioning non-forwarded engine")
+                    is_forwarded = False
+            else:
+                logger.info(f"Forwarded engine already exists for VPN '{vpn_container}', provisioning non-forwarded engine")
         else:
-            logger.info("Forwarded engine already exists, provisioning non-forwarded engine")
+            # Single VPN mode - only one forwarded engine total
+            if not state.has_forwarded_engine():
+                # This will be the forwarded engine
+                is_forwarded = True
+                from .gluetun import get_forwarded_port_sync
+                p2p_port = get_forwarded_port_sync(vpn_container)
+                if p2p_port:
+                    logger.info(f"Provisioning new forwarded engine with P2P port {p2p_port}")
+                else:
+                    logger.warning("No forwarded port available, provisioning non-forwarded engine")
+                    is_forwarded = False
+            else:
+                logger.info("Forwarded engine already exists, provisioning non-forwarded engine")
     
     # Prepare environment variables and command based on variant type
     env = {**req.env}
