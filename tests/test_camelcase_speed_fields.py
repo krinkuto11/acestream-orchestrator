@@ -193,8 +193,8 @@ def test_metrics_aggregation_with_camel_case():
     snap = StreamStatSnapshot(
         ts=datetime.now(timezone.utc),
         peers=15,
-        speed_down=3145728,  # 3 MB/s in bytes
-        speed_up=1572864,    # 1.5 MB/s in bytes
+        speed_down=3072,     # 3 MB/s = 3072 KB/s (AceStream API returns speeds in KB/s)
+        speed_up=1536,       # 1.5 MB/s = 1536 KB/s (AceStream API returns speeds in KB/s)
         downloaded=31457280,
         uploaded=7864320,
         status="playing"
@@ -207,8 +207,8 @@ def test_metrics_aggregation_with_camel_case():
     # Verify metrics reflect the data
     assert orch_total_peers._value.get() == 15, f"Expected 15 peers, got {orch_total_peers._value.get()}"
     
-    expected_download_speed = round(3145728 / (1024 * 1024), 2)  # 3.0 MB/s
-    expected_upload_speed = round(1572864 / (1024 * 1024), 2)    # 1.5 MB/s
+    expected_download_speed = 3.0  # 3.0 MB/s
+    expected_upload_speed = 1.5    # 1.5 MB/s
     
     actual_download = orch_total_download_speed_mbps._value.get()
     actual_upload = orch_total_upload_speed_mbps._value.get()

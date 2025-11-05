@@ -92,8 +92,8 @@ def test_metrics_with_mock_data():
     snap = StreamStatSnapshot(
         ts=datetime.now(timezone.utc),
         peers=10,
-        speed_down=1048576,  # 1 MB/s in bytes
-        speed_up=524288,     # 0.5 MB/s in bytes
+        speed_down=1024,      # 1 MB/s = 1024 KB/s (AceStream API returns speeds in KB/s)
+        speed_up=512,         # 0.5 MB/s = 512 KB/s (AceStream API returns speeds in KB/s)
         downloaded=10485760,  # 10 MB in bytes
         uploaded=5242880,     # 5 MB in bytes
         status="active"

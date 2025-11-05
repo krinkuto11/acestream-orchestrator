@@ -121,15 +121,18 @@ def update_custom_metrics():
     
     # Aggregate instantaneous stats from active streams
     # (speeds and peers are point-in-time values)
+    # Note: AceStream API returns speeds in KB/s, so we need to convert to bytes/s first
     total_speed_up = 0  # bytes/s
     total_speed_down = 0  # bytes/s
     total_peers = 0
     
     for stream in streams:
         if stream.speed_up is not None:
-            total_speed_up += stream.speed_up
+            # Convert from KB/s to bytes/s
+            total_speed_up += stream.speed_up * 1024
         if stream.speed_down is not None:
-            total_speed_down += stream.speed_down
+            # Convert from KB/s to bytes/s
+            total_speed_down += stream.speed_down * 1024
         if stream.peers is not None:
             total_peers += stream.peers
     
