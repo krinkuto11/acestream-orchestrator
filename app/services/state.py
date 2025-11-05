@@ -62,7 +62,7 @@ class State:
                 eng = EngineState(container_id=key, container_name=container_name, host=evt.engine.host, port=evt.engine.port,
                                   labels=evt.labels or {}, forwarded=False, first_seen=self.now(), last_seen=self.now(), streams=[],
                                   health_status="unknown", last_health_check=None, last_stream_usage=self.now(),
-                                  last_cache_cleanup=None, cache_size_bytes=None)
+                                  last_cache_cleanup=None, cache_size_bytes=None, vpn_container=None)
                 self.engines[key] = eng
             else:
                 eng.host = evt.engine.host; eng.port = evt.engine.port; eng.last_seen = self.now()
@@ -82,7 +82,7 @@ class State:
         with SessionLocal() as s:
             s.merge(EngineRow(engine_key=eng.container_id, container_id=evt.container_id, container_name=container_name,
                               host=eng.host, port=eng.port, labels=eng.labels, forwarded=eng.forwarded, 
-                              first_seen=eng.first_seen, last_seen=eng.last_seen))
+                              first_seen=eng.first_seen, last_seen=eng.last_seen, vpn_container=eng.vpn_container))
             s.merge(StreamRow(id=stream_id, engine_key=eng.container_id, key_type=st.key_type, key=st.key,
                               playback_session_id=st.playback_session_id, stat_url=st.stat_url, command_url=st.command_url,
                               is_live=st.is_live, started_at=st.started_at, status=st.status))
@@ -277,6 +277,27 @@ class State:
                           speed_up=snap.speed_up, downloaded=snap.downloaded, uploaded=snap.uploaded, status=snap.status))
             s.commit()
 
+    def set_engine_vpn(self, container_id: str, vpn_container: str):
+        """Set the VPN container assignment for an engine."""
+        with self._lock:
+            eng = self.engines.get(container_id)
+            if eng:
+                eng.vpn_container = vpn_container
+                # Update database as well
+                try:
+                    with SessionLocal() as s:
+                        engine_row = s.get(EngineRow, container_id)
+                        if engine_row:
+                            engine_row.vpn_container = vpn_container
+                            s.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to update VPN assignment in database: {e}")
+
+    def get_engines_by_vpn(self, vpn_container: str) -> List[EngineState]:
+        """Get all engines assigned to a specific VPN container."""
+        with self._lock:
+            return [eng for eng in self.engines.values() if eng.vpn_container == vpn_container]
+
     def load_from_db(self):
         from ..models.db_models import EngineRow, StreamRow
         with SessionLocal() as s:
@@ -303,12 +324,14 @@ class State:
                     last_cache_cleanup = e.last_cache_cleanup.replace(tzinfo=timezone.utc) if e.last_cache_cleanup.tzinfo is None else e.last_cache_cleanup
                 cache_size_bytes = getattr(e, 'cache_size_bytes', None)
                 forwarded = getattr(e, 'forwarded', False)
+                vpn_container = getattr(e, 'vpn_container', None)
                 
                 self.engines[e.engine_key] = EngineState(container_id=e.engine_key, container_name=container_name,
                                                          host=e.host, port=e.port, labels=e.labels or {}, forwarded=forwarded,
                                                          first_seen=first_seen, last_seen=last_seen, streams=[],
                                                          health_status="unknown", last_health_check=None, last_stream_usage=None,
-                                                         last_cache_cleanup=last_cache_cleanup, cache_size_bytes=cache_size_bytes)
+                                                         last_cache_cleanup=last_cache_cleanup, cache_size_bytes=cache_size_bytes,
+                                                         vpn_container=vpn_container)
 
             for r in s.query(StreamRow).filter(StreamRow.status=="started").all():
                 # Ensure datetime objects are timezone-aware when loaded from database
