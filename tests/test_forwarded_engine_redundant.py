@@ -242,8 +242,13 @@ def test_single_mode_clears_all_forwarded():
         assert state.engines["engine2"].forwarded is True
 
 
-def test_redundant_mode_remove_forwarded_engine_promotes_same_vpn():
-    """Test that removing a forwarded engine promotes another engine from the same VPN."""
+def test_redundant_mode_remove_forwarded_engine_clears_state():
+    """Test that removing a forwarded engine clears it from state.
+    
+    Note: The autoscaler will automatically provision a new engine to maintain
+    MIN_REPLICAS. That new engine will become the forwarded engine since none
+    will exist for that VPN after removal.
+    """
     import unittest.mock as mock
     
     with mock.patch('app.services.state.SessionLocal'), \
@@ -303,11 +308,17 @@ def test_redundant_mode_remove_forwarded_engine_promotes_same_vpn():
         # Remove VPN1's forwarded engine
         state.remove_engine("engine1_vpn1")
         
-        # VPN1 should have promoted engine2_vpn1
-        # VPN2 should still have engine1_vpn2 as forwarded
+        # Engine should be removed from state
         assert "engine1_vpn1" not in state.engines  # Removed
-        assert state.engines["engine2_vpn1"].forwarded is True  # Promoted from same VPN
+        
+        # VPN1 should no longer have a forwarded engine
+        # (autoscaler will provision a new one that becomes forwarded)
+        assert state.has_forwarded_engine_for_vpn("gluetun") is False
+        
+        # VPN2 should still have its forwarded engine unchanged
+        assert state.engines["engine2_vpn1"].forwarded is False  # Not promoted
         assert state.engines["engine1_vpn2"].forwarded is True  # Unchanged
+        assert state.has_forwarded_engine_for_vpn("gluetun_2") is True
 
 
 if __name__ == "__main__":
@@ -329,8 +340,8 @@ if __name__ == "__main__":
             test_single_mode_clears_all_forwarded()
             print("✅ test_single_mode_clears_all_forwarded passed")
             
-            test_redundant_mode_remove_forwarded_engine_promotes_same_vpn()
-            print("✅ test_redundant_mode_remove_forwarded_engine_promotes_same_vpn passed")
+            test_redundant_mode_remove_forwarded_engine_clears_state()
+            print("✅ test_redundant_mode_remove_forwarded_engine_clears_state passed")
             
             print("\n" + "=" * 60)
             print("✅ ALL TESTS PASSED")
