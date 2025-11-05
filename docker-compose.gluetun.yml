@@ -26,6 +26,12 @@ services:
       - HEALTH_VPN_DURATION_INITIAL=120s
       - HEALTH_TARGET_ADDRESS=cloudflare.com:80
       - TZ=Europe/Madrid
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://cloudflare.com"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
     networks:
       - aceserver
@@ -35,6 +41,10 @@ services:
     container_name: orchestrator
     image: ghcr.io/krinkuto11/acestream-orchestrator:latest
     env_file: .env
+    environment:
+      # Gluetun configuration (must match HTTP_CONTROL_SERVER_ADDRESS in gluetun)
+      - GLUETUN_CONTAINER_NAME=gluetun
+      - GLUETUN_API_PORT=8001
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
