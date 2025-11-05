@@ -14,9 +14,11 @@ When using Gluetun VPN with the orchestrator, you need to configure two types of
 ### What is it?
 
 The HTTP control server is Gluetun's built-in API that provides:
-- Port forwarding information: `/v1/openvpn/portforwarded`
+- Port forwarding information: `/v1/openvpn/portforwarded` (for OpenVPN with port forwarding)
 - Public IP information: `/v1/publicip/ip`
 - VPN status and control endpoints
+
+**Note:** Port forwarding endpoints are available when using OpenVPN or WireGuard with providers that support port forwarding. The orchestrator automatically queries the appropriate endpoint based on your VPN configuration.
 
 ### Configuration
 

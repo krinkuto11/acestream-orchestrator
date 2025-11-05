@@ -20,8 +20,8 @@ services:
       - VPN_TYPE=wireguard
       - WIREGUARD_PRIVATE_KEY=
       - VPN_PORT_FORWARDING=on
-      - SERVER_COUNTRIES=Spain,France, Germany, Portugal
-      - HTTP_CONTROL_SERVER_ADDRESS=:8001     
+      - SERVER_COUNTRIES=Spain,France,Germany,Portugal
+      - HTTP_CONTROL_SERVER_ADDRESS=:8001
       - DOT=off
       - HEALTH_VPN_DURATION_INITIAL=120s
       - HEALTH_TARGET_ADDRESS=cloudflare.com:80
