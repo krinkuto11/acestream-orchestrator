@@ -14,7 +14,7 @@ import httpx
 import os
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Dict
 from .docker_client import get_client
 from ..core.config import cfg
 from ..utils.debug_logger import get_debug_logger
