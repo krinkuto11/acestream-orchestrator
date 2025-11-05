@@ -491,42 +491,44 @@ class GluetunMonitor:
             for monitor in self._vpn_monitors.values():
                 monitor.invalidate_port_cache()
 
-def get_forwarded_port_sync() -> Optional[int]:
+def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[int]:
     """Synchronous version of get_forwarded_port with caching support."""
-    if not cfg.GLUETUN_CONTAINER_NAME:
+    target_container = container_name or cfg.GLUETUN_CONTAINER_NAME
+    if not target_container:
         return None
     
     # First try to get from cache if available
-    cached_port = gluetun_monitor.get_cached_forwarded_port()
+    cached_port = gluetun_monitor.get_cached_forwarded_port(target_container)
     if cached_port is not None:
-        logger.debug(f"Using cached forwarded port (sync): {cached_port}")
+        logger.debug(f"Using cached forwarded port (sync) for '{target_container}': {cached_port}")
         return cached_port
         
     # If no cached port available, make API call
     try:
         with httpx.Client() as client:
-            response = client.get(f"http://{cfg.GLUETUN_CONTAINER_NAME}:{cfg.GLUETUN_API_PORT}/v1/openvpn/portforwarded", timeout=10)
+            response = client.get(f"http://{target_container}:{cfg.GLUETUN_API_PORT}/v1/openvpn/portforwarded", timeout=10)
             response.raise_for_status()
             data = response.json()
             port = data.get("port")
             if port:
                 port = int(port)
                 # Update the monitor's cache
-                gluetun_monitor._cached_port = port
-                gluetun_monitor._port_cache_time = datetime.now(timezone.utc)
-                # Only log if port has changed to reduce logging noise
-                if gluetun_monitor._last_logged_port != port:
-                    logger.info(f"Retrieved and cached VPN forwarded port (sync): {port}")
-                    gluetun_monitor._last_logged_port = port
+                monitor = gluetun_monitor.get_vpn_monitor(target_container)
+                if monitor:
+                    monitor._cached_port = port
+                    monitor._port_cache_time = datetime.now(timezone.utc)
+                    if monitor._last_logged_port != port:
+                        logger.info(f"Retrieved VPN forwarded port (sync) for '{target_container}': {port}")
+                        monitor._last_logged_port = port
                 return port
             else:
-                logger.warning("No port forwarding information available from Gluetun")
+                logger.warning(f"No port forwarding information available from '{target_container}'")
                 return None
     except Exception as e:
-        logger.error(f"Failed to get forwarded port from Gluetun: {e}")
+        logger.error(f"Failed to get forwarded port from '{target_container}': {e}")
         return None
 
-def _double_check_connectivity_via_engines() -> str:
+def _double_check_connectivity_via_engines(container_name: Optional[str] = None) -> str:
     """
     Double-check VPN connectivity by checking if engines can connect to the internet.
     This is used when Gluetun container health appears unhealthy but the issue
@@ -536,22 +538,28 @@ def _double_check_connectivity_via_engines() -> str:
     endpoint which returns {"result": {"connected": true}} when the engine has
     internet connectivity through the VPN.
     
+    Args:
+        container_name: If provided, only check engines assigned to this VPN container
+    
     Returns "healthy" if any running engine reports connected=true, "unhealthy" otherwise.
     """
     try:
         from .state import state
         from .health import check_engine_network_connection
         
-        # Get all running engines
-        all_engines = state.list_engines()
+        # Get engines to check
+        if container_name:
+            engines_to_check = state.get_engines_by_vpn(container_name)
+        else:
+            engines_to_check = state.list_engines()
         
-        if not all_engines:
-            logger.debug("VPN double-check: No engines available to verify connectivity")
+        if not engines_to_check:
+            logger.debug(f"VPN double-check: No engines available to verify connectivity for '{container_name or 'any VPN'}'")
             return "unhealthy"
         
         # Check network connectivity on each engine
         connected_engines = 0
-        for engine in all_engines:
+        for engine in engines_to_check:
             try:
                 if check_engine_network_connection(engine.host, engine.port):
                     connected_engines += 1
@@ -561,37 +569,24 @@ def _double_check_connectivity_via_engines() -> str:
                 continue
         
         if connected_engines > 0:
-            logger.info(f"VPN double-check: {connected_engines}/{len(all_engines)} engine(s) have internet connectivity - considering VPN healthy")
+            logger.info(f"VPN double-check: {connected_engines}/{len(engines_to_check)} engine(s) have internet connectivity - considering VPN healthy")
             return "healthy"
         else:
-            logger.warning(f"VPN double-check: None of {len(all_engines)} engine(s) have internet connectivity")
+            logger.warning(f"VPN double-check: None of {len(engines_to_check)} engine(s) have internet connectivity")
             return "unhealthy"
             
     except Exception as e:
         logger.error(f"Error during VPN connectivity double-check: {e}")
         return "unhealthy"
 
-def get_vpn_status() -> dict:
-    """Get comprehensive VPN status information."""
-    if not cfg.GLUETUN_CONTAINER_NAME:
-        return {
-            "enabled": False,
-            "status": "disabled",
-            "container_name": None,
-            "container": None,  # Add for frontend compatibility
-            "health": "unknown",
-            "connected": False,  # Add boolean connected field
-            "forwarded_port": None,
-            "last_check": None,
-            "last_check_at": None  # Add for frontend compatibility
-        }
-    
+def _get_single_vpn_status(container_name: str) -> dict:
+    """Get status for a single VPN container."""
     try:
         from .docker_client import get_client
         from docker.errors import NotFound
         
         cli = get_client()
-        container = cli.containers.get(cfg.GLUETUN_CONTAINER_NAME)
+        container = cli.containers.get(container_name)
         container.reload()
         
         # Get container health
@@ -602,7 +597,7 @@ def get_vpn_status() -> dict:
             health_status = health_info.get("Status", "unknown")
             if health_status == "unhealthy":
                 # Double-check with engine network connectivity if container is unhealthy
-                health = _double_check_connectivity_via_engines() 
+                health = _double_check_connectivity_via_engines(container_name) 
             elif health_status == "healthy":
                 health = "healthy"
             else:
@@ -613,49 +608,102 @@ def get_vpn_status() -> dict:
         # Get forwarded port (try cache first, fallback to API call)
         forwarded_port = None
         if container_running:
-            forwarded_port = gluetun_monitor.get_cached_forwarded_port()
+            forwarded_port = gluetun_monitor.get_cached_forwarded_port(container_name)
             if forwarded_port is None:
-                # Only make API call if cache is empty
-                forwarded_port = get_forwarded_port_sync()
+                forwarded_port = get_forwarded_port_sync(container_name)
         
         return {
             "enabled": True,
             "status": container.status,
-            "container_name": cfg.GLUETUN_CONTAINER_NAME,
-            "container": cfg.GLUETUN_CONTAINER_NAME,  # Add for frontend compatibility
+            "container_name": container_name,
+            "container": container_name,
             "health": health,
-            "connected": health == "healthy",  # Add boolean connected field based on health
+            "connected": health == "healthy",
             "forwarded_port": forwarded_port,
             "last_check": datetime.now(timezone.utc).isoformat(),
-            "last_check_at": datetime.now(timezone.utc).isoformat()  # Add for frontend compatibility
+            "last_check_at": datetime.now(timezone.utc).isoformat()
         }
         
     except NotFound:
         return {
             "enabled": True,
             "status": "not_found",
-            "container_name": cfg.GLUETUN_CONTAINER_NAME,
-            "container": cfg.GLUETUN_CONTAINER_NAME,  # Add for frontend compatibility
+            "container_name": container_name,
+            "container": container_name,
             "health": "unhealthy",
-            "connected": False,  # Add boolean connected field
+            "connected": False,
             "forwarded_port": None,
             "last_check": datetime.now(timezone.utc).isoformat(),
-            "last_check_at": datetime.now(timezone.utc).isoformat()  # Add for frontend compatibility
+            "last_check_at": datetime.now(timezone.utc).isoformat()
         }
     except Exception as e:
-        logger.error(f"Error getting VPN status: {e}")
+        logger.error(f"Error getting VPN status for '{container_name}': {e}")
         return {
             "enabled": True,
             "status": "error",
-            "container_name": cfg.GLUETUN_CONTAINER_NAME,
-            "container": cfg.GLUETUN_CONTAINER_NAME,  # Add for frontend compatibility
+            "container_name": container_name,
+            "container": container_name,
             "health": "unknown",
-            "connected": False,  # Add boolean connected field
+            "connected": False,
             "forwarded_port": None,
             "last_check": datetime.now(timezone.utc).isoformat(),
-            "last_check_at": datetime.now(timezone.utc).isoformat(),  # Add for frontend compatibility
+            "last_check_at": datetime.now(timezone.utc).isoformat(),
             "error": str(e)
         }
+
+
+def get_vpn_status() -> dict:
+    """Get comprehensive VPN status information."""
+    if not cfg.GLUETUN_CONTAINER_NAME:
+        return {
+            "mode": "disabled",
+            "enabled": False,
+            "status": "disabled",
+            "container_name": None,
+            "container": None,
+            "health": "unknown",
+            "connected": False,
+            "forwarded_port": None,
+            "last_check": None,
+            "last_check_at": None,
+            "vpn1": None,
+            "vpn2": None
+        }
+    
+    # Get status for VPN1
+    vpn1_status = _get_single_vpn_status(cfg.GLUETUN_CONTAINER_NAME)
+    
+    # In single mode, return status with backwards compatibility
+    if cfg.VPN_MODE == 'single':
+        result = vpn1_status.copy()
+        result["mode"] = "single"
+        result["vpn1"] = vpn1_status
+        result["vpn2"] = None
+        return result
+    
+    # In redundant mode, get both VPN statuses
+    vpn2_status = None
+    if cfg.GLUETUN_CONTAINER_NAME_2:
+        vpn2_status = _get_single_vpn_status(cfg.GLUETUN_CONTAINER_NAME_2)
+    
+    # Determine overall health: healthy if at least one VPN is healthy
+    any_healthy = vpn1_status["connected"] or (vpn2_status and vpn2_status["connected"])
+    overall_health = "healthy" if any_healthy else "unhealthy"
+    
+    return {
+        "mode": "redundant",
+        "enabled": True,
+        "status": "running" if any_healthy else "unhealthy",
+        "container_name": cfg.GLUETUN_CONTAINER_NAME,  # Primary for backwards compatibility
+        "container": cfg.GLUETUN_CONTAINER_NAME,  # For frontend compatibility
+        "health": overall_health,
+        "connected": any_healthy,
+        "forwarded_port": vpn1_status.get("forwarded_port"),  # Primary port for backwards compatibility
+        "last_check": datetime.now(timezone.utc).isoformat(),
+        "last_check_at": datetime.now(timezone.utc).isoformat(),
+        "vpn1": vpn1_status,
+        "vpn2": vpn2_status
+    }
 
 def get_vpn_public_ip() -> Optional[str]:
     """Get the public IP address of the VPN connection from Gluetun."""
