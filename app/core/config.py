@@ -49,6 +49,13 @@ class Cfg(BaseModel):
     # Maximum active replicas when using Gluetun (port range allocation)
     MAX_ACTIVE_REPLICAS: int = int(os.getenv("MAX_ACTIVE_REPLICAS", 20))
     
+    # VPN-specific port ranges for redundant mode
+    # These map VPN container names to their port ranges in the format "min-max"
+    # Example: GLUETUN_PORT_RANGE_1=19000-19499 for first VPN
+    #          GLUETUN_PORT_RANGE_2=19500-19999 for second VPN
+    GLUETUN_PORT_RANGE_1: str | None = os.getenv("GLUETUN_PORT_RANGE_1")
+    GLUETUN_PORT_RANGE_2: str | None = os.getenv("GLUETUN_PORT_RANGE_2")
+    
     # Engine provisioning performance settings
     MAX_CONCURRENT_PROVISIONS: int = int(os.getenv("MAX_CONCURRENT_PROVISIONS", "5"))
     MIN_PROVISION_INTERVAL_S: float = float(os.getenv("MIN_PROVISION_INTERVAL_S", "0.5"))
