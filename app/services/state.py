@@ -19,6 +19,13 @@ class State:
     @staticmethod
     def now():
         return datetime.now(timezone.utc)
+    
+    def _is_redundant_mode(self) -> bool:
+        """Check if we're in redundant VPN mode."""
+        from ..core.config import cfg
+        return (cfg.VPN_MODE == 'redundant' and 
+                cfg.GLUETUN_CONTAINER_NAME and 
+                cfg.GLUETUN_CONTAINER_NAME_2)
 
     def on_stream_started(self, evt: StreamStartedEvent) -> StreamState:
         with self._lock:
@@ -204,18 +211,14 @@ class State:
         if was_forwarded:
             from ..core.config import cfg
             if cfg.GLUETUN_CONTAINER_NAME and self.engines:
-                # In redundant mode, find an engine from the same VPN to promote
-                # In single mode, promote any available engine
-                is_redundant_mode = (cfg.VPN_MODE == 'redundant' and 
-                                   cfg.GLUETUN_CONTAINER_NAME and 
-                                   cfg.GLUETUN_CONTAINER_NAME_2)
+                is_redundant_mode = self._is_redundant_mode()
                 
                 with self._lock:
                     for engine_id, engine in self.engines.items():
                         # In redundant mode, only promote engines from the same VPN
                         # In single mode, promote any non-forwarded engine
-                        should_promote = (not engine.forwarded and 
-                                        (not is_redundant_mode or engine.vpn_container == removed_vpn_container))
+                        same_vpn = (engine.vpn_container == removed_vpn_container)
+                        should_promote = not engine.forwarded and (not is_redundant_mode or same_vpn)
                         
                         if should_promote:
                             if is_redundant_mode and removed_vpn_container:
@@ -465,12 +468,7 @@ class State:
                 return
             
             target_vpn = target_engine.vpn_container
-            
-            # Determine if we're in redundant mode
-            from ..core.config import cfg
-            is_redundant_mode = (cfg.VPN_MODE == 'redundant' and 
-                               cfg.GLUETUN_CONTAINER_NAME and 
-                               cfg.GLUETUN_CONTAINER_NAME_2)
+            is_redundant_mode = self._is_redundant_mode()
             
             # Clear forwarded flag from engines
             for engine in self.engines.values():
