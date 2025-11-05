@@ -477,6 +477,18 @@ class State:
     def has_forwarded_engine(self) -> bool:
         """Check if there is a forwarded engine."""
         return self.get_forwarded_engine() is not None
+    
+    def get_forwarded_engine_for_vpn(self, vpn_container: str) -> Optional[EngineState]:
+        """Get the forwarded engine for a specific VPN container."""
+        with self._lock:
+            for engine in self.engines.values():
+                if engine.forwarded and engine.vpn_container == vpn_container:
+                    return engine
+            return None
+    
+    def has_forwarded_engine_for_vpn(self, vpn_container: str) -> bool:
+        """Check if there is a forwarded engine for a specific VPN container."""
+        return self.get_forwarded_engine_for_vpn(vpn_container) is not None
 
 state = State()
 
