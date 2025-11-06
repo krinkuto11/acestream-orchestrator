@@ -2,7 +2,11 @@
 
 The AceStream Orchestrator can integrate with [Gluetun](https://github.com/qdm12/gluetun) to route all AceStream engines through a VPN connection.
 
-**Note:** For detailed port configuration information, see [GLUETUN_PORT_CONFIGURATION.md](GLUETUN_PORT_CONFIGURATION.md).
+## Quick Links
+
+- **[Failure & Recovery Scenarios](GLUETUN_FAILURE_RECOVERY.md)** - VPN failure handling with diagrams
+- **[Deployment Guide](DEPLOY.md)** - Step-by-step setup for all VPN modes
+- **[Configuration Reference](CONFIG.md)** - Complete environment variable guide
 
 ## Overview
 
@@ -11,6 +15,7 @@ When Gluetun integration is enabled:
 - The orchestrator monitors Gluetun's health status continuously
 - Engines are automatically restarted when VPN reconnects after a disconnection
 - Engine provisioning waits for Gluetun to be healthy before starting
+- Forwarded engines leverage VPN port forwarding for optimal P2P connectivity
 
 ## Configuration
 
@@ -331,7 +336,7 @@ When `GLUETUN_CONTAINER_NAME` is set, the orchestrator:
 2. This routes all engine traffic through Gluetun's network stack
 3. Engines inherit Gluetun's IP address and VPN connection
 4. **Port Management**: Engines share Gluetun's port mappings - no individual port mapping is performed
-5. **Port Allocation**: Engines are allocated ports from the range starting at 19000, limited by `MAX_ACTIVE_REPLICAS`
+5. **Port Allocation**: Engines are allocated ports from the range starting at 19000
 6. **Host Configuration**: Engines use the Gluetun container name as hostname for service discovery
 
 ### Host Resolution Behavior
@@ -346,21 +351,115 @@ This ensures that:
 - No manual hostname configuration is required
 - Service discovery works correctly in both VPN and non-VPN modes
 
-### VPN Port Forwarding
+### VPN Port Forwarding & Forwarded Engines
 
-When using Gluetun with port forwarding enabled, the orchestrator:
-1. Queries Gluetun's API at `http://localhost:{GLUETUN_API_PORT}/v1/openvpn/portforwarded` to get the forwarded port
-2. Sets the `P2P_PORT` environment variable in AceStream engines with the forwarded port
-3. This allows AceStream engines to use the VPN's forwarded port for P2P traffic
+When using Gluetun with port forwarding enabled, the orchestrator implements a "forwarded engine" system:
 
-The Gluetun API port is configurable via the `GLUETUN_API_PORT` environment variable (default: 8000).
+#### What is a Forwarded Engine?
+
+Only **one engine per VPN** can actually use the VPN's forwarded P2P port. This engine is marked as "forwarded" and receives optimal P2P connectivity:
+
+- **Single VPN Mode**: One forwarded engine total
+- **Redundant VPN Mode**: One forwarded engine per VPN (two total)
+
+#### How It Works
+
+1. **Port Discovery**: The orchestrator queries Gluetun's API to get the forwarded port:
+   ```
+   GET http://{gluetun}:{GLUETUN_API_PORT}/v1/openvpn/portforwarded
+   ```
+
+2. **Engine Selection**: When provisioning engines:
+   - If no forwarded engine exists, the first engine becomes forwarded
+   - The forwarded port is passed to the engine via `P2P_PORT` environment variable
+   - Container is labeled with `acestream.forwarded=true`
+
+3. **API Response**: The `/engines` endpoint includes forwarded status:
+   ```json
+   {
+     "container_id": "abc123",
+     "container_name": "acestream-1",
+     "host": "gluetun",
+     "port": 19000,
+     "forwarded": true,
+     "health_status": "healthy"
+   }
+   ```
+
+4. **Dashboard Display**: Forwarded engines show a "FORWARDED" badge in the UI
+
+#### Benefits
+
+- **Proxy Prioritization**: Proxies can prioritize forwarded engines for best performance
+- **Clear Identification**: Easy to identify which engine has the P2P port
+- **Automatic Management**: System automatically selects and maintains forwarded engine
+
+#### Double-Check Connectivity
+
+When Gluetun's Docker health check reports unhealthy, the orchestrator performs a double-check:
+
+1. Queries each engine's network connectivity endpoint:
+   ```
+   GET http://{engine}/server/api?api_version=3&method=get_network_connection_status
+   ```
+
+2. If any engine reports `{"result": {"connected": true}}`, the VPN is considered healthy
+
+3. This prevents false negatives from Gluetun health check issues
+
+This ensures accurate VPN status reporting even when Gluetun's internal health check fails for non-connectivity reasons.
 
 ### Port Management
 
-The orchestrator implements intelligent port management:
+The orchestrator implements intelligent port management with two types of ports:
+
+#### 1. HTTP Control Server Port (Gluetun API)
+
+**Purpose**: Used by the orchestrator to communicate with Gluetun for:
+- Port forwarding information (`/v1/openvpn/portforwarded`)
+- Public IP information (`/v1/publicip/ip`)
+- Health status checks
+
+**Configuration**:
+- Gluetun: Set `HTTP_CONTROL_SERVER_ADDRESS=:8001`
+- Gluetun: Expose port `8001:8001`
+- Orchestrator: Set `GLUETUN_API_PORT=8001`
+
+**Important**: Use the **internal** port (e.g., `:8001`), not external port.
+
+#### 2. AceStream Engine Ports
+
+**Purpose**: Used by engines to serve stream content.
+
+**Single VPN Mode**:
+```yaml
+gluetun:
+  ports:
+    - "19000-19999:19000-19999"  # Must match PORT_RANGE_HOST
+```
+
+**Redundant VPN Mode** (split ranges):
+```yaml
+gluetun1:
+  ports:
+    - "19000-19499:19000-19499"  # First VPN
+gluetun2:
+  ports:
+    - "19500-19999:19500-19999"  # Second VPN
+```
+
+**Configuration**:
+```bash
+# .env
+PORT_RANGE_HOST=19000-19999           # Full range
+GLUETUN_PORT_RANGE_1=19000-19499      # VPN1 range (redundant mode)
+GLUETUN_PORT_RANGE_2=19500-19999      # VPN2 range (redundant mode)
+```
+
+**Port Allocation**:
 - **Standard Mode**: Uses configurable port ranges for HTTP/HTTPS
-- **Gluetun Mode**: Allocates sequential ports starting from 19000
-- **Max Replicas**: Limits concurrent engines to `MAX_ACTIVE_REPLICAS` when using Gluetun
+- **Single VPN Mode**: Allocates sequential ports from PORT_RANGE_HOST
+- **Redundant VPN Mode**: Allocates from VPN-specific ranges
 - **Automatic Cleanup**: Releases ports when engines are stopped
 - Seamless transition between VPN and non-VPN modes
 

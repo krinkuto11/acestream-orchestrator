@@ -197,3 +197,74 @@ Stale stream detection events are logged for monitoring:
 INFO app.services.collector: Detected stale stream stream_id_123: unknown playback session id
 INFO app.services.collector: Automatically ending stale stream stream_id_123
 ```
+
+---
+
+## Cache Cleanup Process
+
+When streams end (including stale stream cleanup), the orchestrator manages cache to optimize resource usage.
+
+### Immediate Cache Cleanup (On Stream End)
+
+**Trigger**: When an engine's last stream ends (becomes idle)
+
+**Process**:
+- Executes cache cleanup command inside the container
+- Records the cache size before cleanup
+- Updates engine state with `last_cache_cleanup` timestamp
+- Stores cache metrics for monitoring
+
+**Location**: `app/services/state.py` - `on_stream_ended()` method
+
+### Periodic Cache Cleanup
+
+**Trigger**: Runs periodically as part of autoscale interval (`AUTOSCALE_INTERVAL_S`)
+
+**Process**:
+1. Identifies all engines with 0 active streams (idle engines)
+2. For each idle engine:
+   - Runs cache cleanup
+   - Updates engine state with cleanup timestamp
+   - Records cache size metrics
+   - Updates database with cleanup information
+
+**Location**: `app/services/monitor.py` - `DockerMonitor._periodic_cache_cleanup()` method
+
+**Benefits**:
+- Catches engines missed during stream end events
+- Provides regular maintenance of idle engines
+- Ensures cache doesn't grow unbounded
+
+### Empty Engine Cleanup
+
+**Trigger**: Runs periodically when `AUTO_DELETE` is enabled
+
+**Process**:
+1. Identifies engines with 0 active streams
+2. Checks if engine has passed the grace period (`ENGINE_GRACE_PERIOD_S`)
+3. If eligible:
+   - Stops the container
+   - Removes the engine from state
+   - Frees up resources
+
+**Location**: `app/services/monitor.py` - `DockerMonitor._cleanup_empty_engines()` method
+
+**Grace Period**: Prevents premature deletion of engines that might be reused soon
+
+### Configuration
+
+```bash
+# .env
+AUTOSCALE_INTERVAL_S=30          # How often to run periodic cleanup
+ENGINE_GRACE_PERIOD_S=30         # Wait before deleting empty engines
+AUTO_DELETE=true                 # Enable/disable automatic deletion
+```
+
+---
+
+## Related Documentation
+
+- [API Documentation](API.md) - Health and engine endpoints
+- [Configuration](CONFIG.md) - Health monitoring settings
+- [Architecture](ARCHITECTURE.md) - System architecture and operations
+- [Gluetun Integration](GLUETUN_INTEGRATION.md) - VPN health monitoring

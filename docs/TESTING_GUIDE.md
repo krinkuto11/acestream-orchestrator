@@ -1,5 +1,9 @@
 # Testing Guide: VPN Port Allocation Fix
 
+> **Note**: This document describes testing for a specific VPN port allocation fix. For general deployment and testing, see:
+> - [Deployment Guide](DEPLOY.md) - Complete deployment and testing instructions
+> - [Gluetun Integration](GLUETUN_INTEGRATION.md) - VPN setup and configuration
+
 ## Quick Test with Your Setup
 
 Based on your docker-compose configuration, follow these steps to test the fix:
@@ -130,4 +134,4 @@ If you encounter issues, you can rollback by:
 If you encounter issues:
 1. Check the orchestrator logs: `docker logs orchestrator`
 2. Verify your docker-compose port mappings match the configured ranges
-3. Review [docs/VPN_PORT_RANGES.md](docs/VPN_PORT_RANGES.md) for detailed information
+3. Review [GLUETUN_INTEGRATION.md](GLUETUN_INTEGRATION.md) for detailed VPN configuration information
