@@ -1,11 +1,21 @@
-# Example Docker Compose configuration for redundant VPN mode
+# Docker Compose configuration for redundant VPN mode
 # This setup provides high availability with two Gluetun VPN containers
-# 
+# Automatic failover ensures zero downtime if one VPN fails
+#
+# Quick Start:
+# 1. Copy .env.example to .env
+# 2. Configure VPN credentials in this file (WIREGUARD_PRIVATE_KEY for both containers)
+# 3. Set VPN_MODE=redundant in .env (or below in orchestrator environment)
+# 4. Configure port ranges: GLUETUN_PORT_RANGE_1 and GLUETUN_PORT_RANGE_2
+# 5. Run: docker-compose -f docker-compose.gluetun-redundant.yml up -d
+# 6. Access dashboard at http://localhost:8000/panel
+#
 # Key configuration points:
 # 1. Two Gluetun containers (gluetun1, gluetun2) with separate configurations
-# 2. Each Gluetun has its own HTTP control server port (8001, 8002)
+# 2. Each Gluetun has its own HTTP control server port (8001 external, 8002 external; both use :8001 internal)
 # 3. Port ranges are split between VPNs for engine distribution
-# 4. Set VPN_MODE=redundant and configure both container names in .env
+# 4. Engines are automatically distributed across both VPNs in round-robin fashion
+# 5. If one VPN fails, traffic automatically routes to the healthy VPN
 
 services:
   gluetun1:
@@ -13,7 +23,6 @@ services:
     container_name: gluetun1
     cap_add:
       - NET_ADMIN
-      - SYS_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
     ports:
@@ -27,9 +36,10 @@ services:
     environment:
       - PGID=1000
       - PUID=1000
+      # VPN Provider Configuration - Adjust for your provider
       - VPN_SERVICE_PROVIDER=protonvpn
       - VPN_TYPE=wireguard
-      - WIREGUARD_PRIVATE_KEY=your_private_key_here
+      - WIREGUARD_PRIVATE_KEY=YOUR_WIREGUARD_PRIVATE_KEY_1_HERE
       - VPN_PORT_FORWARDING=on
       - SERVER_COUNTRIES=Spain,France,Germany,Portugal
       # HTTP control server must listen on the internal port
@@ -54,7 +64,6 @@ services:
     container_name: gluetun2
     cap_add:
       - NET_ADMIN
-      - SYS_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
     ports:
@@ -68,9 +77,10 @@ services:
     environment:
       - PGID=1000
       - PUID=1000
+      # VPN Provider Configuration - Use different server for redundancy
       - VPN_SERVICE_PROVIDER=protonvpn
       - VPN_TYPE=wireguard
-      - WIREGUARD_PRIVATE_KEY=your_private_key_here
+      - WIREGUARD_PRIVATE_KEY=YOUR_WIREGUARD_PRIVATE_KEY_2_HERE
       - VPN_PORT_FORWARDING=on
       # Use different server location for redundancy
       - SERVER_COUNTRIES=Netherlands,Switzerland,Sweden
@@ -88,10 +98,9 @@ services:
       start_period: 60s
     restart: unless-stopped
     networks:
-      - aceserver
+      - acestream
 
   orchestrator:
-    privileged: true
     container_name: orchestrator
     image: ghcr.io/krinkuto11/acestream-orchestrator:latest
     env_file: .env
@@ -110,6 +119,7 @@ services:
       - GLUETUN_PORT_RANGE_2=19500-19999  # Port range for gluetun2
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./orchestrator.db:/app/orchestrator.db  # Persist database
     ports:
       - "8000:8000"
     restart: on-failure
@@ -119,8 +129,9 @@ services:
       gluetun2:
         condition: service_healthy
     networks:
-      - aceserver
+      - acestream
 
 networks:
-  aceserver:
-    external: true
+  acestream:
+    name: aceserver
+    driver: bridge

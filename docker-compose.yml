@@ -1,9 +1,26 @@
+# Docker Compose configuration for standalone mode (no VPN)
+# This is the simplest setup without VPN integration
+# 
+# Quick Start:
+# 1. Copy .env.example to .env and configure
+# 2. Run: docker-compose up -d
+# 3. Access dashboard at http://localhost:8000/panel
+
 services:
   orchestrator:
+    container_name: orchestrator
     image: ghcr.io/krinkuto11/acestream-orchestrator:latest
     env_file: .env
     ports:
       - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./orchestrator.db:/app/orchestrator.db  # Persist database
     restart: on-failure
+    networks:
+      - acestream
+
+networks:
+  acestream:
+    name: orchestrator
+    driver: bridge
