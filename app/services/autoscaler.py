@@ -172,15 +172,25 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
         total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
         
         # Check 1: Never go below MIN_REPLICAS total containers
-        if total_running - 1 < cfg.MIN_REPLICAS:
+        # Only enforce this if we actually have engines running (total_running > 0)
+        # If total_running is 0, the engine doesn't exist in Docker so replica constraints don't apply
+        if total_running > 0 and total_running - 1 < cfg.MIN_REPLICAS:
+            # Engine is part of minimum replicas, remove from grace period tracking
+            if container_id in _empty_engine_timestamps:
+                del _empty_engine_timestamps[container_id]
             logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_REPLICAS={cfg.MIN_REPLICAS} (currently: {total_running} total, would become: {total_running - 1})")
             return False
         
         # Check 2: Maintain MIN_FREE_REPLICAS free engines
-        if cfg.MIN_FREE_REPLICAS > 0:
+        # Only enforce this if we actually have free engines (free_count > 0)
+        # If free_count is 0, the engine doesn't exist in Docker so replica constraints don't apply
+        if cfg.MIN_FREE_REPLICAS > 0 and free_count > 0:
             # If stopping this empty engine would leave us with fewer than MIN_FREE_REPLICAS free engines, don't stop it
             # Since this engine is already empty (has no active streams), stopping it reduces free count by 1
             if free_count - 1 < cfg.MIN_FREE_REPLICAS:
+                # Engine is part of minimum free replicas, remove from grace period tracking
+                if container_id in _empty_engine_timestamps:
+                    del _empty_engine_timestamps[container_id]
                 logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} (currently: {free_count} free, would become: {free_count - 1})")
                 return False
     except Exception as e:
