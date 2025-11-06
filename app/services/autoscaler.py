@@ -173,7 +173,8 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
         
         # Check 1: Never go below MIN_REPLICAS total containers
         # Only enforce this if we actually have engines running (total_running > 0)
-        # If total_running is 0, the engine doesn't exist in Docker so replica constraints don't apply
+        # When total_running is 0, the engine being checked doesn't exist in Docker (state/docker mismatch),
+        # so replica constraints don't apply - we're just cleaning up stale state
         if total_running > 0 and total_running - 1 < cfg.MIN_REPLICAS:
             # Engine is part of minimum replicas, remove from grace period tracking
             if container_id in _empty_engine_timestamps:
@@ -183,7 +184,8 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
         
         # Check 2: Maintain MIN_FREE_REPLICAS free engines
         # Only enforce this if we actually have free engines (free_count > 0)
-        # If free_count is 0, the engine doesn't exist in Docker so replica constraints don't apply
+        # When free_count is 0, there are no free engines in Docker (state/docker mismatch),
+        # so replica constraints don't apply - we're just cleaning up stale state
         if cfg.MIN_FREE_REPLICAS > 0 and free_count > 0:
             # If stopping this empty engine would leave us with fewer than MIN_FREE_REPLICAS free engines, don't stop it
             # Since this engine is already empty (has no active streams), stopping it reduces free count by 1
