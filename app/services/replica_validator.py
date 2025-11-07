@@ -3,6 +3,7 @@ Replica validation service - provides reliable Docker socket validation and repl
 Ensures consistent state synchronization between in-memory state and actual Docker containers.
 """
 import logging
+import time
 from typing import Dict, List, Set, Tuple, Optional
 from datetime import datetime, timezone
 from .health import list_managed
@@ -83,7 +84,6 @@ class ReplicaValidator:
             except Exception as e:
                 if attempt < max_retries - 1:
                     logger.warning(f"Docker socket temporarily unavailable (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {retry_delay}s...")
-                    import time
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                 else:
