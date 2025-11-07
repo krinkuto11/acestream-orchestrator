@@ -98,7 +98,7 @@ services:
       start_period: 60s
     restart: unless-stopped
     networks:
-      - acestream
+      - aceserver
 
   orchestrator:
     container_name: orchestrator
@@ -129,9 +129,8 @@ services:
       gluetun2:
         condition: service_healthy
     networks:
-      - acestream
+      - aceserver
 
 networks:
-  acestream:
-    name: aceserver
+  aceserver:
     driver: bridge
