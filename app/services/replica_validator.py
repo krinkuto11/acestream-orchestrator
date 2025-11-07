@@ -128,11 +128,16 @@ class ReplicaValidator:
             # Don't sync if Docker is unavailable - we can't trust the data
             if not docker_status.get('docker_available', True):
                 logger.warning("Docker communication failed - skipping state synchronization to avoid data loss")
-                # Return cached result or best guess based on state
+                # Return cached result if available
                 if self._cached_result:
+                    logger.debug(f"Returning cached result: {self._cached_result}")
                     return self._cached_result
                 # Fallback: use state count as best estimate
-                return (state_engine_count, used_engines, max(0, state_engine_count - used_engines))
+                # Note: free_count may be inaccurate since we can't verify container status
+                fallback_result = (state_engine_count, used_engines, max(0, state_engine_count - used_engines))
+                logger.warning(f"Docker unavailable - returning estimate based on state: total={state_engine_count}, "
+                             f"used={used_engines}, free={fallback_result[2]} (may be inaccurate)")
+                return fallback_result
             
             # Check if counts don't match
             if state_engine_count != total_running:

@@ -357,7 +357,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         from .gluetun import gluetun_monitor
         from .state import state
         
-        # In redundant mode, assign engine to VPN pool with intelligent load balancing
+        # In redundant mode, assign engine to VPN with round-robin load balancing
         if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
             # Count engines per VPN
             vpn1_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
