@@ -57,7 +57,7 @@ services:
 
   orchestrator:
     container_name: orchestrator
-    image: ghcr.io/krinkuto11/acestream-orchestrator:latest
+    image: ghcr.io/krinkuto11/acestream-orchestrator:v1.0.0
     env_file: .env
     environment:
       # Single VPN mode configuration
