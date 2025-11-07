@@ -49,6 +49,10 @@ class VpnContainerMonitor:
         # Track when container became unhealthy for forced restart timeout
         self._unhealthy_since: Optional[datetime] = None
         self._force_restart_attempted: bool = False
+        
+        # Track when VPN was restarted to add grace period before API calls
+        self._last_restart_time: Optional[datetime] = None
+        self._restart_grace_period_s: int = 15  # Wait 15 seconds after restart before API calls
 
     async def check_health(self) -> bool:
         """Check if VPN container is healthy."""
@@ -191,12 +195,26 @@ class VpnContainerMonitor:
             container = cli.containers.get(self.container_name)
             container.restart()
             self._force_restart_attempted = True
+            self._last_restart_time = datetime.now(timezone.utc)  # Track restart time
             logger.info(f"VPN container '{self.container_name}' restart initiated")
         except Exception as e:
             logger.error(f"Failed to force restart VPN container '{self.container_name}': {e}")
 
+    def _is_in_restart_grace_period(self) -> bool:
+        """Check if we're still in the grace period after a restart."""
+        if self._last_restart_time is None:
+            return False
+        
+        time_since_restart = (datetime.now(timezone.utc) - self._last_restart_time).total_seconds()
+        return time_since_restart < self._restart_grace_period_s
+
     async def get_forwarded_port(self) -> Optional[int]:
         """Get the VPN forwarded port from Gluetun API with caching."""
+        # Don't try to get port if we're in restart grace period
+        if self._is_in_restart_grace_period():
+            logger.debug(f"VPN '{self.container_name}' is in restart grace period, skipping port fetch")
+            return None
+        
         if self._is_port_cache_valid():
             logger.debug(f"Using cached forwarded port for '{self.container_name}': {self._cached_port}")
             return self._cached_port
@@ -666,6 +684,12 @@ def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[in
     if not target_container:
         return None
     
+    # Check if we're in restart grace period
+    monitor = gluetun_monitor.get_vpn_monitor(target_container)
+    if monitor and monitor._is_in_restart_grace_period():
+        logger.debug(f"VPN '{target_container}' is in restart grace period, skipping port fetch (sync)")
+        return None
+    
     # First try to get from cache if available
     cached_port = gluetun_monitor.get_cached_forwarded_port(target_container)
     if cached_port is not None:
@@ -682,7 +706,6 @@ def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[in
             if port:
                 port = int(port)
                 # Update the monitor's cache
-                monitor = gluetun_monitor.get_vpn_monitor(target_container)
                 if monitor:
                     monitor._cached_port = port
                     monitor._port_cache_time = datetime.now(timezone.utc)
@@ -697,11 +720,18 @@ def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[in
         logger.error(f"Failed to get forwarded port from '{target_container}': {e}")
         return None
 
+# Track when we last did a connectivity double-check per VPN to avoid spamming
+_last_double_check_time: Dict[str, datetime] = {}
+_double_check_interval_s = 30  # Only double-check every 30 seconds
+
 def _double_check_connectivity_via_engines(container_name: Optional[str] = None) -> str:
     """
     Double-check VPN connectivity by checking if engines can connect to the internet.
     This is used when Gluetun container health appears unhealthy but the issue
     might be unrelated to actual network connectivity.
+    
+    This function is throttled to avoid excessive checks - it only runs once per
+    _double_check_interval_s seconds per VPN to prevent log spam.
     
     Uses the engine's /server/api?api_version=3&method=get_network_connection_status
     endpoint which returns {"result": {"connected": true}} when the engine has
@@ -713,6 +743,18 @@ def _double_check_connectivity_via_engines(container_name: Optional[str] = None)
     Returns "healthy" if any running engine reports connected=true, "unhealthy" otherwise.
     """
     try:
+        # Throttle double-checks to avoid spamming logs and API calls
+        now = datetime.now(timezone.utc)
+        check_key = container_name or "default"
+        
+        if check_key in _last_double_check_time:
+            time_since_last_check = (now - _last_double_check_time[check_key]).total_seconds()
+            if time_since_last_check < _double_check_interval_s:
+                # Too soon since last check, return unhealthy to maintain cautious behavior
+                return "unhealthy"
+        
+        _last_double_check_time[check_key] = now
+        
         from .state import state
         from .health import check_engine_network_connection
         
@@ -875,9 +917,23 @@ def get_vpn_status() -> dict:
     }
 
 def get_vpn_public_ip() -> Optional[str]:
-    """Get the public IP address of the VPN connection from Gluetun."""
+    """
+    Get the public IP address of the VPN connection from Gluetun.
+    
+    This function should only be called when the VPN is healthy to avoid
+    excessive error logging when VPN is down.
+    """
     if not cfg.GLUETUN_CONTAINER_NAME:
         return None
+    
+    # Don't try to get public IP if VPN is unhealthy or in restart grace period
+    monitor = gluetun_monitor.get_vpn_monitor(cfg.GLUETUN_CONTAINER_NAME)
+    if monitor:
+        if monitor.is_healthy() is False:
+            return None
+        if monitor._is_in_restart_grace_period():
+            logger.debug(f"VPN '{cfg.GLUETUN_CONTAINER_NAME}' is in restart grace period, skipping public IP fetch")
+            return None
     
     try:
         with httpx.Client() as client:

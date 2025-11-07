@@ -142,11 +142,59 @@ class HealthManager:
         
         logger.debug(f"Health check: {len(healthy_engines)} healthy, {len(unhealthy_engines)} unhealthy engines")
         
+        # Check if we should wait for VPN recovery before taking any actions
+        if self._should_wait_for_vpn_recovery(healthy_engines):
+            return
+        
         # Ensure we have minimum healthy engines
         await self._ensure_healthy_engines(healthy_engines, unhealthy_engines)
         
         # Replace unhealthy engines if we have enough healthy ones
         await self._replace_unhealthy_engines(healthy_engines, unhealthy_engines)
+    
+    def _should_wait_for_vpn_recovery(self, healthy_engines: List) -> bool:
+        """
+        Check if we should wait for VPN recovery instead of taking action.
+        
+        Returns True if:
+        - In redundant VPN mode
+        - One VPN is unhealthy with engines on it
+        - We still have some healthy engines from the other VPN
+        
+        This prevents the system from trying to provision or replace engines
+        while waiting for a failed VPN to recover.
+        """
+        if cfg.VPN_MODE != 'redundant' or not cfg.GLUETUN_CONTAINER_NAME_2:
+            return False
+        
+        from .gluetun import gluetun_monitor
+        
+        vpn1_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
+        vpn2_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
+        
+        # If both VPNs are healthy or both are unhealthy, don't wait
+        if vpn1_healthy == vpn2_healthy:
+            return False
+        
+        # If one VPN is unhealthy, check if we have engines on it
+        if vpn1_healthy and not vpn2_healthy:
+            engines_on_failed_vpn = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
+            if engines_on_failed_vpn > 0:
+                healthy_count = len(healthy_engines)
+                logger.info(f"VPN '{cfg.GLUETUN_CONTAINER_NAME_2}' is unhealthy with {engines_on_failed_vpn} engines. "
+                           f"Not taking action - waiting for VPN recovery. "
+                           f"Running with {healthy_count}/{cfg.MIN_REPLICAS} engines.")
+                return True
+        elif vpn2_healthy and not vpn1_healthy:
+            engines_on_failed_vpn = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
+            if engines_on_failed_vpn > 0:
+                healthy_count = len(healthy_engines)
+                logger.info(f"VPN '{cfg.GLUETUN_CONTAINER_NAME}' is unhealthy with {engines_on_failed_vpn} engines. "
+                           f"Not taking action - waiting for VPN recovery. "
+                           f"Running with {healthy_count}/{cfg.MIN_REPLICAS} engines.")
+                return True
+        
+        return False
     
     async def _ensure_healthy_engines(self, healthy_engines: List, unhealthy_engines: List):
         """Ensure we have at least MIN_REPLICAS healthy engines."""
@@ -155,31 +203,6 @@ class HealthManager:
         
         if healthy_count < total_needed:
             deficit = total_needed - healthy_count
-            
-            # In redundant VPN mode, check if unhealthy engines are due to VPN failure
-            # If so, don't provision new engines - wait for VPN recovery
-            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
-                from .gluetun import gluetun_monitor
-                
-                vpn1_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
-                vpn2_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
-                
-                # If one VPN is unhealthy, check if we have engines on it
-                if vpn1_healthy and not vpn2_healthy:
-                    engines_on_failed_vpn = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
-                    if engines_on_failed_vpn > 0:
-                        logger.info(f"VPN '{cfg.GLUETUN_CONTAINER_NAME_2}' is unhealthy with {engines_on_failed_vpn} engines. "
-                                   f"Not provisioning new engines - waiting for VPN recovery. "
-                                   f"Running with {healthy_count}/{total_needed} engines.")
-                        return
-                elif vpn2_healthy and not vpn1_healthy:
-                    engines_on_failed_vpn = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
-                    if engines_on_failed_vpn > 0:
-                        logger.info(f"VPN '{cfg.GLUETUN_CONTAINER_NAME}' is unhealthy with {engines_on_failed_vpn} engines. "
-                                   f"Not provisioning new engines - waiting for VPN recovery. "
-                                   f"Running with {healthy_count}/{total_needed} engines.")
-                        return
-            
             logger.warning(f"Only {healthy_count} healthy engines, need {total_needed}. Starting {deficit} new engines.")
             
             # Start new engines to ensure service availability
