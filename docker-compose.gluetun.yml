@@ -19,51 +19,33 @@ services:
     container_name: gluetun
     cap_add:
       - NET_ADMIN
+      - SYS_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
     ports:
-      # AceStream engine ports (must match PORT_RANGE_HOST in .env)
-      # Adjust range based on your MAX_REPLICAS setting
-      - "19000-19999:19000-19999"
-      # Gluetun HTTP control server (for port forwarding API and health checks)
-      # Must match GLUETUN_API_PORT in .env
+      - "19000-19499:19000-19499"      
       - "8001:8001"
     environment:
       - PGID=1000
       - PUID=1000
-      # VPN Provider Configuration - Adjust for your provider
-      # See https://github.com/qdm12/gluetun-wiki for provider-specific settings
       - VPN_SERVICE_PROVIDER=protonvpn
       - VPN_TYPE=wireguard
-      - WIREGUARD_PRIVATE_KEY=YOUR_WIREGUARD_PRIVATE_KEY_HERE
+      - WIREGUARD_PRIVATE_KEY=
       - VPN_PORT_FORWARDING=on
       - SERVER_COUNTRIES=Spain,France,Germany,Portugal
-      # HTTP control server - REQUIRED for orchestrator API access
-      - HTTP_CONTROL_SERVER_ADDRESS=:8001
-      # DNS and Health
+      - HTTP_CONTROL_SERVER_ADDRESS=:8001     
       - DOT=off
       - HEALTH_VPN_DURATION_INITIAL=120s
       - HEALTH_TARGET_ADDRESS=cloudflare.com:80
       - TZ=Europe/Madrid
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://cloudflare.com"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
     restart: unless-stopped
     networks:
-      - acestream
+      - aceserver
 
   orchestrator:
     container_name: orchestrator
     image: ghcr.io/krinkuto11/acestream-orchestrator:v1.0.0
     env_file: .env
-    environment:
-      # Single VPN mode configuration
-      - VPN_MODE=single
-      - GLUETUN_CONTAINER_NAME=gluetun
-      - GLUETUN_API_PORT=8001
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
