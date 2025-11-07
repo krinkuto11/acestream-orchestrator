@@ -53,6 +53,10 @@ class VpnContainerMonitor:
         # Track when VPN was restarted to add grace period before API calls
         self._last_restart_time: Optional[datetime] = None
         self._restart_grace_period_s: int = 15  # Wait 15 seconds after restart before API calls
+        
+        # Track when VPN recovered to add grace period before cleanup
+        self._last_recovery_time: Optional[datetime] = None
+        self._recovery_stabilization_period_s: int = 120  # Wait 2 minutes after recovery before cleanup
 
     async def check_health(self) -> bool:
         """Check if VPN container is healthy."""
@@ -207,6 +211,14 @@ class VpnContainerMonitor:
         
         time_since_restart = (datetime.now(timezone.utc) - self._last_restart_time).total_seconds()
         return time_since_restart < self._restart_grace_period_s
+
+    def is_in_recovery_stabilization_period(self) -> bool:
+        """Check if we're still in the stabilization period after recovery."""
+        if self._last_recovery_time is None:
+            return False
+        
+        time_since_recovery = (datetime.now(timezone.utc) - self._last_recovery_time).total_seconds()
+        return time_since_recovery < self._recovery_stabilization_period_s
 
     async def get_forwarded_port(self) -> Optional[int]:
         """Get the VPN forwarded port from Gluetun API with caching."""
@@ -430,6 +442,9 @@ class GluetunMonitor:
                              old_status=old_status,
                              new_status=new_status)
             monitor.invalidate_port_cache()
+            
+            # Mark recovery time to prevent premature cleanup
+            monitor._last_recovery_time = now
             
             # Only restart engines if this is a real reconnection, not initial startup
             should_restart_engines = monitor.should_restart_engines_on_reconnection(now)
