@@ -57,6 +57,9 @@ class VpnContainerMonitor:
         # Track when VPN recovered to add grace period before cleanup
         self._last_recovery_time: Optional[datetime] = None
         self._recovery_stabilization_period_s: int = 120  # Wait 2 minutes after recovery before cleanup
+        
+        # Track last logged container status to prevent spam logging
+        self._last_logged_status: Optional[str] = None
 
     async def check_health(self) -> bool:
         """Check if VPN container is healthy."""
@@ -72,7 +75,10 @@ class VpnContainerMonitor:
             # Check container status
             if container.status != "running":
                 duration = time.time() - check_start
-                logger.warning(f"VPN container '{self.container_name}' is not running (status: {container.status})")
+                # Only log warning if status has changed to avoid spam
+                if self._last_logged_status != container.status:
+                    logger.warning(f"VPN container '{self.container_name}' is not running (status: {container.status})")
+                    self._last_logged_status = container.status
                 debug_log.log_vpn("health_check",
                                  status="not_running",
                                  duration=duration,
@@ -96,6 +102,8 @@ class VpnContainerMonitor:
                     return False
                 elif health_status == "healthy":
                     logger.debug(f"VPN container '{self.container_name}' is healthy")
+                    # Reset logged status when container becomes healthy again
+                    self._last_logged_status = None
                     debug_log.log_vpn("health_check",
                                      status="healthy",
                                      duration=duration,
@@ -105,6 +113,8 @@ class VpnContainerMonitor:
                 else:
                     # Health status might be "starting" or "none"
                     logger.debug(f"VPN container '{self.container_name}' health status: {health_status}")
+                    # Reset logged status when container is running
+                    self._last_logged_status = None
                     debug_log.log_vpn("health_check",
                                      status=health_status,
                                      duration=duration,
@@ -114,6 +124,8 @@ class VpnContainerMonitor:
             else:
                 duration = time.time() - check_start
                 logger.debug(f"VPN container '{self.container_name}' has no health check, considering healthy")
+                # Reset logged status when container is running
+                self._last_logged_status = None
                 debug_log.log_vpn("health_check",
                                  status="healthy_no_healthcheck",
                                  duration=duration,
@@ -647,8 +659,27 @@ class GluetunMonitor:
             if exited:
                 logger.info(f"Emergency mode deactivated - restoring full capacity")
                 
-                # Wait a bit for VPN to stabilize before provisioning
+                # Wait for VPN to stabilize and get forwarded port before provisioning
+                # This is important because the first engine provisioned should be the forwarded engine
                 await asyncio.sleep(5)
+                
+                # Wait for forwarded port to become available (max 30 seconds)
+                monitor = self._vpn_monitors.get(recovered_vpn)
+                if monitor:
+                    logger.info(f"Waiting for VPN '{recovered_vpn}' to establish port forwarding...")
+                    port_wait_start = asyncio.get_event_loop().time()
+                    port_wait_timeout = 30
+                    forwarded_port = None
+                    
+                    while (asyncio.get_event_loop().time() - port_wait_start) < port_wait_timeout:
+                        forwarded_port = await monitor.get_forwarded_port()
+                        if forwarded_port:
+                            logger.info(f"VPN '{recovered_vpn}' forwarded port {forwarded_port} is now available")
+                            break
+                        await asyncio.sleep(2)
+                    
+                    if not forwarded_port:
+                        logger.warning(f"VPN '{recovered_vpn}' forwarded port not available after {port_wait_timeout}s, provisioning without it")
                 
                 # Provision engines to restore full capacity
                 await self._provision_engines_after_vpn_recovery(recovered_vpn)
