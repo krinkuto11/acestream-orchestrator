@@ -156,9 +156,14 @@ class DockerMonitor:
         try:
             from .replica_validator import replica_validator
             
-            # Get current container IDs from Docker
-            current_containers = list_managed()
-            current_container_ids = {c.id for c in current_containers if c.status == 'running'}
+            # Get current container IDs from Docker with error handling
+            try:
+                current_containers = list_managed()
+                current_container_ids = {c.id for c in current_containers if c.status == 'running'}
+            except Exception as e:
+                # If Docker socket is temporarily unavailable, skip this sync iteration
+                logger.warning(f"Docker socket temporarily unavailable during sync, will retry next iteration: {e}")
+                return
             
             # Detect changes
             added = current_container_ids - self._last_container_ids

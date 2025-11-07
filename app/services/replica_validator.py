@@ -3,6 +3,7 @@ Replica validation service - provides reliable Docker socket validation and repl
 Ensures consistent state synchronization between in-memory state and actual Docker containers.
 """
 import logging
+import time
 from typing import Dict, List, Set, Tuple, Optional
 from datetime import datetime, timezone
 from .health import list_managed
@@ -30,54 +31,72 @@ class ReplicaValidator:
         return self._sync_lock
     
     def get_docker_container_status(self) -> Dict[str, any]:
-        """Get comprehensive status from Docker socket."""
-        try:
-            managed_containers = list_managed()
-            running_containers = [c for c in managed_containers if c.status == "running"]
-            
-            container_ids = {c.id for c in running_containers}
-            container_details = {}
-            
-            # Build container details with error handling for each container
-            for c in managed_containers:
-                try:
-                    container_details[c.id] = {
-                        'status': c.status,
-                        'name': c.name,
-                        'labels': c.labels or {},
-                        'created': c.attrs.get('Created', '') if hasattr(c, 'attrs') else '',
-                        'ports': c.attrs.get('NetworkSettings', {}).get('Ports', {}) if hasattr(c, 'attrs') else {}
+        """
+        Get comprehensive status from Docker socket with retry logic.
+        
+        Returns a dict with Docker container information, or an error dict if Docker
+        is temporarily unavailable. Distinguishes between temporary unavailability
+        and actual container loss to prevent premature state cleanup.
+        """
+        max_retries = 3
+        retry_delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                managed_containers = list_managed()
+                running_containers = [c for c in managed_containers if c.status == "running"]
+                
+                container_ids = {c.id for c in running_containers}
+                container_details = {}
+                
+                # Build container details with error handling for each container
+                for c in managed_containers:
+                    try:
+                        container_details[c.id] = {
+                            'status': c.status,
+                            'name': c.name,
+                            'labels': c.labels or {},
+                            'created': c.attrs.get('Created', '') if hasattr(c, 'attrs') else '',
+                            'ports': c.attrs.get('NetworkSettings', {}).get('Ports', {}) if hasattr(c, 'attrs') else {}
+                        }
+                    except Exception as e:
+                        logger.warning(f"Failed to get details for container {c.id[:12]}: {e}")
+                        container_details[c.id] = {
+                            'status': getattr(c, 'status', 'unknown'),
+                            'name': getattr(c, 'name', 'unknown'),
+                            'labels': {},
+                            'created': '',
+                            'ports': {}
+                        }
+                
+                result = {
+                    'total_managed': len(managed_containers),
+                    'total_running': len(running_containers),
+                    'running_container_ids': container_ids,
+                    'container_details': container_details,
+                    'containers': running_containers,
+                    'docker_available': True
+                }
+                
+                logger.debug(f"Docker status: managed={result['total_managed']}, running={result['total_running']}")
+                return result
+                
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Docker socket temporarily unavailable (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error(f"Failed to get Docker container status after {max_retries} attempts: {e}")
+                    return {
+                        'total_managed': 0,
+                        'total_running': 0,
+                        'running_container_ids': set(),
+                        'container_details': {},
+                        'containers': [],
+                        'docker_available': False,
+                        'error': str(e)
                     }
-                except Exception as e:
-                    logger.warning(f"Failed to get details for container {c.id[:12]}: {e}")
-                    container_details[c.id] = {
-                        'status': getattr(c, 'status', 'unknown'),
-                        'name': getattr(c, 'name', 'unknown'),
-                        'labels': {},
-                        'created': '',
-                        'ports': {}
-                    }
-            
-            result = {
-                'total_managed': len(managed_containers),
-                'total_running': len(running_containers),
-                'running_container_ids': container_ids,
-                'container_details': container_details,
-                'containers': running_containers
-            }
-            
-            logger.debug(f"Docker status: managed={result['total_managed']}, running={result['total_running']}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Failed to get Docker container status: {e}")
-            return {
-                'total_managed': 0,
-                'total_running': 0,
-                'running_container_ids': set(),
-                'container_details': {},
-                'containers': []
-            }
     
     def validate_and_sync_state(self, force_reindex: bool = False) -> Tuple[int, int, int]:
         """
@@ -107,6 +126,24 @@ class ReplicaValidator:
             all_engines = state.list_engines()
             active_streams = state.list_streams(status="started")
             docker_status = self.get_docker_container_status()
+            
+            # Check if Docker socket is available
+            if not docker_status.get('docker_available', True):
+                logger.warning("Docker socket temporarily unavailable - skipping state synchronization to avoid premature cleanup")
+                # Return current state counts without modification
+                used_container_ids = {stream.container_id for stream in active_streams}
+                state_engine_count = len(all_engines)
+                used_engines = len(used_container_ids)
+                free_count = state_engine_count - used_engines
+                
+                # Return last known good result or cache current state estimate
+                if self._cached_result:
+                    return self._cached_result
+                
+                # Cache current state estimate for consistency on subsequent calls
+                current_state_estimate = (state_engine_count, used_engines, free_count)
+                self._cached_result = current_state_estimate
+                return current_state_estimate
             
             # Find engines currently in use
             used_container_ids = {stream.container_id for stream in active_streams}

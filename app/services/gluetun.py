@@ -56,7 +56,8 @@ class VpnContainerMonitor:
         check_start = time.time()
         
         try:
-            cli = get_client()
+            # Use increased timeout for better resilience during VPN lifecycle events
+            cli = get_client(timeout=30)
             container = cli.containers.get(self.container_name)
             container.reload()
             
@@ -186,7 +187,7 @@ class VpnContainerMonitor:
         
         try:
             logger.warning(f"Force restarting VPN container '{self.container_name}' after {cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S}s timeout")
-            cli = get_client()
+            cli = get_client(timeout=30)
             container = cli.containers.get(self.container_name)
             container.restart()
             self._force_restart_attempted = True
@@ -753,7 +754,7 @@ def _get_single_vpn_status(container_name: str) -> dict:
         from .docker_client import get_client
         from docker.errors import NotFound
         
-        cli = get_client()
+        cli = get_client(timeout=30)
         container = cli.containers.get(container_name)
         container.reload()
         
