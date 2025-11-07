@@ -155,6 +155,31 @@ class HealthManager:
         
         if healthy_count < total_needed:
             deficit = total_needed - healthy_count
+            
+            # In redundant VPN mode, check if unhealthy engines are due to VPN failure
+            # If so, don't provision new engines - wait for VPN recovery
+            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME and cfg.GLUETUN_CONTAINER_NAME_2:
+                from .gluetun import gluetun_monitor
+                
+                vpn1_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
+                vpn2_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
+                
+                # If one VPN is unhealthy, check if we have engines on it
+                if vpn1_healthy and not vpn2_healthy:
+                    engines_on_failed_vpn = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
+                    if engines_on_failed_vpn > 0:
+                        logger.info(f"VPN '{cfg.GLUETUN_CONTAINER_NAME_2}' is unhealthy with {engines_on_failed_vpn} engines. "
+                                   f"Not provisioning new engines - waiting for VPN recovery. "
+                                   f"Running with {healthy_count}/{total_needed} engines.")
+                        return
+                elif vpn2_healthy and not vpn1_healthy:
+                    engines_on_failed_vpn = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
+                    if engines_on_failed_vpn > 0:
+                        logger.info(f"VPN '{cfg.GLUETUN_CONTAINER_NAME}' is unhealthy with {engines_on_failed_vpn} engines. "
+                                   f"Not provisioning new engines - waiting for VPN recovery. "
+                                   f"Running with {healthy_count}/{total_needed} engines.")
+                        return
+            
             logger.warning(f"Only {healthy_count} healthy engines, need {total_needed}. Starting {deficit} new engines.")
             
             # Start new engines to ensure service availability

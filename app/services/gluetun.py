@@ -429,15 +429,11 @@ class GluetunMonitor:
                                  container_name=container_name,
                                  reason="grace_period_or_instability")
             
-            # In redundant mode, trigger rebalancing when VPN recovers (regardless of restart config)
-            # Rebalancing is gentler than full restart - it only moves idle engines
+            # In redundant mode, engines on recovered VPN will become accessible again
+            # New engines will be provisioned on recovered VPN due to round-robin balancing
             if cfg.VPN_MODE == 'redundant':
-                # Wait a bit to let VPN stabilize before rebalancing
-                if should_restart_engines:
-                    logger.info(f"VPN '{container_name}' recovered - checking if rebalancing is needed")
-                    await self._rebalance_engines_in_redundant_mode(container_name)
-                else:
-                    logger.debug(f"VPN '{container_name}' recovered but in grace period - deferring rebalancing")
+                logger.info(f"VPN '{container_name}' recovered - engines on this VPN should now be accessible. "
+                           f"New engines will be balanced across both VPNs.")
         
         # Call registered callbacks
         for callback in self._health_transition_callbacks:
@@ -545,85 +541,6 @@ class GluetunMonitor:
             
         except Exception as e:
             logger.error(f"Error restarting engines for VPN '{container_name}': {e}")
-
-    async def _rebalance_engines_in_redundant_mode(self, recovered_vpn: str):
-        """
-        Rebalance engines across VPNs when one recovers in redundant mode.
-        
-        This method gradually migrates idle engines from the overloaded VPN to the
-        recovered VPN to restore approximately equal distribution.
-        """
-        if cfg.VPN_MODE != 'redundant' or not cfg.GLUETUN_CONTAINER_NAME_2:
-            return
-        
-        try:
-            from .provisioner import stop_container
-            from .state import state
-            
-            # Determine the two VPN containers
-            vpn1 = cfg.GLUETUN_CONTAINER_NAME
-            vpn2 = cfg.GLUETUN_CONTAINER_NAME_2
-            other_vpn = vpn2 if recovered_vpn == vpn1 else vpn1
-            
-            # Count engines on each VPN
-            recovered_engines = state.get_engines_by_vpn(recovered_vpn)
-            other_engines = state.get_engines_by_vpn(other_vpn)
-            
-            recovered_count = len(recovered_engines)
-            other_count = len(other_engines)
-            total_count = recovered_count + other_count
-            
-            if total_count == 0:
-                logger.info(f"No engines to rebalance after VPN '{recovered_vpn}' recovery")
-                return
-            
-            # Calculate imbalance
-            balance_ratio = recovered_count / total_count if total_count > 0 else 0
-            target_ratio = 0.5
-            imbalance = abs(balance_ratio - target_ratio)
-            
-            # Only rebalance if imbalance is significant (>20% deviation from 50/50)
-            if imbalance < 0.2:
-                logger.info(f"VPN balance acceptable after '{recovered_vpn}' recovery: {recovered_count}/{other_count} (target: 50/50)")
-                return
-            
-            # Calculate how many engines to move
-            target_count = total_count // 2
-            engines_to_move = min(abs(target_count - recovered_count), other_count)
-            
-            # Only move idle engines (no active streams) to avoid disruption
-            idle_engines = [
-                eng for eng in other_engines 
-                if not eng.streams or len(eng.streams) == 0
-            ]
-            
-            # Limit rebalancing to avoid mass disruption
-            max_to_move = min(engines_to_move, len(idle_engines), 3)
-            
-            if max_to_move == 0:
-                logger.info(f"No idle engines available to rebalance from '{other_vpn}' to '{recovered_vpn}'")
-                return
-            
-            logger.info(f"Rebalancing {max_to_move} idle engines from '{other_vpn}' to '{recovered_vpn}' "
-                       f"(current: {recovered_count}/{other_count}, target: ~{target_count}/{target_count})")
-            
-            # Stop idle engines on overloaded VPN
-            engines_moved = 0
-            for engine in idle_engines[:max_to_move]:
-                try:
-                    logger.info(f"Moving engine {engine.container_id[:12]} from '{other_vpn}' to '{recovered_vpn}'")
-                    stop_container(engine.container_id)
-                    state.remove_engine(engine.container_id)
-                    engines_moved += 1
-                except Exception as e:
-                    logger.error(f"Error moving engine {engine.container_id[:12]}: {e}")
-            
-            if engines_moved > 0:
-                logger.info(f"Rebalancing complete: moved {engines_moved} engines. "
-                           f"Autoscaler will provision replacements on '{recovered_vpn}'")
-            
-        except Exception as e:
-            logger.error(f"Error rebalancing engines after VPN '{recovered_vpn}' recovery: {e}")
 
     def is_healthy(self, container_name: Optional[str] = None) -> Optional[bool]:
         """Get the current VPN health status. If container_name is None, returns primary VPN status."""
