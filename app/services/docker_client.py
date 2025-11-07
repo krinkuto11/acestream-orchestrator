@@ -5,14 +5,20 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def get_client():
-    """Get Docker client with retry logic for connection."""
+def get_client(timeout: int = 30):
+    """
+    Get Docker client with retry logic for connection.
+    
+    Args:
+        timeout: Socket timeout in seconds (default: 30s, increased from 15s for better 
+                resilience during VPN container lifecycle events)
+    """
     max_retries = 10
     retry_delay = 2
     
     for attempt in range(max_retries):
         try:
-            client = docker.from_env(timeout=15)
+            client = docker.from_env(timeout=timeout)
             # Test the connection
             client.ping()
             return client
