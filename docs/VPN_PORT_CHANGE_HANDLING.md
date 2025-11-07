@@ -25,8 +25,9 @@ The orchestrator now automatically detects port changes and replaces the forward
 ### Detection
 
 1. **Port Tracking**: Each `VpnContainerMonitor` tracks the last known stable forwarded port
-2. **Monitoring Loop**: Every health check cycle, the system checks if the forwarded port has changed
-3. **Change Detection**: When a port change is detected, the system logs it and triggers replacement
+2. **Monitoring Loop**: The system checks for port changes periodically (every 30 seconds by default)
+3. **Throttling**: Port change checks are throttled to avoid excessive API calls, as port changes are rare events
+4. **Change Detection**: When a port change is detected, the system logs it and triggers replacement
 
 ### Replacement Process
 
@@ -48,13 +49,15 @@ When a port change is detected:
 
 ### VpnContainerMonitor
 
-The `VpnContainerMonitor` class tracks port changes:
+The `VpnContainerMonitor` class tracks port changes with throttling:
 
 ```python
 class VpnContainerMonitor:
     def __init__(self, container_name: str):
         # ... existing fields ...
         self._last_stable_forwarded_port: Optional[int] = None
+        self._last_port_check_time: Optional[datetime] = None
+        self._port_check_interval_s: int = 30  # Check every 30 seconds
     
     async def check_port_change(self) -> Optional[tuple[int, int]]:
         """Check if the forwarded port has changed."""
@@ -62,6 +65,14 @@ class VpnContainerMonitor:
         if not self._last_health_status:
             return None
         
+        # Throttle checks to avoid excessive API calls
+        now = datetime.now(timezone.utc)
+        if self._last_port_check_time is not None:
+            time_since_last_check = (now - self._last_port_check_time).total_seconds()
+            if time_since_last_check < self._port_check_interval_s:
+                return None
+        
+        self._last_port_check_time = now
         current_port = await self._fetch_and_cache_port()
         
         if current_port and self._last_stable_forwarded_port:

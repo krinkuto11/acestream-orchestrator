@@ -42,6 +42,7 @@ async def test_port_change_detection_async():
     """Test async port change detection."""
     from app.services.gluetun import VpnContainerMonitor
     from app.core.config import cfg
+    from datetime import datetime, timezone, timedelta
     
     monitor = VpnContainerMonitor("gluetun")
     monitor._last_health_status = True  # VPN is healthy
@@ -60,6 +61,9 @@ async def test_port_change_detection_async():
     assert monitor._last_stable_forwarded_port == 65290
     logger.info("✓ Baseline port established: 65290")
     
+    # Simulate time passing to bypass throttling
+    monitor._last_port_check_time = datetime.now(timezone.utc) - timedelta(seconds=31)
+    
     # Second check - detect port change
     monitor._fetch_and_cache_port = mock_fetch_port_changed
     result = await monitor.check_port_change()
@@ -69,6 +73,9 @@ async def test_port_change_detection_async():
     assert new_port == 40648, f"New port should be 40648, got {new_port}"
     assert monitor._last_stable_forwarded_port == 40648, "Stable port should be updated"
     logger.info(f"✓ Port change detected: {old_port} -> {new_port}")
+    
+    # Simulate time passing again
+    monitor._last_port_check_time = datetime.now(timezone.utc) - timedelta(seconds=31)
     
     # Third check - no change
     result = await monitor.check_port_change()

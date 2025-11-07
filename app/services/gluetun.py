@@ -38,6 +38,8 @@ class VpnContainerMonitor:
         
         # Track the last known stable forwarded port for detecting changes
         self._last_stable_forwarded_port: Optional[int] = None
+        self._last_port_check_time: Optional[datetime] = None
+        self._port_check_interval_s: int = 30  # Check for port changes every 30 seconds
         
         # Track health stability to prevent engine restarts during initial startup
         self._startup_grace_period_s = 60
@@ -245,12 +247,25 @@ class VpnContainerMonitor:
         """
         Check if the forwarded port has changed since the last check.
         
+        This check is throttled to avoid excessive API calls. It only runs if:
+        - VPN is healthy
+        - Sufficient time has passed since last check (based on _port_check_interval_s)
+        
         Returns:
             Optional[tuple[int, int]]: (old_port, new_port) if port changed, None otherwise
         """
         # Only check for port changes if VPN is healthy
         if not self._last_health_status:
             return None
+        
+        # Throttle port change checks to avoid excessive API calls
+        now = datetime.now(timezone.utc)
+        if self._last_port_check_time is not None:
+            time_since_last_check = (now - self._last_port_check_time).total_seconds()
+            if time_since_last_check < self._port_check_interval_s:
+                return None
+        
+        self._last_port_check_time = now
         
         # Fetch the current port
         current_port = await self._fetch_and_cache_port()
