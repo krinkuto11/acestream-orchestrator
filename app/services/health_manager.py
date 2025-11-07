@@ -158,7 +158,7 @@ class HealthManager:
             
             # In redundant VPN mode, check if unhealthy engines are due to VPN failure
             # If so, don't provision new engines - wait for VPN recovery
-            if cfg.VPN_MODE == 'redundant':
+            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
                 from .gluetun import gluetun_monitor
                 
                 vpn1_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)

@@ -565,17 +565,22 @@ class GluetunMonitor:
             logger.info(f"VPN '{recovered_vpn}' recovered - provisioning {deficit} engines to restore capacity ({current_count}/{target_count})")
             
             # Provision engines - they will be assigned to recovered VPN via round-robin
+            # Note: Empty labels/env is intentional - provisioner will handle VPN assignment
+            provisioned = 0
+            failed = 0
             for i in range(deficit):
                 try:
                     logger.info(f"Provisioning recovery engine {i+1}/{deficit}")
                     req = AceProvisionRequest(labels={}, env={})
                     response = start_acestream(req)
                     logger.info(f"Successfully provisioned recovery engine {response.container_id[:12]}")
+                    provisioned += 1
                 except Exception as e:
                     logger.error(f"Failed to provision recovery engine {i+1}/{deficit}: {e}")
+                    failed += 1
                     # Continue with remaining engines even if one fails
             
-            logger.info(f"VPN recovery provisioning complete - provisioned {deficit} engines")
+            logger.info(f"VPN recovery provisioning complete - successfully provisioned {provisioned}/{deficit} engines (failed: {failed})")
             
         except Exception as e:
             logger.error(f"Error provisioning engines after VPN '{recovered_vpn}' recovery: {e}")
