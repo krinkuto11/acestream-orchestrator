@@ -136,10 +136,14 @@ class ReplicaValidator:
                 used_engines = len(used_container_ids)
                 free_count = state_engine_count - used_engines
                 
-                # Return last known good result or current state estimate
+                # Return last known good result or cache current state estimate
                 if self._cached_result:
                     return self._cached_result
-                return (state_engine_count, used_engines, free_count)
+                
+                # Cache current state estimate for consistency on subsequent calls
+                current_state_estimate = (state_engine_count, used_engines, free_count)
+                self._cached_result = current_state_estimate
+                return current_state_estimate
             
             # Find engines currently in use
             used_container_ids = {stream.container_id for stream in active_streams}

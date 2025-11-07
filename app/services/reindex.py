@@ -96,10 +96,9 @@ def reindex_existing():
             # Set VPN container assignment in state if present
             if vpn_container:
                 state.set_engine_vpn(key, vpn_container)
+                logger.debug(f"Restored VPN assignment for engine {key[:12]}: {vpn_container}")
             
             # If this is a forwarded engine, make sure it's marked in state
             if should_be_forwarded:
                 state.set_forwarded_engine(key)
                 logger.info(f"Reindexed forwarded engine: {key[:12]}")
-                if vpn_container:
-                    logger.info(f"Restored VPN assignment for forwarded engine {key[:12]}: {vpn_container}")
