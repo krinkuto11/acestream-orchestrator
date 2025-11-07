@@ -1,0 +1,137 @@
+# Docker Compose configuration for redundant VPN mode
+# This setup provides high availability with two Gluetun VPN containers
+# Automatic failover ensures zero downtime if one VPN fails
+#
+# Quick Start:
+# 1. Copy .env.example to .env
+# 2. Configure VPN credentials in this file (WIREGUARD_PRIVATE_KEY for both containers)
+# 3. Set VPN_MODE=redundant in .env (or below in orchestrator environment)
+# 4. Configure port ranges: GLUETUN_PORT_RANGE_1 and GLUETUN_PORT_RANGE_2
+# 5. Run: docker-compose -f docker-compose.gluetun-redundant.yml up -d
+# 6. Access dashboard at http://localhost:8000/panel
+#
+# Key configuration points:
+# 1. Two Gluetun containers (gluetun1, gluetun2) with separate configurations
+# 2. Each Gluetun has its own HTTP control server port (8001 external, 8002 external; both use :8001 internal)
+# 3. Port ranges are split between VPNs for engine distribution
+# 4. Engines are automatically distributed across both VPNs in round-robin fashion
+# 5. If one VPN fails, traffic automatically routes to the healthy VPN
+
+services:
+  gluetun1:
+    image: qmcgaw/gluetun
+    container_name: gluetun1
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      # AceStream engine ports for VPN1 (first half of PORT_RANGE_HOST)
+      # Engines assigned to gluetun1 will use ports 19000-19499
+      - "19000-19499:19000-19499"
+      # Gluetun HTTP control server for API access (port forwarding, health checks)
+      # The internal port (8001) must match HTTP_CONTROL_SERVER_ADDRESS below
+      # The orchestrator accesses this via http://gluetun1:8001 (uses internal port)
+      - "8001:8001"
+    environment:
+      - PGID=1000
+      - PUID=1000
+      # VPN Provider Configuration - Adjust for your provider
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=YOUR_WIREGUARD_PRIVATE_KEY_1_HERE
+      - VPN_PORT_FORWARDING=on
+      - SERVER_COUNTRIES=Spain,France,Germany,Portugal
+      # HTTP control server must listen on the internal port
+      # This is the port the orchestrator will use when accessing http://gluetun1:8001
+      - HTTP_CONTROL_SERVER_ADDRESS=:8001
+      - DOT=off
+      - HEALTH_VPN_DURATION_INITIAL=120s
+      - HEALTH_TARGET_ADDRESS=cloudflare.com:80
+      - TZ=Europe/Madrid
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://cloudflare.com"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - aceserver
+
+  gluetun2:
+    image: qmcgaw/gluetun
+    container_name: gluetun2
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      # AceStream engine ports for VPN2 (second half of PORT_RANGE_HOST)
+      # Engines assigned to gluetun2 will use ports 19500-19999
+      - "19500-19999:19500-19999"
+      # Gluetun HTTP control server for API access
+      # Note: Different external port (8002) from gluetun1, but same internal port (8001)
+      # The orchestrator accesses this via http://gluetun2:8001 (uses internal port)
+      - "8002:8001"
+    environment:
+      - PGID=1000
+      - PUID=1000
+      # VPN Provider Configuration - Use different server for redundancy
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=YOUR_WIREGUARD_PRIVATE_KEY_2_HERE
+      - VPN_PORT_FORWARDING=on
+      # Use different server location for redundancy
+      - SERVER_COUNTRIES=Netherlands,Switzerland,Sweden
+      # HTTP control server listens on same internal port as gluetun1
+      - HTTP_CONTROL_SERVER_ADDRESS=:8001
+      - DOT=off
+      - HEALTH_VPN_DURATION_INITIAL=120s
+      - HEALTH_TARGET_ADDRESS=cloudflare.com:80
+      - TZ=Europe/Madrid
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://cloudflare.com"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - acestream
+
+  orchestrator:
+    container_name: orchestrator
+    image: ghcr.io/krinkuto11/acestream-orchestrator:latest
+    env_file: .env
+    environment:
+      # Redundant VPN mode configuration
+      - VPN_MODE=redundant
+      - GLUETUN_CONTAINER_NAME=gluetun1
+      - GLUETUN_CONTAINER_NAME_2=gluetun2
+      # Gluetun API port (internal port used by orchestrator to access Gluetun containers)
+      # Both Gluetun containers use :8001 internally
+      - GLUETUN_API_PORT=8001
+      # Port range must cover both VPN port ranges
+      - PORT_RANGE_HOST=19000-19999
+      # VPN-specific port ranges (must match the port mappings above)
+      - GLUETUN_PORT_RANGE_1=19000-19499  # Port range for gluetun1
+      - GLUETUN_PORT_RANGE_2=19500-19999  # Port range for gluetun2
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./orchestrator.db:/app/orchestrator.db  # Persist database
+    ports:
+      - "8000:8000"
+    restart: on-failure
+    depends_on:
+      gluetun1:
+        condition: service_healthy
+      gluetun2:
+        condition: service_healthy
+    networks:
+      - acestream
+
+networks:
+  acestream:
+    name: aceserver
+    driver: bridge

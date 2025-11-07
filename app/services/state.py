@@ -19,6 +19,13 @@ class State:
     @staticmethod
     def now():
         return datetime.now(timezone.utc)
+    
+    def _is_redundant_mode(self) -> bool:
+        """Check if we're in redundant VPN mode."""
+        from ..core.config import cfg
+        return (cfg.VPN_MODE == 'redundant' and 
+                cfg.GLUETUN_CONTAINER_NAME and 
+                cfg.GLUETUN_CONTAINER_NAME_2)
 
     def on_stream_started(self, evt: StreamStartedEvent) -> StreamState:
         with self._lock:
@@ -62,7 +69,7 @@ class State:
                 eng = EngineState(container_id=key, container_name=container_name, host=evt.engine.host, port=evt.engine.port,
                                   labels=evt.labels or {}, forwarded=False, first_seen=self.now(), last_seen=self.now(), streams=[],
                                   health_status="unknown", last_health_check=None, last_stream_usage=self.now(),
-                                  last_cache_cleanup=None, cache_size_bytes=None)
+                                  last_cache_cleanup=None, cache_size_bytes=None, vpn_container=None)
                 self.engines[key] = eng
             else:
                 eng.host = evt.engine.host; eng.port = evt.engine.port; eng.last_seen = self.now()
@@ -82,7 +89,7 @@ class State:
         with SessionLocal() as s:
             s.merge(EngineRow(engine_key=eng.container_id, container_id=evt.container_id, container_name=container_name,
                               host=eng.host, port=eng.port, labels=eng.labels, forwarded=eng.forwarded, 
-                              first_seen=eng.first_seen, last_seen=eng.last_seen))
+                              first_seen=eng.first_seen, last_seen=eng.last_seen, vpn_container=eng.vpn_container))
             s.merge(StreamRow(id=stream_id, engine_key=eng.container_id, key_type=st.key_type, key=st.key,
                               playback_session_id=st.playback_session_id, stat_url=st.stat_url, command_url=st.command_url,
                               is_live=st.is_live, started_at=st.started_at, status=st.status))
@@ -171,12 +178,15 @@ class State:
             return self.engines.get(container_id)
 
     def remove_engine(self, container_id: str) -> Optional[EngineState]:
-        """Remove an engine from the state and return it if it existed."""
-        was_forwarded = False
+        """Remove an engine from the state and return it if it existed.
+        
+        Note: If the removed engine was forwarded, the autoscaler will automatically
+        provision a new engine to maintain MIN_REPLICAS. That new engine will become
+        the forwarded engine since none will exist for that VPN.
+        """
         with self._lock:
             removed_engine = self.engines.pop(container_id, None)
             if removed_engine:
-                was_forwarded = removed_engine.forwarded
                 # Also remove any associated streams that are still active
                 streams_to_remove = [s_id for s_id, stream in self.streams.items() 
                                    if stream.container_id == container_id and stream.status != "ended"]
@@ -197,18 +207,6 @@ class State:
             except Exception:
                 # Database operation failed, but we can continue since we've updated memory state
                 pass
-        
-        # If the removed engine was forwarded, promote another engine if using Gluetun
-        if was_forwarded:
-            from ..core.config import cfg
-            if cfg.GLUETUN_CONTAINER_NAME and self.engines:
-                # Find the first available engine to promote
-                with self._lock:
-                    for engine_id, engine in self.engines.items():
-                        if not engine.forwarded:
-                            logger.info(f"Forwarded engine removed, promoting {engine_id[:12]} to forwarded")
-                            self.set_forwarded_engine(engine_id)
-                            break
         
         return removed_engine
 
@@ -277,6 +275,27 @@ class State:
                           speed_up=snap.speed_up, downloaded=snap.downloaded, uploaded=snap.uploaded, status=snap.status))
             s.commit()
 
+    def set_engine_vpn(self, container_id: str, vpn_container: str):
+        """Set the VPN container assignment for an engine."""
+        with self._lock:
+            eng = self.engines.get(container_id)
+            if eng:
+                eng.vpn_container = vpn_container
+                # Update database as well
+                try:
+                    with SessionLocal() as s:
+                        engine_row = s.get(EngineRow, container_id)
+                        if engine_row:
+                            engine_row.vpn_container = vpn_container
+                            s.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to update VPN assignment in database: {e}")
+
+    def get_engines_by_vpn(self, vpn_container: str) -> List[EngineState]:
+        """Get all engines assigned to a specific VPN container."""
+        with self._lock:
+            return [eng for eng in self.engines.values() if eng.vpn_container == vpn_container]
+
     def load_from_db(self):
         from ..models.db_models import EngineRow, StreamRow
         with SessionLocal() as s:
@@ -303,12 +322,14 @@ class State:
                     last_cache_cleanup = e.last_cache_cleanup.replace(tzinfo=timezone.utc) if e.last_cache_cleanup.tzinfo is None else e.last_cache_cleanup
                 cache_size_bytes = getattr(e, 'cache_size_bytes', None)
                 forwarded = getattr(e, 'forwarded', False)
+                vpn_container = getattr(e, 'vpn_container', None)
                 
                 self.engines[e.engine_key] = EngineState(container_id=e.engine_key, container_name=container_name,
                                                          host=e.host, port=e.port, labels=e.labels or {}, forwarded=forwarded,
                                                          first_seen=first_seen, last_seen=last_seen, streams=[],
                                                          health_status="unknown", last_health_check=None, last_stream_usage=None,
-                                                         last_cache_cleanup=last_cache_cleanup, cache_size_bytes=cache_size_bytes)
+                                                         last_cache_cleanup=last_cache_cleanup, cache_size_bytes=cache_size_bytes,
+                                                         vpn_container=vpn_container)
 
             for r in s.query(StreamRow).filter(StreamRow.status=="started").all():
                 # Ensure datetime objects are timezone-aware when loaded from database
@@ -414,34 +435,52 @@ class State:
                 engine.last_health_check = self.now()
     
     def set_forwarded_engine(self, container_id: str):
-        """Mark an engine as the forwarded engine and clear forwarded flag from others."""
+        """Mark an engine as the forwarded engine and clear forwarded flag from others.
+        
+        In redundant VPN mode, only clears forwarded flag from engines on the same VPN.
+        In single VPN mode, clears forwarded flag from all engines.
+        """
         with self._lock:
-            # Clear forwarded flag from all engines
+            # Get the target engine first to determine its VPN
+            target_engine = self.engines.get(container_id)
+            if not target_engine:
+                logger.warning(f"Cannot set forwarded flag: engine {container_id[:12]} not found")
+                return
+            
+            target_vpn = target_engine.vpn_container
+            is_redundant_mode = self._is_redundant_mode()
+            
+            # Clear forwarded flag from engines
             for engine in self.engines.values():
                 if engine.forwarded:
-                    engine.forwarded = False
-                    # Update database
-                    with SessionLocal() as s:
-                        s.merge(EngineRow(engine_key=engine.container_id, container_id=engine.container_id,
-                                        container_name=engine.container_name, host=engine.host, port=engine.port,
-                                        labels=engine.labels, forwarded=False, first_seen=engine.first_seen,
-                                        last_seen=engine.last_seen))
-                        s.commit()
+                    # In redundant mode, only clear if on the same VPN
+                    # In single mode, clear all forwarded engines
+                    should_clear = (not is_redundant_mode or engine.vpn_container == target_vpn)
+                    
+                    if should_clear:
+                        engine.forwarded = False
+                        # Update database
+                        with SessionLocal() as s:
+                            s.merge(EngineRow(engine_key=engine.container_id, container_id=engine.container_id,
+                                            container_name=engine.container_name, host=engine.host, port=engine.port,
+                                            labels=engine.labels, forwarded=False, first_seen=engine.first_seen,
+                                            last_seen=engine.last_seen, vpn_container=engine.vpn_container))
+                            s.commit()
             
             # Set forwarded flag on the specified engine
-            engine = self.engines.get(container_id)
-            if engine:
-                engine.forwarded = True
-                # Update database
-                with SessionLocal() as s:
-                    s.merge(EngineRow(engine_key=engine.container_id, container_id=engine.container_id,
-                                    container_name=engine.container_name, host=engine.host, port=engine.port,
-                                    labels=engine.labels, forwarded=True, first_seen=engine.first_seen,
-                                    last_seen=engine.last_seen))
-                    s.commit()
-                logger.info(f"Engine {container_id[:12]} is now the forwarded engine")
+            target_engine.forwarded = True
+            # Update database
+            with SessionLocal() as s:
+                s.merge(EngineRow(engine_key=target_engine.container_id, container_id=target_engine.container_id,
+                                container_name=target_engine.container_name, host=target_engine.host, port=target_engine.port,
+                                labels=target_engine.labels, forwarded=True, first_seen=target_engine.first_seen,
+                                last_seen=target_engine.last_seen, vpn_container=target_engine.vpn_container))
+                s.commit()
+            
+            if is_redundant_mode and target_vpn:
+                logger.info(f"Engine {container_id[:12]} is now the forwarded engine for VPN '{target_vpn}'")
             else:
-                logger.warning(f"Cannot set forwarded flag: engine {container_id[:12]} not found")
+                logger.info(f"Engine {container_id[:12]} is now the forwarded engine")
     
     def get_forwarded_engine(self) -> Optional[EngineState]:
         """Get the engine marked as forwarded, if any."""
@@ -454,6 +493,18 @@ class State:
     def has_forwarded_engine(self) -> bool:
         """Check if there is a forwarded engine."""
         return self.get_forwarded_engine() is not None
+    
+    def get_forwarded_engine_for_vpn(self, vpn_container: str) -> Optional[EngineState]:
+        """Get the forwarded engine for a specific VPN container."""
+        with self._lock:
+            for engine in self.engines.values():
+                if engine.forwarded and engine.vpn_container == vpn_container:
+                    return engine
+            return None
+    
+    def has_forwarded_engine_for_vpn(self, vpn_container: str) -> bool:
+        """Check if there is a forwarded engine for a specific VPN container."""
+        return self.get_forwarded_engine_for_vpn(vpn_container) is not None
 
 state = State()
 

@@ -1,45 +1,24 @@
+# Docker Compose configuration for standalone mode (no VPN)
+# This is the simplest setup without VPN integration
+# 
+# Quick Start:
+# 1. Copy .env.example to .env and configure
+# 2. Run: docker-compose up -d
+# 3. Access dashboard at http://localhost:8000/panel
+
 services:
   orchestrator:
-    privileged: true
     container_name: orchestrator
     image: ghcr.io/krinkuto11/acestream-orchestrator:latest
     env_file: .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    ports:
-      - "8000:8000"
+      - ./orchestrator.db:/app/orchestrator.db  # Persist database
     restart: on-failure
     networks:
-      - aceserver
+      - acestream
 
-  acexy:
-    container_name: acexy
-    image: ghcr.io/krinkuto11/acexy-orchestrator:latest
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    environment:
-      ACEXY_ADDR: ":8080"            # Listen on port 8080
-      ACEXY_SCHEME: "http"           # Use HTTP
-      ACEXY_HOST: "acestream"        # Host is "acestream" or the name of the AceStream service
-      ACEXY_PORT: "6878"             # Port is 6878
-      ACEXY_TIMEOUT: "60s"           # Stream timeout when in M3U8 mode
-      ACEXY_M3U8: "false"            # Disable M3U8 mode
-      ACEXY_EMPTY_TIMEOUT: "60s"     # Timeout to close the connection if no data is received
-      ACEXY_BUFFER: "4MB"            # Buffer size is 4MB
-      ACEXY_NO_RESPONSE_TIMEOUT: "10s"  # Timeout to close the connection if no response is received
-      # Orchestrator integration (optional)
-      ACEXY_ORCH_URL: "http://orchestrator:8000"           # Base URL for orchestrator API (leave empty to disable orchestrator integration)
-      ACEXY_ORCH_APIKEY: "defaultpassword"        # API key for orchestrator authentication (optional)
-      # ACEXY_CONTAINER_ID: ""       # Container ID for orchestrator identification (auto-detected if empty)
-      TZ: Europe/Madrid
-      ACEXY_MAX_STREAMS_PER_ENGINE: 2
-    networks:
-      - aceserver
-    depends_on:
-      - orchestrator
-
-# Needs to be created via docker network create aceserver
 networks:
-  aceserver:
-    external: true
+  acestream:
+    name: orchestrator
+    driver: bridge

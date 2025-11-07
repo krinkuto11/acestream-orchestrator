@@ -1,39 +1,72 @@
+# Docker Compose configuration for single VPN mode
+# This setup provides VPN protection for all AceStream engines through one Gluetun container
+#
+# Quick Start:
+# 1. Copy .env.example to .env
+# 2. Configure VPN credentials in this file (see WIREGUARD_PRIVATE_KEY below)
+# 3. Set VPN_MODE=single in .env (or here in orchestrator environment)
+# 4. Run: docker-compose -f docker-compose.gluetun.yml up -d
+# 5. Access dashboard at http://localhost:8000/panel
+#
+# Configuration Notes:
+# - Adjust PORT_RANGE_HOST in .env to match the port mapping below
+# - Set GLUETUN_CONTAINER_NAME=gluetun in .env
+# - Set GLUETUN_API_PORT=8001 in .env
+
 services:
   gluetun:
     image: qmcgaw/gluetun
     container_name: gluetun
     cap_add:
       - NET_ADMIN
-      - SYS_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
     ports:
-      - "19000-19019:19000-19019"
+      # AceStream engine ports (must match PORT_RANGE_HOST in .env)
+      # Adjust range based on your MAX_REPLICAS setting
+      - "19000-19999:19000-19999"
+      # Gluetun HTTP control server (for port forwarding API and health checks)
+      # Must match GLUETUN_API_PORT in .env
       - "8001:8001"
     environment:
       - PGID=1000
       - PUID=1000
+      # VPN Provider Configuration - Adjust for your provider
+      # See https://github.com/qdm12/gluetun-wiki for provider-specific settings
       - VPN_SERVICE_PROVIDER=protonvpn
       - VPN_TYPE=wireguard
-      - WIREGUARD_PRIVATE_KEY=
+      - WIREGUARD_PRIVATE_KEY=YOUR_WIREGUARD_PRIVATE_KEY_HERE
       - VPN_PORT_FORWARDING=on
-      - SERVER_COUNTRIES=Spain,France, Germany, Portugal
-      - HTTP_CONTROL_SERVER_ADDRESS=:8001     
+      - SERVER_COUNTRIES=Spain,France,Germany,Portugal
+      # HTTP control server - REQUIRED for orchestrator API access
+      - HTTP_CONTROL_SERVER_ADDRESS=:8001
+      # DNS and Health
       - DOT=off
       - HEALTH_VPN_DURATION_INITIAL=120s
       - HEALTH_TARGET_ADDRESS=cloudflare.com:80
       - TZ=Europe/Madrid
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://cloudflare.com"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
     networks:
-      - aceserver
+      - acestream
 
   orchestrator:
-    privileged: true
     container_name: orchestrator
     image: ghcr.io/krinkuto11/acestream-orchestrator:latest
     env_file: .env
+    environment:
+      # Single VPN mode configuration
+      - VPN_MODE=single
+      - GLUETUN_CONTAINER_NAME=gluetun
+      - GLUETUN_API_PORT=8001
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./orchestrator.db:/app/orchestrator.db  # Persist database
     ports:
       - "8000:8000"
     restart: on-failure
@@ -41,8 +74,9 @@ services:
       gluetun:
         condition: service_healthy
     networks:
-      - aceserver
+      - acestream
 
 networks:
-  aceserver:
-    external: true
+  acestream:
+    name: aceserver
+    driver: bridge

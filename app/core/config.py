@@ -38,13 +38,23 @@ class Cfg(BaseModel):
 
     # Gluetun VPN integration
     GLUETUN_CONTAINER_NAME: str | None = os.getenv("GLUETUN_CONTAINER_NAME")
+    GLUETUN_CONTAINER_NAME_2: str | None = os.getenv("GLUETUN_CONTAINER_NAME_2")
+    VPN_MODE: str = os.getenv("VPN_MODE", "single")  # Options: single, redundant
     GLUETUN_API_PORT: int = int(os.getenv("GLUETUN_API_PORT", 8000))
     GLUETUN_HEALTH_CHECK_INTERVAL_S: int = int(os.getenv("GLUETUN_HEALTH_CHECK_INTERVAL_S", 5))
     GLUETUN_PORT_CACHE_TTL_S: int = int(os.getenv("GLUETUN_PORT_CACHE_TTL_S", 60))
     VPN_RESTART_ENGINES_ON_RECONNECT: bool = os.getenv("VPN_RESTART_ENGINES_ON_RECONNECT", "true").lower() == "true"
+    VPN_UNHEALTHY_RESTART_TIMEOUT_S: int = int(os.getenv("VPN_UNHEALTHY_RESTART_TIMEOUT_S", 60))
     
     # Maximum active replicas when using Gluetun (port range allocation)
     MAX_ACTIVE_REPLICAS: int = int(os.getenv("MAX_ACTIVE_REPLICAS", 20))
+    
+    # VPN-specific port ranges for redundant mode
+    # These map VPN container names to their port ranges in the format "min-max"
+    # Example: GLUETUN_PORT_RANGE_1=19000-19499 for first VPN
+    #          GLUETUN_PORT_RANGE_2=19500-19999 for second VPN
+    GLUETUN_PORT_RANGE_1: str | None = os.getenv("GLUETUN_PORT_RANGE_1")
+    GLUETUN_PORT_RANGE_2: str | None = os.getenv("GLUETUN_PORT_RANGE_2")
     
     # Engine provisioning performance settings
     MAX_CONCURRENT_PROVISIONS: int = int(os.getenv("MAX_CONCURRENT_PROVISIONS", "5"))
@@ -131,5 +141,24 @@ class Cfg(BaseModel):
         if v <= 0:
             raise ValueError('STATS_HISTORY_MAX must be > 0')
         return v
+
+    @validator('VPN_MODE')
+    def validate_vpn_mode(cls, v):
+        valid_modes = ['single', 'redundant']
+        if v not in valid_modes:
+            raise ValueError(f'VPN_MODE must be one of: {", ".join(valid_modes)}')
+        return v
+
+    @model_validator(mode='after')
+    def validate_vpn_config(self):
+        # If redundant mode is set, ensure second container name is provided
+        if self.VPN_MODE == 'redundant':
+            if not self.GLUETUN_CONTAINER_NAME:
+                raise ValueError('GLUETUN_CONTAINER_NAME is required when VPN_MODE is "redundant"')
+            if not self.GLUETUN_CONTAINER_NAME_2:
+                raise ValueError('GLUETUN_CONTAINER_NAME_2 is required when VPN_MODE is "redundant"')
+            if self.GLUETUN_CONTAINER_NAME == self.GLUETUN_CONTAINER_NAME_2:
+                raise ValueError('GLUETUN_CONTAINER_NAME and GLUETUN_CONTAINER_NAME_2 must be different')
+        return self
 
 cfg = Cfg()

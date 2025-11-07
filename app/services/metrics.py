@@ -15,7 +15,11 @@ orch_total_streams = Gauge("orch_total_streams", "Current number of active strea
 orch_healthy_engines = Gauge("orch_healthy_engines", "Number of healthy engines")
 orch_unhealthy_engines = Gauge("orch_unhealthy_engines", "Number of unhealthy engines")
 orch_used_engines = Gauge("orch_used_engines", "Number of engines currently handling streams")
-orch_vpn_health = Enum("orch_vpn_health", "Current health status of VPN container", states=["healthy", "unhealthy", "unknown", "disabled", "starting"])
+orch_vpn_health = Enum("orch_vpn_health", "Current health status of primary VPN container", states=["healthy", "unhealthy", "unknown", "disabled", "starting"])
+orch_vpn1_health = Enum("orch_vpn1_health", "Health status of VPN1 container", states=["healthy", "unhealthy", "unknown", "disabled", "starting"])
+orch_vpn2_health = Enum("orch_vpn2_health", "Health status of VPN2 container", states=["healthy", "unhealthy", "unknown", "disabled", "starting"])
+orch_vpn1_engines = Gauge("orch_vpn1_engines", "Number of engines assigned to VPN1")
+orch_vpn2_engines = Gauge("orch_vpn2_engines", "Number of engines assigned to VPN2")
 orch_extra_engines = Gauge("orch_extra_engines", "Number of engines beyond MIN_REPLICAS")
 
 metrics_app = make_asgi_app()
@@ -175,4 +179,30 @@ def update_custom_metrics():
     orch_unhealthy_engines.set(unhealthy_engines)
     orch_used_engines.set(used_engines)
     orch_vpn_health.state(vpn_health_str)
+    
+    # Update VPN-specific metrics for redundant mode
+    if cfg.VPN_MODE == 'redundant':
+        # Get individual VPN statuses
+        vpn1_status = vpn_status.get("vpn1", {})
+        vpn2_status = vpn_status.get("vpn2", {})
+        
+        vpn1_health = vpn1_status.get("health", "unknown")
+        vpn2_health = vpn2_status.get("health", "unknown")
+        
+        orch_vpn1_health.state(vpn1_health)
+        orch_vpn2_health.state(vpn2_health)
+        
+        # Count engines per VPN
+        vpn1_engine_count = sum(1 for e in engines if e.vpn_container == cfg.GLUETUN_CONTAINER_NAME)
+        vpn2_engine_count = sum(1 for e in engines if e.vpn_container == cfg.GLUETUN_CONTAINER_NAME_2)
+        
+        orch_vpn1_engines.set(vpn1_engine_count)
+        orch_vpn2_engines.set(vpn2_engine_count)
+    else:
+        # Single VPN mode - set VPN1 metrics, VPN2 to 0
+        orch_vpn1_health.state(vpn_health_str)
+        orch_vpn2_health.state("disabled")
+        orch_vpn1_engines.set(total_engines if cfg.GLUETUN_CONTAINER_NAME else 0)
+        orch_vpn2_engines.set(0)
+    
     orch_extra_engines.set(extra_engines)

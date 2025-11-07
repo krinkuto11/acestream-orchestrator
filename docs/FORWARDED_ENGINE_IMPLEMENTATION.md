@@ -1,8 +1,12 @@
 # Forwarded Engine Implementation
 
+> **Note**: This document is a technical implementation reference. For user-facing documentation, see:
+> - [Gluetun Integration Guide](GLUETUN_INTEGRATION.md) - User guide with forwarded engine explanation
+> - [Architecture](ARCHITECTURE.md) - System architecture overview
+
 ## Overview
 
-This document describes the implementation of the "forwarded engine" feature for Gluetun VPN port forwarding management.
+This document describes the technical implementation details of the "forwarded engine" feature for Gluetun VPN port forwarding management.
 
 ## Problem Statement
 

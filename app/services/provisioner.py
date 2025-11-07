@@ -1,5 +1,6 @@
 import time
 import logging
+from typing import Optional
 from pydantic import BaseModel
 from .docker_client import get_client, safe
 from ..core.config import cfg
@@ -13,6 +14,7 @@ ACESTREAM_LABEL_HTTPS = "acestream.https_port"
 HOST_LABEL_HTTP = "host.http_port"
 HOST_LABEL_HTTPS = "host.https_port"
 FORWARDED_LABEL = "acestream.forwarded"
+VPN_CONTAINER_LABEL = "acestream.vpn_container"
 
 class StartRequest(BaseModel):
     image: str | None = None
@@ -136,7 +138,9 @@ def _release_ports_from_labels(labels: dict):
     # to match the reserve behavior and avoid double-counting
     if cfg.GLUETUN_CONTAINER_NAME:
         try:
-            hp = labels.get(HOST_LABEL_HTTP); alloc.free_gluetun_port(int(hp) if hp else None)
+            hp = labels.get(HOST_LABEL_HTTP)
+            vpn_container = labels.get(VPN_CONTAINER_LABEL)
+            alloc.free_gluetun_port(int(hp) if hp else None, vpn_container)
         except Exception: pass
 
 def clear_acestream_cache(container_id: str) -> tuple[bool, int]:
@@ -226,10 +230,15 @@ def _parse_conf_port(conf_string, port_type="http"):
     return None
 
 
-def _get_network_config():
-    """Get network configuration for container based on Gluetun setup."""
-    if cfg.GLUETUN_CONTAINER_NAME:
-        # Use Gluetun container's network stack
+def _get_network_config(vpn_container: Optional[str] = None):
+    """Get network configuration for container based on VPN setup."""
+    if vpn_container:
+        # Use specific VPN container's network stack
+        return {
+            "network_mode": f"container:{vpn_container}"
+        }
+    elif cfg.GLUETUN_CONTAINER_NAME:
+        # Use primary Gluetun container's network stack (backwards compatibility)
         return {
             "network_mode": f"container:{cfg.GLUETUN_CONTAINER_NAME}"
         }
@@ -244,15 +253,19 @@ def _get_network_config():
             "network": None
         }
 
-def _check_gluetun_health_sync() -> bool:
-    """Synchronous version of Gluetun health check."""
+def _check_gluetun_health_sync(container_name: Optional[str] = None) -> bool:
+    """Synchronous version of VPN health check."""
     try:
         from ..core.config import cfg
         from .docker_client import get_client
         from docker.errors import NotFound
         
+        target_container = container_name or cfg.GLUETUN_CONTAINER_NAME
+        if not target_container:
+            return False
+        
         cli = get_client()
-        container = cli.containers.get(cfg.GLUETUN_CONTAINER_NAME)
+        container = cli.containers.get(target_container)
         container.reload()
         
         # Check container status
@@ -338,37 +351,64 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
                                labels=req.labels,
                                has_custom_env=bool(req.env))
     
-    # Check Gluetun health if configured
+    # Determine VPN assignment and check health
+    vpn_container = None
     if cfg.GLUETUN_CONTAINER_NAME:
         from .gluetun import gluetun_monitor
+        from .state import state
         
-        # Check if Gluetun is healthy before starting engine
+        # In redundant mode, assign engine to VPN pool in round-robin fashion
+        if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+            # Count engines per VPN
+            vpn1_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
+            vpn2_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
+            
+            # Assign to VPN with fewer engines, prefer healthy VPN
+            vpn1_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
+            vpn2_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
+            
+            # If both healthy or both unhealthy, use round-robin
+            if vpn1_healthy == vpn2_healthy:
+                vpn_container = cfg.GLUETUN_CONTAINER_NAME if vpn1_engines <= vpn2_engines else cfg.GLUETUN_CONTAINER_NAME_2
+            # Prefer healthy VPN
+            elif vpn1_healthy:
+                vpn_container = cfg.GLUETUN_CONTAINER_NAME
+            elif vpn2_healthy:
+                vpn_container = cfg.GLUETUN_CONTAINER_NAME_2
+            else:
+                # Both unhealthy, fail provisioning
+                raise RuntimeError("Both VPN containers are unhealthy - cannot start AceStream engine")
+            
+            logger.info(f"Assigning new engine to VPN '{vpn_container}' (VPN1: {vpn1_engines} engines, VPN2: {vpn2_engines} engines)")
+        else:
+            # Single VPN mode
+            vpn_container = cfg.GLUETUN_CONTAINER_NAME
+        
+        # Check if assigned VPN is healthy
         try:
-            # Use a shorter timeout since we should have verified Gluetun health during startup
-            timeout = 5  # Reduced from 30 to 5 seconds
+            timeout = 5
             start_time = time.time()
             
             while (time.time() - start_time) < timeout:
-                current_health = gluetun_monitor.is_healthy()
+                current_health = gluetun_monitor.is_healthy(vpn_container)
                 if current_health is True:
                     break
                 elif current_health is False:
                     # Force a fresh health check
                     import asyncio
                     try:
-                        # Try to get health status synchronously
-                        if _check_gluetun_health_sync():
+                        if _check_gluetun_health_sync(vpn_container):
                             break
                     except Exception:
                         pass
                 
-                time.sleep(0.5)  # Check more frequently since timeout is shorter
+                time.sleep(0.5)
             else:
                 # Timeout reached without becoming healthy
-                raise RuntimeError(f"Gluetun VPN container '{cfg.GLUETUN_CONTAINER_NAME}' is not healthy - cannot start AceStream engine")
+                raise RuntimeError(f"VPN container '{vpn_container}' is not healthy - cannot start AceStream engine")
                 
         except Exception as e:
-            raise RuntimeError(f"Failed to verify Gluetun health: {e}")
+            raise RuntimeError(f"Failed to verify VPN health for '{vpn_container}': {e}")
     
     # Check if user provided CONF and extract ports from it
     user_conf = req.env.get("CONF")
@@ -382,14 +422,14 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         host_http = req.host_port or user_http_port  # Use same port for host binding
         # Reserve this port to avoid conflicts
         if cfg.GLUETUN_CONTAINER_NAME:
-            alloc.reserve_gluetun_port(c_http)
+            alloc.reserve_gluetun_port(c_http, vpn_container)
         else:
             alloc.reserve_http(c_http)
     else:
         # No user http port - use orchestrator allocation
         if cfg.GLUETUN_CONTAINER_NAME:
-            # When using Gluetun, allocate from the Gluetun port range
-            host_http = alloc.alloc_gluetun_port()
+            # When using Gluetun, allocate from the VPN-specific port range
+            host_http = alloc.alloc_gluetun_port(vpn_container)
             c_http = host_http  # Same port for container and host
         else:
             # Normal allocation
@@ -415,20 +455,41 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     variant_config = get_variant_config(cfg.ENGINE_VARIANT)
     
     # Determine if this engine should be the forwarded engine
-    # Only one engine should have the forwarded port when using Gluetun
+    # Only one engine should have the forwarded port per VPN when using Gluetun
     is_forwarded = False
     p2p_port = None
     if cfg.GLUETUN_CONTAINER_NAME:
         from .state import state
-        # Check if there's already a forwarded engine
-        if not state.has_forwarded_engine():
-            # This will be the forwarded engine
-            is_forwarded = True
-            from .gluetun import get_forwarded_port_sync
-            p2p_port = get_forwarded_port_sync()
-            logger.info(f"Provisioning new forwarded engine with P2P port {p2p_port}")
+        
+        # In redundant mode, check if this VPN already has a forwarded engine
+        # In single mode, check if any forwarded engine exists
+        if cfg.VPN_MODE == 'redundant' and vpn_container:
+            if not state.has_forwarded_engine_for_vpn(vpn_container):
+                # This VPN doesn't have a forwarded engine yet
+                is_forwarded = True
+                from .gluetun import get_forwarded_port_sync
+                p2p_port = get_forwarded_port_sync(vpn_container)
+                if p2p_port:
+                    logger.info(f"Provisioning new forwarded engine for VPN '{vpn_container}' with P2P port {p2p_port}")
+                else:
+                    logger.warning(f"VPN '{vpn_container}' has no forwarded port available, provisioning non-forwarded engine")
+                    is_forwarded = False
+            else:
+                logger.info(f"Forwarded engine already exists for VPN '{vpn_container}', provisioning non-forwarded engine")
         else:
-            logger.info("Forwarded engine already exists, provisioning non-forwarded engine")
+            # Single VPN mode - only one forwarded engine total
+            if not state.has_forwarded_engine():
+                # This will be the forwarded engine
+                is_forwarded = True
+                from .gluetun import get_forwarded_port_sync
+                p2p_port = get_forwarded_port_sync(vpn_container)
+                if p2p_port:
+                    logger.info(f"Provisioning new forwarded engine with P2P port {p2p_port}")
+                else:
+                    logger.warning("No forwarded port available, provisioning non-forwarded engine")
+                    is_forwarded = False
+            else:
+                logger.info("Forwarded engine already exists, provisioning non-forwarded engine")
     
     # Prepare environment variables and command based on variant type
     env = {**req.env}
@@ -480,6 +541,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
               ACESTREAM_LABEL_HTTPS: str(c_https),
               HOST_LABEL_HTTP: str(host_http)}
     
+    # Add VPN container label if using VPN
+    if vpn_container:
+        labels[VPN_CONTAINER_LABEL] = vpn_container
+    
     # Add forwarded label if this is the forwarded engine
     if is_forwarded:
         labels[FORWARDED_LABEL] = "true"
@@ -497,8 +562,8 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Generate a meaningful container name with retry logic for conflicts
     container_name = generate_container_name("acestream")
 
-    # Determine network configuration based on Gluetun setup
-    network_config = _get_network_config()
+    # Determine network configuration based on VPN setup
+    network_config = _get_network_config(vpn_container)
 
     cli = get_client()
     
@@ -583,8 +648,12 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     from ..models.db_models import EngineRow
     from .db import SessionLocal
     
-    # Determine host based on Gluetun configuration
-    if cfg.GLUETUN_CONTAINER_NAME:
+    # Determine host based on VPN configuration
+    if vpn_container:
+        # Use the assigned VPN container as the host
+        engine_host = vpn_container
+    elif cfg.GLUETUN_CONTAINER_NAME:
+        # Backwards compatibility for single VPN mode
         engine_host = cfg.GLUETUN_CONTAINER_NAME
     else:
         engine_host = actual_container_name or "127.0.0.1"
@@ -605,7 +674,8 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         last_health_check=None,
         last_stream_usage=None,
         last_cache_cleanup=None,
-        cache_size_bytes=None
+        cache_size_bytes=None,
+        vpn_container=vpn_container
     )
     
     # Add to in-memory state
@@ -623,7 +693,8 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
                 labels=labels,
                 forwarded=is_forwarded,
                 first_seen=now,
-                last_seen=now
+                last_seen=now,
+                vpn_container=vpn_container
             ))
             s.commit()
     except Exception as e:
