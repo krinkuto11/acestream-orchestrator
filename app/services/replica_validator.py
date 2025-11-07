@@ -63,8 +63,7 @@ class ReplicaValidator:
                 'total_running': len(running_containers),
                 'running_container_ids': container_ids,
                 'container_details': container_details,
-                'containers': running_containers,
-                'docker_available': True  # Docker communication succeeded
+                'containers': running_containers
             }
             
             logger.debug(f"Docker status: managed={result['total_managed']}, running={result['total_running']}")
@@ -77,8 +76,7 @@ class ReplicaValidator:
                 'total_running': 0,
                 'running_container_ids': set(),
                 'container_details': {},
-                'containers': [],
-                'docker_available': False  # Docker communication failed
+                'containers': []
             }
     
     def validate_and_sync_state(self, force_reindex: bool = False) -> Tuple[int, int, int]:
@@ -124,20 +122,6 @@ class ReplicaValidator:
             state_container_ids = {engine.container_id for engine in all_engines}
             
             sync_needed = False
-            
-            # Don't sync if Docker is unavailable - we can't trust the data
-            if not docker_status.get('docker_available', True):
-                logger.warning("Docker communication failed - skipping state synchronization to avoid data loss")
-                # Return cached result if available
-                if self._cached_result:
-                    logger.debug(f"Returning cached result: {self._cached_result}")
-                    return self._cached_result
-                # Fallback: use state count as best estimate
-                # Note: free_count may be inaccurate since we can't verify container status
-                fallback_result = (state_engine_count, used_engines, max(0, state_engine_count - used_engines))
-                logger.warning(f"Docker unavailable - returning estimate based on state: total={state_engine_count}, "
-                             f"used={used_engines}, free={fallback_result[2]} (may be inaccurate)")
-                return fallback_result
             
             # Check if counts don't match
             if state_engine_count != total_running:
