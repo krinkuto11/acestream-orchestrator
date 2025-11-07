@@ -961,6 +961,11 @@ def _get_single_vpn_status(container_name: str) -> dict:
 
 def get_vpn_status() -> dict:
     """Get comprehensive VPN status information."""
+    from .state import state
+    
+    # Get emergency mode info
+    emergency_info = state.get_emergency_mode_info()
+    
     if not cfg.GLUETUN_CONTAINER_NAME:
         return {
             "mode": "disabled",
@@ -974,7 +979,8 @@ def get_vpn_status() -> dict:
             "last_check": None,
             "last_check_at": None,
             "vpn1": None,
-            "vpn2": None
+            "vpn2": None,
+            "emergency_mode": emergency_info
         }
     
     # Get status for VPN1
@@ -986,6 +992,7 @@ def get_vpn_status() -> dict:
         result["mode"] = "single"
         result["vpn1"] = vpn1_status
         result["vpn2"] = None
+        result["emergency_mode"] = emergency_info
         return result
     
     # In redundant mode, get both VPN statuses
@@ -1009,7 +1016,8 @@ def get_vpn_status() -> dict:
         "last_check": datetime.now(timezone.utc).isoformat(),
         "last_check_at": datetime.now(timezone.utc).isoformat(),
         "vpn1": vpn1_status,
-        "vpn2": vpn2_status
+        "vpn2": vpn2_status,
+        "emergency_mode": emergency_info
     }
 
 def get_vpn_public_ip() -> Optional[str]:
