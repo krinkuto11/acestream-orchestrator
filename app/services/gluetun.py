@@ -36,6 +36,11 @@ class VpnContainerMonitor:
         self._port_cache_ttl_seconds: int = cfg.GLUETUN_PORT_CACHE_TTL_S
         self._last_logged_port: Optional[int] = None
         
+        # Track the last known stable forwarded port for detecting changes
+        self._last_stable_forwarded_port: Optional[int] = None
+        self._last_port_check_time: Optional[datetime] = None
+        self._port_check_interval_s: int = 30  # Check for port changes every 30 seconds
+        
         # Track health stability to prevent engine restarts during initial startup
         self._startup_grace_period_s = 60
         self._first_healthy_time: Optional[datetime] = None
@@ -238,6 +243,51 @@ class VpnContainerMonitor:
         self._port_cache_time = None
         logger.debug(f"Port cache invalidated for '{self.container_name}'")
 
+    async def check_port_change(self) -> Optional[tuple[int, int]]:
+        """
+        Check if the forwarded port has changed since the last check.
+        
+        This check is throttled to avoid excessive API calls. It only runs if:
+        - VPN is healthy
+        - Sufficient time has passed since last check (based on _port_check_interval_s)
+        
+        Returns:
+            Optional[tuple[int, int]]: (old_port, new_port) if port changed, None otherwise
+        """
+        # Only check for port changes if VPN is healthy
+        if not self._last_health_status:
+            return None
+        
+        # Throttle port change checks to avoid excessive API calls
+        now = datetime.now(timezone.utc)
+        if self._last_port_check_time is not None:
+            time_since_last_check = (now - self._last_port_check_time).total_seconds()
+            if time_since_last_check < self._port_check_interval_s:
+                return None
+        
+        self._last_port_check_time = now
+        
+        # Fetch the current port
+        current_port = await self._fetch_and_cache_port()
+        
+        # If we have no current port, we can't detect a change
+        if current_port is None:
+            return None
+        
+        # If we have no previous stable port, set the current one as stable
+        if self._last_stable_forwarded_port is None:
+            self._last_stable_forwarded_port = current_port
+            return None
+        
+        # Check if port has changed
+        if current_port != self._last_stable_forwarded_port:
+            old_port = self._last_stable_forwarded_port
+            logger.warning(f"VPN '{self.container_name}' forwarded port changed from {old_port} to {current_port}")
+            self._last_stable_forwarded_port = current_port
+            return (old_port, current_port)
+        
+        return None
+
 
 class GluetunMonitor:
     """Monitors Gluetun VPN container(s) health and manages VPN-dependent operations."""
@@ -309,12 +359,15 @@ class GluetunMonitor:
                     if old_health is not None and current_health != old_health:
                         await self._handle_health_transition(container_name, old_health, current_health)
                     
-                    # Background refresh of port cache if healthy and cache is stale
-                    if current_health and not monitor._is_port_cache_valid():
+                    # Check for forwarded port changes when VPN is healthy
+                    if current_health:
                         try:
-                            await monitor._fetch_and_cache_port()
+                            port_change = await monitor.check_port_change()
+                            if port_change:
+                                old_port, new_port = port_change
+                                await self._handle_port_change(container_name, old_port, new_port)
                         except Exception as e:
-                            logger.debug(f"Background port cache refresh failed for '{container_name}': {e}")
+                            logger.error(f"Error checking port change for '{container_name}': {e}")
                     
                     # Check if VPN needs forced restart
                     if not current_health and monitor.should_force_restart():
@@ -385,6 +438,72 @@ class GluetunMonitor:
                     callback(container_name, old_status, new_status)
             except Exception as e:
                 logger.error(f"Error in health transition callback: {e}")
+
+    async def _handle_port_change(self, container_name: str, old_port: int, new_port: int):
+        """
+        Handle VPN forwarded port change by replacing the forwarded engine.
+        
+        When the VPN restarts internally and the forwarded port changes, the existing
+        forwarded engine becomes invalid. This method:
+        1. Identifies and stops the old forwarded engine
+        2. Removes it from state so it's not exposed via /engines endpoint
+        3. Allows the autoscaler to provision a new forwarded engine with the new port
+        """
+        debug_log = get_debug_logger()
+        
+        try:
+            from .state import state
+            from .provisioner import stop_container
+            
+            logger.warning(f"VPN '{container_name}' port changed from {old_port} to {new_port} - replacing forwarded engine")
+            debug_log.log_vpn("port_change_detected",
+                             status="replacing_forwarded_engine",
+                             container_name=container_name,
+                             old_port=old_port,
+                             new_port=new_port)
+            
+            # Find the forwarded engine for this VPN
+            forwarded_engine = None
+            if cfg.VPN_MODE == 'redundant':
+                forwarded_engine = state.get_forwarded_engine_for_vpn(container_name)
+            else:
+                forwarded_engine = state.get_forwarded_engine()
+            
+            if not forwarded_engine:
+                logger.info(f"No forwarded engine found for VPN '{container_name}' - port change handled gracefully")
+                return
+            
+            logger.info(f"Stopping forwarded engine {forwarded_engine.container_id[:12]} due to port change")
+            
+            # Remove from state first to hide from /engines endpoint immediately
+            state.remove_engine(forwarded_engine.container_id)
+            
+            # Then stop the container
+            try:
+                stop_container(forwarded_engine.container_id)
+                logger.info(f"Successfully stopped forwarded engine {forwarded_engine.container_id[:12]}")
+            except Exception as e:
+                logger.error(f"Error stopping forwarded engine {forwarded_engine.container_id[:12]}: {e}")
+            
+            debug_log.log_vpn("port_change_handled",
+                             status="forwarded_engine_replaced",
+                             container_name=container_name,
+                             old_port=old_port,
+                             new_port=new_port,
+                             engine_id=forwarded_engine.container_id[:12])
+            
+            # The autoscaler will automatically provision a new forwarded engine
+            # to maintain MIN_REPLICAS, and it will use the new forwarded port
+            logger.info(f"Forwarded engine replacement triggered - autoscaler will provision new engine with port {new_port}")
+            
+        except Exception as e:
+            logger.error(f"Error handling port change for VPN '{container_name}': {e}")
+            debug_log.log_vpn("port_change_error",
+                             status="error",
+                             container_name=container_name,
+                             old_port=old_port,
+                             new_port=new_port,
+                             error=str(e))
 
     async def _restart_engines_for_vpn(self, container_name: str):
         """Restart all engines assigned to a specific VPN container."""
