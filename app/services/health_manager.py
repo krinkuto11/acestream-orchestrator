@@ -166,9 +166,10 @@ class HealthManager:
         - In redundant VPN mode
         - One VPN is unhealthy with engines on it
         - We still have some healthy engines from the other VPN
+        - Any VPN is in its recovery stabilization period (grace time after recovery)
         
         This prevents the system from trying to provision or replace engines
-        while waiting for a failed VPN to recover.
+        while waiting for a failed VPN to recover or stabilize after recovery.
         """
         if cfg.VPN_MODE != 'redundant' or not cfg.GLUETUN_CONTAINER_NAME_2:
             return False
@@ -177,6 +178,25 @@ class HealthManager:
         
         vpn1_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
         vpn2_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
+        
+        # Check if any VPN is in recovery stabilization period
+        # This ensures we wait for forwarded port to be established before provisioning
+        vpn1_monitor = gluetun_monitor.get_vpn_monitor(cfg.GLUETUN_CONTAINER_NAME)
+        vpn2_monitor = gluetun_monitor.get_vpn_monitor(cfg.GLUETUN_CONTAINER_NAME_2)
+        
+        if vpn1_monitor and vpn1_monitor.is_in_recovery_stabilization_period():
+            healthy_count = len(healthy_engines)
+            logger.info(f"VPN '{cfg.GLUETUN_CONTAINER_NAME}' is in recovery stabilization period. "
+                       f"Not taking action - waiting for port forwarding to stabilize. "
+                       f"Running with {healthy_count}/{cfg.MIN_REPLICAS} engines.")
+            return True
+        
+        if vpn2_monitor and vpn2_monitor.is_in_recovery_stabilization_period():
+            healthy_count = len(healthy_engines)
+            logger.info(f"VPN '{cfg.GLUETUN_CONTAINER_NAME_2}' is in recovery stabilization period. "
+                       f"Not taking action - waiting for port forwarding to stabilize. "
+                       f"Running with {healthy_count}/{cfg.MIN_REPLICAS} engines.")
+            return True
         
         # If both VPNs are healthy or both are unhealthy, don't wait
         if vpn1_healthy == vpn2_healthy:
