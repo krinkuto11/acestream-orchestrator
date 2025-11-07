@@ -1,196 +1,133 @@
-orchestrator  | 2025-11-07T18:02:59.888830475Z INFO:     Started server process [1]
-orchestrator  | 2025-11-07T18:02:59.888877743Z INFO:     Waiting for application startup.
-orchestrator  | 2025-11-07T18:02:59.939851228Z 2025-11-07 19:02:59,939 INFO app.services.state: Starting full cleanup: stopping all managed containers
-orchestrator  | 2025-11-07T18:02:59.970417754Z 2025-11-07 19:02:59,970 INFO app.services.state: Found 0 managed containers to stop
-orchestrator  | 2025-11-07T18:02:59.970437400Z 2025-11-07 19:02:59,970 INFO app.services.state: Stopped 0 containers during cleanup
-orchestrator  | 2025-11-07T18:02:59.970442361Z 2025-11-07 19:02:59,970 INFO app.services.state: Clearing database state
-orchestrator  | 2025-11-07T18:02:59.979857950Z 2025-11-07 19:02:59,979 INFO app.services.state: Clearing in-memory state
-orchestrator  | 2025-11-07T18:02:59.979873964Z 2025-11-07 19:02:59,979 INFO app.services.state: Clearing port allocations
-orchestrator  | 2025-11-07T18:02:59.980003343Z 2025-11-07 19:02:59,979 INFO app.services.state: Full cleanup completed
-orchestrator  | 2025-11-07T18:02:59.984012742Z 2025-11-07 19:02:59,983 INFO app.services.gluetun: VPN monitor started in REDUNDANT mode for containers: gluetun, gluetun_2
-orchestrator  | 2025-11-07T18:02:59.984025702Z 2025-11-07 19:02:59,983 INFO app.main: Waiting for Gluetun to become healthy before provisioning engines...
-orchestrator  | 2025-11-07T18:02:59.998768111Z 2025-11-07 19:02:59,998 INFO app.services.gluetun: VPN 'gluetun' first became healthy at 2025-11-07 18:02:59.983970+00:00
-orchestrator  | 2025-11-07T18:03:00.020167244Z 2025-11-07 19:03:00,019 INFO app.services.gluetun: Retrieved VPN forwarded port for 'gluetun': 62981
-orchestrator  | 2025-11-07T18:03:00.045152672Z 2025-11-07 19:03:00,044 INFO app.services.gluetun: VPN 'gluetun_2' first became healthy at 2025-11-07 18:02:59.983970+00:00
-orchestrator  | 2025-11-07T18:03:00.058227685Z 2025-11-07 19:03:00,057 INFO app.services.gluetun: Retrieved VPN forwarded port for 'gluetun_2': 48278
-orchestrator  | 2025-11-07T18:03:00.985534719Z 2025-11-07 19:03:00,985 INFO app.main: Gluetun is healthy - proceeding with engine provisioning
-orchestrator  | 2025-11-07T18:03:01.019335567Z 2025-11-07 19:03:01,019 INFO app.services.autoscaler: Starting 10 AceStream containers to maintain MIN_REPLICAS=10 total containers (currently: total=0, used=0, free=0)
-orchestrator  | 2025-11-07T18:03:01.020252290Z 2025-11-07 19:03:01,020 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 0 engines, VPN2: 0 engines)
-orchestrator  | 2025-11-07T18:03:01.020262687Z 2025-11-07 19:03:01,020 INFO app.services.provisioner: Provisioning new forwarded engine for VPN 'gluetun' with P2P port 62981
-orchestrator  | 2025-11-07T18:03:01.224396940Z 2025-11-07 19:03:01,224 INFO app.services.state: Engine 9ec1f47141bf is now the forwarded engine for VPN 'gluetun'
-orchestrator  | 2025-11-07T18:03:01.224419910Z 2025-11-07 19:03:01,224 INFO app.services.provisioner: Engine 9ec1f47141bf provisioned as forwarded engine
-orchestrator  | 2025-11-07T18:03:01.224726968Z 2025-11-07 19:03:01,224 INFO app.services.autoscaler: Successfully started AceStream container 9ec1f47141bf (1/10)
-orchestrator  | 2025-11-07T18:03:02.295061464Z 2025-11-07 19:03:02,294 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 1 engines, VPN2: 0 engines)
-orchestrator  | 2025-11-07T18:03:02.295081942Z 2025-11-07 19:03:02,294 INFO app.services.provisioner: Provisioning new forwarded engine for VPN 'gluetun_2' with P2P port 48278
-orchestrator  | 2025-11-07T18:03:02.509094225Z 2025-11-07 19:03:02,508 INFO app.services.state: Engine 72126a24d5b1 is now the forwarded engine for VPN 'gluetun_2'
-orchestrator  | 2025-11-07T18:03:02.509243728Z 2025-11-07 19:03:02,509 INFO app.services.provisioner: Engine 72126a24d5b1 provisioned as forwarded engine
-orchestrator  | 2025-11-07T18:03:02.509488725Z 2025-11-07 19:03:02,509 INFO app.services.autoscaler: Successfully started AceStream container 72126a24d5b1 (2/10)
-orchestrator  | 2025-11-07T18:03:03.546033481Z 2025-11-07 19:03:03,544 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 1 engines, VPN2: 1 engines)
-orchestrator  | 2025-11-07T18:03:03.546052144Z 2025-11-07 19:03:03,544 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T18:03:03.798060724Z 2025-11-07 19:03:03,796 INFO app.services.autoscaler: Successfully started AceStream container 32d7a2e402b6 (3/10)
-orchestrator  | 2025-11-07T18:03:04.838645100Z 2025-11-07 19:03:04,838 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 2 engines, VPN2: 1 engines)
-orchestrator  | 2025-11-07T18:03:04.838892897Z 2025-11-07 19:03:04,838 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun_2', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T18:03:05.077383410Z 2025-11-07 19:03:05,077 INFO app.services.autoscaler: Successfully started AceStream container bfecd003fccf (4/10)
-orchestrator  | 2025-11-07T18:03:06.115298768Z 2025-11-07 19:03:06,115 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 2 engines, VPN2: 2 engines)
-orchestrator  | 2025-11-07T18:03:06.115320887Z 2025-11-07 19:03:06,115 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T18:03:06.374334534Z 2025-11-07 19:03:06,374 INFO app.services.autoscaler: Successfully started AceStream container 95584f998953 (5/10)
-orchestrator  | 2025-11-07T18:03:07.416182440Z 2025-11-07 19:03:07,416 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 3 engines, VPN2: 2 engines)
-orchestrator  | 2025-11-07T18:03:07.416286899Z 2025-11-07 19:03:07,416 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun_2', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T18:03:07.659853047Z 2025-11-07 19:03:07,659 INFO app.services.autoscaler: Successfully started AceStream container 1eb9e5af2919 (6/10)
-orchestrator  | 2025-11-07T18:03:08.718953545Z 2025-11-07 19:03:08,718 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 3 engines, VPN2: 3 engines)
-orchestrator  | 2025-11-07T18:03:08.719271636Z 2025-11-07 19:03:08,719 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T18:03:08.986288805Z 2025-11-07 19:03:08,986 INFO app.services.autoscaler: Successfully started AceStream container 73d9fd3c3768 (7/10)
-orchestrator  | 2025-11-07T18:03:10.046314473Z 2025-11-07 19:03:10,044 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 4 engines, VPN2: 3 engines)
-orchestrator  | 2025-11-07T18:03:10.046330383Z 2025-11-07 19:03:10,044 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun_2', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T18:03:10.313911011Z 2025-11-07 19:03:10,313 INFO app.services.autoscaler: Successfully started AceStream container 6100b2d270af (8/10)
-orchestrator  | 2025-11-07T18:03:11.369797464Z 2025-11-07 19:03:11,369 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 4 engines, VPN2: 4 engines)
-orchestrator  | 2025-11-07T18:03:11.369949749Z 2025-11-07 19:03:11,369 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T18:03:11.620743092Z 2025-11-07 19:03:11,620 INFO app.services.autoscaler: Successfully started AceStream container ea4ea7a86f86 (9/10)
-orchestrator  | 2025-11-07T18:03:12.674817398Z 2025-11-07 19:03:12,672 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 5 engines, VPN2: 4 engines)
-orchestrator  | 2025-11-07T18:03:12.674835796Z 2025-11-07 19:03:12,672 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun_2', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T18:03:12.949328230Z 2025-11-07 19:03:12,949 INFO app.services.autoscaler: Successfully started AceStream container a21aa2f4c84c (10/10)
-orchestrator  | 2025-11-07T18:03:14.005075906Z 2025-11-07 19:03:14,004 INFO app.services.autoscaler: Successfully started 10/10 containers
-orchestrator  | 2025-11-07T18:03:14.005184209Z 2025-11-07 19:03:14,005 INFO app.services.autoscaler: Reindexing after provisioning to pick up new containers
-orchestrator  | 2025-11-07T18:03:14.141545164Z 2025-11-07 19:03:14,141 INFO app.services.monitor: Docker monitor started with 3s interval
-orchestrator  | 2025-11-07T18:03:14.141724173Z 2025-11-07 19:03:14,141 INFO app.services.health_monitor: Health monitor started with 30s interval
-orchestrator  | 2025-11-07T18:03:14.141889097Z 2025-11-07 19:03:14,141 INFO app.services.health_manager: Health manager started with 20s interval
-orchestrator  | 2025-11-07T18:03:14.142072743Z INFO:     Application startup complete.
-orchestrator  | 2025-11-07T18:03:14.204428768Z 2025-11-07 19:03:14,204 INFO app.services.monitor: Docker state change detected: +10, -0 containers
-orchestrator  | 2025-11-07T18:03:14.204451200Z 2025-11-07 19:03:14,204 INFO app.services.monitor: Re-indexing to pick up new containers
-orchestrator  | 2025-11-07T18:03:14.572276934Z INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-orchestrator  | 2025-11-07T20:10:44.119626188Z 2025-11-07 21:10:44,119 INFO app.main: Engine 9ec1f47141bf is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T20:12:32.737371903Z 2025-11-07 21:12:32,737 INFO app.main: Engine 72126a24d5b1 is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T20:15:28.135007315Z 2025-11-07 21:15:28,134 INFO app.main: Engine 9ec1f47141bf is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T20:17:31.323391490Z 2025-11-07 21:17:31,322 INFO app.main: Engine 72126a24d5b1 is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T20:17:46.559612725Z 2025-11-07 21:17:46,559 INFO app.main: Engine 9ec1f47141bf is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T20:18:48.320889241Z 2025-11-07 21:18:48,320 INFO app.main: Engine 72126a24d5b1 is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T20:20:58.851344488Z 2025-11-07 21:20:58,851 INFO app.main: Engine 9ec1f47141bf is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T20:21:23.749051578Z 2025-11-07 21:21:23,748 INFO app.main: Engine 72126a24d5b1 is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T20:21:37.926892484Z 2025-11-07 21:21:37,926 INFO app.main: Engine 9ec1f47141bf is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T21:59:03.854424297Z 2025-11-07 22:59:03,854 INFO app.main: Engine 72126a24d5b1 is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T22:02:18.778079333Z 2025-11-07 23:02:18,777 INFO app.main: Engine 9ec1f47141bf is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T22:03:30.298515617Z 2025-11-07 23:03:30,298 ERROR app.services.gluetun: Error getting VPN status for 'gluetun_2': UnixHTTPConnectionPool(host='localhost', port=None): Read timed out. (read timeout=30)
-orchestrator  | 2025-11-07T22:03:31.010484253Z 2025-11-07 23:03:31,010 WARNING app.services.monitor: Docker socket temporarily unavailable during sync, will retry next iteration: UnixHTTPConnectionPool(host='localhost', port=None): Read timed out. (read timeout=30)
-orchestrator  | 2025-11-07T22:03:33.158051071Z 2025-11-07 23:03:33,157 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:03:33.158075456Z 2025-11-07 23:03:33,157 WARNING app.services.gluetun: VPN 'gluetun_2' became unhealthy
-orchestrator  | 2025-11-07T22:03:33.169309651Z 2025-11-07 23:03:33,169 INFO app.services.collector: Detected stale stream 0e50439e68aa2435b38f0563bb2f2e98f32ff4b1|417ceabfaf9c78158072306dfd1feaf8: unknown playback session id
-orchestrator  | 2025-11-07T22:03:33.209291008Z 2025-11-07 23:03:33,209 INFO app.main: Engine 72126a24d5b1 is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T22:03:33.316056957Z 2025-11-07 23:03:33,315 WARNING app.services.gluetun: VPN double-check: None of 5 engine(s) have internet connectivity
-orchestrator  | 2025-11-07T22:03:36.184664519Z 2025-11-07 23:03:36,184 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:03:39.211725643Z 2025-11-07 23:03:39,211 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:03:42.240108582Z 2025-11-07 23:03:42,239 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:03:45.268089222Z 2025-11-07 23:03:45,267 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:03:48.294757778Z 2025-11-07 23:03:48,294 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:03:51.356103719Z 2025-11-07 23:03:51,355 INFO app.services.health_manager: VPN 'gluetun_2' is unhealthy with 5 engines. Not taking action - waiting for VPN recovery. Running with 10/10 engines.
-orchestrator  | 2025-11-07T22:03:51.391176873Z 2025-11-07 23:03:51,391 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:03:54.418598218Z 2025-11-07 23:03:54,418 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:03:57.458044743Z 2025-11-07 23:03:57,449 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:03:57.902773963Z 2025-11-07 23:03:57,902 INFO app.main: Engine 9ec1f47141bf is in grace period, deferring shutdown
-orchestrator  | 2025-11-07T22:04:00.480629685Z 2025-11-07 23:04:00,480 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:04:03.530401222Z 2025-11-07 23:04:03,529 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:04:03.770562246Z 2025-11-07 23:04:03,770 WARNING app.services.gluetun: VPN double-check: None of 5 engine(s) have internet connectivity
-orchestrator  | 2025-11-07T22:04:06.562768994Z 2025-11-07 23:04:06,562 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:04:09.599717249Z 2025-11-07 23:04:09,599 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:04:11.470552933Z 2025-11-07 23:04:11,470 INFO app.services.health_manager: VPN 'gluetun_2' is unhealthy with 5 engines. Not taking action - waiting for VPN recovery. Running with 10/10 engines.
-orchestrator  | 2025-11-07T22:04:12.634075773Z 2025-11-07 23:04:12,633 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:04:15.802035958Z 2025-11-07 23:04:15,795 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:04:18.841542718Z 2025-11-07 23:04:18,841 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:04:21.912439497Z 2025-11-07 23:04:21,908 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:04:24.981119613Z 2025-11-07 23:04:24,980 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:04:28.048299863Z 2025-11-07 23:04:28,045 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:04:31.082487233Z 2025-11-07 23:04:31,082 WARNING app.services.gluetun: VPN container 'gluetun_2' is not running (status: exited)
-orchestrator  | 2025-11-07T22:04:31.082933994Z 2025-11-07 23:04:31,082 WARNING app.services.gluetun: Force restarting VPN container 'gluetun_2' after 60s timeout
-orchestrator  | 2025-11-07T22:04:52.331364344Z 2025-11-07 23:04:52,330 INFO app.services.gluetun: VPN container 'gluetun_2' restart initiated
-orchestrator  | 2025-11-07T22:04:53.556550884Z 2025-11-07 23:04:53,556 INFO app.services.health_manager: VPN 'gluetun_2' is unhealthy with 5 engines. Not taking action - waiting for VPN recovery. Running with 5/10 engines.
-orchestrator  | 2025-11-07T22:04:55.403437018Z 2025-11-07 23:04:55,403 INFO app.services.gluetun: VPN 'gluetun_2' recovered and is now healthy
-orchestrator  | 2025-11-07T22:04:55.403524193Z 2025-11-07 23:04:55,403 INFO app.services.gluetun: VPN 'gluetun_2' became healthy but skipping engine restart (grace period)
-orchestrator  | 2025-11-07T22:04:55.419047209Z 2025-11-07 23:04:55,418 WARNING app.services.gluetun: No port forwarding info from 'gluetun_2'
-orchestrator  | 2025-11-07T22:05:07.378656399Z 2025-11-07 23:05:07,378 INFO app.services.gluetun: Retrieved VPN forwarded port (sync) for 'gluetun_2': 53344
-orchestrator  | 2025-11-07T22:05:13.678122646Z 2025-11-07 23:05:13,675 WARNING app.services.health_manager: Only 5 healthy engines, need 10. Starting 5 new engines.
-orchestrator  | 2025-11-07T22:05:13.678144002Z 2025-11-07 23:05:13,675 INFO app.services.health_manager: Starting replacement engine 1/5
-orchestrator  | 2025-11-07T22:05:13.678149144Z 2025-11-07 23:05:13,676 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 5 engines, VPN2: 5 engines)
-orchestrator  | 2025-11-07T22:05:13.678153121Z 2025-11-07 23:05:13,676 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T22:05:13.940128993Z 2025-11-07 23:05:13,936 INFO app.services.health_manager: Successfully started replacement engine b9a77e1d5c5b
-orchestrator  | 2025-11-07T22:05:13.940152676Z 2025-11-07 23:05:13,936 INFO app.services.health_manager: Starting replacement engine 2/5
-orchestrator  | 2025-11-07T22:05:13.940157714Z 2025-11-07 23:05:13,937 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 6 engines, VPN2: 5 engines)
-orchestrator  | 2025-11-07T22:05:13.940161779Z 2025-11-07 23:05:13,937 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun_2', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T22:05:14.257338589Z 2025-11-07 23:05:14,257 INFO app.services.health_manager: Successfully started replacement engine e24a4669c9ae
-orchestrator  | 2025-11-07T22:05:14.257362011Z 2025-11-07 23:05:14,257 INFO app.services.health_manager: Starting replacement engine 3/5
-orchestrator  | 2025-11-07T22:05:14.259569056Z 2025-11-07 23:05:14,257 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 6 engines, VPN2: 6 engines)
-orchestrator  | 2025-11-07T22:05:14.259588673Z 2025-11-07 23:05:14,257 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T22:05:14.541954795Z 2025-11-07 23:05:14,541 INFO app.services.health_manager: Successfully started replacement engine ab569615aa4d
-orchestrator  | 2025-11-07T22:05:14.541979472Z 2025-11-07 23:05:14,541 INFO app.services.health_manager: Starting replacement engine 4/5
-orchestrator  | 2025-11-07T22:05:14.543303851Z 2025-11-07 23:05:14,542 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 7 engines, VPN2: 6 engines)
-orchestrator  | 2025-11-07T22:05:14.543333413Z 2025-11-07 23:05:14,542 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun_2', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T22:05:14.818275939Z 2025-11-07 23:05:14,818 INFO app.services.health_manager: Successfully started replacement engine d14bed2808a3
-orchestrator  | 2025-11-07T22:05:14.818373775Z 2025-11-07 23:05:14,818 INFO app.services.health_manager: Starting replacement engine 5/5
-orchestrator  | 2025-11-07T22:05:14.818510485Z 2025-11-07 23:05:14,818 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 7 engines, VPN2: 7 engines)
-orchestrator  | 2025-11-07T22:05:14.818710106Z 2025-11-07 23:05:14,818 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T22:05:15.868549999Z 2025-11-07 23:05:15,868 INFO app.services.monitor: Docker state change detected: +5, -0 containers
-orchestrator  | 2025-11-07T22:05:15.868790609Z 2025-11-07 23:05:15,868 INFO app.services.monitor: Re-indexing to pick up new containers
-orchestrator  | 2025-11-07T22:05:15.871756620Z 2025-11-07 23:05:15,871 INFO app.services.health_manager: Successfully started replacement engine 8c2b037edd14
-orchestrator  | 2025-11-07T22:05:16.230702056Z 2025-11-07 23:05:16,230 INFO app.services.health_manager: Not enough healthy engines (5) to replace unhealthy ones. Ensuring minimum first.
-orchestrator  | 2025-11-07T22:05:26.096816036Z 2025-11-07 23:05:26,096 WARNING app.services.gluetun: VPN 'gluetun_2' forwarded port changed from 48278 to 53344
-orchestrator  | 2025-11-07T22:05:26.096832028Z 2025-11-07 23:05:26,096 WARNING app.services.gluetun: VPN 'gluetun_2' port changed from 48278 to 53344 - replacing forwarded engine
-orchestrator  | 2025-11-07T22:05:26.096865220Z 2025-11-07 23:05:26,096 INFO app.services.gluetun: Stopping forwarded engine 72126a24d5b1 due to port change
-orchestrator  | 2025-11-07T22:05:26.235925120Z 2025-11-07 23:05:26,235 INFO app.services.gluetun: Successfully stopped forwarded engine 72126a24d5b1
-orchestrator  | 2025-11-07T22:05:26.235967909Z 2025-11-07 23:05:26,235 INFO app.services.gluetun: Forwarded engine replacement triggered - autoscaler will provision new engine with port 53344
-orchestrator  | 2025-11-07T22:05:28.883301190Z 2025-11-07 23:05:28,883 INFO app.services.monitor: Docker state change detected: +0, -1 containers
-orchestrator  | 2025-11-07T22:05:36.388271724Z 2025-11-07 23:05:36,388 INFO app.services.health_manager: Marking unhealthy engine bfecd003fccf for replacement
-orchestrator  | 2025-11-07T22:05:36.388297445Z 2025-11-07 23:05:36,388 INFO app.services.health_manager: Starting replacement process for engine bfecd003fccf
-orchestrator  | 2025-11-07T22:05:36.388302368Z 2025-11-07 23:05:36,388 INFO app.services.health_manager: Starting replacement engine 1/1
-orchestrator  | 2025-11-07T22:05:36.389601398Z 2025-11-07 23:05:36,389 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 8 engines, VPN2: 6 engines)
-orchestrator  | 2025-11-07T22:05:36.389615686Z 2025-11-07 23:05:36,389 INFO app.services.provisioner: Provisioning new forwarded engine for VPN 'gluetun_2' with P2P port 53344
-orchestrator  | 2025-11-07T22:05:36.655681713Z 2025-11-07 23:05:36,655 INFO app.services.state: Engine ba2771e8e6c8 is now the forwarded engine for VPN 'gluetun_2'
-orchestrator  | 2025-11-07T22:05:36.655772228Z 2025-11-07 23:05:36,655 INFO app.services.provisioner: Engine ba2771e8e6c8 provisioned as forwarded engine
-orchestrator  | 2025-11-07T22:05:36.656373850Z 2025-11-07 23:05:36,656 INFO app.services.health_manager: Successfully started replacement engine ba2771e8e6c8
-orchestrator  | 2025-11-07T22:05:38.206117586Z 2025-11-07 23:05:38,205 INFO app.services.monitor: Docker state change detected: +1, -0 containers
-orchestrator  | 2025-11-07T22:05:38.206137860Z 2025-11-07 23:05:38,206 INFO app.services.monitor: Re-indexing to pick up new containers
-orchestrator  | 2025-11-07T22:05:46.851893630Z 2025-11-07 23:05:46,851 INFO app.services.health_manager: Removing unhealthy engine bfecd003fccf
-orchestrator  | 2025-11-07T22:05:47.003296161Z 2025-11-07 23:05:47,003 INFO app.services.health_manager: Successfully replaced unhealthy engine bfecd003fccf
-orchestrator  | 2025-11-07T22:05:47.633354925Z 2025-11-07 23:05:47,633 INFO app.services.monitor: Docker state change detected: +0, -1 containers
-orchestrator  | 2025-11-07T22:06:47.515131903Z 2025-11-07 23:06:47,514 INFO app.services.health_manager: Marking unhealthy engine 1eb9e5af2919 for replacement
-orchestrator  | 2025-11-07T22:06:47.515157885Z 2025-11-07 23:06:47,515 INFO app.services.health_manager: Starting replacement process for engine 1eb9e5af2919
-orchestrator  | 2025-11-07T22:06:47.515163237Z 2025-11-07 23:06:47,515 INFO app.services.health_manager: Starting replacement engine 1/1
-orchestrator  | 2025-11-07T22:06:47.517700665Z 2025-11-07 23:06:47,517 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 8 engines, VPN2: 6 engines)
-orchestrator  | 2025-11-07T22:06:47.517720325Z 2025-11-07 23:06:47,517 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun_2', provisioning non-forwarded engine
-orchestrator  | 2025-11-07T22:06:47.830811965Z 2025-11-07 23:06:47,829 INFO app.services.health_manager: Successfully started replacement engine fc68522982cb
-orchestrator  | 2025-11-07T22:06:49.842033032Z 2025-11-07 23:06:49,841 INFO app.services.monitor: Docker state change detected: +1, -0 containers
-orchestrator  | 2025-11-07T22:06:49.842053772Z 2025-11-07 23:06:49,841 INFO app.services.monitor: Re-indexing to pick up new containers
-orchestrator  | 2025-11-07T22:06:58.041840331Z 2025-11-07 23:06:58,041 INFO app.services.health_manager: Removing unhealthy engine 1eb9e5af2919
-orchestrator  | 2025-11-07T22:06:58.226598185Z 2025-11-07 23:06:58,226 WARNING app.services.replica_validator: State/Docker engine count mismatch: state=15, docker=14
-orchestrator  | 2025-11-07T22:06:58.226621231Z 2025-11-07 23:06:58,226 INFO app.services.replica_validator: Found 1 orphaned engines in state: ['1eb9e5af2919']
-orchestrator  | 2025-11-07T22:06:58.226626107Z 2025-11-07 23:06:58,226 INFO app.services.replica_validator: Triggering state synchronization with Docker (sync_needed=True, force_reindex=False)
-orchestrator  | 2025-11-07T22:06:58.226659720Z 2025-11-07 23:06:58,226 INFO app.services.replica_validator: Removing orphaned engine 1eb9e5af2919 from state
-orchestrator  | 2025-11-07T22:06:58.227565845Z 2025-11-07 23:06:58,227 INFO app.services.health_manager: Successfully replaced unhealthy engine 1eb9e5af2919
-orchestrator  | 2025-11-07T22:06:58.234428369Z 2025-11-07 23:06:58,234 INFO app.services.replica_validator: Running reindex to sync with Docker containers
-orchestrator  | 2025-11-07T22:06:58.283398877Z 2025-11-07 23:06:58,283 INFO app.services.replica_validator: After sync: state_engines=14, docker_running=14, free=13
-orchestrator  | 2025-11-07T22:06:59.200270596Z 2025-11-07 23:06:59,200 INFO app.services.monitor: Docker state change detected: +0, -1 containers
-orchestrator  | 2025-11-07T22:06:59.200343742Z 2025-11-07 23:06:59,200 INFO app.services.monitor: Monitor sync request denied by coordination - another sync in progress
-orchestrator  | 2025-11-07T22:07:31.710205452Z 2025-11-07 23:07:31,710 INFO app.services.autoscaler: Engine 32d7a2e402b6 has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:31.710225626Z 2025-11-07 23:07:31,710 INFO app.services.monitor: Cleaning up empty engine 32d7a2e402b6 after grace period
-orchestrator  | 2025-11-07T22:07:31.833773484Z 2025-11-07 23:07:31,833 INFO app.services.autoscaler: Engine 95584f998953 has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:31.833795035Z 2025-11-07 23:07:31,833 INFO app.services.monitor: Cleaning up empty engine 95584f998953 after grace period
-orchestrator  | 2025-11-07T22:07:31.973869379Z 2025-11-07 23:07:31,973 INFO app.services.autoscaler: Engine 73d9fd3c3768 has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:31.973888825Z 2025-11-07 23:07:31,973 INFO app.services.monitor: Cleaning up empty engine 73d9fd3c3768 after grace period
-orchestrator  | 2025-11-07T22:07:32.106806186Z 2025-11-07 23:07:32,106 INFO app.services.autoscaler: Engine 6100b2d270af has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:32.106824789Z 2025-11-07 23:07:32,106 INFO app.services.monitor: Cleaning up empty engine 6100b2d270af after grace period
-orchestrator  | 2025-11-07T22:07:32.246546107Z 2025-11-07 23:07:32,246 INFO app.services.autoscaler: Engine ea4ea7a86f86 has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:32.246568633Z 2025-11-07 23:07:32,246 INFO app.services.monitor: Cleaning up empty engine ea4ea7a86f86 after grace period
-orchestrator  | 2025-11-07T22:07:32.393975742Z 2025-11-07 23:07:32,393 INFO app.services.autoscaler: Engine a21aa2f4c84c has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:32.394007625Z 2025-11-07 23:07:32,393 INFO app.services.monitor: Cleaning up empty engine a21aa2f4c84c after grace period
-orchestrator  | 2025-11-07T22:07:32.538617306Z 2025-11-07 23:07:32,537 INFO app.services.autoscaler: Engine b9a77e1d5c5b has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:32.538717265Z 2025-11-07 23:07:32,537 INFO app.services.monitor: Cleaning up empty engine b9a77e1d5c5b after grace period
-orchestrator  | 2025-11-07T22:07:32.664774968Z 2025-11-07 23:07:32,664 INFO app.services.autoscaler: Engine e24a4669c9ae has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:32.664799479Z 2025-11-07 23:07:32,664 INFO app.services.monitor: Cleaning up empty engine e24a4669c9ae after grace period
-orchestrator  | 2025-11-07T22:07:32.792980905Z 2025-11-07 23:07:32,792 INFO app.services.autoscaler: Engine ab569615aa4d has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:32.793002191Z 2025-11-07 23:07:32,792 INFO app.services.monitor: Cleaning up empty engine ab569615aa4d after grace period
-orchestrator  | 2025-11-07T22:07:32.928618525Z 2025-11-07 23:07:32,928 INFO app.services.autoscaler: Engine d14bed2808a3 has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:32.928656069Z 2025-11-07 23:07:32,928 INFO app.services.monitor: Cleaning up empty engine d14bed2808a3 after grace period
-orchestrator  | 2025-11-07T22:07:33.076914207Z 2025-11-07 23:07:33,076 INFO app.services.autoscaler: Engine 8c2b037edd14 has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:33.076933356Z 2025-11-07 23:07:33,076 INFO app.services.monitor: Cleaning up empty engine 8c2b037edd14 after grace period
-orchestrator  | 2025-11-07T22:07:33.200580587Z 2025-11-07 23:07:33,199 INFO app.services.autoscaler: Engine ba2771e8e6c8 has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:33.200603362Z 2025-11-07 23:07:33,199 INFO app.services.monitor: Cleaning up empty engine ba2771e8e6c8 after grace period
-orchestrator  | 2025-11-07T22:07:33.343683708Z 2025-11-07 23:07:33,342 INFO app.services.autoscaler: Engine fc68522982cb has been empty for 30s, can be stopped
-orchestrator  | 2025-11-07T22:07:33.343705630Z 2025-11-07 23:07:33,342 INFO app.services.monitor: Cleaning up empty engine fc68522982cb after grace period
-orchestrator  | 2025-11-07T22:07:33.455944924Z 2025-11-07 23:07:33,455 INFO app.services.monitor: Docker state change detected: +0, -13 containers
+orchestrator  | 2025-11-07T22:50:35.222338222Z INFO:     Started server process [1]
+orchestrator  | 2025-11-07T22:50:35.222390016Z INFO:     Waiting for application startup.
+orchestrator  | 2025-11-07T22:50:35.280839755Z 2025-11-07 23:50:35,280 INFO app.services.state: Starting full cleanup: stopping all managed containers
+orchestrator  | 2025-11-07T22:50:35.312323102Z 2025-11-07 23:50:35,312 INFO app.services.state: Found 0 managed containers to stop
+orchestrator  | 2025-11-07T22:50:35.312346012Z 2025-11-07 23:50:35,312 INFO app.services.state: Stopped 0 containers during cleanup
+orchestrator  | 2025-11-07T22:50:35.312351210Z 2025-11-07 23:50:35,312 INFO app.services.state: Clearing database state
+orchestrator  | 2025-11-07T22:50:35.321817405Z 2025-11-07 23:50:35,321 INFO app.services.state: Clearing in-memory state
+orchestrator  | 2025-11-07T22:50:35.321836227Z 2025-11-07 23:50:35,321 INFO app.services.state: Clearing port allocations
+orchestrator  | 2025-11-07T22:50:35.321841119Z 2025-11-07 23:50:35,321 INFO app.services.state: Full cleanup completed
+orchestrator  | 2025-11-07T22:50:35.326072982Z 2025-11-07 23:50:35,325 INFO app.services.gluetun: VPN monitor started in REDUNDANT mode for containers: gluetun, gluetun_2
+orchestrator  | 2025-11-07T22:50:35.326093693Z 2025-11-07 23:50:35,325 INFO app.main: Waiting for Gluetun to become healthy before provisioning engines...
+orchestrator  | 2025-11-07T22:50:35.341562925Z 2025-11-07 23:50:35,341 INFO app.services.gluetun: VPN 'gluetun' first became healthy at 2025-11-07 22:50:35.326059+00:00
+orchestrator  | 2025-11-07T22:50:35.358242235Z 2025-11-07 23:50:35,358 INFO app.services.gluetun: Retrieved VPN forwarded port for 'gluetun': 59140
+orchestrator  | 2025-11-07T22:50:35.373149312Z 2025-11-07 23:50:35,372 INFO app.services.gluetun: VPN 'gluetun_2' first became healthy at 2025-11-07 22:50:35.326059+00:00
+orchestrator  | 2025-11-07T22:50:35.383354501Z 2025-11-07 23:50:35,383 INFO app.services.gluetun: Retrieved VPN forwarded port for 'gluetun_2': 53344
+orchestrator  | 2025-11-07T22:50:36.328811850Z 2025-11-07 23:50:36,328 INFO app.main: Gluetun is healthy - proceeding with engine provisioning
+orchestrator  | 2025-11-07T22:50:36.360212154Z 2025-11-07 23:50:36,360 INFO app.services.autoscaler: Starting 10 AceStream containers to maintain MIN_REPLICAS=10 total containers (currently: total=0, used=0, free=0)
+orchestrator  | 2025-11-07T22:50:36.361190304Z 2025-11-07 23:50:36,360 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 0 engines, VPN2: 0 engines)
+orchestrator  | 2025-11-07T22:50:36.361201118Z 2025-11-07 23:50:36,361 INFO app.services.provisioner: Provisioning new forwarded engine for VPN 'gluetun' with P2P port 59140
+orchestrator  | 2025-11-07T22:50:36.565202259Z 2025-11-07 23:50:36,564 INFO app.services.state: Engine 4d287a219569 is now the forwarded engine for VPN 'gluetun'
+orchestrator  | 2025-11-07T22:50:36.565224581Z 2025-11-07 23:50:36,565 INFO app.services.provisioner: Engine 4d287a219569 provisioned as forwarded engine
+orchestrator  | 2025-11-07T22:50:36.565546506Z 2025-11-07 23:50:36,565 INFO app.services.autoscaler: Successfully started AceStream container 4d287a219569 (1/10)
+orchestrator  | 2025-11-07T22:50:37.623243292Z 2025-11-07 23:50:37,623 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 1 engines, VPN2: 0 engines)
+orchestrator  | 2025-11-07T22:50:37.623264055Z 2025-11-07 23:50:37,623 INFO app.services.provisioner: Provisioning new forwarded engine for VPN 'gluetun_2' with P2P port 53344
+orchestrator  | 2025-11-07T22:50:37.828695706Z 2025-11-07 23:50:37,828 INFO app.services.state: Engine 50fbe465978e is now the forwarded engine for VPN 'gluetun_2'
+orchestrator  | 2025-11-07T22:50:37.828715145Z 2025-11-07 23:50:37,828 INFO app.services.provisioner: Engine 50fbe465978e provisioned as forwarded engine
+orchestrator  | 2025-11-07T22:50:37.828720620Z 2025-11-07 23:50:37,828 INFO app.services.autoscaler: Successfully started AceStream container 50fbe465978e (2/10)
+orchestrator  | 2025-11-07T22:50:38.864510431Z 2025-11-07 23:50:38,862 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 1 engines, VPN2: 1 engines)
+orchestrator  | 2025-11-07T22:50:38.864529766Z 2025-11-07 23:50:38,863 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:50:39.098215267Z 2025-11-07 23:50:39,097 INFO app.services.autoscaler: Successfully started AceStream container 61ae82006d67 (3/10)
+orchestrator  | 2025-11-07T22:50:40.136035720Z 2025-11-07 23:50:40,134 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 2 engines, VPN2: 1 engines)
+orchestrator  | 2025-11-07T22:50:40.136054134Z 2025-11-07 23:50:40,134 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun_2', provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:50:40.393223261Z 2025-11-07 23:50:40,393 INFO app.services.autoscaler: Successfully started AceStream container d6ee1a0b49f7 (4/10)
+orchestrator  | 2025-11-07T22:50:41.431297763Z 2025-11-07 23:50:41,431 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 2 engines, VPN2: 2 engines)
+orchestrator  | 2025-11-07T22:50:41.431315267Z 2025-11-07 23:50:41,431 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:50:41.708372318Z 2025-11-07 23:50:41,708 INFO app.services.autoscaler: Successfully started AceStream container f8cbb28609ab (5/10)
+orchestrator  | 2025-11-07T22:50:42.768079099Z 2025-11-07 23:50:42,766 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 3 engines, VPN2: 2 engines)
+orchestrator  | 2025-11-07T22:50:42.768105805Z 2025-11-07 23:50:42,766 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun_2', provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:50:43.034740504Z 2025-11-07 23:50:43,034 INFO app.services.autoscaler: Successfully started AceStream container 22ba98a0d262 (6/10)
+orchestrator  | 2025-11-07T22:50:44.090670436Z 2025-11-07 23:50:44,090 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 3 engines, VPN2: 3 engines)
+orchestrator  | 2025-11-07T22:50:44.091017424Z 2025-11-07 23:50:44,090 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:50:44.374012037Z 2025-11-07 23:50:44,372 INFO app.services.autoscaler: Successfully started AceStream container 88d2fe31dcbc (7/10)
+orchestrator  | 2025-11-07T22:50:45.423446085Z 2025-11-07 23:50:45,423 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 4 engines, VPN2: 3 engines)
+orchestrator  | 2025-11-07T22:50:45.423632928Z 2025-11-07 23:50:45,423 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun_2', provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:50:45.851058164Z 2025-11-07 23:50:45,850 INFO app.services.autoscaler: Successfully started AceStream container 3f9527f4688e (8/10)
+orchestrator  | 2025-11-07T22:50:46.895841358Z 2025-11-07 23:50:46,895 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 4 engines, VPN2: 4 engines)
+orchestrator  | 2025-11-07T22:50:46.896067379Z 2025-11-07 23:50:46,895 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:50:47.153427516Z 2025-11-07 23:50:47,149 INFO app.services.autoscaler: Successfully started AceStream container 4e5eb37761e6 (9/10)
+orchestrator  | 2025-11-07T22:50:48.208355243Z 2025-11-07 23:50:48,208 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 5 engines, VPN2: 4 engines)
+orchestrator  | 2025-11-07T22:50:48.208524684Z 2025-11-07 23:50:48,208 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun_2', provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:50:48.458443062Z 2025-11-07 23:50:48,458 INFO app.services.autoscaler: Successfully started AceStream container 45a42cc3e379 (10/10)
+orchestrator  | 2025-11-07T22:50:49.521355286Z 2025-11-07 23:50:49,521 INFO app.services.autoscaler: Successfully started 10/10 containers
+orchestrator  | 2025-11-07T22:50:49.521377422Z 2025-11-07 23:50:49,521 INFO app.services.autoscaler: Reindexing after provisioning to pick up new containers
+orchestrator  | 2025-11-07T22:50:49.630231692Z 2025-11-07 23:50:49,630 INFO app.services.monitor: Docker monitor started with 3s interval
+orchestrator  | 2025-11-07T22:50:49.630257717Z 2025-11-07 23:50:49,630 INFO app.services.health_monitor: Health monitor started with 30s interval
+orchestrator  | 2025-11-07T22:50:49.630330120Z 2025-11-07 23:50:49,630 INFO app.services.health_manager: Health manager started with 20s interval
+orchestrator  | 2025-11-07T22:50:49.630357929Z INFO:     Application startup complete.
+orchestrator  | 2025-11-07T22:50:49.688187177Z 2025-11-07 23:50:49,687 INFO app.services.monitor: Docker state change detected: +10, -0 containers
+orchestrator  | 2025-11-07T22:50:49.688203241Z 2025-11-07 23:50:49,688 INFO app.services.monitor: Re-indexing to pick up new containers
+orchestrator  | 2025-11-07T22:50:49.992464763Z INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+orchestrator  | 2025-11-07T22:53:22.374715921Z 2025-11-07 23:53:22,374 ERROR app.services.gluetun: Error getting VPN status for 'gluetun': UnixHTTPConnectionPool(host='localhost', port=None): Read timed out. (read timeout=30)
+orchestrator  | 2025-11-07T22:53:23.502650851Z 2025-11-07 23:53:23,502 WARNING app.services.monitor: Docker socket temporarily unavailable during sync, will retry next iteration: UnixHTTPConnectionPool(host='localhost', port=None): Read timed out. (read timeout=30)
+orchestrator  | 2025-11-07T22:53:25.765677310Z 2025-11-07 23:53:25,765 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:53:25.765926619Z 2025-11-07 23:53:25,765 WARNING app.services.gluetun: VPN 'gluetun' became unhealthy
+orchestrator  | 2025-11-07T22:53:25.766371249Z 2025-11-07 23:53:25,765 WARNING app.services.state: ⚠️  ENTERING EMERGENCY MODE ⚠️
+orchestrator  | 2025-11-07T22:53:25.766382560Z 2025-11-07 23:53:25,766 WARNING app.services.state: Failed VPN: gluetun
+orchestrator  | 2025-11-07T22:53:25.766387310Z 2025-11-07 23:53:25,766 WARNING app.services.state: Healthy VPN: gluetun_2
+orchestrator  | 2025-11-07T22:53:25.766391315Z 2025-11-07 23:53:25,766 WARNING app.services.state: System will operate with reduced capacity on single VPN until recovery
+orchestrator  | 2025-11-07T22:53:25.766403875Z 2025-11-07 23:53:25,766 WARNING app.services.state: Removing 5 engines from failed VPN 'gluetun'
+orchestrator  | 2025-11-07T22:53:25.945289160Z 2025-11-07 23:53:25,943 INFO app.services.state: Stopped engine 4d287a219569 from failed VPN
+orchestrator  | 2025-11-07T22:53:26.067393933Z 2025-11-07 23:53:26,064 INFO app.services.state: Stopped engine 61ae82006d67 from failed VPN
+orchestrator  | 2025-11-07T22:53:26.236852676Z 2025-11-07 23:53:26,236 INFO app.services.state: Stopped engine f8cbb28609ab from failed VPN
+orchestrator  | 2025-11-07T22:53:26.371822172Z 2025-11-07 23:53:26,371 INFO app.services.state: Stopped engine 88d2fe31dcbc from failed VPN
+orchestrator  | 2025-11-07T22:53:26.497979721Z 2025-11-07 23:53:26,497 INFO app.services.state: Stopped engine 4e5eb37761e6 from failed VPN
+orchestrator  | 2025-11-07T22:53:26.497998986Z 2025-11-07 23:53:26,497 WARNING app.services.state: Emergency mode active: operating with 5 engines on 'gluetun_2'
+orchestrator  | 2025-11-07T22:53:26.498031861Z 2025-11-07 23:53:26,497 INFO app.services.gluetun: Emergency mode activated - system operating on single VPN 'gluetun_2'
+orchestrator  | 2025-11-07T22:53:26.639307725Z 2025-11-07 23:53:26,639 INFO app.services.monitor: Docker state change detected: +0, -5 containers
+orchestrator  | 2025-11-07T22:53:26.849647821Z 2025-11-07 23:53:26,849 INFO app.main: Engine 4d287a219569 is in grace period, deferring shutdown
+orchestrator  | 2025-11-07T22:53:29.858890797Z 2025-11-07 23:53:29,858 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:53:32.885050042Z 2025-11-07 23:53:32,884 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:53:35.910983222Z 2025-11-07 23:53:35,910 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:53:38.941388736Z 2025-11-07 23:53:38,941 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:53:42.025523729Z 2025-11-07 23:53:42,025 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:53:45.095445022Z 2025-11-07 23:53:45,095 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:53:48.160458751Z 2025-11-07 23:53:48,160 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:53:51.231874711Z 2025-11-07 23:53:51,231 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:53:53.486020219Z 2025-11-07 23:53:53,485 INFO app.main: Engine 50fbe465978e is in grace period, deferring shutdown
+orchestrator  | 2025-11-07T22:53:54.306787144Z 2025-11-07 23:53:54,306 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:53:57.374358807Z 2025-11-07 23:53:57,374 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:54:00.456533591Z 2025-11-07 23:54:00,456 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:54:03.521996503Z 2025-11-07 23:54:03,521 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:54:06.588343940Z 2025-11-07 23:54:06,588 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:54:09.654817867Z 2025-11-07 23:54:09,654 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:54:12.718893761Z 2025-11-07 23:54:12,718 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:54:15.805825608Z 2025-11-07 23:54:15,804 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:54:18.869616179Z 2025-11-07 23:54:18,869 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:54:21.940614882Z 2025-11-07 23:54:21,940 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:54:25.004753333Z 2025-11-07 23:54:25,004 WARNING app.services.gluetun: VPN container 'gluetun' is not running (status: exited)
+orchestrator  | 2025-11-07T22:54:25.006002504Z 2025-11-07 23:54:25,004 WARNING app.services.gluetun: Force restarting VPN container 'gluetun' after 60s timeout
+orchestrator  | 2025-11-07T22:54:38.858847130Z 2025-11-07 23:54:38,858 INFO app.services.gluetun: VPN container 'gluetun' restart initiated
+orchestrator  | 2025-11-07T22:54:42.115512859Z 2025-11-07 23:54:42,115 INFO app.services.gluetun: VPN 'gluetun' recovered and is now healthy
+orchestrator  | 2025-11-07T22:54:42.115560537Z 2025-11-07 23:54:42,115 INFO app.services.state: ✅ EXITING EMERGENCY MODE ✅
+orchestrator  | 2025-11-07T22:54:42.115632693Z 2025-11-07 23:54:42,115 INFO app.services.state: VPN 'gluetun' has recovered after 76.3s
+orchestrator  | 2025-11-07T22:54:42.115687086Z 2025-11-07 23:54:42,115 INFO app.services.state: System will restore full capacity and resume normal operations
+orchestrator  | 2025-11-07T22:54:42.115754358Z 2025-11-07 23:54:42,115 INFO app.services.gluetun: Emergency mode deactivated - restoring full capacity
+orchestrator  | 2025-11-07T22:54:47.116939497Z 2025-11-07 23:54:47,116 INFO app.services.gluetun: VPN 'gluetun' recovered - provisioning 5 engines to restore capacity (5/10)
+orchestrator  | 2025-11-07T22:54:47.116961588Z 2025-11-07 23:54:47,116 INFO app.services.gluetun: Provisioning recovery engine 1/5
+orchestrator  | 2025-11-07T22:54:47.116969082Z 2025-11-07 23:54:47,116 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 0 engines, VPN2: 5 engines)
+orchestrator  | 2025-11-07T22:54:47.117116705Z 2025-11-07 23:54:47,116 WARNING app.services.provisioner: VPN 'gluetun' has no forwarded port available, provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:54:47.307536590Z 2025-11-07 23:54:47,306 INFO app.services.gluetun: Successfully provisioned recovery engine 96fc1a26d320
+orchestrator  | 2025-11-07T22:54:47.307560226Z 2025-11-07 23:54:47,306 INFO app.services.gluetun: Provisioning recovery engine 2/5
+orchestrator  | 2025-11-07T22:54:47.307565400Z 2025-11-07 23:54:47,306 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 1 engines, VPN2: 5 engines)
+orchestrator  | 2025-11-07T22:54:47.307569534Z 2025-11-07 23:54:47,306 WARNING app.services.provisioner: VPN 'gluetun' has no forwarded port available, provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:54:47.562084641Z 2025-11-07 23:54:47,556 INFO app.services.gluetun: Successfully provisioned recovery engine 65bfccdcbf66
+orchestrator  | 2025-11-07T22:54:47.562117727Z 2025-11-07 23:54:47,556 INFO app.services.gluetun: Provisioning recovery engine 3/5
+orchestrator  | 2025-11-07T22:54:47.562123099Z 2025-11-07 23:54:47,557 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 2 engines, VPN2: 5 engines)
+orchestrator  | 2025-11-07T22:54:47.562127140Z 2025-11-07 23:54:47,557 WARNING app.services.provisioner: VPN 'gluetun' has no forwarded port available, provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:54:47.852526783Z 2025-11-07 23:54:47,850 INFO app.services.gluetun: Successfully provisioned recovery engine 99765fb2b976
+orchestrator  | 2025-11-07T22:54:47.852556884Z 2025-11-07 23:54:47,850 INFO app.services.gluetun: Provisioning recovery engine 4/5
+orchestrator  | 2025-11-07T22:54:47.852562601Z 2025-11-07 23:54:47,850 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 3 engines, VPN2: 5 engines)
+orchestrator  | 2025-11-07T22:54:47.852566811Z 2025-11-07 23:54:47,850 WARNING app.services.provisioner: VPN 'gluetun' has no forwarded port available, provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:54:48.129077502Z 2025-11-07 23:54:48,128 INFO app.services.gluetun: Successfully provisioned recovery engine 816a64fdbe93
+orchestrator  | 2025-11-07T22:54:48.129108968Z 2025-11-07 23:54:48,128 INFO app.services.gluetun: Provisioning recovery engine 5/5
+orchestrator  | 2025-11-07T22:54:48.129180388Z 2025-11-07 23:54:48,129 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 4 engines, VPN2: 5 engines)
+orchestrator  | 2025-11-07T22:54:48.129221043Z 2025-11-07 23:54:48,129 WARNING app.services.provisioner: VPN 'gluetun' has no forwarded port available, provisioning non-forwarded engine
+orchestrator  | 2025-11-07T22:54:48.594045542Z 2025-11-07 23:54:48,588 INFO app.services.gluetun: Successfully provisioned recovery engine 30e5ce4c169e
+orchestrator  | 2025-11-07T22:54:48.594071338Z 2025-11-07 23:54:48,588 INFO app.services.gluetun: VPN recovery provisioning complete - successfully provisioned 5/5 engines (failed: 0)
+orchestrator  | 2025-11-07T22:54:48.764635739Z 2025-11-07 23:54:48,764 INFO app.services.monitor: Docker state change detected: +5, -0 containers
+orchestrator  | 2025-11-07T22:54:48.766341180Z 2025-11-07 23:54:48,766 INFO app.services.monitor: Re-indexing to pick up new containers
+orchestrator  | 2025-11-07T22:54:48.778719013Z 2025-11-07 23:54:48,778 INFO app.services.gluetun: Retrieved VPN forwarded port for 'gluetun': 46657
+orchestrator  | 2025-11-07T22:54:48.778968725Z 2025-11-07 23:54:48,778 WARNING app.services.gluetun: VPN 'gluetun' forwarded port changed from 59140 to 46657
+orchestrator  | 2025-11-07T22:54:48.779076107Z 2025-11-07 23:54:48,779 WARNING app.services.gluetun: VPN 'gluetun' port changed from 59140 to 46657 - replacing forwarded engine
+orchestrator  | 2025-11-07T22:54:48.779165652Z 2025-11-07 23:54:48,779 INFO app.services.gluetun: No forwarded engine found for VPN 'gluetun' - port change handled gracefully
