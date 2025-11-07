@@ -434,6 +434,10 @@ class GluetunMonitor:
                                       description=f"VPN '{container_name}' became unhealthy")
             monitor.invalidate_port_cache()
             
+            # In redundant mode, enter emergency mode if one VPN fails
+            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+                await self._handle_vpn_failure(container_name)
+            
         elif not old_status and new_status:
             logger.info(f"VPN '{container_name}' recovered and is now healthy")
             debug_log.log_vpn("transition",
@@ -446,27 +450,27 @@ class GluetunMonitor:
             # Mark recovery time to prevent premature cleanup
             monitor._last_recovery_time = now
             
+            # In redundant mode, handle VPN recovery (may exit emergency mode)
+            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+                await self._handle_vpn_recovery(container_name)
+            
             # Only restart engines if this is a real reconnection, not initial startup
             should_restart_engines = monitor.should_restart_engines_on_reconnection(now)
             
-            if cfg.VPN_RESTART_ENGINES_ON_RECONNECT and should_restart_engines:
+            # In single VPN mode, restart engines on reconnection
+            if cfg.VPN_MODE == 'single' and cfg.VPN_RESTART_ENGINES_ON_RECONNECT and should_restart_engines:
                 logger.info(f"VPN '{container_name}' reconnected - triggering engine restart")
                 debug_log.log_vpn("restart_engines",
                                  status="triggered",
                                  container_name=container_name,
                                  reason="vpn_reconnection")
                 await self._restart_engines_for_vpn(container_name)
-            elif cfg.VPN_RESTART_ENGINES_ON_RECONNECT and not should_restart_engines:
+            elif cfg.VPN_MODE == 'single' and cfg.VPN_RESTART_ENGINES_ON_RECONNECT and not should_restart_engines:
                 logger.info(f"VPN '{container_name}' became healthy but skipping engine restart (grace period)")
                 debug_log.log_vpn("restart_engines",
                                  status="skipped",
                                  container_name=container_name,
                                  reason="grace_period_or_instability")
-            
-            # In redundant mode, trigger provisioning to restore capacity after VPN recovery
-            if cfg.VPN_MODE == 'redundant' and should_restart_engines:
-                logger.info(f"VPN '{container_name}' recovered - triggering provisioning to restore full capacity")
-                await self._provision_engines_after_vpn_recovery(container_name)
         
         # Call registered callbacks
         for callback in self._health_transition_callbacks:
@@ -574,6 +578,83 @@ class GluetunMonitor:
             
         except Exception as e:
             logger.error(f"Error restarting engines for VPN '{container_name}': {e}")
+    
+    async def _handle_vpn_failure(self, failed_vpn: str):
+        """
+        Handle VPN failure in redundant mode by entering emergency mode.
+        
+        Emergency mode immediately:
+        - Takes over all operations for the failed VPN's engines
+        - Deletes engines from the failed VPN
+        - Only manages the healthy VPN's engines
+        """
+        try:
+            from .state import state
+            
+            # Determine which VPN is still healthy
+            vpn1_healthy = self.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
+            vpn2_healthy = self.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
+            
+            # Don't enter emergency mode if both VPNs are unhealthy or both are healthy
+            if vpn1_healthy == vpn2_healthy:
+                logger.debug(f"Not entering emergency mode: both VPNs have same health status")
+                return
+            
+            # Determine healthy VPN
+            if failed_vpn == cfg.GLUETUN_CONTAINER_NAME:
+                healthy_vpn = cfg.GLUETUN_CONTAINER_NAME_2
+            else:
+                healthy_vpn = cfg.GLUETUN_CONTAINER_NAME
+            
+            # Verify the healthy VPN is actually healthy
+            if not self.is_healthy(healthy_vpn):
+                logger.warning(f"Cannot enter emergency mode: healthy VPN '{healthy_vpn}' is not actually healthy")
+                return
+            
+            # Enter emergency mode
+            entered = state.enter_emergency_mode(failed_vpn, healthy_vpn)
+            
+            if entered:
+                logger.info(f"Emergency mode activated - system operating on single VPN '{healthy_vpn}'")
+                
+        except Exception as e:
+            logger.error(f"Error handling VPN failure for '{failed_vpn}': {e}")
+    
+    async def _handle_vpn_recovery(self, recovered_vpn: str):
+        """
+        Handle VPN recovery in redundant mode.
+        
+        If in emergency mode, exits emergency mode and provisions engines to restore capacity.
+        """
+        try:
+            from .state import state
+            
+            # Check if we're in emergency mode
+            if not state.is_emergency_mode():
+                logger.debug(f"VPN '{recovered_vpn}' recovered but not in emergency mode")
+                return
+            
+            emergency_info = state.get_emergency_mode_info()
+            
+            # Only exit emergency mode if the recovered VPN is the one that failed
+            if recovered_vpn != emergency_info.get("failed_vpn"):
+                logger.debug(f"VPN '{recovered_vpn}' recovered but it's not the failed VPN in emergency mode")
+                return
+            
+            # Exit emergency mode
+            exited = state.exit_emergency_mode()
+            
+            if exited:
+                logger.info(f"Emergency mode deactivated - restoring full capacity")
+                
+                # Wait a bit for VPN to stabilize before provisioning
+                await asyncio.sleep(5)
+                
+                # Provision engines to restore full capacity
+                await self._provision_engines_after_vpn_recovery(recovered_vpn)
+                
+        except Exception as e:
+            logger.error(f"Error handling VPN recovery for '{recovered_vpn}': {e}")
 
     async def _provision_engines_after_vpn_recovery(self, recovered_vpn: str):
         """
@@ -880,6 +961,11 @@ def _get_single_vpn_status(container_name: str) -> dict:
 
 def get_vpn_status() -> dict:
     """Get comprehensive VPN status information."""
+    from .state import state
+    
+    # Get emergency mode info
+    emergency_info = state.get_emergency_mode_info()
+    
     if not cfg.GLUETUN_CONTAINER_NAME:
         return {
             "mode": "disabled",
@@ -893,7 +979,8 @@ def get_vpn_status() -> dict:
             "last_check": None,
             "last_check_at": None,
             "vpn1": None,
-            "vpn2": None
+            "vpn2": None,
+            "emergency_mode": emergency_info
         }
     
     # Get status for VPN1
@@ -905,6 +992,7 @@ def get_vpn_status() -> dict:
         result["mode"] = "single"
         result["vpn1"] = vpn1_status
         result["vpn2"] = None
+        result["emergency_mode"] = emergency_info
         return result
     
     # In redundant mode, get both VPN statuses
@@ -928,7 +1016,8 @@ def get_vpn_status() -> dict:
         "last_check": datetime.now(timezone.utc).isoformat(),
         "last_check_at": datetime.now(timezone.utc).isoformat(),
         "vpn1": vpn1_status,
-        "vpn2": vpn2_status
+        "vpn2": vpn2_status,
+        "emergency_mode": emergency_info
     }
 
 def get_vpn_public_ip() -> Optional[str]:

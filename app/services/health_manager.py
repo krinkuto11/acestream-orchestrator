@@ -99,6 +99,12 @@ class HealthManager:
     
     async def _check_and_manage_health(self):
         """Check health of all engines and take corrective actions."""
+        # Skip health management if in emergency mode
+        if state.is_emergency_mode():
+            emergency_info = state.get_emergency_mode_info()
+            logger.debug(f"Health manager paused: in emergency mode (failed VPN: {emergency_info['failed_vpn']})")
+            return
+        
         # Get current engines from state
         engines = state.list_engines()
         current_engine_ids = {engine.container_id for engine in engines}

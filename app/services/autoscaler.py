@@ -42,6 +42,12 @@ def ensure_minimum(initial_startup: bool = False):
     try:
         from .replica_validator import replica_validator
         
+        # Skip autoscaling if in emergency mode (unless initial startup)
+        if not initial_startup and state.is_emergency_mode():
+            emergency_info = state.get_emergency_mode_info()
+            logger.debug(f"Autoscaler paused: in emergency mode (failed VPN: {emergency_info['failed_vpn']})")
+            return
+        
         # Check circuit breaker before attempting provisioning
         if not circuit_breaker_manager.can_provision("general"):
             logger.warning("Circuit breaker is OPEN - skipping provisioning attempt")
