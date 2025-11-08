@@ -9,11 +9,10 @@
 services:
   orchestrator:
     container_name: orchestrator
-    image: ghcr.io/krinkuto11/acestream-orchestrator:latest
+    image: ghcr.io/krinkuto11/acestream-orchestrator:v1.0.0
     env_file: .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./orchestrator.db:/app/orchestrator.db  # Persist database
     restart: on-failure
     networks:
       - acestream
