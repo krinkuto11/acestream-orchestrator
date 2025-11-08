@@ -93,6 +93,6 @@ services:
       - aceserver
 
 networks:
-  acestream:
+  aceserver:
     name: aceserver
     driver: bridge
