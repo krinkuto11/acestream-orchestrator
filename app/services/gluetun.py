@@ -231,6 +231,19 @@ class VpnContainerMonitor:
         
         time_since_recovery = (datetime.now(timezone.utc) - self._last_recovery_time).total_seconds()
         return time_since_recovery < self._recovery_stabilization_period_s
+    
+    def reset_port_tracking(self):
+        """
+        Reset port tracking state.
+        
+        This should be called when entering emergency mode to prevent false
+        port change detection after recovery. When a VPN fails and recovers,
+        the forwarded port typically changes, and we don't want to treat
+        the new port as a "change" from the old pre-failure port.
+        """
+        self._last_stable_forwarded_port = None
+        self._last_port_check_time = None
+        logger.debug(f"Port tracking reset for '{self.container_name}'")
 
     async def get_forwarded_port(self) -> Optional[int]:
         """Get the VPN forwarded port from Gluetun API with caching."""
@@ -293,12 +306,18 @@ class VpnContainerMonitor:
         This check is throttled to avoid excessive API calls. It only runs if:
         - VPN is healthy
         - Sufficient time has passed since last check (based on _port_check_interval_s)
+        - Not in recovery stabilization period (to avoid false detection after VPN recovery)
         
         Returns:
             Optional[tuple[int, int]]: (old_port, new_port) if port changed, None otherwise
         """
         # Only check for port changes if VPN is healthy
         if not self._last_health_status:
+            return None
+        
+        # Don't check for port changes during recovery stabilization period
+        # The port is expected to be different after recovery
+        if self.is_in_recovery_stabilization_period():
             return None
         
         # Throttle port change checks to avoid excessive API calls
@@ -627,6 +646,11 @@ class GluetunMonitor:
             entered = state.enter_emergency_mode(failed_vpn, healthy_vpn)
             
             if entered:
+                # Reset port tracking for the failed VPN to prevent false port change detection after recovery
+                failed_vpn_monitor = self._vpn_monitors.get(failed_vpn)
+                if failed_vpn_monitor:
+                    failed_vpn_monitor.reset_port_tracking()
+                
                 logger.info(f"Emergency mode activated - system operating on single VPN '{healthy_vpn}'")
                 
         except Exception as e:

@@ -47,13 +47,17 @@ def generate_engine_name() -> str:
 
 def generate_container_name(prefix: str = "engine") -> str:
     """
-    Generate a sequential container name with the given prefix.
+    Generate a sequential container name with the given prefix using lowest available number.
+    
+    Instead of always incrementing (which leads to acestream-11 with only 10 engines),
+    this finds the lowest available number in the range [1, N+1] where N is the number
+    of existing containers with this prefix.
     
     Args:
         prefix (str): Prefix for the container name (default: "engine")
         
     Returns:
-        str: Next available container name in sequence
+        str: Next available container name in sequence (e.g., "acestream-3" if 3 is the lowest free number)
     """
     with _name_generation_lock:
         with SessionLocal() as session:
@@ -63,14 +67,14 @@ def generate_container_name(prefix: str = "engine") -> str:
             ).all()
             
             # Extract numbers from existing container names in database
-            numbers = []
+            numbers = set()
             pattern = re.compile(rf'^{re.escape(prefix)}-(\d+)$')
             
             for engine in engines:
                 if engine.container_name:
                     match = pattern.match(engine.container_name)
                     if match:
-                        numbers.append(int(match.group(1)))
+                        numbers.add(int(match.group(1)))
             
             # Also check Docker for existing containers with the same pattern
             # This prevents naming conflicts when containers exist in Docker but not in database
@@ -83,16 +87,15 @@ def generate_container_name(prefix: str = "engine") -> str:
                     if container_name:
                         match = pattern.match(container_name)
                         if match:
-                            numbers.append(int(match.group(1)))
+                            numbers.add(int(match.group(1)))
             except Exception:
                 # If Docker check fails, continue with database-only numbers
                 # This ensures the function still works even if Docker is unavailable
                 pass
             
-            # Find the next available number
-            if not numbers:
-                next_num = 1
-            else:
-                next_num = max(numbers) + 1
+            # Find the lowest available number starting from 1
+            next_num = 1
+            while next_num in numbers:
+                next_num += 1
             
             return f"{prefix}-{next_num}"
