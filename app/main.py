@@ -307,8 +307,9 @@ def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
                     from .services.autoscaler import ensure_minimum
                     ensure_minimum()
             else:
-                # Engine is in grace period, let the monitoring service handle it later
-                logger.info(f"Engine {cid[:12]} is in grace period, deferring shutdown")
+                # Engine cannot be stopped - it may be protected (MIN_REPLICAS/MIN_FREE_REPLICAS) 
+                # or in grace period. Only log at debug level to avoid spam for protected engines.
+                logger.debug(f"Engine {cid[:12]} cannot be stopped, deferring shutdown")
                 
         bg.add_task(_auto)
     return {"updated": bool(st), "stream": st}
