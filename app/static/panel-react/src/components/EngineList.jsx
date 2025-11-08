@@ -7,13 +7,15 @@ import {
   Chip,
   IconButton,
   Divider,
-  Grid
+  Grid,
+  Alert
 } from '@mui/material'
 import DeleteIcon from '@mui/icons-material/Delete'
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord'
+import WarningIcon from '@mui/icons-material/Warning'
 import { timeAgo, formatTime } from '../utils/formatters'
 
-function EngineCard({ engine, onDelete }) {
+function EngineCard({ engine, onDelete, showVpnLabel = false }) {
   const healthColors = {
     healthy: 'success',
     unhealthy: 'error',
@@ -36,6 +38,15 @@ function EngineCard({ engine, onDelete }) {
                   color="primary"
                   size="small"
                   sx={{ ml: 1, fontWeight: 'bold', height: 20 }}
+                />
+              )}
+              {showVpnLabel && engine.vpn_container && (
+                <Chip
+                  label={engine.vpn_container}
+                  color="info"
+                  size="small"
+                  variant="outlined"
+                  sx={{ ml: 1, height: 20, fontSize: '0.7rem' }}
                 />
               )}
             </Typography>
@@ -100,7 +111,114 @@ function EngineCard({ engine, onDelete }) {
   )
 }
 
-function EngineList({ engines, onDeleteEngine }) {
+function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode }) {
+  const isEmergencyFailed = emergencyMode?.active && emergencyMode?.failed_vpn === vpnName
+  
+  return (
+    <Box sx={{ mb: 3 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+        <Typography variant="h6" component="h3" sx={{ fontWeight: 600 }}>
+          {vpnName}
+        </Typography>
+        <Chip
+          label={`${engines.length} ${engines.length === 1 ? 'engine' : 'engines'}`}
+          size="small"
+          color="primary"
+          variant="outlined"
+        />
+        {isEmergencyFailed && (
+          <Chip
+            icon={<WarningIcon />}
+            label="FAILED"
+            size="small"
+            color="error"
+            sx={{ fontWeight: 'bold' }}
+          />
+        )}
+      </Box>
+      
+      {isEmergencyFailed && (
+        <Alert severity="error" icon={<WarningIcon />} sx={{ mb: 2 }}>
+          This VPN has failed. All engines assigned to this VPN have been stopped during emergency mode.
+        </Alert>
+      )}
+      
+      {engines.length === 0 ? (
+        <Card>
+          <CardContent>
+            <Typography color="text.secondary">
+              {isEmergencyFailed ? 'No engines (stopped due to VPN failure)' : 'No engines assigned'}
+            </Typography>
+          </CardContent>
+        </Card>
+      ) : (
+        engines.map((engine) => (
+          <EngineCard
+            key={engine.container_id}
+            engine={engine}
+            onDelete={onDeleteEngine}
+            showVpnLabel={false}
+          />
+        ))
+      )}
+    </Box>
+  )
+}
+
+function EngineList({ engines, onDeleteEngine, vpnStatus }) {
+  const isRedundantMode = vpnStatus?.mode === 'redundant'
+  const emergencyMode = vpnStatus?.emergency_mode
+  
+  // Group engines by VPN in redundant mode
+  if (isRedundantMode) {
+    const vpn1Name = vpnStatus?.vpn1?.container_name
+    const vpn2Name = vpnStatus?.vpn2?.container_name
+    
+    // Group engines by their VPN assignment
+    const enginesByVpn = {
+      [vpn1Name]: [],
+      [vpn2Name]: []
+    }
+    
+    engines.forEach(engine => {
+      if (engine.vpn_container === vpn1Name) {
+        enginesByVpn[vpn1Name].push(engine)
+      } else if (engine.vpn_container === vpn2Name) {
+        enginesByVpn[vpn2Name].push(engine)
+      }
+      // Engines without VPN assignment are ignored in redundant mode
+    })
+    
+    return (
+      <Box>
+        <Typography variant="h5" component="h2" gutterBottom sx={{ fontWeight: 600, mb: 3 }}>
+          Engines ({engines.length})
+        </Typography>
+        
+        {/* VPN 1 Engines */}
+        {vpn1Name && (
+          <VPNEngineGroup
+            vpnName={vpn1Name}
+            engines={enginesByVpn[vpn1Name]}
+            onDeleteEngine={onDeleteEngine}
+            emergencyMode={emergencyMode}
+          />
+        )}
+        
+        {/* VPN 2 Engines */}
+        {vpn2Name && (
+          <VPNEngineGroup
+            vpnName={vpn2Name}
+            engines={enginesByVpn[vpn2Name]}
+            onDeleteEngine={onDeleteEngine}
+            emergencyMode={emergencyMode}
+          />
+        )}
+      </Box>
+    )
+  }
+  
+  // Single VPN mode or no VPN - show all engines in a simple list
   return (
     <Box>
       <Typography variant="h5" component="h2" gutterBottom sx={{ fontWeight: 600 }}>
@@ -118,6 +236,7 @@ function EngineList({ engines, onDeleteEngine }) {
             key={engine.container_id}
             engine={engine}
             onDelete={onDeleteEngine}
+            showVpnLabel={false}
           />
         ))
       )}
