@@ -55,7 +55,7 @@ services:
       gluetun:
         condition: service_healthy
     networks:
-      - acestream
+      - aceserver
 
 networks:
   acestream:
