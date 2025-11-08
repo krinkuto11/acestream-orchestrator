@@ -357,29 +357,37 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         from .gluetun import gluetun_monitor
         from .state import state
         
-        # In redundant mode, assign engine to VPN pool in round-robin fashion
+        # In redundant mode, assign engine to VPN with round-robin load balancing
         if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
-            # Count engines per VPN
-            vpn1_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
-            vpn2_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
-            
-            # Assign to VPN with fewer engines, prefer healthy VPN
-            vpn1_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
-            vpn2_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
-            
-            # If both healthy or both unhealthy, use round-robin
-            if vpn1_healthy == vpn2_healthy:
-                vpn_container = cfg.GLUETUN_CONTAINER_NAME if vpn1_engines <= vpn2_engines else cfg.GLUETUN_CONTAINER_NAME_2
-            # Prefer healthy VPN
-            elif vpn1_healthy:
-                vpn_container = cfg.GLUETUN_CONTAINER_NAME
-            elif vpn2_healthy:
-                vpn_container = cfg.GLUETUN_CONTAINER_NAME_2
+            # Check if in emergency mode - only assign to healthy VPN
+            if state.is_emergency_mode():
+                emergency_info = state.get_emergency_mode_info()
+                vpn_container = emergency_info['healthy_vpn']
+                logger.info(f"Emergency mode active: assigning engine to healthy VPN '{vpn_container}'")
             else:
-                # Both unhealthy, fail provisioning
-                raise RuntimeError("Both VPN containers are unhealthy - cannot start AceStream engine")
-            
-            logger.info(f"Assigning new engine to VPN '{vpn_container}' (VPN1: {vpn1_engines} engines, VPN2: {vpn2_engines} engines)")
+                # Normal redundant mode: Count engines per VPN
+                vpn1_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
+                vpn2_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
+                
+                # Check health of both VPNs
+                vpn1_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
+                vpn2_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
+                
+                # Determine VPN assignment based on health and load
+                if vpn1_healthy and vpn2_healthy:
+                    # Both healthy: use round-robin to balance load
+                    vpn_container = cfg.GLUETUN_CONTAINER_NAME if vpn1_engines <= vpn2_engines else cfg.GLUETUN_CONTAINER_NAME_2
+                elif vpn1_healthy and not vpn2_healthy:
+                    # Only VPN1 healthy: use it
+                    vpn_container = cfg.GLUETUN_CONTAINER_NAME
+                elif vpn2_healthy and not vpn1_healthy:
+                    # Only VPN2 healthy: use it
+                    vpn_container = cfg.GLUETUN_CONTAINER_NAME_2
+                else:
+                    # Both unhealthy: fail provisioning
+                    raise RuntimeError("Both VPN containers are unhealthy - cannot start AceStream engine")
+                
+                logger.info(f"Assigning new engine to VPN '{vpn_container}' (VPN1: {vpn1_engines} engines, VPN2: {vpn2_engines} engines)")
         else:
             # Single VPN mode
             vpn_container = cfg.GLUETUN_CONTAINER_NAME

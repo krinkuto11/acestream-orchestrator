@@ -20,7 +20,7 @@ COPY app ./app
 
 # Build React dashboard
 WORKDIR /app/app/static/panel-react
-RUN npm install && npm run build
+RUN npm install --ignore-scripts && npm run build
 
 # Return to app directory
 WORKDIR /app

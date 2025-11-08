@@ -6,17 +6,31 @@ import {
   Box,
   Chip,
   Grid,
-  Divider
+  Divider,
+  Alert,
+  AlertTitle
 } from '@mui/material'
 import VpnLockIcon from '@mui/icons-material/VpnLock'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import ErrorIcon from '@mui/icons-material/Error'
+import WarningIcon from '@mui/icons-material/Warning'
 import { formatTime } from '../utils/formatters'
 
-function SingleVPNDisplay({ vpnData, label }) {
+function formatDuration(seconds) {
+  if (!seconds) return '0s'
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = Math.floor(seconds % 60)
+  if (minutes === 0) return `${remainingSeconds}s`
+  return `${minutes}m ${remainingSeconds}s`
+}
+
+function SingleVPNDisplay({ vpnData, label, emergencyMode }) {
   const isHealthy = vpnData.connected
   const HealthIcon = isHealthy ? CheckCircleIcon : ErrorIcon
   const healthColor = isHealthy ? 'success' : 'error'
+  
+  // Check if this VPN is in emergency (failed)
+  const isEmergencyFailed = emergencyMode?.active && emergencyMode?.failed_vpn === vpnData.container_name
 
   return (
     <Box>
@@ -25,6 +39,25 @@ function SingleVPNDisplay({ vpnData, label }) {
           {label}
         </Typography>
       )}
+      
+      {/* Emergency mode alert for this specific VPN */}
+      {isEmergencyFailed && (
+        <Alert severity="error" icon={<WarningIcon />} sx={{ mb: 2 }}>
+          <AlertTitle>Emergency Mode - VPN Failed</AlertTitle>
+          <Typography variant="body2">
+            This VPN has failed and is currently unavailable. All engines assigned to this VPN have been stopped.
+          </Typography>
+          <Typography variant="body2" sx={{ mt: 1 }}>
+            Duration: {formatDuration(emergencyMode.duration_seconds)}
+          </Typography>
+          {emergencyMode.entered_at && (
+            <Typography variant="caption" color="text.secondary">
+              Started at: {formatTime(emergencyMode.entered_at)}
+            </Typography>
+          )}
+        </Alert>
+      )}
+      
       <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
         <Chip
           icon={<HealthIcon />}
@@ -37,6 +70,15 @@ function SingleVPNDisplay({ vpnData, label }) {
           color={vpnData.connected ? 'success' : 'error'}
           size="small"
         />
+        {isEmergencyFailed && (
+          <Chip
+            icon={<WarningIcon />}
+            label="EMERGENCY"
+            color="error"
+            size="small"
+            sx={{ fontWeight: 'bold' }}
+          />
+        )}
       </Box>
       <Grid container spacing={2}>
         <Grid item xs={12} sm={6} md={3}>
@@ -81,6 +123,7 @@ function VPNStatus({ vpnStatus }) {
   const overallHealthy = vpnStatus.connected
   const OverallHealthIcon = overallHealthy ? CheckCircleIcon : ErrorIcon
   const overallHealthColor = overallHealthy ? 'success' : 'error'
+  const emergencyMode = vpnStatus.emergency_mode
 
   return (
     <Card>
@@ -103,23 +146,54 @@ function VPNStatus({ vpnStatus }) {
                 color={vpnStatus.connected ? 'success' : 'error'}
                 size="small"
               />
+              {emergencyMode?.active && (
+                <Chip
+                  icon={<WarningIcon />}
+                  label="EMERGENCY MODE"
+                  color="error"
+                  size="small"
+                  sx={{ fontWeight: 'bold' }}
+                />
+              )}
             </Box>
           </Box>
         </Box>
+
+        {/* Overall emergency mode alert for redundant mode */}
+        {isRedundantMode && emergencyMode?.active && (
+          <Alert severity="warning" icon={<WarningIcon />} sx={{ mb: 3 }}>
+            <AlertTitle>System in Emergency Mode</AlertTitle>
+            <Typography variant="body2">
+              Operating with reduced capacity on a single VPN due to VPN failure.
+              System will automatically restore full capacity once the failed VPN recovers.
+            </Typography>
+            <Box sx={{ mt: 1, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+              <Typography variant="body2">
+                <strong>Failed VPN:</strong> {emergencyMode.failed_vpn || 'N/A'}
+              </Typography>
+              <Typography variant="body2">
+                <strong>Healthy VPN:</strong> {emergencyMode.healthy_vpn || 'N/A'}
+              </Typography>
+              <Typography variant="body2">
+                <strong>Duration:</strong> {formatDuration(emergencyMode.duration_seconds)}
+              </Typography>
+            </Box>
+          </Alert>
+        )}
 
         {isRedundantMode ? (
           <>
             {/* VPN 1 */}
             {vpnStatus.vpn1 && (
               <>
-                <SingleVPNDisplay vpnData={vpnStatus.vpn1} label="VPN 1" />
+                <SingleVPNDisplay vpnData={vpnStatus.vpn1} label="VPN 1" emergencyMode={emergencyMode} />
                 {vpnStatus.vpn2 && <Divider sx={{ my: 3 }} />}
               </>
             )}
             
             {/* VPN 2 */}
             {vpnStatus.vpn2 && (
-              <SingleVPNDisplay vpnData={vpnStatus.vpn2} label="VPN 2" />
+              <SingleVPNDisplay vpnData={vpnStatus.vpn2} label="VPN 2" emergencyMode={emergencyMode} />
             )}
           </>
         ) : (

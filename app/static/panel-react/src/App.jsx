@@ -152,6 +152,7 @@ function App() {
             <EngineList
               engines={engines}
               onDeleteEngine={handleDeleteEngine}
+              vpnStatus={vpnStatus}
             />
           </Grid>
 

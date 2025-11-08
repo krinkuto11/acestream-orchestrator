@@ -15,6 +15,12 @@ class State:
         self.engines: Dict[str, EngineState] = {}
         self.streams: Dict[str, StreamState] = {}
         self.stream_stats: Dict[str, List[StreamStatSnapshot]] = {}
+        
+        # Emergency mode state for redundant VPN failure handling
+        self._emergency_mode = False
+        self._failed_vpn_container: Optional[str] = None
+        self._healthy_vpn_container: Optional[str] = None
+        self._emergency_mode_entered_at: Optional[datetime] = None
 
     @staticmethod
     def now():
@@ -505,6 +511,124 @@ class State:
     def has_forwarded_engine_for_vpn(self, vpn_container: str) -> bool:
         """Check if there is a forwarded engine for a specific VPN container."""
         return self.get_forwarded_engine_for_vpn(vpn_container) is not None
+    
+    def enter_emergency_mode(self, failed_vpn: str, healthy_vpn: str) -> bool:
+        """
+        Enter emergency mode when one VPN fails in redundant mode.
+        
+        Emergency mode:
+        - Immediately takes over all operations
+        - Deletes engines from the failed VPN
+        - Only manages the working VPN's engines
+        - Prevents provisioner/health_manager from operating on failed VPN
+        
+        Args:
+            failed_vpn: Name of the failed VPN container
+            healthy_vpn: Name of the healthy VPN container
+            
+        Returns:
+            True if emergency mode was entered, False if already in emergency mode
+        """
+        with self._lock:
+            if self._emergency_mode:
+                logger.warning(f"Already in emergency mode (failed VPN: {self._failed_vpn_container})")
+                return False
+            
+            self._emergency_mode = True
+            self._failed_vpn_container = failed_vpn
+            self._healthy_vpn_container = healthy_vpn
+            self._emergency_mode_entered_at = self.now()
+            
+            logger.warning(f"⚠️  ENTERING EMERGENCY MODE ⚠️")
+            logger.warning(f"Failed VPN: {failed_vpn}")
+            logger.warning(f"Healthy VPN: {healthy_vpn}")
+            logger.warning(f"System will operate with reduced capacity on single VPN until recovery")
+            
+            # Remove all engines assigned to the failed VPN
+            engines_to_remove = [
+                eng.container_id for eng in self.engines.values()
+                if eng.vpn_container == failed_vpn
+            ]
+            
+            if engines_to_remove:
+                logger.warning(f"Removing {len(engines_to_remove)} engines from failed VPN '{failed_vpn}'")
+                for container_id in engines_to_remove:
+                    self.remove_engine(container_id)
+                    # Also stop the container
+                    try:
+                        from .provisioner import stop_container
+                        stop_container(container_id)
+                        logger.info(f"Stopped engine {container_id[:12]} from failed VPN")
+                    except Exception as e:
+                        logger.error(f"Failed to stop engine {container_id[:12]}: {e}")
+            
+            remaining_engines = len([eng for eng in self.engines.values()])
+            logger.warning(f"Emergency mode active: operating with {remaining_engines} engines on '{healthy_vpn}'")
+            
+            return True
+    
+    def exit_emergency_mode(self) -> bool:
+        """
+        Exit emergency mode after VPN recovery.
+        
+        Returns:
+            True if emergency mode was exited, False if not in emergency mode
+        """
+        with self._lock:
+            if not self._emergency_mode:
+                return False
+            
+            failed_vpn = self._failed_vpn_container
+            healthy_vpn = self._healthy_vpn_container
+            duration = (self.now() - self._emergency_mode_entered_at).total_seconds() if self._emergency_mode_entered_at else 0
+            
+            self._emergency_mode = False
+            self._failed_vpn_container = None
+            self._healthy_vpn_container = None
+            self._emergency_mode_entered_at = None
+            
+            logger.info(f"✅ EXITING EMERGENCY MODE ✅")
+            logger.info(f"VPN '{failed_vpn}' has recovered after {duration:.1f}s")
+            logger.info(f"System will restore full capacity and resume normal operations")
+            
+            return True
+    
+    def is_emergency_mode(self) -> bool:
+        """Check if system is in emergency mode."""
+        with self._lock:
+            return self._emergency_mode
+    
+    def get_emergency_mode_info(self) -> Dict:
+        """Get information about emergency mode status."""
+        with self._lock:
+            if not self._emergency_mode:
+                return {
+                    "active": False,
+                    "failed_vpn": None,
+                    "healthy_vpn": None,
+                    "duration_seconds": 0
+                }
+            
+            duration = (self.now() - self._emergency_mode_entered_at).total_seconds() if self._emergency_mode_entered_at else 0
+            
+            return {
+                "active": True,
+                "failed_vpn": self._failed_vpn_container,
+                "healthy_vpn": self._healthy_vpn_container,
+                "duration_seconds": duration,
+                "entered_at": self._emergency_mode_entered_at.isoformat() if self._emergency_mode_entered_at else None
+            }
+    
+    def should_skip_vpn_operations(self, vpn_container: str) -> bool:
+        """
+        Check if operations should be skipped for a VPN container.
+        
+        In emergency mode, operations on the failed VPN should be skipped.
+        """
+        with self._lock:
+            if not self._emergency_mode:
+                return False
+            return vpn_container == self._failed_vpn_container
 
 state = State()
 

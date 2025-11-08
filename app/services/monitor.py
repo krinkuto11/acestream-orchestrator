@@ -129,6 +129,30 @@ class DockerMonitor:
     def _cleanup_empty_engines(self):
         """Clean up engines that have been empty past their grace period."""
         try:
+            # In redundant VPN mode, don't clean up engines if:
+            # 1. One VPN is unhealthy (system is in degraded mode)
+            # 2. A VPN recently recovered (system is stabilizing)
+            # This prevents premature cleanup during VPN recovery
+            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+                vpn1_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
+                vpn2_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
+                
+                # If one VPN is unhealthy, don't clean up engines
+                if vpn1_healthy != vpn2_healthy:
+                    logger.debug("Skipping empty engine cleanup - VPN in degraded mode")
+                    return
+                
+                # Check if any VPN recently recovered
+                vpn1_monitor = gluetun_monitor.get_vpn_monitor(cfg.GLUETUN_CONTAINER_NAME)
+                vpn2_monitor = gluetun_monitor.get_vpn_monitor(cfg.GLUETUN_CONTAINER_NAME_2)
+                
+                if vpn1_monitor and vpn1_monitor.is_in_recovery_stabilization_period():
+                    logger.debug(f"Skipping empty engine cleanup - VPN '{cfg.GLUETUN_CONTAINER_NAME}' recently recovered")
+                    return
+                if vpn2_monitor and vpn2_monitor.is_in_recovery_stabilization_period():
+                    logger.debug(f"Skipping empty engine cleanup - VPN '{cfg.GLUETUN_CONTAINER_NAME_2}' recently recovered")
+                    return
+            
             from .autoscaler import can_stop_engine
             from .provisioner import stop_container
             
@@ -156,9 +180,14 @@ class DockerMonitor:
         try:
             from .replica_validator import replica_validator
             
-            # Get current container IDs from Docker
-            current_containers = list_managed()
-            current_container_ids = {c.id for c in current_containers if c.status == 'running'}
+            # Get current container IDs from Docker with error handling
+            try:
+                current_containers = list_managed()
+                current_container_ids = {c.id for c in current_containers if c.status == 'running'}
+            except Exception as e:
+                # If Docker socket is temporarily unavailable, skip this sync iteration
+                logger.warning(f"Docker socket temporarily unavailable during sync, will retry next iteration: {e}")
+                return
             
             # Detect changes
             added = current_container_ids - self._last_container_ids

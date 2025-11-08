@@ -44,7 +44,7 @@ services:
       - TZ=Europe/Madrid
     restart: unless-stopped
     networks:
-      - aceserver
+      - acestream
 
   gluetun2:
     image: qmcgaw/gluetun

@@ -45,6 +45,7 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 ## Core Features
 
 - **Multiple Deployment Modes**: Standalone, single VPN, or redundant VPN with automatic failover
+- **Emergency Mode**: Automatic failover and recovery when one VPN fails in redundant mode
 - **Multiple Engine Variants**: Support for AMD64 and ARM architectures with optimized configurations
 - **Health Monitoring**: Automatic detection of engine issues with real-time status updates
 - **Usage Tracking**: Track engine idle time for intelligent load balancing
@@ -104,6 +105,13 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
   - Redundant VPN failover
   - Port forwarding loss
   - Monitoring and alerts
+
+- **[Emergency Mode](docs/EMERGENCY_MODE.md)** - Automatic emergency mode for VPN failures
+  - Immediate failover when one VPN fails
+  - Automatic cleanup of failed VPN's engines
+  - Single-VPN operation with reduced capacity
+  - Automatic recovery and capacity restoration
+  - API and monitoring integration
 
 ### Monitoring & Health
 

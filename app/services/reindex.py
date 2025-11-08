@@ -29,13 +29,16 @@ def reindex_existing():
             if HOST_LABEL_HTTPS in lbl: alloc.reserve_host(int(lbl[HOST_LABEL_HTTPS]))
         except Exception: pass
         
+        # Extract VPN container assignment from labels
+        vpn_container = lbl.get("acestream.vpn_container")
+        
         # Reserve Gluetun ports if using Gluetun
         # Only reserve one port per container (use HOST_LABEL_HTTP as the primary port)
         # to avoid double-counting which would cause MAX_ACTIVE_REPLICAS limit to be hit prematurely
         if cfg.GLUETUN_CONTAINER_NAME:
             try:
                 if HOST_LABEL_HTTP in lbl: 
-                    alloc.reserve_gluetun_port(int(lbl[HOST_LABEL_HTTP]))
+                    alloc.reserve_gluetun_port(int(lbl[HOST_LABEL_HTTP]), vpn_container)
             except Exception: pass
         key = c.id
         if key not in state.engines:
@@ -48,8 +51,11 @@ def reindex_existing():
                 container_name = f"container-{key[:12]}"
             
             # Determine host based on Gluetun configuration
-            # When using Gluetun VPN, use Gluetun container's name as host
-            if cfg.GLUETUN_CONTAINER_NAME:
+            # When using Gluetun VPN with redundant mode, use the specific VPN container's name
+            # Otherwise use primary Gluetun container or container name
+            if vpn_container:
+                host = vpn_container
+            elif cfg.GLUETUN_CONTAINER_NAME:
                 host = cfg.GLUETUN_CONTAINER_NAME
             else:
                 # Use container name as host for Docker containers, fallback to 127.0.0.1
@@ -76,12 +82,21 @@ def reindex_existing():
             # Check if this container is marked as forwarded
             is_forwarded_label = lbl.get(FORWARDED_LABEL, "false").lower() == "true"
             
-            # Only mark as forwarded if no other engine is already forwarded
-            # This handles the case where multiple containers have the forwarded label (bug scenario)
-            should_be_forwarded = is_forwarded_label and not state.has_forwarded_engine()
+            # In redundant VPN mode, check per-VPN forwarded engine status
+            if cfg.VPN_MODE == 'redundant' and vpn_container:
+                should_be_forwarded = is_forwarded_label and not state.has_forwarded_engine_for_vpn(vpn_container)
+            else:
+                # In single mode, check global forwarded engine status
+                should_be_forwarded = is_forwarded_label and not state.has_forwarded_engine()
             
             state.engines[key] = EngineState(container_id=key, container_name=container_name, host=host, port=port, 
-                                            labels=lbl, forwarded=should_be_forwarded, first_seen=now, last_seen=now, streams=[])
+                                            labels=lbl, forwarded=should_be_forwarded, first_seen=now, last_seen=now, 
+                                            streams=[], vpn_container=vpn_container)
+            
+            # Set VPN container assignment in state if present
+            if vpn_container:
+                state.set_engine_vpn(key, vpn_container)
+                logger.debug(f"Restored VPN assignment for engine {key[:12]}: {vpn_container}")
             
             # If this is a forwarded engine, make sure it's marked in state
             if should_be_forwarded:
