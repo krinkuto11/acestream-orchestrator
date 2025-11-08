@@ -20,5 +20,5 @@ services:
 
 networks:
   acestream:
-    name: orchestrator
+    name: aceserver
     driver: bridge
