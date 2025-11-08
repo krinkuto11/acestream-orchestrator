@@ -145,10 +145,22 @@ jobs:
         working-directory: /tmp/digests
         run: |
           IMAGE_TAG="${{ steps.vars.outputs.tag }}"
+          # Create manifest with version tag
           docker buildx imagetools create -t "ghcr.io/${{ github.repository_owner }}/acestream-orchestrator:${IMAGE_TAG}" \
             $(printf 'ghcr.io/${{ github.repository_owner }}/acestream-orchestrator@sha256:%s ' *)
+          
+          # For releases, also tag as 'latest'
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            docker buildx imagetools create -t "ghcr.io/${{ github.repository_owner }}/acestream-orchestrator:latest" \
+              $(printf 'ghcr.io/${{ github.repository_owner }}/acestream-orchestrator@sha256:%s ' *)
+          fi
 
       - name: Inspect image
         run: |
           IMAGE_TAG="${{ steps.vars.outputs.tag }}"
           docker buildx imagetools inspect "ghcr.io/${{ github.repository_owner }}/acestream-orchestrator:${IMAGE_TAG}"
+          
+          # Also inspect latest tag for releases
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            docker buildx imagetools inspect "ghcr.io/${{ github.repository_owner }}/acestream-orchestrator:latest"
+          fi

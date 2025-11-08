@@ -57,7 +57,7 @@ services:
       start_period: 60s
     restart: unless-stopped
     networks:
-      - aceserver
+      - acestream
 
   gluetun2:
     image: qmcgaw/gluetun
