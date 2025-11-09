@@ -1,19 +1,8 @@
 import React from 'react'
-import {
-  Card,
-  CardContent,
-  Typography,
-  Box,
-  Chip,
-  Grid,
-  Divider,
-  Alert,
-  AlertTitle
-} from '@mui/material'
-import VpnLockIcon from '@mui/icons-material/VpnLock'
-import CheckCircleIcon from '@mui/icons-material/CheckCircle'
-import ErrorIcon from '@mui/icons-material/Error'
-import WarningIcon from '@mui/icons-material/Warning'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { ShieldCheck, CheckCircle, XCircle, AlertTriangle } from 'lucide-react'
 import { formatTime } from '../utils/formatters'
 
 function formatDuration(seconds) {
@@ -26,168 +15,142 @@ function formatDuration(seconds) {
 
 function SingleVPNDisplay({ vpnData, label, emergencyMode }) {
   const isHealthy = vpnData.connected
-  const HealthIcon = isHealthy ? CheckCircleIcon : ErrorIcon
-  const healthColor = isHealthy ? 'success' : 'error'
+  const HealthIcon = isHealthy ? CheckCircle : XCircle
   
   // Check if this VPN is in emergency (failed)
   const isEmergencyFailed = emergencyMode?.active && emergencyMode?.failed_vpn === vpnData.container_name
 
   return (
-    <Box>
+    <div>
       {label && (
-        <Typography variant="h6" component="h3" sx={{ mb: 2, fontWeight: 600 }}>
-          {label}
-        </Typography>
+        <h3 className="text-xl font-semibold mb-3">{label}</h3>
       )}
       
       {/* Emergency mode alert for this specific VPN */}
       {isEmergencyFailed && (
-        <Alert severity="error" icon={<WarningIcon />} sx={{ mb: 2 }}>
+        <Alert variant="destructive" className="mb-4">
+          <AlertTriangle className="h-4 w-4" />
           <AlertTitle>Emergency Mode - VPN Failed</AlertTitle>
-          <Typography variant="body2">
-            This VPN has failed and is currently unavailable. All engines assigned to this VPN have been stopped.
-          </Typography>
-          <Typography variant="body2" sx={{ mt: 1 }}>
-            Duration: {formatDuration(emergencyMode.duration_seconds)}
-          </Typography>
-          {emergencyMode.entered_at && (
-            <Typography variant="caption" color="text.secondary">
-              Started at: {formatTime(emergencyMode.entered_at)}
-            </Typography>
-          )}
+          <AlertDescription>
+            <p className="text-sm">
+              This VPN has failed and is currently unavailable. All engines assigned to this VPN have been stopped.
+            </p>
+            <p className="text-sm mt-2">
+              Duration: {formatDuration(emergencyMode.duration_seconds)}
+            </p>
+            {emergencyMode.entered_at && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Started at: {formatTime(emergencyMode.entered_at)}
+              </p>
+            )}
+          </AlertDescription>
         </Alert>
       )}
       
-      <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-        <Chip
-          icon={<HealthIcon />}
-          label={isHealthy ? 'Healthy' : 'Unhealthy'}
-          color={healthColor}
-          size="small"
-        />
-        <Chip
-          label={vpnData.connected ? 'Connected' : 'Disconnected'}
-          color={vpnData.connected ? 'success' : 'error'}
-          size="small"
-        />
+      <div className="flex gap-2 mb-4">
+        <Badge variant={isHealthy ? "success" : "destructive"} className="flex items-center gap-1">
+          <HealthIcon className="h-3 w-3" />
+          {isHealthy ? 'Healthy' : 'Unhealthy'}
+        </Badge>
+        <Badge variant={vpnData.connected ? "success" : "destructive"}>
+          {vpnData.connected ? 'Connected' : 'Disconnected'}
+        </Badge>
         {isEmergencyFailed && (
-          <Chip
-            icon={<WarningIcon />}
-            label="EMERGENCY"
-            color="error"
-            size="small"
-            sx={{ fontWeight: 'bold' }}
-          />
+          <Badge variant="destructive" className="flex items-center gap-1 font-bold">
+            <AlertTriangle className="h-3 w-3" />
+            EMERGENCY
+          </Badge>
         )}
-      </Box>
-      <Grid container spacing={2}>
-        <Grid item xs={12} sm={6} md={3}>
-          <Typography variant="caption" color="text.secondary">
-            Container
-          </Typography>
-          <Typography variant="body2">
-            {vpnData.container_name || 'N/A'}
-          </Typography>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Typography variant="caption" color="text.secondary">
-            Health
-          </Typography>
-          <Typography variant="body2">
-            {vpnData.health || 'unknown'}
-          </Typography>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Typography variant="caption" color="text.secondary">
-            Forwarded Port
-          </Typography>
-          <Typography variant="body2">
-            {vpnData.forwarded_port || 'N/A'}
-          </Typography>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Typography variant="caption" color="text.secondary">
-            Last Check
-          </Typography>
-          <Typography variant="body2">
-            {formatTime(vpnData.last_check_at)}
-          </Typography>
-        </Grid>
-      </Grid>
-    </Box>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div>
+          <p className="text-xs text-muted-foreground">Container</p>
+          <p className="text-sm font-medium">{vpnData.container_name || 'N/A'}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Health</p>
+          <p className="text-sm font-medium">{vpnData.health || 'unknown'}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Forwarded Port</p>
+          <p className="text-sm font-medium">{vpnData.forwarded_port || 'N/A'}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Last Check</p>
+          <p className="text-sm font-medium">{formatTime(vpnData.last_check_at)}</p>
+        </div>
+      </div>
+    </div>
   )
 }
 
 function VPNStatus({ vpnStatus }) {
   const isRedundantMode = vpnStatus.mode === 'redundant'
   const overallHealthy = vpnStatus.connected
-  const OverallHealthIcon = overallHealthy ? CheckCircleIcon : ErrorIcon
-  const overallHealthColor = overallHealthy ? 'success' : 'error'
+  const OverallHealthIcon = overallHealthy ? CheckCircle : XCircle
   const emergencyMode = vpnStatus.emergency_mode
 
   return (
     <Card>
-      <CardContent>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-          <VpnLockIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-          <Box>
-            <Typography variant="h5" component="h2" sx={{ fontWeight: 600 }}>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <ShieldCheck className="h-10 w-10 text-primary" />
+          <div>
+            <CardTitle className="text-2xl">
               VPN Status {isRedundantMode && '(Redundant Mode)'}
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 1, mt: 0.5 }}>
-              <Chip
-                icon={<OverallHealthIcon />}
-                label={overallHealthy ? 'Healthy' : 'Unhealthy'}
-                color={overallHealthColor}
-                size="small"
-              />
-              <Chip
-                label={vpnStatus.connected ? 'Connected' : 'Disconnected'}
-                color={vpnStatus.connected ? 'success' : 'error'}
-                size="small"
-              />
+            </CardTitle>
+            <div className="flex gap-2 mt-2">
+              <Badge variant={overallHealthy ? "success" : "destructive"} className="flex items-center gap-1">
+                <OverallHealthIcon className="h-3 w-3" />
+                {overallHealthy ? 'Healthy' : 'Unhealthy'}
+              </Badge>
+              <Badge variant={vpnStatus.connected ? "success" : "destructive"}>
+                {vpnStatus.connected ? 'Connected' : 'Disconnected'}
+              </Badge>
               {emergencyMode?.active && (
-                <Chip
-                  icon={<WarningIcon />}
-                  label="EMERGENCY MODE"
-                  color="error"
-                  size="small"
-                  sx={{ fontWeight: 'bold' }}
-                />
+                <Badge variant="destructive" className="flex items-center gap-1 font-bold">
+                  <AlertTriangle className="h-3 w-3" />
+                  EMERGENCY MODE
+                </Badge>
               )}
-            </Box>
-          </Box>
-        </Box>
+            </div>
+          </div>
+        </div>
+      </CardHeader>
 
+      <CardContent>
         {/* Overall emergency mode alert for redundant mode */}
         {isRedundantMode && emergencyMode?.active && (
-          <Alert severity="warning" icon={<WarningIcon />} sx={{ mb: 3 }}>
+          <Alert variant="warning" className="mb-6">
+            <AlertTriangle className="h-4 w-4" />
             <AlertTitle>System in Emergency Mode</AlertTitle>
-            <Typography variant="body2">
-              Operating with reduced capacity on a single VPN due to VPN failure.
-              System will automatically restore full capacity once the failed VPN recovers.
-            </Typography>
-            <Box sx={{ mt: 1, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-              <Typography variant="body2">
-                <strong>Failed VPN:</strong> {emergencyMode.failed_vpn || 'N/A'}
-              </Typography>
-              <Typography variant="body2">
-                <strong>Healthy VPN:</strong> {emergencyMode.healthy_vpn || 'N/A'}
-              </Typography>
-              <Typography variant="body2">
-                <strong>Duration:</strong> {formatDuration(emergencyMode.duration_seconds)}
-              </Typography>
-            </Box>
+            <AlertDescription>
+              <p className="text-sm">
+                Operating with reduced capacity on a single VPN due to VPN failure.
+                System will automatically restore full capacity once the failed VPN recovers.
+              </p>
+              <div className="mt-2 flex gap-4 flex-wrap text-sm">
+                <div>
+                  <strong>Failed VPN:</strong> {emergencyMode.failed_vpn || 'N/A'}
+                </div>
+                <div>
+                  <strong>Healthy VPN:</strong> {emergencyMode.healthy_vpn || 'N/A'}
+                </div>
+                <div>
+                  <strong>Duration:</strong> {formatDuration(emergencyMode.duration_seconds)}
+                </div>
+              </div>
+            </AlertDescription>
           </Alert>
         )}
 
         {isRedundantMode ? (
-          <>
+          <div className="space-y-6">
             {/* VPN 1 */}
             {vpnStatus.vpn1 && (
               <>
                 <SingleVPNDisplay vpnData={vpnStatus.vpn1} label="VPN 1" emergencyMode={emergencyMode} />
-                {vpnStatus.vpn2 && <Divider sx={{ my: 3 }} />}
+                {vpnStatus.vpn2 && <div className="border-t my-6" />}
               </>
             )}
             
@@ -195,43 +158,27 @@ function VPNStatus({ vpnStatus }) {
             {vpnStatus.vpn2 && (
               <SingleVPNDisplay vpnData={vpnStatus.vpn2} label="VPN 2" emergencyMode={emergencyMode} />
             )}
-          </>
+          </div>
         ) : (
           /* Single VPN mode - show simple view */
-          <Grid container spacing={2}>
-            <Grid item xs={12} sm={6} md={3}>
-              <Typography variant="caption" color="text.secondary">
-                Container
-              </Typography>
-              <Typography variant="body2">
-                {vpnStatus.container || 'N/A'}
-              </Typography>
-            </Grid>
-            <Grid item xs={12} sm={6} md={3}>
-              <Typography variant="caption" color="text.secondary">
-                Public IP
-              </Typography>
-              <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                {vpnStatus.public_ip || 'N/A'}
-              </Typography>
-            </Grid>
-            <Grid item xs={12} sm={6} md={3}>
-              <Typography variant="caption" color="text.secondary">
-                Forwarded Port
-              </Typography>
-              <Typography variant="body2">
-                {vpnStatus.forwarded_port || 'N/A'}
-              </Typography>
-            </Grid>
-            <Grid item xs={12} sm={6} md={3}>
-              <Typography variant="caption" color="text.secondary">
-                Last Check
-              </Typography>
-              <Typography variant="body2">
-                {formatTime(vpnStatus.last_check_at)}
-              </Typography>
-            </Grid>
-          </Grid>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Container</p>
+              <p className="text-sm font-medium">{vpnStatus.container || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Public IP</p>
+              <p className="text-sm font-medium font-mono">{vpnStatus.public_ip || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Forwarded Port</p>
+              <p className="text-sm font-medium">{vpnStatus.forwarded_port || 'N/A'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Last Check</p>
+              <p className="text-sm font-medium">{formatTime(vpnStatus.last_check_at)}</p>
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>

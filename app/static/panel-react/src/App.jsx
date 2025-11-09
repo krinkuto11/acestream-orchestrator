@@ -1,12 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import {
-  Box,
-  Container,
-  Grid,
-  Paper,
-  Alert,
-  Snackbar
-} from '@mui/material'
 import Header from './components/Header'
 import KPICards from './components/KPICards'
 import EngineList from './components/EngineList'
@@ -14,6 +6,8 @@ import StreamList from './components/StreamList'
 import VPNStatus from './components/VPNStatus'
 import StreamDetail from './components/StreamDetail'
 import { useLocalStorage } from './hooks/useLocalStorage'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { AlertCircle } from 'lucide-react'
 
 function App() {
   const [orchUrl, setOrchUrl] = useLocalStorage('orch_url', 'http://localhost:8000')
@@ -116,7 +110,7 @@ function App() {
   const healthyEngines = engines.filter(e => e.health_status === 'healthy').length
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+    <div className="min-h-screen bg-background">
       <Header
         orchUrl={orchUrl}
         setOrchUrl={setOrchUrl}
@@ -127,71 +121,73 @@ function App() {
         isConnected={isConnected}
       />
       
-      <Container maxWidth="xl" sx={{ mt: 3, mb: 3, flex: 1 }}>
-        <Grid container spacing={3}>
-          {/* KPI Cards */}
-          <Grid item xs={12}>
-            <KPICards
-              totalEngines={engines.length}
-              activeStreams={streams.length}
-              healthyEngines={healthyEngines}
-              vpnStatus={vpnStatus}
-              lastUpdate={lastUpdate}
-            />
-          </Grid>
+      <div className="container mx-auto px-4 py-6 space-y-6">
+        {/* KPI Cards */}
+        <KPICards
+          totalEngines={engines.length}
+          activeStreams={streams.length}
+          healthyEngines={healthyEngines}
+          vpnStatus={vpnStatus}
+          lastUpdate={lastUpdate}
+        />
 
-          {/* VPN Status */}
-          {vpnStatus.enabled && (
-            <Grid item xs={12}>
-              <VPNStatus vpnStatus={vpnStatus} />
-            </Grid>
-          )}
+        {/* VPN Status */}
+        {vpnStatus.enabled && (
+          <VPNStatus vpnStatus={vpnStatus} />
+        )}
 
+        {/* Engines and Streams Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Engines - Left Side */}
-          <Grid item xs={12} md={6}>
+          <div>
             <EngineList
               engines={engines}
               onDeleteEngine={handleDeleteEngine}
               vpnStatus={vpnStatus}
             />
-          </Grid>
+          </div>
 
           {/* Streams - Right Side */}
-          <Grid item xs={12} md={6}>
+          <div>
             <StreamList
               streams={streams}
               selectedStream={selectedStream}
               onSelectStream={setSelectedStream}
             />
-          </Grid>
+          </div>
+        </div>
 
-          {/* Stream Detail */}
-          {selectedStream && (
-            <Grid item xs={12}>
-              <StreamDetail
-                stream={selectedStream}
-                orchUrl={orchUrl}
-                apiKey={apiKey}
-                onStopStream={handleStopStream}
-                onDeleteEngine={handleDeleteEngine}
-                onClose={() => setSelectedStream(null)}
-              />
-            </Grid>
-          )}
-        </Grid>
-      </Container>
+        {/* Stream Detail */}
+        {selectedStream && (
+          <StreamDetail
+            stream={selectedStream}
+            orchUrl={orchUrl}
+            apiKey={apiKey}
+            onStopStream={handleStopStream}
+            onDeleteEngine={handleDeleteEngine}
+            onClose={() => setSelectedStream(null)}
+          />
+        )}
 
-      <Snackbar
-        open={!!error}
-        autoHideDuration={6000}
-        onClose={() => setError(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert onClose={() => setError(null)} severity="error" sx={{ width: '100%' }}>
-          {error}
-        </Alert>
-      </Snackbar>
-    </Box>
+        {/* Error Alert */}
+        {error && (
+          <div className="fixed bottom-4 right-4 max-w-md z-50">
+            <Alert variant="destructive" className="shadow-lg">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+              <button 
+                onClick={() => setError(null)}
+                className="absolute top-2 right-2 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </Alert>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
