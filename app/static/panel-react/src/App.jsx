@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import Header from './components/Header'
-import KPICards from './components/KPICards'
-import EngineList from './components/EngineList'
-import StreamList from './components/StreamList'
-import VPNStatus from './components/VPNStatus'
-import StreamDetail from './components/StreamDetail'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { Sidebar } from './components/Sidebar'
+import { Topbar } from './components/Topbar'
+import { OverviewPage } from './pages/OverviewPage'
+import { EnginesPage } from './pages/EnginesPage'
+import { StreamsPage } from './pages/StreamsPage'
+import { HealthPage } from './pages/HealthPage'
+import { VPNPage } from './pages/VPNPage'
+import { MetricsPage } from './pages/MetricsPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { AlertCircle } from 'lucide-react'
@@ -17,6 +21,7 @@ function App() {
   const [engines, setEngines] = useState([])
   const [streams, setStreams] = useState([])
   const [vpnStatus, setVpnStatus] = useState({ enabled: false })
+  const [orchestratorStatus, setOrchestratorStatus] = useState(null)
   const [selectedStream, setSelectedStream] = useState(null)
   const [error, setError] = useState(null)
   const [lastUpdate, setLastUpdate] = useState(null)
@@ -38,10 +43,11 @@ function App() {
   const fetchData = useCallback(async () => {
     try {
       setError(null)
-      const [enginesData, streamsData, vpnData] = await Promise.all([
+      const [enginesData, streamsData, vpnData, orchStatus] = await Promise.all([
         fetchJSON(`${orchUrl}/engines`),
         fetchJSON(`${orchUrl}/streams?status=started`),
-        fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false }))
+        fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false })),
+        fetchJSON(`${orchUrl}/orchestrator/status`).catch(() => null)
       ])
       
       // Fetch VPN public IP if VPN is enabled and connected
@@ -51,7 +57,6 @@ function App() {
           const publicIpData = await fetchJSON(`${orchUrl}/vpn/publicip`)
           vpnDataWithIp = { ...vpnData, public_ip: publicIpData.public_ip }
         } catch (err) {
-          // If public IP fetch fails, continue without it
           console.warn('Failed to fetch VPN public IP:', err)
         }
       }
@@ -59,6 +64,7 @@ function App() {
       setEngines(enginesData)
       setStreams(streamsData)
       setVpnStatus(vpnDataWithIp)
+      setOrchestratorStatus(orchStatus)
       setLastUpdate(new Date())
       setIsConnected(true)
     } catch (err) {
@@ -68,10 +74,7 @@ function App() {
   }, [orchUrl, fetchJSON])
 
   useEffect(() => {
-    // Initial load
     fetchData()
-    
-    // Set up polling
     const interval = setInterval(fetchData, refreshInterval)
     return () => clearInterval(interval)
   }, [fetchData, refreshInterval])
@@ -107,69 +110,101 @@ function App() {
     }
   }, [orchUrl, fetchJSON, fetchData])
 
-  const healthyEngines = engines.filter(e => e.health_status === 'healthy').length
-
   return (
-    <div className="min-h-screen bg-background">
-      <Header
-        orchUrl={orchUrl}
-        setOrchUrl={setOrchUrl}
-        apiKey={apiKey}
-        setApiKey={setApiKey}
-        refreshInterval={refreshInterval}
-        setRefreshInterval={setRefreshInterval}
-        isConnected={isConnected}
-      />
-      
-      <div className="container mx-auto px-4 py-6 space-y-6">
-        {/* KPI Cards */}
-        <KPICards
-          totalEngines={engines.length}
-          activeStreams={streams.length}
-          healthyEngines={healthyEngines}
-          vpnStatus={vpnStatus}
-          lastUpdate={lastUpdate}
-        />
-
-        {/* VPN Status */}
-        {vpnStatus.enabled && (
-          <VPNStatus vpnStatus={vpnStatus} />
-        )}
-
-        {/* Engines and Streams Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Engines - Left Side */}
-          <div>
-            <EngineList
-              engines={engines}
-              onDeleteEngine={handleDeleteEngine}
-              vpnStatus={vpnStatus}
-            />
-          </div>
-
-          {/* Streams - Right Side */}
-          <div>
-            <StreamList
-              streams={streams}
-              selectedStream={selectedStream}
-              onSelectStream={setSelectedStream}
-            />
-          </div>
+    <BrowserRouter basename="/panel">
+      <div className="flex min-h-screen bg-background">
+        <Sidebar />
+        
+        <div className="flex-1 flex flex-col">
+          <Topbar
+            orchUrl={orchUrl}
+            setOrchUrl={setOrchUrl}
+            apiKey={apiKey}
+            setApiKey={setApiKey}
+            refreshInterval={refreshInterval}
+            setRefreshInterval={setRefreshInterval}
+            isConnected={isConnected}
+          />
+          
+          <main className="flex-1 overflow-y-auto p-6">
+            <Routes>
+              <Route 
+                path="/" 
+                element={
+                  <OverviewPage
+                    engines={engines}
+                    streams={streams}
+                    vpnStatus={vpnStatus}
+                    orchestratorStatus={orchestratorStatus}
+                  />
+                } 
+              />
+              <Route 
+                path="/engines" 
+                element={
+                  <EnginesPage
+                    engines={engines}
+                    onDeleteEngine={handleDeleteEngine}
+                    vpnStatus={vpnStatus}
+                  />
+                } 
+              />
+              <Route 
+                path="/streams" 
+                element={
+                  <StreamsPage
+                    streams={streams}
+                    selectedStream={selectedStream}
+                    onSelectStream={setSelectedStream}
+                    orchUrl={orchUrl}
+                    apiKey={apiKey}
+                    onStopStream={handleStopStream}
+                    onDeleteEngine={handleDeleteEngine}
+                  />
+                } 
+              />
+              <Route 
+                path="/health" 
+                element={
+                  <HealthPage
+                    apiKey={apiKey}
+                    orchUrl={orchUrl}
+                  />
+                } 
+              />
+              <Route 
+                path="/vpn" 
+                element={
+                  <VPNPage vpnStatus={vpnStatus} />
+                } 
+              />
+              <Route 
+                path="/metrics" 
+                element={
+                  <MetricsPage
+                    apiKey={apiKey}
+                    orchUrl={orchUrl}
+                  />
+                } 
+              />
+              <Route 
+                path="/settings" 
+                element={
+                  <SettingsPage
+                    orchUrl={orchUrl}
+                    setOrchUrl={setOrchUrl}
+                    apiKey={apiKey}
+                    setApiKey={setApiKey}
+                    refreshInterval={refreshInterval}
+                    setRefreshInterval={setRefreshInterval}
+                  />
+                } 
+              />
+            </Routes>
+          </main>
         </div>
 
-        {/* Stream Detail */}
-        {selectedStream && (
-          <StreamDetail
-            stream={selectedStream}
-            orchUrl={orchUrl}
-            apiKey={apiKey}
-            onStopStream={handleStopStream}
-            onDeleteEngine={handleDeleteEngine}
-            onClose={() => setSelectedStream(null)}
-          />
-        )}
-
-        {/* Error Alert */}
+        {/* Error Toast */}
         {error && (
           <div className="fixed bottom-4 right-4 max-w-md z-50">
             <Alert variant="destructive" className="shadow-lg">
@@ -187,7 +222,7 @@ function App() {
           </div>
         )}
       </div>
-    </div>
+    </BrowserRouter>
   )
 }
 
