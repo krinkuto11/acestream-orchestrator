@@ -1,111 +1,71 @@
 import React from 'react'
-import {
-  Card,
-  CardContent,
-  Typography,
-  Box,
-  Chip,
-  IconButton,
-  Divider,
-  Grid,
-  Alert
-} from '@mui/material'
-import DeleteIcon from '@mui/icons-material/Delete'
-import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord'
-import WarningIcon from '@mui/icons-material/Warning'
+import { Card, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Trash2, AlertTriangle, Activity } from 'lucide-react'
 import { timeAgo, formatTime } from '../utils/formatters'
 
 function EngineCard({ engine, onDelete, showVpnLabel = false }) {
   const healthColors = {
     healthy: 'success',
-    unhealthy: 'error',
-    unknown: 'default'
+    unhealthy: 'destructive',
+    unknown: 'outline'
   }
   
   const healthStatus = engine.health_status || 'unknown'
-  const healthColor = healthColors[healthStatus] || 'default'
+  const healthVariant = healthColors[healthStatus] || 'outline'
 
   return (
-    <Card sx={{ mb: 1.5, '&:hover': { bgcolor: 'action.hover' } }}>
-      <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
-          <Box>
-            <Typography variant="subtitle1" component="div" sx={{ fontWeight: 600, lineHeight: 1.3 }}>
+    <Card className="mb-3 hover:bg-accent/5 transition-colors">
+      <CardContent className="pt-4 pb-4">
+        <div className="flex justify-between items-start mb-3">
+          <div>
+            <div className="font-semibold text-base flex items-center gap-2 mb-1">
               {engine.container_name || engine.container_id.slice(0, 12)}
               {engine.forwarded && (
-                <Chip
-                  label="FORWARDED"
-                  color="primary"
-                  size="small"
-                  sx={{ ml: 1, fontWeight: 'bold', height: 20 }}
-                />
+                <Badge variant="default" className="font-bold">FORWARDED</Badge>
               )}
               {showVpnLabel && engine.vpn_container && (
-                <Chip
-                  label={engine.vpn_container}
-                  color="info"
-                  size="small"
-                  variant="outlined"
-                  sx={{ ml: 1, height: 20, fontSize: '0.7rem' }}
-                />
+                <Badge variant="outline" className="text-xs">{engine.vpn_container}</Badge>
               )}
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
+            </div>
+            <p className="text-sm text-muted-foreground">
               {engine.host}:{engine.port}
-            </Typography>
-          </Box>
-          <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-            <Chip
-              icon={<FiberManualRecordIcon sx={{ fontSize: 12 }} />}
-              label={healthStatus.toUpperCase()}
-              color={healthColor}
-              size="small"
-              sx={{ height: 24, fontSize: '0.7rem' }}
-            />
-            <IconButton
+            </p>
+          </div>
+          <div className="flex gap-2 items-center">
+            <Badge variant={healthVariant} className="flex items-center gap-1">
+              <Activity className="h-3 w-3" />
+              {healthStatus.toUpperCase()}
+            </Badge>
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => onDelete(engine.container_id)}
-              color="error"
-              size="small"
-              sx={{ p: 0.5 }}
+              className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
             >
-              <DeleteIcon fontSize="small" />
-            </IconButton>
-          </Box>
-        </Box>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
 
-        <Grid container spacing={1.5}>
-          <Grid item xs={6}>
-            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-              Active Streams
-            </Typography>
-            <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-              {engine.streams.length}
-            </Typography>
-          </Grid>
-          <Grid item xs={6}>
-            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-              Last Used
-            </Typography>
-            <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-              {timeAgo(engine.last_stream_usage)}
-            </Typography>
-          </Grid>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <p className="text-xs text-muted-foreground">Active Streams</p>
+            <p className="text-sm font-medium">{engine.streams.length}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Last Used</p>
+            <p className="text-sm font-medium">{timeAgo(engine.last_stream_usage)}</p>
+          </div>
           {engine.last_health_check && (
-            <>
-              <Grid item xs={12}>
-                <Divider sx={{ my: 0 }} />
-              </Grid>
-              <Grid item xs={12}>
-                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                  Last Health Check
-                </Typography>
-                <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-                  {formatTime(engine.last_health_check)}
-                </Typography>
-              </Grid>
-            </>
+            <div className="col-span-2">
+              <p className="text-xs text-muted-foreground">Last Health Check</p>
+              <p className="text-sm font-medium">{formatTime(engine.last_health_check)}</p>
+            </div>
           )}
-        </Grid>
+        </div>
       </CardContent>
     </Card>
   )
@@ -115,40 +75,36 @@ function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode }) {
   const isEmergencyFailed = emergencyMode?.active && emergencyMode?.failed_vpn === vpnName
   
   return (
-    <Box sx={{ mb: 3 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-        <Typography variant="h6" component="h3" sx={{ fontWeight: 600 }}>
-          {vpnName}
-        </Typography>
-        <Chip
-          label={`${engines.length} ${engines.length === 1 ? 'engine' : 'engines'}`}
-          size="small"
-          color="primary"
-          variant="outlined"
-        />
+    <div className="mb-6">
+      <div className="flex items-center gap-2 mb-3">
+        <h3 className="text-xl font-semibold">{vpnName}</h3>
+        <Badge variant="outline">
+          {engines.length} {engines.length === 1 ? 'engine' : 'engines'}
+        </Badge>
         {isEmergencyFailed && (
-          <Chip
-            icon={<WarningIcon />}
-            label="FAILED"
-            size="small"
-            color="error"
-            sx={{ fontWeight: 'bold' }}
-          />
+          <Badge variant="destructive" className="flex items-center gap-1 font-bold">
+            <AlertTriangle className="h-3 w-3" />
+            FAILED
+          </Badge>
         )}
-      </Box>
+      </div>
       
       {isEmergencyFailed && (
-        <Alert severity="error" icon={<WarningIcon />} sx={{ mb: 2 }}>
-          This VPN has failed. All engines assigned to this VPN have been stopped during emergency mode.
+        <Alert variant="destructive" className="mb-4">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>VPN Failed</AlertTitle>
+          <AlertDescription>
+            This VPN has failed. All engines assigned to this VPN have been stopped during emergency mode.
+          </AlertDescription>
         </Alert>
       )}
       
       {engines.length === 0 ? (
         <Card>
-          <CardContent>
-            <Typography color="text.secondary">
+          <CardContent className="pt-6 pb-6">
+            <p className="text-muted-foreground">
               {isEmergencyFailed ? 'No engines (stopped due to VPN failure)' : 'No engines assigned'}
-            </Typography>
+            </p>
           </CardContent>
         </Card>
       ) : (
@@ -161,7 +117,7 @@ function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode }) {
           />
         ))
       )}
-    </Box>
+    </div>
   )
 }
 
@@ -190,10 +146,8 @@ function EngineList({ engines, onDeleteEngine, vpnStatus }) {
     })
     
     return (
-      <Box>
-        <Typography variant="h5" component="h2" gutterBottom sx={{ fontWeight: 600, mb: 3 }}>
-          Engines ({engines.length})
-        </Typography>
+      <div>
+        <h2 className="text-2xl font-semibold mb-6">Engines ({engines.length})</h2>
         
         {/* VPN 1 Engines */}
         {vpn1Name && (
@@ -214,20 +168,18 @@ function EngineList({ engines, onDeleteEngine, vpnStatus }) {
             emergencyMode={emergencyMode}
           />
         )}
-      </Box>
+      </div>
     )
   }
   
   // Single VPN mode or no VPN - show all engines in a simple list
   return (
-    <Box>
-      <Typography variant="h5" component="h2" gutterBottom sx={{ fontWeight: 600 }}>
-        Engines ({engines.length})
-      </Typography>
+    <div>
+      <h2 className="text-2xl font-semibold mb-6">Engines ({engines.length})</h2>
       {engines.length === 0 ? (
         <Card>
-          <CardContent>
-            <Typography color="text.secondary">No engines available</Typography>
+          <CardContent className="pt-6 pb-6">
+            <p className="text-muted-foreground">No engines available</p>
           </CardContent>
         </Card>
       ) : (
@@ -240,7 +192,7 @@ function EngineList({ engines, onDeleteEngine, vpnStatus }) {
           />
         ))
       )}
-    </Box>
+    </div>
   )
 }
 

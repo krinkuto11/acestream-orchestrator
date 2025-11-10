@@ -1,26 +1,26 @@
 import React from 'react'
-import { Grid, Card, CardContent, Typography, Box } from '@mui/material'
-import DnsIcon from '@mui/icons-material/Dns'
-import PlayCircleIcon from '@mui/icons-material/PlayCircle'
-import CheckCircleIcon from '@mui/icons-material/CheckCircle'
-import VpnLockIcon from '@mui/icons-material/VpnLock'
-import UpdateIcon from '@mui/icons-material/Update'
+import { Card, CardContent } from '@/components/ui/card'
+import { Server, PlayCircle, CheckCircle, ShieldCheck, Clock } from 'lucide-react'
 
-function KPICard({ icon: Icon, value, label, color = 'primary' }) {
+function KPICard({ icon: Icon, value, label, variant = 'default' }) {
+  const variantClasses = {
+    default: 'text-primary',
+    secondary: 'text-green-500',
+    success: 'text-emerald-500',
+    warning: 'text-yellow-500',
+    info: 'text-blue-500',
+  }
+
   return (
-    <Card sx={{ height: '100%' }}>
-      <CardContent>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <Icon sx={{ fontSize: 40, color: `${color}.main` }} />
-          <Box>
-            <Typography variant="h4" component="div" sx={{ fontWeight: 600 }}>
-              {value}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {label}
-            </Typography>
-          </Box>
-        </Box>
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex items-center gap-3">
+          <Icon className={`h-10 w-10 ${variantClasses[variant]}`} />
+          <div>
+            <div className="text-3xl font-bold">{value}</div>
+            <p className="text-sm text-muted-foreground">{label}</p>
+          </div>
+        </div>
       </CardContent>
     </Card>
   )
@@ -30,34 +30,20 @@ function KPICards({ totalEngines, activeStreams, healthyEngines, vpnStatus, last
   const vpnStatusText = vpnStatus.enabled 
     ? (vpnStatus.connected ? 'Connected' : 'Disconnected')
     : 'Disabled'
-  
-  const vpnColor = vpnStatus.enabled 
-    ? (vpnStatus.connected ? 'success' : 'error')
-    : 'default'
 
   return (
-    <Grid container spacing={2}>
-      <Grid item xs={12} sm={6} md={2.4}>
-        <KPICard icon={DnsIcon} value={totalEngines} label="Engines" color="primary" />
-      </Grid>
-      <Grid item xs={12} sm={6} md={2.4}>
-        <KPICard icon={PlayCircleIcon} value={activeStreams} label="Active Streams" color="secondary" />
-      </Grid>
-      <Grid item xs={12} sm={6} md={2.4}>
-        <KPICard icon={CheckCircleIcon} value={healthyEngines} label="Healthy Engines" color="success" />
-      </Grid>
-      <Grid item xs={12} sm={6} md={2.4}>
-        <KPICard icon={VpnLockIcon} value={vpnStatusText} label="VPN Status" color={vpnColor} />
-      </Grid>
-      <Grid item xs={12} sm={12} md={2.4}>
-        <KPICard 
-          icon={UpdateIcon} 
-          value={lastUpdate ? lastUpdate.toLocaleTimeString() : 'Never'} 
-          label="Last Update" 
-          color="info" 
-        />
-      </Grid>
-    </Grid>
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <KPICard icon={Server} value={totalEngines} label="Engines" variant="default" />
+      <KPICard icon={PlayCircle} value={activeStreams} label="Active Streams" variant="secondary" />
+      <KPICard icon={CheckCircle} value={healthyEngines} label="Healthy Engines" variant="success" />
+      <KPICard icon={ShieldCheck} value={vpnStatusText} label="VPN Status" variant={vpnStatus.connected ? "success" : "warning"} />
+      <KPICard 
+        icon={Clock} 
+        value={lastUpdate ? lastUpdate.toLocaleTimeString() : 'Never'} 
+        label="Last Update" 
+        variant="info" 
+      />
+    </div>
   )
 }
 

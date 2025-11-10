@@ -1,17 +1,9 @@
 import React from 'react'
-import {
-  AppBar,
-  Toolbar,
-  Typography,
-  Box,
-  TextField,
-  Select,
-  MenuItem,
-  Chip,
-  FormControl,
-  InputLabel
-} from '@mui/material'
-import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord'
+import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Activity } from 'lucide-react'
 
 function Header({
   orchUrl,
@@ -23,53 +15,57 @@ function Header({
   isConnected
 }) {
   return (
-    <AppBar position="sticky" color="default" elevation={1}>
-      <Toolbar sx={{ gap: 2, flexWrap: 'wrap', py: 1 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Typography variant="h6" component="div" color="primary" sx={{ fontWeight: 600 }}>
-            Acestream Orchestrator
-          </Typography>
-          <Chip
-            icon={<FiberManualRecordIcon />}
-            label={isConnected ? 'Connected (Polling)' : 'Error'}
-            color={isConnected ? 'success' : 'error'}
-            size="small"
-            sx={{ ml: 1 }}
-          />
-        </Box>
+    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <div className="container flex h-16 items-center gap-4 px-4">
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-bold text-primary">Acestream Orchestrator</h1>
+          <Badge variant={isConnected ? "success" : "destructive"} className="flex items-center gap-1">
+            <Activity className="h-3 w-3" />
+            {isConnected ? 'Connected' : 'Error'}
+          </Badge>
+        </div>
 
-        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', flex: 1, justifyContent: 'flex-end' }}>
-          <TextField
-            label="Server URL"
-            value={orchUrl}
-            onChange={(e) => setOrchUrl(e.target.value)}
-            size="small"
-            sx={{ minWidth: 200 }}
-          />
-          <TextField
-            label="API Key"
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            size="small"
-            sx={{ minWidth: 150 }}
-          />
-          <FormControl size="small" sx={{ minWidth: 100 }}>
-            <InputLabel>Refresh</InputLabel>
-            <Select
-              value={refreshInterval}
-              onChange={(e) => setRefreshInterval(e.target.value)}
-              label="Refresh"
-            >
-              <MenuItem value={2000}>2s</MenuItem>
-              <MenuItem value={5000}>5s</MenuItem>
-              <MenuItem value={10000}>10s</MenuItem>
-              <MenuItem value={30000}>30s</MenuItem>
+        <div className="ml-auto flex items-center gap-4">
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="server-url" className="text-xs">Server URL</Label>
+            <Input
+              id="server-url"
+              value={orchUrl}
+              onChange={(e) => setOrchUrl(e.target.value)}
+              className="h-8 w-48"
+              placeholder="http://localhost:8000"
+            />
+          </div>
+          
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="api-key" className="text-xs">API Key</Label>
+            <Input
+              id="api-key"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              className="h-8 w-40"
+              placeholder="Enter API key"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="refresh" className="text-xs">Refresh</Label>
+            <Select value={refreshInterval.toString()} onValueChange={(val) => setRefreshInterval(Number(val))}>
+              <SelectTrigger className="h-8 w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="2000">2s</SelectItem>
+                <SelectItem value="5000">5s</SelectItem>
+                <SelectItem value="10000">10s</SelectItem>
+                <SelectItem value="30000">30s</SelectItem>
+              </SelectContent>
             </Select>
-          </FormControl>
-        </Box>
-      </Toolbar>
-    </AppBar>
+          </div>
+        </div>
+      </div>
+    </header>
   )
 }
 
