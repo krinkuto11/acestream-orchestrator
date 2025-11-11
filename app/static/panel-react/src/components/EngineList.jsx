@@ -77,7 +77,7 @@ function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode }) {
   return (
     <div className="mb-6">
       <div className="flex items-center gap-2 mb-3">
-        <h3 className="text-xl font-semibold">{vpnName}</h3>
+        <h3 className="text-xl font-semibold tracking-tight">{vpnName}</h3>
         <Badge variant="outline">
           {engines.length} {engines.length === 1 ? 'engine' : 'engines'}
         </Badge>
@@ -147,27 +147,30 @@ function EngineList({ engines, onDeleteEngine, vpnStatus }) {
     
     return (
       <div>
-        <h2 className="text-2xl font-semibold mb-6">Engines ({engines.length})</h2>
+        <h2 className="text-2xl font-semibold tracking-tight mb-6">Engines ({engines.length})</h2>
         
-        {/* VPN 1 Engines */}
-        {vpn1Name && (
-          <VPNEngineGroup
-            vpnName={vpn1Name}
-            engines={enginesByVpn[vpn1Name]}
-            onDeleteEngine={onDeleteEngine}
-            emergencyMode={emergencyMode}
-          />
-        )}
-        
-        {/* VPN 2 Engines */}
-        {vpn2Name && (
-          <VPNEngineGroup
-            vpnName={vpn2Name}
-            engines={enginesByVpn[vpn2Name]}
-            onDeleteEngine={onDeleteEngine}
-            emergencyMode={emergencyMode}
-          />
-        )}
+        {/* Grid layout for side-by-side VPN groups in redundant mode */}
+        <div className="grid gap-6 md:grid-cols-2">
+          {/* VPN 1 Engines */}
+          {vpn1Name && (
+            <VPNEngineGroup
+              vpnName={vpn1Name}
+              engines={enginesByVpn[vpn1Name]}
+              onDeleteEngine={onDeleteEngine}
+              emergencyMode={emergencyMode}
+            />
+          )}
+          
+          {/* VPN 2 Engines */}
+          {vpn2Name && (
+            <VPNEngineGroup
+              vpnName={vpn2Name}
+              engines={enginesByVpn[vpn2Name]}
+              onDeleteEngine={onDeleteEngine}
+              emergencyMode={emergencyMode}
+            />
+          )}
+        </div>
       </div>
     )
   }
@@ -175,7 +178,7 @@ function EngineList({ engines, onDeleteEngine, vpnStatus }) {
   // Single VPN mode or no VPN - show all engines in a simple list
   return (
     <div>
-      <h2 className="text-2xl font-semibold mb-6">Engines ({engines.length})</h2>
+      <h2 className="text-2xl font-semibold tracking-tight mb-6">Engines ({engines.length})</h2>
       {engines.length === 0 ? (
         <Card>
           <CardContent className="pt-6 pb-6">
