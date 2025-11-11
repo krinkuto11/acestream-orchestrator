@@ -16,9 +16,11 @@ export function SettingsPage({
 }) {
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Settings</h1>
-        <p className="text-muted-foreground">Configure dashboard preferences</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+          <p className="text-muted-foreground mt-1">Configure dashboard connection and preferences</p>
+        </div>
       </div>
 
       <Card>

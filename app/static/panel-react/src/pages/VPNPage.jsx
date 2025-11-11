@@ -6,9 +6,11 @@ export function VPNPage({ vpnStatus }) {
   if (!vpnStatus.enabled) {
     return (
       <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold">VPN Status</h1>
-          <p className="text-muted-foreground">Monitor VPN connection and health</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">VPN Status</h1>
+            <p className="text-muted-foreground mt-1">Monitor VPN connection and health</p>
+          </div>
         </div>
 
         <Card>
@@ -22,9 +24,11 @@ export function VPNPage({ vpnStatus }) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">VPN Status</h1>
-        <p className="text-muted-foreground">Monitor VPN connection and health</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">VPN Status</h1>
+          <p className="text-muted-foreground mt-1">Monitor VPN connection and health</p>
+        </div>
       </div>
 
       <VPNStatus vpnStatus={vpnStatus} />

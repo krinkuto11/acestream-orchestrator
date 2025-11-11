@@ -63,9 +63,11 @@ export function MetricsPage({ apiKey, orchUrl }) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Metrics</h1>
-        <p className="text-muted-foreground">Prometheus metrics and system statistics</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Metrics</h1>
+          <p className="text-muted-foreground mt-1">Prometheus metrics and system statistics</p>
+        </div>
       </div>
 
       {error && (
