@@ -75,7 +75,7 @@ function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode }) {
   const isEmergencyFailed = emergencyMode?.active && emergencyMode?.failed_vpn === vpnName
   
   return (
-    <div className="mb-6">
+    <div>
       <div className="flex items-center gap-2 mb-3">
         <h3 className="text-xl font-semibold">{vpnName}</h3>
         <Badge variant="outline">
@@ -149,25 +149,28 @@ function EngineList({ engines, onDeleteEngine, vpnStatus }) {
       <div>
         <h2 className="text-2xl font-semibold mb-6">Engines ({engines.length})</h2>
         
-        {/* VPN 1 Engines */}
-        {vpn1Name && (
-          <VPNEngineGroup
-            vpnName={vpn1Name}
-            engines={enginesByVpn[vpn1Name]}
-            onDeleteEngine={onDeleteEngine}
-            emergencyMode={emergencyMode}
-          />
-        )}
-        
-        {/* VPN 2 Engines */}
-        {vpn2Name && (
-          <VPNEngineGroup
-            vpnName={vpn2Name}
-            engines={enginesByVpn[vpn2Name]}
-            onDeleteEngine={onDeleteEngine}
-            emergencyMode={emergencyMode}
-          />
-        )}
+        {/* Side-by-side layout for redundant VPN mode */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* VPN 1 Engines */}
+          {vpn1Name && (
+            <VPNEngineGroup
+              vpnName={vpn1Name}
+              engines={enginesByVpn[vpn1Name]}
+              onDeleteEngine={onDeleteEngine}
+              emergencyMode={emergencyMode}
+            />
+          )}
+          
+          {/* VPN 2 Engines */}
+          {vpn2Name && (
+            <VPNEngineGroup
+              vpnName={vpn2Name}
+              engines={enginesByVpn[vpn2Name]}
+              onDeleteEngine={onDeleteEngine}
+              emergencyMode={emergencyMode}
+            />
+          )}
+        </div>
       </div>
     )
   }

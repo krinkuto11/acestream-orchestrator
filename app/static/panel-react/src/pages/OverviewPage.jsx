@@ -170,6 +170,14 @@ function RecentActivity({ streams, engines }) {
                   <div className="flex-1 truncate">
                     <p className="text-sm font-medium truncate">{stream.id.slice(0, 16)}...</p>
                     <p className="text-xs text-muted-foreground">{stream.content_key || 'N/A'}</p>
+                    <div className="flex gap-3 mt-1">
+                      <span className="text-xs text-green-500">
+                        ↓ {((stream.speed_down || 0) * 1024 / 1024).toFixed(1)} MB/s
+                      </span>
+                      <span className="text-xs text-red-500">
+                        ↑ {((stream.speed_up || 0) * 1024 / 1024).toFixed(1)} MB/s
+                      </span>
+                    </div>
                   </div>
                   <Badge variant="success" className="ml-2">Active</Badge>
                 </div>
