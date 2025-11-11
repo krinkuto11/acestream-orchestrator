@@ -37,6 +37,34 @@ function StatCard({ title, value, icon: Icon, trend, trendValue, variant = 'defa
 }
 
 function QuickStats({ engines, streams, vpnStatus, healthyEngines }) {
+  // Determine VPN status display for redundant mode
+  const getVPNStatusDisplay = () => {
+    if (!vpnStatus.enabled) {
+      return { value: 'Disabled', variant: 'default' }
+    }
+    
+    if (vpnStatus.mode === 'redundant') {
+      const vpn1Connected = vpnStatus.vpn1?.connected
+      const vpn2Connected = vpnStatus.vpn2?.connected
+      
+      if (vpn1Connected && vpn2Connected) {
+        return { value: 'Both Connected', variant: 'success' }
+      } else if (vpn1Connected || vpn2Connected) {
+        return { value: '1 Connected', variant: 'warning' }
+      } else {
+        return { value: 'Both Down', variant: 'error' }
+      }
+    }
+    
+    // Single VPN mode
+    return {
+      value: vpnStatus.connected ? 'Connected' : 'Disconnected',
+      variant: vpnStatus.connected ? 'success' : 'error'
+    }
+  }
+  
+  const vpnDisplay = getVPNStatusDisplay()
+  
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       <StatCard
@@ -59,9 +87,9 @@ function QuickStats({ engines, streams, vpnStatus, healthyEngines }) {
       />
       <StatCard
         title="VPN Status"
-        value={vpnStatus.enabled ? (vpnStatus.connected ? 'Connected' : 'Disconnected') : 'Disabled'}
+        value={vpnDisplay.value}
         icon={ShieldCheck}
-        variant={vpnStatus.connected ? "success" : vpnStatus.enabled ? "error" : "default"}
+        variant={vpnDisplay.variant}
       />
     </div>
   )
