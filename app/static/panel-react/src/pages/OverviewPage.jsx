@@ -1,17 +1,18 @@
 import React from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Server, Activity, CheckCircle, ShieldCheck, Clock, TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react'
+import { Server, Activity, CheckCircle, ShieldCheck, Clock, TrendingUp, TrendingDown, AlertTriangle, Download, Upload } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { cn } from '@/lib/utils'
+import { formatBytesPerSecond } from '@/utils/formatters'
 
 function StatCard({ title, value, icon: Icon, trend, trendValue, variant = 'default' }) {
   const variantClasses = {
     default: 'text-primary',
-    success: 'text-green-500',
-    warning: 'text-yellow-500',
-    error: 'text-red-500',
-    info: 'text-blue-500',
+    success: 'text-green-600 dark:text-green-400',
+    warning: 'text-yellow-600 dark:text-yellow-400',
+    error: 'text-red-600 dark:text-red-400',
+    info: 'text-blue-600 dark:text-blue-400',
   }
 
   return (
@@ -25,7 +26,7 @@ function StatCard({ title, value, icon: Icon, trend, trendValue, variant = 'defa
       <CardContent>
         <div className="text-2xl font-bold">{value}</div>
         {trend && (
-          <p className={cn("text-xs flex items-center gap-1 mt-1", trend === 'up' ? 'text-green-600' : 'text-red-600')}>
+          <p className={cn("text-xs flex items-center gap-1 mt-1", trend === 'up' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
             {trend === 'up' ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
             <span>{trendValue}</span>
           </p>
@@ -166,6 +167,16 @@ function RecentActivity({ streams, engines }) {
                   <div className="flex-1 truncate">
                     <p className="text-sm font-medium truncate">{stream.id.slice(0, 16)}...</p>
                     <p className="text-xs text-muted-foreground">{stream.content_key || 'N/A'}</p>
+                    <div className="flex gap-3 mt-1">
+                      <span className="text-xs flex items-center gap-1 text-green-600 dark:text-green-400">
+                        <Download className="h-3 w-3" />
+                        {formatBytesPerSecond((stream.speed_down || 0) * 1024)}
+                      </span>
+                      <span className="text-xs flex items-center gap-1 text-red-600 dark:text-red-400">
+                        <Upload className="h-3 w-3" />
+                        {formatBytesPerSecond((stream.speed_up || 0) * 1024)}
+                      </span>
+                    </div>
                   </div>
                   <Badge variant="success" className="ml-2">Active</Badge>
                 </div>

@@ -118,11 +118,11 @@ export function HealthPage({ apiKey, orchUrl }) {
           <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">Healthy Engines</p>
-              <p className="text-3xl font-bold text-green-600">{healthStatus?.healthy_engines || 0}</p>
+              <p className="text-3xl font-bold text-green-600 dark:text-green-400">{healthStatus?.healthy_engines || 0}</p>
             </div>
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">Unhealthy Engines</p>
-              <p className="text-3xl font-bold text-red-600">{healthStatus?.unhealthy_engines || 0}</p>
+              <p className="text-3xl font-bold text-red-600 dark:text-red-400">{healthStatus?.unhealthy_engines || 0}</p>
             </div>
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">Total Checks</p>
