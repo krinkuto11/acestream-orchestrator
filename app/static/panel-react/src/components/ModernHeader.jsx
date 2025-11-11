@@ -12,9 +12,9 @@ export function ModernHeader({ isConnected, lastUpdate, onOpenSettings }) {
         {/* Connection Status */}
         <div className="flex items-center gap-2">
           {isConnected ? (
-            <Wifi className="h-4 w-4 text-green-500" />
+            <Wifi className="h-4 w-4 text-green-600 dark:text-green-400" />
           ) : (
-            <WifiOff className="h-4 w-4 text-red-500" />
+            <WifiOff className="h-4 w-4 text-red-600 dark:text-red-400" />
           )}
           <Badge variant={isConnected ? "success" : "destructive"} className="text-xs">
             {isConnected ? 'Connected' : 'Disconnected'}

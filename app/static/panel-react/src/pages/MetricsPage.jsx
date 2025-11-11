@@ -111,7 +111,7 @@ export function MetricsPage({ apiKey, orchUrl }) {
             <CardTitle className="text-sm font-medium text-muted-foreground">Collect Errors</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold text-red-600">{parsedMetrics.orch_collect_errors_total || 0}</p>
+            <p className="text-3xl font-bold text-red-600 dark:text-red-400">{parsedMetrics.orch_collect_errors_total || 0}</p>
           </CardContent>
         </Card>
       </div>

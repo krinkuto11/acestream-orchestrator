@@ -5,10 +5,10 @@ import { Server, PlayCircle, CheckCircle, ShieldCheck, Clock } from 'lucide-reac
 function KPICard({ icon: Icon, value, label, variant = 'default' }) {
   const variantClasses = {
     default: 'text-primary',
-    secondary: 'text-green-500',
-    success: 'text-emerald-500',
-    warning: 'text-yellow-500',
-    info: 'text-blue-500',
+    secondary: 'text-green-600 dark:text-green-400',
+    success: 'text-emerald-600 dark:text-emerald-400',
+    warning: 'text-yellow-600 dark:text-yellow-400',
+    info: 'text-blue-600 dark:text-blue-400',
   }
 
   return (
