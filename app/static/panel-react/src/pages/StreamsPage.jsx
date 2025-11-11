@@ -13,9 +13,11 @@ export function StreamsPage({
 }) {
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Streams</h1>
-        <p className="text-muted-foreground">Monitor active and historical streams</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Streams</h1>
+          <p className="text-muted-foreground mt-1">Monitor active and historical streams</p>
+        </div>
       </div>
 
       <StreamList

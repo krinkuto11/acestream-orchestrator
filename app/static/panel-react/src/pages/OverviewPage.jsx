@@ -16,24 +16,20 @@ function StatCard({ title, value, icon: Icon, trend, trendValue, variant = 'defa
 
   return (
     <Card>
-      <CardContent className="pt-6">
-        <div className="flex items-center justify-between">
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">{title}</p>
-            <div className="flex items-baseline gap-2">
-              <p className="text-3xl font-bold">{value}</p>
-              {trend && (
-                <div className={cn("flex items-center gap-1 text-sm", trend === 'up' ? 'text-green-600' : 'text-red-600')}>
-                  {trend === 'up' ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-                  <span>{trendValue}</span>
-                </div>
-              )}
-            </div>
-          </div>
-          <div className={cn("rounded-full p-3 bg-accent", variantClasses[variant])}>
-            <Icon className="h-8 w-8" />
-          </div>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        <div className={cn("rounded-md p-2 bg-accent", variantClasses[variant])}>
+          <Icon className="h-4 w-4" />
         </div>
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-bold">{value}</div>
+        {trend && (
+          <p className={cn("text-xs flex items-center gap-1 mt-1", trend === 'up' ? 'text-green-600' : 'text-red-600')}>
+            {trend === 'up' ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+            <span>{trendValue}</span>
+          </p>
+        )}
       </CardContent>
     </Card>
   )
@@ -219,9 +215,11 @@ export function OverviewPage({ engines, streams, vpnStatus, orchestratorStatus }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Overview</h1>
-        <p className="text-muted-foreground">System status and recent activity</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Overview</h1>
+          <p className="text-muted-foreground mt-1">Monitor your AceStream orchestrator system status</p>
+        </div>
       </div>
 
       <QuickStats
