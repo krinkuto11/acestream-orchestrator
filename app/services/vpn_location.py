@@ -1,8 +1,14 @@
 """
-VPN Location Service
+VPN Location Service - DEPRECATED
 
-Matches VPN public IPs to Gluetun server list to determine provider, country, and city.
-Caches server list with daily updates for optimal performance.
+⚠️ DEPRECATED: This service is no longer used.
+
+VPN location information is now obtained directly from:
+- Provider: VPN_SERVICE_PROVIDER docker environment variable (see gluetun.get_vpn_provider)
+- Location: Gluetun's /v1/publicip/ip endpoint (see gluetun.get_vpn_public_ip_info)
+
+This file is kept for backward compatibility but is no longer actively used.
+The servers.json matching logic has been replaced with direct API calls to Gluetun.
 """
 
 import json
