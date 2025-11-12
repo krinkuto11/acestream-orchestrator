@@ -30,6 +30,15 @@ class VPNLocationService:
         self._ip_index: Dict[str, Dict] = {}  # IP -> server info mapping
         self._lock = asyncio.Lock()
     
+    def is_ready(self) -> bool:
+        """
+        Check if the service is ready to perform lookups.
+        
+        Returns:
+            True if IP index is populated and ready for lookups
+        """
+        return len(self._ip_index) > 0
+    
     async def get_location_by_ip(self, public_ip: str) -> Optional[Dict[str, str]]:
         """
         Get VPN location information by public IP.
@@ -45,6 +54,11 @@ class VPNLocationService:
         
         # Ensure we have fresh server data
         await self._ensure_server_data()
+        
+        # Check if service is ready (IPs are indexed)
+        if not self.is_ready():
+            logger.debug("VPN location service not ready yet (IPs not indexed)")
+            return None
         
         # Lookup in index
         server_info = self._ip_index.get(public_ip)
