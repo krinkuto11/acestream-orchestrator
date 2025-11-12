@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import { 
   LayoutDashboard, 
@@ -28,6 +28,19 @@ const navigation = [
 export function ModernSidebar() {
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
+  const [version, setVersion] = useState('1.0.0')
+
+  useEffect(() => {
+    // Fetch version information
+    fetch('/panel/version.json')
+      .then(res => res.json())
+      .then(data => {
+        setVersion(data.version)
+      })
+      .catch(err => {
+        console.warn('Failed to load version info:', err)
+      })
+  }, [])
 
   return (
     <div className={cn(
@@ -92,7 +105,7 @@ export function ModernSidebar() {
         
         {!collapsed && (
           <p className="text-xs text-muted-foreground text-center mt-2">
-            Version 1.0.0
+            Version {version}
           </p>
         )}
       </div>
