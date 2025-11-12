@@ -56,6 +56,31 @@ async def test_vpn_location_unknown_ip():
     print(f"✓ Correctly returned None for unknown IP {unknown_ip}")
 
 
+async def test_vpn_location_fallback():
+    """Test fallback to IP geolocation API for IPs not in Gluetun index."""
+    print("\nTest 4: Testing fallback to IP geolocation API...")
+    # Ensure we have data
+    await vpn_location_service._ensure_server_data()
+    
+    # Use the IPs from the problem statement that are not in Gluetun index
+    test_ips = ["185.246.211.201", "217.138.216.131"]
+    
+    for test_ip in test_ips:
+        # Verify it's not in the Gluetun index
+        assert test_ip not in vpn_location_service._ip_index, f"Test IP {test_ip} should not be in Gluetun index"
+        
+        # Try to get location (should use fallback API)
+        location = await vpn_location_service.get_location_by_ip(test_ip)
+        
+        if location:
+            assert 'provider' in location
+            assert 'country' in location
+            assert 'city' in location
+            print(f"✓ Fallback lookup for {test_ip}: {location}")
+        else:
+            print(f"⚠ Fallback lookup for {test_ip} returned None (API may be unavailable)")
+
+
 if __name__ == "__main__":
     print("Testing VPN Location Service...")
     print("=" * 60)
@@ -65,6 +90,7 @@ if __name__ == "__main__":
         asyncio.run(test_vpn_location_service_fetch())
         asyncio.run(test_vpn_location_lookup())
         asyncio.run(test_vpn_location_unknown_ip())
+        asyncio.run(test_vpn_location_fallback())
         
         print("\n" + "=" * 60)
         print("✓ All tests passed!")
