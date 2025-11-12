@@ -974,26 +974,10 @@ def _get_single_vpn_status(container_name: str) -> dict:
             if forwarded_port is None:
                 forwarded_port = get_forwarded_port_sync(container_name)
         
-        # Get public IP and location info
+        # Get public IP
         public_ip = None
-        location = None
         if container_running and health == "healthy":
             public_ip = get_vpn_public_ip(container_name)
-            if public_ip:
-                # Get location info from VPN location service
-                try:
-                    import asyncio
-                    from .vpn_location import vpn_location_service
-                    # Run async function in sync context
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # If we're in an async context, don't block
-                        # Location will be fetched on next request
-                        pass
-                    else:
-                        location = loop.run_until_complete(vpn_location_service.get_location_by_ip(public_ip))
-                except Exception as e:
-                    logger.debug(f"Could not get location for IP {public_ip}: {e}")
         
         result = {
             "enabled": True,
@@ -1008,13 +992,8 @@ def _get_single_vpn_status(container_name: str) -> dict:
             "last_check_at": datetime.now(timezone.utc).isoformat()
         }
         
-        # Add location info if available
-        if location:
-            result.update({
-                "provider": location.get("provider", "Unknown"),
-                "country": location.get("country", "Unknown"),
-                "city": location.get("city", "N/A")
-            })
+        # Location enrichment is handled by the async endpoint
+        # to avoid sync/async issues in this sync function
         
         return result
         

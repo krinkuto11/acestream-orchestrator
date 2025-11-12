@@ -434,19 +434,22 @@ async def get_vpn_status_endpoint():
     from .services.vpn_location import vpn_location_service
     
     try:
-        # Enrich VPN1 if present
+        # Only attempt location enrichment if public IPs are present AND service is ready
+        # This ensures we don't search until IPs are indexed
+        
+        # Enrich VPN1 if present and has public IP
         if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
             location = await vpn_location_service.get_location_by_ip(vpn_status["vpn1"]["public_ip"])
             if location:
                 vpn_status["vpn1"].update(location)
         
-        # Enrich VPN2 if present
+        # Enrich VPN2 if present and has public IP
         if vpn_status.get("vpn2") and vpn_status["vpn2"].get("public_ip"):
             location = await vpn_location_service.get_location_by_ip(vpn_status["vpn2"]["public_ip"])
             if location:
                 vpn_status["vpn2"].update(location)
         
-        # For single mode, also add to top-level
+        # For single mode, also add to top-level if it has public IP
         if vpn_status.get("mode") == "single" and vpn_status.get("public_ip"):
             location = await vpn_location_service.get_location_by_ip(vpn_status["public_ip"])
             if location:
