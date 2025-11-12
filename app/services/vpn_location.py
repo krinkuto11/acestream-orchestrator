@@ -20,6 +20,12 @@ GLUETUN_SERVERS_URL = "https://raw.githubusercontent.com/qdm12/gluetun/master/in
 CACHE_FILE = Path("/tmp/gluetun_servers_cache.json")
 CACHE_DURATION_HOURS = 24
 
+# Fallback IP geolocation service (free, no API key required)
+# Used when IP is not found in Gluetun servers index
+IP_GEOLOCATION_API_URL = "http://ip-api.com/json/{ip}?fields=status,country,city,isp"
+GEOLOCATION_CACHE_FILE = Path("/tmp/ip_geolocation_cache.json")
+GEOLOCATION_CACHE_DURATION_HOURS = 24 * 7  # Cache for 7 days (IPs don't change often)
+
 
 class VPNLocationService:
     """Service to match VPN IPs to server locations."""
@@ -29,6 +35,8 @@ class VPNLocationService:
         self._cache_timestamp: Optional[datetime] = None
         self._ip_index: Dict[str, Dict] = {}  # IP -> server info mapping
         self._lock = asyncio.Lock()
+        self._geolocation_cache: Dict[str, Dict] = {}  # IP -> geolocation data cache
+        self._geolocation_cache_timestamp: Optional[datetime] = None
     
     def is_ready(self) -> bool:
         """
@@ -42,6 +50,9 @@ class VPNLocationService:
     async def get_location_by_ip(self, public_ip: str) -> Optional[Dict[str, str]]:
         """
         Get VPN location information by public IP.
+        
+        First tries to lookup in Gluetun servers index, then falls back to
+        IP geolocation API if not found.
         
         Args:
             public_ip: The public IP address to lookup
@@ -60,13 +71,20 @@ class VPNLocationService:
             logger.debug("VPN location service not ready yet (IPs not indexed)")
             return None
         
-        # Lookup in index
+        # First, try to lookup in Gluetun servers index
         server_info = self._ip_index.get(public_ip)
         if server_info:
-            logger.debug(f"Found location for IP {public_ip}: {server_info}")
+            logger.debug(f"Found location for IP {public_ip} in Gluetun index: {server_info}")
             return server_info
         
-        logger.debug(f"No location found for IP {public_ip}")
+        # Not found in Gluetun index, try IP geolocation API as fallback
+        logger.debug(f"IP {public_ip} not found in Gluetun index, trying IP geolocation API")
+        geolocation_info = await self._get_location_from_geolocation_api(public_ip)
+        if geolocation_info:
+            logger.debug(f"Found location for IP {public_ip} via geolocation API: {geolocation_info}")
+            return geolocation_info
+        
+        logger.debug(f"No location found for IP {public_ip} from any source")
         return None
     
     async def _ensure_server_data(self):
@@ -231,6 +249,113 @@ class VPNLocationService:
         except Exception as e:
             logger.error(f"Error saving disk cache: {e}")
     
+    async def _get_location_from_geolocation_api(self, public_ip: str) -> Optional[Dict[str, str]]:
+        """
+        Get location information from IP geolocation API (fallback method).
+        
+        Uses ip-api.com free service which doesn't require an API key.
+        Results are cached to reduce API calls.
+        
+        Args:
+            public_ip: The public IP address to lookup
+            
+        Returns:
+            Dict with 'provider', 'country', 'city' keys, or None if lookup fails
+        """
+        # Load geolocation cache if not loaded
+        await self._ensure_geolocation_cache()
+        
+        # Check if IP is in cache and cache is fresh
+        if public_ip in self._geolocation_cache:
+            cache_age = datetime.now(timezone.utc) - self._geolocation_cache_timestamp
+            if cache_age < timedelta(hours=GEOLOCATION_CACHE_DURATION_HOURS):
+                logger.debug(f"Using cached geolocation data for IP {public_ip}")
+                return self._geolocation_cache[public_ip]
+        
+        # Fetch from API
+        try:
+            api_url = IP_GEOLOCATION_API_URL.format(ip=public_ip)
+            logger.debug(f"Fetching geolocation data from API for IP {public_ip}")
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(api_url)
+                response.raise_for_status()
+                data = response.json()
+            
+            # Check if lookup was successful
+            if data.get("status") != "success":
+                logger.warning(f"IP geolocation API returned non-success status for {public_ip}: {data.get('status')}")
+                return None
+            
+            # Extract location info
+            location_info = {
+                'provider': data.get('isp', 'Unknown'),
+                'country': data.get('country', 'Unknown'),
+                'city': data.get('city', 'Unknown')
+            }
+            
+            # Cache the result
+            self._geolocation_cache[public_ip] = location_info
+            await self._save_geolocation_cache()
+            
+            logger.info(f"Retrieved location for IP {public_ip} from geolocation API: {location_info}")
+            return location_info
+            
+        except Exception as e:
+            logger.error(f"Error fetching location from geolocation API for IP {public_ip}: {e}")
+            return None
+    
+    async def _ensure_geolocation_cache(self):
+        """Ensure geolocation cache is loaded from disk if available."""
+        if self._geolocation_cache_timestamp is not None:
+            return  # Already loaded
+        
+        try:
+            if not GEOLOCATION_CACHE_FILE.exists():
+                self._geolocation_cache = {}
+                self._geolocation_cache_timestamp = datetime.now(timezone.utc)
+                return
+            
+            # Load from disk
+            with open(GEOLOCATION_CACHE_FILE, 'r') as f:
+                data = json.load(f)
+            
+            self._geolocation_cache = data.get('cache', {})
+            timestamp_str = data.get('timestamp')
+            if timestamp_str:
+                self._geolocation_cache_timestamp = datetime.fromisoformat(timestamp_str)
+            else:
+                self._geolocation_cache_timestamp = datetime.now(timezone.utc)
+            
+            logger.debug(f"Loaded {len(self._geolocation_cache)} geolocation cache entries from disk")
+            
+        except Exception as e:
+            logger.error(f"Error loading geolocation cache from disk: {e}")
+            self._geolocation_cache = {}
+            self._geolocation_cache_timestamp = datetime.now(timezone.utc)
+    
+    async def _save_geolocation_cache(self):
+        """Save geolocation cache to disk."""
+        try:
+            cache_data = {
+                'cache': self._geolocation_cache,
+                'timestamp': self._geolocation_cache_timestamp.isoformat()
+            }
+            
+            # Ensure parent directory exists
+            GEOLOCATION_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write to temp file first, then rename (atomic operation)
+            temp_file = GEOLOCATION_CACHE_FILE.with_suffix('.tmp')
+            with open(temp_file, 'w') as f:
+                json.dump(cache_data, f)
+            
+            temp_file.replace(GEOLOCATION_CACHE_FILE)
+            logger.debug(f"Saved geolocation cache to disk: {GEOLOCATION_CACHE_FILE}")
+            
+        except Exception as e:
+            logger.error(f"Error saving geolocation cache to disk: {e}")
+
     async def force_refresh(self):
         """Force refresh of server data (for manual updates)."""
         async with self._lock:

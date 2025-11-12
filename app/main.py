@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
                         else:
                             logger.info(f"VPN1 ({vpn_status['vpn1']['container_name']}) location: "
                                       f"IP={vpn_status['vpn1']['public_ip']}, "
-                                      f"Location=Not found in index")
+                                      f"Location=Unknown (not found in Gluetun index or geolocation database)")
                     
                     # Check VPN2 location (redundant mode)
                     if vpn_status.get("vpn2") and vpn_status["vpn2"].get("public_ip"):
@@ -97,7 +97,7 @@ async def lifespan(app: FastAPI):
                         else:
                             logger.info(f"VPN2 ({vpn_status['vpn2']['container_name']}) location: "
                                       f"IP={vpn_status['vpn2']['public_ip']}, "
-                                      f"Location=Not found in index")
+                                      f"Location=Unknown (not found in Gluetun index or geolocation database)")
                     
                     # For single VPN mode
                     if vpn_status.get("mode") == "single" and vpn_status.get("public_ip"):
@@ -112,7 +112,7 @@ async def lifespan(app: FastAPI):
                             else:
                                 logger.info(f"VPN ({vpn_status['container_name']}) location: "
                                           f"IP={vpn_status['public_ip']}, "
-                                          f"Location=Not found in index")
+                                          f"Location=Unknown (not found in Gluetun index or geolocation database)")
                     
                 except Exception as e:
                     logger.error(f"Failed to initialize VPN location service: {e}")
