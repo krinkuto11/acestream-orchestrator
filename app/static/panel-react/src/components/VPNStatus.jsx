@@ -68,8 +68,8 @@ function SingleVPNDisplay({ vpnData, label, emergencyMode }) {
           <p className="text-sm font-medium">{vpnData.container_name || 'N/A'}</p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Health</p>
-          <p className="text-sm font-medium">{vpnData.health || 'unknown'}</p>
+          <p className="text-xs text-muted-foreground">Public IP</p>
+          <p className="text-sm font-medium font-mono">{vpnData.public_ip || 'N/A'}</p>
         </div>
         <div>
           <p className="text-xs text-muted-foreground">Forwarded Port</p>
@@ -79,6 +79,24 @@ function SingleVPNDisplay({ vpnData, label, emergencyMode }) {
           <p className="text-xs text-muted-foreground">Last Check</p>
           <p className="text-sm font-medium">{formatTime(vpnData.last_check_at)}</p>
         </div>
+        {vpnData.provider && (
+          <div>
+            <p className="text-xs text-muted-foreground">Provider</p>
+            <p className="text-sm font-medium capitalize">{vpnData.provider}</p>
+          </div>
+        )}
+        {vpnData.country && (
+          <div>
+            <p className="text-xs text-muted-foreground">Country</p>
+            <p className="text-sm font-medium">{vpnData.country}</p>
+          </div>
+        )}
+        {vpnData.city && (
+          <div>
+            <p className="text-xs text-muted-foreground">City</p>
+            <p className="text-sm font-medium">{vpnData.city}</p>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -178,6 +196,24 @@ function VPNStatus({ vpnStatus }) {
               <p className="text-xs text-muted-foreground">Last Check</p>
               <p className="text-sm font-medium">{formatTime(vpnStatus.last_check_at)}</p>
             </div>
+            {vpnStatus.provider && (
+              <div>
+                <p className="text-xs text-muted-foreground">Provider</p>
+                <p className="text-sm font-medium capitalize">{vpnStatus.provider}</p>
+              </div>
+            )}
+            {vpnStatus.country && (
+              <div>
+                <p className="text-xs text-muted-foreground">Country</p>
+                <p className="text-sm font-medium">{vpnStatus.country}</p>
+              </div>
+            )}
+            {vpnStatus.city && (
+              <div>
+                <p className="text-xs text-muted-foreground">City</p>
+                <p className="text-sm font-medium">{vpnStatus.city}</p>
+              </div>
+            )}
           </div>
         )}
       </CardContent>
