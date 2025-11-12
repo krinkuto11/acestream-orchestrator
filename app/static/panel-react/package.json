@@ -5,7 +5,7 @@
   "description": "React Material-UI Dashboard for Acestream Orchestrator",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node generate-version.js && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
