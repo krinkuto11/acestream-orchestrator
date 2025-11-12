@@ -62,60 +62,38 @@ async def lifespan(app: FastAPI):
             if gluetun_monitor.is_healthy() is True:
                 logger.info("Gluetun is healthy - proceeding with engine provisioning")
                 
-                # Initialize VPN location service now that VPN is healthy
-                from .services.vpn_location import vpn_location_service
+                # Log VPN location information for all healthy VPN containers
                 from .services.gluetun import get_vpn_status
                 try:
-                    await vpn_location_service.initialize_at_startup()
-                    
-                    # Log VPN location matches for all healthy VPN containers
                     vpn_status = get_vpn_status()
                     
                     # Check VPN1 location
                     if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
-                        location = await vpn_location_service.get_location_by_ip(vpn_status["vpn1"]["public_ip"])
-                        if location:
-                            logger.info(f"VPN1 ({vpn_status['vpn1']['container_name']}) location: "
-                                      f"IP={vpn_status['vpn1']['public_ip']}, "
-                                      f"Provider={location['provider']}, "
-                                      f"Country={location['country']}, "
-                                      f"City={location['city']}")
-                        else:
-                            logger.info(f"VPN1 ({vpn_status['vpn1']['container_name']}) location: "
-                                      f"IP={vpn_status['vpn1']['public_ip']}, "
-                                      f"Location=Unknown (not found in Gluetun index or geolocation database)")
+                        logger.info(f"VPN1 ({vpn_status['vpn1']['container_name']}) status: "
+                                  f"IP={vpn_status['vpn1']['public_ip']}, "
+                                  f"Provider={vpn_status['vpn1'].get('provider', 'Unknown')}, "
+                                  f"Country={vpn_status['vpn1'].get('country', 'Unknown')}, "
+                                  f"City={vpn_status['vpn1'].get('city', 'Unknown')}")
                     
                     # Check VPN2 location (redundant mode)
                     if vpn_status.get("vpn2") and vpn_status["vpn2"].get("public_ip"):
-                        location = await vpn_location_service.get_location_by_ip(vpn_status["vpn2"]["public_ip"])
-                        if location:
-                            logger.info(f"VPN2 ({vpn_status['vpn2']['container_name']}) location: "
-                                      f"IP={vpn_status['vpn2']['public_ip']}, "
-                                      f"Provider={location['provider']}, "
-                                      f"Country={location['country']}, "
-                                      f"City={location['city']}")
-                        else:
-                            logger.info(f"VPN2 ({vpn_status['vpn2']['container_name']}) location: "
-                                      f"IP={vpn_status['vpn2']['public_ip']}, "
-                                      f"Location=Unknown (not found in Gluetun index or geolocation database)")
+                        logger.info(f"VPN2 ({vpn_status['vpn2']['container_name']}) status: "
+                                  f"IP={vpn_status['vpn2']['public_ip']}, "
+                                  f"Provider={vpn_status['vpn2'].get('provider', 'Unknown')}, "
+                                  f"Country={vpn_status['vpn2'].get('country', 'Unknown')}, "
+                                  f"City={vpn_status['vpn2'].get('city', 'Unknown')}")
                     
                     # For single VPN mode
                     if vpn_status.get("mode") == "single" and vpn_status.get("public_ip"):
                         if not vpn_status.get("vpn1"):  # Already logged above if vpn1 exists
-                            location = await vpn_location_service.get_location_by_ip(vpn_status["public_ip"])
-                            if location:
-                                logger.info(f"VPN ({vpn_status['container_name']}) location: "
-                                          f"IP={vpn_status['public_ip']}, "
-                                          f"Provider={location['provider']}, "
-                                          f"Country={location['country']}, "
-                                          f"City={location['city']}")
-                            else:
-                                logger.info(f"VPN ({vpn_status['container_name']}) location: "
-                                          f"IP={vpn_status['public_ip']}, "
-                                          f"Location=Unknown (not found in Gluetun index or geolocation database)")
+                            logger.info(f"VPN ({vpn_status['container_name']}) status: "
+                                      f"IP={vpn_status['public_ip']}, "
+                                      f"Provider={vpn_status.get('provider', 'Unknown')}, "
+                                      f"Country={vpn_status.get('country', 'Unknown')}, "
+                                      f"City={vpn_status.get('city', 'Unknown')}")
                     
                 except Exception as e:
-                    logger.error(f"Failed to initialize VPN location service: {e}")
+                    logger.error(f"Failed to get VPN status: {e}")
                 
                 break
             await asyncio.sleep(1)
@@ -483,36 +461,14 @@ def by_label(key: str, value: str):
 
 @app.get("/vpn/status")
 async def get_vpn_status_endpoint():
-    """Get VPN (Gluetun) status information with location data."""
+    """
+    Get VPN (Gluetun) status information with location data.
+    
+    Location data (provider, country, city, region) is now obtained directly from:
+    - Provider: VPN_SERVICE_PROVIDER docker environment variable
+    - Location: Gluetun's /v1/publicip/ip endpoint
+    """
     vpn_status = get_vpn_status()
-    
-    # Enrich with location data for each VPN if available
-    from .services.vpn_location import vpn_location_service
-    
-    try:
-        # Only attempt location enrichment if public IPs are present AND service is ready
-        # This ensures we don't search until IPs are indexed
-        
-        # Enrich VPN1 if present and has public IP
-        if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
-            location = await vpn_location_service.get_location_by_ip(vpn_status["vpn1"]["public_ip"])
-            if location:
-                vpn_status["vpn1"].update(location)
-        
-        # Enrich VPN2 if present and has public IP
-        if vpn_status.get("vpn2") and vpn_status["vpn2"].get("public_ip"):
-            location = await vpn_location_service.get_location_by_ip(vpn_status["vpn2"]["public_ip"])
-            if location:
-                vpn_status["vpn2"].update(location)
-        
-        # For single mode, also add to top-level if it has public IP
-        if vpn_status.get("mode") == "single" and vpn_status.get("public_ip"):
-            location = await vpn_location_service.get_location_by_ip(vpn_status["public_ip"])
-            if location:
-                vpn_status.update(location)
-    except Exception as e:
-        logger.debug(f"Could not enrich VPN status with location: {e}")
-    
     return vpn_status
 
 @app.get("/vpn/publicip")
