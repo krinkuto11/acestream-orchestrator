@@ -1,0 +1,979 @@
+{
+  "<root>": {
+    "airvpn": {},
+    "cyberghost": {},
+    "expressvpn": {},
+    "fastestvpn": {},
+    "giganews": {},
+    "hidemyass": {},
+    "ipvanish": {},
+    "ivpn": {},
+    "mullvad": {},
+    "nordvpn": {},
+    "perfect privacy": {},
+    "privado": {},
+    "private internet access": {},
+    "privatevpn": {},
+    "protonvpn": {},
+    "purevpn": {},
+    "slickvpn": {},
+    "surfshark": {},
+    "torguard": {},
+    "version": "<number>",
+    "vpn unlimited": {},
+    "vpnsecure": {},
+    "vyprvpn": {},
+    "wevpn": {},
+    "windscribe": {}
+  },
+  "airvpn": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "airvpn.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "server_name": "<string>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "server_name": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "cyberghost": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "cyberghost.servers[]": [
+    {
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "tcp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "expressvpn": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "expressvpn.servers[]": [
+    {
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "fastestvpn": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "fastestvpn.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "giganews": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "giganews.servers[]": [
+    {
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "hidemyass": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "hidemyass.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "ipvanish": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "ipvanish.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "ivpn": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "ivpn.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "isp": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "isp": "<string>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "isp": "<string>",
+      "region": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "isp": "<string>",
+      "region": "<string>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    }
+  ],
+  "mullvad": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "mullvad.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "isp": "<string>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "isp": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "isp": "<string>",
+      "owned": "<boolean>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "isp": "<string>",
+      "owned": "<boolean>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    }
+  ],
+  "nordvpn": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "nordvpn.servers[]": [
+    {
+      "categories": [],
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "number": "<number>",
+      "region": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "categories": [],
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "number": "<number>",
+      "region": "<string>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "categories": [],
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "number": "<number>",
+      "region": "<string>",
+      "tcp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "perfect privacy": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "perfect privacy.servers[]": [
+    {
+      "city": "<string>",
+      "ips": [],
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "privado": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "privado.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "private internet access": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "private internet access.servers[]": [
+    {
+      "hostname": "<string>",
+      "ips": [],
+      "port_forward": "<boolean>",
+      "region": "<string>",
+      "server_name": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "server_name": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "privatevpn": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "privatevpn.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "ips": [],
+      "tcp": "<boolean>",
+      "udp": "<boolean>"
+    }
+  ],
+  "protonvpn": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "protonvpn.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "port_forward": "<boolean>",
+      "server_name": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "port_forward": "<boolean>",
+      "server_name": "<string>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "port_forward": "<boolean>",
+      "server_name": "<string>",
+      "stream": "<boolean>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "port_forward": "<boolean>",
+      "server_name": "<string>",
+      "stream": "<boolean>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "secure_core": "<boolean>",
+      "server_name": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "secure_core": "<boolean>",
+      "server_name": "<string>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "server_name": "<string>",
+      "stream": "<boolean>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "server_name": "<string>",
+      "stream": "<boolean>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "free": "<boolean>",
+      "hostname": "<string>",
+      "ips": [],
+      "server_name": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "free": "<boolean>",
+      "hostname": "<string>",
+      "ips": [],
+      "server_name": "<string>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "server_name": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "server_name": "<string>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "server_name": "<string>",
+      "tcp": "<boolean>",
+      "tor": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "server_name": "<string>",
+      "tor": "<boolean>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    }
+  ],
+  "purevpn": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "purevpn.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "tcp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "slickvpn": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "slickvpn.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "surfshark": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "surfshark.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "retroloc": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "retroloc": "<string>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    }
+  ],
+  "torguard": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "torguard.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "vpn unlimited": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "vpn unlimited.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "country": "<string>",
+      "free": "<boolean>",
+      "hostname": "<string>",
+      "ips": [],
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "stream": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "free": "<boolean>",
+      "hostname": "<string>",
+      "ips": [],
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "vpnsecure": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "vpnsecure.servers[]": [
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    },
+    {
+      "city": "<string>",
+      "country": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "premium": "<boolean>",
+      "region": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "vyprvpn": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "vyprvpn.servers[]": [
+    {
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "wevpn": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "wevpn.servers[]": [
+    {
+      "city": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "udp": "<boolean>",
+      "vpn": "<string>"
+    }
+  ],
+  "windscribe": {
+    "servers": [],
+    "timestamp": "<number>",
+    "version": "<number>"
+  },
+  "windscribe.servers[]": [
+    {
+      "city": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "tcp": "<boolean>",
+      "udp": "<boolean>",
+      "vpn": "<string>",
+      "x509": "<string>"
+    },
+    {
+      "city": "<string>",
+      "hostname": "<string>",
+      "ips": [],
+      "region": "<string>",
+      "vpn": "<string>",
+      "wgpubkey": "<string>"
+    }
+  ],
+  "airvpn.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "cyberghost.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "expressvpn.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "fastestvpn.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "giganews.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "hidemyass.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "ipvanish.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "ivpn.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "mullvad.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "nordvpn.servers[].categories[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "nordvpn.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "perfect privacy.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "privado.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "private internet access.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "privatevpn.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "protonvpn.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "purevpn.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "slickvpn.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "surfshark.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "torguard.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "vpn unlimited.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "vpnsecure.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "vyprvpn.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "wevpn.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ],
+  "windscribe.servers[].ips[]": [
+    "<string>",
+    [
+      "...array..."
+    ]
+  ]
+}
