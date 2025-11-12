@@ -974,7 +974,28 @@ def _get_single_vpn_status(container_name: str) -> dict:
             if forwarded_port is None:
                 forwarded_port = get_forwarded_port_sync(container_name)
         
-        return {
+        # Get public IP and location info
+        public_ip = None
+        location = None
+        if container_running and health == "healthy":
+            public_ip = get_vpn_public_ip(container_name)
+            if public_ip:
+                # Get location info from VPN location service
+                try:
+                    import asyncio
+                    from .vpn_location import vpn_location_service
+                    # Run async function in sync context
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If we're in an async context, don't block
+                        # Location will be fetched on next request
+                        pass
+                    else:
+                        location = loop.run_until_complete(vpn_location_service.get_location_by_ip(public_ip))
+                except Exception as e:
+                    logger.debug(f"Could not get location for IP {public_ip}: {e}")
+        
+        result = {
             "enabled": True,
             "status": container.status,
             "container_name": container_name,
@@ -982,9 +1003,20 @@ def _get_single_vpn_status(container_name: str) -> dict:
             "health": health,
             "connected": health == "healthy",
             "forwarded_port": forwarded_port,
+            "public_ip": public_ip,
             "last_check": datetime.now(timezone.utc).isoformat(),
             "last_check_at": datetime.now(timezone.utc).isoformat()
         }
+        
+        # Add location info if available
+        if location:
+            result.update({
+                "provider": location.get("provider", "Unknown"),
+                "country": location.get("country", "Unknown"),
+                "city": location.get("city", "N/A")
+            })
+        
+        return result
         
     except NotFound:
         return {
@@ -995,6 +1027,7 @@ def _get_single_vpn_status(container_name: str) -> dict:
             "health": "unhealthy",
             "connected": False,
             "forwarded_port": None,
+            "public_ip": None,
             "last_check": datetime.now(timezone.utc).isoformat(),
             "last_check_at": datetime.now(timezone.utc).isoformat()
         }
@@ -1008,6 +1041,7 @@ def _get_single_vpn_status(container_name: str) -> dict:
             "health": "unknown",
             "connected": False,
             "forwarded_port": None,
+            "public_ip": None,
             "last_check": datetime.now(timezone.utc).isoformat(),
             "last_check_at": datetime.now(timezone.utc).isoformat(),
             "error": str(e)
@@ -1075,39 +1109,43 @@ def get_vpn_status() -> dict:
         "emergency_mode": emergency_info
     }
 
-def get_vpn_public_ip() -> Optional[str]:
+def get_vpn_public_ip(container_name: Optional[str] = None) -> Optional[str]:
     """
     Get the public IP address of the VPN connection from Gluetun.
+    
+    Args:
+        container_name: Specific VPN container name, or None for primary VPN
     
     This function should only be called when the VPN is healthy to avoid
     excessive error logging when VPN is down.
     """
-    if not cfg.GLUETUN_CONTAINER_NAME:
+    target_container = container_name or cfg.GLUETUN_CONTAINER_NAME
+    if not target_container:
         return None
     
     # Don't try to get public IP if VPN is unhealthy or in restart grace period
-    monitor = gluetun_monitor.get_vpn_monitor(cfg.GLUETUN_CONTAINER_NAME)
+    monitor = gluetun_monitor.get_vpn_monitor(target_container)
     if monitor:
         if monitor.is_healthy() is False:
             return None
         if monitor._is_in_restart_grace_period():
-            logger.debug(f"VPN '{cfg.GLUETUN_CONTAINER_NAME}' is in restart grace period, skipping public IP fetch")
+            logger.debug(f"VPN '{target_container}' is in restart grace period, skipping public IP fetch")
             return None
     
     try:
         with httpx.Client() as client:
-            response = client.get(f"http://{cfg.GLUETUN_CONTAINER_NAME}:{cfg.GLUETUN_API_PORT}/v1/publicip/ip", timeout=10)
+            response = client.get(f"http://{target_container}:{cfg.GLUETUN_API_PORT}/v1/publicip/ip", timeout=10)
             response.raise_for_status()
             data = response.json()
             public_ip = data.get("public_ip")
             if public_ip:
-                logger.debug(f"Retrieved VPN public IP: {public_ip}")
+                logger.debug(f"Retrieved VPN public IP for '{target_container}': {public_ip}")
                 return public_ip
             else:
-                logger.warning("No public IP information available from Gluetun")
+                logger.warning(f"No public IP information available from '{target_container}'")
                 return None
     except Exception as e:
-        logger.error(f"Failed to get public IP from Gluetun: {e}")
+        logger.error(f"Failed to get public IP from '{target_container}': {e}")
         return None
 
 # Global Gluetun monitor instance
