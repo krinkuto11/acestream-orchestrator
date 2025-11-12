@@ -64,8 +64,56 @@ async def lifespan(app: FastAPI):
                 
                 # Initialize VPN location service now that VPN is healthy
                 from .services.vpn_location import vpn_location_service
+                from .services.gluetun import get_vpn_status
                 try:
                     await vpn_location_service.initialize_at_startup()
+                    
+                    # Log VPN location matches for all healthy VPN containers
+                    vpn_status = get_vpn_status()
+                    
+                    # Check VPN1 location
+                    if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
+                        location = await vpn_location_service.get_location_by_ip(vpn_status["vpn1"]["public_ip"])
+                        if location:
+                            logger.info(f"VPN1 ({vpn_status['vpn1']['container_name']}) location: "
+                                      f"IP={vpn_status['vpn1']['public_ip']}, "
+                                      f"Provider={location['provider']}, "
+                                      f"Country={location['country']}, "
+                                      f"City={location['city']}")
+                        else:
+                            logger.info(f"VPN1 ({vpn_status['vpn1']['container_name']}) location: "
+                                      f"IP={vpn_status['vpn1']['public_ip']}, "
+                                      f"Location=Not found in index")
+                    
+                    # Check VPN2 location (redundant mode)
+                    if vpn_status.get("vpn2") and vpn_status["vpn2"].get("public_ip"):
+                        location = await vpn_location_service.get_location_by_ip(vpn_status["vpn2"]["public_ip"])
+                        if location:
+                            logger.info(f"VPN2 ({vpn_status['vpn2']['container_name']}) location: "
+                                      f"IP={vpn_status['vpn2']['public_ip']}, "
+                                      f"Provider={location['provider']}, "
+                                      f"Country={location['country']}, "
+                                      f"City={location['city']}")
+                        else:
+                            logger.info(f"VPN2 ({vpn_status['vpn2']['container_name']}) location: "
+                                      f"IP={vpn_status['vpn2']['public_ip']}, "
+                                      f"Location=Not found in index")
+                    
+                    # For single VPN mode
+                    if vpn_status.get("mode") == "single" and vpn_status.get("public_ip"):
+                        if not vpn_status.get("vpn1"):  # Already logged above if vpn1 exists
+                            location = await vpn_location_service.get_location_by_ip(vpn_status["public_ip"])
+                            if location:
+                                logger.info(f"VPN ({vpn_status['container_name']}) location: "
+                                          f"IP={vpn_status['public_ip']}, "
+                                          f"Provider={location['provider']}, "
+                                          f"Country={location['country']}, "
+                                          f"City={location['city']}")
+                            else:
+                                logger.info(f"VPN ({vpn_status['container_name']}) location: "
+                                          f"IP={vpn_status['public_ip']}, "
+                                          f"Location=Not found in index")
+                    
                 except Exception as e:
                     logger.error(f"Failed to initialize VPN location service: {e}")
                 
