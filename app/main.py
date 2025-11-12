@@ -324,7 +324,8 @@ def get_engines():
     # but we don't want to break existing functionality
     try:
         from .services.health import list_managed
-        from .services.gluetun import gluetun_monitor
+        from .services.gluetun import gluetun_monitor, get_forwarded_port_sync
+        from .services.engine_info import get_engine_version_info_sync
         
         running_container_ids = {c.id for c in list_managed() if c.status == "running"}
         
@@ -357,6 +358,29 @@ def get_engines():
             else:
                 # Single VPN mode or no VPN - include the engine
                 verified_engines.append(engine)
+        
+        # Enrich engines with version info and forwarded port
+        for engine in verified_engines:
+            # Add engine variant from config
+            engine.engine_variant = cfg.ENGINE_VARIANT
+            
+            # Get engine version info
+            try:
+                version_info = get_engine_version_info_sync(engine.host, engine.port)
+                if version_info:
+                    engine.platform = version_info.get("platform")
+                    engine.version = version_info.get("version")
+            except Exception as e:
+                logger.debug(f"Could not get version info for engine {engine.container_id[:12]}: {e}")
+            
+            # Get forwarded port for forwarded engines
+            if engine.forwarded and engine.vpn_container:
+                try:
+                    port = get_forwarded_port_sync(engine.vpn_container)
+                    if port:
+                        engine.forwarded_port = port
+                except Exception as e:
+                    logger.debug(f"Could not get forwarded port for engine {engine.container_id[:12]}: {e}")
         
         # Sort engines by port number for consistent ordering
         verified_engines.sort(key=lambda e: e.port)
@@ -402,9 +426,35 @@ def by_label(key: str, value: str):
     return res
 
 @app.get("/vpn/status")
-def get_vpn_status_endpoint():
-    """Get VPN (Gluetun) status information."""
-    return get_vpn_status()
+async def get_vpn_status_endpoint():
+    """Get VPN (Gluetun) status information with location data."""
+    vpn_status = get_vpn_status()
+    
+    # Enrich with location data for each VPN if available
+    from .services.vpn_location import vpn_location_service
+    
+    try:
+        # Enrich VPN1 if present
+        if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
+            location = await vpn_location_service.get_location_by_ip(vpn_status["vpn1"]["public_ip"])
+            if location:
+                vpn_status["vpn1"].update(location)
+        
+        # Enrich VPN2 if present
+        if vpn_status.get("vpn2") and vpn_status["vpn2"].get("public_ip"):
+            location = await vpn_location_service.get_location_by_ip(vpn_status["vpn2"]["public_ip"])
+            if location:
+                vpn_status["vpn2"].update(location)
+        
+        # For single mode, also add to top-level
+        if vpn_status.get("mode") == "single" and vpn_status.get("public_ip"):
+            location = await vpn_location_service.get_location_by_ip(vpn_status["public_ip"])
+            if location:
+                vpn_status.update(location)
+    except Exception as e:
+        logger.debug(f"Could not enrich VPN status with location: {e}")
+    
+    return vpn_status
 
 @app.get("/vpn/publicip")
 def get_vpn_publicip_endpoint():

@@ -1,12 +1,15 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Trash2, AlertTriangle, Activity } from 'lucide-react'
+import { Trash2, AlertTriangle, Activity, ChevronDown, ChevronUp } from 'lucide-react'
 import { timeAgo, formatTime } from '../utils/formatters'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 
 function EngineCard({ engine, onDelete, showVpnLabel = false }) {
+  const [isOpen, setIsOpen] = useState(false)
+  
   const healthColors = {
     healthy: 'success',
     unhealthy: 'destructive',
@@ -20,7 +23,7 @@ function EngineCard({ engine, onDelete, showVpnLabel = false }) {
     <Card className="mb-3 hover:bg-accent/5 transition-colors">
       <CardContent className="pt-4 pb-4">
         <div className="flex justify-between items-start mb-3">
-          <div>
+          <div className="flex-1">
             <div className="font-semibold text-base flex items-center gap-2 mb-1">
               {engine.container_name || engine.container_id.slice(0, 12)}
               {engine.forwarded && (
@@ -28,6 +31,9 @@ function EngineCard({ engine, onDelete, showVpnLabel = false }) {
               )}
               {showVpnLabel && engine.vpn_container && (
                 <Badge variant="outline" className="text-xs">{engine.vpn_container}</Badge>
+              )}
+              {engine.engine_variant && (
+                <Badge variant="secondary" className="text-xs">{engine.engine_variant}</Badge>
               )}
             </div>
             <p className="text-sm text-muted-foreground">
@@ -50,7 +56,7 @@ function EngineCard({ engine, onDelete, showVpnLabel = false }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-4 mb-3">
           <div>
             <p className="text-xs text-muted-foreground">Active Streams</p>
             <p className="text-sm font-medium">{engine.streams.length}</p>
@@ -66,6 +72,53 @@ function EngineCard({ engine, onDelete, showVpnLabel = false }) {
             </div>
           )}
         </div>
+
+        {/* Collapsible details section */}
+        <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+          <CollapsibleTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full flex items-center justify-center gap-2 text-xs"
+            >
+              {isOpen ? (
+                <>
+                  <ChevronUp className="h-3 w-3" />
+                  Hide Details
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="h-3 w-3" />
+                  Show Details
+                </>
+              )}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="pt-3">
+            <div className="border-t pt-3">
+              <div className="grid grid-cols-2 gap-4">
+                {engine.platform && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Platform</p>
+                    <p className="text-sm font-medium">{engine.platform}</p>
+                  </div>
+                )}
+                {engine.version && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">AceStream Version</p>
+                    <p className="text-sm font-medium">{engine.version}</p>
+                  </div>
+                )}
+                {engine.forwarded && engine.forwarded_port && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Forwarded Port</p>
+                    <p className="text-sm font-medium font-mono">{engine.forwarded_port}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
       </CardContent>
     </Card>
   )
