@@ -150,6 +150,11 @@ class VPNLocationService:
         if not self._servers_cache:
             return
         
+        # Track statistics for verbose logging
+        provider_stats = {}
+        total_servers = 0
+        total_ips = 0
+        
         # Iterate through all providers
         for provider_name, provider_data in self._servers_cache.items():
             # Skip metadata fields
@@ -162,6 +167,10 @@ class VPNLocationService:
             servers = provider_data.get('servers', [])
             if not isinstance(servers, list):
                 continue
+            
+            provider_server_count = len(servers)
+            provider_ip_count = 0
+            total_servers += provider_server_count
             
             # Index each server's IPs
             for server in servers:
@@ -180,6 +189,23 @@ class VPNLocationService:
                             'country': country,
                             'city': city or 'N/A'
                         }
+                        provider_ip_count += 1
+                        total_ips += 1
+            
+            # Track stats per provider
+            if provider_ip_count > 0:
+                provider_stats[provider_name] = {
+                    'servers': provider_server_count,
+                    'ips': provider_ip_count
+                }
+        
+        logger.info(f"Built IP index with {len(self._ip_index)} entries from {total_servers} servers across {len(provider_stats)} providers")
+        
+        # Log verbose provider statistics
+        if provider_stats:
+            logger.info("VPN location index statistics by provider:")
+            for provider, stats in sorted(provider_stats.items(), key=lambda x: x[1]['ips'], reverse=True):
+                logger.info(f"  - {provider}: {stats['servers']} servers, {stats['ips']} IPs")
         
         logger.debug(f"Built IP index with {len(self._ip_index)} entries")
     
@@ -212,6 +238,21 @@ class VPNLocationService:
             self._cache_timestamp = None
             self._ip_index.clear()
             await self._fetch_and_cache_servers()
+    
+    async def initialize_at_startup(self):
+        """
+        Initialize VPN location service at startup.
+        
+        This eagerly fetches and indexes the Gluetun server list to be ready
+        for VPN location lookups. Should be called after VPN containers become healthy.
+        """
+        logger.info("Initializing VPN location service...")
+        await self._ensure_server_data()
+        
+        if self.is_ready():
+            logger.info(f"VPN location service initialized successfully with {len(self._ip_index)} server IPs")
+        else:
+            logger.warning("VPN location service initialization completed but IP index is empty")
 
 
 # Global instance

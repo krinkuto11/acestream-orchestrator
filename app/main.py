@@ -61,6 +61,14 @@ async def lifespan(app: FastAPI):
         while (asyncio.get_event_loop().time() - wait_start) < max_wait_time:
             if gluetun_monitor.is_healthy() is True:
                 logger.info("Gluetun is healthy - proceeding with engine provisioning")
+                
+                # Initialize VPN location service now that VPN is healthy
+                from .services.vpn_location import vpn_location_service
+                try:
+                    await vpn_location_service.initialize_at_startup()
+                except Exception as e:
+                    logger.error(f"Failed to initialize VPN location service: {e}")
+                
                 break
             await asyncio.sleep(1)
         else:
