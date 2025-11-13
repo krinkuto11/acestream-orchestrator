@@ -55,9 +55,9 @@ services:
       gluetun:
         condition: service_healthy
     networks:
-      - acestream
+      - aceserver
 
 networks:
-  acestream:
+  aceserver:
     name: aceserver
     driver: bridge

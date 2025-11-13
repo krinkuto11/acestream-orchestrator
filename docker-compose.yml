@@ -15,9 +15,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: on-failure
     networks:
-      - acestream
+      - aceserver
 
 networks:
-  acestream:
+  aceserver:
     name: aceserver
     driver: bridge

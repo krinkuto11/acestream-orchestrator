@@ -44,7 +44,7 @@ services:
       - TZ=Europe/Madrid
     restart: unless-stopped
     networks:
-      - acestream
+      - aceserver
 
   gluetun2:
     image: qmcgaw/gluetun
@@ -92,7 +92,7 @@ services:
     networks:
       - aceserver
 
-
-  acestream:
+networks:
+  aceserver:
     name: aceserver
     driver: bridge
