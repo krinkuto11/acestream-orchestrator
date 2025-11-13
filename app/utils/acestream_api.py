@@ -24,7 +24,37 @@ async def fetch_infohash_from_stat_url(stat_url: str) -> Optional[str]:
             response = await client.get(stat_url)
             response.raise_for_status()
             data = response.json()
-            return data.get("infohash")
+
+            # Recursive search for "infohash" in nested structures.
+            def _find_key(obj, key: str):
+                if isinstance(obj, dict):
+                    # Direct hit
+                    if key in obj and obj[key]:
+                        return obj[key]
+                    # Otherwise search values
+                    for v in obj.values():
+                        res = _find_key(v, key)
+                        if res:
+                            return res
+                elif isinstance(obj, list):
+                    for item in obj:
+                        res = _find_key(item, key)
+                        if res:
+                            return res
+                return None
+
+            infohash = _find_key(data, "infohash")
+            if infohash:
+                logger.debug(f"Found infohash for {stat_url}: {infohash}")
+            else:
+                # Log a small sample of the payload to help debugging
+                try:
+                    sample = data if isinstance(data, dict) else {"type": str(type(data))}
+                except Exception:
+                    sample = {"type": str(type(data))}
+                logger.debug(f"No infohash found in stat response for {stat_url}; sample keys/top-level: {list(sample.keys()) if isinstance(sample, dict) else sample}")
+
+            return infohash
     except Exception as e:
         logger.debug(f"Failed to fetch infohash from {stat_url}: {e}")
         return None
