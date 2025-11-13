@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { X, StopCircle, Trash2, ExternalLink } from 'lucide-react'
+import { X, StopCircle, Trash2, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react'
 import { Line } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
@@ -14,6 +14,12 @@ import {
   Legend
 } from 'chart.js'
 import { formatTime, formatBytes } from '../utils/formatters'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import { Badge } from '@/components/ui/badge'
 
 ChartJS.register(
   CategoryScale,
@@ -28,6 +34,9 @@ ChartJS.register(
 function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, onClose }) {
   const [stats, setStats] = useState([])
   const [loading, setLoading] = useState(false)
+  const [extendedStats, setExtendedStats] = useState(null)
+  const [extendedStatsLoading, setExtendedStatsLoading] = useState(false)
+  const [isExtendedStatsOpen, setIsExtendedStatsOpen] = useState(false)
 
   const fetchStats = useCallback(async () => {
     if (!stream) return
@@ -56,11 +65,38 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
     }
   }, [stream, orchUrl, apiKey])
 
+  const fetchExtendedStats = useCallback(async () => {
+    if (!stream) return
+    
+    setExtendedStatsLoading(true)
+    try {
+      const headers = {}
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`
+      }
+      
+      const response = await fetch(
+        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/extended-stats`,
+        { headers }
+      )
+      
+      if (response.ok) {
+        const data = await response.json()
+        setExtendedStats(data)
+      }
+    } catch (err) {
+      console.error('Failed to fetch extended stats:', err)
+    } finally {
+      setExtendedStatsLoading(false)
+    }
+  }, [stream, orchUrl, apiKey])
+
   useEffect(() => {
     fetchStats()
+    fetchExtendedStats()
     const interval = setInterval(fetchStats, 10000) // Refresh every 10 seconds
     return () => clearInterval(interval)
-  }, [fetchStats])
+  }, [fetchStats, fetchExtendedStats])
 
   // AceStream API returns speed in KB/s, so we divide by 1024 to convert to MB/s
   const chartData = {
@@ -143,53 +179,119 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
       </CardHeader>
 
       <CardContent className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <p className="text-xs text-muted-foreground">Stream ID</p>
-            <p className="text-sm font-medium break-all">{stream.id}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Session ID</p>
-            <p className="text-sm font-medium break-all">{stream.session_id || 'N/A'}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Content Key</p>
-            <p className="text-sm font-medium break-all">{stream.content_key || 'N/A'}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Content Type</p>
-            <p className="text-sm font-medium">{stream.content_type || 'N/A'}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Engine</p>
-            <p className="text-sm font-medium">
-              {stream.container_name || stream.container_id?.slice(0, 12) || 'N/A'}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Started At</p>
-            <p className="text-sm font-medium">{formatTime(stream.started_at)}</p>
-          </div>
-        </div>
+        <Collapsible open={isExtendedStatsOpen} onOpenChange={setIsExtendedStatsOpen}>
+          <CollapsibleTrigger asChild>
+            <Button variant="outline" className="w-full flex justify-between items-center">
+              <span className="font-semibold">Stream Information</span>
+              {isExtendedStatsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-4 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground">Stream ID</p>
+                <p className="text-sm font-medium break-all">{stream.id}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Engine</p>
+                <p className="text-sm font-medium">
+                  {stream.container_name || stream.container_id?.slice(0, 12) || 'N/A'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Started At</p>
+                <p className="text-sm font-medium">{formatTime(stream.started_at)}</p>
+              </div>
+              
+              {/* Extended Stats from analyze_content API */}
+              {/* extended stats loading indicator removed to reduce UI clutter */}
+              
+              {extendedStats && (
+                <>
+                  {extendedStats.title && (
+                    <div className="col-span-2">
+                      <p className="text-xs text-muted-foreground">Title</p>
+                      <p className="text-sm font-medium break-all">{extendedStats.title}</p>
+                    </div>
+                  )}
+                  {extendedStats.content_type && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Content Type</p>
+                      <p className="text-sm font-medium">{extendedStats.content_type}</p>
+                    </div>
+                  )}
+                  {extendedStats.transport_type && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Transport Type</p>
+                      <p className="text-sm font-medium">{extendedStats.transport_type}</p>
+                    </div>
+                  )}
+                  {extendedStats.infohash && (
+                    <div className="col-span-2">
+                      <p className="text-xs text-muted-foreground">Infohash</p>
+                      <p className="text-sm font-medium break-all">{extendedStats.infohash}</p>
+                    </div>
+                  )}
+                  {extendedStats.is_live !== undefined && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Live Stream</p>
+                      <Badge variant={extendedStats.is_live ? "success" : "secondary"}>
+                        {extendedStats.is_live ? 'Yes' : 'No'}
+                      </Badge>
+                    </div>
+                  )}
+                  {extendedStats.mime && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">MIME Type</p>
+                      <p className="text-sm font-medium">{extendedStats.mime}</p>
+                    </div>
+                  )}
+                  {extendedStats.categories && extendedStats.categories.length > 0 && (
+                    <div className="col-span-2">
+                      <p className="text-xs text-muted-foreground">Categories</p>
+                      <div className="flex gap-2 flex-wrap mt-1">
+                        {extendedStats.categories.map((cat, idx) => (
+                          <Badge key={idx} variant="outline">{cat}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {extendedStats.suggested_filename && (
+                    <div className="col-span-2">
+                      <p className="text-xs text-muted-foreground">Suggested Filename</p>
+                      <p className="text-sm font-medium break-all">{extendedStats.suggested_filename}</p>
+                    </div>
+                  )}
+                  {extendedStats.media_files_count !== undefined && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Media Files Count</p>
+                      <p className="text-sm font-medium">{extendedStats.media_files_count}</p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
 
-        <div className="flex gap-4">
-          <a 
-            href={stream.stat_url} 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="text-sm text-primary hover:underline flex items-center gap-1"
-          >
-            Statistics URL <ExternalLink className="h-3 w-3" />
-          </a>
-          <a 
-            href={stream.command_url} 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="text-sm text-primary hover:underline flex items-center gap-1"
-          >
-            Command URL <ExternalLink className="h-3 w-3" />
-          </a>
-        </div>
+            <div className="flex gap-4">
+              <a 
+                href={stream.stat_url} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-sm text-primary hover:underline flex items-center gap-1"
+              >
+                Statistics URL <ExternalLink className="h-3 w-3" />
+              </a>
+              <a 
+                href={stream.command_url} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-sm text-primary hover:underline flex items-center gap-1"
+              >
+                Command URL <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
 
         <div className="border-t pt-4">
           <div className="h-80">

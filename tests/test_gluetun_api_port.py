@@ -35,7 +35,7 @@ def test_gluetun_api_port_config():
         
         # Create a simple function to test URL formation
         def test_url_formation(api_port):
-            return f"http://localhost:{api_port}/v1/openvpn/portforwarded"
+            return f"http://localhost:{api_port}/v1/portforward"
         
         # Test with default port
         url_default = test_url_formation(cfg.GLUETUN_API_PORT)

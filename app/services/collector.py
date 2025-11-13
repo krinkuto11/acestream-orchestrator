@@ -39,15 +39,30 @@ class Collector:
 
     async def _collect_one(self, client: httpx.AsyncClient, stream_id: str, url: str):
         try:
+            logger.debug(f"Collecting stats for stream_id={stream_id} url={url}")
             r = await client.get(url)
+            logger.debug(f"HTTP {r.status_code} from {url} for stream {stream_id}")
             if r.status_code >= 300:
+                # Log response body at debug so operators can inspect redirects/errors
+                try:
+                    text = r.text
+                except Exception:
+                    text = "<unreadable response body>"
+                logger.warning(f"Non-success response collecting stats for {stream_id} ({r.status_code}): {text}")
                 return
-            data = r.json()
-            
+            try:
+                data = r.json()
+            except Exception as e:
+                # Response wasn't valid JSON — log the body to help debugging
+                body = r.text if hasattr(r, 'text') else '<no-body>'
+                logger.debug(f"Failed to parse JSON from {url} for stream {stream_id}: {e}; body={body}")
+                return
+
             # Check if the stream has stopped/is stale
             # When a stream has stopped, the engine returns: {"response": null, "error": "unknown playback session id"}
             if data.get("response") is None and data.get("error"):
                 error_msg = data.get("error", "").lower()
+                logger.debug(f"Stat endpoint reported error for {stream_id}: {data.get('error')}")
                 if "unknown playback session id" in error_msg:
                     logger.info(f"Detected stale stream {stream_id}: {data.get('error')}")
                     # Get the stream to find its container_id
@@ -62,15 +77,33 @@ class Collector:
                         ))
                         orch_stale_streams_detected.inc()
                     return
-            
+
             payload = data.get("response") or {}
+            # Log the raw payload at debug level (truncated to avoid huge logs)
+            try:
+                raw_payload_str = str(payload)
+                if len(raw_payload_str) > 2000:
+                    raw_payload_str = raw_payload_str[:2000] + '...<truncated>'
+            except Exception:
+                raw_payload_str = '<unrepresentable payload>'
+            logger.debug(f"Payload for {stream_id} from {url}: {raw_payload_str}")
+
             # Handle both snake_case and camelCase field names from AceStream API
             # Some engine versions return speedDown/speedUp, others return speed_down/speed_up
             # Use explicit None check to preserve 0 values (0 is valid speed)
             speed_down_snake = payload.get("speed_down")
-            speed_down = speed_down_snake if speed_down_snake is not None else payload.get("speedDown")
+            speed_down_camel = payload.get("speedDown")
+            speed_down = speed_down_snake if speed_down_snake is not None else speed_down_camel
             speed_up_snake = payload.get("speed_up")
-            speed_up = speed_up_snake if speed_up_snake is not None else payload.get("speedUp")
+            speed_up_camel = payload.get("speedUp")
+            speed_up = speed_up_snake if speed_up_snake is not None else speed_up_camel
+
+            # Log which keys were used so it's clear which engine version responded
+            logger.debug(
+                f"Selected speed values for {stream_id}: speed_down={speed_down} (snake={speed_down_snake} camel={speed_down_camel}), "
+                f"speed_up={speed_up} (snake={speed_up_snake} camel={speed_up_camel})"
+            )
+
             snap = StreamStatSnapshot(
                 ts=datetime.now(timezone.utc),
                 peers=payload.get("peers"),
@@ -81,10 +114,15 @@ class Collector:
                 status=payload.get("status"),
             )
             state.append_stat(stream_id, snap)
-            
+            logger.debug(f"Appended stat for {stream_id}: peers={snap.peers} speed_down={snap.speed_down} speed_up={snap.speed_up} downloaded={snap.downloaded} uploaded={snap.uploaded}")
+
             # Update cumulative byte metrics
-            on_stream_stat_update(stream_id, snap.uploaded, snap.downloaded)
+            try:
+                on_stream_stat_update(stream_id, snap.uploaded, snap.downloaded)
+            except Exception:
+                logger.exception(f"Error updating cumulative metrics for stream {stream_id}")
         except Exception:
+            logger.exception(f"Unhandled exception while collecting stats for {stream_id} from {url}")
             return
 
 collector = Collector()

@@ -133,10 +133,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files with validation
+# Mount static files with validation and SPA fallback
 panel_dir = "app/static/panel"
 if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
-    app.mount("/panel", StaticFiles(directory=panel_dir, html=True), name="panel")
+    from fastapi.responses import FileResponse
+    
+    # Add catch-all route for SPA routing BEFORE mounting StaticFiles
+    # This ensures direct navigation to subroutes like /panel/engines works
+    @app.get("/panel/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """
+        Catch-all route to serve index.html for all /panel/* routes.
+        This enables direct navigation to subroutes like /panel/engines.
+        """
+        # Sanitize the path to prevent directory traversal attacks
+        # Resolve to absolute path and ensure it's within panel_dir
+        panel_dir_abs = os.path.abspath(panel_dir)
+        requested_path = os.path.abspath(os.path.join(panel_dir, full_path))
+        
+        # Security check: ensure the requested path is within panel_dir
+        if not requested_path.startswith(panel_dir_abs + os.sep) and requested_path != panel_dir_abs:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Check if it's a request for an actual file (has extension)
+        if os.path.isfile(requested_path):
+            return FileResponse(requested_path)
+        
+        # Otherwise, serve index.html for React Router
+        index_path = os.path.join(panel_dir_abs, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+        else:
+            raise HTTPException(status_code=404, detail="Panel not found")
+    
+    # Mount static files for assets (without html=True since we handle it above)
+    app.mount("/panel", StaticFiles(directory=panel_dir), name="panel")
 else:
     logger.warning(f"Panel directory {panel_dir} not found. /panel endpoint will not be available.")
 
@@ -444,6 +475,30 @@ def get_stream_stats(stream_id: str, since: Optional[datetime] = None):
         snaps = [x for x in snaps if x.ts >= since]
     return snaps
 
+@app.get("/streams/{stream_id}/extended-stats")
+async def get_stream_extended_stats(stream_id: str):
+    """
+    Get extended statistics for a stream by querying the AceStream analyze_content API.
+    This returns additional metadata like content_type, title, is_live, mime, categories, etc.
+    """
+    from .utils.acestream_api import get_stream_extended_stats
+    
+    # Get the stream from state
+    stream = state.get_stream(stream_id)
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+    
+    if not stream.stat_url:
+        raise HTTPException(status_code=400, detail="Stream has no stat URL")
+    
+    # Fetch extended stats
+    extended_stats = await get_stream_extended_stats(stream.stat_url)
+    
+    if extended_stats is None:
+        raise HTTPException(status_code=503, detail="Unable to fetch extended stats from AceStream engine")
+    
+    return extended_stats
+
 # by-label
 from .services.inspect import inspect_container
 from .services.health import list_managed
@@ -629,7 +684,8 @@ def get_orchestrator_status():
         "config": {
             "auto_delete": cfg.AUTO_DELETE,
             "grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
-            "engine_variant": cfg.ENGINE_VARIANT
+            "engine_variant": cfg.ENGINE_VARIANT,
+            "debug_mode": cfg.DEBUG_MODE
         },
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
