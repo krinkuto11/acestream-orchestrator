@@ -39,71 +39,86 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, deb
   const [extendedStatsLoading, setExtendedStatsLoading] = useState(false)
   const [extendedStatsError, setExtendedStatsError] = useState(null)
 
-  const fetchStats = useCallback(async () => {
-    if (!stream || !isOpen) return
-    
-    setLoading(true)
-    try {
-      const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
-      const headers = {}
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-      
-      const response = await fetch(
-        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`,
-        { headers }
-      )
-      
-      if (response.ok) {
-        const data = await response.json()
-        setStats(data)
-      }
-    } catch (err) {
-      console.error('Failed to fetch stats:', err)
-    } finally {
-      setLoading(false)
-    }
-  }, [stream, orchUrl, apiKey, isOpen])
-
-  const fetchExtendedStats = useCallback(async () => {
-    if (!stream || !isOpen) return
-    
-    setExtendedStatsLoading(true)
-    setExtendedStatsError(null)
-    try {
-      const headers = {}
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-      
-      const response = await fetch(
-        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/extended-stats`,
-        { headers }
-      )
-      
-      if (response.ok) {
-        const data = await response.json()
-        setExtendedStats(data)
-      } else {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-      }
-    } catch (err) {
-      console.error('Failed to fetch extended stats:', err)
-      setExtendedStatsError(err.message || String(err))
-    } finally {
-      setExtendedStatsLoading(false)
-    }
-  }, [stream, orchUrl, apiKey, isOpen])
-
   useEffect(() => {
-    if (isOpen) {
-      fetchStats()
-      fetchExtendedStats()
-      const interval = setInterval(fetchStats, 10000)
-      return () => clearInterval(interval)
+    if (!isOpen || !stream) return
+    
+    const abortController = new AbortController()
+    
+    // Fetch regular stats
+    const fetchStats = async () => {
+      if (abortController.signal.aborted) return
+      
+      setLoading(true)
+      try {
+        const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+        const headers = {}
+        if (apiKey) {
+          headers['Authorization'] = `Bearer ${apiKey}`
+        }
+        
+        const response = await fetch(
+          `${orchUrl}/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`,
+          { headers, signal: abortController.signal }
+        )
+        
+        if (response.ok) {
+          const data = await response.json()
+          setStats(data)
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Failed to fetch stats:', err)
+        }
+      } finally {
+        setLoading(false)
+      }
     }
-  }, [fetchStats, fetchExtendedStats, isOpen])
+    
+    // Fetch extended stats (once per open)
+    const fetchExtendedStats = async () => {
+      if (abortController.signal.aborted) return
+      
+      setExtendedStatsLoading(true)
+      setExtendedStatsError(null)
+      try {
+        const headers = {}
+        if (apiKey) {
+          headers['Authorization'] = `Bearer ${apiKey}`
+        }
+        
+        const response = await fetch(
+          `${orchUrl}/streams/${encodeURIComponent(stream.id)}/extended-stats`,
+          { headers, signal: abortController.signal }
+        )
+        
+        if (response.ok) {
+          const data = await response.json()
+          setExtendedStats(data)
+        } else {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Failed to fetch extended stats:', err)
+          setExtendedStatsError(err.message || String(err))
+        }
+      } finally {
+        setExtendedStatsLoading(false)
+      }
+    }
+    
+    // Initial fetch
+    fetchStats()
+    fetchExtendedStats()
+    
+    // Set up interval for stats (but not extended stats)
+    const interval = setInterval(fetchStats, 10000)
+    
+    return () => {
+      clearInterval(interval)
+      abortController.abort()
+    }
+  }, [stream, orchUrl, apiKey, isOpen])
 
   const chartData = {
     labels: stats.map(s => new Date(s.ts).toLocaleTimeString()),

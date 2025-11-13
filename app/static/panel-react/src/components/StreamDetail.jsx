@@ -38,65 +38,82 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
   const [extendedStatsLoading, setExtendedStatsLoading] = useState(false)
   const [isExtendedStatsOpen, setIsExtendedStatsOpen] = useState(false)
 
-  const fetchStats = useCallback(async () => {
-    if (!stream) return
-    
-    setLoading(true)
-    try {
-      const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
-      const headers = {}
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-      
-      const response = await fetch(
-        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`,
-        { headers }
-      )
-      
-      if (response.ok) {
-        const data = await response.json()
-        setStats(data)
-      }
-    } catch (err) {
-      console.error('Failed to fetch stats:', err)
-    } finally {
-      setLoading(false)
-    }
-  }, [stream, orchUrl, apiKey])
-
-  const fetchExtendedStats = useCallback(async () => {
-    if (!stream) return
-    
-    setExtendedStatsLoading(true)
-    try {
-      const headers = {}
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-      
-      const response = await fetch(
-        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/extended-stats`,
-        { headers }
-      )
-      
-      if (response.ok) {
-        const data = await response.json()
-        setExtendedStats(data)
-      }
-    } catch (err) {
-      console.error('Failed to fetch extended stats:', err)
-    } finally {
-      setExtendedStatsLoading(false)
-    }
-  }, [stream, orchUrl, apiKey])
-
   useEffect(() => {
+    if (!stream) return
+    
+    const abortController = new AbortController()
+    
+    // Fetch regular stats
+    const fetchStats = async () => {
+      if (abortController.signal.aborted) return
+      
+      setLoading(true)
+      try {
+        const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+        const headers = {}
+        if (apiKey) {
+          headers['Authorization'] = `Bearer ${apiKey}`
+        }
+        
+        const response = await fetch(
+          `${orchUrl}/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`,
+          { headers, signal: abortController.signal }
+        )
+        
+        if (response.ok) {
+          const data = await response.json()
+          setStats(data)
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Failed to fetch stats:', err)
+        }
+      } finally {
+        setLoading(false)
+      }
+    }
+    
+    // Fetch extended stats (once)
+    const fetchExtendedStats = async () => {
+      if (abortController.signal.aborted) return
+      
+      setExtendedStatsLoading(true)
+      try {
+        const headers = {}
+        if (apiKey) {
+          headers['Authorization'] = `Bearer ${apiKey}`
+        }
+        
+        const response = await fetch(
+          `${orchUrl}/streams/${encodeURIComponent(stream.id)}/extended-stats`,
+          { headers, signal: abortController.signal }
+        )
+        
+        if (response.ok) {
+          const data = await response.json()
+          setExtendedStats(data)
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Failed to fetch extended stats:', err)
+        }
+      } finally {
+        setExtendedStatsLoading(false)
+      }
+    }
+    
+    // Initial fetch
     fetchStats()
     fetchExtendedStats()
-    const interval = setInterval(fetchStats, 10000) // Refresh every 10 seconds
-    return () => clearInterval(interval)
-  }, [fetchStats, fetchExtendedStats])
+    
+    // Set up interval for stats (but not extended stats)
+    const interval = setInterval(fetchStats, 10000)
+    
+    return () => {
+      clearInterval(interval)
+      abortController.abort()
+    }
+  }, [stream, orchUrl, apiKey])
 
   // AceStream API returns speed in KB/s, so we divide by 1024 to convert to MB/s
   const chartData = {
