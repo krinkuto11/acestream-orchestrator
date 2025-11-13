@@ -1,15 +1,13 @@
 import React from 'react'
 import StreamList from '@/components/StreamList'
-import StreamDetail from '@/components/StreamDetail'
 
 export function StreamsPage({ 
   streams, 
-  selectedStream, 
-  onSelectStream, 
   orchUrl,
   apiKey,
   onStopStream,
-  onDeleteEngine 
+  onDeleteEngine,
+  debugMode
 }) {
   return (
     <div className="space-y-6">
@@ -22,20 +20,12 @@ export function StreamsPage({
 
       <StreamList
         streams={streams}
-        selectedStream={selectedStream}
-        onSelectStream={onSelectStream}
+        orchUrl={orchUrl}
+        apiKey={apiKey}
+        onStopStream={onStopStream}
+        onDeleteEngine={onDeleteEngine}
+        debugMode={debugMode}
       />
-
-      {selectedStream && (
-        <StreamDetail
-          stream={selectedStream}
-          orchUrl={orchUrl}
-          apiKey={apiKey}
-          onStopStream={onStopStream}
-          onDeleteEngine={onDeleteEngine}
-          onClose={() => onSelectStream(null)}
-        />
-      )}
     </div>
   )
 }

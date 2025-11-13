@@ -23,7 +23,6 @@ function App() {
   const [streams, setStreams] = useState([])
   const [vpnStatus, setVpnStatus] = useState({ enabled: false })
   const [orchestratorStatus, setOrchestratorStatus] = useState(null)
-  const [selectedStream, setSelectedStream] = useState(null)
   const [lastUpdate, setLastUpdate] = useState(null)
   const [isConnected, setIsConnected] = useState(false)
 
@@ -154,12 +153,11 @@ function App() {
                   element={
                     <StreamsPage
                       streams={streams}
-                      selectedStream={selectedStream}
-                      onSelectStream={setSelectedStream}
                       orchUrl={orchUrl}
                       apiKey={apiKey}
                       onStopStream={handleStopStream}
                       onDeleteEngine={handleDeleteEngine}
+                      debugMode={orchestratorStatus?.config?.debug_mode || false}
                     />
                   } 
                 />
