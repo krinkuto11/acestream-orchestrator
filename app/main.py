@@ -133,10 +133,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files with validation
+# Mount static files with validation and SPA fallback
 panel_dir = "app/static/panel"
 if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
-    app.mount("/panel", StaticFiles(directory=panel_dir, html=True), name="panel")
+    from fastapi.responses import FileResponse
+    
+    # Add catch-all route for SPA routing BEFORE mounting StaticFiles
+    # This ensures direct navigation to subroutes like /panel/engines works
+    @app.get("/panel/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """
+        Catch-all route to serve index.html for all /panel/* routes.
+        This enables direct navigation to subroutes like /panel/engines.
+        """
+        # Check if it's a request for an actual file (has extension)
+        file_path = os.path.join(panel_dir, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        
+        # Otherwise, serve index.html for React Router
+        index_path = os.path.join(panel_dir, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+        else:
+            raise HTTPException(status_code=404, detail="Panel not found")
+    
+    # Mount static files for assets (without html=True since we handle it above)
+    app.mount("/panel", StaticFiles(directory=panel_dir), name="panel")
 else:
     logger.warning(f"Panel directory {panel_dir} not found. /panel endpoint will not be available.")
 
