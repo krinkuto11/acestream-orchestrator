@@ -974,7 +974,25 @@ def _get_single_vpn_status(container_name: str) -> dict:
             if forwarded_port is None:
                 forwarded_port = get_forwarded_port_sync(container_name)
         
-        return {
+        # Get provider from docker config
+        provider = None
+        if container_running:
+            provider = get_vpn_provider(container_name)
+        
+        # Get public IP info (includes location data from Gluetun API)
+        public_ip = None
+        country = None
+        city = None
+        region = None
+        if container_running and health == "healthy":
+            ip_info = get_vpn_public_ip_info(container_name)
+            if ip_info:
+                public_ip = ip_info.get("public_ip")
+                country = ip_info.get("country")
+                city = ip_info.get("city")
+                region = ip_info.get("region")
+        
+        result = {
             "enabled": True,
             "status": container.status,
             "container_name": container_name,
@@ -982,9 +1000,16 @@ def _get_single_vpn_status(container_name: str) -> dict:
             "health": health,
             "connected": health == "healthy",
             "forwarded_port": forwarded_port,
+            "public_ip": public_ip,
+            "provider": provider,
+            "country": country,
+            "city": city,
+            "region": region,
             "last_check": datetime.now(timezone.utc).isoformat(),
             "last_check_at": datetime.now(timezone.utc).isoformat()
         }
+        
+        return result
         
     except NotFound:
         return {
@@ -995,6 +1020,7 @@ def _get_single_vpn_status(container_name: str) -> dict:
             "health": "unhealthy",
             "connected": False,
             "forwarded_port": None,
+            "public_ip": None,
             "last_check": datetime.now(timezone.utc).isoformat(),
             "last_check_at": datetime.now(timezone.utc).isoformat()
         }
@@ -1008,6 +1034,7 @@ def _get_single_vpn_status(container_name: str) -> dict:
             "health": "unknown",
             "connected": False,
             "forwarded_port": None,
+            "public_ip": None,
             "last_check": datetime.now(timezone.utc).isoformat(),
             "last_check_at": datetime.now(timezone.utc).isoformat(),
             "error": str(e)
@@ -1075,40 +1102,166 @@ def get_vpn_status() -> dict:
         "emergency_mode": emergency_info
     }
 
-def get_vpn_public_ip() -> Optional[str]:
+def normalize_provider_name(provider: str) -> str:
     """
-    Get the public IP address of the VPN connection from Gluetun.
+    Normalize VPN provider name from docker env variable to proper capitalization.
     
-    This function should only be called when the VPN is healthy to avoid
-    excessive error logging when VPN is down.
+    The VPN_SERVICE_PROVIDER env variable is lowercase, but we need to match
+    it against a list of properly capitalized provider names.
+    
+    Args:
+        provider: Provider name from docker env (e.g., "protonvpn", "nordvpn")
+    
+    Returns:
+        Properly capitalized provider name (e.g., "ProtonVPN", "NordVPN")
     """
-    if not cfg.GLUETUN_CONTAINER_NAME:
+    # Provider name mapping from lowercase to proper capitalization
+    provider_map = {
+        "airvpn": "AirVPN",
+        "cyberghost": "Cyberghost",
+        "expressvpn": "ExpressVPN",
+        "fastestvpn": "FastestVPN",
+        "giganews": "Giganews",
+        "hidemyass": "HideMyAss",
+        "ipvanish": "IPVanish",
+        "ivpn": "IVPN",
+        "mullvad": "Mullvad",
+        "nordvpn": "NordVPN",
+        "perfect privacy": "Perfect Privacy",
+        "perfectprivacy": "Perfect Privacy",
+        "privado": "Privado",
+        "private internet access": "Private Internet Access",
+        "pia": "Private Internet Access",
+        "privatevpn": "PrivateVPN",
+        "protonvpn": "ProtonVPN",
+        "purevpn": "PureVPN",
+        "slickvpn": "SlickVPN",
+        "surfshark": "Surfshark",
+        "torguard": "TorGuard",
+        "vpnsecure.me": "VPNSecure.me",
+        "vpnsecure": "VPNSecure.me",
+        "vpnunlimited": "VPNUnlimited",
+        "vyprvpn": "Vyprvpn",
+        "wevpn": "WeVPN",
+        "windscribe": "Windscribe",
+    }
+    
+    # Normalize input to lowercase for lookup
+    provider_lower = provider.lower().strip()
+    
+    # Return mapped name or title case as fallback
+    return provider_map.get(provider_lower, provider.title())
+
+
+def get_vpn_provider(container_name: Optional[str] = None) -> Optional[str]:
+    """
+    Get VPN provider from container's VPN_SERVICE_PROVIDER environment variable.
+    
+    Args:
+        container_name: Specific VPN container name, or None for primary VPN
+    
+    Returns:
+        Normalized provider name (e.g., "ProtonVPN", "NordVPN") or None if not found
+    """
+    target_container = container_name or cfg.GLUETUN_CONTAINER_NAME
+    if not target_container:
+        return None
+    
+    try:
+        from .docker_client import get_client
+        from docker.errors import NotFound
+        
+        cli = get_client(timeout=30)
+        container = cli.containers.get(target_container)
+        container.reload()
+        
+        # Get VPN_SERVICE_PROVIDER from container environment
+        env_vars = container.attrs.get("Config", {}).get("Env", [])
+        for env_var in env_vars:
+            if env_var.startswith("VPN_SERVICE_PROVIDER="):
+                provider = env_var.split("=", 1)[1]
+                normalized = normalize_provider_name(provider)
+                logger.debug(f"Retrieved VPN provider for '{target_container}': {provider} -> {normalized}")
+                return normalized
+        
+        logger.warning(f"VPN_SERVICE_PROVIDER not found in container '{target_container}' environment")
+        return None
+        
+    except NotFound:
+        logger.error(f"VPN container '{target_container}' not found")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get VPN provider from '{target_container}': {e}")
+        return None
+
+
+def get_vpn_public_ip_info(container_name: Optional[str] = None) -> Optional[Dict[str, str]]:
+    """
+    Get comprehensive public IP information from Gluetun's /v1/publicip/ip endpoint.
+    
+    The new API response format includes:
+    {
+        "public_ip": "217.138.216.131",
+        "region": "Land Berlin",
+        "country": "Germany",
+        "city": "Berlin",
+        "location": "52.519600,13.406900",
+        "organization": "M247 Europe SRL",
+        "postal_code": "10178",
+        "timezone": "Europe/Berlin"
+    }
+    
+    Args:
+        container_name: Specific VPN container name, or None for primary VPN
+    
+    Returns:
+        Dict with public IP and location information, or None if unavailable
+    """
+    target_container = container_name or cfg.GLUETUN_CONTAINER_NAME
+    if not target_container:
         return None
     
     # Don't try to get public IP if VPN is unhealthy or in restart grace period
-    monitor = gluetun_monitor.get_vpn_monitor(cfg.GLUETUN_CONTAINER_NAME)
+    monitor = gluetun_monitor.get_vpn_monitor(target_container)
     if monitor:
         if monitor.is_healthy() is False:
             return None
         if monitor._is_in_restart_grace_period():
-            logger.debug(f"VPN '{cfg.GLUETUN_CONTAINER_NAME}' is in restart grace period, skipping public IP fetch")
+            logger.debug(f"VPN '{target_container}' is in restart grace period, skipping public IP fetch")
             return None
     
     try:
         with httpx.Client() as client:
-            response = client.get(f"http://{cfg.GLUETUN_CONTAINER_NAME}:{cfg.GLUETUN_API_PORT}/v1/publicip/ip", timeout=10)
+            response = client.get(f"http://{target_container}:{cfg.GLUETUN_API_PORT}/v1/publicip/ip", timeout=10)
             response.raise_for_status()
             data = response.json()
-            public_ip = data.get("public_ip")
-            if public_ip:
-                logger.debug(f"Retrieved VPN public IP: {public_ip}")
-                return public_ip
+            
+            if data.get("public_ip"):
+                logger.debug(f"Retrieved VPN public IP info for '{target_container}': {data.get('public_ip')}, {data.get('country')}, {data.get('city')}")
+                return data
             else:
-                logger.warning("No public IP information available from Gluetun")
+                logger.warning(f"No public IP information available from '{target_container}'")
                 return None
     except Exception as e:
-        logger.error(f"Failed to get public IP from Gluetun: {e}")
+        logger.error(f"Failed to get public IP info from '{target_container}': {e}")
         return None
+
+
+def get_vpn_public_ip(container_name: Optional[str] = None) -> Optional[str]:
+    """
+    Get the public IP address of the VPN connection from Gluetun.
+    
+    Args:
+        container_name: Specific VPN container name, or None for primary VPN
+    
+    Returns:
+        Public IP address as string, or None if unavailable
+    
+    This function should only be called when the VPN is healthy to avoid
+    excessive error logging when VPN is down.
+    """
+    info = get_vpn_public_ip_info(container_name)
+    return info.get("public_ip") if info else None
 
 # Global Gluetun monitor instance
 gluetun_monitor = GluetunMonitor()

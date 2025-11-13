@@ -1,19 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import {
-  Box,
-  Container,
-  Grid,
-  Paper,
-  Alert,
-  Snackbar
-} from '@mui/material'
-import Header from './components/Header'
-import KPICards from './components/KPICards'
-import EngineList from './components/EngineList'
-import StreamList from './components/StreamList'
-import VPNStatus from './components/VPNStatus'
-import StreamDetail from './components/StreamDetail'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { ModernSidebar } from './components/ModernSidebar'
+import { ModernHeader } from './components/ModernHeader'
+import { ThemeProvider } from './components/ThemeProvider'
+import { OverviewPage } from './pages/OverviewPage'
+import { EnginesPage } from './pages/EnginesPage'
+import { StreamsPage } from './pages/StreamsPage'
+import { HealthPage } from './pages/HealthPage'
+import { VPNPage } from './pages/VPNPage'
+import { MetricsPage } from './pages/MetricsPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { useLocalStorage } from './hooks/useLocalStorage'
+import { Toaster } from '@/components/ui/sonner'
+import { toast } from 'sonner'
 
 function App() {
   const [orchUrl, setOrchUrl] = useLocalStorage('orch_url', 'http://localhost:8000')
@@ -23,8 +22,8 @@ function App() {
   const [engines, setEngines] = useState([])
   const [streams, setStreams] = useState([])
   const [vpnStatus, setVpnStatus] = useState({ enabled: false })
+  const [orchestratorStatus, setOrchestratorStatus] = useState(null)
   const [selectedStream, setSelectedStream] = useState(null)
-  const [error, setError] = useState(null)
   const [lastUpdate, setLastUpdate] = useState(null)
   const [isConnected, setIsConnected] = useState(false)
 
@@ -43,11 +42,11 @@ function App() {
 
   const fetchData = useCallback(async () => {
     try {
-      setError(null)
-      const [enginesData, streamsData, vpnData] = await Promise.all([
+      const [enginesData, streamsData, vpnData, orchStatus] = await Promise.all([
         fetchJSON(`${orchUrl}/engines`),
         fetchJSON(`${orchUrl}/streams?status=started`),
-        fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false }))
+        fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false })),
+        fetchJSON(`${orchUrl}/orchestrator/status`).catch(() => null)
       ])
       
       // Fetch VPN public IP if VPN is enabled and connected
@@ -57,7 +56,6 @@ function App() {
           const publicIpData = await fetchJSON(`${orchUrl}/vpn/publicip`)
           vpnDataWithIp = { ...vpnData, public_ip: publicIpData.public_ip }
         } catch (err) {
-          // If public IP fetch fails, continue without it
           console.warn('Failed to fetch VPN public IP:', err)
         }
       }
@@ -65,19 +63,18 @@ function App() {
       setEngines(enginesData)
       setStreams(streamsData)
       setVpnStatus(vpnDataWithIp)
+      setOrchestratorStatus(orchStatus)
       setLastUpdate(new Date())
       setIsConnected(true)
     } catch (err) {
-      setError(err.message || String(err))
+      const errorMessage = err.message || String(err)
+      toast.error(`Connection error: ${errorMessage}`)
       setIsConnected(false)
     }
   }, [orchUrl, fetchJSON])
 
   useEffect(() => {
-    // Initial load
     fetchData()
-    
-    // Set up polling
     const interval = setInterval(fetchData, refreshInterval)
     return () => clearInterval(interval)
   }, [fetchData, refreshInterval])
@@ -91,9 +88,10 @@ function App() {
       await fetchJSON(`${orchUrl}/containers/${encodeURIComponent(containerId)}`, {
         method: 'DELETE'
       })
+      toast.success('Engine deleted successfully')
       await fetchData()
     } catch (err) {
-      setError(`Failed to delete engine: ${err.message}`)
+      toast.error(`Failed to delete engine: ${err.message}`)
     }
   }, [orchUrl, fetchJSON, fetchData])
 
@@ -107,91 +105,107 @@ function App() {
         method: 'DELETE'
       })
       setSelectedStream(null)
+      toast.success('Stream stopped successfully')
       await fetchData()
     } catch (err) {
-      setError(`Failed to stop stream: ${err.message}`)
+      toast.error(`Failed to stop stream: ${err.message}`)
     }
   }, [orchUrl, fetchJSON, fetchData])
 
-  const healthyEngines = engines.filter(e => e.health_status === 'healthy').length
-
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-      <Header
-        orchUrl={orchUrl}
-        setOrchUrl={setOrchUrl}
-        apiKey={apiKey}
-        setApiKey={setApiKey}
-        refreshInterval={refreshInterval}
-        setRefreshInterval={setRefreshInterval}
-        isConnected={isConnected}
-      />
-      
-      <Container maxWidth="xl" sx={{ mt: 3, mb: 3, flex: 1 }}>
-        <Grid container spacing={3}>
-          {/* KPI Cards */}
-          <Grid item xs={12}>
-            <KPICards
-              totalEngines={engines.length}
-              activeStreams={streams.length}
-              healthyEngines={healthyEngines}
-              vpnStatus={vpnStatus}
+    <ThemeProvider defaultTheme="light">
+      <BrowserRouter basename="/panel">
+        <div className="flex min-h-screen bg-background">
+          <ModernSidebar />
+          
+          <div className="flex-1 flex flex-col">
+            <ModernHeader 
+              isConnected={isConnected}
               lastUpdate={lastUpdate}
             />
-          </Grid>
-
-          {/* VPN Status */}
-          {vpnStatus.enabled && (
-            <Grid item xs={12}>
-              <VPNStatus vpnStatus={vpnStatus} />
-            </Grid>
-          )}
-
-          {/* Engines - Left Side */}
-          <Grid item xs={12} md={6}>
-            <EngineList
-              engines={engines}
-              onDeleteEngine={handleDeleteEngine}
-              vpnStatus={vpnStatus}
-            />
-          </Grid>
-
-          {/* Streams - Right Side */}
-          <Grid item xs={12} md={6}>
-            <StreamList
-              streams={streams}
-              selectedStream={selectedStream}
-              onSelectStream={setSelectedStream}
-            />
-          </Grid>
-
-          {/* Stream Detail */}
-          {selectedStream && (
-            <Grid item xs={12}>
-              <StreamDetail
-                stream={selectedStream}
-                orchUrl={orchUrl}
-                apiKey={apiKey}
-                onStopStream={handleStopStream}
-                onDeleteEngine={handleDeleteEngine}
-                onClose={() => setSelectedStream(null)}
-              />
-            </Grid>
-          )}
-        </Grid>
-      </Container>
-
-      <Snackbar
-        open={!!error}
-        autoHideDuration={6000}
-        onClose={() => setError(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert onClose={() => setError(null)} severity="error" sx={{ width: '100%' }}>
-          {error}
-        </Alert>
-      </Snackbar>
-    </Box>
+            
+            <main className="flex-1 overflow-y-auto p-6">
+              <Routes>
+                <Route 
+                  path="/" 
+                  element={
+                    <OverviewPage
+                      engines={engines}
+                      streams={streams}
+                      vpnStatus={vpnStatus}
+                      orchestratorStatus={orchestratorStatus}
+                    />
+                  } 
+                />
+                <Route 
+                  path="/engines" 
+                  element={
+                    <EnginesPage
+                      engines={engines}
+                      onDeleteEngine={handleDeleteEngine}
+                      vpnStatus={vpnStatus}
+                    />
+                  } 
+                />
+                <Route 
+                  path="/streams" 
+                  element={
+                    <StreamsPage
+                      streams={streams}
+                      selectedStream={selectedStream}
+                      onSelectStream={setSelectedStream}
+                      orchUrl={orchUrl}
+                      apiKey={apiKey}
+                      onStopStream={handleStopStream}
+                      onDeleteEngine={handleDeleteEngine}
+                    />
+                  } 
+                />
+                <Route 
+                  path="/health" 
+                  element={
+                    <HealthPage
+                      apiKey={apiKey}
+                      orchUrl={orchUrl}
+                    />
+                  } 
+                />
+                <Route 
+                  path="/vpn" 
+                  element={
+                    <VPNPage vpnStatus={vpnStatus} />
+                  } 
+                />
+                <Route 
+                  path="/metrics" 
+                  element={
+                    <MetricsPage
+                      apiKey={apiKey}
+                      orchUrl={orchUrl}
+                    />
+                  } 
+                />
+                <Route 
+                  path="/settings" 
+                  element={
+                    <SettingsPage
+                      orchUrl={orchUrl}
+                      setOrchUrl={setOrchUrl}
+                      apiKey={apiKey}
+                      setApiKey={setApiKey}
+                      refreshInterval={refreshInterval}
+                      setRefreshInterval={setRefreshInterval}
+                    />
+                  } 
+                />
+              </Routes>
+            </main>
+          </div>
+        </div>
+        
+        <Toaster />
+      </BrowserRouter>
+    </ThemeProvider>
   )
 }
 

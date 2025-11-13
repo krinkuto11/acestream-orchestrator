@@ -1,124 +1,96 @@
 import React from 'react'
-import {
-  Card,
-  CardContent,
-  CardActionArea,
-  Typography,
-  Box,
-  Chip,
-  Divider,
-  Grid
-} from '@mui/material'
-import PlayCircleFilledIcon from '@mui/icons-material/PlayCircleFilled'
+import { Card, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { PlayCircle, Download, Upload, Users } from 'lucide-react'
 import { formatTime, formatBytes, formatBytesPerSecond } from '../utils/formatters'
 
 function StreamCard({ stream, isSelected, onSelect }) {
   return (
     <Card 
-      sx={{ 
-        mb: 2, 
-        border: isSelected ? 2 : 0,
-        borderColor: 'primary.main',
-        '&:hover': { bgcolor: 'action.hover' }
-      }}
+      className={`mb-4 cursor-pointer transition-all hover:shadow-md ${
+        isSelected ? 'ring-2 ring-primary' : ''
+      }`}
+      onClick={() => onSelect(stream)}
     >
-      <CardActionArea onClick={() => onSelect(stream)}>
-        <CardContent>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-            <Box sx={{ flex: 1, overflow: 'hidden' }}>
-              <Typography variant="h6" component="div" sx={{ fontWeight: 600, mb: 0.5 }}>
-                {stream.id.slice(0, 16)}...
-              </Typography>
-              <Typography variant="body2" color="text.secondary" noWrap>
-                {stream.content_key || 'N/A'}
-              </Typography>
-            </Box>
-            <Chip
-              icon={<PlayCircleFilledIcon />}
-              label="ACTIVE"
-              color="success"
-              size="small"
-              sx={{ ml: 1 }}
-            />
-          </Box>
+      <CardContent className="pt-6">
+        <div className="flex justify-between items-start mb-4">
+          <div className="flex-1 overflow-hidden">
+            <h3 className="font-semibold text-lg mb-1">
+              {stream.id.slice(0, 16)}...
+            </h3>
+            <p className="text-sm text-muted-foreground truncate">
+              {stream.content_key || 'N/A'}
+            </p>
+          </div>
+          <Badge variant="success" className="ml-2 flex items-center gap-1">
+            <PlayCircle className="h-3 w-3" />
+            ACTIVE
+          </Badge>
+        </div>
 
-          <Divider sx={{ my: 1.5 }} />
-
-          <Grid container spacing={1}>
-            <Grid item xs={12}>
-              <Typography variant="caption" color="text.secondary">
-                Engine
-              </Typography>
-              <Typography variant="body2" noWrap>
-                {stream.container_name || stream.container_id?.slice(0, 12) || 'N/A'}
-              </Typography>
-            </Grid>
-            <Grid item xs={12}>
-              <Typography variant="caption" color="text.secondary">
-                Started
-              </Typography>
-              <Typography variant="body2">
-                {formatTime(stream.started_at)}
-              </Typography>
-            </Grid>
-            {/* AceStream API returns speeds in KB/s, convert to B/s for formatter */}
-            <Grid item xs={4}>
-              <Typography variant="caption" color="text.secondary">
-                Download
-              </Typography>
-              <Typography variant="body2" sx={{ color: 'secondary.main', fontWeight: 600 }}>
+        <div className="border-t pt-3 space-y-3">
+          <div>
+            <p className="text-xs text-muted-foreground">Engine</p>
+            <p className="text-sm font-medium truncate">
+              {stream.container_name || stream.container_id?.slice(0, 12) || 'N/A'}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Started</p>
+            <p className="text-sm font-medium">{formatTime(stream.started_at)}</p>
+          </div>
+          
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <Download className="h-3 w-3" /> Download
+              </p>
+              <p className="text-sm font-semibold text-green-600 dark:text-green-400">
                 {formatBytesPerSecond((stream.speed_down || 0) * 1024)}
-              </Typography>
-            </Grid>
-            <Grid item xs={4}>
-              <Typography variant="caption" color="text.secondary">
-                Upload
-              </Typography>
-              <Typography variant="body2" sx={{ color: 'error.main', fontWeight: 600 }}>
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <Upload className="h-3 w-3" /> Upload
+              </p>
+              <p className="text-sm font-semibold text-red-600 dark:text-red-400">
                 {formatBytesPerSecond((stream.speed_up || 0) * 1024)}
-              </Typography>
-            </Grid>
-            <Grid item xs={4}>
-              <Typography variant="caption" color="text.secondary">
-                Peers
-              </Typography>
-              <Typography variant="body2" sx={{ color: 'info.main', fontWeight: 600 }}>
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <Users className="h-3 w-3" /> Peers
+              </p>
+              <p className="text-sm font-semibold text-blue-600 dark:text-blue-400">
                 {stream.peers != null ? stream.peers : 'N/A'}
-              </Typography>
-            </Grid>
-            <Grid item xs={6}>
-              <Typography variant="caption" color="text.secondary">
-                Total Downloaded
-              </Typography>
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                {formatBytes(stream.downloaded)}
-              </Typography>
-            </Grid>
-            <Grid item xs={6}>
-              <Typography variant="caption" color="text.secondary">
-                Total Uploaded
-              </Typography>
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                {formatBytes(stream.uploaded)}
-              </Typography>
-            </Grid>
-          </Grid>
-        </CardContent>
-      </CardActionArea>
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-muted-foreground">Total Downloaded</p>
+              <p className="text-sm font-semibold">{formatBytes(stream.downloaded)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Total Uploaded</p>
+              <p className="text-sm font-semibold">{formatBytes(stream.uploaded)}</p>
+            </div>
+          </div>
+        </div>
+      </CardContent>
     </Card>
   )
 }
 
 function StreamList({ streams, selectedStream, onSelectStream }) {
   return (
-    <Box>
-      <Typography variant="h5" component="h2" gutterBottom sx={{ fontWeight: 600 }}>
-        Active Streams ({streams.length})
-      </Typography>
+    <div>
+      <h2 className="text-2xl font-semibold mb-6">Active Streams ({streams.length})</h2>
       {streams.length === 0 ? (
         <Card>
-          <CardContent>
-            <Typography color="text.secondary">No active streams</Typography>
+          <CardContent className="pt-6 pb-6">
+            <p className="text-muted-foreground">No active streams</p>
           </CardContent>
         </Card>
       ) : (
@@ -131,7 +103,7 @@ function StreamList({ streams, selectedStream, onSelectStream }) {
           />
         ))
       )}
-    </Box>
+    </div>
   )
 }
 

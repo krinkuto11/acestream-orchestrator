@@ -61,6 +61,40 @@ async def lifespan(app: FastAPI):
         while (asyncio.get_event_loop().time() - wait_start) < max_wait_time:
             if gluetun_monitor.is_healthy() is True:
                 logger.info("Gluetun is healthy - proceeding with engine provisioning")
+                
+                # Log VPN location information for all healthy VPN containers
+                from .services.gluetun import get_vpn_status
+                try:
+                    vpn_status = get_vpn_status()
+                    
+                    # Check VPN1 location
+                    if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
+                        logger.info(f"VPN1 ({vpn_status['vpn1']['container_name']}) status: "
+                                  f"IP={vpn_status['vpn1']['public_ip']}, "
+                                  f"Provider={vpn_status['vpn1'].get('provider', 'Unknown')}, "
+                                  f"Country={vpn_status['vpn1'].get('country', 'Unknown')}, "
+                                  f"City={vpn_status['vpn1'].get('city', 'Unknown')}")
+                    
+                    # Check VPN2 location (redundant mode)
+                    if vpn_status.get("vpn2") and vpn_status["vpn2"].get("public_ip"):
+                        logger.info(f"VPN2 ({vpn_status['vpn2']['container_name']}) status: "
+                                  f"IP={vpn_status['vpn2']['public_ip']}, "
+                                  f"Provider={vpn_status['vpn2'].get('provider', 'Unknown')}, "
+                                  f"Country={vpn_status['vpn2'].get('country', 'Unknown')}, "
+                                  f"City={vpn_status['vpn2'].get('city', 'Unknown')}")
+                    
+                    # For single VPN mode
+                    if vpn_status.get("mode") == "single" and vpn_status.get("public_ip"):
+                        if not vpn_status.get("vpn1"):  # Already logged above if vpn1 exists
+                            logger.info(f"VPN ({vpn_status['container_name']}) status: "
+                                      f"IP={vpn_status['public_ip']}, "
+                                      f"Provider={vpn_status.get('provider', 'Unknown')}, "
+                                      f"Country={vpn_status.get('country', 'Unknown')}, "
+                                      f"City={vpn_status.get('city', 'Unknown')}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to get VPN status: {e}")
+                
                 break
             await asyncio.sleep(1)
         else:
@@ -324,7 +358,8 @@ def get_engines():
     # but we don't want to break existing functionality
     try:
         from .services.health import list_managed
-        from .services.gluetun import gluetun_monitor
+        from .services.gluetun import gluetun_monitor, get_forwarded_port_sync
+        from .services.engine_info import get_engine_version_info_sync
         
         running_container_ids = {c.id for c in list_managed() if c.status == "running"}
         
@@ -357,6 +392,29 @@ def get_engines():
             else:
                 # Single VPN mode or no VPN - include the engine
                 verified_engines.append(engine)
+        
+        # Enrich engines with version info and forwarded port
+        for engine in verified_engines:
+            # Add engine variant from config
+            engine.engine_variant = cfg.ENGINE_VARIANT
+            
+            # Get engine version info
+            try:
+                version_info = get_engine_version_info_sync(engine.host, engine.port)
+                if version_info:
+                    engine.platform = version_info.get("platform")
+                    engine.version = version_info.get("version")
+            except Exception as e:
+                logger.debug(f"Could not get version info for engine {engine.container_id[:12]}: {e}")
+            
+            # Get forwarded port for forwarded engines
+            if engine.forwarded and engine.vpn_container:
+                try:
+                    port = get_forwarded_port_sync(engine.vpn_container)
+                    if port:
+                        engine.forwarded_port = port
+                except Exception as e:
+                    logger.debug(f"Could not get forwarded port for engine {engine.container_id[:12]}: {e}")
         
         # Sort engines by port number for consistent ordering
         verified_engines.sort(key=lambda e: e.port)
@@ -402,9 +460,16 @@ def by_label(key: str, value: str):
     return res
 
 @app.get("/vpn/status")
-def get_vpn_status_endpoint():
-    """Get VPN (Gluetun) status information."""
-    return get_vpn_status()
+async def get_vpn_status_endpoint():
+    """
+    Get VPN (Gluetun) status information with location data.
+    
+    Location data (provider, country, city, region) is now obtained directly from:
+    - Provider: VPN_SERVICE_PROVIDER docker environment variable
+    - Location: Gluetun's /v1/publicip/ip endpoint
+    """
+    vpn_status = get_vpn_status()
+    return vpn_status
 
 @app.get("/vpn/publicip")
 def get_vpn_publicip_endpoint():
