@@ -146,13 +146,21 @@ if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
         Catch-all route to serve index.html for all /panel/* routes.
         This enables direct navigation to subroutes like /panel/engines.
         """
+        # Sanitize the path to prevent directory traversal attacks
+        # Resolve to absolute path and ensure it's within panel_dir
+        panel_dir_abs = os.path.abspath(panel_dir)
+        requested_path = os.path.abspath(os.path.join(panel_dir, full_path))
+        
+        # Security check: ensure the requested path is within panel_dir
+        if not requested_path.startswith(panel_dir_abs + os.sep) and requested_path != panel_dir_abs:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
         # Check if it's a request for an actual file (has extension)
-        file_path = os.path.join(panel_dir, full_path)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
+        if os.path.isfile(requested_path):
+            return FileResponse(requested_path)
         
         # Otherwise, serve index.html for React Router
-        index_path = os.path.join(panel_dir, "index.html")
+        index_path = os.path.join(panel_dir_abs, "index.html")
         if os.path.exists(index_path):
             return FileResponse(index_path)
         else:
