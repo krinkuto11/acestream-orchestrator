@@ -204,11 +204,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
               </div>
               
               {/* Extended Stats from analyze_content API */}
-              {extendedStatsLoading && (
-                <div className="col-span-2">
-                  <p className="text-sm text-muted-foreground">Loading extended stats...</p>
-                </div>
-              )}
+              {/* extended stats loading indicator removed to reduce UI clutter */}
               
               {extendedStats && (
                 <>

@@ -266,11 +266,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, deb
                 <p className="text-sm font-medium">{formatTime(stream.started_at)}</p>
               </div>
               
-              {extendedStatsLoading && (
-                <div className="col-span-2">
-                  <p className="text-sm text-muted-foreground">Loading extended stats...</p>
-                </div>
-              )}
+              {/* Extended stats loading indicator intentionally removed to reduce UI clutter */}
               
               {debugMode && extendedStatsError && (
                 <div className="col-span-2">
