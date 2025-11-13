@@ -268,7 +268,7 @@ class VpnContainerMonitor:
         """Fetch the forwarded port from Gluetun API and cache it."""
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(f"http://{self.container_name}:{cfg.GLUETUN_API_PORT}/v1/openvpn/portforwarded", timeout=10)
+                response = await client.get(f"http://{self.container_name}:{cfg.GLUETUN_API_PORT}/v1/portforward", timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 port = data.get("port")
@@ -850,7 +850,7 @@ def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[in
     # If no cached port available, make API call
     try:
         with httpx.Client() as client:
-            response = client.get(f"http://{target_container}:{cfg.GLUETUN_API_PORT}/v1/openvpn/portforwarded", timeout=10)
+            response = client.get(f"http://{target_container}:{cfg.GLUETUN_API_PORT}/v1/portforward", timeout=10)
             response.raise_for_status()
             data = response.json()
             port = data.get("port")
