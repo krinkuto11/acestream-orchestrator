@@ -134,6 +134,8 @@ function App() {
                       streams={streams}
                       vpnStatus={vpnStatus}
                       orchestratorStatus={orchestratorStatus}
+                      orchUrl={orchUrl}
+                      apiKey={apiKey}
                     />
                   } 
                 />

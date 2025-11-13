@@ -175,7 +175,65 @@ function SystemStatus({ vpnStatus, orchestratorStatus }) {
   )
 }
 
-function RecentActivity({ streams, engines }) {
+function StreamCard({ stream, orchUrl, apiKey }) {
+  const [title, setTitle] = React.useState(null)
+  const [loading, setLoading] = React.useState(true)
+
+  React.useEffect(() => {
+    const fetchTitle = async () => {
+      try {
+        const headers = {}
+        if (apiKey) {
+          headers['Authorization'] = `Bearer ${apiKey}`
+        }
+        
+        const response = await fetch(
+          `${orchUrl}/streams/${encodeURIComponent(stream.id)}/extended-stats`,
+          { headers }
+        )
+        
+        if (response.ok) {
+          const data = await response.json()
+          if (data.title) {
+            setTitle(data.title)
+          }
+        }
+      } catch (err) {
+        console.debug('Failed to fetch title for stream:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    
+    fetchTitle()
+  }, [stream.id, orchUrl, apiKey])
+
+  const displayText = loading ? 'Loading...' : (title || stream.key || 'N/A')
+
+  return (
+    <div className="flex items-center justify-between border-b pb-2 last:border-0">
+      <div className="flex-1 truncate">
+        <p className="text-sm font-medium truncate">{stream.id.slice(0, 16)}...</p>
+        <p className="text-xs text-muted-foreground truncate" title={displayText}>
+          {displayText}
+        </p>
+        <div className="flex gap-3 mt-1">
+          <span className="text-xs flex items-center gap-1 text-green-600 dark:text-green-400">
+            <Download className="h-3 w-3" />
+            {formatBytesPerSecond((stream.speed_down || 0) * 1024)}
+          </span>
+          <span className="text-xs flex items-center gap-1 text-red-600 dark:text-red-400">
+            <Upload className="h-3 w-3" />
+            {formatBytesPerSecond((stream.speed_up || 0) * 1024)}
+          </span>
+        </div>
+      </div>
+      <Badge variant="success" className="ml-2">Active</Badge>
+    </div>
+  )
+}
+
+function RecentActivity({ streams, engines, orchUrl, apiKey }) {
   const recentStreams = streams.slice(0, 5)
   const recentEngines = engines.slice(0, 5)
 
@@ -191,23 +249,12 @@ function RecentActivity({ streams, engines }) {
           ) : (
             <div className="space-y-2">
               {recentStreams.map((stream) => (
-                <div key={stream.id} className="flex items-center justify-between border-b pb-2 last:border-0">
-                  <div className="flex-1 truncate">
-                    <p className="text-sm font-medium truncate">{stream.id.slice(0, 16)}...</p>
-                    <p className="text-xs text-muted-foreground">{stream.content_key || 'N/A'}</p>
-                    <div className="flex gap-3 mt-1">
-                      <span className="text-xs flex items-center gap-1 text-green-600 dark:text-green-400">
-                        <Download className="h-3 w-3" />
-                        {formatBytesPerSecond((stream.speed_down || 0) * 1024)}
-                      </span>
-                      <span className="text-xs flex items-center gap-1 text-red-600 dark:text-red-400">
-                        <Upload className="h-3 w-3" />
-                        {formatBytesPerSecond((stream.speed_up || 0) * 1024)}
-                      </span>
-                    </div>
-                  </div>
-                  <Badge variant="success" className="ml-2">Active</Badge>
-                </div>
+                <StreamCard 
+                  key={stream.id} 
+                  stream={stream} 
+                  orchUrl={orchUrl}
+                  apiKey={apiKey}
+                />
               ))}
             </div>
           )}
@@ -249,7 +296,7 @@ function RecentActivity({ streams, engines }) {
   )
 }
 
-export function OverviewPage({ engines, streams, vpnStatus, orchestratorStatus }) {
+export function OverviewPage({ engines, streams, vpnStatus, orchestratorStatus, orchUrl, apiKey }) {
   const healthyEngines = engines.filter(e => e.health_status === 'healthy').length
 
   return (
@@ -270,7 +317,12 @@ export function OverviewPage({ engines, streams, vpnStatus, orchestratorStatus }
 
       <SystemStatus vpnStatus={vpnStatus} orchestratorStatus={orchestratorStatus} />
 
-      <RecentActivity streams={streams} engines={engines} />
+      <RecentActivity 
+        streams={streams} 
+        engines={engines} 
+        orchUrl={orchUrl}
+        apiKey={apiKey}
+      />
     </div>
   )
 }

@@ -467,6 +467,30 @@ def get_stream_stats(stream_id: str, since: Optional[datetime] = None):
         snaps = [x for x in snaps if x.ts >= since]
     return snaps
 
+@app.get("/streams/{stream_id}/extended-stats")
+async def get_stream_extended_stats(stream_id: str):
+    """
+    Get extended statistics for a stream by querying the AceStream analyze_content API.
+    This returns additional metadata like content_type, title, is_live, mime, categories, etc.
+    """
+    from .utils.acestream_api import get_stream_extended_stats
+    
+    # Get the stream from state
+    stream = state.get_stream(stream_id)
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+    
+    if not stream.stat_url:
+        raise HTTPException(status_code=400, detail="Stream has no stat URL")
+    
+    # Fetch extended stats
+    extended_stats = await get_stream_extended_stats(stream.stat_url)
+    
+    if extended_stats is None:
+        raise HTTPException(status_code=503, detail="Unable to fetch extended stats from AceStream engine")
+    
+    return extended_stats
+
 # by-label
 from .services.inspect import inspect_container
 from .services.health import list_managed
