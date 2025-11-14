@@ -75,6 +75,25 @@ Comprehensive VPN monitoring section:
 - **Forwarded port**: Current port forwarding configuration
 - **Last check**: Timestamp of most recent VPN health check
 
+### ⚙️ Advanced Engine Settings (NEW)
+Comprehensive engine parameter configuration interface:
+- **Platform Detection**: Automatically detects system architecture (amd64/arm32/arm64)
+- **Custom Variant Toggle**: Enable/disable custom engine parameters
+- **ARM Version Selection**: Choose between AceStream v3.2.13 or v3.2.14 for ARM platforms
+- **Parameter Configuration**: 35 configurable parameters organized into 7 categories:
+  - **Basic Settings**: Console mode, bind options, access tokens
+  - **Cache Configuration**: Memory/disk cache settings and sizes
+  - **Buffer Settings**: Live and VOD buffer configuration
+  - **Connection Settings**: P2P connections, bandwidth limits, port settings
+  - **WebRTC Settings**: WebRTC connection options
+  - **Advanced Settings**: Stats reporting, slot management
+  - **Logging Settings**: Debug levels, log files, log rotation
+- **Per-Parameter Control**: Each parameter can be individually enabled/disabled
+- **Unit Display**: Proper units shown (MB, GB, seconds, etc.)
+- **VPN-Aware**: P2P port configuration shows warnings when VPN is enabled
+- **Save & Reprovision**: Save settings and reprovision all engines with new configuration
+- **Real-time Validation**: Configuration validated before saving
+
 ## Configuration
 
 ### Connection Settings
@@ -129,6 +148,10 @@ The dashboard interfaces with the following endpoints:
 - `GET /vpn/status` - VPN status and configuration
 - `GET /streams/{id}/stats` - Historical stream statistics
 - `DELETE /containers/{id}` - Engine deletion (protected)
+- `GET /custom-variant/platform` - Platform detection (NEW)
+- `GET /custom-variant/config` - Custom variant configuration (NEW)
+- `POST /custom-variant/config` - Update custom variant (protected, NEW)
+- `POST /custom-variant/reprovision` - Reprovision engines (protected, NEW)
 
 ### Browser Compatibility
 - Modern browsers with ES6+ support
@@ -182,19 +205,26 @@ For non-Docker deployments:
 
 ```
 src/
-├── App.jsx                 # Main application component
-├── main.jsx               # React entry point with theme
+├── App.jsx                           # Main application component
+├── main.jsx                         # React entry point with theme
 ├── components/
-│   ├── Header.jsx         # AppBar with settings
-│   ├── KPICards.jsx       # Dashboard metrics
-│   ├── EngineList.jsx     # Engine status cards
-│   ├── StreamList.jsx     # Active streams
-│   ├── VPNStatus.jsx      # VPN monitoring
-│   └── StreamDetail.jsx   # Stream details with charts
+│   ├── ModernSidebar.jsx            # Navigation sidebar
+│   ├── ModernHeader.jsx             # AppBar with settings
+│   ├── VPNStatus.jsx                # VPN monitoring
+│   └── ThemeProvider.jsx            # Dark/light theme
+├── pages/
+│   ├── OverviewPage.jsx             # Dashboard home
+│   ├── EnginesPage.jsx              # Engine status cards
+│   ├── StreamsPage.jsx              # Active streams
+│   ├── HealthPage.jsx               # Health monitoring
+│   ├── VPNPage.jsx                  # VPN details
+│   ├── MetricsPage.jsx              # Metrics and stats
+│   ├── SettingsPage.jsx             # Connection settings
+│   └── AdvancedEngineSettingsPage.jsx  # Custom variant config (NEW)
 ├── hooks/
-│   └── useLocalStorage.js # Persistent settings hook
+│   └── useLocalStorage.js           # Persistent settings hook
 └── utils/
-    └── formatters.js      # Date/time/size formatting
+    └── formatters.js                # Date/time/size formatting
 ```
 
 ### Performance Features

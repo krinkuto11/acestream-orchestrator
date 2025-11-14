@@ -47,6 +47,7 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 - **Multiple Deployment Modes**: Standalone, single VPN, or redundant VPN with automatic failover
 - **Emergency Mode**: Automatic failover and recovery when one VPN fails in redundant mode
 - **Multiple Engine Variants**: Support for AMD64 and ARM architectures with optimized configurations
+- **Custom Engine Variants** (NEW): Configure individual AceStream parameters via UI with 35+ options
 - **Health Monitoring**: Automatic detection of engine issues with real-time status updates
 - **Usage Tracking**: Track engine idle time for intelligent load balancing
 - **Modern Web Dashboard**: Real-time monitoring interface built with React and Material-UI
@@ -88,6 +89,12 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
   - ARM32 and ARM64 variants
   - Configuration methods
   - P2P port handling
+  - **Custom Engine Variants** (NEW)
+    - Configure 35+ AceStream parameters via UI
+    - Platform auto-detection
+    - ARM version selection
+    - Per-parameter enable/disable
+    - VPN-aware configuration
 
 ### VPN Integration
 
