@@ -1,0 +1,217 @@
+{
+  "enabled": false,
+  "platform": "amd64",
+  "arm_version": "3.2.13",
+  "parameters": [
+    {
+      "name": "--client-console",
+      "type": "flag",
+      "value": true,
+      "enabled": true
+    },
+    {
+      "name": "--bind-all",
+      "type": "flag",
+      "value": true,
+      "enabled": true
+    },
+    {
+      "name": "--service-remote-access",
+      "type": "flag",
+      "value": false,
+      "enabled": false
+    },
+    {
+      "name": "--allow-user-config",
+      "type": "flag",
+      "value": false,
+      "enabled": false
+    },
+    {
+      "name": "--stats-report-peers",
+      "type": "flag",
+      "value": false,
+      "enabled": false
+    },
+    {
+      "name": "--access-token",
+      "type": "string",
+      "value": "",
+      "enabled": false
+    },
+    {
+      "name": "--service-access-token",
+      "type": "string",
+      "value": "",
+      "enabled": false
+    },
+    {
+      "name": "--cache-dir",
+      "type": "path",
+      "value": "~/.ACEStream",
+      "enabled": false
+    },
+    {
+      "name": "--log-file",
+      "type": "path",
+      "value": "",
+      "enabled": false
+    },
+    {
+      "name": "--live-cache-type",
+      "type": "string",
+      "value": "memory",
+      "enabled": true
+    },
+    {
+      "name": "--live-cache-size",
+      "type": "bytes",
+      "value": 268435456,
+      "enabled": true
+    },
+    {
+      "name": "--vod-cache-type",
+      "type": "string",
+      "value": "disk",
+      "enabled": true
+    },
+    {
+      "name": "--vod-cache-size",
+      "type": "bytes",
+      "value": 536870912,
+      "enabled": true
+    },
+    {
+      "name": "--vod-drop-max-age",
+      "type": "int",
+      "value": 0,
+      "enabled": false
+    },
+    {
+      "name": "--max-file-size",
+      "type": "bytes",
+      "value": 2147483648,
+      "enabled": true
+    },
+    {
+      "name": "--live-buffer",
+      "type": "int",
+      "value": 10,
+      "enabled": true
+    },
+    {
+      "name": "--vod-buffer",
+      "type": "int",
+      "value": 5,
+      "enabled": true
+    },
+    {
+      "name": "--refill-buffer-interval",
+      "type": "int",
+      "value": 5,
+      "enabled": true
+    },
+    {
+      "name": "--max-connections",
+      "type": "int",
+      "value": 200,
+      "enabled": true
+    },
+    {
+      "name": "--max-peers",
+      "type": "int",
+      "value": 40,
+      "enabled": true
+    },
+    {
+      "name": "--max-upload-slots",
+      "type": "int",
+      "value": 4,
+      "enabled": true
+    },
+    {
+      "name": "--auto-slots",
+      "type": "int",
+      "value": 1,
+      "enabled": true
+    },
+    {
+      "name": "--download-limit",
+      "type": "int",
+      "value": 0,
+      "enabled": false
+    },
+    {
+      "name": "--upload-limit",
+      "type": "int",
+      "value": 0,
+      "enabled": false
+    },
+    {
+      "name": "--port",
+      "type": "int",
+      "value": 8621,
+      "enabled": false
+    },
+    {
+      "name": "--webrtc-allow-outgoing-connections",
+      "type": "int",
+      "value": 0,
+      "enabled": false
+    },
+    {
+      "name": "--webrtc-allow-incoming-connections",
+      "type": "int",
+      "value": 0,
+      "enabled": false
+    },
+    {
+      "name": "--stats-report-interval",
+      "type": "int",
+      "value": 60,
+      "enabled": true
+    },
+    {
+      "name": "--slots-manager-use-cpu-limit",
+      "type": "int",
+      "value": 0,
+      "enabled": false
+    },
+    {
+      "name": "--core-skip-have-before-playback-pos",
+      "type": "int",
+      "value": 0,
+      "enabled": false
+    },
+    {
+      "name": "--core-dlr-periodic-check-interval",
+      "type": "int",
+      "value": 10,
+      "enabled": true
+    },
+    {
+      "name": "--check-live-pos-interval",
+      "type": "int",
+      "value": 10,
+      "enabled": true
+    },
+    {
+      "name": "--log-debug",
+      "type": "int",
+      "value": 0,
+      "enabled": false
+    },
+    {
+      "name": "--log-max-size",
+      "type": "bytes",
+      "value": 10485760,
+      "enabled": true
+    },
+    {
+      "name": "--log-backup-count",
+      "type": "int",
+      "value": 3,
+      "enabled": true
+    }
+  ]
+}

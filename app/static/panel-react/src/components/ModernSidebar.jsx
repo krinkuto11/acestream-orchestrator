@@ -9,7 +9,8 @@ import {
   BarChart3, 
   ShieldCheck,
   ChevronLeft,
-  ChevronRight 
+  ChevronRight,
+  Sliders
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
@@ -23,6 +24,7 @@ const navigation = [
   { name: 'VPN', href: '/vpn', icon: Wifi },
   { name: 'Metrics', href: '/metrics', icon: BarChart3 },
   { name: 'Settings', href: '/settings', icon: Settings },
+  { name: 'Advanced Engine', href: '/advanced-engine-settings', icon: Sliders },
 ]
 
 export function ModernSidebar() {

@@ -10,6 +10,7 @@ import { HealthPage } from './pages/HealthPage'
 import { VPNPage } from './pages/VPNPage'
 import { MetricsPage } from './pages/MetricsPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { AdvancedEngineSettingsPage } from './pages/AdvancedEngineSettingsPage'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import { Toaster } from '@/components/ui/sonner'
 import { toast } from 'sonner'
@@ -195,6 +196,16 @@ function App() {
                       setApiKey={setApiKey}
                       refreshInterval={refreshInterval}
                       setRefreshInterval={setRefreshInterval}
+                    />
+                  } 
+                />
+                <Route 
+                  path="/advanced-engine-settings" 
+                  element={
+                    <AdvancedEngineSettingsPage
+                      orchUrl={orchUrl}
+                      apiKey={apiKey}
+                      fetchJSON={fetchJSON}
                     />
                   } 
                 />
