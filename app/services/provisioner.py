@@ -298,6 +298,7 @@ def get_variant_config(variant: str):
     Get the configuration for a specific engine variant.
     
     This is a public API for retrieving variant configuration.
+    Supports custom variants when enabled via custom_variant_config.
     
     Args:
         variant: The engine variant name. Valid values are:
@@ -305,6 +306,7 @@ def get_variant_config(variant: str):
                  - 'jopsis-amd64'
                  - 'jopsis-arm32'
                  - 'jopsis-arm64'
+                 - 'custom' (when custom variant is enabled)
     
     Returns:
         dict with keys:
@@ -312,7 +314,20 @@ def get_variant_config(variant: str):
             - config_type: "env" or "cmd" (always present)
             - base_args: Base arguments string (for ENV-based jopsis-amd64 variant)
             - base_cmd: Base command list (for CMD-based arm32/arm64 variants)
+            - is_custom: True if this is a custom variant
     """
+    # Check if custom variant is enabled and should override
+    from .custom_variant_config import is_custom_variant_enabled, get_config, build_variant_config_from_custom
+    
+    if is_custom_variant_enabled():
+        try:
+            custom_config = get_config()
+            if custom_config:
+                logger.info("Using custom engine variant configuration")
+                return build_variant_config_from_custom(custom_config)
+        except Exception as e:
+            logger.error(f"Failed to load custom variant config, falling back to standard variants: {e}")
+    
     configs = {
         "krinkuto11-amd64": {
             "image": "ghcr.io/krinkuto11/acestream-http-proxy:latest",

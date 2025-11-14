@@ -690,4 +690,99 @@ def get_orchestrator_status():
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
+# Custom Engine Variant endpoints
+from .services.custom_variant_config import (
+    detect_platform, 
+    get_config as get_custom_config, 
+    save_config as save_custom_config,
+    reload_config,
+    validate_config,
+    CustomVariantConfig
+)
+
+@app.get("/custom-variant/platform")
+def get_platform_info():
+    """Get detected platform information."""
+    return {
+        "platform": detect_platform(),
+        "supported_platforms": ["amd64", "arm32", "arm64"]
+    }
+
+@app.get("/custom-variant/config")
+def get_custom_variant_config():
+    """Get current custom variant configuration."""
+    config = get_custom_config()
+    if config:
+        return config.dict()
+    else:
+        raise HTTPException(status_code=500, detail="Failed to load custom variant configuration")
+
+@app.post("/custom-variant/config", dependencies=[Depends(require_api_key)])
+def update_custom_variant_config(config: CustomVariantConfig):
+    """
+    Update custom variant configuration.
+    Validates the configuration before saving.
+    """
+    # Validate the configuration
+    is_valid, error_msg = validate_config(config)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=f"Invalid configuration: {error_msg}")
+    
+    # Save the configuration
+    success = save_custom_config(config)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save configuration")
+    
+    # Reload the configuration to ensure it's active
+    reload_config()
+    
+    return {
+        "message": "Configuration saved successfully",
+        "config": config.dict()
+    }
+
+@app.post("/custom-variant/reprovision", dependencies=[Depends(require_api_key)])
+async def reprovision_all_engines(background_tasks: BackgroundTasks):
+    """
+    Delete all engines and reprovision them with current settings.
+    This is a potentially disruptive operation.
+    """
+    from .services.health import list_managed
+    
+    # Get all current engines
+    engines = list_managed()
+    engine_ids = [c.id for c in engines]
+    
+    logger.info(f"Starting reprovision of {len(engine_ids)} engines with new custom variant settings")
+    
+    # Delete all engines
+    for engine_id in engine_ids:
+        try:
+            stop_container(engine_id)
+            logger.info(f"Stopped engine {engine_id[:12]}")
+        except Exception as e:
+            logger.error(f"Failed to stop engine {engine_id[:12]}: {e}")
+    
+    # Clear state
+    cleanup_on_shutdown()
+    
+    # Reload custom config to ensure we have latest settings
+    reload_config()
+    
+    # Reprovision minimum replicas in background
+    async def reprovision_task():
+        await asyncio.sleep(2)  # Give time for cleanup
+        try:
+            await ensure_minimum()
+            logger.info(f"Successfully reprovisioned engines with new settings")
+        except Exception as e:
+            logger.error(f"Failed to reprovision engines: {e}")
+    
+    background_tasks.add_task(reprovision_task)
+    
+    return {
+        "message": f"Started reprovisioning of {len(engine_ids)} engines",
+        "deleted_count": len(engine_ids)
+    }
+
 # WebSocket endpoint removed - using simple polling approach
