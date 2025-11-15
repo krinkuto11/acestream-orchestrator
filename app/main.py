@@ -448,9 +448,9 @@ def get_engines():
                     engine.platform = version_info.get("platform")
                     engine.version = version_info.get("version")
                 else:
-                    logger.warning(f"No version info returned for engine {engine.container_id[:12]} at {engine.host}:{engine.port}")
+                    logger.debug(f"No version info returned for engine {engine.container_id[:12]} at {engine.host}:{engine.port}")
             except Exception as e:
-                logger.warning(f"Could not get version info for engine {engine.container_id[:12]} at {engine.host}:{engine.port}: {e}")
+                logger.debug(f"Could not get version info for engine {engine.container_id[:12]} at {engine.host}:{engine.port}: {e}")
             
             # Get forwarded port for forwarded engines
             if engine.forwarded and engine.vpn_container:
