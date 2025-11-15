@@ -433,6 +433,10 @@ def get_engines():
             from .services.custom_variant_config import is_custom_variant_enabled
             if is_custom_variant_enabled():
                 engine.is_custom_variant = True
+                # Add the active template name if available
+                template_name = get_active_template_name()
+                if template_name:
+                    engine.template_name = template_name
             
             # Get engine version info
             try:
@@ -705,6 +709,19 @@ from .services.custom_variant_config import (
     CustomVariantConfig
 )
 
+# Template management
+from .services.template_manager import (
+    list_templates,
+    get_template,
+    save_template,
+    delete_template,
+    export_template,
+    import_template,
+    set_active_template,
+    get_active_template_id,
+    get_active_template_name
+)
+
 # Global state for reprovisioning tracking
 _reprovision_state = {
     "in_progress": False,
@@ -833,5 +850,129 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
         "message": f"Started reprovisioning of {len(engine_ids)} engines",
         "deleted_count": len(engine_ids)
     }
+
+# Template Management Endpoints
+@app.get("/custom-variant/templates")
+def list_all_templates():
+    """List all template slots with metadata."""
+    templates = list_templates()
+    active_template_id = get_active_template_id()
+    
+    return {
+        "templates": templates,
+        "active_template_id": active_template_id
+    }
+
+@app.get("/custom-variant/templates/{slot_id}")
+def get_template_by_id(slot_id: int):
+    """Get a specific template by slot ID."""
+    if slot_id < 1 or slot_id > 10:
+        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
+    
+    template = get_template(slot_id)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template {slot_id} not found")
+    
+    return template.to_dict()
+
+@app.post("/custom-variant/templates/{slot_id}", dependencies=[Depends(require_api_key)])
+def save_template_to_slot(slot_id: int, request: dict):
+    """Save a template to a specific slot."""
+    if slot_id < 1 or slot_id > 10:
+        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
+    
+    if "name" not in request or "config" not in request:
+        raise HTTPException(status_code=400, detail="Request must include 'name' and 'config'")
+    
+    try:
+        config = CustomVariantConfig(**request["config"])
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid config: {str(e)}")
+    
+    # Validate the configuration
+    is_valid, error_msg = validate_config(config)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=f"Invalid configuration: {error_msg}")
+    
+    success = save_template(slot_id, request["name"], config)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save template")
+    
+    return {"message": f"Template {slot_id} saved successfully"}
+
+@app.delete("/custom-variant/templates/{slot_id}", dependencies=[Depends(require_api_key)])
+def delete_template_by_id(slot_id: int):
+    """Delete a template from a specific slot."""
+    if slot_id < 1 or slot_id > 10:
+        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
+    
+    # Don't allow deleting the active template
+    if slot_id == get_active_template_id():
+        raise HTTPException(status_code=400, detail="Cannot delete the currently active template")
+    
+    success = delete_template(slot_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Template {slot_id} not found")
+    
+    return {"message": f"Template {slot_id} deleted successfully"}
+
+@app.post("/custom-variant/templates/{slot_id}/activate", dependencies=[Depends(require_api_key)])
+def activate_template(slot_id: int):
+    """Activate a template (load it as current config)."""
+    if slot_id < 1 or slot_id > 10:
+        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
+    
+    template = get_template(slot_id)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template {slot_id} not found")
+    
+    # Save the template config as the current custom variant config
+    success = save_custom_config(template.config)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to activate template")
+    
+    # Reload the configuration
+    reload_config()
+    
+    # Set as active template
+    set_active_template(slot_id)
+    
+    return {
+        "message": f"Template '{template.name}' activated successfully",
+        "template_id": slot_id,
+        "template_name": template.name
+    }
+
+@app.get("/custom-variant/templates/{slot_id}/export")
+def export_template_endpoint(slot_id: int):
+    """Export a template as JSON."""
+    if slot_id < 1 or slot_id > 10:
+        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
+    
+    json_data = export_template(slot_id)
+    if not json_data:
+        raise HTTPException(status_code=404, detail=f"Template {slot_id} not found")
+    
+    from starlette.responses import Response
+    return Response(
+        content=json_data,
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=template_{slot_id}.json"}
+    )
+
+@app.post("/custom-variant/templates/{slot_id}/import", dependencies=[Depends(require_api_key)])
+def import_template_endpoint(slot_id: int, request: dict):
+    """Import a template from JSON."""
+    if slot_id < 1 or slot_id > 10:
+        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
+    
+    if "json_data" not in request:
+        raise HTTPException(status_code=400, detail="Request must include 'json_data'")
+    
+    success, error_msg = import_template(slot_id, request["json_data"])
+    if not success:
+        raise HTTPException(status_code=400, detail=error_msg)
+    
+    return {"message": f"Template {slot_id} imported successfully"}
 
 # WebSocket endpoint removed - using simple polling approach
