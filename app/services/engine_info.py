@@ -85,5 +85,5 @@ def get_engine_version_info_sync(host: str, port: int) -> Optional[Dict]:
                 return None
                 
     except Exception as e:
-        logger.debug(f"Failed to get engine version from {host}:{port}: {e}")
+        logger.warning(f"Failed to get engine version from {host}:{port}: {e}")
         return None

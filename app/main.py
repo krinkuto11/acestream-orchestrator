@@ -426,18 +426,20 @@ def get_engines():
         
         # Enrich engines with version info and forwarded port
         for engine in verified_engines:
-            # Only set engine_variant if not already set (from labels)
-            if not engine.engine_variant:
-                engine.engine_variant = cfg.ENGINE_VARIANT
-            
-            # Check if custom variant is enabled and add flag
+            # Check if custom variant is enabled and override engine_variant with template name
             from .services.custom_variant_config import is_custom_variant_enabled
             if is_custom_variant_enabled():
-                engine.is_custom_variant = True
-                # Add the active template name if available
+                # For custom variants, use the template name as engine_variant
                 template_name = get_active_template_name()
                 if template_name:
-                    engine.template_name = template_name
+                    engine.engine_variant = template_name
+                elif not engine.engine_variant:
+                    # Fallback to config if no template name and no existing variant
+                    engine.engine_variant = cfg.ENGINE_VARIANT
+            else:
+                # For standard variants, only set engine_variant if not already set (from labels)
+                if not engine.engine_variant:
+                    engine.engine_variant = cfg.ENGINE_VARIANT
             
             # Get engine version info
             try:
@@ -445,8 +447,10 @@ def get_engines():
                 if version_info:
                     engine.platform = version_info.get("platform")
                     engine.version = version_info.get("version")
+                else:
+                    logger.warning(f"No version info returned for engine {engine.container_id[:12]} at {engine.host}:{engine.port}")
             except Exception as e:
-                logger.debug(f"Could not get version info for engine {engine.container_id[:12]}: {e}")
+                logger.warning(f"Could not get version info for engine {engine.container_id[:12]} at {engine.host}:{engine.port}: {e}")
             
             # Get forwarded port for forwarded engines
             if engine.forwarded and engine.vpn_container:
@@ -454,8 +458,10 @@ def get_engines():
                     port = get_forwarded_port_sync(engine.vpn_container)
                     if port:
                         engine.forwarded_port = port
+                    else:
+                        logger.debug(f"No forwarded port available for VPN {engine.vpn_container} (engine {engine.container_id[:12]})")
                 except Exception as e:
-                    logger.debug(f"Could not get forwarded port for engine {engine.container_id[:12]}: {e}")
+                    logger.warning(f"Could not get forwarded port for engine {engine.container_id[:12]} on VPN {engine.vpn_container}: {e}")
         
         # Sort engines by port number for consistent ordering
         verified_engines.sort(key=lambda e: e.port)
