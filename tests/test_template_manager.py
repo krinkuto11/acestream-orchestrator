@@ -11,6 +11,7 @@ from app.services.template_manager import (
     delete_template,
     export_template,
     import_template,
+    rename_template,
     TEMPLATE_DIR
 )
 from app.services.custom_variant_config import (
@@ -139,6 +140,35 @@ def test_invalid_slot_id():
         get_template(11)
 
 
+def test_rename_template():
+    """Test renaming a template"""
+    # Create a test template
+    platform = detect_platform()
+    config = CustomVariantConfig(
+        enabled=True,
+        platform=platform,
+        parameters=get_default_parameters(platform)
+    )
+    save_template(5, "Original Name", config)
+    
+    # Rename it
+    success = rename_template(5, "New Name")
+    assert success
+    
+    # Verify the name changed
+    template = get_template(5)
+    assert template is not None
+    assert template.name == "New Name"
+    assert template.config.enabled == True  # Config should be unchanged
+    
+    # Clean up
+    delete_template(5)
+    
+    # Test renaming non-existent template
+    success = rename_template(6, "Should Fail")
+    assert not success
+
+
 def test_multiple_templates():
     """Test managing multiple templates"""
     platform = detect_platform()
@@ -190,6 +220,9 @@ if __name__ == "__main__":
     
     test_invalid_slot_id()
     print("✓ Invalid slot ID")
+    
+    test_rename_template()
+    print("✓ Rename template")
     
     test_multiple_templates()
     print("✓ Multiple templates")

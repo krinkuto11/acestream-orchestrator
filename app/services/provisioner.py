@@ -480,13 +480,19 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     
     # Determine the actual engine variant name (important for custom variants)
     from .custom_variant_config import is_custom_variant_enabled, get_config
+    from .template_manager import get_active_template_name
     if is_custom_variant_enabled():
-        # For custom variants, store a descriptive name
-        custom_config = get_config()
-        if custom_config:
-            engine_variant_name = f"{custom_config.platform}"
+        # For custom variants, use the template name if available
+        template_name = get_active_template_name()
+        if template_name:
+            engine_variant_name = template_name
         else:
-            engine_variant_name = cfg.ENGINE_VARIANT
+            # Fallback to platform if no template name
+            custom_config = get_config()
+            if custom_config:
+                engine_variant_name = f"{custom_config.platform}"
+            else:
+                engine_variant_name = cfg.ENGINE_VARIANT
     else:
         # Use the configured variant name
         engine_variant_name = cfg.ENGINE_VARIANT

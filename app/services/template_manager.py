@@ -247,3 +247,31 @@ def get_active_template_name() -> Optional[str]:
     
     template = get_template(_active_template_id)
     return template.name if template else None
+
+
+def rename_template(slot_id: int, new_name: str) -> bool:
+    """
+    Rename a template.
+    
+    Args:
+        slot_id: Template slot number (1-10)
+        new_name: New name for the template
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Load existing template
+        template = get_template(slot_id)
+        if not template:
+            logger.error(f"Cannot rename: template {slot_id} does not exist")
+            return False
+        
+        # Save with new name but same config
+        success = save_template(slot_id, new_name, template.config)
+        if success:
+            logger.info(f"Renamed template {slot_id} to '{new_name}'")
+        return success
+    except Exception as e:
+        logger.error(f"Failed to rename template {slot_id}: {e}")
+        return False

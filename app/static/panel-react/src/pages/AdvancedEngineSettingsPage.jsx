@@ -6,7 +6,7 @@ import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Save, RefreshCw, AlertCircle, Info, Cpu, Upload, Download, Trash2, Plus } from 'lucide-react'
+import { Save, RefreshCw, AlertCircle, Info, Cpu, Upload, Download, Trash2, Plus, Edit, Pencil } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
@@ -107,6 +107,9 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   const [selectedTemplateSlot, setSelectedTemplateSlot] = useState(null)
   const [templateName, setTemplateName] = useState('')
   const [showTemplateDialog, setShowTemplateDialog] = useState(false)
+  const [showRenameDialog, setShowRenameDialog] = useState(false)
+  const [renameSlotId, setRenameSlotId] = useState(null)
+  const [renameValue, setRenameValue] = useState('')
 
   // Fetch templates
   const fetchTemplates = useCallback(async () => {
@@ -357,6 +360,41 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     }
   }, [orchUrl, apiKey, fetchJSON, fetchTemplates])
 
+  const handleRenameTemplate = useCallback(async (slotId, newName) => {
+    try {
+      await fetchJSON(`${orchUrl}/custom-variant/templates/${slotId}/rename`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': apiKey
+        },
+        body: JSON.stringify({
+          name: newName
+        })
+      })
+      
+      toast.success(`Template renamed successfully`)
+      await fetchTemplates()
+      setShowRenameDialog(false)
+    } catch (err) {
+      toast.error(`Failed to rename template: ${err.message}`)
+    }
+  }, [orchUrl, apiKey, fetchJSON, fetchTemplates])
+
+  const handleEditTemplate = useCallback(async (slotId) => {
+    try {
+      // Load the template configuration
+      const template = await fetchJSON(`${orchUrl}/custom-variant/templates/${slotId}`)
+      
+      // Update the current config with the template's config
+      setConfig(template.config)
+      
+      toast.success(`Loaded template for editing. Make your changes and save.`)
+    } catch (err) {
+      toast.error(`Failed to load template for editing: ${err.message}`)
+    }
+  }, [orchUrl, fetchJSON])
+
   // Render a parameter input based on its type
   const renderParameter = useCallback((paramMeta, param) => {
     if (!param) return null
@@ -381,7 +419,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             {showVpnWarning && (
               <p className="text-xs text-amber-600 dark:text-amber-500 mt-1 flex items-center gap-1">
                 <AlertCircle className="h-3 w-3" />
-                When VPN is enabled, you can use Gluetun's forwarded port
+                When VPN is enabled, leaving this off will let the provisioner use Gluetun's forwarded port automatically
               </p>
             )}
           </div>
@@ -612,6 +650,28 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                         size="sm"
                         variant="ghost"
                         className="h-7 w-7 p-0"
+                        onClick={() => handleEditTemplate(template.slot_id)}
+                        title="Edit"
+                      >
+                        <Edit className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0"
+                        onClick={() => {
+                          setRenameSlotId(template.slot_id)
+                          setRenameValue(template.name)
+                          setShowRenameDialog(true)
+                        }}
+                        title="Rename"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0"
                         onClick={() => handleExportTemplate(template.slot_id)}
                         title="Export"
                       >
@@ -705,6 +765,41 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                       disabled={!templateName.trim()}
                     >
                       Save
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Rename template dialog */}
+          {showRenameDialog && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div className="bg-background p-6 rounded-lg max-w-md w-full mx-4 border">
+                <h3 className="text-lg font-semibold mb-4">Rename Template</h3>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="rename-template">New Template Name</Label>
+                    <Input
+                      id="rename-template"
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      placeholder="Enter new name"
+                      className="mt-1"
+                    />
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <Button
+                      variant="outline"
+                      onClick={() => setShowRenameDialog(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => handleRenameTemplate(renameSlotId, renameValue)}
+                      disabled={!renameValue.trim()}
+                    >
+                      Rename
                     </Button>
                   </div>
                 </div>
