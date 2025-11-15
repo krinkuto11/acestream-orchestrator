@@ -112,7 +112,7 @@ def get_template(slot_id: int) -> Optional[Template]:
             data = json.load(f)
         
         template = Template.from_dict(data)
-        logger.info(f"Loaded template {slot_id}: {template.name}")
+        logger.debug(f"Loaded template {slot_id}: {template.name}")
         return template
     except Exception as e:
         logger.error(f"Failed to load template {slot_id}: {e}")
