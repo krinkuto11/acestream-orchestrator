@@ -426,8 +426,9 @@ def get_engines():
         
         # Enrich engines with version info and forwarded port
         for engine in verified_engines:
-            # Add engine variant from config
-            engine.engine_variant = cfg.ENGINE_VARIANT
+            # Only set engine_variant if not already set (from labels)
+            if not engine.engine_variant:
+                engine.engine_variant = cfg.ENGINE_VARIANT
             
             # Check if custom variant is enabled and add flag
             from .services.custom_variant_config import is_custom_variant_enabled
