@@ -713,7 +713,8 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         last_stream_usage=None,
         last_cache_cleanup=None,
         cache_size_bytes=None,
-        vpn_container=vpn_container
+        vpn_container=vpn_container,
+        engine_variant=engine_variant_name
     )
     
     # Add to in-memory state
