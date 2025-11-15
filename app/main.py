@@ -429,6 +429,11 @@ def get_engines():
             # Add engine variant from config
             engine.engine_variant = cfg.ENGINE_VARIANT
             
+            # Check if custom variant is enabled and add flag
+            from .services.custom_variant_config import is_custom_variant_enabled
+            if is_custom_variant_enabled():
+                engine.is_custom_variant = True
+            
             # Get engine version info
             try:
                 version_info = get_engine_version_info_sync(engine.host, engine.port)
@@ -700,6 +705,14 @@ from .services.custom_variant_config import (
     CustomVariantConfig
 )
 
+# Global state for reprovisioning tracking
+_reprovision_state = {
+    "in_progress": False,
+    "status": "idle",  # idle, in_progress, success, error
+    "message": None,
+    "timestamp": None
+}
+
 @app.get("/custom-variant/platform")
 def get_platform_info():
     """Get detected platform information."""
@@ -741,13 +754,35 @@ def update_custom_variant_config(config: CustomVariantConfig):
         "config": config.dict()
     }
 
+@app.get("/custom-variant/reprovision/status")
+def get_reprovision_status():
+    """Get current reprovisioning status."""
+    return _reprovision_state
+
 @app.post("/custom-variant/reprovision", dependencies=[Depends(require_api_key)])
 async def reprovision_all_engines(background_tasks: BackgroundTasks):
     """
     Delete all engines and reprovision them with current settings.
     This is a potentially disruptive operation.
     """
+    global _reprovision_state
+    
+    # Check if already in progress
+    if _reprovision_state["in_progress"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Reprovisioning operation already in progress"
+        )
+    
     from .services.health import list_managed
+    
+    # Mark as in progress
+    _reprovision_state = {
+        "in_progress": True,
+        "status": "in_progress",
+        "message": "Reprovisioning engines...",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
     
     # Get all current engines
     engines = list_managed()
@@ -770,13 +805,27 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
     reload_config()
     
     # Reprovision minimum replicas in background
-    async def reprovision_task():
-        await asyncio.sleep(2)  # Give time for cleanup
+    def reprovision_task():
+        global _reprovision_state
+        import time
+        time.sleep(2)  # Give time for cleanup
         try:
-            await ensure_minimum()
+            ensure_minimum()
             logger.info(f"Successfully reprovisioned engines with new settings")
+            _reprovision_state = {
+                "in_progress": False,
+                "status": "success",
+                "message": "Successfully reprovisioned all engines",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
         except Exception as e:
             logger.error(f"Failed to reprovision engines: {e}")
+            _reprovision_state = {
+                "in_progress": False,
+                "status": "error",
+                "message": f"Failed to reprovision engines: {str(e)}",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
     
     background_tasks.add_task(reprovision_task)
     

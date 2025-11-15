@@ -96,6 +96,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [reprovisioning, setReprovisioning] = useState(false)
+  const [reprovisionStatus, setReprovisionStatus] = useState(null)
   const [config, setConfig] = useState(null)
   const [platform, setPlatform] = useState(null)
   const [vpnEnabled, setVpnEnabled] = useState(false)
@@ -120,9 +121,58 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     }
   }, [orchUrl, fetchJSON])
 
+  // Poll reprovision status
+  const checkReprovisionStatus = useCallback(async () => {
+    try {
+      const status = await fetchJSON(`${orchUrl}/custom-variant/reprovision/status`)
+      setReprovisionStatus(status)
+      
+      // Update reprovisioning state based on status
+      if (status.in_progress) {
+        setReprovisioning(true)
+      } else {
+        setReprovisioning(false)
+        
+        // Show success or error toast based on final status
+        if (status.status === 'success' && status.message) {
+          // Only show toast if status changed recently (within last 5 seconds)
+          const statusTime = new Date(status.timestamp)
+          const now = new Date()
+          if ((now - statusTime) < 5000) {
+            toast.success(status.message)
+          }
+        } else if (status.status === 'error' && status.message) {
+          // Only show toast if status changed recently
+          const statusTime = new Date(status.timestamp)
+          const now = new Date()
+          if ((now - statusTime) < 5000) {
+            toast.error(status.message)
+          }
+        }
+      }
+      
+      return status.in_progress
+    } catch (err) {
+      // Ignore errors when checking status
+      return false
+    }
+  }, [orchUrl, fetchJSON])
+
   useEffect(() => {
     fetchConfig()
   }, [fetchConfig])
+
+  // Poll reprovision status every 2 seconds
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      await checkReprovisionStatus()
+    }, 2000)
+    
+    // Initial check
+    checkReprovisionStatus()
+    
+    return () => clearInterval(interval)
+  }, [checkReprovisionStatus])
 
   // Update a parameter value
   const updateParameter = useCallback((paramName, field, value) => {
@@ -176,12 +226,18 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       })
       
       toast.success('Reprovisioning started. Engines will be recreated shortly.')
+      
+      // Start polling for status
+      await checkReprovisionStatus()
     } catch (err) {
-      toast.error(`Failed to reprovision: ${err.message}`)
-    } finally {
+      if (err.message.includes('409')) {
+        toast.error('Reprovisioning operation already in progress')
+      } else {
+        toast.error(`Failed to reprovision: ${err.message}`)
+      }
       setReprovisioning(false)
     }
-  }, [orchUrl, apiKey, fetchJSON])
+  }, [orchUrl, apiKey, fetchJSON, checkReprovisionStatus])
 
   // Render a parameter input based on its type
   const renderParameter = useCallback((paramMeta, param) => {
@@ -309,11 +365,11 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           <Button
             variant="outline"
             onClick={handleReprovision}
-            disabled={reprovisioning || !config.enabled}
+            disabled={reprovisioning}
             className="flex items-center gap-2"
           >
             <RefreshCw className={reprovisioning ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-            Reprovision All Engines
+            {reprovisioning ? 'Reprovisioning...' : 'Reprovision All Engines'}
           </Button>
           <Button
             onClick={handleSave}
