@@ -481,7 +481,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         </div>
         <div className="flex items-center gap-2">
           <Button
-            variant="outline"
+            variant="secondary"
             onClick={handleReprovision}
             disabled={reprovisioning}
             className="flex items-center gap-2"

@@ -1,6 +1,6 @@
 from .ports import alloc
 from .health import list_managed
-from .provisioner import ACESTREAM_LABEL_HTTP, ACESTREAM_LABEL_HTTPS, HOST_LABEL_HTTP, HOST_LABEL_HTTPS, FORWARDED_LABEL
+from .provisioner import ACESTREAM_LABEL_HTTP, ACESTREAM_LABEL_HTTPS, HOST_LABEL_HTTP, HOST_LABEL_HTTPS, FORWARDED_LABEL, ENGINE_VARIANT_LABEL
 from .state import state
 from .inspect import get_container_name
 from ..models.schemas import EngineState
@@ -89,9 +89,12 @@ def reindex_existing():
                 # In single mode, check global forwarded engine status
                 should_be_forwarded = is_forwarded_label and not state.has_forwarded_engine()
             
+            # Get engine variant from labels
+            engine_variant = lbl.get(ENGINE_VARIANT_LABEL)
+            
             state.engines[key] = EngineState(container_id=key, container_name=container_name, host=host, port=port, 
                                             labels=lbl, forwarded=should_be_forwarded, first_seen=now, last_seen=now, 
-                                            streams=[], vpn_container=vpn_container)
+                                            streams=[], vpn_container=vpn_container, engine_variant=engine_variant)
             
             # Set VPN container assignment in state if present
             if vpn_container:

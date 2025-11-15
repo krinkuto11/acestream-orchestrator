@@ -15,6 +15,7 @@ HOST_LABEL_HTTP = "host.http_port"
 HOST_LABEL_HTTPS = "host.https_port"
 FORWARDED_LABEL = "acestream.forwarded"
 VPN_CONTAINER_LABEL = "acestream.vpn_container"
+ENGINE_VARIANT_LABEL = "acestream.engine_variant"
 
 class StartRequest(BaseModel):
     image: str | None = None
@@ -477,6 +478,19 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Get variant configuration
     variant_config = get_variant_config(cfg.ENGINE_VARIANT)
     
+    # Determine the actual engine variant name (important for custom variants)
+    from .custom_variant_config import is_custom_variant_enabled, get_config
+    if is_custom_variant_enabled():
+        # For custom variants, store a descriptive name
+        custom_config = get_config()
+        if custom_config:
+            engine_variant_name = f"{custom_config.platform}"
+        else:
+            engine_variant_name = cfg.ENGINE_VARIANT
+    else:
+        # Use the configured variant name
+        engine_variant_name = cfg.ENGINE_VARIANT
+    
     # Determine if this engine should be the forwarded engine
     # Only one engine should have the forwarded port per VPN when using Gluetun
     is_forwarded = False
@@ -562,7 +576,8 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     labels = {**req.labels, key: val,
               ACESTREAM_LABEL_HTTP: str(c_http),
               ACESTREAM_LABEL_HTTPS: str(c_https),
-              HOST_LABEL_HTTP: str(host_http)}
+              HOST_LABEL_HTTP: str(host_http),
+              ENGINE_VARIANT_LABEL: engine_variant_name}
     
     # Add VPN container label if using VPN
     if vpn_container:
