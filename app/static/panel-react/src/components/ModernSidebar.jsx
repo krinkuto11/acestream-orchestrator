@@ -92,7 +92,7 @@ export function ModernSidebar() {
         <Button
           variant="ghost"
           size="sm"
-          className="w-full justify-center"
+          className="w-full justify-center text-foreground"
           onClick={() => setCollapsed(!collapsed)}
         >
           {collapsed ? (
