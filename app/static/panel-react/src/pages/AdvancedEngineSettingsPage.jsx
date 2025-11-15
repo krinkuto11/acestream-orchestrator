@@ -6,7 +6,7 @@ import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Save, RefreshCw, AlertCircle, Info, Cpu } from 'lucide-react'
+import { Save, RefreshCw, AlertCircle, Info, Cpu, Upload, Download, Trash2, Plus } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
@@ -96,9 +96,28 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [reprovisioning, setReprovisioning] = useState(false)
+  const [reprovisionStatus, setReprovisionStatus] = useState(null)
   const [config, setConfig] = useState(null)
   const [platform, setPlatform] = useState(null)
   const [vpnEnabled, setVpnEnabled] = useState(false)
+  
+  // Template management state
+  const [templates, setTemplates] = useState([])
+  const [activeTemplateId, setActiveTemplateId] = useState(null)
+  const [selectedTemplateSlot, setSelectedTemplateSlot] = useState(null)
+  const [templateName, setTemplateName] = useState('')
+  const [showTemplateDialog, setShowTemplateDialog] = useState(false)
+
+  // Fetch templates
+  const fetchTemplates = useCallback(async () => {
+    try {
+      const data = await fetchJSON(`${orchUrl}/custom-variant/templates`)
+      setTemplates(data.templates)
+      setActiveTemplateId(data.active_template_id)
+    } catch (err) {
+      console.error('Failed to load templates:', err)
+    }
+  }, [orchUrl, fetchJSON])
 
   // Fetch current configuration
   const fetchConfig = useCallback(async () => {
@@ -120,9 +139,59 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     }
   }, [orchUrl, fetchJSON])
 
+  // Poll reprovision status
+  const checkReprovisionStatus = useCallback(async () => {
+    try {
+      const status = await fetchJSON(`${orchUrl}/custom-variant/reprovision/status`)
+      setReprovisionStatus(status)
+      
+      // Update reprovisioning state based on status
+      if (status.in_progress) {
+        setReprovisioning(true)
+      } else {
+        setReprovisioning(false)
+        
+        // Show success or error toast based on final status
+        if (status.status === 'success' && status.message) {
+          // Only show toast if status changed recently (within last 5 seconds)
+          const statusTime = new Date(status.timestamp)
+          const now = new Date()
+          if ((now - statusTime) < 5000) {
+            toast.success(status.message)
+          }
+        } else if (status.status === 'error' && status.message) {
+          // Only show toast if status changed recently
+          const statusTime = new Date(status.timestamp)
+          const now = new Date()
+          if ((now - statusTime) < 5000) {
+            toast.error(status.message)
+          }
+        }
+      }
+      
+      return status.in_progress
+    } catch (err) {
+      // Ignore errors when checking status
+      return false
+    }
+  }, [orchUrl, fetchJSON])
+
   useEffect(() => {
     fetchConfig()
-  }, [fetchConfig])
+    fetchTemplates()
+  }, [fetchConfig, fetchTemplates])
+
+  // Poll reprovision status every 2 seconds
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      await checkReprovisionStatus()
+    }, 2000)
+    
+    // Initial check
+    checkReprovisionStatus()
+    
+    return () => clearInterval(interval)
+  }, [checkReprovisionStatus])
 
   // Update a parameter value
   const updateParameter = useCallback((paramName, field, value) => {
@@ -176,12 +245,117 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       })
       
       toast.success('Reprovisioning started. Engines will be recreated shortly.')
+      
+      // Start polling for status
+      await checkReprovisionStatus()
     } catch (err) {
-      toast.error(`Failed to reprovision: ${err.message}`)
-    } finally {
+      if (err.message.includes('409')) {
+        toast.error('Reprovisioning operation already in progress')
+      } else {
+        toast.error(`Failed to reprovision: ${err.message}`)
+      }
       setReprovisioning(false)
     }
-  }, [orchUrl, apiKey, fetchJSON])
+  }, [orchUrl, apiKey, fetchJSON, checkReprovisionStatus])
+
+  // Template management functions
+  const handleSaveAsTemplate = useCallback(async (slotId, name) => {
+    try {
+      await fetchJSON(`${orchUrl}/custom-variant/templates/${slotId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': apiKey
+        },
+        body: JSON.stringify({
+          name: name,
+          config: config
+        })
+      })
+      
+      toast.success(`Template saved to slot ${slotId}`)
+      await fetchTemplates()
+      setShowTemplateDialog(false)
+    } catch (err) {
+      toast.error(`Failed to save template: ${err.message}`)
+    }
+  }, [orchUrl, apiKey, config, fetchJSON, fetchTemplates])
+
+  const handleLoadTemplate = useCallback(async (slotId) => {
+    try {
+      const response = await fetchJSON(`${orchUrl}/custom-variant/templates/${slotId}/activate`, {
+        method: 'POST',
+        headers: {
+          'X-API-KEY': apiKey
+        }
+      })
+      
+      toast.success(response.message)
+      await fetchConfig()
+      await fetchTemplates()
+    } catch (err) {
+      toast.error(`Failed to load template: ${err.message}`)
+    }
+  }, [orchUrl, apiKey, fetchJSON, fetchConfig, fetchTemplates])
+
+  const handleDeleteTemplate = useCallback(async (slotId) => {
+    if (!window.confirm('Are you sure you want to delete this template?')) {
+      return
+    }
+
+    try {
+      await fetchJSON(`${orchUrl}/custom-variant/templates/${slotId}`, {
+        method: 'DELETE',
+        headers: {
+          'X-API-KEY': apiKey
+        }
+      })
+      
+      toast.success(`Template ${slotId} deleted`)
+      await fetchTemplates()
+    } catch (err) {
+      toast.error(`Failed to delete template: ${err.message}`)
+    }
+  }, [orchUrl, apiKey, fetchJSON, fetchTemplates])
+
+  const handleExportTemplate = useCallback(async (slotId) => {
+    try {
+      const response = await fetch(`${orchUrl}/custom-variant/templates/${slotId}/export`)
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `template_${slotId}.json`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+      
+      toast.success(`Template ${slotId} exported`)
+    } catch (err) {
+      toast.error(`Failed to export template: ${err.message}`)
+    }
+  }, [orchUrl])
+
+  const handleImportTemplate = useCallback(async (slotId, fileContent) => {
+    try {
+      await fetchJSON(`${orchUrl}/custom-variant/templates/${slotId}/import`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': apiKey
+        },
+        body: JSON.stringify({
+          json_data: fileContent
+        })
+      })
+      
+      toast.success(`Template imported to slot ${slotId}`)
+      await fetchTemplates()
+    } catch (err) {
+      toast.error(`Failed to import template: ${err.message}`)
+    }
+  }, [orchUrl, apiKey, fetchJSON, fetchTemplates])
 
   // Render a parameter input based on its type
   const renderParameter = useCallback((paramMeta, param) => {
@@ -309,11 +483,11 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           <Button
             variant="outline"
             onClick={handleReprovision}
-            disabled={reprovisioning || !config.enabled}
+            disabled={reprovisioning}
             className="flex items-center gap-2"
           >
             <RefreshCw className={reprovisioning ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-            Reprovision All Engines
+            {reprovisioning ? 'Reprovisioning...' : 'Reprovision All Engines'}
           </Button>
           <Button
             onClick={handleSave}
@@ -392,6 +566,150 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                 Enable it above to configure custom parameters.
               </AlertDescription>
             </Alert>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Template Management */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Template Management</CardTitle>
+          <CardDescription>
+            Save and load custom variant configurations as templates (10 slots available)
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Template grid */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {templates.map((template) => (
+              <div
+                key={template.slot_id}
+                className={`p-3 border rounded-lg ${
+                  activeTemplateId === template.slot_id ? 'border-primary bg-primary/5' : ''
+                } ${!template.exists ? 'border-dashed' : ''}`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium">Slot {template.slot_id}</span>
+                  {activeTemplateId === template.slot_id && (
+                    <Badge variant="default" className="text-xs">Active</Badge>
+                  )}
+                </div>
+                <p className="text-sm font-medium mb-2 truncate" title={template.name}>
+                  {template.name}
+                </p>
+                <div className="flex gap-1">
+                  {template.exists ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 text-xs h-7"
+                        onClick={() => handleLoadTemplate(template.slot_id)}
+                      >
+                        Load
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0"
+                        onClick={() => handleExportTemplate(template.slot_id)}
+                        title="Export"
+                      >
+                        <Download className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0 text-destructive"
+                        onClick={() => handleDeleteTemplate(template.slot_id)}
+                        title="Delete"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 text-xs h-7"
+                        onClick={() => {
+                          setSelectedTemplateSlot(template.slot_id)
+                          setTemplateName(template.name)
+                          setShowTemplateDialog(true)
+                        }}
+                      >
+                        <Plus className="h-3 w-3 mr-1" />
+                        Save Here
+                      </Button>
+                      <label htmlFor={`import-${template.slot_id}`}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0"
+                          title="Import"
+                          onClick={() => document.getElementById(`import-${template.slot_id}`).click()}
+                        >
+                          <Upload className="h-3 w-3" />
+                        </Button>
+                      </label>
+                      <input
+                        id={`import-${template.slot_id}`}
+                        type="file"
+                        accept=".json"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files[0]
+                          if (file) {
+                            const reader = new FileReader()
+                            reader.onload = (event) => {
+                              handleImportTemplate(template.slot_id, event.target.result)
+                            }
+                            reader.readAsText(file)
+                          }
+                          e.target.value = null
+                        }}
+                      />
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Save as template dialog */}
+          {showTemplateDialog && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div className="bg-background p-6 rounded-lg max-w-md w-full mx-4 border">
+                <h3 className="text-lg font-semibold mb-4">Save as Template</h3>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="template-name">Template Name</Label>
+                    <Input
+                      id="template-name"
+                      value={templateName}
+                      onChange={(e) => setTemplateName(e.target.value)}
+                      placeholder="Enter template name"
+                      className="mt-1"
+                    />
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <Button
+                      variant="outline"
+                      onClick={() => setShowTemplateDialog(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => handleSaveAsTemplate(selectedTemplateSlot, templateName)}
+                      disabled={!templateName.trim()}
+                    >
+                      Save
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -32,7 +32,12 @@ function EngineCard({ engine, onDelete, showVpnLabel = false }) {
               {showVpnLabel && engine.vpn_container && (
                 <Badge variant="outline" className="text-xs">{engine.vpn_container}</Badge>
               )}
-              {engine.engine_variant && (
+              {engine.is_custom_variant && (
+                <Badge variant="secondary" className="text-xs">
+                  {engine.template_name ? `Custom Variant: ${engine.template_name}` : 'Custom Variant'}
+                </Badge>
+              )}
+              {engine.engine_variant && !engine.is_custom_variant && (
                 <Badge variant="secondary" className="text-xs">{engine.engine_variant}</Badge>
               )}
             </div>

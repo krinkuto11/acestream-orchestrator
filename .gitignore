@@ -67,3 +67,6 @@ app/static/panel/
 
 # Testing tools
 actionlint
+
+# User-generated template files
+custom_templates/
