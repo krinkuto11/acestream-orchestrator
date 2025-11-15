@@ -726,7 +726,8 @@ from .services.template_manager import (
     import_template,
     set_active_template,
     get_active_template_id,
-    get_active_template_name
+    get_active_template_name,
+    rename_template
 )
 
 # Global state for reprovisioning tracking
@@ -922,6 +923,25 @@ def delete_template_by_id(slot_id: int):
         raise HTTPException(status_code=404, detail=f"Template {slot_id} not found")
     
     return {"message": f"Template {slot_id} deleted successfully"}
+
+@app.patch("/custom-variant/templates/{slot_id}/rename", dependencies=[Depends(require_api_key)])
+def rename_template_endpoint(slot_id: int, request: dict):
+    """Rename a template."""
+    if slot_id < 1 or slot_id > 10:
+        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
+    
+    if "name" not in request:
+        raise HTTPException(status_code=400, detail="Request must include 'name'")
+    
+    new_name = request["name"].strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Template name cannot be empty")
+    
+    success = rename_template(slot_id, new_name)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Template {slot_id} not found or rename failed")
+    
+    return {"message": f"Template {slot_id} renamed to '{new_name}' successfully"}
 
 @app.post("/custom-variant/templates/{slot_id}/activate", dependencies=[Depends(require_api_key)])
 def activate_template(slot_id: int):
