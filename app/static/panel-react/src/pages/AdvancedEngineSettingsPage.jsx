@@ -110,6 +110,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   const [showRenameDialog, setShowRenameDialog] = useState(false)
   const [renameSlotId, setRenameSlotId] = useState(null)
   const [renameValue, setRenameValue] = useState('')
+  const [editingTemplateSlot, setEditingTemplateSlot] = useState(null)  // Track which template is being edited
 
   // Fetch templates
   const fetchTemplates = useCallback(async () => {
@@ -206,8 +207,8 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     }))
   }, [])
 
-  // Save configuration
-  const handleSave = useCallback(async () => {
+  // Save platform configuration (enabled/arm_version)
+  const handleSavePlatformConfig = useCallback(async () => {
     try {
       setSaving(true)
       
@@ -220,13 +221,51 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         body: JSON.stringify(config)
       })
       
-      toast.success('Configuration saved successfully')
+      toast.success('Platform configuration saved successfully')
     } catch (err) {
-      toast.error(`Failed to save configuration: ${err.message}`)
+      toast.error(`Failed to save platform configuration: ${err.message}`)
     } finally {
       setSaving(false)
     }
   }, [orchUrl, apiKey, config, fetchJSON])
+
+  // Save template being edited
+  const handleSaveTemplate = useCallback(async () => {
+    if (!editingTemplateSlot) {
+      toast.error('No template is being edited')
+      return
+    }
+
+    try {
+      setSaving(true)
+      
+      await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': apiKey
+        },
+        body: JSON.stringify({
+          name: templateName,
+          config: config
+        })
+      })
+      
+      toast.success(`Template ${editingTemplateSlot} saved successfully`)
+      await fetchTemplates()
+      setEditingTemplateSlot(null)
+      setTemplateName('')
+    } catch (err) {
+      toast.error(`Failed to save template: ${err.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, fetchJSON, fetchTemplates])
+
+  // Save configuration (kept for backward compatibility, now just calls platform save)
+  const handleSave = useCallback(async () => {
+    await handleSavePlatformConfig()
+  }, [handleSavePlatformConfig])
 
   // Reprovision all engines
   const handleReprovision = useCallback(async () => {
@@ -279,10 +318,19 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       toast.success(`Template saved to slot ${slotId}`)
       await fetchTemplates()
       setShowTemplateDialog(false)
+      setEditingTemplateSlot(null)  // Exit editing mode
+      setTemplateName('')
     } catch (err) {
       toast.error(`Failed to save template: ${err.message}`)
     }
   }, [orchUrl, apiKey, config, fetchJSON, fetchTemplates])
+
+  const handleNewTemplate = useCallback((slotId) => {
+    // Enter editing mode for a new template
+    setEditingTemplateSlot(slotId)
+    setTemplateName(`Template ${slotId}`)
+    toast.info(`Creating new template in slot ${slotId}. Configure parameters below and save.`)
+  }, [])
 
   const handleLoadTemplate = useCallback(async (slotId) => {
     try {
@@ -389,7 +437,11 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       // Update the current config with the template's config
       setConfig(template.config)
       
-      toast.success(`Loaded template for editing. Make your changes and save.`)
+      // Set editing mode with the template name
+      setEditingTemplateSlot(slotId)
+      setTemplateName(template.name)
+      
+      toast.success(`Loaded template ${slotId} for editing. Make your changes and save below.`)
     } catch (err) {
       toast.error(`Failed to load template for editing: ${err.message}`)
     }
@@ -527,14 +579,6 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             <RefreshCw className={reprovisioning ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
             {reprovisioning ? 'Reprovisioning...' : 'Reprovision All Engines'}
           </Button>
-          <Button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2"
-          >
-            <Save className="h-4 w-4" />
-            {saving ? 'Saving...' : 'Save Settings'}
-          </Button>
         </div>
       </div>
 
@@ -605,6 +649,17 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
               </AlertDescription>
             </Alert>
           )}
+
+          <div className="flex justify-end">
+            <Button
+              onClick={handleSavePlatformConfig}
+              disabled={saving}
+              className="flex items-center gap-2"
+            >
+              <Save className="h-4 w-4" />
+              {saving ? 'Saving...' : 'Save Platform Settings'}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -693,24 +748,21 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                         size="sm"
                         variant="outline"
                         className="flex-1 text-xs h-7"
-                        onClick={() => {
-                          setSelectedTemplateSlot(template.slot_id)
-                          setTemplateName(template.name)
-                          setShowTemplateDialog(true)
-                        }}
+                        onClick={() => handleNewTemplate(template.slot_id)}
                       >
                         <Plus className="h-3 w-3 mr-1" />
-                        Save Here
+                        New Template
                       </Button>
                       <label htmlFor={`import-${template.slot_id}`}>
                         <Button
                           size="sm"
-                          variant="ghost"
-                          className="h-7 w-7 p-0"
-                          title="Import"
+                          variant="outline"
+                          className="flex-1 text-xs h-7"
+                          title="Import Template"
                           onClick={() => document.getElementById(`import-${template.slot_id}`).click()}
                         >
-                          <Upload className="h-3 w-3" />
+                          <Upload className="h-3 w-3 mr-1" />
+                          Import
                         </Button>
                       </label>
                       <input
@@ -809,16 +861,27 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         </CardContent>
       </Card>
 
-      {/* Parameters */}
-      {config.enabled && (
+      {/* Parameters - Only shown when editing a template */}
+      {editingTemplateSlot && (
         <Card>
           <CardHeader>
             <CardTitle>Engine Parameters</CardTitle>
             <CardDescription>
-              Configure AceStream engine behavior. Toggle each parameter to enable/disable it.
+              Editing template for slot {editingTemplateSlot}. Configure parameters below and save.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {/* Template name input */}
+            <div className="space-y-2">
+              <Label htmlFor="template-name">Template Name</Label>
+              <Input
+                id="template-name"
+                value={templateName}
+                onChange={(e) => setTemplateName(e.target.value)}
+                placeholder="Enter template name"
+              />
+            </div>
+
             <Tabs defaultValue="basic" className="w-full">
               <TabsList className="grid w-full grid-cols-7">
                 {Object.keys(parameterCategories).map(key => (
@@ -843,19 +906,30 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                 </TabsContent>
               ))}
             </Tabs>
+
+            {/* Save template button */}
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setEditingTemplateSlot(null)
+                  setTemplateName('')
+                  fetchConfig()  // Reset config to original
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSaveTemplate}
+                disabled={saving || !templateName.trim()}
+                className="flex items-center gap-2"
+              >
+                <Save className="h-4 w-4" />
+                {saving ? 'Saving...' : 'Save Template'}
+              </Button>
+            </div>
           </CardContent>
         </Card>
-      )}
-
-      {/* Warning about reprovisioning */}
-      {config.enabled && (
-        <Alert variant="warning">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            <strong>Note:</strong> Changes to these settings require reprovisioning all engines to take effect.
-            Use the "Reprovision All Engines" button after saving to apply changes immediately.
-          </AlertDescription>
-        </Alert>
       )}
     </div>
   )

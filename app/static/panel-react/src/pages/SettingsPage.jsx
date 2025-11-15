@@ -3,8 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Button } from '@/components/ui/button'
-import { Save } from 'lucide-react'
 
 export function SettingsPage({
   orchUrl,
@@ -85,13 +83,6 @@ export function SettingsPage({
           </div>
         </CardContent>
       </Card>
-
-      <div className="flex justify-end">
-        <Button className="flex items-center gap-2">
-          <Save className="h-4 w-4" />
-          Save Settings
-        </Button>
-      </div>
     </div>
   )
 }
