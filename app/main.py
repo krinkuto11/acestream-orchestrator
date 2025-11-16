@@ -21,6 +21,7 @@ from .services.inspect import inspect_container, ContainerNotFound
 from .services.state import state, load_state_from_db, cleanup_on_shutdown
 from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot
 from .services.collector import collector
+from .services.stream_cleanup import stream_cleanup
 from .services.monitor import docker_monitor
 from .services.metrics import update_custom_metrics
 from .services.auth import require_api_key
@@ -106,6 +107,7 @@ async def lifespan(app: FastAPI):
     
     # Start remaining monitoring services
     asyncio.create_task(collector.start())
+    asyncio.create_task(stream_cleanup.start())  # Start stream cleanup service
     asyncio.create_task(docker_monitor.start())  # Start Docker monitoring
     asyncio.create_task(health_monitor.start())  # Start health monitoring  
     asyncio.create_task(health_manager.start())  # Start proactive health management
@@ -115,6 +117,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     await collector.stop()
+    await stream_cleanup.stop()  # Stop stream cleanup service
     await docker_monitor.stop()  # Stop Docker monitoring
     await health_monitor.stop()  # Stop health monitoring
     await health_manager.stop()  # Stop health management
@@ -481,7 +484,8 @@ def get_engine(container_id: str):
     return {"engine": eng, "streams": streams}
 
 @app.get("/streams", response_model=List[StreamState])
-def get_streams(status: Optional[str] = Query(None, pattern="^(started|ended)$"), container_id: Optional[str] = None):
+def get_streams(status: Optional[str] = Query("started", pattern="^(started|ended)$"), container_id: Optional[str] = None):
+    """Get streams. By default, only returns started streams. Use status=ended to see ended streams."""
     return state.list_streams_with_stats(status=status, container_id=container_id)
 
 @app.get("/streams/{stream_id}/stats", response_model=List[StreamStatSnapshot])

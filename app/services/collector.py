@@ -64,11 +64,11 @@ class Collector:
                 error_msg = data.get("error", "").lower()
                 logger.debug(f"Stat endpoint reported error for {stream_id}: {data.get('error')}")
                 if "unknown playback session id" in error_msg:
-                    logger.info(f"Detected stale stream {stream_id}: {data.get('error')}")
                     # Get the stream to find its container_id
                     stream = state.get_stream(stream_id)
                     if stream and stream.status == "started":
-                        # Automatically end the stream
+                        # Only log and end the stream if it's still marked as started
+                        logger.info(f"Detected stale stream {stream_id}: {data.get('error')}")
                         logger.info(f"Automatically ending stale stream {stream_id}")
                         state.on_stream_ended(StreamEndedEvent(
                             container_id=stream.container_id,
@@ -76,6 +76,9 @@ class Collector:
                             reason="stale_stream_detected"
                         ))
                         orch_stale_streams_detected.inc()
+                    else:
+                        # Stream is already ended or doesn't exist - this is expected
+                        logger.debug(f"Stale stream {stream_id} is already ended or doesn't exist, skipping")
                     return
 
             payload = data.get("response") or {}

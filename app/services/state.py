@@ -629,6 +629,51 @@ class State:
             if not self._emergency_mode:
                 return False
             return vpn_container == self._failed_vpn_container
+    
+    def cleanup_ended_streams(self, max_age_seconds: int = 3600) -> int:
+        """
+        Remove ended streams that are older than max_age_seconds.
+        
+        Args:
+            max_age_seconds: Maximum age in seconds for ended streams to keep (default: 1 hour)
+            
+        Returns:
+            Number of streams removed
+        """
+        from datetime import timedelta
+        
+        with self._lock:
+            now = self.now()
+            cutoff_time = now - timedelta(seconds=max_age_seconds)
+            
+            # Find ended streams that are older than the cutoff
+            streams_to_remove = []
+            for stream_id, stream in self.streams.items():
+                if stream.status == "ended" and stream.ended_at and stream.ended_at < cutoff_time:
+                    streams_to_remove.append(stream_id)
+            
+            # Remove them from memory
+            for stream_id in streams_to_remove:
+                del self.streams[stream_id]
+                # Also remove stats for the stream to free memory
+                if stream_id in self.stream_stats:
+                    del self.stream_stats[stream_id]
+        
+        # Remove from database as well
+        if streams_to_remove:
+            try:
+                from ..models.db_models import StreamRow, StatRow
+                with SessionLocal() as s:
+                    # Delete stats first (foreign key constraint)
+                    s.query(StatRow).filter(StatRow.stream_id.in_(streams_to_remove)).delete(synchronize_session=False)
+                    # Then delete streams
+                    s.query(StreamRow).filter(StreamRow.id.in_(streams_to_remove)).delete(synchronize_session=False)
+                    s.commit()
+                    logger.info(f"Cleaned up {len(streams_to_remove)} ended streams older than {max_age_seconds}s")
+            except Exception as e:
+                logger.warning(f"Failed to clean up ended streams from database: {e}")
+        
+        return len(streams_to_remove)
 
 state = State()
 
