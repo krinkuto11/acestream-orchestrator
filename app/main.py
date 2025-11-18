@@ -429,19 +429,21 @@ def get_engines():
         
         # Enrich engines with version info and forwarded port
         for engine in verified_engines:
-            # Check if custom variant is enabled and override engine_variant with template name
+            # Only set engine_variant if not already set (from labels)
+            # This ensures old engines keep their original variant name until reprovisioned
             from .services.custom_variant_config import is_custom_variant_enabled
-            if is_custom_variant_enabled():
-                # For custom variants, use the template name as engine_variant
-                template_name = get_active_template_name()
-                if template_name:
-                    engine.engine_variant = template_name
-                elif not engine.engine_variant:
-                    # Fallback to config if no template name and no existing variant
-                    engine.engine_variant = cfg.ENGINE_VARIANT
-            else:
-                # For standard variants, only set engine_variant if not already set (from labels)
-                if not engine.engine_variant:
+            if not engine.engine_variant:
+                # Engine has no variant set from labels, use current configuration
+                if is_custom_variant_enabled():
+                    # For custom variants, use the template name as engine_variant
+                    template_name = get_active_template_name()
+                    if template_name:
+                        engine.engine_variant = template_name
+                    else:
+                        # Fallback to config if no template name
+                        engine.engine_variant = cfg.ENGINE_VARIANT
+                else:
+                    # For standard variants, use configured variant name
                     engine.engine_variant = cfg.ENGINE_VARIANT
             
             # Get engine version info
@@ -518,6 +520,61 @@ async def get_stream_extended_stats(stream_id: str):
         raise HTTPException(status_code=503, detail="Unable to fetch extended stats from AceStream engine")
     
     return extended_stats
+
+@app.get("/streams/{stream_id}/livepos")
+async def get_stream_livepos(stream_id: str):
+    """
+    Get live position data for a stream from its stat URL.
+    This returns livepos information including current position, buffer, and timestamps.
+    """
+    import httpx
+    
+    # Get the stream from state
+    stream = state.get_stream(stream_id)
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+    
+    if not stream.stat_url:
+        raise HTTPException(status_code=400, detail="Stream has no stat URL")
+    
+    # Fetch livepos data from stat URL
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(stream.stat_url)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Extract response payload
+            payload = data.get("response")
+            if not payload:
+                raise HTTPException(status_code=503, detail="No response data from stat URL")
+            
+            # Extract livepos data
+            livepos = payload.get("livepos")
+            if not livepos:
+                # Stream might not be live or doesn't have livepos data
+                return {
+                    "has_livepos": False,
+                    "is_live": payload.get("is_live", 0) == 1
+                }
+            
+            # Return livepos data with additional context
+            return {
+                "has_livepos": True,
+                "is_live": payload.get("is_live", 0) == 1,
+                "livepos": {
+                    "pos": livepos.get("pos"),
+                    "last_ts": livepos.get("last_ts") or livepos.get("last"),
+                    "first_ts": livepos.get("first_ts") or livepos.get("first"),
+                    "buffer_pieces": livepos.get("buffer_pieces")
+                }
+            }
+    except httpx.HTTPError as e:
+        logger.error(f"Failed to fetch livepos for stream {stream_id}: {e}")
+        raise HTTPException(status_code=503, detail=f"Failed to fetch livepos data: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error processing livepos for stream {stream_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error processing livepos data: {str(e)}")
 
 # by-label
 from .services.inspect import inspect_container
