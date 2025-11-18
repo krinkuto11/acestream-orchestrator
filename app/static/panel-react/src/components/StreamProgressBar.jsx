@@ -84,10 +84,10 @@ function StreamProgressBar({ streamId, orchUrl, apiKey }) {
   const bufferPercent = Math.min(currentPercent + 10, 100) // Show ~10% buffer ahead visually
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1.5">
       <div className="flex items-center gap-2">
         {is_live && (
-          <Badge variant="destructive" className="text-xs px-1.5 py-0">
+          <Badge variant="destructive" className="text-xs px-1.5 py-0.5">
             LIVE
           </Badge>
         )}
@@ -109,11 +109,6 @@ function StreamProgressBar({ streamId, orchUrl, apiKey }) {
           className="absolute h-full bg-red-600 transition-all duration-300"
           style={{ width: `${currentPercent}%` }}
         />
-      </div>
-      
-      {/* Seekable range info */}
-      <div className="text-xs text-muted-foreground">
-        Seekable: {formatTimestamp(first_ts)} - {formatTimestamp(last_ts)}
       </div>
     </div>
   )
