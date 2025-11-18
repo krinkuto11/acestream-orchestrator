@@ -79,6 +79,11 @@ Response:
  - GET /engines/{container_id} → {engine, streams[]}
 
  - GET /streams?status=started|ended&container_id= → StreamState[]
+   - By default, returns only `started` streams (active streams)
+   - Use `status=started` to explicitly get active streams
+   - Use `status=ended` to get ended streams
+   - Can filter by `container_id` to get streams for a specific engine
+   - **Note**: Ended streams older than 1 hour are automatically cleaned up from the system
 
  - GET /streams/{stream_id}/stats?since=<ISO8601> → StreamStatSnapshot[]
 
@@ -129,4 +134,127 @@ Response:
    - orch_collect_errors_total
    - orch_streams_active
    - orch_provision_total{kind="generic|acestream"}
+
+## Custom Engine Variant
+
+Custom engine variants allow fine-grained control over AceStream engine parameters via the UI.
+
+### GET /custom-variant/platform
+
+Get detected platform information.
+
+Response:
+```json
+{
+  "platform": "amd64",
+  "supported_platforms": ["amd64", "arm32", "arm64"]
+}
+```
+
+**Fields:**
+- `platform`: Automatically detected system architecture
+- `supported_platforms`: List of all supported platforms
+
+### GET /custom-variant/config
+
+Get current custom variant configuration.
+
+Response:
+```json
+{
+  "enabled": false,
+  "platform": "amd64",
+  "arm_version": "3.2.13",
+  "parameters": [
+    {
+      "name": "--client-console",
+      "type": "flag",
+      "value": true,
+      "enabled": true
+    },
+    {
+      "name": "--live-cache-size",
+      "type": "bytes",
+      "value": 268435456,
+      "enabled": true
+    }
+  ]
+}
+```
+
+**Fields:**
+- `enabled`: Whether custom variant is active (overrides ENGINE_VARIANT env var)
+- `platform`: Platform architecture ("amd64", "arm32", "arm64")
+- `arm_version`: AceStream version for ARM platforms ("3.2.13" or "3.2.14")
+- `parameters`: Array of engine parameter configurations
+  - `name`: Parameter name (e.g., "--client-console")
+  - `type`: Parameter type ("flag", "string", "int", "bytes", "path")
+  - `value`: Parameter value (type depends on `type` field)
+  - `enabled`: Whether this parameter is active
+
+### POST /custom-variant/config (protected)
+
+Update custom variant configuration. Validates configuration before saving.
+
+**Headers:**
+- `X-API-KEY`: API key for authentication
+- `Content-Type`: application/json
+
+Body:
+```json
+{
+  "enabled": true,
+  "platform": "amd64",
+  "arm_version": "3.2.13",
+  "parameters": [
+    {
+      "name": "--client-console",
+      "type": "flag",
+      "value": true,
+      "enabled": true
+    }
+  ]
+}
+```
+
+Response:
+```json
+{
+  "message": "Configuration saved successfully",
+  "config": { ... }
+}
+```
+
+**Validation:**
+- Platform must be one of: "amd64", "arm32", "arm64"
+- ARM version must be one of: "3.2.13", "3.2.14" (only for ARM platforms)
+- Parameter types must be valid: "flag", "string", "int", "bytes", "path"
+- Parameter values must match their declared type
+
+**Error Responses:**
+- `400 Bad Request`: Invalid configuration (validation failed)
+- `500 Internal Server Error`: Failed to save configuration
+
+### POST /custom-variant/reprovision (protected)
+
+Delete all engines and reprovision them with current custom variant settings. This is a potentially disruptive operation that interrupts all active streams.
+
+**Headers:**
+- `X-API-KEY`: API key for authentication
+
+Response:
+```json
+{
+  "message": "Started reprovisioning of 5 engines",
+  "deleted_count": 5
+}
+```
+
+**Process:**
+1. All existing engines are stopped and removed
+2. Engine state is cleared
+3. Custom variant config is reloaded from disk
+4. Minimum replicas are provisioned with new settings
+
+**Note:** This operation runs entirely in the background as a non-blocking task. The endpoint returns immediately after starting the operation. The API and UI remain fully accessible during reprovisioning. Use `GET /custom-variant/reprovision/status` to check the progress.
 

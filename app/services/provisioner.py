@@ -1,5 +1,6 @@
 import time
 import logging
+import docker
 from typing import Optional
 from pydantic import BaseModel
 from .docker_client import get_client, safe
@@ -15,6 +16,7 @@ HOST_LABEL_HTTP = "host.http_port"
 HOST_LABEL_HTTPS = "host.https_port"
 FORWARDED_LABEL = "acestream.forwarded"
 VPN_CONTAINER_LABEL = "acestream.vpn_container"
+ENGINE_VARIANT_LABEL = "acestream.engine_variant"
 
 class StartRequest(BaseModel):
     image: str | None = None
@@ -187,7 +189,16 @@ def clear_acestream_cache(container_id: str) -> tuple[bool, int]:
         else:
             logger.warning(f"Cache cleanup command returned non-zero exit code {result.exit_code} for container {container_id[:12]}")
             return (False, cache_size)
+    except docker.errors.NotFound:
+        # Container doesn't exist - this is expected during cleanup/reprovisioning
+        logger.debug(f"Cannot clear cache - container {container_id[:12]} not found")
+        return (False, 0)
+    except docker.errors.APIError as e:
+        # API error (e.g., container not running) - log at debug level as this is expected
+        logger.debug(f"Cannot clear cache for container {container_id[:12]}: {e}")
+        return (False, 0)
     except Exception as e:
+        # Catch-all for unexpected errors - keep at warning level
         logger.warning(f"Failed to clear AceStream cache for container {container_id[:12]}: {e}")
         return (False, 0)
 
@@ -298,6 +309,7 @@ def get_variant_config(variant: str):
     Get the configuration for a specific engine variant.
     
     This is a public API for retrieving variant configuration.
+    Supports custom variants when enabled via custom_variant_config.
     
     Args:
         variant: The engine variant name. Valid values are:
@@ -305,6 +317,7 @@ def get_variant_config(variant: str):
                  - 'jopsis-amd64'
                  - 'jopsis-arm32'
                  - 'jopsis-arm64'
+                 - 'custom' (when custom variant is enabled)
     
     Returns:
         dict with keys:
@@ -312,7 +325,20 @@ def get_variant_config(variant: str):
             - config_type: "env" or "cmd" (always present)
             - base_args: Base arguments string (for ENV-based jopsis-amd64 variant)
             - base_cmd: Base command list (for CMD-based arm32/arm64 variants)
+            - is_custom: True if this is a custom variant
     """
+    # Check if custom variant is enabled and should override
+    from .custom_variant_config import is_custom_variant_enabled, get_config, build_variant_config_from_custom
+    
+    if is_custom_variant_enabled():
+        try:
+            custom_config = get_config()
+            if custom_config:
+                logger.info("Using custom engine variant configuration")
+                return build_variant_config_from_custom(custom_config)
+        except Exception as e:
+            logger.error(f"Failed to load custom variant config, falling back to standard variants: {e}")
+    
     configs = {
         "krinkuto11-amd64": {
             "image": "ghcr.io/krinkuto11/acestream-http-proxy:latest",
@@ -462,6 +488,25 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Get variant configuration
     variant_config = get_variant_config(cfg.ENGINE_VARIANT)
     
+    # Determine the actual engine variant name (important for custom variants)
+    from .custom_variant_config import is_custom_variant_enabled, get_config
+    from .template_manager import get_active_template_name
+    if is_custom_variant_enabled():
+        # For custom variants, use the template name if available
+        template_name = get_active_template_name()
+        if template_name:
+            engine_variant_name = template_name
+        else:
+            # Fallback to platform if no template name
+            custom_config = get_config()
+            if custom_config:
+                engine_variant_name = f"{custom_config.platform}"
+            else:
+                engine_variant_name = cfg.ENGINE_VARIANT
+    else:
+        # Use the configured variant name
+        engine_variant_name = cfg.ENGINE_VARIANT
+    
     # Determine if this engine should be the forwarded engine
     # Only one engine should have the forwarded port per VPN when using Gluetun
     is_forwarded = False
@@ -547,7 +592,8 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     labels = {**req.labels, key: val,
               ACESTREAM_LABEL_HTTP: str(c_http),
               ACESTREAM_LABEL_HTTPS: str(c_https),
-              HOST_LABEL_HTTP: str(host_http)}
+              HOST_LABEL_HTTP: str(host_http),
+              ENGINE_VARIANT_LABEL: engine_variant_name}
     
     # Add VPN container label if using VPN
     if vpn_container:
@@ -683,7 +729,8 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         last_stream_usage=None,
         last_cache_cleanup=None,
         cache_size_bytes=None,
-        vpn_container=vpn_container
+        vpn_container=vpn_container,
+        engine_variant=engine_variant_name
     )
     
     # Add to in-memory state

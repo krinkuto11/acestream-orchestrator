@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { PlayCircle, Download, Upload, Users, ChevronDown, ChevronUp, StopCircle, Trash2, ExternalLink } from 'lucide-react'
 import { formatTime, formatBytes, formatBytesPerSecond } from '../utils/formatters'
+import StreamProgressBar from './StreamProgressBar'
 import {
   Collapsible,
   CollapsibleContent,
@@ -181,9 +182,13 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, deb
             <h3 className="font-semibold text-lg mb-1">
               {stream.id.slice(0, 16)}...
             </h3>
-            <p className="text-sm text-muted-foreground truncate">
-              {stream.content_key || 'N/A'}
-            </p>
+            <div className="mt-2">
+              <StreamProgressBar 
+                streamId={stream.id} 
+                orchUrl={orchUrl} 
+                apiKey={apiKey} 
+              />
+            </div>
           </div>
           <Badge variant="success" className="ml-2 flex items-center gap-1">
             <PlayCircle className="h-3 w-3" />

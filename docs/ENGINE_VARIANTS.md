@@ -212,6 +212,106 @@ If you're upgrading from a version without variant support:
 
 ## Advanced Usage
 
+### Custom Engine Variants
+
+The orchestrator now supports **Custom Engine Variants** that allow you to configure individual AceStream engine parameters via the UI, overriding the environment variable-based variant selection.
+
+#### Enabling Custom Variants
+
+1. Navigate to the **Advanced Engine** section in the dashboard sidebar
+2. Toggle "Enable Custom Engine Variant" switch
+3. The system will automatically detect your platform (amd64, arm32, or arm64)
+4. For ARM platforms, select your preferred AceStream version (3.2.13 or 3.2.14)
+5. Configure individual parameters across 7 categories:
+   - **Basic Settings**: Console mode, bind options, access tokens
+   - **Cache Configuration**: Memory/disk cache settings, cache sizes
+   - **Buffer Settings**: Live and VOD buffer configuration
+   - **Connection Settings**: P2P connections, bandwidth limits, port settings
+   - **WebRTC Settings**: WebRTC connection options
+   - **Advanced Settings**: Stats reporting, slot management, periodic checks
+   - **Logging Settings**: Debug levels, log files, log rotation
+
+#### Custom Variant Configuration
+
+**Base Images**:
+- **amd64**: `jopsis/acestream:x64`
+- **arm32**: `jopsis/acestream:arm32-v3.2.13` or `jopsis/acestream:arm32-v3.2.14`
+- **arm64**: `jopsis/acestream:arm64-v3.2.13` or `jopsis/acestream:arm64-v3.2.14`
+
+**Parameter Configuration**:
+- Each parameter can be individually enabled/disabled
+- Parameters include proper units (MB, GB, seconds, etc.)
+- Flag parameters show as enabled/disabled toggles
+- Integer parameters that represent boolean states are shown as toggles
+- P2P port parameter is VPN-aware and shows a warning when VPN is enabled
+
+**Configuration Storage**:
+- Settings are stored in `custom_engine_variant.json` in the root directory
+- Configuration persists across restarts
+- When enabled, custom variant overrides the `ENGINE_VARIANT` environment variable
+
+**Applying Changes**:
+1. Make your parameter changes in the UI
+2. Click "Save Settings" to persist the configuration
+3. Click "Reprovision All Engines" to apply changes to running engines
+   - ⚠️ **Warning**: This will delete all engines and recreate them, interrupting active streams
+
+**API Endpoints**:
+- `GET /custom-variant/platform` - Get detected platform information
+- `GET /custom-variant/config` - Get current custom variant configuration
+- `POST /custom-variant/config` - Update custom variant configuration (requires API key)
+- `POST /custom-variant/reprovision` - Reprovision all engines with new settings (requires API key)
+
+**Available Parameters** (35 total):
+
+| Category | Parameter | Type | Default | Description |
+|----------|-----------|------|---------|-------------|
+| Basic | `--client-console` | Flag | Enabled | Run engine in console mode |
+| Basic | `--bind-all` | Flag | Enabled | Listen on all network interfaces |
+| Basic | `--service-remote-access` | Flag | Disabled | Enable remote access to service |
+| Basic | `--access-token` | String | - | Public access token for API |
+| Basic | `--service-access-token` | String | - | Administrative access token |
+| Basic | `--allow-user-config` | Flag | Disabled | Allow per-user custom configuration |
+| Cache | `--cache-dir` | Path | ~/.ACEStream | Directory for storing cache |
+| Cache | `--live-cache-type` | String | memory | Cache type for live streams (memory/disk/hybrid) |
+| Cache | `--live-cache-size` | Bytes | 256MB | Live cache size |
+| Cache | `--vod-cache-type` | String | disk | Cache type for VOD (memory/disk/hybrid) |
+| Cache | `--vod-cache-size` | Bytes | 512MB | VOD cache size |
+| Cache | `--vod-drop-max-age` | Integer | 0 | Maximum age before dropping VOD cache |
+| Cache | `--max-file-size` | Bytes | 2GB | Maximum file size to cache |
+| Buffer | `--live-buffer` | Integer | 10 | Live stream buffer (seconds) |
+| Buffer | `--vod-buffer` | Integer | 5 | VOD buffer (seconds) |
+| Buffer | `--refill-buffer-interval` | Integer | 5 | Buffer refill interval (seconds) |
+| Connections | `--max-connections` | Integer | 200 | Maximum simultaneous connections |
+| Connections | `--max-peers` | Integer | 40 | Maximum peers per torrent |
+| Connections | `--max-upload-slots` | Integer | 4 | Number of simultaneous upload slots |
+| Connections | `--auto-slots` | Boolean | Enabled | Automatic slot adjustment |
+| Connections | `--download-limit` | Integer | 0 | Download speed limit (KB/s, 0=unlimited) |
+| Connections | `--upload-limit` | Integer | 0 | Upload speed limit (KB/s, 0=unlimited) |
+| Connections | `--port` | Integer | 8621 | Port for P2P connections (VPN-aware) |
+| WebRTC | `--webrtc-allow-outgoing-connections` | Boolean | Disabled | Allow outgoing WebRTC connections |
+| WebRTC | `--webrtc-allow-incoming-connections` | Boolean | Disabled | Allow incoming WebRTC connections |
+| Advanced | `--stats-report-interval` | Integer | 60 | Interval for statistics reports (seconds) |
+| Advanced | `--stats-report-peers` | Flag | Disabled | Include peer info in statistics |
+| Advanced | `--slots-manager-use-cpu-limit` | Boolean | Disabled | Use CPU limit for slot management |
+| Advanced | `--core-skip-have-before-playback-pos` | Boolean | Disabled | Skip downloaded pieces before playback position |
+| Advanced | `--core-dlr-periodic-check-interval` | Integer | 10 | Periodic DLR check interval (seconds) |
+| Advanced | `--check-live-pos-interval` | Integer | 10 | Interval for checking live position (seconds) |
+| Logging | `--log-debug` | Integer | 0 | Debug level (0=normal, 1=verbose, 2=very verbose) |
+| Logging | `--log-file` | Path | - | File for saving logs |
+| Logging | `--log-max-size` | Bytes | 10MB | Max log size |
+| Logging | `--log-backup-count` | Integer | 3 | Number of backup log files |
+
+**VPN Integration**:
+- When VPN (Gluetun) is enabled, the P2P port parameter shows a warning
+- You can configure engines to use Gluetun's forwarded port
+- Port assignment respects VPN health and redundant VPN mode
+
+**Priority Order**:
+1. Custom Variant (when enabled via UI)
+2. `ENGINE_VARIANT` environment variable
+3. Default variant (krinkuto11-amd64)
+
 ### Debugging Variant Configuration
 
 To see how a variant is configured:

@@ -42,7 +42,7 @@ async def get_engine_version_info(host: str, port: int) -> Optional[Dict]:
                 logger.debug(f"Retrieved version info for {host}:{port}: {version_info}")
                 return version_info
             else:
-                logger.warning(f"Invalid response format from {host}:{port}")
+                logger.debug(f"Invalid response format from {host}:{port}")
                 return None
                 
     except Exception as e:
@@ -81,7 +81,7 @@ def get_engine_version_info_sync(host: str, port: int) -> Optional[Dict]:
                 logger.debug(f"Retrieved version info for {host}:{port}: {version_info}")
                 return version_info
             else:
-                logger.warning(f"Invalid response format from {host}:{port}")
+                logger.debug(f"Invalid response format from {host}:{port}")
                 return None
                 
     except Exception as e:

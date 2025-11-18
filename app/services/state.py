@@ -21,6 +21,10 @@ class State:
         self._failed_vpn_container: Optional[str] = None
         self._healthy_vpn_container: Optional[str] = None
         self._emergency_mode_entered_at: Optional[datetime] = None
+        
+        # Reprovisioning mode state for coordinating system-wide reprovisioning
+        self._reprovisioning_mode = False
+        self._reprovisioning_entered_at: Optional[datetime] = None
 
     @staticmethod
     def now():
@@ -629,6 +633,117 @@ class State:
             if not self._emergency_mode:
                 return False
             return vpn_container == self._failed_vpn_container
+    
+    def enter_reprovisioning_mode(self) -> bool:
+        """
+        Enter reprovisioning mode to coordinate system-wide engine reprovisioning.
+        
+        Reprovisioning mode:
+        - Pauses health management operations
+        - Pauses autoscaling operations
+        - Allows monitoring to continue (but with reduced operations)
+        
+        Returns:
+            bool: True if successfully entered reprovisioning mode, False if already in it
+        """
+        with self._lock:
+            if self._reprovisioning_mode:
+                logger.warning("Already in reprovisioning mode")
+                return False
+            
+            self._reprovisioning_mode = True
+            self._reprovisioning_entered_at = self.now()
+            
+            logger.info("Entered reprovisioning mode - pausing health management and autoscaling")
+            return True
+    
+    def exit_reprovisioning_mode(self) -> bool:
+        """
+        Exit reprovisioning mode and resume normal operations.
+        
+        Returns:
+            bool: True if successfully exited reprovisioning mode, False if wasn't in it
+        """
+        with self._lock:
+            if not self._reprovisioning_mode:
+                logger.warning("Not in reprovisioning mode")
+                return False
+            
+            duration = (self.now() - self._reprovisioning_entered_at).total_seconds() if self._reprovisioning_entered_at else 0
+            
+            self._reprovisioning_mode = False
+            self._reprovisioning_entered_at = None
+            
+            logger.info(f"Exited reprovisioning mode after {duration:.1f}s - resuming normal operations")
+            return True
+    
+    def is_reprovisioning_mode(self) -> bool:
+        """Check if system is in reprovisioning mode."""
+        with self._lock:
+            return self._reprovisioning_mode
+    
+    def get_reprovisioning_mode_info(self) -> Dict:
+        """Get information about reprovisioning mode status."""
+        with self._lock:
+            if not self._reprovisioning_mode:
+                return {
+                    "active": False,
+                    "duration_seconds": 0,
+                    "entered_at": None
+                }
+            
+            duration = (self.now() - self._reprovisioning_entered_at).total_seconds() if self._reprovisioning_entered_at else 0
+            
+            return {
+                "active": True,
+                "duration_seconds": duration,
+                "entered_at": self._reprovisioning_entered_at.isoformat() if self._reprovisioning_entered_at else None
+            }
+    
+    def cleanup_ended_streams(self, max_age_seconds: int = 3600) -> int:
+        """
+        Remove ended streams that are older than max_age_seconds.
+        
+        Args:
+            max_age_seconds: Maximum age in seconds for ended streams to keep (default: 1 hour)
+            
+        Returns:
+            Number of streams removed
+        """
+        from datetime import timedelta
+        
+        with self._lock:
+            now = self.now()
+            cutoff_time = now - timedelta(seconds=max_age_seconds)
+            
+            # Find ended streams that are older than the cutoff
+            streams_to_remove = []
+            for stream_id, stream in self.streams.items():
+                if stream.status == "ended" and stream.ended_at and stream.ended_at < cutoff_time:
+                    streams_to_remove.append(stream_id)
+            
+            # Remove them from memory
+            for stream_id in streams_to_remove:
+                del self.streams[stream_id]
+                # Also remove stats for the stream to free memory
+                if stream_id in self.stream_stats:
+                    del self.stream_stats[stream_id]
+        
+        # Remove from database as well
+        if streams_to_remove:
+            try:
+                from ..models.db_models import StreamRow, StatRow
+                with SessionLocal() as s:
+                    # Delete stats first (foreign key constraint)
+                    s.query(StatRow).filter(StatRow.stream_id.in_(streams_to_remove)).delete(synchronize_session=False)
+                    # Then delete streams
+                    s.query(StreamRow).filter(StreamRow.id.in_(streams_to_remove)).delete(synchronize_session=False)
+                    s.commit()
+                    logger.info(f"Cleaned up {len(streams_to_remove)} ended streams older than {max_age_seconds}s")
+            except Exception as e:
+                logger.warning(f"Failed to clean up ended streams from database: {e}")
+        
+        return len(streams_to_remove)
 
 state = State()
 

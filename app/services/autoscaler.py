@@ -48,6 +48,11 @@ def ensure_minimum(initial_startup: bool = False):
             logger.debug(f"Autoscaler paused: in emergency mode (failed VPN: {emergency_info['failed_vpn']})")
             return
         
+        # Skip autoscaling if in reprovisioning mode (unless initial startup)
+        if not initial_startup and state.is_reprovisioning_mode():
+            logger.debug("Autoscaler paused: in reprovisioning mode")
+            return
+        
         # Check circuit breaker before attempting provisioning
         if not circuit_breaker_manager.can_provision("general"):
             logger.warning("Circuit breaker is OPEN - skipping provisioning attempt")

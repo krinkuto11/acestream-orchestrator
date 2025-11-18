@@ -46,3 +46,9 @@ class StatRow(Base):
     downloaded: Mapped[int | None] = mapped_column(Integer)
     uploaded: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str | None] = mapped_column(String(32))
+
+class ConfigRow(Base):
+    __tablename__ = "config"
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
