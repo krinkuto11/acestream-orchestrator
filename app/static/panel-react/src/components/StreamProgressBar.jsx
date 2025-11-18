@@ -79,9 +79,17 @@ function StreamProgressBar({ streamId, orchUrl, apiKey }) {
   const currentPercent = totalRange > 0 ? (currentPos / totalRange) * 100 : 0
   
   // Buffer is relative to current position
-  // buffer_pieces indicates how much is buffered ahead
+  // buffer_pieces indicates how much is buffered ahead (in pieces, typically ~1 second each)
   const bufferAhead = buffer_pieces || 0
-  const bufferPercent = Math.min(currentPercent + 10, 100) // Show ~10% buffer ahead visually
+  // Calculate buffer as a percentage of total range, with minimum 2% visibility if buffer exists
+  const bufferSeconds = bufferAhead // Assume each piece ~= 1 second
+  const bufferPercentFromData = totalRange > 0 ? (bufferSeconds / totalRange) * 100 : 0
+  // Ensure buffer is always at least 2% visible when it exists, and cap at remaining space
+  const minVisibleBuffer = bufferAhead > 0 ? 2 : 0
+  const bufferPercent = Math.min(
+    currentPercent + Math.max(bufferPercentFromData, minVisibleBuffer),
+    100
+  )
 
   return (
     <div className="space-y-1.5">
