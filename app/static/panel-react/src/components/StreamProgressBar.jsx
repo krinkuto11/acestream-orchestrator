@@ -81,15 +81,17 @@ function StreamProgressBar({ streamId, orchUrl, apiKey }) {
   // Buffer is relative to current position
   // buffer_pieces indicates how much is buffered ahead (in pieces, typically ~1 second each)
   const bufferAhead = buffer_pieces || 0
-  // Calculate buffer as a percentage of total range, with minimum 2% visibility if buffer exists
+  // Calculate buffer as a percentage of total range
   const bufferSeconds = bufferAhead // Assume each piece ~= 1 second
   const bufferPercentFromData = totalRange > 0 ? (bufferSeconds / totalRange) * 100 : 0
-  // Ensure buffer is always at least 2% visible when it exists, and cap at remaining space
-  const minVisibleBuffer = bufferAhead > 0 ? 2 : 0
+  // Buffer extends from current position
   const bufferPercent = Math.min(
-    currentPercent + Math.max(bufferPercentFromData, minVisibleBuffer),
+    currentPercent + bufferPercentFromData,
     100
   )
+  
+  // Calculate seconds behind live
+  const secondsBehindLive = Math.max(0, Math.floor(last_ts - pos))
 
   return (
     <div className="space-y-1.5">
@@ -100,19 +102,19 @@ function StreamProgressBar({ streamId, orchUrl, apiKey }) {
           </Badge>
         )}
         <div className="flex-1 text-xs text-muted-foreground">
-          {formatTimestamp(pos)} / {formatTimestamp(last_ts)}
+          {secondsBehindLive} second{secondsBehindLive !== 1 ? 's' : ''} behind live
         </div>
       </div>
       
       {/* Progress bar container */}
       <div className="relative h-2.5 w-full bg-muted rounded-full overflow-hidden">
-        {/* Buffered range (lighter) */}
+        {/* Buffered range (grey zone) - extends from current position */}
         <div
-          className="absolute h-full bg-primary/30 transition-all duration-300"
+          className="absolute h-full bg-gray-400 dark:bg-gray-600 transition-all duration-300"
           style={{ width: `${bufferPercent}%` }}
         />
         
-        {/* Current position (darker red, YouTube-like) */}
+        {/* Current position (red, YouTube-like) */}
         <div
           className="absolute h-full bg-red-600 transition-all duration-300"
           style={{ width: `${currentPercent}%` }}
