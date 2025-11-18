@@ -1,5 +1,6 @@
 import time
 import logging
+import docker
 from typing import Optional
 from pydantic import BaseModel
 from .docker_client import get_client, safe
@@ -188,7 +189,16 @@ def clear_acestream_cache(container_id: str) -> tuple[bool, int]:
         else:
             logger.warning(f"Cache cleanup command returned non-zero exit code {result.exit_code} for container {container_id[:12]}")
             return (False, cache_size)
+    except docker.errors.NotFound:
+        # Container doesn't exist - this is expected during cleanup/reprovisioning
+        logger.debug(f"Cannot clear cache - container {container_id[:12]} not found")
+        return (False, 0)
+    except docker.errors.APIError as e:
+        # API error (e.g., container not running) - log at debug level as this is expected
+        logger.debug(f"Cannot clear cache for container {container_id[:12]}: {e}")
+        return (False, 0)
     except Exception as e:
+        # Catch-all for unexpected errors - keep at warning level
         logger.warning(f"Failed to clear AceStream cache for container {container_id[:12]}: {e}")
         return (False, 0)
 

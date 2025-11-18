@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { AlertCircle, ArrowUpDown, ArrowUp, ArrowDown, HardDrive, Activity } from 'lucide-react'
+import { AlertCircle, ArrowUpDown, ArrowUp, ArrowDown, HardDrive, Activity, Users } from 'lucide-react'
 import { Line } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
@@ -33,7 +33,8 @@ export function MetricsPage({ apiKey, orchUrl }) {
     uploadSpeedMbps: [],
     downloadSpeedMbps: [],
     activeStreams: [],
-    usedEngines: []
+    usedEngines: [],
+    peers: []
   })
 
   const fetchMetrics = useCallback(async () => {
@@ -65,13 +66,15 @@ export function MetricsPage({ apiKey, orchUrl }) {
         const newDownloadSpeedMbps = [...prev.downloadSpeedMbps, parsed.orch_total_download_speed_mbps || 0].slice(-maxPoints)
         const newActiveStreams = [...prev.activeStreams, parsed.orch_total_streams || 0].slice(-maxPoints)
         const newUsedEngines = [...prev.usedEngines, parsed.orch_used_engines || 0].slice(-maxPoints)
+        const newPeers = [...prev.peers, parsed.orch_total_peers || 0].slice(-maxPoints)
         
         return {
           timestamps: newTimestamps,
           uploadSpeedMbps: newUploadSpeedMbps,
           downloadSpeedMbps: newDownloadSpeedMbps,
           activeStreams: newActiveStreams,
-          usedEngines: newUsedEngines
+          usedEngines: newUsedEngines,
+          peers: newPeers
         }
       })
     } catch (err) {
@@ -95,7 +98,8 @@ export function MetricsPage({ apiKey, orchUrl }) {
     lines.forEach(line => {
       if (line.startsWith('#') || !line.trim()) return
       
-      const match = line.match(/^(\w+)(?:{.*?})?\s+([\d.]+)/)
+      // Updated regex to handle scientific notation (e.g., 1.27451136e+08)
+      const match = line.match(/^(\w+)(?:{.*?})?\s+([\d.eE+-]+)/)
       if (match) {
         const [, name, value] = match
         if (!parsed[name]) {
@@ -200,7 +204,7 @@ export function MetricsPage({ apiKey, orchUrl }) {
       )}
 
       {/* Key Metrics Summary */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Downloaded</CardTitle>
@@ -253,6 +257,17 @@ export function MetricsPage({ apiKey, orchUrl }) {
           <CardContent>
             <div className="text-2xl font-bold">{parsedMetrics.orch_total_streams || 0}</div>
             <p className="text-xs text-muted-foreground mt-1">{parsedMetrics.orch_used_engines || 0} engines in use</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Connected Peers</CardTitle>
+            <Users className="h-4 w-4 text-orange-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{parsedMetrics.orch_total_peers || 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">Current connections</p>
           </CardContent>
         </Card>
       </div>
@@ -333,6 +348,32 @@ export function MetricsPage({ apiKey, orchUrl }) {
                     'rgba(234, 179, 8, 0.1)'
                   )}
                   options={chartOptions('Engines in Use Over Time', 'Count')}
+                />
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Peer Count Chart */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Connected Peers</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div style={{ height: '300px' }}>
+              {loading && historicalData.timestamps.length === 0 ? (
+                <div className="flex items-center justify-center h-full">
+                  <p className="text-muted-foreground">Loading chart data...</p>
+                </div>
+              ) : (
+                <Line
+                  data={createChartData(
+                    'Peers',
+                    historicalData.peers,
+                    'rgb(249, 115, 22)',
+                    'rgba(249, 115, 22, 0.1)'
+                  )}
+                  options={chartOptions('Connected Peers Over Time', 'Count')}
                 />
               )}
             </div>

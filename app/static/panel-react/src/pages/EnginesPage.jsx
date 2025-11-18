@@ -59,7 +59,27 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, fetch
                   <p className="text-sm text-muted-foreground">
                     {reprovisionStatus?.message || 'Engines are being reprovisioned with new settings.'}
                   </p>
-                  <Progress value={null} className="w-full mt-2" />
+                  {(() => {
+                    // Calculate progress percentage based on current phase and counts
+                    let progress = 0
+                    if (reprovisionStatus) {
+                      const { current_phase, engines_stopped = 0, total_engines = 0 } = reprovisionStatus
+                      
+                      if (current_phase === 'stopping' && total_engines > 0) {
+                        // Stopping phase: 0-40% of progress
+                        progress = Math.round((engines_stopped / total_engines) * 40)
+                      } else if (current_phase === 'cleaning') {
+                        // Cleaning phase: 40-50% of progress
+                        progress = 45
+                      } else if (current_phase === 'provisioning') {
+                        // Provisioning phase: 50-100% of progress
+                        progress = 50 + Math.round((engines_stopped / Math.max(total_engines, 1)) * 50)
+                      } else if (current_phase === 'complete') {
+                        progress = 100
+                      }
+                    }
+                    return <Progress value={progress} className="w-full mt-2" />
+                  })()}
                 </div>
               </AlertDescription>
             </Alert>
