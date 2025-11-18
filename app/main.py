@@ -559,13 +559,16 @@ async def get_stream_livepos(stream_id: str):
                 }
             
             # Return livepos data with additional context
+            # Extract all relevant fields from livepos according to AceStream API
             return {
                 "has_livepos": True,
                 "is_live": payload.get("is_live", 0) == 1,
                 "livepos": {
                     "pos": livepos.get("pos"),
-                    "last_ts": livepos.get("last_ts") or livepos.get("last"),
+                    "live_first": livepos.get("live_first") or livepos.get("first_ts") or livepos.get("first"),
+                    "live_last": livepos.get("live_last") or livepos.get("last_ts") or livepos.get("last"),
                     "first_ts": livepos.get("first_ts") or livepos.get("first"),
+                    "last_ts": livepos.get("last_ts") or livepos.get("last"),
                     "buffer_pieces": livepos.get("buffer_pieces")
                 }
             }
