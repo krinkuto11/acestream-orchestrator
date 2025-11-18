@@ -13,13 +13,6 @@ import {
   Tooltip,
   Legend
 } from 'chart.js'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 
 ChartJS.register(
   CategoryScale,
@@ -35,11 +28,8 @@ export function MetricsPage({ apiKey, orchUrl }) {
   const [metrics, setMetrics] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [timeRange, setTimeRange] = useState('1h') // Time range for graphs
   const [historicalData, setHistoricalData] = useState({
     timestamps: [],
-    uploadedMB: [],
-    downloadedMB: [],
     uploadSpeedMbps: [],
     downloadSpeedMbps: [],
     activeStreams: [],
@@ -63,16 +53,14 @@ export function MetricsPage({ apiKey, orchUrl }) {
       setMetrics(data)
       setError(null)
       
-      // Parse and store historical data
+      // Parse and store historical data for speeds and counts only
       const parsed = parseMetrics(data)
       const now = new Date()
       
       setHistoricalData(prev => {
-        const maxPoints = timeRange === '5m' ? 30 : timeRange === '15m' ? 45 : timeRange === '1h' ? 60 : timeRange === '6h' ? 72 : 144
+        const maxPoints = 60 // Keep last 60 data points (10 minutes at 10s intervals)
         
         const newTimestamps = [...prev.timestamps, now].slice(-maxPoints)
-        const newUploadedMB = [...prev.uploadedMB, (parsed.orch_total_uploaded_bytes || 0) / (1024 * 1024)].slice(-maxPoints)
-        const newDownloadedMB = [...prev.downloadedMB, (parsed.orch_total_downloaded_bytes || 0) / (1024 * 1024)].slice(-maxPoints)
         const newUploadSpeedMbps = [...prev.uploadSpeedMbps, parsed.orch_total_upload_speed_mbps || 0].slice(-maxPoints)
         const newDownloadSpeedMbps = [...prev.downloadSpeedMbps, parsed.orch_total_download_speed_mbps || 0].slice(-maxPoints)
         const newActiveStreams = [...prev.activeStreams, parsed.orch_total_streams || 0].slice(-maxPoints)
@@ -80,8 +68,6 @@ export function MetricsPage({ apiKey, orchUrl }) {
         
         return {
           timestamps: newTimestamps,
-          uploadedMB: newUploadedMB,
-          downloadedMB: newDownloadedMB,
           uploadSpeedMbps: newUploadSpeedMbps,
           downloadSpeedMbps: newDownloadSpeedMbps,
           activeStreams: newActiveStreams,
@@ -93,7 +79,7 @@ export function MetricsPage({ apiKey, orchUrl }) {
     } finally {
       setLoading(false)
     }
-  }, [orchUrl, apiKey, timeRange])
+  }, [orchUrl, apiKey])
 
   useEffect(() => {
     fetchMetrics()
@@ -204,21 +190,6 @@ export function MetricsPage({ apiKey, orchUrl }) {
           <h1 className="text-3xl font-bold tracking-tight">Metrics</h1>
           <p className="text-muted-foreground mt-1">Real-time metrics and statistics</p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Time Range:</span>
-          <Select value={timeRange} onValueChange={setTimeRange}>
-            <SelectTrigger className="w-[120px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="5m">5 minutes</SelectItem>
-              <SelectItem value="15m">15 minutes</SelectItem>
-              <SelectItem value="1h">1 hour</SelectItem>
-              <SelectItem value="6h">6 hours</SelectItem>
-              <SelectItem value="24h">24 hours</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
       </div>
 
       {error && (
@@ -288,34 +259,6 @@ export function MetricsPage({ apiKey, orchUrl }) {
 
       {/* Charts */}
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Total Data Transfer Chart */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Total Data Transfer (MB)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div style={{ height: '300px' }}>
-              {loading && historicalData.timestamps.length === 0 ? (
-                <div className="flex items-center justify-center h-full">
-                  <p className="text-muted-foreground">Loading chart data...</p>
-                </div>
-              ) : (
-                <Line
-                  data={createDualChartData(
-                    'Downloaded',
-                    historicalData.downloadedMB,
-                    'Uploaded',
-                    historicalData.uploadedMB,
-                    { border: 'rgb(59, 130, 246)', bg: 'rgba(59, 130, 246, 0.1)' },
-                    { border: 'rgb(34, 197, 94)', bg: 'rgba(34, 197, 94, 0.1)' }
-                  )}
-                  options={chartOptions('Data Transfer Over Time', 'Megabytes')}
-                />
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Transfer Speeds Chart */}
         <Card>
           <CardHeader>

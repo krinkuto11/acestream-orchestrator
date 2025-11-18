@@ -793,6 +793,7 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
     """
     Delete all engines and reprovision them with current settings.
     This is a potentially disruptive operation.
+    This operation runs entirely in the background to avoid blocking the API/UI.
     """
     global _reprovision_state
     
@@ -805,6 +806,10 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
     
     from .services.health import list_managed
     
+    # Get engine count for response before marking in progress
+    engines = list_managed()
+    engine_count = len(engines)
+    
     # Mark as in progress
     _reprovision_state = {
         "in_progress": True,
@@ -813,34 +818,40 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     
-    # Get all current engines
-    engines = list_managed()
-    engine_ids = [c.id for c in engines]
-    
-    logger.info(f"Starting reprovision of {len(engine_ids)} engines with new custom variant settings")
-    
-    # Delete all engines
-    for engine_id in engine_ids:
-        try:
-            stop_container(engine_id)
-            logger.info(f"Stopped engine {engine_id[:12]}")
-        except Exception as e:
-            logger.error(f"Failed to stop engine {engine_id[:12]}: {e}")
-    
-    # Clear state
-    cleanup_on_shutdown()
-    
-    # Reload custom config to ensure we have latest settings
-    reload_config()
-    
-    # Reprovision minimum replicas in background
+    # Perform all reprovisioning work in background task
     def reprovision_task():
         global _reprovision_state
         import time
-        time.sleep(2)  # Give time for cleanup
+        
         try:
+            # Get current engines (refresh list in background context)
+            from .services.health import list_managed
+            engines = list_managed()
+            engine_ids = [c.id for c in engines]
+            
+            logger.info(f"Starting reprovision of {len(engine_ids)} engines with new custom variant settings")
+            
+            # Delete all engines
+            for engine_id in engine_ids:
+                try:
+                    stop_container(engine_id)
+                    logger.info(f"Stopped engine {engine_id[:12]}")
+                except Exception as e:
+                    logger.error(f"Failed to stop engine {engine_id[:12]}: {e}")
+            
+            # Clear state
+            cleanup_on_shutdown()
+            
+            # Reload custom config to ensure we have latest settings
+            reload_config()
+            
+            # Give time for cleanup
+            time.sleep(2)
+            
+            # Reprovision minimum replicas
             ensure_minimum()
             logger.info(f"Successfully reprovisioned engines with new settings")
+            
             _reprovision_state = {
                 "in_progress": False,
                 "status": "success",
@@ -859,8 +870,8 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
     background_tasks.add_task(reprovision_task)
     
     return {
-        "message": f"Started reprovisioning of {len(engine_ids)} engines",
-        "deleted_count": len(engine_ids)
+        "message": f"Started reprovisioning of {engine_count} engines",
+        "deleted_count": engine_count
     }
 
 # Template Management Endpoints
