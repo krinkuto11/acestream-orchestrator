@@ -9,8 +9,8 @@ import { Badge } from '@/components/ui/badge'
  * @returns {number} Percentage (0-100)
  */
 function calculatePercentage(value, liveFirst, liveLast) {
-  if (!value && value !== 0) return 0
-  if (!liveLast || !liveFirst) return 0
+  if (value == null) return 0
+  if (liveLast == null || liveFirst == null) return 0
   
   const totalRange = liveLast - liveFirst
   if (totalRange <= 0) return 0
