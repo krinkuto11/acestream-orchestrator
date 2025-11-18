@@ -29,6 +29,15 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, fetch
     return () => clearInterval(interval)
   }, [orchUrl, fetchJSON])
 
+  // Clear success/error message when component unmounts (user navigates away)
+  useEffect(() => {
+    return () => {
+      // Clear the status when leaving the page
+      setReprovisionStatus(null)
+      setIsReprovisioning(false)
+    }
+  }, [])
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">

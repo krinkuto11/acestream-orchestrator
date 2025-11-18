@@ -254,7 +254,7 @@ Response:
 1. All existing engines are stopped and removed
 2. Engine state is cleared
 3. Custom variant config is reloaded from disk
-4. Minimum replicas are provisioned in the background with new settings
+4. Minimum replicas are provisioned with new settings
 
-**Note:** This operation runs asynchronously. The response indicates that reprovisioning has started, not that it has completed.
+**Note:** This operation runs entirely in the background as a non-blocking task. The endpoint returns immediately after starting the operation. The API and UI remain fully accessible during reprovisioning. Use `GET /custom-variant/reprovision/status` to check the progress.
 
