@@ -111,6 +111,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   const [renameSlotId, setRenameSlotId] = useState(null)
   const [renameValue, setRenameValue] = useState('')
   const [editingTemplateSlot, setEditingTemplateSlot] = useState(null)  // Track which template is being edited
+  const [showReprovisionWarning, setShowReprovisionWarning] = useState(false)  // Show warning after editing active template
 
   // Fetch templates
   const fetchTemplates = useCallback(async () => {
@@ -252,6 +253,12 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       })
       
       toast.success(`Template ${editingTemplateSlot} saved successfully`)
+      
+      // If we're editing the active template, show reprovision warning
+      if (editingTemplateSlot === activeTemplateId) {
+        setShowReprovisionWarning(true)
+      }
+      
       await fetchTemplates()
       setEditingTemplateSlot(null)
       setTemplateName('')
@@ -260,7 +267,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     } finally {
       setSaving(false)
     }
-  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, fetchJSON, fetchTemplates])
+  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, activeTemplateId, fetchJSON, fetchTemplates])
 
   // Save configuration (kept for backward compatibility, now just calls platform save)
   const handleSave = useCallback(async () => {
@@ -278,6 +285,19 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
 
     try {
       setReprovisioning(true)
+      setShowReprovisionWarning(false)  // Clear warning when reprovisioning
+      
+      // First, save the current config before reprovisioning
+      if (config && config.enabled) {
+        await fetchJSON(`${orchUrl}/custom-variant/config`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-KEY': apiKey
+          },
+          body: JSON.stringify(config)
+        })
+      }
       
       await fetchJSON(`${orchUrl}/custom-variant/reprovision`, {
         method: 'POST',
@@ -298,7 +318,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       }
       setReprovisioning(false)
     }
-  }, [orchUrl, apiKey, fetchJSON, checkReprovisionStatus])
+  }, [orchUrl, apiKey, config, fetchJSON, checkReprovisionStatus])
 
   // Template management functions
   const handleSaveAsTemplate = useCallback(async (slotId, name) => {
@@ -615,9 +635,41 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             </div>
             <Switch
               checked={config.enabled}
-              onCheckedChange={(checked) => setConfig(prev => ({ ...prev, enabled: checked }))}
+              onCheckedChange={async (checked) => {
+                setConfig(prev => ({ ...prev, enabled: checked }))
+                
+                // If enabling and no active template, auto-load first available template
+                if (checked && !activeTemplateId) {
+                  const firstTemplate = templates.find(t => t.exists)
+                  if (firstTemplate) {
+                    try {
+                      const response = await fetchJSON(`${orchUrl}/custom-variant/templates/${firstTemplate.slot_id}/activate`, {
+                        method: 'POST',
+                        headers: {
+                          'X-API-KEY': apiKey
+                        }
+                      })
+                      toast.success(`Auto-loaded template: ${firstTemplate.name}`)
+                      await fetchConfig()
+                      await fetchTemplates()
+                    } catch (err) {
+                      toast.error(`Failed to auto-load template: ${err.message}`)
+                    }
+                  }
+                }
+              }}
+              disabled={!templates.some(t => t.exists)}
             />
           </div>
+
+          {!templates.some(t => t.exists) && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                No templates available. Create a template below to enable custom engine variants.
+              </AlertDescription>
+            </Alert>
+          )}
 
           {config.enabled && (platform.platform === 'arm32' || platform.platform === 'arm64') && (
             <div className="space-y-2">
@@ -672,6 +724,17 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Reprovision Warning */}
+          {showReprovisionWarning && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                You have edited the active template. Engines must be reprovisioned for the changes to take effect.
+                Click "Reprovision All Engines" above to apply the new settings.
+              </AlertDescription>
+            </Alert>
+          )}
+          
           {/* Template grid */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {templates.map((template) => (
@@ -693,14 +756,17 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                 <div className="flex gap-1">
                   {template.exists ? (
                     <>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="flex-1 text-xs h-7"
-                        onClick={() => handleLoadTemplate(template.slot_id)}
-                      >
-                        Load
-                      </Button>
+                      {/* Hide Load button for active template */}
+                      {activeTemplateId !== template.slot_id && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 text-xs h-7"
+                          onClick={() => handleLoadTemplate(template.slot_id)}
+                        >
+                          Load
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="ghost"

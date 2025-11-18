@@ -146,6 +146,8 @@ function App() {
                       engines={engines}
                       onDeleteEngine={handleDeleteEngine}
                       vpnStatus={vpnStatus}
+                      orchUrl={orchUrl}
+                      fetchJSON={fetchJSON}
                     />
                   } 
                 />

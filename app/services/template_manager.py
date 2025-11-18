@@ -229,14 +229,59 @@ def import_template(slot_id: int, json_data: str) -> tuple[bool, Optional[str]]:
 _active_template_id: Optional[int] = None
 
 
+def _load_active_template_from_db() -> Optional[int]:
+    """Load active template ID from database"""
+    try:
+        from .db import SessionLocal
+        from ..models.db_models import ConfigRow
+        
+        with SessionLocal() as session:
+            row = session.query(ConfigRow).filter_by(key="active_template_id").first()
+            if row and row.value:
+                return int(row.value)
+    except Exception as e:
+        logger.error(f"Failed to load active template ID from database: {e}")
+    return None
+
+
+def _save_active_template_to_db(slot_id: Optional[int]):
+    """Save active template ID to database"""
+    try:
+        from .db import SessionLocal
+        from ..models.db_models import ConfigRow
+        from datetime import datetime, timezone
+        
+        with SessionLocal() as session:
+            row = session.query(ConfigRow).filter_by(key="active_template_id").first()
+            if row:
+                row.value = str(slot_id) if slot_id is not None else None
+                row.updated_at = datetime.now(timezone.utc)
+            else:
+                row = ConfigRow(
+                    key="active_template_id",
+                    value=str(slot_id) if slot_id is not None else None
+                )
+                session.add(row)
+            session.commit()
+    except Exception as e:
+        logger.error(f"Failed to save active template ID to database: {e}")
+
+
 def set_active_template(slot_id: Optional[int]):
-    """Set the currently active template"""
+    """Set the currently active template and persist to database"""
     global _active_template_id
     _active_template_id = slot_id
+    _save_active_template_to_db(slot_id)
 
 
 def get_active_template_id() -> Optional[int]:
     """Get the currently active template ID"""
+    global _active_template_id
+    
+    # Load from database if not in memory
+    if _active_template_id is None:
+        _active_template_id = _load_active_template_from_db()
+    
     return _active_template_id
 
 
