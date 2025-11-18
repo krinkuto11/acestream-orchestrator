@@ -455,7 +455,11 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       const template = await fetchJSON(`${orchUrl}/custom-variant/templates/${slotId}`)
       
       // Update the current config with the template's config
-      setConfig(template.config)
+      // Preserve the current platform's enabled state
+      setConfig(prevConfig => ({
+        ...template.config,
+        enabled: prevConfig.enabled
+      }))
       
       // Set editing mode with the template name
       setEditingTemplateSlot(slotId)

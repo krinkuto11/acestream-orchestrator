@@ -53,7 +53,7 @@ export function ModernSidebar() {
       <div className="flex h-16 items-center border-b px-4">
         {!collapsed && (
           <h1 className="text-lg font-bold text-primary truncate">
-            Acestream Orchestrator
+            AceStream Orchestrator
           </h1>
         )}
         {collapsed && (
