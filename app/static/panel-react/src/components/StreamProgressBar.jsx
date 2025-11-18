@@ -97,7 +97,7 @@ function StreamProgressBar({ streamId, orchUrl, apiKey }) {
       </div>
       
       {/* Progress bar container */}
-      <div className="relative h-1.5 w-full bg-muted rounded-full overflow-hidden">
+      <div className="relative h-2.5 w-full bg-muted rounded-full overflow-hidden">
         {/* Buffered range (lighter) */}
         <div
           className="absolute h-full bg-primary/30 transition-all duration-300"
