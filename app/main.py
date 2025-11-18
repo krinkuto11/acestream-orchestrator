@@ -739,7 +739,12 @@ _reprovision_state = {
     "in_progress": False,
     "status": "idle",  # idle, in_progress, success, error
     "message": None,
-    "timestamp": None
+    "timestamp": None,
+    "total_engines": 0,
+    "engines_stopped": 0,
+    "engines_provisioned": 0,
+    "current_engine_id": None,
+    "current_phase": None  # stopping, cleaning, provisioning, complete
 }
 
 @app.get("/custom-variant/platform")
@@ -815,7 +820,12 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
         "in_progress": True,
         "status": "in_progress",
         "message": "Reprovisioning engines...",
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "total_engines": engine_count,
+        "engines_stopped": 0,
+        "engines_provisioned": 0,
+        "current_engine_id": None,
+        "current_phase": "preparing"
     }
     
     # Perform all reprovisioning work in background task
@@ -824,20 +834,46 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
         import time
         
         try:
+            # Enter reprovisioning mode to coordinate with other services
+            state.enter_reprovisioning_mode()
+            
             # Get current engines (refresh list in background context)
             from .services.health import list_managed
             engines = list_managed()
             engine_ids = [c.id for c in engines]
+            total_engines = len(engine_ids)
             
-            logger.info(f"Starting reprovision of {len(engine_ids)} engines with new custom variant settings")
+            logger.info(f"Starting reprovision of {total_engines} engines with new custom variant settings")
+            
+            # Update state: stopping phase
+            _reprovision_state.update({
+                "total_engines": total_engines,
+                "current_phase": "stopping",
+                "message": f"Stopping {total_engines} engines..."
+            })
             
             # Delete all engines
-            for engine_id in engine_ids:
+            for idx, engine_id in enumerate(engine_ids, 1):
                 try:
+                    _reprovision_state.update({
+                        "current_engine_id": engine_id[:12],
+                        "message": f"Stopping engine {idx}/{total_engines}: {engine_id[:12]}"
+                    })
+                    
                     stop_container(engine_id)
-                    logger.info(f"Stopped engine {engine_id[:12]}")
+                    logger.info(f"Stopped engine {engine_id[:12]} ({idx}/{total_engines})")
+                    
+                    _reprovision_state["engines_stopped"] = idx
                 except Exception as e:
                     logger.error(f"Failed to stop engine {engine_id[:12]}: {e}")
+                    # Continue with remaining engines even if one fails
+            
+            # Update state: cleaning phase
+            _reprovision_state.update({
+                "current_phase": "cleaning",
+                "current_engine_id": None,
+                "message": "Cleaning up state..."
+            })
             
             # Clear state
             cleanup_on_shutdown()
@@ -845,26 +881,53 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
             # Reload custom config to ensure we have latest settings
             reload_config()
             
-            # Give time for cleanup
+            # Give time for cleanup and monitoring systems to settle
             time.sleep(2)
             
+            # Update state: provisioning phase
+            _reprovision_state.update({
+                "current_phase": "provisioning",
+                "message": f"Provisioning {cfg.MIN_REPLICAS} new engines..."
+            })
+            
             # Reprovision minimum replicas
-            ensure_minimum()
+            ensure_minimum(initial_startup=True)
             logger.info(f"Successfully reprovisioned engines with new settings")
             
+            # Exit reprovisioning mode
+            state.exit_reprovisioning_mode()
+            
+            # Update state: complete
             _reprovision_state = {
                 "in_progress": False,
                 "status": "success",
-                "message": "Successfully reprovisioned all engines",
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "message": f"Successfully reprovisioned all engines ({total_engines} stopped, {cfg.MIN_REPLICAS} provisioned)",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "total_engines": total_engines,
+                "engines_stopped": total_engines,
+                "engines_provisioned": cfg.MIN_REPLICAS,
+                "current_engine_id": None,
+                "current_phase": "complete"
             }
         except Exception as e:
             logger.error(f"Failed to reprovision engines: {e}")
+            
+            # Exit reprovisioning mode on error
+            try:
+                state.exit_reprovisioning_mode()
+            except Exception:
+                pass
+            
             _reprovision_state = {
                 "in_progress": False,
                 "status": "error",
                 "message": f"Failed to reprovision engines: {str(e)}",
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "total_engines": _reprovision_state.get("total_engines", 0),
+                "engines_stopped": _reprovision_state.get("engines_stopped", 0),
+                "engines_provisioned": 0,
+                "current_engine_id": _reprovision_state.get("current_engine_id"),
+                "current_phase": "error"
             }
     
     background_tasks.add_task(reprovision_task)

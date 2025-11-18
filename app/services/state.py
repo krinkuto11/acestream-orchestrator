@@ -21,6 +21,10 @@ class State:
         self._failed_vpn_container: Optional[str] = None
         self._healthy_vpn_container: Optional[str] = None
         self._emergency_mode_entered_at: Optional[datetime] = None
+        
+        # Reprovisioning mode state for coordinating system-wide reprovisioning
+        self._reprovisioning_mode = False
+        self._reprovisioning_entered_at: Optional[datetime] = None
 
     @staticmethod
     def now():
@@ -629,6 +633,72 @@ class State:
             if not self._emergency_mode:
                 return False
             return vpn_container == self._failed_vpn_container
+    
+    def enter_reprovisioning_mode(self) -> bool:
+        """
+        Enter reprovisioning mode to coordinate system-wide engine reprovisioning.
+        
+        Reprovisioning mode:
+        - Pauses health management operations
+        - Pauses autoscaling operations
+        - Allows monitoring to continue (but with reduced operations)
+        
+        Returns:
+            bool: True if successfully entered reprovisioning mode, False if already in it
+        """
+        with self._lock:
+            if self._reprovisioning_mode:
+                logger.warning("Already in reprovisioning mode")
+                return False
+            
+            self._reprovisioning_mode = True
+            self._reprovisioning_entered_at = self.now()
+            
+            logger.info("Entered reprovisioning mode - pausing health management and autoscaling")
+            return True
+    
+    def exit_reprovisioning_mode(self) -> bool:
+        """
+        Exit reprovisioning mode and resume normal operations.
+        
+        Returns:
+            bool: True if successfully exited reprovisioning mode, False if wasn't in it
+        """
+        with self._lock:
+            if not self._reprovisioning_mode:
+                logger.warning("Not in reprovisioning mode")
+                return False
+            
+            duration = (self.now() - self._reprovisioning_entered_at).total_seconds() if self._reprovisioning_entered_at else 0
+            
+            self._reprovisioning_mode = False
+            self._reprovisioning_entered_at = None
+            
+            logger.info(f"Exited reprovisioning mode after {duration:.1f}s - resuming normal operations")
+            return True
+    
+    def is_reprovisioning_mode(self) -> bool:
+        """Check if system is in reprovisioning mode."""
+        with self._lock:
+            return self._reprovisioning_mode
+    
+    def get_reprovisioning_mode_info(self) -> Dict:
+        """Get information about reprovisioning mode status."""
+        with self._lock:
+            if not self._reprovisioning_mode:
+                return {
+                    "active": False,
+                    "duration_seconds": 0,
+                    "entered_at": None
+                }
+            
+            duration = (self.now() - self._reprovisioning_entered_at).total_seconds() if self._reprovisioning_entered_at else 0
+            
+            return {
+                "active": True,
+                "duration_seconds": duration,
+                "entered_at": self._reprovisioning_entered_at.isoformat() if self._reprovisioning_entered_at else None
+            }
     
     def cleanup_ended_streams(self, max_age_seconds: int = 3600) -> int:
         """

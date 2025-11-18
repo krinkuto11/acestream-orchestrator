@@ -8,6 +8,8 @@ orch_stale_streams_detected = Counter("orch_stale_streams_detected_total", "stal
 # Aggregated metrics from all engines
 orch_total_uploaded_bytes = Gauge("orch_total_uploaded_bytes", "Total bytes uploaded from all engines")
 orch_total_downloaded_bytes = Gauge("orch_total_downloaded_bytes", "Total bytes downloaded from all engines")
+orch_total_uploaded_mb = Gauge("orch_total_uploaded_mb", "Total MB uploaded from all engines")
+orch_total_downloaded_mb = Gauge("orch_total_downloaded_mb", "Total MB downloaded from all engines")
 orch_total_upload_speed_mbps = Gauge("orch_total_upload_speed_mbps", "Current sum of upload speeds from all engines in MB/s")
 orch_total_download_speed_mbps = Gauge("orch_total_download_speed_mbps", "Current sum of download speeds from all engines in MB/s")
 orch_total_peers = Gauge("orch_total_peers", "Current total peers across all engines")
@@ -168,9 +170,15 @@ def update_custom_metrics():
         cumulative_uploaded = _cumulative_uploaded_bytes
         cumulative_downloaded = _cumulative_downloaded_bytes
     
+    # Convert bytes to MB for human-readable metrics
+    cumulative_uploaded_mb = round(cumulative_uploaded / (1024 * 1024), 2) if cumulative_uploaded > 0 else 0.0
+    cumulative_downloaded_mb = round(cumulative_downloaded / (1024 * 1024), 2) if cumulative_downloaded > 0 else 0.0
+    
     # Update all metrics
     orch_total_uploaded_bytes.set(cumulative_uploaded)
     orch_total_downloaded_bytes.set(cumulative_downloaded)
+    orch_total_uploaded_mb.set(cumulative_uploaded_mb)
+    orch_total_downloaded_mb.set(cumulative_downloaded_mb)
     orch_total_upload_speed_mbps.set(total_upload_speed_mbps)
     orch_total_download_speed_mbps.set(total_download_speed_mbps)
     orch_total_peers.set(total_peers)
