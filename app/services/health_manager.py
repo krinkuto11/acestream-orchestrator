@@ -105,6 +105,11 @@ class HealthManager:
             logger.debug(f"Health manager paused: in emergency mode (failed VPN: {emergency_info['failed_vpn']})")
             return
         
+        # Skip health management if in reprovisioning mode
+        if state.is_reprovisioning_mode():
+            logger.debug("Health manager paused: in reprovisioning mode")
+            return
+        
         # Get current engines from state
         engines = state.list_engines()
         current_engine_ids = {engine.container_id for engine in engines}
