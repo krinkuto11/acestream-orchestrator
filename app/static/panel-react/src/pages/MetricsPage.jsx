@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { AlertCircle, ArrowUpDown, ArrowUp, ArrowDown, HardDrive, Activity, Users } from 'lucide-react'
+import { formatBytes } from '../utils/formatters'
 import { Line } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
@@ -115,11 +116,6 @@ export function MetricsPage({ apiKey, orchUrl }) {
 
   const parsedMetrics = metrics ? parseMetrics(metrics) : {}
 
-  // Format bytes to MB
-  const formatMB = (bytes) => {
-    return (bytes / (1024 * 1024)).toFixed(2)
-  }
-
   // Create chart data
   const createChartData = (label, data, borderColor, backgroundColor) => ({
     labels: historicalData.timestamps.map(ts => ts.toLocaleTimeString()),
@@ -211,7 +207,7 @@ export function MetricsPage({ apiKey, orchUrl }) {
             <ArrowDown className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatMB(parsedMetrics.orch_total_downloaded_bytes || 0)} MB</div>
+            <div className="text-2xl font-bold">{formatBytes(parsedMetrics.orch_total_downloaded_bytes || 0)}</div>
             <p className="text-xs text-muted-foreground mt-1">All-time total</p>
           </CardContent>
         </Card>
@@ -222,7 +218,7 @@ export function MetricsPage({ apiKey, orchUrl }) {
             <ArrowUp className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatMB(parsedMetrics.orch_total_uploaded_bytes || 0)} MB</div>
+            <div className="text-2xl font-bold">{formatBytes(parsedMetrics.orch_total_uploaded_bytes || 0)}</div>
             <p className="text-xs text-muted-foreground mt-1">All-time total</p>
           </CardContent>
         </Card>
