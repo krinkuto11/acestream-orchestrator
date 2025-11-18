@@ -8,14 +8,31 @@ import { RefreshCw, AlertCircle, CheckCircle } from 'lucide-react'
 export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, fetchJSON }) {
   const [reprovisionStatus, setReprovisionStatus] = useState(null)
   const [isReprovisioning, setIsReprovisioning] = useState(false)
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false)
+  const [showErrorMessage, setShowErrorMessage] = useState(false)
 
   // Poll for reprovision status
   useEffect(() => {
     const checkReprovisionStatus = async () => {
       try {
         const status = await fetchJSON(`${orchUrl}/custom-variant/reprovision/status`)
+        const wasReprovisioning = isReprovisioning
+        
         setReprovisionStatus(status)
         setIsReprovisioning(status.in_progress)
+        
+        // When reprovisioning completes, show success/error message briefly
+        if (wasReprovisioning && !status.in_progress) {
+          if (status.status === 'success') {
+            setShowSuccessMessage(true)
+            // Auto-dismiss success message after 10 seconds
+            setTimeout(() => setShowSuccessMessage(false), 10000)
+          } else if (status.status === 'error') {
+            setShowErrorMessage(true)
+            // Auto-dismiss error message after 15 seconds
+            setTimeout(() => setShowErrorMessage(false), 15000)
+          }
+        }
       } catch (err) {
         // Ignore errors
       }
@@ -27,7 +44,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, fetch
     // Poll every 2 seconds
     const interval = setInterval(checkReprovisionStatus, 2000)
     return () => clearInterval(interval)
-  }, [orchUrl, fetchJSON])
+  }, [orchUrl, fetchJSON, isReprovisioning])
 
   // Clear success/error message when component unmounts (user navigates away)
   useEffect(() => {
@@ -35,6 +52,8 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, fetch
       // Clear the status when leaving the page
       setReprovisionStatus(null)
       setIsReprovisioning(false)
+      setShowSuccessMessage(false)
+      setShowErrorMessage(false)
     }
   }, [])
 
@@ -88,7 +107,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, fetch
       )}
 
       {/* Success message after reprovisioning */}
-      {!isReprovisioning && reprovisionStatus?.status === 'success' && (
+      {!isReprovisioning && showSuccessMessage && reprovisionStatus?.status === 'success' && (
         <Card>
           <CardContent className="pt-6">
             <Alert variant="default" className="border-green-500 bg-green-50 dark:bg-green-950">
@@ -102,7 +121,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, fetch
       )}
 
       {/* Error message after reprovisioning */}
-      {!isReprovisioning && reprovisionStatus?.status === 'error' && (
+      {!isReprovisioning && showErrorMessage && reprovisionStatus?.status === 'error' && (
         <Card>
           <CardContent className="pt-6">
             <Alert variant="destructive">
