@@ -2,12 +2,10 @@ FROM python:3.12-slim
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 
-# Update pip and install certificates, Node.js and npm
+# Update pip and install Node.js and npm
 RUN pip install --upgrade pip && \
     apt-get update && \
-    apt-get install -y ca-certificates curl gnupg && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
+    apt-get install -y nodejs npm && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
