@@ -1,6 +1,11 @@
 # AceStream Orchestrator
 
 Dynamic orchestration service for AceStream engines with health monitoring, usage tracking, VPN integration, and a modern web dashboard.
+| Dashboard | Engines | Streams |
+|---------|---------|---------|
+| <img width="300" src="https://github.com/user-attachments/assets/02f40e0f-6629-4ff6-a1ba-599051fbd0dc" /> | <img width="300" src="https://github.com/user-attachments/assets/ebda1c53-782d-4e48-939b-d9e0c21283e2" /> | <img width="300" src="https://github.com/user-attachments/assets/2466b4e8-5f76-4d04-81a1-88ca1398692f" /> |
+
+
 
 ## What It Does
 
