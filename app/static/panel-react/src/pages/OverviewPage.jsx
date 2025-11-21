@@ -129,9 +129,7 @@ function ResourceUsage({ orchUrl }) {
 
   // Show placeholder while loading or no data
   if (loading || !totalStats || totalStats.container_count === 0) {
-    const message = loading 
-      ? "Loading resource usage..." 
-      : "No engines running - resource usage unavailable"
+    const message = loading ? "Loading resource usage..." : "No engines running - resource usage unavailable"
     
     return (
       <div className="space-y-4">

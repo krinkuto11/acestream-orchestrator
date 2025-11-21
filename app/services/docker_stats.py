@@ -106,8 +106,8 @@ class StatsCollector:
                     for container_id, task in version_tasks:
                         try:
                             result = await task
-                            # Check if result is valid (not None and not an exception)
-                            if result is not None and not isinstance(result, Exception):
+                            # Check if result is valid (not None, since get_engine_version_info returns Optional[Dict])
+                            if result is not None:
                                 result['updated_at'] = datetime.now(timezone.utc).isoformat()
                                 new_version_cache[container_id] = result
                         except Exception as e:
