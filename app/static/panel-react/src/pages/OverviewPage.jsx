@@ -103,10 +103,13 @@ function ResourceUsage({ orchUrl }) {
   useEffect(() => {
     const fetchTotalStats = async () => {
       try {
+        // Use the /engines/stats/total endpoint which uses cached stats from the background collector
         const response = await fetch(`${orchUrl}/engines/stats/total`)
         if (response.ok) {
           const data = await response.json()
           setTotalStats(data)
+        } else {
+          console.error('Failed to fetch total stats: HTTP', response.status)
         }
       } catch (err) {
         console.error('Failed to fetch total stats:', err)
@@ -124,7 +127,7 @@ function ResourceUsage({ orchUrl }) {
     return () => clearInterval(interval)
   }, [orchUrl])
 
-  // Don't show anything if loading or no engines
+  // Don't show anything while loading initially
   if (loading) {
     return null
   }

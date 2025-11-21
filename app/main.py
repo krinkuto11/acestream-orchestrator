@@ -591,23 +591,50 @@ def get_engine(container_id: str):
 
 @app.get("/engines/stats/all")
 def get_all_engine_stats():
-    """Get Docker stats for all engines."""
-    engines = state.list_engines()
-    container_ids = [e.container_id for e in engines]
-    stats = get_multiple_container_stats(container_ids)
-    return stats
+    """Get Docker stats for all engines from cache."""
+    # Use cached stats from the background collector
+    all_stats = stats_collector.get_all_cached_stats()
+    return all_stats
 
 @app.get("/engines/stats/total")
 def get_total_engine_stats():
-    """Get aggregated Docker stats across all engines."""
-    engines = state.list_engines()
-    container_ids = [e.container_id for e in engines]
-    total_stats = get_total_stats(container_ids)
-    return total_stats
+    """Get aggregated Docker stats across all engines from cache."""
+    # Use cached stats from the background collector
+    all_stats = stats_collector.get_all_cached_stats()
+    
+    total = {
+        'total_cpu_percent': 0.0,
+        'total_memory_usage': 0,
+        'total_network_rx_bytes': 0,
+        'total_network_tx_bytes': 0,
+        'total_block_read_bytes': 0,
+        'total_block_write_bytes': 0,
+        'container_count': 0
+    }
+    
+    for container_id, stats in all_stats.items():
+        total['total_cpu_percent'] += stats.get('cpu_percent', 0)
+        total['total_memory_usage'] += stats.get('memory_usage', 0)
+        total['total_network_rx_bytes'] += stats.get('network_rx_bytes', 0)
+        total['total_network_tx_bytes'] += stats.get('network_tx_bytes', 0)
+        total['total_block_read_bytes'] += stats.get('block_read_bytes', 0)
+        total['total_block_write_bytes'] += stats.get('block_write_bytes', 0)
+        total['container_count'] += 1
+    
+    # Round CPU percent
+    total['total_cpu_percent'] = round(total['total_cpu_percent'], 2)
+    
+    return total
 
 @app.get("/engines/{container_id}/stats")
 def get_engine_stats(container_id: str):
-    """Get Docker stats for a specific engine."""
+    """Get Docker stats for a specific engine from cache."""
+    # First try to get from cache
+    stats = stats_collector.get_cached_stats(container_id)
+    if stats:
+        return stats
+    
+    # If not in cache, fall back to direct fetch
     stats = get_container_stats(container_id)
     if not stats:
         raise HTTPException(status_code=404, detail="Container not found or stats unavailable")
