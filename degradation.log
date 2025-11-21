@@ -1,0 +1,217 @@
+orchestrator  | 2025-11-21T10:48:29.487704875Z 2025-11-21 11:48:29,487 ERROR app.services.gluetun: Error getting VPN status for 'gluetun_2': UnixHTTPConnectionPool(host='localhost', port=None): Read timed out. (read timeout=30)
+orchestrator  | 2025-11-21T10:48:29.907610219Z 2025-11-21 11:48:29,907 WARNING app.services.monitor: Docker socket temporarily unavailable during sync, will retry next iteration: UnixHTTPConnectionPool(host='localhost', port=None): Read timed out. (read timeout=30)
+orchestrator  | 2025-11-21T10:48:49.226756549Z 2025-11-21 11:48:49,225 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:49.229427773Z 2025-11-21 11:48:49,228 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:49.302965264Z 2025-11-21 11:48:49,297 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:49.581405263Z 2025-11-21 11:48:49,580 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:49.646770514Z 2025-11-21 11:48:49,642 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:49.677538814Z 2025-11-21 11:48:49,670 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:49.686125220Z 2025-11-21 11:48:49,685 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:49.687979985Z 2025-11-21 11:48:49,687 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:49.708442723Z 2025-11-21 11:48:49,697 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:49.711319245Z 2025-11-21 11:48:49,710 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:49.834925781Z 2025-11-21 11:48:49,834 ERROR app.main: Failed to fetch livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 
+orchestrator  | 2025-11-21T10:48:49.839018926Z 2025-11-21 11:48:49,837 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:49.839802541Z 2025-11-21 11:48:49,838 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun': 
+orchestrator  | 2025-11-21T10:48:49.900487298Z 2025-11-21 11:48:49,894 ERROR app.services.collector: Unhandled exception while collecting stats for 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112 from http://gluetun:19000/ace/stat/ec44b73af850bb0c514f2e6d11d125a3dffd73e9/fa9fdf38ffc111267e424a9dcba7d112
+orchestrator  | 2025-11-21T10:48:49.900510028Z Traceback (most recent call last):
+orchestrator  | 2025-11-21T10:48:49.900515109Z   File "/usr/local/lib/python3.12/site-packages/httpx/_transports/default.py", line 72, in map_httpcore_exceptions
+orchestrator  | 2025-11-21T10:48:49.900519421Z     yield
+orchestrator  | 2025-11-21T10:48:49.900523274Z   File "/usr/local/lib/python3.12/site-packages/httpx/_transports/default.py", line 377, in handle_async_request
+orchestrator  | 2025-11-21T10:48:49.900527388Z     resp = await self._pool.handle_async_request(req)
+orchestrator  | 2025-11-21T10:48:49.900531280Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900535156Z   File "/usr/local/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+orchestrator  | 2025-11-21T10:48:49.900539107Z     raise exc from None
+orchestrator  | 2025-11-21T10:48:49.900542936Z   File "/usr/local/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+orchestrator  | 2025-11-21T10:48:49.900546782Z     response = await connection.handle_async_request(
+orchestrator  | 2025-11-21T10:48:49.900550547Z                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900554282Z   File "/usr/local/lib/python3.12/site-packages/httpcore/_async/connection.py", line 101, in handle_async_request
+orchestrator  | 2025-11-21T10:48:49.900558171Z     raise exc
+orchestrator  | 2025-11-21T10:48:49.900561874Z   File "/usr/local/lib/python3.12/site-packages/httpcore/_async/connection.py", line 78, in handle_async_request
+orchestrator  | 2025-11-21T10:48:49.900565860Z     stream = await self._connect(request)
+orchestrator  | 2025-11-21T10:48:49.900569679Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900573462Z   File "/usr/local/lib/python3.12/site-packages/httpcore/_async/connection.py", line 124, in _connect
+orchestrator  | 2025-11-21T10:48:49.900577389Z     stream = await self._network_backend.connect_tcp(**kwargs)
+orchestrator  | 2025-11-21T10:48:49.900581230Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900585032Z   File "/usr/local/lib/python3.12/site-packages/httpcore/_backends/auto.py", line 31, in connect_tcp
+orchestrator  | 2025-11-21T10:48:49.900588988Z     return await self._backend.connect_tcp(
+orchestrator  | 2025-11-21T10:48:49.900592773Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900596602Z   File "/usr/local/lib/python3.12/site-packages/httpcore/_backends/anyio.py", line 113, in connect_tcp
+orchestrator  | 2025-11-21T10:48:49.900600515Z     with map_exceptions(exc_map):
+orchestrator  | 2025-11-21T10:48:49.900604272Z          ^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900608158Z   File "/usr/local/lib/python3.12/contextlib.py", line 158, in __exit__
+orchestrator  | 2025-11-21T10:48:49.900612053Z     self.gen.throw(value)
+orchestrator  | 2025-11-21T10:48:49.900626876Z   File "/usr/local/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+orchestrator  | 2025-11-21T10:48:49.900631882Z     raise to_exc(exc) from exc
+orchestrator  | 2025-11-21T10:48:49.900635934Z httpcore.ConnectTimeout
+orchestrator  | 2025-11-21T10:48:49.900639707Z 
+orchestrator  | 2025-11-21T10:48:49.900643372Z The above exception was the direct cause of the following exception:
+orchestrator  | 2025-11-21T10:48:49.900647223Z 
+orchestrator  | 2025-11-21T10:48:49.900650858Z Traceback (most recent call last):
+orchestrator  | 2025-11-21T10:48:49.900654636Z   File "/app/app/services/collector.py", line 43, in _collect_one
+orchestrator  | 2025-11-21T10:48:49.900658551Z     r = await client.get(url)
+orchestrator  | 2025-11-21T10:48:49.900662712Z         ^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900666483Z   File "/usr/local/lib/python3.12/site-packages/httpx/_client.py", line 1814, in get
+orchestrator  | 2025-11-21T10:48:49.900670403Z     return await self.request(
+orchestrator  | 2025-11-21T10:48:49.900674212Z            ^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900677993Z   File "/usr/local/lib/python3.12/site-packages/httpx/_client.py", line 1585, in request
+orchestrator  | 2025-11-21T10:48:49.900681869Z     return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+orchestrator  | 2025-11-21T10:48:49.900685729Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900689779Z   File "/usr/local/lib/python3.12/site-packages/httpx/_client.py", line 1674, in send
+orchestrator  | 2025-11-21T10:48:49.900693803Z     response = await self._send_handling_auth(
+orchestrator  | 2025-11-21T10:48:49.900697552Z                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900701390Z   File "/usr/local/lib/python3.12/site-packages/httpx/_client.py", line 1702, in _send_handling_auth
+orchestrator  | 2025-11-21T10:48:49.900705243Z     response = await self._send_handling_redirects(
+orchestrator  | 2025-11-21T10:48:49.900709138Z                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900712878Z   File "/usr/local/lib/python3.12/site-packages/httpx/_client.py", line 1739, in _send_handling_redirects
+orchestrator  | 2025-11-21T10:48:49.900716712Z     response = await self._send_single_request(request)
+orchestrator  | 2025-11-21T10:48:49.900720684Z                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900724552Z   File "/usr/local/lib/python3.12/site-packages/httpx/_client.py", line 1776, in _send_single_request
+orchestrator  | 2025-11-21T10:48:49.900728479Z     response = await transport.handle_async_request(request)
+orchestrator  | 2025-11-21T10:48:49.900732274Z                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900736067Z   File "/usr/local/lib/python3.12/site-packages/httpx/_transports/default.py", line 376, in handle_async_request
+orchestrator  | 2025-11-21T10:48:49.900739953Z     with map_httpcore_exceptions():
+orchestrator  | 2025-11-21T10:48:49.900743765Z          ^^^^^^^^^^^^^^^^^^^^^^^^^
+orchestrator  | 2025-11-21T10:48:49.900747577Z   File "/usr/local/lib/python3.12/contextlib.py", line 158, in __exit__
+orchestrator  | 2025-11-21T10:48:49.900754384Z     self.gen.throw(value)
+orchestrator  | 2025-11-21T10:48:49.900758583Z   File "/usr/local/lib/python3.12/site-packages/httpx/_transports/default.py", line 89, in map_httpcore_exceptions
+orchestrator  | 2025-11-21T10:48:49.900762522Z     raise mapped_exc(message) from exc
+orchestrator  | 2025-11-21T10:48:49.900767212Z httpx.ConnectTimeout
+orchestrator  | 2025-11-21T10:48:49.904366273Z 2025-11-21 11:48:49,904 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:49.998004712Z 2025-11-21 11:48:49,997 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': [Errno 111] Connection refused
+orchestrator  | 2025-11-21T10:48:50.202920205Z 2025-11-21 11:48:50,202 ERROR app.services.gluetun: Failed to get forwarded port from 'gluetun_2': All connection attempts failed
+orchestrator  | 2025-11-21T10:48:50.320208846Z 2025-11-21 11:48:50,320 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.350064038Z 2025-11-21 11:48:50,349 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.437206052Z 2025-11-21 11:48:50,437 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.442476095Z 2025-11-21 11:48:50,441 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.443952998Z 2025-11-21 11:48:50,443 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.522920656Z 2025-11-21 11:48:50,522 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.540454142Z 2025-11-21 11:48:50,540 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.547296339Z 2025-11-21 11:48:50,546 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.630976593Z 2025-11-21 11:48:50,630 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:50.654847737Z 2025-11-21 11:48:50,654 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.719896904Z 2025-11-21 11:48:50,719 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.766637694Z 2025-11-21 11:48:50,766 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.772872553Z 2025-11-21 11:48:50,772 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.901438467Z 2025-11-21 11:48:50,901 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:50.955256117Z 2025-11-21 11:48:50,955 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.000436993Z 2025-11-21 11:48:51,000 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.021580258Z 2025-11-21 11:48:51,021 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:51.147207875Z 2025-11-21 11:48:51,147 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.161451952Z 2025-11-21 11:48:51,160 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.196310692Z 2025-11-21 11:48:51,194 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.313721078Z 2025-11-21 11:48:51,313 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.331549590Z 2025-11-21 11:48:51,331 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.409581727Z 2025-11-21 11:48:51,409 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:51.433493447Z 2025-11-21 11:48:51,433 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.515452272Z 2025-11-21 11:48:51,515 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.536876782Z 2025-11-21 11:48:51,536 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.570320544Z 2025-11-21 11:48:51,566 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.684110530Z 2025-11-21 11:48:51,683 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.696358890Z 2025-11-21 11:48:51,696 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.785730831Z 2025-11-21 11:48:51,783 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:51.797939355Z 2025-11-21 11:48:51,797 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.927266930Z 2025-11-21 11:48:51,926 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:51.936679903Z 2025-11-21 11:48:51,935 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.029571288Z 2025-11-21 11:48:52,029 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.167270342Z 2025-11-21 11:48:52,167 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.177214617Z 2025-11-21 11:48:52,177 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.259373317Z 2025-11-21 11:48:52,259 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:52.282322038Z 2025-11-21 11:48:52,282 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.412562497Z 2025-11-21 11:48:52,412 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.434225089Z 2025-11-21 11:48:52,434 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.549448161Z 2025-11-21 11:48:52,549 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.628801296Z 2025-11-21 11:48:52,627 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.655082764Z 2025-11-21 11:48:52,654 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.666927655Z 2025-11-21 11:48:52,666 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.730593541Z 2025-11-21 11:48:52,730 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.858974802Z 2025-11-21 11:48:52,858 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.877778788Z 2025-11-21 11:48:52,877 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:52.909981280Z 2025-11-21 11:48:52,909 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:53.098443703Z 2025-11-21 11:48:53,098 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:53.106351210Z 2025-11-21 11:48:53,106 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:53.256255972Z 2025-11-21 11:48:53,255 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:53.302106481Z 2025-11-21 11:48:53,300 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:53.311323805Z 2025-11-21 11:48:53,311 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:53.612291230Z 2025-11-21 11:48:53,612 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:53.615263911Z 2025-11-21 11:48:53,614 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:53.738558678Z 2025-11-21 11:48:53,738 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:53.748141266Z 2025-11-21 11:48:53,747 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:53.905816279Z 2025-11-21 11:48:53,905 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:53.908110410Z 2025-11-21 11:48:53,906 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:53.913782945Z 2025-11-21 11:48:53,913 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:54.098046679Z 2025-11-21 11:48:54,096 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:54.127666781Z 2025-11-21 11:48:54,127 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:54.219261805Z 2025-11-21 11:48:54,218 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:54.281581218Z 2025-11-21 11:48:54,276 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:54.415048675Z 2025-11-21 11:48:54,410 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:54.454495998Z 2025-11-21 11:48:54,453 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:54.469028826Z 2025-11-21 11:48:54,468 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:54.682064759Z 2025-11-21 11:48:54,681 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:54.702107475Z 2025-11-21 11:48:54,701 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:54.814184222Z 2025-11-21 11:48:54,814 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:54.926092106Z 2025-11-21 11:48:54,918 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:54.956013677Z 2025-11-21 11:48:54,955 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:55.011564757Z 2025-11-21 11:48:55,011 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:55.163339801Z 2025-11-21 11:48:55,160 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:55.355397028Z 2025-11-21 11:48:55,354 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:55.385941251Z 2025-11-21 11:48:55,383 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:55.425360190Z 2025-11-21 11:48:55,425 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:55.558064344Z 2025-11-21 11:48:55,557 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:55.710915100Z 2025-11-21 11:48:55,708 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:55.775800207Z 2025-11-21 11:48:55,775 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:55.840969434Z 2025-11-21 11:48:55,840 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:55.862578028Z 2025-11-21 11:48:55,862 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:55.870868388Z 2025-11-21 11:48:55,868 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:55.981694110Z 2025-11-21 11:48:55,981 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:56.074891904Z 2025-11-21 11:48:56,073 ERROR app.main: Failed to fetch livepos for stream 31c19ffb3472c289c5bbbbc174449c8ed0d19e38|ad27aab15515a7c268ab4961066378ac: All connection attempts failed
+orchestrator  | 2025-11-21T10:48:56.172224979Z 2025-11-21 11:48:56,171 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:56.242114318Z 2025-11-21 11:48:56,241 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:56.251382164Z 2025-11-21 11:48:56,251 ERROR app.main: Error processing livepos for stream 4b528d10eaad747ddf52251206177573ee3e9f74|fa9fdf38ffc111267e424a9dcba7d112: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:48:56.326455851Z 2025-11-21 11:48:56,326 WARNING app.services.gluetun: No port forwarding information available from 'gluetun_2'
+orchestrator  | 2025-11-21T10:48:56.492706605Z 2025-11-21 11:48:56,492 INFO app.services.gluetun: Retrieved VPN forwarded port (sync) for 'gluetun_2': 61697
+orchestrator  | 2025-11-21T10:49:21.075226512Z 2025-11-21 11:49:21,075 WARNING app.services.gluetun: VPN 'gluetun_2' forwarded port changed from 36783 to 61697
+orchestrator  | 2025-11-21T10:49:21.075265465Z 2025-11-21 11:49:21,075 WARNING app.services.gluetun: VPN 'gluetun_2' port changed from 36783 to 61697 - replacing forwarded engine
+orchestrator  | 2025-11-21T10:49:21.075477114Z 2025-11-21 11:49:21,075 INFO app.services.gluetun: Stopping forwarded engine 223ba7f4fcb6 due to port change
+orchestrator  | 2025-11-21T10:49:31.284110919Z 2025-11-21 11:49:31,283 INFO app.services.gluetun: Successfully stopped forwarded engine 223ba7f4fcb6
+orchestrator  | 2025-11-21T10:49:31.284247595Z 2025-11-21 11:49:31,284 INFO app.services.gluetun: Forwarded engine replacement triggered - autoscaler will provision new engine with port 61697
+orchestrator  | 2025-11-21T10:49:31.445402897Z 2025-11-21 11:49:31,445 INFO app.services.monitor: Docker state change detected: +0, -1 containers
+orchestrator  | 2025-11-21T10:49:31.546091179Z 2025-11-21 11:49:31,545 WARNING app.services.health_manager: Only 3 healthy engines, need 6. Starting 3 new engines.
+orchestrator  | 2025-11-21T10:49:31.546141104Z 2025-11-21 11:49:31,545 INFO app.services.health_manager: Starting replacement engine 1/3
+orchestrator  | 2025-11-21T10:49:31.548357173Z 2025-11-21 11:49:31,548 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 3 engines, VPN2: 2 engines)
+orchestrator  | 2025-11-21T10:49:31.548564921Z 2025-11-21 11:49:31,548 INFO app.services.provisioner: Provisioning new forwarded engine for VPN 'gluetun_2' with P2P port 61697
+orchestrator  | 2025-11-21T10:49:32.046103187Z 2025-11-21 11:49:32,044 INFO app.services.state: Engine d08fb5304bab is now the forwarded engine for VPN 'gluetun_2'
+orchestrator  | 2025-11-21T10:49:32.046133337Z 2025-11-21 11:49:32,044 INFO app.services.provisioner: Engine d08fb5304bab provisioned as forwarded engine
+orchestrator  | 2025-11-21T10:49:32.256672642Z 2025-11-21 11:49:32,256 INFO app.services.health_manager: Successfully started replacement engine d08fb5304bab
+orchestrator  | 2025-11-21T10:49:32.257341771Z 2025-11-21 11:49:32,257 INFO app.services.health_manager: Starting replacement engine 2/3
+orchestrator  | 2025-11-21T10:49:32.259176192Z 2025-11-21 11:49:32,259 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 3 engines, VPN2: 3 engines)
+orchestrator  | 2025-11-21T10:49:32.259488957Z 2025-11-21 11:49:32,259 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
+orchestrator  | 2025-11-21T10:49:32.766706350Z 2025-11-21 11:49:32,763 INFO app.services.health_manager: Successfully started replacement engine c89c2e51b805
+orchestrator  | 2025-11-21T10:49:32.766730309Z 2025-11-21 11:49:32,764 INFO app.services.health_manager: Starting replacement engine 3/3
+orchestrator  | 2025-11-21T10:49:32.766735587Z 2025-11-21 11:49:32,764 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun_2' (VPN1: 4 engines, VPN2: 3 engines)
+orchestrator  | 2025-11-21T10:49:32.766740014Z 2025-11-21 11:49:32,764 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun_2', provisioning non-forwarded engine
+orchestrator  | 2025-11-21T10:49:33.231641027Z 2025-11-21 11:49:33,231 INFO app.services.health_manager: Successfully started replacement engine 996ef137265c
+orchestrator  | 2025-11-21T10:49:34.612578212Z 2025-11-21 11:49:34,612 INFO app.services.monitor: Docker state change detected: +3, -0 containers
+orchestrator  | 2025-11-21T10:49:34.612597730Z 2025-11-21 11:49:34,612 INFO app.services.monitor: Re-indexing to pick up new containers
+orchestrator  | 2025-11-21T10:49:53.438148636Z 2025-11-21 11:49:53,437 INFO app.services.health_manager: Marking unhealthy engine 56b618316101 for replacement
+orchestrator  | 2025-11-21T10:49:53.438174381Z 2025-11-21 11:49:53,438 INFO app.services.health_manager: Starting replacement process for engine 56b618316101
+orchestrator  | 2025-11-21T10:49:53.438186993Z 2025-11-21 11:49:53,438 INFO app.services.health_manager: Starting replacement engine 1/1
+orchestrator  | 2025-11-21T10:49:53.438608419Z 2025-11-21 11:49:53,438 INFO app.services.provisioner: Assigning new engine to VPN 'gluetun' (VPN1: 4 engines, VPN2: 4 engines)
+orchestrator  | 2025-11-21T10:49:53.438655817Z 2025-11-21 11:49:53,438 INFO app.services.provisioner: Forwarded engine already exists for VPN 'gluetun', provisioning non-forwarded engine
+orchestrator  | 2025-11-21T10:49:53.776005530Z 2025-11-21 11:49:53,775 INFO app.services.health_manager: Successfully started replacement engine e54be3dd216c
+orchestrator  | 2025-11-21T10:49:56.380828290Z 2025-11-21 11:49:56,380 INFO app.services.monitor: Docker state change detected: +1, -0 containers
+orchestrator  | 2025-11-21T10:49:56.380849406Z 2025-11-21 11:49:56,380 INFO app.services.monitor: Re-indexing to pick up new containers
+orchestrator  | 2025-11-21T10:50:03.897887223Z 2025-11-21 11:50:03,897 INFO app.services.health_manager: Removing unhealthy engine 56b618316101
+orchestrator  | 2025-11-21T10:50:13.867424377Z 2025-11-21 11:50:13,866 INFO app.services.autoscaler: Engine 56b618316101 has been empty for 30s, can be stopped
+orchestrator  | 2025-11-21T10:50:13.867559809Z 2025-11-21 11:50:13,867 INFO app.services.monitor: Cleaning up empty engine 56b618316101 after grace period
+orchestrator  | 2025-11-21T10:50:14.032455973Z 2025-11-21 11:50:14,032 ERROR app.services.health_manager: Error replacing engine 56b618316101: 409 Client Error for http+docker://localhost/v1.52/containers/56b618316101771d7a93eaf4038b3273151a163d13a30241eec7b538b794665d?v=False&link=False&force=False: Conflict ("removal of container 56b618316101771d7a93eaf4038b3273151a163d13a30241eec7b538b794665d is already in progress")
+orchestrator  | 2025-11-21T10:50:14.075238933Z 2025-11-21 11:50:14,074 INFO app.services.autoscaler: Engine 3e94940e3a5a has been empty for 30s, can be stopped
+orchestrator  | 2025-11-21T10:50:14.075261408Z 2025-11-21 11:50:14,074 INFO app.services.monitor: Cleaning up empty engine 3e94940e3a5a after grace period
+orchestrator  | 2025-11-21T10:50:14.998862773Z 2025-11-21 11:50:14,998 INFO app.services.monitor: Docker state change detected: +0, -1 containers
+orchestrator  | 2025-11-21T10:50:24.232577574Z 2025-11-21 11:50:24,232 WARNING app.services.monitor: Docker socket temporarily unavailable during sync, will retry next iteration: 404 Client Error for http+docker://localhost/v1.52/containers/3e94940e3a5a9fe7d60c7c291785a5978583da66c4f70f4d2eaae085b5c10826/json: Not Found ("No such container: 3e94940e3a5a9fe7d60c7c291785a5978583da66c4f70f4d2eaae085b5c10826")
+orchestrator  | 2025-11-21T10:50:24.285172711Z 2025-11-21 11:50:24,285 INFO app.services.autoscaler: Engine 2ff3b2bda469 has been empty for 30s, can be stopped
+orchestrator  | 2025-11-21T10:50:24.285205363Z 2025-11-21 11:50:24,285 INFO app.services.monitor: Cleaning up empty engine 2ff3b2bda469 after grace period
+orchestrator  | 2025-11-21T10:50:27.286719401Z 2025-11-21 11:50:27,286 INFO app.services.monitor: Docker state change detected: +0, -1 containers
+orchestrator  | 2025-11-21T10:50:36.569276707Z 2025-11-21 11:50:36,568 INFO app.services.monitor: Docker state change detected: +0, -1 containers
+orchestrator  | 2025-11-21T10:54:58.423353613Z 2025-11-21 11:54:58,423 ERROR app.main: Error processing livepos for stream c8ad94585fbe13cfc9074c2b5e23fb6344e0f66d|3db78d4c8d8fdc5ea8ec6da77bff8b28: 503: No response data from stat URL
+orchestrator  | 2025-11-21T10:57:41.749160665Z 2025-11-21 11:57:41,748 ERROR app.main: Error processing livepos for stream c8ad94585fbe13cfc9074c2b5e23fb6344e0f66d|b7774d2e61a1e0c80b6fe76b5e0d7919: 503: No response data from stat URL
