@@ -689,7 +689,8 @@ async def get_stream_extended_stats(stream_id: str):
     from .utils.acestream_api import get_stream_extended_stats
     
     # Check cache first
-    # Note: We never cache None values, so cache miss (None) vs cached None is not an issue
+    # Note: We only cache successful (non-None) results, so this check is safe
+    # Cache miss returns None, but we never cache None values
     cache_key = f"extended_stats:{stream_id}"
     cached_result = extended_stats_cache.get(cache_key)
     if cached_result is not None:
@@ -707,10 +708,12 @@ async def get_stream_extended_stats(stream_id: str):
     # Fetch extended stats
     extended_stats = await get_stream_extended_stats(stream.stat_url)
     
+    # Raise exception if fetch failed (returns None)
     if extended_stats is None:
         raise HTTPException(status_code=503, detail="Unable to fetch extended stats from AceStream engine")
     
-    # Cache the result using configured TTL
+    # Cache the successful result using configured TTL
+    # (We only reach here if extended_stats is not None due to exception above)
     extended_stats_cache.set(cache_key, extended_stats, ttl=EXTENDED_STATS_CACHE_TTL)
     logger.debug(f"Cached extended stats for stream {stream_id[:16]}...")
     
