@@ -1229,7 +1229,7 @@ def get_events(
     return [
         EventLog(
             id=e.id,
-            timestamp=e.timestamp,
+            timestamp=e.timestamp if e.timestamp.tzinfo else e.timestamp.replace(tzinfo=timezone.utc),
             event_type=e.event_type,
             category=e.category,
             message=e.message,

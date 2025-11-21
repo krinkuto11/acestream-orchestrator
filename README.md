@@ -1,5 +1,7 @@
 # AceStream Orchestrator
 
+<img src="app/icons/favicon-96x96.png" alt="AceStream Orchestrator Logo" width="96" height="96" />
+
 Dynamic orchestration service for AceStream engines with health monitoring, usage tracking, VPN integration, and a modern web dashboard.
 
 ## What It Does
