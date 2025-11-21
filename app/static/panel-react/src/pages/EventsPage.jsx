@@ -31,6 +31,11 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
   const [filterType, setFilterType] = useState('all')
   const [displayLimit, setDisplayLimit] = useState(maxEventsDisplay)
 
+  // Sync displayLimit with maxEventsDisplay prop changes
+  useEffect(() => {
+    setDisplayLimit(maxEventsDisplay)
+  }, [maxEventsDisplay])
+
   const fetchEvents = useCallback(async () => {
     try {
       setLoading(true)

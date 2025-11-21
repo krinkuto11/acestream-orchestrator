@@ -148,15 +148,26 @@ class EventLogger:
         """Get statistics about logged events."""
         try:
             with get_session() as session:
-                total_count = session.query(EventRow).count()
+                from sqlalchemy import func, case
                 
-                # Count by type
-                type_counts = {}
-                for event_type in ["engine", "stream", "vpn", "health", "system"]:
-                    count = session.query(EventRow).filter(
-                        EventRow.event_type == event_type
-                    ).count()
-                    type_counts[event_type] = count
+                # Get total count and type counts in single query using CASE
+                type_counts_query = session.query(
+                    func.count().label('total'),
+                    func.sum(case((EventRow.event_type == 'engine', 1), else_=0)).label('engine'),
+                    func.sum(case((EventRow.event_type == 'stream', 1), else_=0)).label('stream'),
+                    func.sum(case((EventRow.event_type == 'vpn', 1), else_=0)).label('vpn'),
+                    func.sum(case((EventRow.event_type == 'health', 1), else_=0)).label('health'),
+                    func.sum(case((EventRow.event_type == 'system', 1), else_=0)).label('system')
+                ).first()
+                
+                total_count = type_counts_query.total or 0
+                type_counts = {
+                    "engine": type_counts_query.engine or 0,
+                    "stream": type_counts_query.stream or 0,
+                    "vpn": type_counts_query.vpn or 0,
+                    "health": type_counts_query.health or 0,
+                    "system": type_counts_query.system or 0
+                }
                 
                 # Get oldest and newest
                 oldest = session.query(EventRow).order_by(EventRow.timestamp).first()
@@ -175,35 +186,37 @@ class EventLogger:
     def _cleanup_old_events_if_needed(self, session: Session):
         """Clean up old events if we exceed limits."""
         try:
+            from sqlalchemy import func
+            
             # Check total count
-            total = session.query(EventRow).count()
+            total = session.query(func.count(EventRow.id)).scalar()
             
             if total > self.MAX_EVENTS:
-                # Delete oldest events to bring back to limit
+                # Delete oldest events to bring back to limit using subquery
                 excess = total - self.MAX_EVENTS
-                oldest_events = session.query(EventRow).order_by(
+                subquery = session.query(EventRow.id).order_by(
                     EventRow.timestamp
-                ).limit(excess).all()
+                ).limit(excess).subquery()
                 
-                for event in oldest_events:
-                    session.delete(event)
+                deleted = session.query(EventRow).filter(
+                    EventRow.id.in_(session.query(subquery.c.id))
+                ).delete(synchronize_session=False)
                 
-                logger.info(f"Cleaned up {excess} old events (total exceeded {self.MAX_EVENTS})")
+                logger.info(f"Cleaned up {deleted} old events (total exceeded {self.MAX_EVENTS})")
             
-            # Also delete events older than MAX_AGE_DAYS
+            # Also delete events older than MAX_AGE_DAYS using bulk delete
             cutoff = datetime.now(timezone.utc) - timedelta(days=self.MAX_AGE_DAYS)
-            old_events = session.query(EventRow).filter(
+            old_event_count = session.query(EventRow).filter(
                 EventRow.timestamp < cutoff
-            ).all()
+            ).delete(synchronize_session=False)
             
-            if old_events:
-                for event in old_events:
-                    session.delete(event)
-                logger.info(f"Cleaned up {len(old_events)} events older than {self.MAX_AGE_DAYS} days")
+            if old_event_count > 0:
+                logger.info(f"Cleaned up {old_event_count} events older than {self.MAX_AGE_DAYS} days")
             
             session.commit()
         except Exception as e:
             logger.error(f"Failed to cleanup old events: {e}", exc_info=True)
+            session.rollback()
     
     def cleanup_old_events(self, max_age_days: Optional[int] = None):
         """Manually trigger cleanup of old events."""
@@ -213,9 +226,10 @@ class EventLogger:
                     days=max_age_days if max_age_days is not None else self.MAX_AGE_DAYS
                 )
                 
+                # Use bulk delete operation
                 result = session.query(EventRow).filter(
                     EventRow.timestamp < cutoff
-                ).delete()
+                ).delete(synchronize_session=False)
                 
                 session.commit()
                 logger.info(f"Cleaned up {result} events older than {max_age_days or self.MAX_AGE_DAYS} days")
