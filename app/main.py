@@ -11,6 +11,7 @@ import logging
 
 from .utils.logging import setup
 from .utils.debug_logger import init_debug_logger, get_debug_logger
+from .utils.simple_cache import SimpleCache
 from .core.config import cfg
 from .services.autoscaler import ensure_minimum, scale_to, can_stop_engine
 from .services.provisioner import StartRequest, start_container, stop_container, AceProvisionRequest, AceProvisionResponse, start_acestream, HOST_LABEL_HTTP
@@ -40,6 +41,11 @@ setup()
 debug_logger = init_debug_logger(enabled=cfg.DEBUG_MODE, log_dir=cfg.DEBUG_LOG_DIR)
 if cfg.DEBUG_MODE:
     logger.info(f"Debug mode enabled. Logs will be written to: {cfg.DEBUG_LOG_DIR}")
+
+# Initialize caches for expensive operations
+extended_stats_cache = SimpleCache(default_ttl=30)  # Cache stream extended stats for 30s
+events_cache = SimpleCache(default_ttl=5)  # Cache events for 5s
+livepos_cache = SimpleCache(default_ttl=5)  # Cache livepos for 5s
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -240,6 +246,8 @@ def provision(req: StartRequest):
         details={"image": req.image, "labels": req.labels or {}},
         container_id=result.get("container_id")
     )
+    # Invalidate events cache when new event is logged
+    events_cache.clear()
     return result
 
 @app.post("/provision/acestream", response_model=AceProvisionResponse, dependencies=[Depends(require_api_key)])
@@ -380,6 +388,8 @@ def delete(container_id: str):
         message=f"Engine deleted: {container_id[:12]}",
         container_id=container_id
     )
+    # Invalidate events cache when new event is logged
+    events_cache.clear()
     stop_container(container_id)
     return {"deleted": container_id}
 
@@ -408,6 +418,11 @@ def ev_stream_started(evt: StreamStartedEvent):
         container_id=evt.container_id,
         stream_id=result.id
     )
+    # Invalidate events cache when new event is logged
+    events_cache.clear()
+    # Invalidate extended stats cache for this stream (new stream started)
+    extended_stats_cache.delete(f"extended_stats:{result.id}")
+    livepos_cache.delete(f"livepos:{result.id}")
     return result
 
 @app.post("/events/stream_ended", dependencies=[Depends(require_api_key)])
@@ -427,6 +442,11 @@ def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
             container_id=st.container_id,
             stream_id=st.id
         )
+        # Invalidate events cache when new event is logged
+        events_cache.clear()
+        # Invalidate caches for this stream (stream ended)
+        extended_stats_cache.delete(f"extended_stats:{st.id}")
+        livepos_cache.delete(f"livepos:{st.id}")
     
     if cfg.AUTO_DELETE and st:
         def _auto():
@@ -651,8 +671,16 @@ async def get_stream_extended_stats(stream_id: str):
     """
     Get extended statistics for a stream by querying the AceStream analyze_content API.
     This returns additional metadata like content_type, title, is_live, mime, categories, etc.
+    Uses caching to avoid repeated expensive API calls.
     """
     from .utils.acestream_api import get_stream_extended_stats
+    
+    # Check cache first
+    cache_key = f"extended_stats:{stream_id}"
+    cached_result = extended_stats_cache.get(cache_key)
+    if cached_result is not None:
+        logger.debug(f"Returning cached extended stats for stream {stream_id[:16]}...")
+        return cached_result
     
     # Get the stream from state
     stream = state.get_stream(stream_id)
@@ -668,6 +696,10 @@ async def get_stream_extended_stats(stream_id: str):
     if extended_stats is None:
         raise HTTPException(status_code=503, detail="Unable to fetch extended stats from AceStream engine")
     
+    # Cache the result for 30 seconds
+    extended_stats_cache.set(cache_key, extended_stats, ttl=30)
+    logger.debug(f"Cached extended stats for stream {stream_id[:16]}...")
+    
     return extended_stats
 
 @app.get("/streams/{stream_id}/livepos")
@@ -675,8 +707,16 @@ async def get_stream_livepos(stream_id: str):
     """
     Get live position data for a stream from its stat URL.
     This returns livepos information including current position, buffer, and timestamps.
+    Uses caching to avoid repeated API calls.
     """
     import httpx
+    
+    # Check cache first
+    cache_key = f"livepos:{stream_id}"
+    cached_result = livepos_cache.get(cache_key)
+    if cached_result is not None:
+        logger.debug(f"Returning cached livepos for stream {stream_id[:16]}...")
+        return cached_result
     
     # Get the stream from state
     stream = state.get_stream(stream_id)
@@ -702,14 +742,17 @@ async def get_stream_livepos(stream_id: str):
             livepos = payload.get("livepos")
             if not livepos:
                 # Stream might not be live or doesn't have livepos data
-                return {
+                result = {
                     "has_livepos": False,
                     "is_live": payload.get("is_live", 0) == 1
                 }
+                # Cache negative results for shorter time (3 seconds)
+                livepos_cache.set(cache_key, result, ttl=3)
+                return result
             
             # Return livepos data with additional context
             # Extract all relevant fields from livepos according to AceStream API
-            return {
+            result = {
                 "has_livepos": True,
                 "is_live": payload.get("is_live", 0) == 1,
                 "livepos": {
@@ -721,6 +764,10 @@ async def get_stream_livepos(stream_id: str):
                     "buffer_pieces": livepos.get("buffer_pieces")
                 }
             }
+            # Cache successful results for 5 seconds
+            livepos_cache.set(cache_key, result, ttl=5)
+            logger.debug(f"Cached livepos for stream {stream_id[:16]}...")
+            return result
     except httpx.HTTPError as e:
         logger.error(f"Failed to fetch livepos for stream {stream_id}: {e}")
         raise HTTPException(status_code=503, detail=f"Failed to fetch livepos data: {str(e)}")
@@ -1303,7 +1350,17 @@ def get_events(
     """
     Retrieve application events with optional filtering.
     Events are returned in reverse chronological order (newest first).
+    Uses caching to improve performance for repeated queries.
     """
+    # Create cache key from query parameters
+    cache_key = f"events:limit={limit}:offset={offset}:type={event_type}:cat={category}:cid={container_id}:sid={stream_id}:since={since}"
+    
+    # Check cache first
+    cached_result = events_cache.get(cache_key)
+    if cached_result is not None:
+        logger.debug(f"Returning cached events (limit={limit}, offset={offset})")
+        return cached_result
+    
     events = event_logger.get_events(
         limit=limit,
         offset=offset,
@@ -1315,7 +1372,7 @@ def get_events(
     )
     
     # Convert EventRow to EventLog schema
-    return [
+    result = [
         EventLog(
             id=e.id,
             timestamp=e.timestamp if e.timestamp.tzinfo else e.timestamp.replace(tzinfo=timezone.utc),
@@ -1328,11 +1385,31 @@ def get_events(
         )
         for e in events
     ]
+    
+    # Cache the result for 5 seconds
+    events_cache.set(cache_key, result, ttl=5)
+    logger.debug(f"Cached events (limit={limit}, offset={offset})")
+    
+    return result
 
 @app.get("/events/stats")
 def get_event_stats():
-    """Get statistics about logged events."""
-    return event_logger.get_event_stats()
+    """Get statistics about logged events. Uses caching to improve performance."""
+    cache_key = "events:stats"
+    
+    # Check cache first
+    cached_result = events_cache.get(cache_key)
+    if cached_result is not None:
+        logger.debug("Returning cached event stats")
+        return cached_result
+    
+    result = event_logger.get_event_stats()
+    
+    # Cache the result for 5 seconds
+    events_cache.set(cache_key, result, ttl=5)
+    logger.debug("Cached event stats")
+    
+    return result
 
 @app.post("/events/cleanup", dependencies=[Depends(require_api_key)])
 def cleanup_events(max_age_days: int = Query(30, ge=1, description="Delete events older than this many days")):
