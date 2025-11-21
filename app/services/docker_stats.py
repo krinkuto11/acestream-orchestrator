@@ -95,23 +95,23 @@ class StatsCollector:
                 # Collect version info for all engines concurrently (async, may be slow)
                 new_version_cache = {}
                 
-                # Create tasks with engine info tuples for clean mapping
-                version_tasks = [
-                    (engine.container_id, asyncio.create_task(get_engine_version_info(engine.host, engine.port)))
-                    for engine in engines
-                ]
-                
-                # Wait for all version info requests to complete
-                if version_tasks:
-                    for container_id, task in version_tasks:
-                        try:
-                            result = await task
-                            # Check if result is valid (not None, since get_engine_version_info returns Optional[Dict])
-                            if result is not None:
-                                result['updated_at'] = datetime.now(timezone.utc).isoformat()
-                                new_version_cache[container_id] = result
-                        except Exception as e:
-                            logger.debug(f"Failed to get version info for {container_id[:12]}: {e}")
+                # Create tasks for concurrent execution
+                if engines:
+                    tasks = [
+                        get_engine_version_info(engine.host, engine.port)
+                        for engine in engines
+                    ]
+                    
+                    # Wait for all version info requests to complete concurrently
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    
+                    # Process results
+                    for engine, result in zip(engines, results):
+                        if isinstance(result, Exception):
+                            logger.debug(f"Failed to get version info for {engine.container_id[:12]}: {result}")
+                        elif result is not None:
+                            result['updated_at'] = datetime.now(timezone.utc).isoformat()
+                            new_version_cache[engine.container_id] = result
                 
                 # Update caches atomically
                 self._stats_cache = new_stats_cache
