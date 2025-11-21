@@ -175,6 +175,40 @@ if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
 else:
     logger.warning(f"Panel directory {panel_dir} not found. /panel endpoint will not be available.")
 
+# Favicon routes - serve favicon files at root level for browser default requests
+if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
+    @app.get("/favicon.ico")
+    async def get_favicon_ico():
+        """Serve favicon.ico at root level."""
+        favicon_path = os.path.join(panel_dir, "favicon.ico")
+        if os.path.exists(favicon_path):
+            return FileResponse(favicon_path)
+        raise HTTPException(status_code=404, detail="Not Found")
+    
+    @app.get("/favicon.svg")
+    async def get_favicon_svg():
+        """Serve favicon.svg at root level."""
+        favicon_path = os.path.join(panel_dir, "favicon.svg")
+        if os.path.exists(favicon_path):
+            return FileResponse(favicon_path)
+        raise HTTPException(status_code=404, detail="Not Found")
+    
+    @app.get("/favicon-96x96.png")
+    async def get_favicon_96():
+        """Serve favicon-96x96.png at root level."""
+        favicon_path = os.path.join(panel_dir, "favicon-96x96.png")
+        if os.path.exists(favicon_path):
+            return FileResponse(favicon_path)
+        raise HTTPException(status_code=404, detail="Not Found")
+    
+    @app.get("/apple-touch-icon.png")
+    async def get_apple_touch_icon():
+        """Serve apple-touch-icon.png at root level."""
+        favicon_path = os.path.join(panel_dir, "apple-touch-icon.png")
+        if os.path.exists(favicon_path):
+            return FileResponse(favicon_path)
+        raise HTTPException(status_code=404, detail="Not Found")
+
 # Prometheus metrics endpoint with custom aggregated metrics
 from starlette.responses import Response
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
