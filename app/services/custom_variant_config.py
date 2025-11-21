@@ -37,7 +37,7 @@ class CustomVariantConfig(BaseModel):
     enabled: bool = False
     platform: str  # "amd64", "arm32", "arm64"
     arm_version: str = "3.2.13"  # For ARM platforms: "3.2.13" or "3.2.14"
-    memory_limit: Optional[str] = None  # Docker memory limit (e.g., "512m", "1g", "2g")
+    memory_limit: Optional[str] = None  # Docker memory limit format: "512m", "1g", "2g", etc.
     parameters: List[CustomVariantParameter] = []
     
     @validator('platform')
@@ -52,6 +52,23 @@ class CustomVariantConfig(BaseModel):
         valid_versions = ['3.2.13', '3.2.14']
         if v not in valid_versions:
             raise ValueError(f'arm_version must be one of: {", ".join(valid_versions)}')
+        return v
+    
+    @validator('memory_limit')
+    def validate_memory_limit(cls, v):
+        """Validate Docker memory limit format."""
+        if v is None or v == '':
+            return None
+        
+        import re
+        # Docker memory format: number followed by unit (b, k, m, g)
+        # Examples: "512m", "1g", "2048m", "512M", "1G"
+        pattern = r'^\d+[bBkKmMgG]$'
+        if not re.match(pattern, v):
+            raise ValueError(
+                'memory_limit must be in Docker format: number + unit (b/k/m/g). '
+                'Examples: "512m", "1g", "2g"'
+            )
         return v
 
 

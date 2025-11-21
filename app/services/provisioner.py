@@ -634,8 +634,14 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     
     # Add memory limit if specified in variant_config (for custom variants)
     if "memory_limit" in variant_config and variant_config["memory_limit"]:
-        container_args["mem_limit"] = variant_config["memory_limit"]
-        logger.info(f"Setting memory limit for engine: {variant_config['memory_limit']}")
+        mem_limit = variant_config["memory_limit"]
+        # Validate Docker memory format before applying
+        import re
+        if not re.match(r'^\d+[bBkKmMgG]$', mem_limit):
+            logger.warning(f"Invalid memory limit format '{mem_limit}', skipping. Expected format: number+unit (e.g., '512m', '1g')")
+        else:
+            container_args["mem_limit"] = mem_limit
+            logger.info(f"Setting memory limit for engine: {mem_limit}")
     
     # Add command for CMD-based variants
     if cmd is not None:

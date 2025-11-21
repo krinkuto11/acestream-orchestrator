@@ -705,9 +705,11 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                 value={config.memory_limit || ''}
                 onChange={(e) => setConfig(prev => ({ ...prev, memory_limit: e.target.value }))}
                 placeholder="e.g., 512m, 1g, 2g"
+                pattern="^\d+[bBkKmMgG]$"
+                title="Enter memory limit in Docker format: number followed by unit (b, k, m, or g). Examples: 512m, 1g, 2g"
               />
               <p className="text-xs text-muted-foreground">
-                Docker memory limit for each engine container. Use format like "512m" (512 MB), "1g" (1 GB), "2g" (2 GB). Leave empty for no limit.
+                Docker memory limit for each engine container. Format: number + unit (b/k/m/g). Examples: "512m" (512 MB), "1g" (1 GB), "2g" (2 GB). Leave empty for no limit.
               </p>
             </div>
           )}
