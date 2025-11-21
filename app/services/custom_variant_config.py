@@ -37,6 +37,7 @@ class CustomVariantConfig(BaseModel):
     enabled: bool = False
     platform: str  # "amd64", "arm32", "arm64"
     arm_version: str = "3.2.13"  # For ARM platforms: "3.2.13" or "3.2.14"
+    memory_limit: Optional[str] = None  # Docker memory limit (e.g., "512m", "1g", "2g")
     parameters: List[CustomVariantParameter] = []
     
     @validator('platform')
@@ -274,7 +275,7 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
         config: Custom variant configuration
     
     Returns:
-        Dict with 'image', 'config_type', and platform-specific config
+        Dict with 'image', 'config_type', platform-specific config, and optional 'memory_limit'
     """
     # Determine base image
     if config.platform == 'amd64':
@@ -296,6 +297,10 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
         "config_type": config_type,
         "is_custom": True
     }
+    
+    # Add memory limit if specified
+    if config.memory_limit:
+        result["memory_limit"] = config.memory_limit
     
     # Build parameter string or command
     if config_type == "env":

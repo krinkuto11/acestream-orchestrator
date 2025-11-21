@@ -696,6 +696,22 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             </div>
           )}
 
+          {config.enabled && (
+            <div className="space-y-2">
+              <Label htmlFor="memory_limit">Container Memory Limit (Optional)</Label>
+              <Input
+                id="memory_limit"
+                type="text"
+                value={config.memory_limit || ''}
+                onChange={(e) => setConfig(prev => ({ ...prev, memory_limit: e.target.value }))}
+                placeholder="e.g., 512m, 1g, 2g"
+              />
+              <p className="text-xs text-muted-foreground">
+                Docker memory limit for each engine container. Use format like "512m" (512 MB), "1g" (1 GB), "2g" (2 GB). Leave empty for no limit.
+              </p>
+            </div>
+          )}
+
           {!config.enabled && (
             <Alert>
               <Info className="h-4 w-4" />

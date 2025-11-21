@@ -30,7 +30,7 @@ from .services.db import engine
 from .models.db_models import Base
 from .services.reindex import reindex_existing
 from .services.gluetun import gluetun_monitor
-from .services.docker_stats import get_container_stats, get_multiple_container_stats, get_total_stats
+from .services.docker_stats import get_container_stats, get_multiple_container_stats, get_total_stats, stats_collector
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(docker_monitor.start())  # Start Docker monitoring
     asyncio.create_task(health_monitor.start())  # Start health monitoring  
     asyncio.create_task(health_manager.start())  # Start proactive health management
+    await stats_collector.start()  # Start Docker stats collector
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
     yield
@@ -124,6 +125,7 @@ async def lifespan(app: FastAPI):
     await health_monitor.stop()  # Stop health monitoring
     await health_manager.stop()  # Stop health management
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
+    await stats_collector.stop()  # Stop Docker stats collector
     
     # Give a small delay to ensure any pending operations complete
     await asyncio.sleep(0.1)
@@ -562,6 +564,13 @@ def get_engines():
                         logger.debug(f"No forwarded port available for VPN {engine.vpn_container} (engine {engine.container_id[:12]})")
                 except Exception as e:
                     logger.warning(f"Could not get forwarded port for engine {engine.container_id[:12]} on VPN {engine.vpn_container}: {e}")
+            
+            # Include cached Docker stats if available
+            cached_stats = stats_collector.get_cached_stats(engine.container_id)
+            if cached_stats:
+                # Convert to DockerStats model
+                from .models.schemas import DockerStats
+                engine.docker_stats = DockerStats(**cached_stats)
         
         # Sort engines by port number for consistent ordering
         verified_engines.sort(key=lambda e: e.port)

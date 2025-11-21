@@ -29,6 +29,18 @@ class StreamEndedEvent(BaseModel):
     stream_id: Optional[str] = None
     reason: Optional[str] = None
 
+class DockerStats(BaseModel):
+    """Docker container statistics."""
+    cpu_percent: float
+    memory_usage: int
+    memory_limit: int
+    memory_percent: float
+    network_rx_bytes: int
+    network_tx_bytes: int
+    block_read_bytes: int
+    block_write_bytes: int
+    updated_at: Optional[str] = None
+
 class EngineState(BaseModel):
     container_id: str
     container_name: Optional[str] = None
@@ -50,6 +62,8 @@ class EngineState(BaseModel):
     platform: Optional[str] = None
     version: Optional[str] = None
     forwarded_port: Optional[int] = None  # For forwarded engines only
+    # Docker stats (cached from background collector)
+    docker_stats: Optional[DockerStats] = None
 
 class StreamState(BaseModel):
     id: str

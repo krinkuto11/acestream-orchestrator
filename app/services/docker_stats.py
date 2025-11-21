@@ -1,14 +1,100 @@
 """
 Service for fetching Docker container statistics.
 Provides CPU, memory, network I/O, and block I/O metrics for containers.
+Includes a background polling service for continuous stats collection.
 """
 
 import logging
+import asyncio
 from typing import Dict, Optional, List
 from .docker_client import get_client
 from docker.errors import NotFound, APIError
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+
+class StatsCollector:
+    """Background service for collecting and caching Docker container stats."""
+    
+    def __init__(self, poll_interval: int = 3):
+        """
+        Initialize the stats collector.
+        
+        Args:
+            poll_interval: Interval in seconds between stat collections
+        """
+        self.poll_interval = poll_interval
+        self._stats_cache: Dict[str, Dict] = {}
+        self._task: Optional[asyncio.Task] = None
+        self._running = False
+        
+    def get_cached_stats(self, container_id: str) -> Optional[Dict]:
+        """Get cached stats for a container."""
+        return self._stats_cache.get(container_id)
+    
+    def get_all_cached_stats(self) -> Dict[str, Dict]:
+        """Get all cached stats."""
+        return self._stats_cache.copy()
+    
+    async def start(self):
+        """Start the background stats collection task."""
+        if self._running:
+            logger.warning("StatsCollector already running")
+            return
+        
+        self._running = True
+        self._task = asyncio.create_task(self._poll_stats())
+        logger.info(f"Started Docker stats collector (poll interval: {self.poll_interval}s)")
+    
+    async def stop(self):
+        """Stop the background stats collection task."""
+        if not self._running:
+            return
+        
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        logger.info("Stopped Docker stats collector")
+    
+    async def _poll_stats(self):
+        """Background task to continuously poll container stats."""
+        while self._running:
+            try:
+                # Get list of engine containers from state
+                from .state import state
+                engines = state.list_engines()
+                container_ids = [e.container_id for e in engines]
+                
+                # Collect stats for all engines
+                new_cache = {}
+                for container_id in container_ids:
+                    stats = get_container_stats(container_id)
+                    if stats:
+                        # Add timestamp
+                        stats['updated_at'] = datetime.now(timezone.utc).isoformat()
+                        new_cache[container_id] = stats
+                
+                # Update cache atomically
+                self._stats_cache = new_cache
+                
+                # Log cache update for debugging
+                if container_ids:
+                    logger.debug(f"Updated stats cache for {len(new_cache)}/{len(container_ids)} containers")
+                    
+            except Exception as e:
+                logger.error(f"Error in stats polling: {e}", exc_info=True)
+            
+            # Wait for next poll interval
+            await asyncio.sleep(self.poll_interval)
+
+
+# Global stats collector instance
+stats_collector = StatsCollector(poll_interval=3)
 
 
 def get_container_stats(container_id: str) -> Optional[Dict]:
