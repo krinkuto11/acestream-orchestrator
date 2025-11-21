@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
                 # Log VPN location information for all healthy VPN containers
                 from .services.gluetun import get_vpn_status
                 try:
-                    vpn_status = get_vpn_status()
+                    vpn_status = await get_vpn_status()
                     
                     # Check VPN1 location
                     if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
@@ -243,11 +243,11 @@ def provision(req: StartRequest):
     return result
 
 @app.post("/provision/acestream", response_model=AceProvisionResponse, dependencies=[Depends(require_api_key)])
-def provision_acestream(req: AceProvisionRequest):
+async def provision_acestream(req: AceProvisionRequest):
     # Check provisioning status before attempting
     from .services.circuit_breaker import circuit_breaker_manager
     
-    vpn_status_check = get_vpn_status()
+    vpn_status_check = await get_vpn_status()
     circuit_breaker_status = circuit_breaker_manager.get_status()
     
     # Build detailed error response if provisioning is blocked
@@ -489,7 +489,7 @@ def get_engines():
     # but we don't want to break existing functionality
     try:
         from .services.health import list_managed
-        from .services.gluetun import gluetun_monitor, get_forwarded_port_sync
+        from .services.gluetun import gluetun_monitor
         
         running_container_ids = {c.id for c in list_managed() if c.status == "running"}
         
@@ -548,14 +548,15 @@ def get_engines():
                 engine.platform = cached_version.get("platform")
                 engine.version = cached_version.get("version")
             
-            # Get forwarded port for forwarded engines
+            # Get forwarded port for forwarded engines - ONLY from cache to avoid blocking
             if engine.forwarded and engine.vpn_container:
                 try:
-                    port = get_forwarded_port_sync(engine.vpn_container)
+                    # Only use cached port - don't make blocking HTTP call
+                    port = gluetun_monitor.get_cached_forwarded_port(engine.vpn_container)
                     if port:
                         engine.forwarded_port = port
                     else:
-                        logger.debug(f"No forwarded port available for VPN {engine.vpn_container} (engine {engine.container_id[:12]})")
+                        logger.debug(f"No cached forwarded port available for VPN {engine.vpn_container} (engine {engine.container_id[:12]})")
                 except Exception as e:
                     logger.warning(f"Could not get forwarded port for engine {engine.container_id[:12]} on VPN {engine.vpn_container}: {e}")
             
@@ -751,14 +752,14 @@ async def get_vpn_status_endpoint():
     - Provider: VPN_SERVICE_PROVIDER docker environment variable
     - Location: Gluetun's /v1/publicip/ip endpoint
     """
-    vpn_status = get_vpn_status()
+    vpn_status = await get_vpn_status()
     return vpn_status
 
 @app.get("/vpn/publicip")
-def get_vpn_publicip_endpoint():
+async def get_vpn_publicip_endpoint():
     """Get VPN public IP address."""
     from .services.gluetun import get_vpn_public_ip
-    public_ip = get_vpn_public_ip()
+    public_ip = await get_vpn_public_ip()
     if public_ip:
         return {"public_ip": public_ip}
     else:
@@ -777,7 +778,7 @@ def reset_circuit_breaker(operation_type: Optional[str] = None):
     return {"message": f"Circuit breaker {'for ' + operation_type if operation_type else 'all'} reset successfully"}
 
 @app.get("/orchestrator/status")
-def get_orchestrator_status():
+async def get_orchestrator_status():
     """
     Get comprehensive orchestrator status for proxy integration.
     This endpoint provides all the information a proxy needs to understand
@@ -796,7 +797,7 @@ def get_orchestrator_status():
     docker_status = replica_validator.get_docker_container_status()
     
     # Get VPN status
-    vpn_status = get_vpn_status()
+    vpn_status = await get_vpn_status()
     
     # Get health summary
     health_summary = health_manager.get_health_summary()
