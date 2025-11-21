@@ -1,6 +1,5 @@
 import React from 'react'
 import { Separator } from '@/components/ui/separator'
-import { ThemeToggle } from './ThemeToggle'
 import { Badge } from '@/components/ui/badge'
 import { Wifi, WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -32,11 +31,6 @@ export function ModernHeader({ isConnected, lastUpdate, onOpenSettings }) {
         
         {/* Spacer */}
         <div className="flex-1" />
-        
-        {/* Right side controls */}
-        <div className="flex items-center gap-2">
-          <ThemeToggle />
-        </div>
       </div>
     </header>
   )
