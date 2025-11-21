@@ -258,3 +258,95 @@ Response:
 
 **Note:** This operation runs entirely in the background as a non-blocking task. The endpoint returns immediately after starting the operation. The API and UI remain fully accessible during reprovisioning. Use `GET /custom-variant/reprovision/status` to check the progress.
 
+
+## Event Logging
+
+The event logging system tracks significant operational events for transparency and traceability.
+
+### GET /events
+
+Retrieve application events with optional filtering and pagination.
+
+**Query Parameters:**
+- `limit` (int, optional): Maximum number of events to return (1-1000, default: 100)
+- `offset` (int, optional): Pagination offset (default: 0)
+- `event_type` (string, optional): Filter by event type - one of: `engine`, `stream`, `vpn`, `health`, `system`
+- `category` (string, optional): Filter by category (e.g., "created", "deleted", "started", "ended", "failed", "recovered")
+- `container_id` (string, optional): Filter by container ID
+- `stream_id` (string, optional): Filter by stream ID
+- `since` (datetime, optional): Only return events after this timestamp (ISO 8601 format)
+
+Response:
+```json
+[
+  {
+    "id": 123,
+    "timestamp": "2025-11-21T12:18:47.502472",
+    "event_type": "health",
+    "category": "warning",
+    "message": "High proportion of unhealthy engines: 1/1 (>30%)",
+    "details": {
+      "unhealthy_count": 1,
+      "total_engines": 1,
+      "percentage": 100.0
+    },
+    "container_id": null,
+    "stream_id": null
+  }
+]
+```
+
+**Event Types:**
+- `engine`: Engine provisioning, deletion, and lifecycle events
+- `stream`: Stream start and end events
+- `vpn`: VPN connection, disconnection, and recovery events
+- `health`: Health check warnings and failures
+- `system`: Auto-scaling and system-level events
+
+**Common Categories:**
+- `created`, `deleted`: Resource lifecycle
+- `started`, `ended`: Operation lifecycle
+- `connected`, `disconnected`: Connection states
+- `failed`, `recovered`: Failure and recovery
+- `warning`: Warning conditions
+- `scaling`: Auto-scaling operations
+
+### GET /events/stats
+
+Get statistics about logged events.
+
+Response:
+```json
+{
+  "total": 15,
+  "by_type": {
+    "engine": 1,
+    "stream": 1,
+    "vpn": 1,
+    "health": 8,
+    "system": 4
+  },
+  "oldest": "2025-11-21T12:17:45.677028",
+  "newest": "2025-11-21T12:18:47.502472"
+}
+```
+
+### POST /events/cleanup (protected)
+
+Manually trigger cleanup of old events.
+
+**Headers:**
+- `X-API-KEY`: API key for authentication
+
+**Query Parameters:**
+- `max_age_days` (int, optional): Delete events older than this many days (default: 30, minimum: 1)
+
+Response:
+```json
+{
+  "deleted": 42,
+  "message": "Cleaned up 42 events older than 30 days"
+}
+```
+
+**Note:** Events are also automatically cleaned up when the total count exceeds 10,000 or when events are older than 30 days.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pydantic import BaseModel, HttpUrl
-from typing import Dict, Optional, Literal, List
+from typing import Dict, Optional, Literal, List, Any
 from datetime import datetime
 
 class EngineAddress(BaseModel):
@@ -103,6 +103,6 @@ class EventLog(BaseModel):
     event_type: Literal["engine", "stream", "vpn", "health", "system"]
     category: str  # created, deleted, started, ended, failed, recovered, etc.
     message: str
-    details: Optional[Dict[str, any]] = {}
+    details: Optional[Dict[str, Any]] = {}
     container_id: Optional[str] = None
     stream_id: Optional[str] = None

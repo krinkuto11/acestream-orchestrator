@@ -442,3 +442,113 @@ class EngineState:
 - [Deployment](DEPLOY.md) - Deployment instructions
 - [Health Monitoring](HEALTH_MONITORING.md) - Health check details
 - [Gluetun Integration](GLUETUN_INTEGRATION.md) - VPN integration
+
+## Event Logging System
+
+The event logging system provides transparent tracking of significant operational events throughout the application lifecycle.
+
+### Purpose
+
+Unlike debug logs which are for development troubleshooting, the event logging system captures user-facing operational events that provide:
+- **Transparency**: Clear visibility into what the orchestrator is doing
+- **Traceability**: Historical record of important operations and state changes
+- **Monitoring**: Real-time awareness of system health and activities
+
+### Architecture
+
+**Components:**
+1. **EventLogger Service** (`app/services/event_logger.py`)
+   - Central service for logging and retrieving events
+   - Automatic cleanup of old events (>10,000 total or >30 days old)
+   - SQLite-backed persistent storage
+
+2. **Database Model** (`EventRow` in `app/models/db_models.py`)
+   - Stores event metadata: timestamp, type, category, message
+   - Optional associations: container_id, stream_id
+   - JSON details field for additional structured data
+
+3. **API Endpoints** (`app/main.py`)
+   - `GET /events` - Query events with filtering and pagination
+   - `GET /events/stats` - Event statistics and counts
+   - `POST /events/cleanup` - Manual cleanup trigger (protected)
+
+4. **UI Integration** (`EventsPage.jsx`)
+   - Color-coded event display by type
+   - Real-time updates (5s refresh)
+   - Filtering by event type
+   - Configurable display limits
+
+### Event Types
+
+Events are categorized into five types, each with a distinct color in the UI:
+
+1. **Engine Events** (🔧 Blue)
+   - Engine provisioning and deletion
+   - Logged in: `provision_acestream()`, `delete()`
+
+2. **Stream Events** (📺 Green)
+   - Stream start and end lifecycle
+   - Logged in: `ev_stream_started()`, `ev_stream_ended()`
+
+3. **VPN Events** (🔒 Purple)
+   - VPN connection, disconnection, and recovery
+   - Logged in: `VpnContainerMonitor.update_health_status()`
+
+4. **Health Events** (💊 Yellow)
+   - Health check warnings and circuit breaker states
+   - Logged in: `HealthMonitor._monitor_loop()`, `CircuitBreaker` state changes
+
+5. **System Events** (⚡ Gray)
+   - Auto-scaling operations
+   - Logged in: `ensure_minimum()` and other autoscaler operations
+
+### Integration Points
+
+The event logger is integrated throughout the application at key decision points:
+
+```python
+from .services.event_logger import event_logger
+
+# Engine provisioning
+event_logger.log_event(
+    event_type="engine",
+    category="created",
+    message=f"AceStream engine provisioned on port {port}",
+    details={"host_http_port": port, "image": image},
+    container_id=container_id
+)
+
+# Health warnings
+event_logger.log_event(
+    event_type="health",
+    category="warning",
+    message=f"High proportion of unhealthy engines: {unhealthy}/{total}",
+    details={"unhealthy_count": unhealthy, "total_engines": total}
+)
+```
+
+### Data Retention
+
+Events are automatically cleaned up to prevent unbounded growth:
+- **Count Limit**: Maximum 10,000 events retained
+- **Age Limit**: Events older than 30 days are deleted
+- **Cleanup Trigger**: Runs automatically after each new event
+- **Manual Cleanup**: Available via `/events/cleanup` endpoint
+
+### UI Features
+
+The Events page in the React dashboard provides:
+- **Statistics Cards**: Count by event type at the top
+- **Filtering**: Filter by event type (all, engine, stream, vpn, health, system)
+- **Display Limit**: Configurable in settings (50, 100, 200, 500 events)
+- **Details Expansion**: Click to view structured event details
+- **Color Coding**: Visual distinction between event types
+- **Timestamps**: Relative time display (e.g., "2 minutes ago")
+- **Auto-refresh**: Updates every 5 seconds
+
+### Performance Considerations
+
+- Events are logged asynchronously to avoid blocking main operations
+- Database queries use indexes on `timestamp` and `event_type` columns
+- Automatic cleanup prevents database bloat
+- UI pagination limits data transfer
