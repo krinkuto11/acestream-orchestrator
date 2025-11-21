@@ -53,6 +53,17 @@ extended_stats_cache = SimpleCache(default_ttl=EXTENDED_STATS_CACHE_TTL)
 events_cache = SimpleCache(default_ttl=EVENTS_CACHE_TTL)
 livepos_cache = SimpleCache(default_ttl=LIVEPOS_CACHE_TTL)
 
+
+def invalidate_stream_caches(stream_id: str) -> None:
+    """Invalidate cached data for a specific stream."""
+    extended_stats_cache.delete(f"extended_stats:{stream_id}")
+    livepos_cache.delete(f"livepos:{stream_id}")
+
+
+def invalidate_events_cache() -> None:
+    """Invalidate all cached events data."""
+    events_cache.clear()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup - Ensure clean start (dry run)
@@ -253,7 +264,7 @@ def provision(req: StartRequest):
         container_id=result.get("container_id")
     )
     # Invalidate events cache when new event is logged
-    events_cache.clear()
+    invalidate_events_cache()
     return result
 
 @app.post("/provision/acestream", response_model=AceProvisionResponse, dependencies=[Depends(require_api_key)])
@@ -395,7 +406,7 @@ def delete(container_id: str):
         container_id=container_id
     )
     # Invalidate events cache when new event is logged
-    events_cache.clear()
+    invalidate_events_cache()
     stop_container(container_id)
     return {"deleted": container_id}
 
@@ -424,11 +435,9 @@ def ev_stream_started(evt: StreamStartedEvent):
         container_id=evt.container_id,
         stream_id=result.id
     )
-    # Invalidate events cache when new event is logged
-    events_cache.clear()
-    # Invalidate extended stats cache for this stream (new stream started)
-    extended_stats_cache.delete(f"extended_stats:{result.id}")
-    livepos_cache.delete(f"livepos:{result.id}")
+    # Invalidate caches when new stream starts
+    invalidate_events_cache()
+    invalidate_stream_caches(result.id)
     return result
 
 @app.post("/events/stream_ended", dependencies=[Depends(require_api_key)])
@@ -448,11 +457,9 @@ def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
             container_id=st.container_id,
             stream_id=st.id
         )
-        # Invalidate events cache when new event is logged
-        events_cache.clear()
-        # Invalidate caches for this stream (stream ended)
-        extended_stats_cache.delete(f"extended_stats:{st.id}")
-        livepos_cache.delete(f"livepos:{st.id}")
+        # Invalidate caches when stream ends
+        invalidate_events_cache()
+        invalidate_stream_caches(st.id)
     
     if cfg.AUTO_DELETE and st:
         def _auto():
@@ -682,6 +689,7 @@ async def get_stream_extended_stats(stream_id: str):
     from .utils.acestream_api import get_stream_extended_stats
     
     # Check cache first
+    # Note: We never cache None values, so cache miss (None) vs cached None is not an issue
     cache_key = f"extended_stats:{stream_id}"
     cached_result = extended_stats_cache.get(cache_key)
     if cached_result is not None:
