@@ -112,8 +112,10 @@ class StatsCollector:
                         else:
                             # result is valid (could be None or a dict)
                             if result is not None:
-                                result['updated_at'] = datetime.now(timezone.utc).isoformat()
-                                new_version_cache[engine.container_id] = result
+                                # Create a copy to avoid modifying shared references
+                                result_copy = result.copy()
+                                result_copy['updated_at'] = datetime.now(timezone.utc).isoformat()
+                                new_version_cache[engine.container_id] = result_copy
                 
                 # Update caches atomically
                 self._stats_cache = new_stats_cache
