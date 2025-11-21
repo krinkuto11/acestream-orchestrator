@@ -7,6 +7,7 @@ Manages user-defined custom engine variants with configurable parameters.
 import json
 import logging
 import platform
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field, validator
@@ -60,7 +61,6 @@ class CustomVariantConfig(BaseModel):
         if v is None or v == '':
             return None
         
-        import re
         # Docker memory format: number followed by unit (b, k, m, g)
         # Examples: "512m", "1g", "2048m", "512M", "1G"
         pattern = r'^\d+[bBkKmMgG]$'

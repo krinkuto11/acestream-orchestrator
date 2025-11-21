@@ -1,5 +1,6 @@
 import time
 import logging
+import re
 import docker
 from typing import Optional
 from pydantic import BaseModel
@@ -636,7 +637,6 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     if "memory_limit" in variant_config and variant_config["memory_limit"]:
         mem_limit = variant_config["memory_limit"]
         # Validate Docker memory format before applying
-        import re
         if not re.match(r'^\d+[bBkKmMgG]$', mem_limit):
             logger.warning(f"Invalid memory limit format '{mem_limit}', skipping. Expected format: number+unit (e.g., '512m', '1g')")
         else:
