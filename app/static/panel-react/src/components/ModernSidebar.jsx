@@ -57,8 +57,8 @@ export function ModernSidebar() {
           <>
             <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8" />
             <h1 className="text-lg font-bold text-primary leading-tight">
-              <div>AceStream</div>
-              <div>Orchestrator</div>
+              <span className="block">AceStream</span>
+              <span className="block">Orchestrator</span>
             </h1>
           </>
         )}
