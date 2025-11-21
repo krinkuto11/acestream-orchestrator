@@ -177,37 +177,32 @@ else:
 
 # Favicon routes - serve favicon files at root level for browser default requests
 if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
-    @app.get("/favicon.ico")
-    async def get_favicon_ico():
-        """Serve favicon.ico at root level."""
-        favicon_path = os.path.join(panel_dir, "favicon.ico")
+    def serve_favicon(filename: str):
+        """Helper function to serve favicon files from panel directory."""
+        favicon_path = os.path.join(panel_dir, filename)
         if os.path.exists(favicon_path):
             return FileResponse(favicon_path)
         raise HTTPException(status_code=404, detail="Not Found")
+    
+    @app.get("/favicon.ico")
+    async def get_favicon_ico():
+        """Serve favicon.ico at root level."""
+        return serve_favicon("favicon.ico")
     
     @app.get("/favicon.svg")
     async def get_favicon_svg():
         """Serve favicon.svg at root level."""
-        favicon_path = os.path.join(panel_dir, "favicon.svg")
-        if os.path.exists(favicon_path):
-            return FileResponse(favicon_path)
-        raise HTTPException(status_code=404, detail="Not Found")
+        return serve_favicon("favicon.svg")
     
     @app.get("/favicon-96x96.png")
     async def get_favicon_96():
         """Serve favicon-96x96.png at root level."""
-        favicon_path = os.path.join(panel_dir, "favicon-96x96.png")
-        if os.path.exists(favicon_path):
-            return FileResponse(favicon_path)
-        raise HTTPException(status_code=404, detail="Not Found")
+        return serve_favicon("favicon-96x96.png")
     
     @app.get("/apple-touch-icon.png")
     async def get_apple_touch_icon():
         """Serve apple-touch-icon.png at root level."""
-        favicon_path = os.path.join(panel_dir, "apple-touch-icon.png")
-        if os.path.exists(favicon_path):
-            return FileResponse(favicon_path)
-        raise HTTPException(status_code=404, detail="Not Found")
+        return serve_favicon("apple-touch-icon.png")
 
 # Prometheus metrics endpoint with custom aggregated metrics
 from starlette.responses import Response
