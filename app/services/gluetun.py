@@ -1001,12 +1001,10 @@ async def _get_single_vpn_status(container_name: str) -> dict:
         else:
             health = "healthy" if container_running else "unhealthy"
         
-        # Get forwarded port (try cache first, fallback to API call)
+        # Get forwarded port (from cache only to avoid blocking)
         forwarded_port = None
         if container_running:
             forwarded_port = gluetun_monitor.get_cached_forwarded_port(container_name)
-            if forwarded_port is None:
-                forwarded_port = get_forwarded_port_sync(container_name)
         
         # Get provider from docker config
         provider = None
