@@ -109,9 +109,11 @@ class StatsCollector:
                     for engine, result in zip(engines, results):
                         if isinstance(result, Exception):
                             logger.debug(f"Failed to get version info for {engine.container_id[:12]}: {result}")
-                        elif result is not None:
-                            result['updated_at'] = datetime.now(timezone.utc).isoformat()
-                            new_version_cache[engine.container_id] = result
+                        else:
+                            # result is valid (could be None or a dict)
+                            if result is not None:
+                                result['updated_at'] = datetime.now(timezone.utc).isoformat()
+                                new_version_cache[engine.container_id] = result
                 
                 # Update caches atomically
                 self._stats_cache = new_stats_cache
