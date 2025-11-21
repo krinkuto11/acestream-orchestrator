@@ -47,6 +47,8 @@ def get_container_stats(container_id: str) -> Optional[Dict]:
         system_delta = cpu_stats.get('system_cpu_usage', 0) - \
                        precpu_stats.get('system_cpu_usage', 0)
         
+        # Get number of online CPUs. If not provided by Docker, use the length of percpu_usage array
+        # This fallback handles cases where online_cpus field is not populated by the Docker API
         online_cpus = cpu_stats.get('online_cpus', 0)
         if not online_cpus:
             online_cpus = len(cpu_stats.get('cpu_usage', {}).get('percpu_usage', [])) or 1

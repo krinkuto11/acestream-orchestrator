@@ -124,8 +124,24 @@ function ResourceUsage({ orchUrl }) {
     return () => clearInterval(interval)
   }, [orchUrl])
 
-  if (loading || !totalStats || totalStats.container_count === 0) {
+  // Don't show anything if loading or no engines
+  if (loading) {
     return null
+  }
+
+  if (!totalStats || totalStats.container_count === 0) {
+    return (
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold">Resource Usage</h3>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-sm text-muted-foreground">
+              No engines running - resource usage unavailable
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   return (
