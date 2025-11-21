@@ -975,7 +975,7 @@ def _double_check_connectivity_via_engines(container_name: Optional[str] = None)
         logger.error(f"Error during VPN connectivity double-check: {e}")
         return "unhealthy"
 
-def _get_single_vpn_status(container_name: str) -> dict:
+async def _get_single_vpn_status(container_name: str) -> dict:
     """Get status for a single VPN container."""
     try:
         from .docker_client import get_client
@@ -1019,7 +1019,7 @@ def _get_single_vpn_status(container_name: str) -> dict:
         city = None
         region = None
         if container_running and health == "healthy":
-            ip_info = get_vpn_public_ip_info(container_name)
+            ip_info = await get_vpn_public_ip_info(container_name)
             if ip_info:
                 public_ip = ip_info.get("public_ip")
                 country = ip_info.get("country")
@@ -1075,7 +1075,7 @@ def _get_single_vpn_status(container_name: str) -> dict:
         }
 
 
-def get_vpn_status() -> dict:
+async def get_vpn_status() -> dict:
     """Get comprehensive VPN status information."""
     from .state import state
     
@@ -1100,7 +1100,7 @@ def get_vpn_status() -> dict:
         }
     
     # Get status for VPN1
-    vpn1_status = _get_single_vpn_status(cfg.GLUETUN_CONTAINER_NAME)
+    vpn1_status = await _get_single_vpn_status(cfg.GLUETUN_CONTAINER_NAME)
     
     # In single mode, return status with backwards compatibility
     if cfg.VPN_MODE == 'single':
@@ -1114,7 +1114,7 @@ def get_vpn_status() -> dict:
     # In redundant mode, get both VPN statuses
     vpn2_status = None
     if cfg.GLUETUN_CONTAINER_NAME_2:
-        vpn2_status = _get_single_vpn_status(cfg.GLUETUN_CONTAINER_NAME_2)
+        vpn2_status = await _get_single_vpn_status(cfg.GLUETUN_CONTAINER_NAME_2)
     
     # Determine overall health: healthy if at least one VPN is healthy
     any_healthy = vpn1_status["connected"] or (vpn2_status and vpn2_status["connected"])
@@ -1229,7 +1229,7 @@ def get_vpn_provider(container_name: Optional[str] = None) -> Optional[str]:
         return None
 
 
-def get_vpn_public_ip_info(container_name: Optional[str] = None) -> Optional[Dict[str, str]]:
+async def get_vpn_public_ip_info(container_name: Optional[str] = None) -> Optional[Dict[str, str]]:
     """
     Get comprehensive public IP information from Gluetun's /v1/publicip/ip endpoint.
     
@@ -1265,8 +1265,8 @@ def get_vpn_public_ip_info(container_name: Optional[str] = None) -> Optional[Dic
             return None
     
     try:
-        with httpx.Client() as client:
-            response = client.get(f"http://{target_container}:{cfg.GLUETUN_API_PORT}/v1/publicip/ip", timeout=10)
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"http://{target_container}:{cfg.GLUETUN_API_PORT}/v1/publicip/ip", timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -1281,7 +1281,7 @@ def get_vpn_public_ip_info(container_name: Optional[str] = None) -> Optional[Dic
         return None
 
 
-def get_vpn_public_ip(container_name: Optional[str] = None) -> Optional[str]:
+async def get_vpn_public_ip(container_name: Optional[str] = None) -> Optional[str]:
     """
     Get the public IP address of the VPN connection from Gluetun.
     
@@ -1294,7 +1294,7 @@ def get_vpn_public_ip(container_name: Optional[str] = None) -> Optional[str]:
     This function should only be called when the VPN is healthy to avoid
     excessive error logging when VPN is down.
     """
-    info = get_vpn_public_ip_info(container_name)
+    info = await get_vpn_public_ip_info(container_name)
     return info.get("public_ip") if info else None
 
 # Global Gluetun monitor instance

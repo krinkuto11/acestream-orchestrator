@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
                 # Log VPN location information for all healthy VPN containers
                 from .services.gluetun import get_vpn_status
                 try:
-                    vpn_status = get_vpn_status()
+                    vpn_status = await get_vpn_status()
                     
                     # Check VPN1 location
                     if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
@@ -243,11 +243,11 @@ def provision(req: StartRequest):
     return result
 
 @app.post("/provision/acestream", response_model=AceProvisionResponse, dependencies=[Depends(require_api_key)])
-def provision_acestream(req: AceProvisionRequest):
+async def provision_acestream(req: AceProvisionRequest):
     # Check provisioning status before attempting
     from .services.circuit_breaker import circuit_breaker_manager
     
-    vpn_status_check = get_vpn_status()
+    vpn_status_check = await get_vpn_status()
     circuit_breaker_status = circuit_breaker_manager.get_status()
     
     # Build detailed error response if provisioning is blocked
@@ -751,14 +751,14 @@ async def get_vpn_status_endpoint():
     - Provider: VPN_SERVICE_PROVIDER docker environment variable
     - Location: Gluetun's /v1/publicip/ip endpoint
     """
-    vpn_status = get_vpn_status()
+    vpn_status = await get_vpn_status()
     return vpn_status
 
 @app.get("/vpn/publicip")
-def get_vpn_publicip_endpoint():
+async def get_vpn_publicip_endpoint():
     """Get VPN public IP address."""
     from .services.gluetun import get_vpn_public_ip
-    public_ip = get_vpn_public_ip()
+    public_ip = await get_vpn_public_ip()
     if public_ip:
         return {"public_ip": public_ip}
     else:
@@ -777,7 +777,7 @@ def reset_circuit_breaker(operation_type: Optional[str] = None):
     return {"message": f"Circuit breaker {'for ' + operation_type if operation_type else 'all'} reset successfully"}
 
 @app.get("/orchestrator/status")
-def get_orchestrator_status():
+async def get_orchestrator_status():
     """
     Get comprehensive orchestrator status for proxy integration.
     This endpoint provides all the information a proxy needs to understand
@@ -796,7 +796,7 @@ def get_orchestrator_status():
     docker_status = replica_validator.get_docker_container_status()
     
     # Get VPN status
-    vpn_status = get_vpn_status()
+    vpn_status = await get_vpn_status()
     
     # Get health summary
     health_summary = health_manager.get_health_summary()

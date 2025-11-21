@@ -117,9 +117,12 @@ def update_custom_metrics():
     - orch_used_engines: Number of engines currently handling streams
     - orch_vpn_health: Current health status of VPN container
     - orch_extra_engines: Number of engines beyond MIN_REPLICAS
+    
+    Note: VPN health is obtained from the cached gluetun_monitor state to avoid 
+    blocking async calls during metrics scraping.
     """
     from .state import state
-    from .gluetun import get_vpn_status
+    from .gluetun import gluetun_monitor
     from ..core.config import cfg
     
     # Get all active streams with their latest stats
@@ -156,11 +159,45 @@ def update_custom_metrics():
     engines_with_streams = set(stream.container_id for stream in streams)
     used_engines = len(engines_with_streams)
     
-    # Get VPN health status
-    vpn_status = get_vpn_status()
-    vpn_health_str = vpn_status.get("health", "unknown")
-    if not vpn_status.get("enabled", False):
+    # Get VPN health status from gluetun_monitor cache (non-blocking)
+    # This avoids making async calls during metrics scraping
+    vpn_health_str = "unknown"
+    vpn1_health = "unknown"
+    vpn2_health = "unknown"
+    
+    if not cfg.GLUETUN_CONTAINER_NAME:
         vpn_health_str = "disabled"
+        vpn1_health = "disabled"
+        vpn2_health = "disabled"
+    else:
+        # Use cached health status from monitor
+        vpn1_is_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
+        if vpn1_is_healthy is True:
+            vpn1_health = "healthy"
+        elif vpn1_is_healthy is False:
+            vpn1_health = "unhealthy"
+        else:
+            vpn1_health = "unknown"
+        
+        if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+            vpn2_is_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
+            if vpn2_is_healthy is True:
+                vpn2_health = "healthy"
+            elif vpn2_is_healthy is False:
+                vpn2_health = "unhealthy"
+            else:
+                vpn2_health = "unknown"
+            
+            # Overall health: healthy if at least one VPN is healthy
+            if vpn1_is_healthy is True or vpn2_is_healthy is True:
+                vpn_health_str = "healthy"
+            elif vpn1_is_healthy is False and vpn2_is_healthy is False:
+                vpn_health_str = "unhealthy"
+            else:
+                vpn_health_str = "unknown"
+        else:
+            vpn_health_str = vpn1_health
+            vpn2_health = "disabled"
     
     # Calculate extra engines (beyond minimum)
     extra_engines = max(0, total_engines - cfg.MIN_REPLICAS)
@@ -190,13 +227,6 @@ def update_custom_metrics():
     
     # Update VPN-specific metrics for redundant mode
     if cfg.VPN_MODE == 'redundant':
-        # Get individual VPN statuses
-        vpn1_status = vpn_status.get("vpn1", {})
-        vpn2_status = vpn_status.get("vpn2", {})
-        
-        vpn1_health = vpn1_status.get("health", "unknown")
-        vpn2_health = vpn2_status.get("health", "unknown")
-        
         orch_vpn1_health.state(vpn1_health)
         orch_vpn2_health.state(vpn2_health)
         
@@ -208,7 +238,7 @@ def update_custom_metrics():
         orch_vpn2_engines.set(vpn2_engine_count)
     else:
         # Single VPN mode - set VPN1 metrics, VPN2 to 0
-        orch_vpn1_health.state(vpn_health_str)
+        orch_vpn1_health.state(vpn1_health)
         orch_vpn2_health.state("disabled")
         orch_vpn1_engines.set(total_engines if cfg.GLUETUN_CONTAINER_NAME else 0)
         orch_vpn2_engines.set(0)
