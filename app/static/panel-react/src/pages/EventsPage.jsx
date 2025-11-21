@@ -4,8 +4,8 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { RefreshCw, Filter } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
+import { RefreshCw, Settings, Play, Wifi, ShieldCheck, Zap, FileText } from 'lucide-react'
+import { formatDistanceToNow, parseISO } from 'date-fns'
 
 const EVENT_TYPE_COLORS = {
   engine: 'bg-blue-500',
@@ -13,6 +13,22 @@ const EVENT_TYPE_COLORS = {
   vpn: 'bg-purple-500',
   health: 'bg-yellow-500',
   system: 'bg-gray-500'
+}
+
+const EVENT_TYPE_BORDER_COLORS = {
+  engine: 'border-blue-500',
+  stream: 'border-green-500',
+  vpn: 'border-purple-500',
+  health: 'border-yellow-500',
+  system: 'border-gray-500'
+}
+
+const EVENT_TYPE_TEXT_COLORS = {
+  engine: 'text-blue-500',
+  stream: 'text-green-500',
+  vpn: 'text-purple-500',
+  health: 'text-yellow-500',
+  system: 'text-gray-500'
 }
 
 const EVENT_TYPE_LABELS = {
@@ -78,7 +94,8 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
 
   const formatTimestamp = (timestamp) => {
     try {
-      const date = new Date(timestamp)
+      // Parse ISO string explicitly to handle UTC timestamps correctly
+      const date = parseISO(timestamp)
       return formatDistanceToNow(date, { addSuffix: true })
     } catch {
       return timestamp
@@ -87,13 +104,13 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
 
   const getEventIcon = (eventType) => {
     const icons = {
-      engine: '⚙️',
-      stream: '📺',
-      vpn: '🔒',
-      health: '💊',
-      system: '⚡'
+      engine: Settings,
+      stream: Play,
+      vpn: Wifi,
+      health: ShieldCheck,
+      system: Zap
     }
-    return icons[eventType] || '📝'
+    return icons[eventType] || FileText
   }
 
   const getCategoryBadgeVariant = (category) => {
@@ -121,7 +138,7 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
             Track significant application events and operations
           </p>
         </div>
-        <Button onClick={fetchEvents} variant="outline" size="sm">
+        <Button onClick={fetchEvents} variant="default" size="sm">
           <RefreshCw className="h-4 w-4 mr-2" />
           Refresh
         </Button>
@@ -138,18 +155,22 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
               <div className="text-2xl font-bold">{stats.total}</div>
             </CardContent>
           </Card>
-          {Object.entries(stats.by_type || {}).map(([type, count]) => (
-            <Card key={type}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
-                  {getEventIcon(type)} {EVENT_TYPE_LABELS[type]}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{count}</div>
-              </CardContent>
-            </Card>
-          ))}
+          {Object.entries(stats.by_type || {}).map(([type, count]) => {
+            const IconComponent = getEventIcon(type)
+            return (
+              <Card key={type}>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <IconComponent className={`h-4 w-4 ${EVENT_TYPE_TEXT_COLORS[type]}`} />
+                    {EVENT_TYPE_LABELS[type]}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{count}</div>
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
       )}
 
@@ -165,11 +186,11 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Events</SelectItem>
-                  <SelectItem value="engine">🔧 Engine</SelectItem>
-                  <SelectItem value="stream">📺 Stream</SelectItem>
-                  <SelectItem value="vpn">🔒 VPN</SelectItem>
-                  <SelectItem value="health">💊 Health</SelectItem>
-                  <SelectItem value="system">⚡ System</SelectItem>
+                  <SelectItem value="engine">Engine</SelectItem>
+                  <SelectItem value="stream">Stream</SelectItem>
+                  <SelectItem value="vpn">VPN</SelectItem>
+                  <SelectItem value="health">Health</SelectItem>
+                  <SelectItem value="system">System</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -218,17 +239,19 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
 
           {events.length > 0 && (
             <div className="space-y-3">
-              {events.map((event) => (
-                <div
-                  key={event.id}
-                  className="flex items-start gap-4 p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
-                >
-                  {/* Event Type Indicator */}
-                  <div className="flex-shrink-0">
-                    <div className={`w-10 h-10 rounded-full ${EVENT_TYPE_COLORS[event.event_type]} flex items-center justify-center text-white text-xl`}>
-                      {getEventIcon(event.event_type)}
+              {events.map((event) => {
+                const IconComponent = getEventIcon(event.event_type)
+                return (
+                  <div
+                    key={event.id}
+                    className={`flex items-start gap-4 p-4 rounded-lg border-2 ${EVENT_TYPE_BORDER_COLORS[event.event_type]} bg-card hover:bg-accent/50 transition-colors`}
+                  >
+                    {/* Event Type Indicator */}
+                    <div className="flex-shrink-0">
+                      <div className={`w-10 h-10 rounded-full ${EVENT_TYPE_COLORS[event.event_type]} flex items-center justify-center text-white`}>
+                        <IconComponent className="h-5 w-5" />
+                      </div>
                     </div>
-                  </div>
 
                   {/* Event Details */}
                   <div className="flex-1 min-w-0">
@@ -269,7 +292,8 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
                     </div>
                   </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </CardContent>
