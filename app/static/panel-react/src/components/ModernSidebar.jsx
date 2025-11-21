@@ -10,7 +10,8 @@ import {
   ShieldCheck,
   ChevronLeft,
   ChevronRight,
-  Sliders
+  Sliders,
+  FileText
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
@@ -20,6 +21,7 @@ const navigation = [
   { name: 'Overview', href: '/', icon: LayoutDashboard },
   { name: 'Engines', href: '/engines', icon: Server },
   { name: 'Streams', href: '/streams', icon: Activity },
+  { name: 'Events', href: '/events', icon: FileText },
   { name: 'Health', href: '/health', icon: ShieldCheck },
   { name: 'VPN', href: '/vpn', icon: Wifi },
   { name: 'Metrics', href: '/metrics', icon: BarChart3 },

@@ -10,6 +10,7 @@ from typing import Dict, Optional
 from enum import Enum
 from ..core.config import cfg
 from ..utils.debug_logger import get_debug_logger
+from .event_logger import event_logger
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,13 @@ class CircuitBreaker:
             debug_log.log_circuit_breaker("unknown",
                                          state="closed",
                                          failure_count=0)
+            # Log event for circuit breaker recovery
+            event_logger.log_event(
+                event_type="health",
+                category="recovered",
+                message="Circuit breaker closed - normal operations restored",
+                details={"previous_failures": self.failure_count}
+            )
             self.state = CircuitState.CLOSED
     
     def record_failure(self):
@@ -82,6 +90,16 @@ class CircuitBreaker:
             debug_log.log_stress_event("circuit_breaker_reopened",
                                       severity="critical",
                                       description="Circuit breaker reopened after recovery failure")
+            # Log event for circuit breaker reopening
+            event_logger.log_event(
+                event_type="health",
+                category="failed",
+                message="Circuit breaker reopened - recovery test failed",
+                details={
+                    "failure_count": self.failure_count,
+                    "reason": "recovery_failed"
+                }
+            )
             self.state = CircuitState.OPEN
         elif (self.state == CircuitState.CLOSED and 
               self.failure_count >= self.failure_threshold):
@@ -94,6 +112,17 @@ class CircuitBreaker:
             debug_log.log_stress_event("circuit_breaker_opened",
                                       severity="critical",
                                       description=f"Circuit breaker opened after {self.failure_count} failures")
+            # Log event for circuit breaker opening
+            event_logger.log_event(
+                event_type="health",
+                category="failed",
+                message=f"Circuit breaker opened after {self.failure_count} consecutive failures",
+                details={
+                    "failure_count": self.failure_count,
+                    "threshold": self.failure_threshold,
+                    "recovery_timeout": self.recovery_timeout
+                }
+            )
             self.state = CircuitState.OPEN
     
     def get_status(self) -> Dict:

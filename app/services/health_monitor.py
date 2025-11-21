@@ -3,6 +3,7 @@ import logging
 import time
 from .state import state
 from ..utils.debug_logger import get_debug_logger
+from .event_logger import event_logger
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,17 @@ class HealthMonitor:
                                               description=f"{unhealthy_count}/{len(engines)} engines unhealthy (>30%)",
                                               unhealthy_count=unhealthy_count,
                                               total=len(engines))
+                    # Log event for high unhealthy engines
+                    event_logger.log_event(
+                        event_type="health",
+                        category="warning",
+                        message=f"High proportion of unhealthy engines: {unhealthy_count}/{len(engines)} (>30%)",
+                        details={
+                            "unhealthy_count": unhealthy_count,
+                            "total_engines": len(engines),
+                            "percentage": round(unhealthy_count / len(engines) * 100, 2)
+                        }
+                    )
                 
             except Exception as e:
                 duration = time.time() - check_start

@@ -18,6 +18,7 @@ from typing import Optional, Dict
 from .docker_client import get_client
 from ..core.config import cfg
 from ..utils.debug_logger import get_debug_logger
+from .event_logger import event_logger
 from docker.errors import NotFound
 
 logger = logging.getLogger(__name__)
@@ -162,8 +163,23 @@ class VpnContainerMonitor:
             if self._first_healthy_time is None:
                 self._first_healthy_time = now
                 logger.info(f"VPN '{self.container_name}' first became healthy at {now}")
+                # Log VPN connection event
+                event_logger.log_event(
+                    event_type="vpn",
+                    category="connected",
+                    message=f"VPN '{self.container_name}' established connection",
+                    details={"container": self.container_name}
+                )
             self._consecutive_healthy_count += 1
             # Reset unhealthy tracking when healthy
+            if self._unhealthy_since is not None:
+                # Log recovery event
+                event_logger.log_event(
+                    event_type="vpn",
+                    category="recovered",
+                    message=f"VPN '{self.container_name}' recovered from unhealthy state",
+                    details={"container": self.container_name}
+                )
             self._unhealthy_since = None
             self._force_restart_attempted = False
         else:
@@ -171,6 +187,13 @@ class VpnContainerMonitor:
             # Track when became unhealthy
             if self._unhealthy_since is None:
                 self._unhealthy_since = now
+                # Log VPN disconnection event
+                event_logger.log_event(
+                    event_type="vpn",
+                    category="disconnected",
+                    message=f"VPN '{self.container_name}' became unhealthy",
+                    details={"container": self.container_name}
+                )
         
         self._last_health_status = current_health
 

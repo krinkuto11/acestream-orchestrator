@@ -19,8 +19,9 @@ from .services.health_monitor import health_monitor
 from .services.health_manager import health_manager
 from .services.inspect import inspect_container, ContainerNotFound
 from .services.state import state, load_state_from_db, cleanup_on_shutdown
-from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot
+from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot, EventLog
 from .services.collector import collector
+from .services.event_logger import event_logger
 from .services.stream_cleanup import stream_cleanup
 from .services.monitor import docker_monitor
 from .services.metrics import update_custom_metrics
@@ -194,6 +195,14 @@ def get_metrics():
 @app.post("/provision", dependencies=[Depends(require_api_key)])
 def provision(req: StartRequest):
     result = start_container(req)
+    # Log engine provisioning
+    event_logger.log_event(
+        event_type="engine",
+        category="created",
+        message=f"Engine provisioned: {result.get('container_id', 'unknown')[:12]}",
+        details={"image": req.image, "labels": req.labels or {}},
+        container_id=result.get("container_id")
+    )
     return result
 
 @app.post("/provision/acestream", response_model=AceProvisionResponse, dependencies=[Depends(require_api_key)])
@@ -299,6 +308,20 @@ def provision_acestream(req: AceProvisionRequest):
     except Exception as e:
         logger.error(f"Failed to reindex after provisioning: {e}")
     
+    # Log successful engine provisioning
+    event_logger.log_event(
+        event_type="engine",
+        category="created",
+        message=f"AceStream engine provisioned on port {response.host_http_port}",
+        details={
+            "image": req.image or "default",
+            "host_http_port": response.host_http_port,
+            "container_http_port": response.container_http_port,
+            "labels": req.labels or {}
+        },
+        container_id=response.container_id
+    )
+    
     return response
 
 @app.post("/scale/{demand}", dependencies=[Depends(require_api_key)])
@@ -313,6 +336,13 @@ def garbage_collect():
 
 @app.delete("/containers/{container_id}", dependencies=[Depends(require_api_key)])
 def delete(container_id: str):
+    # Log engine deletion
+    event_logger.log_event(
+        event_type="engine",
+        category="deleted",
+        message=f"Engine deleted: {container_id[:12]}",
+        container_id=container_id
+    )
     stop_container(container_id)
     return {"deleted": container_id}
 
@@ -326,11 +356,41 @@ def get_container(container_id: str):
 # Events
 @app.post("/events/stream_started", response_model=StreamState, dependencies=[Depends(require_api_key)])
 def ev_stream_started(evt: StreamStartedEvent):
-    return state.on_stream_started(evt)
+    result = state.on_stream_started(evt)
+    # Log stream start event
+    event_logger.log_event(
+        event_type="stream",
+        category="started",
+        message=f"Stream started: {evt.stream.key_type}={evt.stream.key[:16]}...",
+        details={
+            "key_type": evt.stream.key_type,
+            "key": evt.stream.key,
+            "engine_port": evt.engine.port,
+            "is_live": bool(evt.session.is_live)
+        },
+        container_id=evt.container_id,
+        stream_id=result.id
+    )
+    return result
 
 @app.post("/events/stream_ended", dependencies=[Depends(require_api_key)])
 def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
     st = state.on_stream_ended(evt)
+    # Log stream end event
+    if st:
+        event_logger.log_event(
+            event_type="stream",
+            category="ended",
+            message=f"Stream ended: {st.id[:16]}... (reason: {evt.reason or 'unknown'})",
+            details={
+                "reason": evt.reason,
+                "key_type": st.key_type,
+                "key": st.key
+            },
+            container_id=st.container_id,
+            stream_id=st.id
+        )
+    
     if cfg.AUTO_DELETE and st:
         def _auto():
             cid = st.container_id
@@ -1139,5 +1199,56 @@ def import_template_endpoint(slot_id: int, request: dict):
         raise HTTPException(status_code=400, detail=error_msg)
     
     return {"message": f"Template {slot_id} imported successfully"}
+
+# Event Logging Endpoints
+@app.get("/events", response_model=List[EventLog])
+def get_events(
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of events to return"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    event_type: Optional[str] = Query(None, description="Filter by event type (engine, stream, vpn, health, system)"),
+    category: Optional[str] = Query(None, description="Filter by category"),
+    container_id: Optional[str] = Query(None, description="Filter by container ID"),
+    stream_id: Optional[str] = Query(None, description="Filter by stream ID"),
+    since: Optional[datetime] = Query(None, description="Only return events after this timestamp")
+):
+    """
+    Retrieve application events with optional filtering.
+    Events are returned in reverse chronological order (newest first).
+    """
+    events = event_logger.get_events(
+        limit=limit,
+        offset=offset,
+        event_type=event_type,
+        category=category,
+        container_id=container_id,
+        stream_id=stream_id,
+        since=since
+    )
+    
+    # Convert EventRow to EventLog schema
+    return [
+        EventLog(
+            id=e.id,
+            timestamp=e.timestamp,
+            event_type=e.event_type,
+            category=e.category,
+            message=e.message,
+            details=e.details or {},
+            container_id=e.container_id,
+            stream_id=e.stream_id
+        )
+        for e in events
+    ]
+
+@app.get("/events/stats")
+def get_event_stats():
+    """Get statistics about logged events."""
+    return event_logger.get_event_stats()
+
+@app.post("/events/cleanup", dependencies=[Depends(require_api_key)])
+def cleanup_events(max_age_days: int = Query(30, ge=1, description="Delete events older than this many days")):
+    """Manually trigger cleanup of old events."""
+    deleted = event_logger.cleanup_old_events(max_age_days)
+    return {"deleted": deleted, "message": f"Cleaned up {deleted} events older than {max_age_days} days"}
 
 # WebSocket endpoint removed - using simple polling approach
