@@ -7,6 +7,7 @@ Manages user-defined custom engine variants with configurable parameters.
 import json
 import logging
 import platform
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field, validator
@@ -37,6 +38,7 @@ class CustomVariantConfig(BaseModel):
     enabled: bool = False
     platform: str  # "amd64", "arm32", "arm64"
     arm_version: str = "3.2.13"  # For ARM platforms: "3.2.13" or "3.2.14"
+    memory_limit: Optional[str] = None  # Docker memory limit format: "512m", "1g", "2g", etc.
     parameters: List[CustomVariantParameter] = []
     
     @validator('platform')
@@ -51,6 +53,22 @@ class CustomVariantConfig(BaseModel):
         valid_versions = ['3.2.13', '3.2.14']
         if v not in valid_versions:
             raise ValueError(f'arm_version must be one of: {", ".join(valid_versions)}')
+        return v
+    
+    @validator('memory_limit')
+    def validate_memory_limit(cls, v):
+        """Validate Docker memory limit format."""
+        if v is None or v == '':
+            return None
+        
+        # Docker memory format: number followed by unit (b, k, m, g)
+        # Examples: "512m", "1g", "2048m", "512M", "1G"
+        pattern = r'^\d+[bBkKmMgG]$'
+        if not re.match(pattern, v):
+            raise ValueError(
+                'memory_limit must be in Docker format: number + unit (b/k/m/g). '
+                'Examples: "512m", "1g", "2g"'
+            )
         return v
 
 
@@ -274,7 +292,7 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
         config: Custom variant configuration
     
     Returns:
-        Dict with 'image', 'config_type', and platform-specific config
+        Dict with 'image', 'config_type', platform-specific config, and optional 'memory_limit'
     """
     # Determine base image
     if config.platform == 'amd64':
@@ -296,6 +314,10 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
         "config_type": config_type,
         "is_custom": True
     }
+    
+    # Add memory limit if specified
+    if config.memory_limit:
+        result["memory_limit"] = config.memory_limit
     
     # Build parameter string or command
     if config_type == "env":

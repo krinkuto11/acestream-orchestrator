@@ -19,7 +19,7 @@ from .services.health_monitor import health_monitor
 from .services.health_manager import health_manager
 from .services.inspect import inspect_container, ContainerNotFound
 from .services.state import state, load_state_from_db, cleanup_on_shutdown
-from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot, EventLog
+from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot, EventLog, DockerStats
 from .services.collector import collector
 from .services.event_logger import event_logger
 from .services.stream_cleanup import stream_cleanup
@@ -30,7 +30,7 @@ from .services.db import engine
 from .models.db_models import Base
 from .services.reindex import reindex_existing
 from .services.gluetun import gluetun_monitor
-from .services.docker_stats import get_container_stats, get_multiple_container_stats, get_total_stats
+from .services.docker_stats import get_container_stats, get_multiple_container_stats, get_total_stats, stats_collector
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(docker_monitor.start())  # Start Docker monitoring
     asyncio.create_task(health_monitor.start())  # Start health monitoring  
     asyncio.create_task(health_manager.start())  # Start proactive health management
+    await stats_collector.start()  # Start Docker stats collector
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
     yield
@@ -124,6 +125,7 @@ async def lifespan(app: FastAPI):
     await health_monitor.stop()  # Stop health monitoring
     await health_manager.stop()  # Stop health management
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
+    await stats_collector.stop()  # Stop Docker stats collector
     
     # Give a small delay to ensure any pending operations complete
     await asyncio.sleep(0.1)
@@ -562,6 +564,12 @@ def get_engines():
                         logger.debug(f"No forwarded port available for VPN {engine.vpn_container} (engine {engine.container_id[:12]})")
                 except Exception as e:
                     logger.warning(f"Could not get forwarded port for engine {engine.container_id[:12]} on VPN {engine.vpn_container}: {e}")
+            
+            # Include cached Docker stats if available
+            cached_stats = stats_collector.get_cached_stats(engine.container_id)
+            if cached_stats:
+                # Convert to DockerStats model
+                engine.docker_stats = DockerStats(**cached_stats)
         
         # Sort engines by port number for consistent ordering
         verified_engines.sort(key=lambda e: e.port)
@@ -582,23 +590,50 @@ def get_engine(container_id: str):
 
 @app.get("/engines/stats/all")
 def get_all_engine_stats():
-    """Get Docker stats for all engines."""
-    engines = state.list_engines()
-    container_ids = [e.container_id for e in engines]
-    stats = get_multiple_container_stats(container_ids)
-    return stats
+    """Get Docker stats for all engines from cache."""
+    # Use cached stats from the background collector
+    all_stats = stats_collector.get_all_cached_stats()
+    return all_stats
 
 @app.get("/engines/stats/total")
 def get_total_engine_stats():
-    """Get aggregated Docker stats across all engines."""
-    engines = state.list_engines()
-    container_ids = [e.container_id for e in engines]
-    total_stats = get_total_stats(container_ids)
-    return total_stats
+    """Get aggregated Docker stats across all engines from cache."""
+    # Use cached stats from the background collector
+    all_stats = stats_collector.get_all_cached_stats()
+    
+    total = {
+        'total_cpu_percent': 0.0,
+        'total_memory_usage': 0,
+        'total_network_rx_bytes': 0,
+        'total_network_tx_bytes': 0,
+        'total_block_read_bytes': 0,
+        'total_block_write_bytes': 0,
+        'container_count': 0
+    }
+    
+    for container_id, stats in all_stats.items():
+        total['total_cpu_percent'] += stats.get('cpu_percent', 0)
+        total['total_memory_usage'] += stats.get('memory_usage', 0)
+        total['total_network_rx_bytes'] += stats.get('network_rx_bytes', 0)
+        total['total_network_tx_bytes'] += stats.get('network_tx_bytes', 0)
+        total['total_block_read_bytes'] += stats.get('block_read_bytes', 0)
+        total['total_block_write_bytes'] += stats.get('block_write_bytes', 0)
+        total['container_count'] += 1
+    
+    # Round CPU percent
+    total['total_cpu_percent'] = round(total['total_cpu_percent'], 2)
+    
+    return total
 
 @app.get("/engines/{container_id}/stats")
 def get_engine_stats(container_id: str):
-    """Get Docker stats for a specific engine."""
+    """Get Docker stats for a specific engine from cache."""
+    # First try to get from cache
+    stats = stats_collector.get_cached_stats(container_id)
+    if stats:
+        return stats
+    
+    # If not in cache, fall back to direct fetch
     stats = get_container_stats(container_id)
     if not stats:
         raise HTTPException(status_code=404, detail="Container not found or stats unavailable")
