@@ -63,10 +63,13 @@ class StatsCollector:
     
     async def _poll_stats(self):
         """Background task to continuously poll container stats."""
+        # Import state lazily to avoid initialization order issues
+        # This background task starts after application initialization completes
+        from .state import state
+        
         while self._running:
             try:
                 # Get list of engine containers from state
-                from .state import state
                 engines = state.list_engines()
                 container_ids = [e.container_id for e in engines]
                 

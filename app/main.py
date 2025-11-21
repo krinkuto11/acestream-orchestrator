@@ -19,7 +19,7 @@ from .services.health_monitor import health_monitor
 from .services.health_manager import health_manager
 from .services.inspect import inspect_container, ContainerNotFound
 from .services.state import state, load_state_from_db, cleanup_on_shutdown
-from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot, EventLog
+from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot, EventLog, DockerStats
 from .services.collector import collector
 from .services.event_logger import event_logger
 from .services.stream_cleanup import stream_cleanup
@@ -569,7 +569,6 @@ def get_engines():
             cached_stats = stats_collector.get_cached_stats(engine.container_id)
             if cached_stats:
                 # Convert to DockerStats model
-                from .models.schemas import DockerStats
                 engine.docker_stats = DockerStats(**cached_stats)
         
         # Sort engines by port number for consistent ordering
