@@ -1,6 +1,10 @@
 """
 Simple in-memory cache with TTL support.
 Used for caching expensive API calls to improve UI performance.
+
+Note: This cache cannot distinguish between a cached None value and a cache miss,
+as both return None from the get() method. If you need to cache None values,
+consider using a sentinel value or a different cache implementation.
 """
 import time
 from typing import Optional, Any, Dict, Tuple

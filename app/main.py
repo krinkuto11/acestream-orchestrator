@@ -42,10 +42,16 @@ debug_logger = init_debug_logger(enabled=cfg.DEBUG_MODE, log_dir=cfg.DEBUG_LOG_D
 if cfg.DEBUG_MODE:
     logger.info(f"Debug mode enabled. Logs will be written to: {cfg.DEBUG_LOG_DIR}")
 
+# Cache TTL constants (in seconds)
+EXTENDED_STATS_CACHE_TTL = 30  # Cache stream extended stats for 30 seconds
+LIVEPOS_CACHE_TTL = 5          # Cache livepos data for 5 seconds
+LIVEPOS_NEGATIVE_TTL = 3       # Cache negative livepos results for 3 seconds
+EVENTS_CACHE_TTL = 5           # Cache events and stats for 5 seconds
+
 # Initialize caches for expensive operations
-extended_stats_cache = SimpleCache(default_ttl=30)  # Cache stream extended stats for 30s
-events_cache = SimpleCache(default_ttl=5)  # Cache events for 5s
-livepos_cache = SimpleCache(default_ttl=5)  # Cache livepos for 5s
+extended_stats_cache = SimpleCache(default_ttl=EXTENDED_STATS_CACHE_TTL)
+events_cache = SimpleCache(default_ttl=EVENTS_CACHE_TTL)
+livepos_cache = SimpleCache(default_ttl=LIVEPOS_CACHE_TTL)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -696,8 +702,8 @@ async def get_stream_extended_stats(stream_id: str):
     if extended_stats is None:
         raise HTTPException(status_code=503, detail="Unable to fetch extended stats from AceStream engine")
     
-    # Cache the result for 30 seconds
-    extended_stats_cache.set(cache_key, extended_stats, ttl=30)
+    # Cache the result using configured TTL
+    extended_stats_cache.set(cache_key, extended_stats, ttl=EXTENDED_STATS_CACHE_TTL)
     logger.debug(f"Cached extended stats for stream {stream_id[:16]}...")
     
     return extended_stats
@@ -746,8 +752,8 @@ async def get_stream_livepos(stream_id: str):
                     "has_livepos": False,
                     "is_live": payload.get("is_live", 0) == 1
                 }
-                # Cache negative results for shorter time (3 seconds)
-                livepos_cache.set(cache_key, result, ttl=3)
+                # Cache negative results for shorter time
+                livepos_cache.set(cache_key, result, ttl=LIVEPOS_NEGATIVE_TTL)
                 return result
             
             # Return livepos data with additional context
@@ -764,8 +770,8 @@ async def get_stream_livepos(stream_id: str):
                     "buffer_pieces": livepos.get("buffer_pieces")
                 }
             }
-            # Cache successful results for 5 seconds
-            livepos_cache.set(cache_key, result, ttl=5)
+            # Cache successful results using configured TTL
+            livepos_cache.set(cache_key, result, ttl=LIVEPOS_CACHE_TTL)
             logger.debug(f"Cached livepos for stream {stream_id[:16]}...")
             return result
     except httpx.HTTPError as e:
@@ -1337,6 +1343,19 @@ def import_template_endpoint(slot_id: int, request: dict):
     return {"message": f"Template {slot_id} imported successfully"}
 
 # Event Logging Endpoints
+def _build_events_cache_key(
+    limit: int,
+    offset: int,
+    event_type: Optional[str] = None,
+    category: Optional[str] = None,
+    container_id: Optional[str] = None,
+    stream_id: Optional[str] = None,
+    since: Optional[datetime] = None
+) -> str:
+    """Build a cache key from events query parameters."""
+    return f"events:limit={limit}:offset={offset}:type={event_type}:cat={category}:cid={container_id}:sid={stream_id}:since={since}"
+
+
 @app.get("/events", response_model=List[EventLog])
 def get_events(
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of events to return"),
@@ -1353,7 +1372,7 @@ def get_events(
     Uses caching to improve performance for repeated queries.
     """
     # Create cache key from query parameters
-    cache_key = f"events:limit={limit}:offset={offset}:type={event_type}:cat={category}:cid={container_id}:sid={stream_id}:since={since}"
+    cache_key = _build_events_cache_key(limit, offset, event_type, category, container_id, stream_id, since)
     
     # Check cache first
     cached_result = events_cache.get(cache_key)
@@ -1386,8 +1405,8 @@ def get_events(
         for e in events
     ]
     
-    # Cache the result for 5 seconds
-    events_cache.set(cache_key, result, ttl=5)
+    # Cache the result using configured TTL
+    events_cache.set(cache_key, result, ttl=EVENTS_CACHE_TTL)
     logger.debug(f"Cached events (limit={limit}, offset={offset})")
     
     return result
@@ -1405,8 +1424,8 @@ def get_event_stats():
     
     result = event_logger.get_event_stats()
     
-    # Cache the result for 5 seconds
-    events_cache.set(cache_key, result, ttl=5)
+    # Cache the result using configured TTL
+    events_cache.set(cache_key, result, ttl=EVENTS_CACHE_TTL)
     logger.debug("Cached event stats")
     
     return result
