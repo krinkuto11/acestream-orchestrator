@@ -52,3 +52,14 @@ class ConfigRow(Base):
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     value: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+class EventRow(Base):
+    __tablename__ = "events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    event_type: Mapped[str] = mapped_column(String(32), index=True)  # engine, stream, vpn, health, system
+    category: Mapped[str] = mapped_column(String(32))  # created, deleted, started, ended, etc.
+    message: Mapped[str] = mapped_column(Text)
+    details: Mapped[dict | None] = mapped_column(JSON, default={})
+    container_id: Mapped[str | None] = mapped_column(String(128))
+    stream_id: Mapped[str | None] = mapped_column(String(256))

@@ -5,6 +5,7 @@ from .provisioner import StartRequest, start_container, AceProvisionRequest, sta
 from .health import list_managed
 from .state import state
 from .circuit_breaker import circuit_breaker_manager
+from .event_logger import event_logger
 import logging
 import asyncio
 from datetime import datetime, timedelta
@@ -105,6 +106,19 @@ def ensure_minimum(initial_startup: bool = False):
         logger.info(f"Starting {deficit} AceStream containers to maintain {target_description} (currently: total={total_running}, used={used_engines}, free={free_count})")
         
         if deficit > 0:
+            # Log autoscaling event
+            event_logger.log_event(
+                event_type="system",
+                category="scaling",
+                message=f"Auto-scaling: provisioning {deficit} engines to meet {target_description}",
+                details={
+                    "deficit": deficit,
+                    "total_running": total_running,
+                    "free_count": free_count,
+                    "target": target,
+                    "initial_startup": initial_startup
+                }
+            )
             # Use simple synchronous provisioning for reliability
             success_count = 0
             failure_count = 0

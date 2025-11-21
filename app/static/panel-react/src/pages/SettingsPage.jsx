@@ -10,7 +10,9 @@ export function SettingsPage({
   apiKey,
   setApiKey,
   refreshInterval,
-  setRefreshInterval
+  setRefreshInterval,
+  maxEventsDisplay,
+  setMaxEventsDisplay
 }) {
   return (
     <div className="space-y-6">
@@ -79,6 +81,27 @@ export function SettingsPage({
             </Select>
             <p className="text-xs text-muted-foreground">
               How often the dashboard refreshes data from the server
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="max-events">Event Log Display Limit</Label>
+            <Select 
+              value={maxEventsDisplay.toString()} 
+              onValueChange={(val) => setMaxEventsDisplay(Number(val))}
+            >
+              <SelectTrigger id="max-events">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="50">50 events</SelectItem>
+                <SelectItem value="100">100 events</SelectItem>
+                <SelectItem value="200">200 events</SelectItem>
+                <SelectItem value="500">500 events</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Maximum number of events to display in the Event Log page
             </p>
           </div>
         </CardContent>

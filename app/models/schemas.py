@@ -95,3 +95,14 @@ class ProvisioningBlockedReason(BaseModel):
     recovery_eta_seconds: Optional[int] = None  # Estimated time until recovery
     can_retry: bool = False  # Whether retrying makes sense
     should_wait: bool = False  # Whether proxy should wait vs fail immediately
+
+class EventLog(BaseModel):
+    """Event log entry for significant application events."""
+    id: int
+    timestamp: datetime
+    event_type: Literal["engine", "stream", "vpn", "health", "system"]
+    category: str  # created, deleted, started, ended, failed, recovered, etc.
+    message: str
+    details: Optional[Dict[str, any]] = {}
+    container_id: Optional[str] = None
+    stream_id: Optional[str] = None

@@ -6,6 +6,7 @@ import { ThemeProvider } from './components/ThemeProvider'
 import { OverviewPage } from './pages/OverviewPage'
 import { EnginesPage } from './pages/EnginesPage'
 import { StreamsPage } from './pages/StreamsPage'
+import { EventsPage } from './pages/EventsPage'
 import { HealthPage } from './pages/HealthPage'
 import { VPNPage } from './pages/VPNPage'
 import { MetricsPage } from './pages/MetricsPage'
@@ -19,6 +20,7 @@ function App() {
   const [orchUrl, setOrchUrl] = useLocalStorage('orch_url', 'http://localhost:8000')
   const [apiKey, setApiKey] = useLocalStorage('orch_apikey', '')
   const [refreshInterval, setRefreshInterval] = useLocalStorage('refresh_interval', 5000)
+  const [maxEventsDisplay, setMaxEventsDisplay] = useLocalStorage('max_events_display', 100)
   
   const [engines, setEngines] = useState([])
   const [streams, setStreams] = useState([])
@@ -165,6 +167,16 @@ function App() {
                   } 
                 />
                 <Route 
+                  path="/events" 
+                  element={
+                    <EventsPage
+                      orchUrl={orchUrl}
+                      apiKey={apiKey}
+                      maxEventsDisplay={maxEventsDisplay}
+                    />
+                  } 
+                />
+                <Route 
                   path="/health" 
                   element={
                     <HealthPage
@@ -198,6 +210,8 @@ function App() {
                       setApiKey={setApiKey}
                       refreshInterval={refreshInterval}
                       setRefreshInterval={setRefreshInterval}
+                      maxEventsDisplay={maxEventsDisplay}
+                      setMaxEventsDisplay={setMaxEventsDisplay}
                     />
                   } 
                 />
