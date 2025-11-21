@@ -94,22 +94,24 @@ class StatsCollector:
                 
                 # Collect version info for all engines concurrently (async, may be slow)
                 new_version_cache = {}
-                version_tasks = []
-                engine_map = {}
                 
-                for engine in engines:
-                    task = asyncio.create_task(get_engine_version_info(engine.host, engine.port))
-                    version_tasks.append(task)
-                    engine_map[task] = engine.container_id
+                # Create tasks with engine info tuples for clean mapping
+                version_tasks = [
+                    (engine.container_id, asyncio.create_task(get_engine_version_info(engine.host, engine.port)))
+                    for engine in engines
+                ]
                 
                 # Wait for all version info requests to complete
                 if version_tasks:
-                    results = await asyncio.gather(*version_tasks, return_exceptions=True)
-                    for task, result in zip(version_tasks, results):
-                        container_id = engine_map[task]
-                        if result and not isinstance(result, Exception):
-                            result['updated_at'] = datetime.now(timezone.utc).isoformat()
-                            new_version_cache[container_id] = result
+                    for container_id, task in version_tasks:
+                        try:
+                            result = await task
+                            # Check if result is valid (not None and not an exception)
+                            if result is not None and not isinstance(result, Exception):
+                                result['updated_at'] = datetime.now(timezone.utc).isoformat()
+                                new_version_cache[container_id] = result
+                        except Exception as e:
+                            logger.debug(f"Failed to get version info for {container_id[:12]}: {e}")
                 
                 # Update caches atomically
                 self._stats_cache = new_stats_cache
