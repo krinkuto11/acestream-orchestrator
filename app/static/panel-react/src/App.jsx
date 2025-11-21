@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { ModernSidebar } from './components/ModernSidebar'
 import { ModernHeader } from './components/ModernHeader'
-import { ThemeProvider } from './components/ThemeProvider'
+import { ThemeProvider, useTheme } from './components/ThemeProvider'
 import { OverviewPage } from './pages/OverviewPage'
 import { EnginesPage } from './pages/EnginesPage'
 import { StreamsPage } from './pages/StreamsPage'
@@ -13,10 +13,13 @@ import { MetricsPage } from './pages/MetricsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { AdvancedEngineSettingsPage } from './pages/AdvancedEngineSettingsPage'
 import { useLocalStorage } from './hooks/useLocalStorage'
+import { useFavicon } from './hooks/useFavicon'
 import { Toaster } from '@/components/ui/sonner'
 import { toast } from 'sonner'
 
-function App() {
+function AppContent() {
+  const { resolvedTheme } = useTheme()
+  useFavicon(resolvedTheme)
   const [orchUrl, setOrchUrl] = useLocalStorage('orch_url', 'http://localhost:8000')
   const [apiKey, setApiKey] = useLocalStorage('orch_apikey', '')
   const [refreshInterval, setRefreshInterval] = useLocalStorage('refresh_interval', 5000)
@@ -115,123 +118,129 @@ function App() {
   }, [orchUrl, fetchJSON, fetchData])
 
   return (
-    <ThemeProvider defaultTheme="light">
-      <BrowserRouter basename="/panel">
-        <div className="flex min-h-screen bg-background">
-          <ModernSidebar />
-          
-          <div className="flex-1 flex flex-col">
-            <ModernHeader 
-              isConnected={isConnected}
-              lastUpdate={lastUpdate}
-            />
-            
-            <main className="flex-1 overflow-y-auto p-6">
-              <Routes>
-                <Route 
-                  path="/" 
-                  element={
-                    <OverviewPage
-                      engines={engines}
-                      streams={streams}
-                      vpnStatus={vpnStatus}
-                      orchestratorStatus={orchestratorStatus}
-                      orchUrl={orchUrl}
-                      apiKey={apiKey}
-                    />
-                  } 
-                />
-                <Route 
-                  path="/engines" 
-                  element={
-                    <EnginesPage
-                      engines={engines}
-                      onDeleteEngine={handleDeleteEngine}
-                      vpnStatus={vpnStatus}
-                      orchUrl={orchUrl}
-                      fetchJSON={fetchJSON}
-                    />
-                  } 
-                />
-                <Route 
-                  path="/streams" 
-                  element={
-                    <StreamsPage
-                      streams={streams}
-                      orchUrl={orchUrl}
-                      apiKey={apiKey}
-                      onStopStream={handleStopStream}
-                      onDeleteEngine={handleDeleteEngine}
-                      debugMode={orchestratorStatus?.config?.debug_mode || false}
-                    />
-                  } 
-                />
-                <Route 
-                  path="/events" 
-                  element={
-                    <EventsPage
-                      orchUrl={orchUrl}
-                      apiKey={apiKey}
-                      maxEventsDisplay={maxEventsDisplay}
-                    />
-                  } 
-                />
-                <Route 
-                  path="/health" 
-                  element={
-                    <HealthPage
-                      apiKey={apiKey}
-                      orchUrl={orchUrl}
-                    />
-                  } 
-                />
-                <Route 
-                  path="/vpn" 
-                  element={
-                    <VPNPage vpnStatus={vpnStatus} />
-                  } 
-                />
-                <Route 
-                  path="/metrics" 
-                  element={
-                    <MetricsPage
-                      apiKey={apiKey}
-                      orchUrl={orchUrl}
-                    />
-                  } 
-                />
-                <Route 
-                  path="/settings" 
-                  element={
-                    <SettingsPage
-                      orchUrl={orchUrl}
-                      setOrchUrl={setOrchUrl}
-                      apiKey={apiKey}
-                      setApiKey={setApiKey}
-                      refreshInterval={refreshInterval}
-                      setRefreshInterval={setRefreshInterval}
-                      maxEventsDisplay={maxEventsDisplay}
-                      setMaxEventsDisplay={setMaxEventsDisplay}
-                    />
-                  } 
-                />
-                <Route 
-                  path="/advanced-engine-settings" 
-                  element={
-                    <AdvancedEngineSettingsPage
-                      orchUrl={orchUrl}
-                      apiKey={apiKey}
-                      fetchJSON={fetchJSON}
-                    />
-                  } 
-                />
-              </Routes>
-            </main>
-          </div>
-        </div>
+    <BrowserRouter basename="/panel">
+      <div className="flex min-h-screen bg-background">
+        <ModernSidebar />
         
-        <Toaster />
-      </BrowserRouter>
+        <div className="flex-1 flex flex-col">
+          <ModernHeader 
+            isConnected={isConnected}
+            lastUpdate={lastUpdate}
+          />
+          
+          <main className="flex-1 overflow-y-auto p-6">
+            <Routes>
+              <Route 
+                path="/" 
+                element={
+                  <OverviewPage
+                    engines={engines}
+                    streams={streams}
+                    vpnStatus={vpnStatus}
+                    orchestratorStatus={orchestratorStatus}
+                    orchUrl={orchUrl}
+                    apiKey={apiKey}
+                  />
+                } 
+              />
+              <Route 
+                path="/engines" 
+                element={
+                  <EnginesPage
+                    engines={engines}
+                    onDeleteEngine={handleDeleteEngine}
+                    vpnStatus={vpnStatus}
+                    orchUrl={orchUrl}
+                    fetchJSON={fetchJSON}
+                  />
+                } 
+              />
+              <Route 
+                path="/streams" 
+                element={
+                  <StreamsPage
+                    streams={streams}
+                    orchUrl={orchUrl}
+                    apiKey={apiKey}
+                    onStopStream={handleStopStream}
+                    onDeleteEngine={handleDeleteEngine}
+                    debugMode={orchestratorStatus?.config?.debug_mode || false}
+                  />
+                } 
+              />
+              <Route 
+                path="/events" 
+                element={
+                  <EventsPage
+                    orchUrl={orchUrl}
+                    apiKey={apiKey}
+                    maxEventsDisplay={maxEventsDisplay}
+                  />
+                } 
+              />
+              <Route 
+                path="/health" 
+                element={
+                  <HealthPage
+                    apiKey={apiKey}
+                    orchUrl={orchUrl}
+                  />
+                } 
+              />
+              <Route 
+                path="/vpn" 
+                element={
+                  <VPNPage vpnStatus={vpnStatus} />
+                } 
+              />
+              <Route 
+                path="/metrics" 
+                element={
+                  <MetricsPage
+                    apiKey={apiKey}
+                    orchUrl={orchUrl}
+                  />
+                } 
+              />
+              <Route 
+                path="/settings" 
+                element={
+                  <SettingsPage
+                    orchUrl={orchUrl}
+                    setOrchUrl={setOrchUrl}
+                    apiKey={apiKey}
+                    setApiKey={setApiKey}
+                    refreshInterval={refreshInterval}
+                    setRefreshInterval={setRefreshInterval}
+                    maxEventsDisplay={maxEventsDisplay}
+                    setMaxEventsDisplay={setMaxEventsDisplay}
+                  />
+                } 
+              />
+              <Route 
+                path="/advanced-engine-settings" 
+                element={
+                  <AdvancedEngineSettingsPage
+                    orchUrl={orchUrl}
+                    apiKey={apiKey}
+                    fetchJSON={fetchJSON}
+                  />
+                } 
+              />
+            </Routes>
+          </main>
+        </div>
+      </div>
+      
+      <Toaster />
+    </BrowserRouter>
+  )
+}
+
+function App() {
+  return (
+    <ThemeProvider defaultTheme="light">
+      <AppContent />
     </ThemeProvider>
   )
 }
