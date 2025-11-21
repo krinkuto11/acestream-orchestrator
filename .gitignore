@@ -70,3 +70,6 @@ actionlint
 
 # User-generated template files
 custom_templates/
+
+# Auto-generated version file
+app/static/panel-react/public/version.json

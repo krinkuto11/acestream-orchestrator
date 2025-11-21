@@ -127,19 +127,19 @@ function ResourceUsage({ orchUrl }) {
     return () => clearInterval(interval)
   }, [orchUrl])
 
-  // Don't show anything while loading initially
-  if (loading) {
-    return null
-  }
-
-  if (!totalStats || totalStats.container_count === 0) {
+  // Show placeholder while loading or no data
+  if (loading || !totalStats || totalStats.container_count === 0) {
+    const message = loading 
+      ? "Loading resource usage..." 
+      : "No engines running - resource usage unavailable"
+    
     return (
       <div className="space-y-4">
         <h3 className="text-lg font-semibold">Resource Usage</h3>
         <Card>
           <CardContent className="pt-6">
             <p className="text-sm text-muted-foreground">
-              No engines running - resource usage unavailable
+              {message}
             </p>
           </CardContent>
         </Card>
