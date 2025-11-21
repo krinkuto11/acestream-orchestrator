@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class StatsCollector:
-    """Background service for collecting and caching Docker container stats."""
+    """Background service for collecting and caching Docker container stats and version info."""
     
     def __init__(self, poll_interval: int = 3):
         """
@@ -26,6 +26,7 @@ class StatsCollector:
         """
         self.poll_interval = poll_interval
         self._stats_cache: Dict[str, Dict] = {}
+        self._version_cache: Dict[str, Dict] = {}
         self._task: Optional[asyncio.Task] = None
         self._running = False
         
@@ -36,6 +37,14 @@ class StatsCollector:
     def get_all_cached_stats(self) -> Dict[str, Dict]:
         """Get all cached stats."""
         return self._stats_cache.copy()
+    
+    def get_cached_version(self, container_id: str) -> Optional[Dict]:
+        """Get cached version info for a container."""
+        return self._version_cache.get(container_id)
+    
+    def get_all_cached_versions(self) -> Dict[str, Dict]:
+        """Get all cached version info."""
+        return self._version_cache.copy()
     
     async def start(self):
         """Start the background stats collection task."""
@@ -62,10 +71,11 @@ class StatsCollector:
         logger.info("Stopped Docker stats collector")
     
     async def _poll_stats(self):
-        """Background task to continuously poll container stats."""
-        # Import state lazily to avoid initialization order issues
+        """Background task to continuously poll container stats and version info."""
+        # Import state and engine_info lazily to avoid initialization order issues
         # This background task starts after application initialization completes
         from .state import state
+        from .engine_info import get_engine_version_info
         
         while self._running:
             try:
@@ -73,21 +83,48 @@ class StatsCollector:
                 engines = state.list_engines()
                 container_ids = [e.container_id for e in engines]
                 
-                # Collect stats for all engines
-                new_cache = {}
+                # Collect stats for all engines (synchronous, fast)
+                new_stats_cache = {}
                 for container_id in container_ids:
                     stats = get_container_stats(container_id)
                     if stats:
                         # Add timestamp
                         stats['updated_at'] = datetime.now(timezone.utc).isoformat()
-                        new_cache[container_id] = stats
+                        new_stats_cache[container_id] = stats
                 
-                # Update cache atomically
-                self._stats_cache = new_cache
+                # Collect version info for all engines concurrently (async, may be slow)
+                new_version_cache = {}
+                
+                # Create tasks for concurrent execution
+                if engines:
+                    tasks = [
+                        get_engine_version_info(engine.host, engine.port)
+                        for engine in engines
+                    ]
+                    
+                    # Wait for all version info requests to complete concurrently
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    
+                    # Process results
+                    for engine, result in zip(engines, results):
+                        if isinstance(result, Exception):
+                            logger.debug(f"Failed to get version info for {engine.container_id[:12]}: {result}")
+                        else:
+                            # result is valid (could be None or a dict)
+                            if result is not None:
+                                # Create a copy to avoid modifying shared references
+                                result_copy = result.copy()
+                                result_copy['updated_at'] = datetime.now(timezone.utc).isoformat()
+                                new_version_cache[engine.container_id] = result_copy
+                
+                # Update caches atomically
+                self._stats_cache = new_stats_cache
+                self._version_cache = new_version_cache
                 
                 # Log cache update for debugging
                 if container_ids:
-                    logger.debug(f"Updated stats cache for {len(new_cache)}/{len(container_ids)} containers")
+                    logger.debug(f"Updated stats cache for {len(new_stats_cache)}/{len(container_ids)} containers")
+                    logger.debug(f"Updated version cache for {len(new_version_cache)}/{len(container_ids)} containers")
                     
             except Exception as e:
                 logger.error(f"Error in stats polling: {e}", exc_info=True)

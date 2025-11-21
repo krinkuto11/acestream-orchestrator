@@ -490,7 +490,6 @@ def get_engines():
     try:
         from .services.health import list_managed
         from .services.gluetun import gluetun_monitor, get_forwarded_port_sync
-        from .services.engine_info import get_engine_version_info_sync
         
         running_container_ids = {c.id for c in list_managed() if c.status == "running"}
         
@@ -543,16 +542,11 @@ def get_engines():
                     # For standard variants, use configured variant name
                     engine.engine_variant = cfg.ENGINE_VARIANT
             
-            # Get engine version info
-            try:
-                version_info = get_engine_version_info_sync(engine.host, engine.port)
-                if version_info:
-                    engine.platform = version_info.get("platform")
-                    engine.version = version_info.get("version")
-                else:
-                    logger.debug(f"No version info returned for engine {engine.container_id[:12]} at {engine.host}:{engine.port}")
-            except Exception as e:
-                logger.debug(f"Could not get version info for engine {engine.container_id[:12]} at {engine.host}:{engine.port}: {e}")
+            # Get engine version info from cache (no blocking calls)
+            cached_version = stats_collector.get_cached_version(engine.container_id)
+            if cached_version:
+                engine.platform = cached_version.get("platform")
+                engine.version = cached_version.get("version")
             
             # Get forwarded port for forwarded engines
             if engine.forwarded and engine.vpn_container:
