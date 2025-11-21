@@ -55,14 +55,15 @@ export function ModernSidebar() {
       <div className="flex h-16 items-center border-b px-4 gap-2">
         {!collapsed && (
           <>
-            <img src="/favicon-96x96.png" alt="AceStream Logo" className="h-8 w-8" />
-            <h1 className="text-lg font-bold text-primary truncate">
-              AceStream Orchestrator
+            <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8" />
+            <h1 className="text-lg font-bold text-primary leading-tight">
+              <div>AceStream</div>
+              <div>Orchestrator</div>
             </h1>
           </>
         )}
         {collapsed && (
-          <img src="/favicon-96x96.png" alt="AceStream Logo" className="h-8 w-8" />
+          <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8" />
         )}
       </div>
 
