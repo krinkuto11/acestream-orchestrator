@@ -30,6 +30,7 @@ from .services.db import engine
 from .models.db_models import Base
 from .services.reindex import reindex_existing
 from .services.gluetun import gluetun_monitor
+from .services.docker_stats import get_container_stats, get_multiple_container_stats, get_total_stats
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,11 @@ if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
     async def get_favicon_96():
         """Serve favicon-96x96.png at root level."""
         return serve_favicon("favicon-96x96.png")
+    
+    @app.get("/favicon-96x96-dark.png")
+    async def get_favicon_96_dark():
+        """Serve favicon-96x96-dark.png at root level."""
+        return serve_favicon("favicon-96x96-dark.png")
     
     @app.get("/apple-touch-icon.png")
     async def get_apple_touch_icon():
@@ -573,6 +579,30 @@ def get_engine(container_id: str):
         return {"error": "not found"}
     streams = state.list_streams(status="started", container_id=container_id)
     return {"engine": eng, "streams": streams}
+
+@app.get("/engines/stats/all")
+def get_all_engine_stats():
+    """Get Docker stats for all engines."""
+    engines = state.list_engines()
+    container_ids = [e.container_id for e in engines]
+    stats = get_multiple_container_stats(container_ids)
+    return stats
+
+@app.get("/engines/stats/total")
+def get_total_engine_stats():
+    """Get aggregated Docker stats across all engines."""
+    engines = state.list_engines()
+    container_ids = [e.container_id for e in engines]
+    total_stats = get_total_stats(container_ids)
+    return total_stats
+
+@app.get("/engines/{container_id}/stats")
+def get_engine_stats(container_id: str):
+    """Get Docker stats for a specific engine."""
+    stats = get_container_stats(container_id)
+    if not stats:
+        raise HTTPException(status_code=404, detail="Container not found or stats unavailable")
+    return stats
 
 @app.get("/streams", response_model=List[StreamState])
 def get_streams(status: Optional[str] = Query("started", pattern="^(started|ended)$"), container_id: Optional[str] = None):
