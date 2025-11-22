@@ -31,6 +31,7 @@ from .models.db_models import Base
 from .services.reindex import reindex_existing
 from .services.gluetun import gluetun_monitor
 from .services.docker_stats import get_container_stats, get_multiple_container_stats, get_total_stats
+from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_cache, get_cache
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(health_manager.start())  # Start proactive health management
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
+    # Start cache cleanup task
+    await start_cleanup_task(interval=60)
+    logger.info("Cache service started")
+    
     yield
     
     # Shutdown
@@ -124,6 +129,7 @@ async def lifespan(app: FastAPI):
     await health_monitor.stop()  # Stop health monitoring
     await health_manager.stop()  # Stop health management
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
+    await stop_cleanup_task()  # Stop cache cleanup
     
     # Give a small delay to ensure any pending operations complete
     await asyncio.sleep(0.1)
@@ -343,6 +349,10 @@ def provision_acestream(req: AceProvisionRequest):
     except Exception as e:
         logger.error(f"Failed to reindex after provisioning: {e}")
     
+    # Invalidate cache after provisioning
+    invalidate_cache("orchestrator:status")
+    invalidate_cache("stats:total")
+    
     # Log successful engine provisioning
     event_logger.log_event(
         event_type="engine",
@@ -379,6 +389,11 @@ def delete(container_id: str):
         container_id=container_id
     )
     stop_container(container_id)
+    
+    # Invalidate cache after stopping container
+    invalidate_cache("orchestrator:status")
+    invalidate_cache("stats:total")
+    
     return {"deleted": container_id}
 
 @app.get("/containers/{container_id}")
@@ -590,10 +605,24 @@ def get_all_engine_stats():
 
 @app.get("/engines/stats/total")
 def get_total_engine_stats():
-    """Get aggregated Docker stats across all engines."""
+    """Get aggregated Docker stats across all engines (cached for 3 seconds)."""
+    # Use cache to avoid expensive Docker API calls on every poll
+    cache = get_cache()
+    cache_key = "stats:total"
+    
+    # Try to get from cache
+    cached_value = cache.get(cache_key)
+    if cached_value is not None:
+        return cached_value
+    
+    # Cache miss - compute stats
     engines = state.list_engines()
     container_ids = [e.container_id for e in engines]
     total_stats = get_total_stats(container_ids)
+    
+    # Cache for 3 seconds (UI polls every 5s, so this reduces load significantly)
+    cache.set(cache_key, total_stats, ttl=3.0)
+    
     return total_stats
 
 @app.get("/engines/{container_id}/stats")
@@ -716,13 +745,27 @@ def by_label(key: str, value: str):
 @app.get("/vpn/status")
 async def get_vpn_status_endpoint():
     """
-    Get VPN (Gluetun) status information with location data.
+    Get VPN (Gluetun) status information with location data (cached for 3 seconds).
     
     Location data (provider, country, city, region) is now obtained directly from:
     - Provider: VPN_SERVICE_PROVIDER docker environment variable
     - Location: Gluetun's /v1/publicip/ip endpoint
     """
+    # Use cache to avoid expensive VPN status checks on every poll
+    cache = get_cache()
+    cache_key = "vpn:status"
+    
+    # Try to get from cache
+    cached_value = cache.get(cache_key)
+    if cached_value is not None:
+        return cached_value
+    
+    # Cache miss - fetch VPN status
     vpn_status = get_vpn_status()
+    
+    # Cache for 3 seconds
+    cache.set(cache_key, vpn_status, ttl=3.0)
+    
     return vpn_status
 
 @app.get("/vpn/publicip")
@@ -750,12 +793,22 @@ def reset_circuit_breaker(operation_type: Optional[str] = None):
 @app.get("/orchestrator/status")
 def get_orchestrator_status():
     """
-    Get comprehensive orchestrator status for proxy integration.
+    Get comprehensive orchestrator status for proxy integration (cached for 2 seconds).
     This endpoint provides all the information a proxy needs to understand
     the orchestrator's current state including VPN, provisioning, and health status.
     
     Enhanced to provide detailed provisioning status with recovery guidance.
     """
+    # Use cache to avoid expensive status aggregation on every poll
+    cache = get_cache()
+    cache_key = "orchestrator:status"
+    
+    # Try to get from cache
+    cached_value = cache.get(cache_key)
+    if cached_value is not None:
+        return cached_value
+    
+    # Cache miss - compute orchestrator status
     from .services.replica_validator import replica_validator
     from .services.circuit_breaker import circuit_breaker_manager
     
@@ -847,7 +900,7 @@ def get_orchestrator_status():
     else:
         overall_status = "healthy"
     
-    return {
+    result = {
         "status": overall_status,
         "engines": {
             "total": len(engines),
@@ -888,6 +941,11 @@ def get_orchestrator_status():
         },
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+    
+    # Cache for 2 seconds (UI polls every 5s)
+    cache.set(cache_key, result, ttl=2.0)
+    
+    return result
 
 # Custom Engine Variant endpoints
 from .services.custom_variant_config import (
@@ -1309,5 +1367,19 @@ def cleanup_events(max_age_days: int = Query(30, ge=1, description="Delete event
     """Manually trigger cleanup of old events."""
     deleted = event_logger.cleanup_old_events(max_age_days)
     return {"deleted": deleted, "message": f"Cleaned up {deleted} events older than {max_age_days} days"}
+
+# Cache statistics endpoint
+@app.get("/cache/stats")
+def get_cache_stats():
+    """Get cache statistics for monitoring and debugging."""
+    cache = get_cache()
+    return cache.get_stats()
+
+@app.post("/cache/clear", dependencies=[Depends(require_api_key)])
+def clear_cache():
+    """Manually clear all cache entries."""
+    cache = get_cache()
+    cache.clear()
+    return {"message": "Cache cleared successfully"}
 
 # WebSocket endpoint removed - using simple polling approach

@@ -58,6 +58,11 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
   - Active template persistence across container reboots
   - Edit, rename, import/export templates
   - Visual feedback for active templates
+- **Stats Caching**: Intelligent caching of expensive API endpoints for improved UI responsiveness
+  - 2-3 second TTL for cached endpoints
+  - Automatic cache invalidation on state changes
+  - Reduces Docker API load by ~60-70%
+  - Transparent to API consumers
 - **Reprovisioning Progress**: Real-time progress indicators when reprovisioning engines
 - **Health Monitoring**: Automatic detection of engine issues with real-time status updates
 - **Usage Tracking**: Track engine idle time for intelligent load balancing
@@ -142,6 +147,12 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
   - Usage tracking
   - Stale stream detection
   - Cache cleanup process
+
+- **[Stats Caching](docs/STATS_CACHING.md)** - Performance optimization via caching
+  - Cached endpoints and TTLs
+  - Cache invalidation strategy
+  - Performance impact and monitoring
+  - Configuration and troubleshooting
 
 - **[Dashboard Guide](docs/PANEL.md)** - Web dashboard features and usage
   - Modern React interface
