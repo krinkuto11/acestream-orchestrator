@@ -94,11 +94,14 @@ class SimpleCache:
                 logger.debug(f"Cache DELETE for key: {key}")
     
     def clear(self):
-        """Clear all cache entries."""
+        """Clear all cache entries and reset statistics."""
         with self._lock:
             count = len(self._cache)
             self._cache.clear()
-            logger.info(f"Cache CLEAR: removed {count} entries")
+            # Also reset statistics
+            self._hits = 0
+            self._misses = 0
+            logger.info(f"Cache CLEAR: removed {count} entries and reset stats")
     
     def cleanup_expired(self):
         """Remove all expired entries from cache."""
