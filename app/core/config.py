@@ -64,6 +64,9 @@ class Cfg(BaseModel):
     ACE_HTTP_RANGE: str = os.getenv("ACE_HTTP_RANGE", "40000-44999")
     ACE_HTTPS_RANGE: str = os.getenv("ACE_HTTPS_RANGE", "45000-49999")
     ACE_MAP_HTTPS: bool = os.getenv("ACE_MAP_HTTPS", "false").lower() == "true"
+    
+    # Engine resource limits
+    ENGINE_MEMORY_LIMIT: str | None = os.getenv("ENGINE_MEMORY_LIMIT")
 
     API_KEY: str | None = os.getenv("API_KEY")
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
@@ -160,5 +163,16 @@ class Cfg(BaseModel):
             if self.GLUETUN_CONTAINER_NAME == self.GLUETUN_CONTAINER_NAME_2:
                 raise ValueError('GLUETUN_CONTAINER_NAME and GLUETUN_CONTAINER_NAME_2 must be different')
         return self
+    
+    @validator('ENGINE_MEMORY_LIMIT')
+    def validate_engine_memory_limit(cls, v):
+        if v is None or v == "":
+            return None
+        # Import validation function
+        from ..services.custom_variant_config import validate_memory_limit
+        is_valid, error_msg = validate_memory_limit(v)
+        if not is_valid:
+            raise ValueError(f'ENGINE_MEMORY_LIMIT: {error_msg}')
+        return v
 
 cfg = Cfg()
