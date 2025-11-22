@@ -5,15 +5,85 @@ Provides CPU, memory, network I/O, and block I/O metrics for containers.
 
 import logging
 import re
-import subprocess
 from typing import Dict, Optional, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from .docker_client import get_client
 from docker.errors import NotFound, APIError
 
 logger = logging.getLogger(__name__)
 
-# Docker stats command format for batch collection
-DOCKER_STATS_FORMAT = '{{.Container}}\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}'
+
+def _extract_stats_from_api_response(stats: Dict, container_id: str) -> Dict:
+    """
+    Extract and format stats from Docker API response.
+    
+    Args:
+        stats: Raw stats dictionary from Docker API
+        container_id: Container ID
+        
+    Returns:
+        Formatted stats dictionary
+    """
+    # Extract CPU stats
+    cpu_stats = stats.get('cpu_stats', {})
+    precpu_stats = stats.get('precpu_stats', {})
+    
+    cpu_percent = 0.0
+    cpu_delta = cpu_stats.get('cpu_usage', {}).get('total_usage', 0) - \
+                precpu_stats.get('cpu_usage', {}).get('total_usage', 0)
+    system_delta = cpu_stats.get('system_cpu_usage', 0) - \
+                   precpu_stats.get('system_cpu_usage', 0)
+    
+    # Get number of online CPUs. If not provided by Docker, use the length of percpu_usage array
+    # This fallback handles cases where online_cpus field is not populated by the Docker API
+    online_cpus = cpu_stats.get('online_cpus', 0)
+    if not online_cpus:
+        online_cpus = len(cpu_stats.get('cpu_usage', {}).get('percpu_usage', [])) or 1
+    
+    if system_delta > 0 and cpu_delta > 0:
+        cpu_percent = (cpu_delta / system_delta) * online_cpus * 100.0
+    
+    # Extract memory stats
+    memory_stats = stats.get('memory_stats', {})
+    memory_usage = memory_stats.get('usage', 0)
+    memory_limit = memory_stats.get('limit', 0)
+    memory_percent = 0.0
+    if memory_limit > 0:
+        memory_percent = (memory_usage / memory_limit) * 100.0
+    
+    # Extract network stats
+    networks = stats.get('networks', {})
+    network_rx_bytes = 0
+    network_tx_bytes = 0
+    for interface_stats in networks.values():
+        network_rx_bytes += interface_stats.get('rx_bytes', 0)
+        network_tx_bytes += interface_stats.get('tx_bytes', 0)
+    
+    # Extract block I/O stats
+    blkio_stats = stats.get('blkio_stats', {})
+    io_service_bytes = blkio_stats.get('io_service_bytes_recursive', [])
+    
+    block_read_bytes = 0
+    block_write_bytes = 0
+    for entry in io_service_bytes:
+        op = entry.get('op', '')
+        value = entry.get('value', 0)
+        if op.lower() == 'read':
+            block_read_bytes += value
+        elif op.lower() == 'write':
+            block_write_bytes += value
+    
+    return {
+        'container_id': container_id,
+        'cpu_percent': round(cpu_percent, 2),
+        'memory_usage': memory_usage,
+        'memory_limit': memory_limit,
+        'memory_percent': round(memory_percent, 2),
+        'network_rx_bytes': network_rx_bytes,
+        'network_tx_bytes': network_tx_bytes,
+        'block_read_bytes': block_read_bytes,
+        'block_write_bytes': block_write_bytes
+    }
 
 
 def get_container_stats(container_id: str) -> Optional[Dict]:
@@ -42,66 +112,7 @@ def get_container_stats(container_id: str) -> Optional[Dict]:
         # Get stats with stream=False to get a single snapshot
         stats = container.stats(stream=False)
         
-        # Extract CPU stats
-        cpu_stats = stats.get('cpu_stats', {})
-        precpu_stats = stats.get('precpu_stats', {})
-        
-        cpu_percent = 0.0
-        cpu_delta = cpu_stats.get('cpu_usage', {}).get('total_usage', 0) - \
-                    precpu_stats.get('cpu_usage', {}).get('total_usage', 0)
-        system_delta = cpu_stats.get('system_cpu_usage', 0) - \
-                       precpu_stats.get('system_cpu_usage', 0)
-        
-        # Get number of online CPUs. If not provided by Docker, use the length of percpu_usage array
-        # This fallback handles cases where online_cpus field is not populated by the Docker API
-        online_cpus = cpu_stats.get('online_cpus', 0)
-        if not online_cpus:
-            online_cpus = len(cpu_stats.get('cpu_usage', {}).get('percpu_usage', [])) or 1
-        
-        if system_delta > 0 and cpu_delta > 0:
-            cpu_percent = (cpu_delta / system_delta) * online_cpus * 100.0
-        
-        # Extract memory stats
-        memory_stats = stats.get('memory_stats', {})
-        memory_usage = memory_stats.get('usage', 0)
-        memory_limit = memory_stats.get('limit', 0)
-        memory_percent = 0.0
-        if memory_limit > 0:
-            memory_percent = (memory_usage / memory_limit) * 100.0
-        
-        # Extract network stats
-        networks = stats.get('networks', {})
-        network_rx_bytes = 0
-        network_tx_bytes = 0
-        for interface_stats in networks.values():
-            network_rx_bytes += interface_stats.get('rx_bytes', 0)
-            network_tx_bytes += interface_stats.get('tx_bytes', 0)
-        
-        # Extract block I/O stats
-        blkio_stats = stats.get('blkio_stats', {})
-        io_service_bytes = blkio_stats.get('io_service_bytes_recursive', [])
-        
-        block_read_bytes = 0
-        block_write_bytes = 0
-        for entry in io_service_bytes:
-            op = entry.get('op', '')
-            value = entry.get('value', 0)
-            if op.lower() == 'read':
-                block_read_bytes += value
-            elif op.lower() == 'write':
-                block_write_bytes += value
-        
-        return {
-            'container_id': container_id,
-            'cpu_percent': round(cpu_percent, 2),
-            'memory_usage': memory_usage,
-            'memory_limit': memory_limit,
-            'memory_percent': round(memory_percent, 2),
-            'network_rx_bytes': network_rx_bytes,
-            'network_tx_bytes': network_tx_bytes,
-            'block_read_bytes': block_read_bytes,
-            'block_write_bytes': block_write_bytes
-        }
+        return _extract_stats_from_api_response(stats, container_id)
         
     except NotFound:
         logger.debug(f"Container {container_id[:12]} not found when fetching stats")
@@ -206,69 +217,69 @@ def _parse_percent(percent_str: str) -> float:
         return 0.0
 
 
+def _get_container_stats_safe(container) -> Optional[tuple]:
+    """
+    Helper to safely get stats for a single container.
+    Returns tuple of (container_id, stats_dict) or None on error.
+    Used for concurrent batch collection.
+    """
+    try:
+        # Get stats with stream=False to get a single snapshot
+        stats = container.stats(stream=False)
+        # Use the shared helper to extract stats
+        stats_dict = _extract_stats_from_api_response(stats, container.id)
+        return (container.id, stats_dict)
+        
+    except (NotFound, APIError) as e:
+        # Skip containers that disappear or have errors
+        logger.debug(f"Skipping container {container.id[:12]} in batch stats: {e}")
+        return None
+    except Exception as e:
+        # Log but continue with other containers
+        logger.debug(f"Error getting stats for container {container.id[:12]}: {e}")
+        return None
+
+
 def get_all_container_stats_batch() -> Dict[str, Dict]:
     """
-    Get statistics for all containers using a single docker stats command.
-    This is much more efficient than querying each container individually.
+    Get statistics for all containers using the Docker SDK with concurrent execution.
+    Uses ThreadPoolExecutor for non-blocking concurrent stats collection,
+    which significantly improves performance with many containers.
     
     Returns:
         Dictionary mapping container_id to stats dictionary.
-        Returns empty dict if docker command fails.
+        Returns empty dict if docker API fails.
     """
     try:
-        # Run docker stats with --no-stream to get a single snapshot
-        result = subprocess.run(
-            ['docker', 'stats', '--no-stream', '--no-trunc', '--format', DOCKER_STATS_FORMAT],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
+        client = get_client()
+        # Get all running containers
+        containers = client.containers.list()
         
-        if result.returncode != 0:
-            logger.warning(f"Docker stats command failed: {result.stderr}")
+        if not containers:
             return {}
         
-        # Parse the output
         stats_dict = {}
-        lines = result.stdout.strip().split('\n')
         
-        for line in lines:
-            if not line.strip():
-                continue
+        # Use ThreadPoolExecutor for concurrent stats collection
+        # max_workers defaults to min(32, cpu_count() + 4) which is reasonable
+        with ThreadPoolExecutor() as executor:
+            # Submit all stats collection tasks
+            futures = [
+                executor.submit(_get_container_stats_safe, container)
+                for container in containers
+            ]
             
-            parts = line.split('\t')
-            if len(parts) < 7:
-                continue
-            
-            container_id = parts[0].strip()
-            cpu_percent = _parse_percent(parts[2])
-            memory_usage, memory_limit = _parse_memory_usage(parts[3])
-            memory_percent = _parse_percent(parts[4])
-            network_rx_bytes, network_tx_bytes = _parse_io_value(parts[5])
-            block_read_bytes, block_write_bytes = _parse_io_value(parts[6])
-            
-            stats_dict[container_id] = {
-                'container_id': container_id,
-                'cpu_percent': round(cpu_percent, 2),
-                'memory_usage': memory_usage,
-                'memory_limit': memory_limit,
-                'memory_percent': round(memory_percent, 2),
-                'network_rx_bytes': network_rx_bytes,
-                'network_tx_bytes': network_tx_bytes,
-                'block_read_bytes': block_read_bytes,
-                'block_write_bytes': block_write_bytes
-            }
+            # Collect results as they complete
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    container_id, stats = result
+                    stats_dict[container_id] = stats
         
         return stats_dict
         
-    except subprocess.TimeoutExpired:
-        logger.warning("Docker stats command timed out")
-        return {}
-    except FileNotFoundError:
-        logger.warning("Docker command not found")
-        return {}
     except Exception as e:
-        logger.error(f"Error running docker stats batch command: {e}")
+        logger.warning(f"Error collecting batch container stats: {e}")
         return {}
 
 

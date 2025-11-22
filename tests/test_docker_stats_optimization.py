@@ -104,25 +104,84 @@ class TestParsers:
 class TestBatchStatsCollection:
     """Test batch stats collection functionality."""
     
-    @patch('app.services.docker_stats.subprocess.run')
-    def test_get_all_container_stats_batch_success(self, mock_run):
+    def _create_mock_container(self, container_id, name, cpu_percent, memory_usage_mib, 
+                               memory_limit_gib, memory_percent, network_rx_gb, 
+                               network_tx_gb, block_write_mb):
+        """Helper to create a mock container with stats."""
+        mock_container = MagicMock()
+        mock_container.id = container_id
+        mock_container.name = name
+        
+        # Create stats data matching Docker API format
+        memory_usage = int(memory_usage_mib * 1024 * 1024)
+        memory_limit = int(memory_limit_gib * 1024 * 1024 * 1024)
+        network_rx = int(network_rx_gb * 1000 * 1000 * 1000)
+        network_tx = int(network_tx_gb * 1000 * 1000 * 1000)
+        block_write = int(block_write_mb * 1000 * 1000)
+        
+        # Calculate CPU stats to achieve target percentage
+        # cpu_percent = (cpu_delta / system_delta) * online_cpus * 100
+        # For simplicity, set deltas that give us the target percentage
+        online_cpus = 4
+        target_ratio = cpu_percent / (online_cpus * 100.0)
+        cpu_delta = int(1000000 * target_ratio)
+        system_delta = 1000000
+        
+        stats_data = {
+            'cpu_stats': {
+                'cpu_usage': {'total_usage': 2000000 + cpu_delta, 'percpu_usage': [0] * online_cpus},
+                'system_cpu_usage': 10000000 + system_delta,
+                'online_cpus': online_cpus
+            },
+            'precpu_stats': {
+                'cpu_usage': {'total_usage': 2000000},
+                'system_cpu_usage': 10000000
+            },
+            'memory_stats': {
+                'usage': memory_usage,
+                'limit': memory_limit
+            },
+            'networks': {
+                'eth0': {
+                    'rx_bytes': network_rx,
+                    'tx_bytes': network_tx
+                }
+            },
+            'blkio_stats': {
+                'io_service_bytes_recursive': [
+                    {'op': 'Write', 'value': block_write}
+                ]
+            }
+        }
+        
+        mock_container.stats.return_value = stats_data
+        return mock_container
+    
+    @patch('app.services.docker_stats.get_client')
+    def test_get_all_container_stats_batch_success(self, mock_get_client):
         """Test successful batch stats collection."""
-        # Use sample output from fixture
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=SAMPLE_DOCKER_STATS_OUTPUT,
-            stderr=""
-        )
+        # Create mock containers matching the sample data
+        mock_containers = [
+            self._create_mock_container(
+                '6d2f498cbeff', 'acestream-7', 0.28, 111.8, 16.02, 0.68, 3.17, 6.29, 74.8
+            ),
+            self._create_mock_container(
+                '73329bff2d10', 'acestream-6', 0.28, 110.5, 16.02, 0.67, 0.425, 0.388, 71.7
+            ),
+            self._create_mock_container(
+                '34f96e9c1768', 'acestream-5', 0.62, 110.4, 16.02, 0.67, 3.17, 6.29, 71.7
+            )
+        ]
+        
+        mock_client = MagicMock()
+        mock_client.containers.list.return_value = mock_containers
+        mock_get_client.return_value = mock_client
         
         result = get_all_container_stats_batch()
         
-        # Verify the command was called correctly
-        mock_run.assert_called_once()
-        args = mock_run.call_args[0][0]
-        assert args[0] == 'docker'
-        assert args[1] == 'stats'
-        assert '--no-stream' in args
-        assert '--no-trunc' in args
+        # Verify the client was used
+        mock_get_client.assert_called_once()
+        mock_client.containers.list.assert_called_once()
         
         # Verify results
         assert len(result) == 3
@@ -142,43 +201,38 @@ class TestBatchStatsCollection:
         assert stats['block_read_bytes'] == 0
         assert stats['block_write_bytes'] == int(74.8 * 1000 * 1000)
     
-    @patch('app.services.docker_stats.subprocess.run')
-    def test_get_all_container_stats_batch_empty_output(self, mock_run):
+    @patch('app.services.docker_stats.get_client')
+    def test_get_all_container_stats_batch_empty_output(self, mock_get_client):
         """Test batch stats with no containers."""
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout="",
-            stderr=""
-        )
+        mock_client = MagicMock()
+        mock_client.containers.list.return_value = []
+        mock_get_client.return_value = mock_client
         
         result = get_all_container_stats_batch()
         assert result == {}
     
-    @patch('app.services.docker_stats.subprocess.run')
-    def test_get_all_container_stats_batch_command_failure(self, mock_run):
-        """Test batch stats when docker command fails."""
-        mock_run.return_value = MagicMock(
-            returncode=1,
-            stdout="",
-            stderr="Error: Docker daemon not running"
-        )
+    @patch('app.services.docker_stats.get_client')
+    def test_get_all_container_stats_batch_command_failure(self, mock_get_client):
+        """Test batch stats when docker API fails."""
+        mock_get_client.side_effect = Exception("Docker daemon not running")
         
         result = get_all_container_stats_batch()
         assert result == {}
     
-    @patch('app.services.docker_stats.subprocess.run')
-    def test_get_all_container_stats_batch_timeout(self, mock_run):
-        """Test batch stats when command times out."""
-        import subprocess
-        mock_run.side_effect = subprocess.TimeoutExpired('docker', 10)
+    @patch('app.services.docker_stats.get_client')
+    def test_get_all_container_stats_batch_timeout(self, mock_get_client):
+        """Test batch stats when API times out."""
+        from docker.errors import APIError
+        mock_get_client.side_effect = APIError("Timeout")
         
         result = get_all_container_stats_batch()
         assert result == {}
     
-    @patch('app.services.docker_stats.subprocess.run')
-    def test_get_all_container_stats_batch_docker_not_found(self, mock_run):
-        """Test batch stats when docker command not found."""
-        mock_run.side_effect = FileNotFoundError()
+    @patch('app.services.docker_stats.get_client')
+    def test_get_all_container_stats_batch_docker_not_found(self, mock_get_client):
+        """Test batch stats when docker client fails to initialize."""
+        from docker.errors import DockerException
+        mock_get_client.side_effect = DockerException("Docker not found")
         
         result = get_all_container_stats_batch()
         assert result == {}
