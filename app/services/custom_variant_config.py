@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 # Default config file path
 DEFAULT_CONFIG_PATH = Path("custom_engine_variant.json")
 
+# Memory limit constants
+MIN_MEMORY_BYTES = 32 * 1024 * 1024  # 32MB minimum
+MAX_MEMORY_BYTES = 128 * 1024 * 1024 * 1024  # 128GB maximum
+
 
 def validate_memory_limit(memory_str: Optional[str]) -> tuple[bool, Optional[str]]:
     """
@@ -44,39 +48,34 @@ def validate_memory_limit(memory_str: Optional[str]) -> tuple[bool, Optional[str
         return True, None
     
     # Validate format: number followed by optional suffix (b, k, m, g)
-    pattern = r'^(\d+)([bkmg]?)$'
+    pattern = r'^(\d{1,15})([bkmg]?)$'  # Limit to 15 digits to prevent overflow
     match = re.match(pattern, memory_str.lower())
     
     if not match:
         return False, "Invalid format. Expected: number with optional suffix (b, k, m, g). Examples: '512m', '2g', '1024m'"
     
-    value, suffix = match.groups()
-    value = int(value)
+    try:
+        value_str, suffix = match.groups()
+        value = int(value_str)
+    except (ValueError, OverflowError):
+        return False, "Value too large or invalid"
     
-    # Validate reasonable limits
-    if suffix == 'g' and value > 128:
-        return False, "Memory limit too high. Maximum is 128g"
-    elif suffix == 'm' and value > 131072:  # 128GB in MB
-        return False, "Memory limit too high. Maximum is 131072m (128g)"
-    elif suffix == 'k' and value > 134217728:  # 128GB in KB
-        return False, "Memory limit too high. Maximum is 134217728k (128g)"
-    elif suffix == '' and value > 137438953472:  # 128GB in bytes
-        return False, "Memory limit too high. Maximum is 137438953472 bytes (128g)"
-    
-    # Validate minimum (at least 32MB)
-    min_bytes = 32 * 1024 * 1024  # 32MB
+    # Calculate actual bytes based on suffix
     if suffix == 'g':
         actual_bytes = value * 1024 * 1024 * 1024
     elif suffix == 'm':
         actual_bytes = value * 1024 * 1024
     elif suffix == 'k':
         actual_bytes = value * 1024
-    elif suffix == 'b':
-        actual_bytes = value
-    else:
+    else:  # 'b' or empty suffix (both represent bytes)
         actual_bytes = value
     
-    if actual_bytes < min_bytes:
+    # Validate maximum
+    if actual_bytes > MAX_MEMORY_BYTES:
+        return False, "Memory limit too high. Maximum is 128g"
+    
+    # Validate minimum
+    if actual_bytes < MIN_MEMORY_BYTES:
         return False, "Memory limit too low. Minimum is 32m"
     
     return True, None

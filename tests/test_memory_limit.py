@@ -81,6 +81,13 @@ class TestMemoryLimitValidation:
         # Just above maximum
         is_valid, error = validate_memory_limit("129g")
         assert not is_valid
+    
+    def test_memory_limit_overflow_protection(self):
+        """Test that extremely large values are rejected to prevent overflow."""
+        # Very large number that could cause overflow
+        is_valid, error = validate_memory_limit("999999999999999999999999999999")
+        assert not is_valid
+        assert error is not None
 
 
 class TestCustomVariantConfigMemoryLimit:
