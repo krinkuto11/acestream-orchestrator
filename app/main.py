@@ -354,7 +354,7 @@ def provision_acestream(req: AceProvisionRequest):
     
     # Invalidate cache after provisioning
     invalidate_cache("orchestrator:status")
-    invalidate_cache("stats:total")
+    # Note: docker_stats_collector will automatically detect and collect stats for new engines
     
     # Log successful engine provisioning
     event_logger.log_event(
@@ -395,7 +395,7 @@ def delete(container_id: str):
     
     # Invalidate cache after stopping container
     invalidate_cache("orchestrator:status")
-    invalidate_cache("stats:total")
+    # Note: docker_stats_collector will automatically detect removed engines and stop collecting their stats
     
     return {"deleted": container_id}
 

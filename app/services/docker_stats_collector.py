@@ -8,7 +8,7 @@ import logging
 from typing import Dict, Optional
 from datetime import datetime, timezone
 from .state import state
-from .docker_stats import get_multiple_container_stats, get_total_stats
+from .docker_stats import get_multiple_container_stats
 from ..core.config import cfg
 
 logger = logging.getLogger(__name__)
