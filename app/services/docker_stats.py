@@ -226,7 +226,6 @@ def _get_container_stats_safe(container) -> Optional[tuple]:
     try:
         # Get stats with stream=False to get a single snapshot
         stats = container.stats(stream=False)
-        
         # Use the shared helper to extract stats
         stats_dict = _extract_stats_from_api_response(stats, container.id)
         return (container.id, stats_dict)
@@ -265,13 +264,13 @@ def get_all_container_stats_batch() -> Dict[str, Dict]:
         # max_workers defaults to min(32, cpu_count() + 4) which is reasonable
         with ThreadPoolExecutor() as executor:
             # Submit all stats collection tasks
-            future_to_container = {
-                executor.submit(_get_container_stats_safe, container): container 
+            futures = [
+                executor.submit(_get_container_stats_safe, container)
                 for container in containers
-            }
+            ]
             
             # Collect results as they complete
-            for future in as_completed(future_to_container):
+            for future in as_completed(futures):
                 result = future.result()
                 if result is not None:
                     container_id, stats = result
