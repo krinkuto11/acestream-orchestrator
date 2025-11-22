@@ -12,6 +12,79 @@ from docker.errors import NotFound, APIError
 logger = logging.getLogger(__name__)
 
 
+def _extract_stats_from_api_response(stats: Dict, container_id: str) -> Dict:
+    """
+    Extract and format stats from Docker API response.
+    
+    Args:
+        stats: Raw stats dictionary from Docker API
+        container_id: Container ID
+        
+    Returns:
+        Formatted stats dictionary
+    """
+    # Extract CPU stats
+    cpu_stats = stats.get('cpu_stats', {})
+    precpu_stats = stats.get('precpu_stats', {})
+    
+    cpu_percent = 0.0
+    cpu_delta = cpu_stats.get('cpu_usage', {}).get('total_usage', 0) - \
+                precpu_stats.get('cpu_usage', {}).get('total_usage', 0)
+    system_delta = cpu_stats.get('system_cpu_usage', 0) - \
+                   precpu_stats.get('system_cpu_usage', 0)
+    
+    # Get number of online CPUs. If not provided by Docker, use the length of percpu_usage array
+    # This fallback handles cases where online_cpus field is not populated by the Docker API
+    online_cpus = cpu_stats.get('online_cpus', 0)
+    if not online_cpus:
+        online_cpus = len(cpu_stats.get('cpu_usage', {}).get('percpu_usage', [])) or 1
+    
+    if system_delta > 0 and cpu_delta > 0:
+        cpu_percent = (cpu_delta / system_delta) * online_cpus * 100.0
+    
+    # Extract memory stats
+    memory_stats = stats.get('memory_stats', {})
+    memory_usage = memory_stats.get('usage', 0)
+    memory_limit = memory_stats.get('limit', 0)
+    memory_percent = 0.0
+    if memory_limit > 0:
+        memory_percent = (memory_usage / memory_limit) * 100.0
+    
+    # Extract network stats
+    networks = stats.get('networks', {})
+    network_rx_bytes = 0
+    network_tx_bytes = 0
+    for interface_stats in networks.values():
+        network_rx_bytes += interface_stats.get('rx_bytes', 0)
+        network_tx_bytes += interface_stats.get('tx_bytes', 0)
+    
+    # Extract block I/O stats
+    blkio_stats = stats.get('blkio_stats', {})
+    io_service_bytes = blkio_stats.get('io_service_bytes_recursive', [])
+    
+    block_read_bytes = 0
+    block_write_bytes = 0
+    for entry in io_service_bytes:
+        op = entry.get('op', '')
+        value = entry.get('value', 0)
+        if op.lower() == 'read':
+            block_read_bytes += value
+        elif op.lower() == 'write':
+            block_write_bytes += value
+    
+    return {
+        'container_id': container_id,
+        'cpu_percent': round(cpu_percent, 2),
+        'memory_usage': memory_usage,
+        'memory_limit': memory_limit,
+        'memory_percent': round(memory_percent, 2),
+        'network_rx_bytes': network_rx_bytes,
+        'network_tx_bytes': network_tx_bytes,
+        'block_read_bytes': block_read_bytes,
+        'block_write_bytes': block_write_bytes
+    }
+
+
 def get_container_stats(container_id: str) -> Optional[Dict]:
     """
     Get statistics for a single container.
@@ -38,66 +111,7 @@ def get_container_stats(container_id: str) -> Optional[Dict]:
         # Get stats with stream=False to get a single snapshot
         stats = container.stats(stream=False)
         
-        # Extract CPU stats
-        cpu_stats = stats.get('cpu_stats', {})
-        precpu_stats = stats.get('precpu_stats', {})
-        
-        cpu_percent = 0.0
-        cpu_delta = cpu_stats.get('cpu_usage', {}).get('total_usage', 0) - \
-                    precpu_stats.get('cpu_usage', {}).get('total_usage', 0)
-        system_delta = cpu_stats.get('system_cpu_usage', 0) - \
-                       precpu_stats.get('system_cpu_usage', 0)
-        
-        # Get number of online CPUs. If not provided by Docker, use the length of percpu_usage array
-        # This fallback handles cases where online_cpus field is not populated by the Docker API
-        online_cpus = cpu_stats.get('online_cpus', 0)
-        if not online_cpus:
-            online_cpus = len(cpu_stats.get('cpu_usage', {}).get('percpu_usage', [])) or 1
-        
-        if system_delta > 0 and cpu_delta > 0:
-            cpu_percent = (cpu_delta / system_delta) * online_cpus * 100.0
-        
-        # Extract memory stats
-        memory_stats = stats.get('memory_stats', {})
-        memory_usage = memory_stats.get('usage', 0)
-        memory_limit = memory_stats.get('limit', 0)
-        memory_percent = 0.0
-        if memory_limit > 0:
-            memory_percent = (memory_usage / memory_limit) * 100.0
-        
-        # Extract network stats
-        networks = stats.get('networks', {})
-        network_rx_bytes = 0
-        network_tx_bytes = 0
-        for interface_stats in networks.values():
-            network_rx_bytes += interface_stats.get('rx_bytes', 0)
-            network_tx_bytes += interface_stats.get('tx_bytes', 0)
-        
-        # Extract block I/O stats
-        blkio_stats = stats.get('blkio_stats', {})
-        io_service_bytes = blkio_stats.get('io_service_bytes_recursive', [])
-        
-        block_read_bytes = 0
-        block_write_bytes = 0
-        for entry in io_service_bytes:
-            op = entry.get('op', '')
-            value = entry.get('value', 0)
-            if op.lower() == 'read':
-                block_read_bytes += value
-            elif op.lower() == 'write':
-                block_write_bytes += value
-        
-        return {
-            'container_id': container_id,
-            'cpu_percent': round(cpu_percent, 2),
-            'memory_usage': memory_usage,
-            'memory_limit': memory_limit,
-            'memory_percent': round(memory_percent, 2),
-            'network_rx_bytes': network_rx_bytes,
-            'network_tx_bytes': network_tx_bytes,
-            'block_read_bytes': block_read_bytes,
-            'block_write_bytes': block_write_bytes
-        }
+        return _extract_stats_from_api_response(stats, container_id)
         
     except NotFound:
         logger.debug(f"Container {container_id[:12]} not found when fetching stats")
@@ -222,65 +236,8 @@ def get_all_container_stats_batch() -> Dict[str, Dict]:
                 # Get stats with stream=False to get a single snapshot
                 stats = container.stats(stream=False)
                 
-                # Extract CPU stats
-                cpu_stats = stats.get('cpu_stats', {})
-                precpu_stats = stats.get('precpu_stats', {})
-                
-                cpu_percent = 0.0
-                cpu_delta = cpu_stats.get('cpu_usage', {}).get('total_usage', 0) - \
-                            precpu_stats.get('cpu_usage', {}).get('total_usage', 0)
-                system_delta = cpu_stats.get('system_cpu_usage', 0) - \
-                               precpu_stats.get('system_cpu_usage', 0)
-                
-                # Get number of online CPUs
-                online_cpus = cpu_stats.get('online_cpus', 0)
-                if not online_cpus:
-                    online_cpus = len(cpu_stats.get('cpu_usage', {}).get('percpu_usage', [])) or 1
-                
-                if system_delta > 0 and cpu_delta > 0:
-                    cpu_percent = (cpu_delta / system_delta) * online_cpus * 100.0
-                
-                # Extract memory stats
-                memory_stats = stats.get('memory_stats', {})
-                memory_usage = memory_stats.get('usage', 0)
-                memory_limit = memory_stats.get('limit', 0)
-                memory_percent = 0.0
-                if memory_limit > 0:
-                    memory_percent = (memory_usage / memory_limit) * 100.0
-                
-                # Extract network stats
-                networks = stats.get('networks', {})
-                network_rx_bytes = 0
-                network_tx_bytes = 0
-                for interface_stats in networks.values():
-                    network_rx_bytes += interface_stats.get('rx_bytes', 0)
-                    network_tx_bytes += interface_stats.get('tx_bytes', 0)
-                
-                # Extract block I/O stats
-                blkio_stats = stats.get('blkio_stats', {})
-                io_service_bytes = blkio_stats.get('io_service_bytes_recursive', [])
-                
-                block_read_bytes = 0
-                block_write_bytes = 0
-                for entry in io_service_bytes:
-                    op = entry.get('op', '')
-                    value = entry.get('value', 0)
-                    if op.lower() == 'read':
-                        block_read_bytes += value
-                    elif op.lower() == 'write':
-                        block_write_bytes += value
-                
-                stats_dict[container.id] = {
-                    'container_id': container.id,
-                    'cpu_percent': round(cpu_percent, 2),
-                    'memory_usage': memory_usage,
-                    'memory_limit': memory_limit,
-                    'memory_percent': round(memory_percent, 2),
-                    'network_rx_bytes': network_rx_bytes,
-                    'network_tx_bytes': network_tx_bytes,
-                    'block_read_bytes': block_read_bytes,
-                    'block_write_bytes': block_write_bytes
-                }
+                # Use the shared helper to extract stats
+                stats_dict[container.id] = _extract_stats_from_api_response(stats, container.id)
                 
             except (NotFound, APIError) as e:
                 # Skip containers that disappear or have errors
