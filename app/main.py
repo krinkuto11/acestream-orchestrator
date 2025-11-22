@@ -31,6 +31,7 @@ from .models.db_models import Base
 from .services.reindex import reindex_existing
 from .services.gluetun import gluetun_monitor
 from .services.docker_stats import get_container_stats, get_multiple_container_stats, get_total_stats
+from .services.docker_stats_collector import docker_stats_collector
 from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_cache, get_cache
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(docker_monitor.start())  # Start Docker monitoring
     asyncio.create_task(health_monitor.start())  # Start health monitoring  
     asyncio.create_task(health_manager.start())  # Start proactive health management
+    asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
     # Start cache cleanup task
@@ -128,6 +130,7 @@ async def lifespan(app: FastAPI):
     await docker_monitor.stop()  # Stop Docker monitoring
     await health_monitor.stop()  # Stop health monitoring
     await health_manager.stop()  # Stop health management
+    await docker_stats_collector.stop()  # Stop Docker stats collector
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
     await stop_cleanup_task()  # Stop cache cleanup
     
@@ -351,7 +354,7 @@ def provision_acestream(req: AceProvisionRequest):
     
     # Invalidate cache after provisioning
     invalidate_cache("orchestrator:status")
-    invalidate_cache("stats:total")
+    # Note: docker_stats_collector will automatically detect and collect stats for new engines
     
     # Log successful engine provisioning
     event_logger.log_event(
@@ -392,7 +395,7 @@ def delete(container_id: str):
     
     # Invalidate cache after stopping container
     invalidate_cache("orchestrator:status")
-    invalidate_cache("stats:total")
+    # Note: docker_stats_collector will automatically detect removed engines and stop collecting their stats
     
     return {"deleted": container_id}
 
@@ -597,38 +600,23 @@ def get_engine(container_id: str):
 
 @app.get("/engines/stats/all")
 def get_all_engine_stats():
-    """Get Docker stats for all engines."""
-    engines = state.list_engines()
-    container_ids = [e.container_id for e in engines]
-    stats = get_multiple_container_stats(container_ids)
+    """Get Docker stats for all engines from background collector (instant response)."""
+    # Return cached stats from background collector
+    stats = docker_stats_collector.get_all_stats()
     return stats
 
 @app.get("/engines/stats/total")
 def get_total_engine_stats():
-    """Get aggregated Docker stats across all engines (cached for 3 seconds)."""
-    # Use cache to avoid expensive Docker API calls on every poll
-    cache = get_cache()
-    cache_key = "stats:total"
-    
-    # Try to get from cache
-    cached_value = cache.get(cache_key)
-    if cached_value is not None:
-        return cached_value
-    
-    # Cache miss - compute stats
-    engines = state.list_engines()
-    container_ids = [e.container_id for e in engines]
-    total_stats = get_total_stats(container_ids)
-    
-    # Cache for 3 seconds (UI polls every 5s, so this reduces load significantly)
-    cache.set(cache_key, total_stats, ttl=3.0)
-    
+    """Get aggregated Docker stats across all engines from background collector (instant response)."""
+    # Get stats from background collector - no cache needed as collector maintains fresh data
+    total_stats = docker_stats_collector.get_total_stats()
     return total_stats
 
 @app.get("/engines/{container_id}/stats")
 def get_engine_stats(container_id: str):
-    """Get Docker stats for a specific engine."""
-    stats = get_container_stats(container_id)
+    """Get Docker stats for a specific engine from background collector (instant response)."""
+    # Get stats from background collector
+    stats = docker_stats_collector.get_engine_stats(container_id)
     if not stats:
         raise HTTPException(status_code=404, detail="Container not found or stats unavailable")
     return stats
