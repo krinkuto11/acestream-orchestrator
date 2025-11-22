@@ -634,7 +634,7 @@ def get_total_engine_stats():
     container_ids = [e.container_id for e in engines]
     total_stats = get_total_stats(container_ids)
     
-    # Cache for 3 seconds (UI polls every 5s, so this reduces load significantly)
+    # Cache for 3 seconds (UI polls every 3s, so this reduces load significantly)
     cache.set(cache_key, total_stats, ttl=3.0)
     
     return total_stats

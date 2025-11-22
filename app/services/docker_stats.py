@@ -130,6 +130,8 @@ def get_multiple_container_stats(container_ids: List[str]) -> Dict[str, Dict]:
     # Use ThreadPoolExecutor to fetch stats concurrently
     # This dramatically reduces total time when fetching multiple containers
     # e.g., 10 containers @ 0.2s each = 2s sequential vs ~0.2s concurrent
+    # Max workers is capped at 10 to avoid overwhelming the Docker daemon with too many
+    # concurrent requests, which is a reasonable balance between performance and resource usage
     with ThreadPoolExecutor(max_workers=min(len(container_ids), 10)) as executor:
         # Submit all tasks
         future_to_id = {
