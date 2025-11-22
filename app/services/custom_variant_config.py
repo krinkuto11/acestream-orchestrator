@@ -7,6 +7,7 @@ Manages user-defined custom engine variants with configurable parameters.
 import json
 import logging
 import platform
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field, validator
@@ -15,6 +16,70 @@ logger = logging.getLogger(__name__)
 
 # Default config file path
 DEFAULT_CONFIG_PATH = Path("custom_engine_variant.json")
+
+
+def validate_memory_limit(memory_str: Optional[str]) -> tuple[bool, Optional[str]]:
+    """
+    Validate Docker memory limit format.
+    
+    Args:
+        memory_str: Memory limit string (e.g., "512m", "2g", "1024m", "0" for unlimited)
+    
+    Returns:
+        Tuple of (is_valid, error_message)
+    
+    Valid formats:
+        - Empty string or None: No limit (unlimited)
+        - "0": Unlimited
+        - Number with suffix: b, k, m, g (case insensitive)
+        - Examples: "512m", "2g", "1024m", "512M", "2G"
+    """
+    if not memory_str or memory_str.strip() == "":
+        return True, None
+    
+    memory_str = memory_str.strip()
+    
+    # Allow "0" for unlimited
+    if memory_str == "0":
+        return True, None
+    
+    # Validate format: number followed by optional suffix (b, k, m, g)
+    pattern = r'^(\d+)([bkmg]?)$'
+    match = re.match(pattern, memory_str.lower())
+    
+    if not match:
+        return False, "Invalid format. Expected: number with optional suffix (b, k, m, g). Examples: '512m', '2g', '1024m'"
+    
+    value, suffix = match.groups()
+    value = int(value)
+    
+    # Validate reasonable limits
+    if suffix == 'g' and value > 128:
+        return False, "Memory limit too high. Maximum is 128g"
+    elif suffix == 'm' and value > 131072:  # 128GB in MB
+        return False, "Memory limit too high. Maximum is 131072m (128g)"
+    elif suffix == 'k' and value > 134217728:  # 128GB in KB
+        return False, "Memory limit too high. Maximum is 134217728k (128g)"
+    elif suffix == '' and value > 137438953472:  # 128GB in bytes
+        return False, "Memory limit too high. Maximum is 137438953472 bytes (128g)"
+    
+    # Validate minimum (at least 32MB)
+    min_bytes = 32 * 1024 * 1024  # 32MB
+    if suffix == 'g':
+        actual_bytes = value * 1024 * 1024 * 1024
+    elif suffix == 'm':
+        actual_bytes = value * 1024 * 1024
+    elif suffix == 'k':
+        actual_bytes = value * 1024
+    elif suffix == 'b':
+        actual_bytes = value
+    else:
+        actual_bytes = value
+    
+    if actual_bytes < min_bytes:
+        return False, "Memory limit too low. Minimum is 32m"
+    
+    return True, None
 
 
 class CustomVariantParameter(BaseModel):
@@ -37,6 +102,7 @@ class CustomVariantConfig(BaseModel):
     enabled: bool = False
     platform: str  # "amd64", "arm32", "arm64"
     arm_version: str = "3.2.13"  # For ARM platforms: "3.2.13" or "3.2.14"
+    memory_limit: Optional[str] = None  # Docker memory limit (e.g., "512m", "2g")
     parameters: List[CustomVariantParameter] = []
     
     @validator('platform')
@@ -51,6 +117,15 @@ class CustomVariantConfig(BaseModel):
         valid_versions = ['3.2.13', '3.2.14']
         if v not in valid_versions:
             raise ValueError(f'arm_version must be one of: {", ".join(valid_versions)}')
+        return v
+    
+    @validator('memory_limit')
+    def validate_memory_limit_field(cls, v):
+        if v is None or v == "":
+            return None
+        is_valid, error_msg = validate_memory_limit(v)
+        if not is_valid:
+            raise ValueError(error_msg)
         return v
 
 

@@ -696,6 +696,23 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             </div>
           )}
 
+          {/* Memory Limit Configuration */}
+          <div className="space-y-2">
+            <Label htmlFor="memory-limit">Engine Memory Limit (Optional)</Label>
+            <Input
+              id="memory-limit"
+              type="text"
+              value={config.memory_limit || ''}
+              onChange={(e) => setConfig(prev => ({ ...prev, memory_limit: e.target.value }))}
+              placeholder="e.g., 512m, 2g, 1024m"
+            />
+            <p className="text-xs text-muted-foreground">
+              Set Docker memory limit for engine containers. Leave empty for unlimited.
+              Valid formats: number with suffix (b, k, m, g). Examples: '512m', '2g', '1024m'.
+              Minimum: 32m. This applies to all engine types when set.
+            </p>
+          </div>
+
           {!config.enabled && (
             <Alert>
               <Info className="h-4 w-4" />

@@ -621,6 +621,22 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
 
     cli = get_client()
     
+    # Determine memory limit to apply
+    # Priority: custom variant config > global env config
+    memory_limit = None
+    if variant_config.get("is_custom"):
+        # Check if custom variant has memory limit configured
+        from .custom_variant_config import get_config as get_custom_config
+        custom_config = get_custom_config()
+        if custom_config and custom_config.memory_limit:
+            memory_limit = custom_config.memory_limit
+            logger.info(f"Applying custom variant memory limit: {memory_limit}")
+    
+    # Fall back to global config if no custom limit
+    if not memory_limit and cfg.ENGINE_MEMORY_LIMIT:
+        memory_limit = cfg.ENGINE_MEMORY_LIMIT
+        logger.info(f"Applying global memory limit: {memory_limit}")
+    
     # Build container arguments, conditionally including ports
     container_args = {
         "image": variant_config["image"],
@@ -631,6 +647,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         **network_config,
         "restart_policy": {"Name": "unless-stopped"}
     }
+    
+    # Add memory limit if configured
+    if memory_limit:
+        container_args["mem_limit"] = memory_limit
     
     # Add command for CMD-based variants
     if cmd is not None:
