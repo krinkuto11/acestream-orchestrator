@@ -364,10 +364,15 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       toast.success(response.message)
       await fetchConfig()
       await fetchTemplates()
+      
+      // If custom variant is disabled, automatically enable it after loading template
+      if (config && !config.enabled) {
+        setConfig(prev => ({ ...prev, enabled: true }))
+      }
     } catch (err) {
       toast.error(`Failed to load template: ${err.message}`)
     }
-  }, [orchUrl, apiKey, fetchJSON, fetchConfig, fetchTemplates])
+  }, [orchUrl, apiKey, fetchJSON, fetchConfig, fetchTemplates, config])
 
   const handleDeleteTemplate = useCallback(async (slotId) => {
     if (!window.confirm('Are you sure you want to delete this template?')) {
