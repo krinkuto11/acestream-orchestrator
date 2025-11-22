@@ -14,7 +14,7 @@ from .custom_variant_config import CustomVariantConfig
 logger = logging.getLogger(__name__)
 
 # Template directory
-TEMPLATE_DIR = Path("custom_templates")
+TEMPLATE_DIR = Path("app/config/custom_templates")
 MAX_TEMPLATES = 10
 
 
