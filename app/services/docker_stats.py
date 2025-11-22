@@ -227,7 +227,7 @@ def get_all_container_stats_batch() -> Dict[str, Dict]:
     """
     try:
         client = get_client()
-        # Get all containers (both running and stopped)
+        # Get all running containers
         containers = client.containers.list()
         
         stats_dict = {}
