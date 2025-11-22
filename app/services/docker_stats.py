@@ -6,6 +6,7 @@ Provides CPU, memory, network I/O, and block I/O metrics for containers.
 import logging
 import re
 from typing import Dict, Optional, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from .docker_client import get_client
 from docker.errors import NotFound, APIError
 
@@ -216,10 +217,35 @@ def _parse_percent(percent_str: str) -> float:
         return 0.0
 
 
+def _get_container_stats_safe(container) -> Optional[tuple]:
+    """
+    Helper to safely get stats for a single container.
+    Returns tuple of (container_id, stats_dict) or None on error.
+    Used for concurrent batch collection.
+    """
+    try:
+        # Get stats with stream=False to get a single snapshot
+        stats = container.stats(stream=False)
+        
+        # Use the shared helper to extract stats
+        stats_dict = _extract_stats_from_api_response(stats, container.id)
+        return (container.id, stats_dict)
+        
+    except (NotFound, APIError) as e:
+        # Skip containers that disappear or have errors
+        logger.debug(f"Skipping container {container.id[:12]} in batch stats: {e}")
+        return None
+    except Exception as e:
+        # Log but continue with other containers
+        logger.debug(f"Error getting stats for container {container.id[:12]}: {e}")
+        return None
+
+
 def get_all_container_stats_batch() -> Dict[str, Dict]:
     """
-    Get statistics for all containers using the Docker SDK.
-    This is much more efficient than querying each container individually.
+    Get statistics for all containers using the Docker SDK with concurrent execution.
+    Uses ThreadPoolExecutor for non-blocking concurrent stats collection,
+    which significantly improves performance with many containers.
     
     Returns:
         Dictionary mapping container_id to stats dictionary.
@@ -230,23 +256,26 @@ def get_all_container_stats_batch() -> Dict[str, Dict]:
         # Get all running containers
         containers = client.containers.list()
         
+        if not containers:
+            return {}
+        
         stats_dict = {}
-        for container in containers:
-            try:
-                # Get stats with stream=False to get a single snapshot
-                stats = container.stats(stream=False)
-                
-                # Use the shared helper to extract stats
-                stats_dict[container.id] = _extract_stats_from_api_response(stats, container.id)
-                
-            except (NotFound, APIError) as e:
-                # Skip containers that disappear or have errors
-                logger.debug(f"Skipping container {container.id[:12]} in batch stats: {e}")
-                continue
-            except Exception as e:
-                # Log but continue with other containers
-                logger.debug(f"Error getting stats for container {container.id[:12]}: {e}")
-                continue
+        
+        # Use ThreadPoolExecutor for concurrent stats collection
+        # max_workers defaults to min(32, cpu_count() + 4) which is reasonable
+        with ThreadPoolExecutor() as executor:
+            # Submit all stats collection tasks
+            future_to_container = {
+                executor.submit(_get_container_stats_safe, container): container 
+                for container in containers
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_container):
+                result = future.result()
+                if result is not None:
+                    container_id, stats = result
+                    stats_dict[container_id] = stats
         
         return stats_dict
         
