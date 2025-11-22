@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, validator
 logger = logging.getLogger(__name__)
 
 # Default config file path
-DEFAULT_CONFIG_PATH = Path("custom_engine_variant.json")
+DEFAULT_CONFIG_PATH = Path("app/config/custom_engine_variant.json")
 
 # Memory limit constants
 MIN_MEMORY_BYTES = 32 * 1024 * 1024  # 32MB minimum
