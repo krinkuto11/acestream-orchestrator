@@ -141,7 +141,7 @@ function ResourceUsage({ orchUrl }) {
           <CardContent>
             <div className="space-y-2">
               <div className="text-2xl font-bold">
-                {cpuPercent.toFixed(2)}%
+                {cpuPercent.toFixed(1)}%
               </div>
               <Progress value={Math.min(cpuPercent, 100)} className="h-2" />
               <p className="text-xs text-muted-foreground">
