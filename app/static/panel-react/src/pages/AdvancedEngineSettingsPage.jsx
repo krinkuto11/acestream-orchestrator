@@ -119,8 +119,10 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       const data = await fetchJSON(`${orchUrl}/custom-variant/templates`)
       setTemplates(data.templates)
       setActiveTemplateId(data.active_template_id)
+      return data  // Return data for immediate use
     } catch (err) {
       console.error('Failed to load templates:', err)
+      return null
     }
   }, [orchUrl, fetchJSON])
 
@@ -260,26 +262,26 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       }
       
       // Refresh templates to get updated state
-      await fetchTemplates()
-      
-      // Check if this is the first template - need to re-fetch to get accurate state
-      const updatedTemplates = await fetchJSON(`${orchUrl}/custom-variant/templates`)
-      const otherTemplates = updatedTemplates.templates.filter(t => t.exists && t.slot_id !== editingTemplateSlot)
+      const updatedTemplates = await fetchTemplates()
       
       // If no other template exists (this is the first one), auto-activate it
-      if (otherTemplates.length === 0 && !updatedTemplates.active_template_id) {
-        try {
-          await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}/activate`, {
-            method: 'POST',
-            headers: {
-              'X-API-KEY': apiKey
-            }
-          })
-          toast.success(`Template ${editingTemplateSlot} automatically activated as the first template`)
-          await fetchConfig()
-          await fetchTemplates()
-        } catch (err) {
-          console.error('Failed to auto-activate template:', err)
+      if (updatedTemplates) {
+        const otherTemplates = updatedTemplates.templates.filter(t => t.exists && t.slot_id !== editingTemplateSlot)
+        
+        if (otherTemplates.length === 0 && !updatedTemplates.active_template_id) {
+          try {
+            await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}/activate`, {
+              method: 'POST',
+              headers: {
+                'X-API-KEY': apiKey
+              }
+            })
+            toast.success(`Template ${editingTemplateSlot} automatically activated as the first template`)
+            await fetchConfig()
+            await fetchTemplates()
+          } catch (err) {
+            console.error('Failed to auto-activate template:', err)
+          }
         }
       }
       
