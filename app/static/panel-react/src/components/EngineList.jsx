@@ -11,7 +11,6 @@ import { Progress } from '@/components/ui/progress'
 function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
   const [isOpen, setIsOpen] = useState(false)
   const [stats, setStats] = useState(null)
-  const [statsLoading, setStatsLoading] = useState(true)
   
   const healthColors = {
     healthy: 'success',
@@ -22,15 +21,10 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
   const healthStatus = engine.health_status || 'unknown'
   const healthVariant = healthColors[healthStatus] || 'outline'
 
-  // Fetch Docker stats when details are expanded
+  // Fetch Docker stats continuously (not just when expanded)
   useEffect(() => {
-    if (!isOpen) {
-      return
-    }
-    
     const fetchStats = async () => {
       try {
-        setStatsLoading(true)
         const response = await fetch(`${orchUrl}/engines/${engine.container_id}/stats`)
         if (response.ok) {
           const data = await response.json()
@@ -38,19 +32,17 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
         }
       } catch (err) {
         console.error('Failed to fetch engine stats:', err)
-      } finally {
-        setStatsLoading(false)
       }
     }
     
     // Fetch immediately
     fetchStats()
     
-    // Refresh stats every 3 seconds while expanded
+    // Refresh stats every 3 seconds
     const interval = setInterval(fetchStats, 3000)
     
     return () => clearInterval(interval)
-  }, [isOpen, engine.container_id, orchUrl])
+  }, [engine.container_id, orchUrl])
 
   return (
     <Card className="mb-3 hover:bg-accent/5 transition-colors">
@@ -104,12 +96,45 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
             <p className="text-sm font-medium">{timeAgo(engine.last_stream_usage)}</p>
           </div>
           {engine.last_health_check && (
-            <div className="col-span-2">
+            <div>
               <p className="text-xs text-muted-foreground">Last Health Check</p>
               <p className="text-sm font-medium">{formatTime(engine.last_health_check)}</p>
             </div>
           )}
         </div>
+
+        {/* Docker Stats Section - Always visible in main block */}
+        {stats && (
+          <div className="border-t pt-3 mb-3">
+            <div className="space-y-2">
+              {/* CPU */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Cpu className="h-3 w-3" />
+                    CPU
+                  </span>
+                  <span className="text-xs font-medium">{stats.cpu_percent.toFixed(1)}%</span>
+                </div>
+                <Progress value={Math.min(stats.cpu_percent, 100)} className="h-1.5" />
+              </div>
+              
+              {/* Memory */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                    <MemoryStick className="h-3 w-3" />
+                    Memory
+                  </span>
+                  <span className="text-xs font-medium">
+                    {formatBytes(stats.memory_usage)} ({stats.memory_percent.toFixed(1)}%)
+                  </span>
+                </div>
+                <Progress value={stats.memory_percent} className="h-1.5" />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Collapsible details section */}
         <Collapsible open={isOpen} onOpenChange={setIsOpen}>
@@ -155,49 +180,15 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
                 )}
               </div>
               
-              {/* Docker Stats Section */}
-              <div className="border-t pt-3">
-                <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                  <Activity className="h-4 w-4" />
-                  Docker Stats
-                </h4>
-                
-                {statsLoading && (
-                  <p className="text-sm text-muted-foreground">Loading stats...</p>
-                )}
-                
-                {!statsLoading && !stats && (
-                  <p className="text-sm text-muted-foreground">Stats unavailable</p>
-                )}
-                
-                {!statsLoading && stats && (
+              {/* Extended Docker Stats Section - Network and Block I/O */}
+              {stats && (
+                <div className="border-t pt-3">
+                  <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                    <Activity className="h-4 w-4" />
+                    Extended Stats
+                  </h4>
+                  
                   <div className="space-y-3">
-                    {/* CPU */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Cpu className="h-3 w-3" />
-                          CPU
-                        </span>
-                        <span className="text-xs font-medium">{stats.cpu_percent.toFixed(2)}%</span>
-                      </div>
-                      <Progress value={Math.min(stats.cpu_percent, 100)} className="h-2" />
-                    </div>
-                    
-                    {/* Memory */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-muted-foreground flex items-center gap-1">
-                          <MemoryStick className="h-3 w-3" />
-                          Memory
-                        </span>
-                        <span className="text-xs font-medium">
-                          {formatBytes(stats.memory_usage)} / {formatBytes(stats.memory_limit)} ({stats.memory_percent.toFixed(2)}%)
-                        </span>
-                      </div>
-                      <Progress value={stats.memory_percent} className="h-2" />
-                    </div>
-                    
                     {/* Network I/O */}
                     <div>
                       <div className="flex items-center justify-between">
@@ -224,8 +215,8 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
                       </div>
                     </div>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </CollapsibleContent>
         </Collapsible>
