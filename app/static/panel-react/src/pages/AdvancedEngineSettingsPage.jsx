@@ -259,11 +259,15 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         setShowReprovisionWarning(true)
       }
       
+      // Refresh templates to get updated state
       await fetchTemplates()
       
+      // Check if this is the first template - need to re-fetch to get accurate state
+      const updatedTemplates = await fetchJSON(`${orchUrl}/custom-variant/templates`)
+      const otherTemplates = updatedTemplates.templates.filter(t => t.exists && t.slot_id !== editingTemplateSlot)
+      
       // If no other template exists (this is the first one), auto-activate it
-      const otherTemplates = templates.filter(t => t.exists && t.slot_id !== editingTemplateSlot)
-      if (otherTemplates.length === 0 && !activeTemplateId) {
+      if (otherTemplates.length === 0 && !updatedTemplates.active_template_id) {
         try {
           await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}/activate`, {
             method: 'POST',
@@ -286,12 +290,31 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     } finally {
       setSaving(false)
     }
-  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, activeTemplateId, templates, fetchJSON, fetchTemplates, fetchConfig])
+  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, activeTemplateId, fetchJSON, fetchTemplates, fetchConfig])
 
   // Save configuration (kept for backward compatibility, now just calls platform save)
   const handleSave = useCallback(async () => {
     await handleSavePlatformConfig()
   }, [handleSavePlatformConfig])
+
+  // Helper function to save current template
+  const saveCurrentTemplate = useCallback(async () => {
+    if (!editingTemplateSlot || !templateName) {
+      return
+    }
+    
+    await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-KEY': apiKey
+      },
+      body: JSON.stringify({
+        name: templateName,
+        config: config
+      })
+    })
+  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, fetchJSON])
 
   // Reprovision all engines
   const handleReprovision = useCallback(async () => {
@@ -318,17 +341,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       
       // If editing a template, save it as well
       if (editingTemplateSlot) {
-        await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-API-KEY': apiKey
-          },
-          body: JSON.stringify({
-            name: templateName,
-            config: config
-          })
-        })
+        await saveCurrentTemplate()
         toast.success(`Template ${editingTemplateSlot} saved before reprovisioning`)
       }
       
@@ -351,7 +364,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       }
       setReprovisioning(false)
     }
-  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, fetchJSON, checkReprovisionStatus])
+  }, [orchUrl, apiKey, config, editingTemplateSlot, saveCurrentTemplate, fetchJSON, checkReprovisionStatus])
 
   // Template management functions
   const handleSaveAsTemplate = useCallback(async (slotId, name) => {
