@@ -111,7 +111,8 @@ def get_container_stats(container_id: str) -> Optional[Dict]:
 
 def get_multiple_container_stats(container_ids: List[str]) -> Dict[str, Dict]:
     """
-    Get statistics for multiple containers.
+    Get statistics for multiple containers efficiently in a single batch operation.
+    Uses concurrent execution to fetch all container stats in parallel.
     
     Args:
         container_ids: List of Docker container IDs
@@ -119,17 +120,40 @@ def get_multiple_container_stats(container_ids: List[str]) -> Dict[str, Dict]:
     Returns:
         Dictionary mapping container_id to stats dictionary
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    if not container_ids:
+        return {}
+    
     results = {}
-    for container_id in container_ids:
-        stats = get_container_stats(container_id)
-        if stats:
-            results[container_id] = stats
+    
+    # Use ThreadPoolExecutor to fetch stats concurrently
+    # This dramatically reduces total time when fetching multiple containers
+    # e.g., 10 containers @ 0.2s each = 2s sequential vs ~0.2s concurrent
+    with ThreadPoolExecutor(max_workers=min(len(container_ids), 10)) as executor:
+        # Submit all tasks
+        future_to_id = {
+            executor.submit(get_container_stats, container_id): container_id
+            for container_id in container_ids
+        }
+        
+        # Collect results as they complete
+        for future in as_completed(future_to_id):
+            container_id = future_to_id[future]
+            try:
+                stats = future.result()
+                if stats:
+                    results[container_id] = stats
+            except Exception as e:
+                logger.warning(f"Failed to get stats for container {container_id[:12]}: {e}")
+    
     return results
 
 
 def get_total_stats(container_ids: List[str]) -> Dict:
     """
     Get aggregated statistics across multiple containers.
+    Uses the optimized batch fetching for efficiency.
     
     Args:
         container_ids: List of Docker container IDs
@@ -154,16 +178,18 @@ def get_total_stats(container_ids: List[str]) -> Dict:
         'container_count': 0
     }
     
-    for container_id in container_ids:
-        stats = get_container_stats(container_id)
-        if stats:
-            total['total_cpu_percent'] += stats['cpu_percent']
-            total['total_memory_usage'] += stats['memory_usage']
-            total['total_network_rx_bytes'] += stats['network_rx_bytes']
-            total['total_network_tx_bytes'] += stats['network_tx_bytes']
-            total['total_block_read_bytes'] += stats['block_read_bytes']
-            total['total_block_write_bytes'] += stats['block_write_bytes']
-            total['container_count'] += 1
+    # Use the optimized batch fetching
+    all_stats = get_multiple_container_stats(container_ids)
+    
+    # Aggregate the results
+    for stats in all_stats.values():
+        total['total_cpu_percent'] += stats['cpu_percent']
+        total['total_memory_usage'] += stats['memory_usage']
+        total['total_network_rx_bytes'] += stats['network_rx_bytes']
+        total['total_network_tx_bytes'] += stats['network_tx_bytes']
+        total['total_block_read_bytes'] += stats['block_read_bytes']
+        total['total_block_write_bytes'] += stats['block_write_bytes']
+        total['container_count'] += 1
     
     # Round CPU percent
     total['total_cpu_percent'] = round(total['total_cpu_percent'], 2)

@@ -8,9 +8,8 @@ import { timeAgo, formatTime, formatBytes } from '../utils/formatters'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Progress } from '@/components/ui/progress'
 
-function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
+function EngineCard({ engine, onDelete, showVpnLabel = false, stats = null }) {
   const [isOpen, setIsOpen] = useState(false)
-  const [stats, setStats] = useState(null)
   
   const healthColors = {
     healthy: 'success',
@@ -20,29 +19,6 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
   
   const healthStatus = engine.health_status || 'unknown'
   const healthVariant = healthColors[healthStatus] || 'outline'
-
-  // Fetch Docker stats continuously (not just when expanded)
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const response = await fetch(`${orchUrl}/engines/${engine.container_id}/stats`)
-        if (response.ok) {
-          const data = await response.json()
-          setStats(data)
-        }
-      } catch (err) {
-        console.error('Failed to fetch engine stats:', err)
-      }
-    }
-    
-    // Fetch immediately
-    fetchStats()
-    
-    // Refresh stats every 3 seconds
-    const interval = setInterval(fetchStats, 3000)
-    
-    return () => clearInterval(interval)
-  }, [engine.container_id, orchUrl])
 
   return (
     <Card className="mb-3 hover:bg-accent/5 transition-colors">
@@ -225,7 +201,7 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
   )
 }
 
-function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode, orchUrl }) {
+function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode, engineStats }) {
   const isEmergencyFailed = emergencyMode?.active && emergencyMode?.failed_vpn === vpnName
   
   return (
@@ -268,7 +244,7 @@ function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode, orchU
             engine={engine}
             onDelete={onDeleteEngine}
             showVpnLabel={false}
-            orchUrl={orchUrl}
+            stats={engineStats?.[engine.container_id] || null}
           />
         ))
       )}
@@ -277,8 +253,32 @@ function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode, orchU
 }
 
 function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
+  const [engineStats, setEngineStats] = useState({})
   const isRedundantMode = vpnStatus?.mode === 'redundant'
   const emergencyMode = vpnStatus?.emergency_mode
+  
+  // Fetch all engine stats in a single batch call
+  useEffect(() => {
+    const fetchAllStats = async () => {
+      try {
+        const response = await fetch(`${orchUrl}/engines/stats/all`)
+        if (response.ok) {
+          const data = await response.json()
+          setEngineStats(data)
+        }
+      } catch (err) {
+        console.error('Failed to fetch engine stats:', err)
+      }
+    }
+    
+    // Fetch immediately
+    fetchAllStats()
+    
+    // Refresh stats every 3 seconds
+    const interval = setInterval(fetchAllStats, 3000)
+    
+    return () => clearInterval(interval)
+  }, [orchUrl])
   
   // Group engines by VPN in redundant mode
   if (isRedundantMode) {
@@ -313,7 +313,7 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
               engines={enginesByVpn[vpn1Name]}
               onDeleteEngine={onDeleteEngine}
               emergencyMode={emergencyMode}
-              orchUrl={orchUrl}
+              engineStats={engineStats}
             />
           )}
           
@@ -324,7 +324,7 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
               engines={enginesByVpn[vpn2Name]}
               onDeleteEngine={onDeleteEngine}
               emergencyMode={emergencyMode}
-              orchUrl={orchUrl}
+              engineStats={engineStats}
             />
           )}
         </div>
@@ -349,7 +349,7 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
             engine={engine}
             onDelete={onDeleteEngine}
             showVpnLabel={false}
-            orchUrl={orchUrl}
+            stats={engineStats?.[engine.container_id] || null}
           />
         ))
       )}

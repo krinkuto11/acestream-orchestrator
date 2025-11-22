@@ -597,10 +597,24 @@ def get_engine(container_id: str):
 
 @app.get("/engines/stats/all")
 def get_all_engine_stats():
-    """Get Docker stats for all engines."""
+    """Get Docker stats for all engines (cached for 3 seconds)."""
+    # Use cache to avoid expensive Docker API calls on every poll
+    cache = get_cache()
+    cache_key = "stats:all"
+    
+    # Try to get from cache
+    cached_value = cache.get(cache_key)
+    if cached_value is not None:
+        return cached_value
+    
+    # Cache miss - compute stats
     engines = state.list_engines()
     container_ids = [e.container_id for e in engines]
     stats = get_multiple_container_stats(container_ids)
+    
+    # Cache for 3 seconds (UI polls every 3s, so this reduces load significantly)
+    cache.set(cache_key, stats, ttl=3.0)
+    
     return stats
 
 @app.get("/engines/stats/total")
@@ -627,10 +641,24 @@ def get_total_engine_stats():
 
 @app.get("/engines/{container_id}/stats")
 def get_engine_stats(container_id: str):
-    """Get Docker stats for a specific engine."""
+    """Get Docker stats for a specific engine (cached for 3 seconds)."""
+    # Use cache to avoid expensive Docker API calls on every poll
+    cache = get_cache()
+    cache_key = f"stats:engine:{container_id}"
+    
+    # Try to get from cache
+    cached_value = cache.get(cache_key)
+    if cached_value is not None:
+        return cached_value
+    
+    # Cache miss - compute stats
     stats = get_container_stats(container_id)
     if not stats:
         raise HTTPException(status_code=404, detail="Container not found or stats unavailable")
+    
+    # Cache for 3 seconds (UI polls every 3s, so this reduces load significantly)
+    cache.set(cache_key, stats, ttl=3.0)
+    
     return stats
 
 @app.get("/streams", response_model=List[StreamState])
