@@ -15,6 +15,12 @@ from app.services.docker_stats import (
 )
 
 
+# Sample docker stats output for testing (matches the format from problem statement)
+SAMPLE_DOCKER_STATS_OUTPUT = """6d2f498cbeff\tacestream-7\t0.28%\t111.8MiB / 16.02GiB\t0.68%\t3.17GB / 6.29GB\t0B / 74.8MB
+73329bff2d10\tacestream-6\t0.28%\t110.5MiB / 16.02GiB\t0.67%\t425MB / 388MB\t0B / 71.7MB
+34f96e9c1768\tacestream-5\t0.62%\t110.4MiB / 16.02GiB\t0.67%\t3.17GB / 6.29GB\t0B / 71.7MB"""
+
+
 class TestParsers:
     """Test parsing functions for docker stats output."""
     
@@ -101,14 +107,10 @@ class TestBatchStatsCollection:
     @patch('app.services.docker_stats.subprocess.run')
     def test_get_all_container_stats_batch_success(self, mock_run):
         """Test successful batch stats collection."""
-        # Mock docker stats output (similar to the problem statement example)
-        mock_output = """6d2f498cbeff\tacestream-7\t0.28%\t111.8MiB / 16.02GiB\t0.68%\t3.17GB / 6.29GB\t0B / 74.8MB
-73329bff2d10\tacestream-6\t0.28%\t110.5MiB / 16.02GiB\t0.67%\t425MB / 388MB\t0B / 71.7MB
-34f96e9c1768\tacestream-5\t0.62%\t110.4MiB / 16.02GiB\t0.67%\t3.17GB / 6.29GB\t0B / 71.7MB"""
-        
+        # Use sample output from fixture
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout=mock_output,
+            stdout=SAMPLE_DOCKER_STATS_OUTPUT,
             stderr=""
         )
         

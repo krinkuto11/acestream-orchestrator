@@ -4,13 +4,16 @@ Provides CPU, memory, network I/O, and block I/O metrics for containers.
 """
 
 import logging
-import subprocess
 import re
+import subprocess
 from typing import Dict, Optional, List
 from .docker_client import get_client
 from docker.errors import NotFound, APIError
 
 logger = logging.getLogger(__name__)
+
+# Docker stats command format for batch collection
+DOCKER_STATS_FORMAT = '{{.Container}}\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}'
 
 
 def get_container_stats(container_id: str) -> Optional[Dict]:
@@ -214,10 +217,8 @@ def get_all_container_stats_batch() -> Dict[str, Dict]:
     """
     try:
         # Run docker stats with --no-stream to get a single snapshot
-        # Use table format for easier parsing
         result = subprocess.run(
-            ['docker', 'stats', '--no-stream', '--no-trunc', '--format',
-             '{{.Container}}\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}'],
+            ['docker', 'stats', '--no-stream', '--no-trunc', '--format', DOCKER_STATS_FORMAT],
             capture_output=True,
             text=True,
             timeout=10
@@ -288,17 +289,23 @@ def get_multiple_container_stats(container_ids: List[str]) -> Dict[str, Dict]:
     all_stats = get_all_container_stats_batch()
     
     if all_stats:
+        # Build lookup for efficient matching (handles both short and full IDs)
+        stats_lookup = {}
+        for stats_id, stats in all_stats.items():
+            stats_lookup[stats_id] = stats
+            # Also index by short ID (first 12 chars) for matching
+            if len(stats_id) > 12:
+                stats_lookup[stats_id[:12]] = stats
+        
         # Filter to only requested containers
         results = {}
         for container_id in container_ids:
-            if container_id in all_stats:
-                results[container_id] = all_stats[container_id]
-            else:
-                # Container might be in the batch with short ID, try to match
-                for stats_id, stats in all_stats.items():
-                    if stats_id.startswith(container_id) or container_id.startswith(stats_id):
-                        results[container_id] = stats
-                        break
+            # Try exact match first
+            if container_id in stats_lookup:
+                results[container_id] = stats_lookup[container_id]
+            # Try short ID match
+            elif len(container_id) >= 12 and container_id[:12] in stats_lookup:
+                results[container_id] = stats_lookup[container_id[:12]]
         return results
     
     # Fallback to individual queries if batch fails
