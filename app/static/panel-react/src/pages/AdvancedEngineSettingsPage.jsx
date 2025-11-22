@@ -260,6 +260,25 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       }
       
       await fetchTemplates()
+      
+      // If no other template exists (this is the first one), auto-activate it
+      const otherTemplates = templates.filter(t => t.exists && t.slot_id !== editingTemplateSlot)
+      if (otherTemplates.length === 0 && !activeTemplateId) {
+        try {
+          await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}/activate`, {
+            method: 'POST',
+            headers: {
+              'X-API-KEY': apiKey
+            }
+          })
+          toast.success(`Template ${editingTemplateSlot} automatically activated as the first template`)
+          await fetchConfig()
+          await fetchTemplates()
+        } catch (err) {
+          console.error('Failed to auto-activate template:', err)
+        }
+      }
+      
       setEditingTemplateSlot(null)
       setTemplateName('')
     } catch (err) {
@@ -267,7 +286,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     } finally {
       setSaving(false)
     }
-  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, activeTemplateId, fetchJSON, fetchTemplates])
+  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, activeTemplateId, templates, fetchJSON, fetchTemplates, fetchConfig])
 
   // Save configuration (kept for backward compatibility, now just calls platform save)
   const handleSave = useCallback(async () => {
@@ -277,7 +296,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   // Reprovision all engines
   const handleReprovision = useCallback(async () => {
     if (!window.confirm(
-      'This will delete ALL engines and recreate them with the new settings. ' +
+      'This will save all settings and delete ALL engines and recreate them with the new settings. ' +
       'All active streams will be interrupted. Are you sure?'
     )) {
       return
@@ -288,15 +307,29 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       setShowReprovisionWarning(false)  // Clear warning when reprovisioning
       
       // First, save the current config before reprovisioning
-      if (config && config.enabled) {
-        await fetchJSON(`${orchUrl}/custom-variant/config`, {
+      await fetchJSON(`${orchUrl}/custom-variant/config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': apiKey
+        },
+        body: JSON.stringify(config)
+      })
+      
+      // If editing a template, save it as well
+      if (editingTemplateSlot) {
+        await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-API-KEY': apiKey
           },
-          body: JSON.stringify(config)
+          body: JSON.stringify({
+            name: templateName,
+            config: config
+          })
         })
+        toast.success(`Template ${editingTemplateSlot} saved before reprovisioning`)
       }
       
       await fetchJSON(`${orchUrl}/custom-variant/reprovision`, {
@@ -306,7 +339,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         }
       })
       
-      toast.success('Reprovisioning started. Engines will be recreated shortly.')
+      toast.success('Settings saved. Reprovisioning started. Engines will be recreated shortly.')
       
       // Start polling for status
       await checkReprovisionStatus()
@@ -318,7 +351,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       }
       setReprovisioning(false)
     }
-  }, [orchUrl, apiKey, config, fetchJSON, checkReprovisionStatus])
+  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, fetchJSON, checkReprovisionStatus])
 
   // Template management functions
   const handleSaveAsTemplate = useCallback(async (slotId, name) => {
@@ -606,7 +639,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             className="flex items-center gap-2"
           >
             <RefreshCw className={reprovisioning ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-            {reprovisioning ? 'Reprovisioning...' : 'Reprovision All Engines'}
+            {reprovisioning ? 'Reprovisioning...' : 'Save & Reprovision All Engines'}
           </Button>
         </div>
       </div>
@@ -667,7 +700,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                   }
                 }
               }}
-              disabled={!templates.some(t => t.exists)}
+              disabled={!templates.some(t => t.exists) || editingTemplateSlot !== null}
             />
           </div>
 
@@ -741,15 +774,16 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         </CardContent>
       </Card>
 
-      {/* Template Management */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Template Management</CardTitle>
-          <CardDescription>
-            Save and load custom variant configurations as templates (10 slots available)
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      {/* Template Management - Only show when custom variant is enabled */}
+      {config.enabled && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Template Management</CardTitle>
+            <CardDescription>
+              Save and load custom variant configurations as templates (10 slots available)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
           {/* Reprovision Warning */}
           {showReprovisionWarning && (
             <Alert variant="destructive">
@@ -952,6 +986,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Parameters - Only shown when editing a template */}
       {editingTemplateSlot && (
