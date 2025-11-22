@@ -98,7 +98,6 @@ function QuickStats({ engines, streams, vpnStatus, healthyEngines }) {
 
 function ResourceUsage({ orchUrl }) {
   const [totalStats, setTotalStats] = useState(null)
-  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const fetchTotalStats = async () => {
@@ -110,8 +109,6 @@ function ResourceUsage({ orchUrl }) {
         }
       } catch (err) {
         console.error('Failed to fetch total stats:', err)
-      } finally {
-        setLoading(false)
       }
     }
 
@@ -124,25 +121,10 @@ function ResourceUsage({ orchUrl }) {
     return () => clearInterval(interval)
   }, [orchUrl])
 
-  // Don't show anything if loading or no engines
-  if (loading) {
-    return null
-  }
-
-  if (!totalStats || totalStats.container_count === 0) {
-    return (
-      <div className="space-y-4">
-        <h3 className="text-lg font-semibold">Resource Usage</h3>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">
-              No engines running - resource usage unavailable
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
+  // Always show the cards, even when loading or no engines
+  const cpuPercent = totalStats?.total_cpu_percent || 0
+  const memoryUsage = totalStats?.total_memory_usage || 0
+  const containerCount = totalStats?.container_count || 0
 
   return (
     <div className="space-y-4">
@@ -159,11 +141,14 @@ function ResourceUsage({ orchUrl }) {
           <CardContent>
             <div className="space-y-2">
               <div className="text-2xl font-bold">
-                {totalStats.total_cpu_percent.toFixed(2)}%
+                {cpuPercent.toFixed(2)}%
               </div>
-              <Progress value={Math.min(totalStats.total_cpu_percent, 100)} className="h-2" />
+              <Progress value={Math.min(cpuPercent, 100)} className="h-2" />
               <p className="text-xs text-muted-foreground">
-                Across {totalStats.container_count} {totalStats.container_count === 1 ? 'engine' : 'engines'}
+                {containerCount === 0 
+                  ? 'No engines running' 
+                  : `Across ${containerCount} ${containerCount === 1 ? 'engine' : 'engines'}`
+                }
               </p>
             </div>
           </CardContent>
@@ -179,10 +164,13 @@ function ResourceUsage({ orchUrl }) {
           <CardContent>
             <div className="space-y-2">
               <div className="text-2xl font-bold">
-                {formatBytes(totalStats.total_memory_usage)}
+                {formatBytes(memoryUsage)}
               </div>
               <p className="text-xs text-muted-foreground">
-                Across {totalStats.container_count} {totalStats.container_count === 1 ? 'engine' : 'engines'}
+                {containerCount === 0 
+                  ? 'No engines running' 
+                  : `Across ${containerCount} ${containerCount === 1 ? 'engine' : 'engines'}`
+                }
               </p>
             </div>
           </CardContent>
