@@ -715,18 +715,9 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                   }
                 }
               }}
-              disabled={!templates.some(t => t.exists) || editingTemplateSlot !== null}
+              disabled={editingTemplateSlot !== null}
             />
           </div>
-
-          {!templates.some(t => t.exists) && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                No templates available. Create a template below to enable custom engine variants.
-              </AlertDescription>
-            </Alert>
-          )}
 
           {config.enabled && (platform.platform === 'arm32' || platform.platform === 'arm64') && (
             <div className="space-y-2">
@@ -789,9 +780,8 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         </CardContent>
       </Card>
 
-      {/* Template Management - Only show when custom variant is enabled */}
-      {config.enabled && (
-        <Card>
+      {/* Template Management */}
+      <Card>
           <CardHeader>
             <CardTitle>Template Management</CardTitle>
             <CardDescription>
@@ -1001,7 +991,6 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           )}
         </CardContent>
       </Card>
-      )}
 
       {/* Parameters - Only shown when editing a template */}
       {editingTemplateSlot && (
