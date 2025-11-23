@@ -16,6 +16,7 @@ from .health import check_acestream_health, list_managed
 from .provisioner import AceProvisionRequest, start_acestream, stop_container
 from .autoscaler import ensure_minimum
 from .circuit_breaker import circuit_breaker_manager
+from .event_logger import event_logger
 from ..core.config import cfg
 
 logger = logging.getLogger(__name__)
@@ -236,6 +237,19 @@ class HealthManager:
             deficit = total_needed - healthy_count
             logger.warning(f"Only {healthy_count} healthy engines, need {total_needed}. Starting {deficit} new engines.")
             
+            # Log health event for visibility in dashboard
+            event_logger.log_event(
+                event_type="health",
+                category="insufficient_engines",
+                message=f"Only {healthy_count} healthy engines, need {total_needed}. Starting {deficit} new engines.",
+                details={
+                    "healthy_count": healthy_count,
+                    "total_needed": total_needed,
+                    "deficit": deficit,
+                    "unhealthy_count": len(unhealthy_engines)
+                }
+            )
+            
             # Start new engines to ensure service availability
             await self._start_replacement_engines(deficit)
     
@@ -302,6 +316,19 @@ class HealthManager:
                     success_count += 1
                     circuit_breaker_manager.record_provisioning_success("replacement")
                     logger.info(f"Successfully started replacement engine {response.container_id[:12]}")
+                    
+                    # Log engine creation event
+                    event_logger.log_event(
+                        event_type="health",
+                        category="replacement_started",
+                        message=f"Successfully started replacement engine {response.container_id[:12]}",
+                        details={
+                            "engine_number": i+1,
+                            "total_count": count
+                        },
+                        container_id=response.container_id
+                    )
+                    
                     # Initialize health tracking for new engine
                     self._engine_health[response.container_id] = EngineHealthStatus(response.container_id)
                 else:

@@ -18,6 +18,7 @@ from typing import Optional, Dict
 from .docker_client import get_client
 from ..core.config import cfg
 from ..utils.debug_logger import get_debug_logger
+from .event_logger import event_logger
 from docker.errors import NotFound
 
 logger = logging.getLogger(__name__)
@@ -162,8 +163,23 @@ class VpnContainerMonitor:
             if self._first_healthy_time is None:
                 self._first_healthy_time = now
                 logger.info(f"VPN '{self.container_name}' first became healthy at {now}")
+                # Log VPN connection event
+                event_logger.log_event(
+                    event_type="vpn",
+                    category="connected",
+                    message=f"VPN '{self.container_name}' established connection",
+                    details={"container": self.container_name}
+                )
             self._consecutive_healthy_count += 1
             # Reset unhealthy tracking when healthy
+            if self._unhealthy_since is not None:
+                # Log recovery event
+                event_logger.log_event(
+                    event_type="vpn",
+                    category="recovered",
+                    message=f"VPN '{self.container_name}' recovered from unhealthy state",
+                    details={"container": self.container_name}
+                )
             self._unhealthy_since = None
             self._force_restart_attempted = False
         else:
@@ -171,6 +187,13 @@ class VpnContainerMonitor:
             # Track when became unhealthy
             if self._unhealthy_since is None:
                 self._unhealthy_since = now
+                # Log VPN disconnection event
+                event_logger.log_event(
+                    event_type="vpn",
+                    category="disconnected",
+                    message=f"VPN '{self.container_name}' became unhealthy",
+                    details={"container": self.container_name}
+                )
         
         self._last_health_status = current_health
 
@@ -521,9 +544,11 @@ class GluetunMonitor:
         forwarded engine becomes invalid. This method:
         1. Identifies and stops the old forwarded engine
         2. Removes it from state so it's not exposed via /engines endpoint
-        3. Allows the autoscaler to provision a new forwarded engine with the new port
+        3. Sets recovery stabilization period to prevent premature cleanup
+        4. Allows the autoscaler to provision a new forwarded engine with the new port
         """
         debug_log = get_debug_logger()
+        now = datetime.now(timezone.utc)
         
         try:
             from .state import state
@@ -558,6 +583,15 @@ class GluetunMonitor:
                 logger.info(f"Successfully stopped forwarded engine {forwarded_engine.container_id[:12]}")
             except Exception as e:
                 logger.error(f"Error stopping forwarded engine {forwarded_engine.container_id[:12]}: {e}")
+            
+            # Set recovery stabilization period to prevent premature cleanup during recovery
+            # This prevents the monitor from cleaning up engines that may be temporarily
+            # unhealthy during the port change and subsequent reprovisioning
+            monitor = self._vpn_monitors.get(container_name)
+            if monitor:
+                monitor._last_recovery_time = now
+                logger.info(f"Recovery stabilization period set for VPN '{container_name}' after port change "
+                           f"({monitor._recovery_stabilization_period_s}s)")
             
             debug_log.log_vpn("port_change_handled",
                              status="forwarded_engine_replaced",

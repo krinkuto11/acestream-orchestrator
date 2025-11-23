@@ -1,10 +1,11 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Server, Activity, CheckCircle, ShieldCheck, Clock, TrendingUp, TrendingDown, AlertTriangle, Download, Upload } from 'lucide-react'
+import { Server, Activity, CheckCircle, ShieldCheck, Clock, TrendingUp, TrendingDown, AlertTriangle, Download, Upload, Cpu, MemoryStick } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { cn } from '@/lib/utils'
-import { formatBytesPerSecond } from '@/utils/formatters'
+import { formatBytesPerSecond, formatBytes } from '@/utils/formatters'
+import { Progress } from '@/components/ui/progress'
 
 function StatCard({ title, value, icon: Icon, trend, trendValue, variant = 'default' }) {
   const variantClasses = {
@@ -91,6 +92,90 @@ function QuickStats({ engines, streams, vpnStatus, healthyEngines }) {
         icon={ShieldCheck}
         variant={vpnDisplay.variant}
       />
+    </div>
+  )
+}
+
+function ResourceUsage({ orchUrl }) {
+  const [totalStats, setTotalStats] = useState(null)
+
+  useEffect(() => {
+    const fetchTotalStats = async () => {
+      try {
+        const response = await fetch(`${orchUrl}/engines/stats/total`)
+        if (response.ok) {
+          const data = await response.json()
+          setTotalStats(data)
+        }
+      } catch (err) {
+        console.error('Failed to fetch total stats:', err)
+      }
+    }
+
+    // Fetch immediately
+    fetchTotalStats()
+
+    // Refresh every 5 seconds
+    const interval = setInterval(fetchTotalStats, 5000)
+
+    return () => clearInterval(interval)
+  }, [orchUrl])
+
+  // Always show the cards, even when loading or no engines
+  const cpuPercent = totalStats?.total_cpu_percent || 0
+  const memoryUsage = totalStats?.total_memory_usage || 0
+  const containerCount = totalStats?.container_count || 0
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-lg font-semibold">Resource Usage</h3>
+      
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Cpu className="h-4 w-4" />
+              Total CPU Usage
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <div className="text-2xl font-bold">
+                {cpuPercent.toFixed(1)}%
+              </div>
+              <Progress value={Math.min(cpuPercent, 100)} className="h-2" />
+              <p className="text-xs text-muted-foreground">
+                {containerCount === 0 
+                  ? 'No engines running' 
+                  : `Across ${containerCount} ${containerCount === 1 ? 'engine' : 'engines'}`
+                }
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <MemoryStick className="h-4 w-4" />
+              Total Memory Usage
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <div className="text-2xl font-bold">
+                {formatBytes(memoryUsage)}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {containerCount === 0 
+                  ? 'No engines running' 
+                  : `Across ${containerCount} ${containerCount === 1 ? 'engine' : 'engines'}`
+                }
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
@@ -314,6 +399,8 @@ export function OverviewPage({ engines, streams, vpnStatus, orchestratorStatus, 
         vpnStatus={vpnStatus}
         healthyEngines={healthyEngines}
       />
+
+      <ResourceUsage orchUrl={orchUrl} />
 
       <SystemStatus vpnStatus={vpnStatus} orchestratorStatus={orchestratorStatus} />
 

@@ -138,6 +138,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, fetch
         engines={engines}
         onDeleteEngine={onDeleteEngine}
         vpnStatus={vpnStatus}
+        orchUrl={orchUrl}
       />
     </div>
   )

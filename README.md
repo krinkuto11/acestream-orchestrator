@@ -1,11 +1,11 @@
 # AceStream Orchestrator
 
+<img src="app/icons/favicon-96x96-dark.png" alt="AceStream Orchestrator Logo" width="96" height="96" />
+
 Dynamic orchestration service for AceStream engines with health monitoring, usage tracking, VPN integration, and a modern web dashboard.
 | Dashboard | Engines | Streams |
 |---------|---------|---------|
 | <img width="300" src="https://github.com/user-attachments/assets/02f40e0f-6629-4ff6-a1ba-599051fbd0dc" /> | <img width="300" src="https://github.com/user-attachments/assets/ebda1c53-782d-4e48-939b-d9e0c21283e2" /> | <img width="300" src="https://github.com/user-attachments/assets/2466b4e8-5f76-4d04-81a1-88ca1398692f" /> |
-
-
 
 ## What It Does
 
@@ -58,6 +58,11 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
   - Active template persistence across container reboots
   - Edit, rename, import/export templates
   - Visual feedback for active templates
+- **Stats Caching**: Intelligent caching of expensive API endpoints for improved UI responsiveness
+  - 2-3 second TTL for cached endpoints
+  - Automatic cache invalidation on state changes
+  - Reduces Docker API load by ~60-70%
+  - Transparent to API consumers
 - **Reprovisioning Progress**: Real-time progress indicators when reprovisioning engines
 - **Health Monitoring**: Automatic detection of engine issues with real-time status updates
 - **Usage Tracking**: Track engine idle time for intelligent load balancing
@@ -142,6 +147,12 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
   - Usage tracking
   - Stale stream detection
   - Cache cleanup process
+
+- **[Stats Caching](docs/STATS_CACHING.md)** - Performance optimization via caching
+  - Cached endpoints and TTLs
+  - Cache invalidation strategy
+  - Performance impact and monitoring
+  - Configuration and troubleshooting
 
 - **[Dashboard Guide](docs/PANEL.md)** - Web dashboard features and usage
   - Modern React interface

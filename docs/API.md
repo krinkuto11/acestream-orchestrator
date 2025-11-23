@@ -87,6 +87,25 @@ Response:
 
  - GET /streams/{stream_id}/stats?since=<ISO8601> → StreamStatSnapshot[]
 
+ - GET /streams/{stream_id}/extended-stats → Extended stream metadata from AceStream engine
+   - Returns additional metadata like content_type, title, is_live, mime, categories, etc.
+   - Queries the AceStream analyze_content API for the stream
+
+ - GET /streams/{stream_id}/livepos → Live position data for a stream
+   - Returns livepos information including current position, buffer, and timestamps
+   - Only applicable for live streams
+
+ - GET /engines/stats/all → Docker stats for all engines (instant response from background collector)
+   - Returns cached statistics from the background collector
+   - Includes CPU, memory, network, and block I/O stats for each engine
+
+ - GET /engines/stats/total → Aggregated Docker stats across all engines (instant response)
+   - Returns total CPU, memory, network, and block I/O stats
+   - Data is aggregated from background collector
+
+ - GET /engines/{container_id}/stats → Docker stats for a specific engine (instant response)
+   - Returns cached statistics for a single engine from background collector
+
  - GET /containers/{container_id} → Docker inspection
 
  - GET /by-label?key=stream_id&value=ch-42 (protected)
@@ -122,10 +141,27 @@ Response:
    connectivity by testing engines' `/server/api?api_version=3&method=get_network_connection_status` 
    endpoint. If any engine reports `{"result": {"connected": true}}`, the VPN is considered healthy.
 
+ - GET /vpn/publicip → Get VPN public IP address
+   - Returns the public IP address of the VPN connection
+
+ - GET /health/status → Detailed health status and management information
+   - Returns comprehensive health summary including healthy/unhealthy engine counts
+   - Includes proactive health management status
+
+ - GET /orchestrator/status → Comprehensive orchestrator status for proxy integration (cached for 2s)
+   - Provides all information a proxy needs including VPN, provisioning, and health status
+   - Includes detailed provisioning status with recovery guidance
+   - Returns capacity information, circuit breaker state, and system configuration
+
+ - GET /cache/stats → Cache statistics for monitoring and debugging
+   - Returns cache hit/miss rates, entry counts, and memory usage
+
 ### Control
  - DELETE /containers/{container_id} (protected)
  - POST /gc (protected)
  - POST /scale/{demand:int} (protected)
+ - POST /health/circuit-breaker/reset?operation_type= (protected) → Reset circuit breakers for manual intervention
+ - POST /cache/clear (protected) → Manually clear all cache entries
 
 ### Metrics
  - GET /metrics Prometheus:
@@ -134,6 +170,24 @@ Response:
    - orch_collect_errors_total
    - orch_streams_active
    - orch_provision_total{kind="generic|acestream"}
+   - orch_stale_streams_detected_total - Stale streams detected and auto-ended
+   - orch_total_uploaded_bytes - Cumulative bytes uploaded from all engines (all-time)
+   - orch_total_downloaded_bytes - Cumulative bytes downloaded from all engines (all-time)
+   - orch_total_uploaded_mb - Cumulative MB uploaded from all engines
+   - orch_total_downloaded_mb - Cumulative MB downloaded from all engines
+   - orch_total_upload_speed_mbps - Current sum of upload speeds in MB/s
+   - orch_total_download_speed_mbps - Current sum of download speeds in MB/s
+   - orch_total_peers - Current total peers across all engines
+   - orch_total_streams - Current number of active streams
+   - orch_healthy_engines - Number of healthy engines
+   - orch_unhealthy_engines - Number of unhealthy engines
+   - orch_used_engines - Number of engines currently handling streams
+   - orch_vpn_health - Current health status of primary VPN container
+   - orch_vpn1_health - Health status of VPN1 container (redundant mode)
+   - orch_vpn2_health - Health status of VPN2 container (redundant mode)
+   - orch_vpn1_engines - Number of engines assigned to VPN1
+   - orch_vpn2_engines - Number of engines assigned to VPN2
+   - orch_extra_engines - Number of engines beyond MIN_REPLICAS
 
 ## Custom Engine Variant
 
@@ -258,3 +312,248 @@ Response:
 
 **Note:** This operation runs entirely in the background as a non-blocking task. The endpoint returns immediately after starting the operation. The API and UI remain fully accessible during reprovisioning. Use `GET /custom-variant/reprovision/status` to check the progress.
 
+### GET /custom-variant/reprovision/status
+
+Get current reprovisioning status.
+
+Response:
+```json
+{
+  "in_progress": false,
+  "status": "idle",
+  "message": null,
+  "timestamp": null,
+  "total_engines": 0,
+  "engines_stopped": 0,
+  "engines_provisioned": 0,
+  "current_engine_id": null,
+  "current_phase": null
+}
+```
+
+**Status Values:**
+- `idle`: No reprovisioning in progress
+- `in_progress`: Reprovisioning currently running
+- `success`: Last reprovisioning completed successfully
+- `error`: Last reprovisioning failed
+
+**Phases:**
+- `preparing`: Initial phase
+- `stopping`: Stopping existing engines
+- `cleaning`: Cleaning up state
+- `provisioning`: Provisioning new engines
+- `complete`: Reprovisioning completed
+- `error`: Error occurred
+
+## Template Management
+
+The orchestrator supports 10 template slots for saving and managing custom engine variant configurations.
+
+### GET /custom-variant/templates
+
+List all template slots with metadata.
+
+Response:
+```json
+{
+  "templates": [
+    {
+      "slot_id": 1,
+      "name": "My Template",
+      "exists": true
+    },
+    {
+      "slot_id": 2,
+      "name": "Template 2",
+      "exists": false
+    }
+  ],
+  "active_template_id": 1
+}
+```
+
+### GET /custom-variant/templates/{slot_id}
+
+Get a specific template by slot ID (1-10).
+
+Response:
+```json
+{
+  "slot_id": 1,
+  "name": "My Template",
+  "config": {
+    "enabled": true,
+    "platform": "amd64",
+    "parameters": [...]
+  }
+}
+```
+
+### POST /custom-variant/templates/{slot_id} (protected)
+
+Save a template to a specific slot (1-10).
+
+**Headers:**
+- `X-API-KEY`: API key for authentication
+
+Body:
+```json
+{
+  "name": "My Template",
+  "config": {
+    "enabled": true,
+    "platform": "amd64",
+    "parameters": [...]
+  }
+}
+```
+
+### DELETE /custom-variant/templates/{slot_id} (protected)
+
+Delete a template from a specific slot. Cannot delete the currently active template.
+
+**Headers:**
+- `X-API-KEY`: API key for authentication
+
+### PATCH /custom-variant/templates/{slot_id}/rename (protected)
+
+Rename a template.
+
+**Headers:**
+- `X-API-KEY`: API key for authentication
+
+Body:
+```json
+{
+  "name": "New Template Name"
+}
+```
+
+### POST /custom-variant/templates/{slot_id}/activate (protected)
+
+Activate a template (load it as current config).
+
+**Headers:**
+- `X-API-KEY`: API key for authentication
+
+Response:
+```json
+{
+  "message": "Template 'My Template' activated successfully",
+  "template_id": 1,
+  "template_name": "My Template"
+}
+```
+
+### GET /custom-variant/templates/{slot_id}/export
+
+Export a template as JSON file.
+
+Response: JSON file download with template data
+
+### POST /custom-variant/templates/{slot_id}/import (protected)
+
+Import a template from JSON.
+
+**Headers:**
+- `X-API-KEY`: API key for authentication
+
+Body:
+```json
+{
+  "json_data": "{\"slot_id\": 1, \"name\": \"Imported\", \"config\": {...}}"
+}
+```
+
+
+## Event Logging
+
+The event logging system tracks significant operational events for transparency and traceability.
+
+### GET /events
+
+Retrieve application events with optional filtering and pagination.
+
+**Query Parameters:**
+- `limit` (int, optional): Maximum number of events to return (1-1000, default: 100)
+- `offset` (int, optional): Pagination offset (default: 0)
+- `event_type` (string, optional): Filter by event type - one of: `engine`, `stream`, `vpn`, `health`, `system`
+- `category` (string, optional): Filter by category (e.g., "created", "deleted", "started", "ended", "failed", "recovered")
+- `container_id` (string, optional): Filter by container ID
+- `stream_id` (string, optional): Filter by stream ID
+- `since` (datetime, optional): Only return events after this timestamp (ISO 8601 format)
+
+Response:
+```json
+[
+  {
+    "id": 123,
+    "timestamp": "2025-11-21T12:18:47.502472",
+    "event_type": "health",
+    "category": "warning",
+    "message": "High proportion of unhealthy engines: 1/1 (>30%)",
+    "details": {
+      "unhealthy_count": 1,
+      "total_engines": 1,
+      "percentage": 100.0
+    },
+    "container_id": null,
+    "stream_id": null
+  }
+]
+```
+
+**Event Types:**
+- `engine`: Engine provisioning, deletion, and lifecycle events
+- `stream`: Stream start and end events
+- `vpn`: VPN connection, disconnection, and recovery events
+- `health`: Health check warnings and failures
+- `system`: Auto-scaling and system-level events
+
+**Common Categories:**
+- `created`, `deleted`: Resource lifecycle
+- `started`, `ended`: Operation lifecycle
+- `connected`, `disconnected`: Connection states
+- `failed`, `recovered`: Failure and recovery
+- `warning`: Warning conditions
+- `scaling`: Auto-scaling operations
+
+### GET /events/stats
+
+Get statistics about logged events.
+
+Response:
+```json
+{
+  "total": 15,
+  "by_type": {
+    "engine": 1,
+    "stream": 1,
+    "vpn": 1,
+    "health": 8,
+    "system": 4
+  },
+  "oldest": "2025-11-21T12:17:45.677028",
+  "newest": "2025-11-21T12:18:47.502472"
+}
+```
+
+### POST /events/cleanup (protected)
+
+Manually trigger cleanup of old events.
+
+**Headers:**
+- `X-API-KEY`: API key for authentication
+
+**Query Parameters:**
+- `max_age_days` (int, optional): Delete events older than this many days (default: 30, minimum: 1)
+
+Response:
+```json
+{
+  "deleted": 42,
+  "message": "Cleaned up 42 events older than 30 days"
+}
+```
+
+**Note:** Events are also automatically cleaned up when the total count exceeds 10,000 or when events are older than 30 days.

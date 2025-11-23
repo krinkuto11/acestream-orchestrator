@@ -119,8 +119,10 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       const data = await fetchJSON(`${orchUrl}/custom-variant/templates`)
       setTemplates(data.templates)
       setActiveTemplateId(data.active_template_id)
+      return data  // Return data for immediate use
     } catch (err) {
       console.error('Failed to load templates:', err)
+      return null
     }
   }, [orchUrl, fetchJSON])
 
@@ -259,7 +261,30 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         setShowReprovisionWarning(true)
       }
       
-      await fetchTemplates()
+      // Refresh templates to get updated state
+      const updatedTemplates = await fetchTemplates()
+      
+      // If no other template exists (this is the first one), auto-activate it
+      if (updatedTemplates) {
+        const otherTemplates = updatedTemplates.templates.filter(t => t.exists && t.slot_id !== editingTemplateSlot)
+        
+        if (otherTemplates.length === 0 && !updatedTemplates.active_template_id) {
+          try {
+            await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}/activate`, {
+              method: 'POST',
+              headers: {
+                'X-API-KEY': apiKey
+              }
+            })
+            toast.success(`Template ${editingTemplateSlot} automatically activated as the first template`)
+            await fetchConfig()
+            await fetchTemplates()
+          } catch (err) {
+            console.error('Failed to auto-activate template:', err)
+          }
+        }
+      }
+      
       setEditingTemplateSlot(null)
       setTemplateName('')
     } catch (err) {
@@ -267,17 +292,36 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     } finally {
       setSaving(false)
     }
-  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, activeTemplateId, fetchJSON, fetchTemplates])
+  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, activeTemplateId, fetchJSON, fetchTemplates, fetchConfig])
 
   // Save configuration (kept for backward compatibility, now just calls platform save)
   const handleSave = useCallback(async () => {
     await handleSavePlatformConfig()
   }, [handleSavePlatformConfig])
 
+  // Helper function to save current template
+  const saveCurrentTemplate = useCallback(async () => {
+    if (!editingTemplateSlot || !templateName) {
+      return
+    }
+    
+    await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-KEY': apiKey
+      },
+      body: JSON.stringify({
+        name: templateName,
+        config: config
+      })
+    })
+  }, [orchUrl, apiKey, config, templateName, editingTemplateSlot, fetchJSON])
+
   // Reprovision all engines
   const handleReprovision = useCallback(async () => {
     if (!window.confirm(
-      'This will delete ALL engines and recreate them with the new settings. ' +
+      'This will save all settings and delete ALL engines and recreate them with the new settings. ' +
       'All active streams will be interrupted. Are you sure?'
     )) {
       return
@@ -288,15 +332,19 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       setShowReprovisionWarning(false)  // Clear warning when reprovisioning
       
       // First, save the current config before reprovisioning
-      if (config && config.enabled) {
-        await fetchJSON(`${orchUrl}/custom-variant/config`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-API-KEY': apiKey
-          },
-          body: JSON.stringify(config)
-        })
+      await fetchJSON(`${orchUrl}/custom-variant/config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': apiKey
+        },
+        body: JSON.stringify(config)
+      })
+      
+      // If editing a template, save it as well
+      if (editingTemplateSlot) {
+        await saveCurrentTemplate()
+        toast.success(`Template ${editingTemplateSlot} saved before reprovisioning`)
       }
       
       await fetchJSON(`${orchUrl}/custom-variant/reprovision`, {
@@ -306,7 +354,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         }
       })
       
-      toast.success('Reprovisioning started. Engines will be recreated shortly.')
+      toast.success('Settings saved. Reprovisioning started. Engines will be recreated shortly.')
       
       // Start polling for status
       await checkReprovisionStatus()
@@ -318,7 +366,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       }
       setReprovisioning(false)
     }
-  }, [orchUrl, apiKey, config, fetchJSON, checkReprovisionStatus])
+  }, [orchUrl, apiKey, config, editingTemplateSlot, saveCurrentTemplate, fetchJSON, checkReprovisionStatus])
 
   // Template management functions
   const handleSaveAsTemplate = useCallback(async (slotId, name) => {
@@ -364,10 +412,15 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       toast.success(response.message)
       await fetchConfig()
       await fetchTemplates()
+      
+      // If custom variant is disabled, automatically enable it after loading template
+      if (config && !config.enabled) {
+        setConfig(prev => ({ ...prev, enabled: true }))
+      }
     } catch (err) {
       toast.error(`Failed to load template: ${err.message}`)
     }
-  }, [orchUrl, apiKey, fetchJSON, fetchConfig, fetchTemplates])
+  }, [orchUrl, apiKey, fetchJSON, fetchConfig, fetchTemplates, config])
 
   const handleDeleteTemplate = useCallback(async (slotId) => {
     if (!window.confirm('Are you sure you want to delete this template?')) {
@@ -601,7 +654,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             className="flex items-center gap-2"
           >
             <RefreshCw className={reprovisioning ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-            {reprovisioning ? 'Reprovisioning...' : 'Reprovision All Engines'}
+            {reprovisioning ? 'Reprovisioning...' : 'Save & Reprovision All Engines'}
           </Button>
         </div>
       </div>
@@ -662,7 +715,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                   }
                 }
               }}
-              disabled={!templates.some(t => t.exists)}
+              disabled={!templates.some(t => t.exists) || editingTemplateSlot !== null}
             />
           </div>
 
@@ -696,6 +749,23 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             </div>
           )}
 
+          {/* Memory Limit Configuration */}
+          <div className="space-y-2">
+            <Label htmlFor="memory-limit">Engine Memory Limit (Optional)</Label>
+            <Input
+              id="memory-limit"
+              type="text"
+              value={config.memory_limit || ''}
+              onChange={(e) => setConfig(prev => ({ ...prev, memory_limit: e.target.value }))}
+              placeholder="e.g., 512m, 2g, 1024m"
+            />
+            <p className="text-xs text-muted-foreground">
+              Set Docker memory limit for engine containers. Leave empty for unlimited.
+              Valid formats: number with suffix (b, k, m, g). Examples: '512m', '2g', '1024m'.
+              Minimum: 32m. This applies to all engine types when set.
+            </p>
+          </div>
+
           {!config.enabled && (
             <Alert>
               <Info className="h-4 w-4" />
@@ -719,15 +789,16 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         </CardContent>
       </Card>
 
-      {/* Template Management */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Template Management</CardTitle>
-          <CardDescription>
-            Save and load custom variant configurations as templates (10 slots available)
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      {/* Template Management - Only show when custom variant is enabled */}
+      {config.enabled && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Template Management</CardTitle>
+            <CardDescription>
+              Save and load custom variant configurations as templates (10 slots available)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
           {/* Reprovision Warning */}
           {showReprovisionWarning && (
             <Alert variant="destructive">
@@ -930,6 +1001,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Parameters - Only shown when editing a template */}
       {editingTemplateSlot && (

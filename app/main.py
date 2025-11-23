@@ -19,8 +19,9 @@ from .services.health_monitor import health_monitor
 from .services.health_manager import health_manager
 from .services.inspect import inspect_container, ContainerNotFound
 from .services.state import state, load_state_from_db, cleanup_on_shutdown
-from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot
+from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot, EventLog
 from .services.collector import collector
+from .services.event_logger import event_logger
 from .services.stream_cleanup import stream_cleanup
 from .services.monitor import docker_monitor
 from .services.metrics import update_custom_metrics
@@ -29,6 +30,9 @@ from .services.db import engine
 from .models.db_models import Base
 from .services.reindex import reindex_existing
 from .services.gluetun import gluetun_monitor
+from .services.docker_stats import get_container_stats, get_multiple_container_stats, get_total_stats
+from .services.docker_stats_collector import docker_stats_collector
+from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_cache, get_cache
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +115,12 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(docker_monitor.start())  # Start Docker monitoring
     asyncio.create_task(health_monitor.start())  # Start health monitoring  
     asyncio.create_task(health_manager.start())  # Start proactive health management
+    asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
+    
+    # Start cache cleanup task
+    await start_cleanup_task(interval=60)
+    logger.info("Cache service started")
     
     yield
     
@@ -121,7 +130,9 @@ async def lifespan(app: FastAPI):
     await docker_monitor.stop()  # Stop Docker monitoring
     await health_monitor.stop()  # Stop health monitoring
     await health_manager.stop()  # Stop health management
+    await docker_stats_collector.stop()  # Stop Docker stats collector
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
+    await stop_cleanup_task()  # Stop cache cleanup
     
     # Give a small delay to ensure any pending operations complete
     await asyncio.sleep(0.1)
@@ -174,6 +185,40 @@ if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
 else:
     logger.warning(f"Panel directory {panel_dir} not found. /panel endpoint will not be available.")
 
+# Favicon routes - serve favicon files at root level for browser default requests
+if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
+    def serve_favicon(filename: str):
+        """Helper function to serve favicon files from panel directory."""
+        favicon_path = os.path.join(panel_dir, filename)
+        if os.path.exists(favicon_path):
+            return FileResponse(favicon_path)
+        raise HTTPException(status_code=404, detail="Not Found")
+    
+    @app.get("/favicon.ico")
+    async def get_favicon_ico():
+        """Serve favicon.ico at root level."""
+        return serve_favicon("favicon.ico")
+    
+    @app.get("/favicon.svg")
+    async def get_favicon_svg():
+        """Serve favicon.svg at root level."""
+        return serve_favicon("favicon.svg")
+    
+    @app.get("/favicon-96x96.png")
+    async def get_favicon_96():
+        """Serve favicon-96x96.png at root level."""
+        return serve_favicon("favicon-96x96.png")
+    
+    @app.get("/favicon-96x96-dark.png")
+    async def get_favicon_96_dark():
+        """Serve favicon-96x96-dark.png at root level."""
+        return serve_favicon("favicon-96x96-dark.png")
+    
+    @app.get("/apple-touch-icon.png")
+    async def get_apple_touch_icon():
+        """Serve apple-touch-icon.png at root level."""
+        return serve_favicon("apple-touch-icon.png")
+
 # Prometheus metrics endpoint with custom aggregated metrics
 from starlette.responses import Response
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
@@ -194,6 +239,14 @@ def get_metrics():
 @app.post("/provision", dependencies=[Depends(require_api_key)])
 def provision(req: StartRequest):
     result = start_container(req)
+    # Log engine provisioning
+    event_logger.log_event(
+        event_type="engine",
+        category="created",
+        message=f"Engine provisioned: {result.get('container_id', 'unknown')[:12]}",
+        details={"image": req.image, "labels": req.labels or {}},
+        container_id=result.get("container_id")
+    )
     return result
 
 @app.post("/provision/acestream", response_model=AceProvisionResponse, dependencies=[Depends(require_api_key)])
@@ -299,6 +352,24 @@ def provision_acestream(req: AceProvisionRequest):
     except Exception as e:
         logger.error(f"Failed to reindex after provisioning: {e}")
     
+    # Invalidate cache after provisioning
+    invalidate_cache("orchestrator:status")
+    # Note: docker_stats_collector will automatically detect and collect stats for new engines
+    
+    # Log successful engine provisioning
+    event_logger.log_event(
+        event_type="engine",
+        category="created",
+        message=f"AceStream engine provisioned on port {response.host_http_port}",
+        details={
+            "image": req.image or "default",
+            "host_http_port": response.host_http_port,
+            "container_http_port": response.container_http_port,
+            "labels": req.labels or {}
+        },
+        container_id=response.container_id
+    )
+    
     return response
 
 @app.post("/scale/{demand}", dependencies=[Depends(require_api_key)])
@@ -313,7 +384,19 @@ def garbage_collect():
 
 @app.delete("/containers/{container_id}", dependencies=[Depends(require_api_key)])
 def delete(container_id: str):
+    # Log engine deletion
+    event_logger.log_event(
+        event_type="engine",
+        category="deleted",
+        message=f"Engine deleted: {container_id[:12]}",
+        container_id=container_id
+    )
     stop_container(container_id)
+    
+    # Invalidate cache after stopping container
+    invalidate_cache("orchestrator:status")
+    # Note: docker_stats_collector will automatically detect removed engines and stop collecting their stats
+    
     return {"deleted": container_id}
 
 @app.get("/containers/{container_id}")
@@ -326,11 +409,41 @@ def get_container(container_id: str):
 # Events
 @app.post("/events/stream_started", response_model=StreamState, dependencies=[Depends(require_api_key)])
 def ev_stream_started(evt: StreamStartedEvent):
-    return state.on_stream_started(evt)
+    result = state.on_stream_started(evt)
+    # Log stream start event
+    event_logger.log_event(
+        event_type="stream",
+        category="started",
+        message=f"Stream started: {evt.stream.key_type}={evt.stream.key[:16]}...",
+        details={
+            "key_type": evt.stream.key_type,
+            "key": evt.stream.key,
+            "engine_port": evt.engine.port,
+            "is_live": bool(evt.session.is_live)
+        },
+        container_id=evt.container_id,
+        stream_id=result.id
+    )
+    return result
 
 @app.post("/events/stream_ended", dependencies=[Depends(require_api_key)])
 def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
     st = state.on_stream_ended(evt)
+    # Log stream end event
+    if st:
+        event_logger.log_event(
+            event_type="stream",
+            category="ended",
+            message=f"Stream ended: {st.id[:16]}... (reason: {evt.reason or 'unknown'})",
+            details={
+                "reason": evt.reason,
+                "key_type": st.key_type,
+                "key": st.key
+            },
+            container_id=st.container_id,
+            stream_id=st.id
+        )
+    
     if cfg.AUTO_DELETE and st:
         def _auto():
             cid = st.container_id
@@ -485,6 +598,29 @@ def get_engine(container_id: str):
     streams = state.list_streams(status="started", container_id=container_id)
     return {"engine": eng, "streams": streams}
 
+@app.get("/engines/stats/all")
+def get_all_engine_stats():
+    """Get Docker stats for all engines from background collector (instant response)."""
+    # Return cached stats from background collector
+    stats = docker_stats_collector.get_all_stats()
+    return stats
+
+@app.get("/engines/stats/total")
+def get_total_engine_stats():
+    """Get aggregated Docker stats across all engines from background collector (instant response)."""
+    # Get stats from background collector - no cache needed as collector maintains fresh data
+    total_stats = docker_stats_collector.get_total_stats()
+    return total_stats
+
+@app.get("/engines/{container_id}/stats")
+def get_engine_stats(container_id: str):
+    """Get Docker stats for a specific engine from background collector (instant response)."""
+    # Get stats from background collector
+    stats = docker_stats_collector.get_engine_stats(container_id)
+    if not stats:
+        raise HTTPException(status_code=404, detail="Container not found or stats unavailable")
+    return stats
+
 @app.get("/streams", response_model=List[StreamState])
 def get_streams(status: Optional[str] = Query("started", pattern="^(started|ended)$"), container_id: Optional[str] = None):
     """Get streams. By default, only returns started streams. Use status=ended to see ended streams."""
@@ -597,13 +733,27 @@ def by_label(key: str, value: str):
 @app.get("/vpn/status")
 async def get_vpn_status_endpoint():
     """
-    Get VPN (Gluetun) status information with location data.
+    Get VPN (Gluetun) status information with location data (cached for 3 seconds).
     
     Location data (provider, country, city, region) is now obtained directly from:
     - Provider: VPN_SERVICE_PROVIDER docker environment variable
     - Location: Gluetun's /v1/publicip/ip endpoint
     """
+    # Use cache to avoid expensive VPN status checks on every poll
+    cache = get_cache()
+    cache_key = "vpn:status"
+    
+    # Try to get from cache
+    cached_value = cache.get(cache_key)
+    if cached_value is not None:
+        return cached_value
+    
+    # Cache miss - fetch VPN status
     vpn_status = get_vpn_status()
+    
+    # Cache for 3 seconds
+    cache.set(cache_key, vpn_status, ttl=3.0)
+    
     return vpn_status
 
 @app.get("/vpn/publicip")
@@ -631,12 +781,22 @@ def reset_circuit_breaker(operation_type: Optional[str] = None):
 @app.get("/orchestrator/status")
 def get_orchestrator_status():
     """
-    Get comprehensive orchestrator status for proxy integration.
+    Get comprehensive orchestrator status for proxy integration (cached for 2 seconds).
     This endpoint provides all the information a proxy needs to understand
     the orchestrator's current state including VPN, provisioning, and health status.
     
     Enhanced to provide detailed provisioning status with recovery guidance.
     """
+    # Use cache to avoid expensive status aggregation on every poll
+    cache = get_cache()
+    cache_key = "orchestrator:status"
+    
+    # Try to get from cache
+    cached_value = cache.get(cache_key)
+    if cached_value is not None:
+        return cached_value
+    
+    # Cache miss - compute orchestrator status
     from .services.replica_validator import replica_validator
     from .services.circuit_breaker import circuit_breaker_manager
     
@@ -728,7 +888,7 @@ def get_orchestrator_status():
     else:
         overall_status = "healthy"
     
-    return {
+    result = {
         "status": overall_status,
         "engines": {
             "total": len(engines),
@@ -769,6 +929,11 @@ def get_orchestrator_status():
         },
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+    
+    # Cache for 2 seconds (UI polls every 5s)
+    cache.set(cache_key, result, ttl=2.0)
+    
+    return result
 
 # Custom Engine Variant endpoints
 from .services.custom_variant_config import (
@@ -1139,5 +1304,70 @@ def import_template_endpoint(slot_id: int, request: dict):
         raise HTTPException(status_code=400, detail=error_msg)
     
     return {"message": f"Template {slot_id} imported successfully"}
+
+# Event Logging Endpoints
+@app.get("/events", response_model=List[EventLog])
+def get_events(
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of events to return"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    event_type: Optional[str] = Query(None, description="Filter by event type (engine, stream, vpn, health, system)"),
+    category: Optional[str] = Query(None, description="Filter by category"),
+    container_id: Optional[str] = Query(None, description="Filter by container ID"),
+    stream_id: Optional[str] = Query(None, description="Filter by stream ID"),
+    since: Optional[datetime] = Query(None, description="Only return events after this timestamp")
+):
+    """
+    Retrieve application events with optional filtering.
+    Events are returned in reverse chronological order (newest first).
+    """
+    events = event_logger.get_events(
+        limit=limit,
+        offset=offset,
+        event_type=event_type,
+        category=category,
+        container_id=container_id,
+        stream_id=stream_id,
+        since=since
+    )
+    
+    # Convert EventRow to EventLog schema
+    return [
+        EventLog(
+            id=e.id,
+            timestamp=e.timestamp if e.timestamp.tzinfo else e.timestamp.replace(tzinfo=timezone.utc),
+            event_type=e.event_type,
+            category=e.category,
+            message=e.message,
+            details=e.details or {},
+            container_id=e.container_id,
+            stream_id=e.stream_id
+        )
+        for e in events
+    ]
+
+@app.get("/events/stats")
+def get_event_stats():
+    """Get statistics about logged events."""
+    return event_logger.get_event_stats()
+
+@app.post("/events/cleanup", dependencies=[Depends(require_api_key)])
+def cleanup_events(max_age_days: int = Query(30, ge=1, description="Delete events older than this many days")):
+    """Manually trigger cleanup of old events."""
+    deleted = event_logger.cleanup_old_events(max_age_days)
+    return {"deleted": deleted, "message": f"Cleaned up {deleted} events older than {max_age_days} days"}
+
+# Cache statistics endpoint
+@app.get("/cache/stats")
+def get_cache_stats():
+    """Get cache statistics for monitoring and debugging."""
+    cache = get_cache()
+    return cache.get_stats()
+
+@app.post("/cache/clear", dependencies=[Depends(require_api_key)])
+def clear_cache():
+    """Manually clear all cache entries."""
+    cache = get_cache()
+    cache.clear()
+    return {"message": "Cache cleared successfully"}
 
 # WebSocket endpoint removed - using simple polling approach

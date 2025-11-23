@@ -10,7 +10,8 @@ import {
   ShieldCheck,
   ChevronLeft,
   ChevronRight,
-  Sliders
+  Sliders,
+  FileText
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
@@ -20,6 +21,7 @@ const navigation = [
   { name: 'Overview', href: '/', icon: LayoutDashboard },
   { name: 'Engines', href: '/engines', icon: Server },
   { name: 'Streams', href: '/streams', icon: Activity },
+  { name: 'Events', href: '/events', icon: FileText },
   { name: 'Health', href: '/health', icon: ShieldCheck },
   { name: 'VPN', href: '/vpn', icon: Wifi },
   { name: 'Metrics', href: '/metrics', icon: BarChart3 },
@@ -50,14 +52,18 @@ export function ModernSidebar() {
       collapsed ? "w-16" : "w-64"
     )}>
       {/* Logo */}
-      <div className="flex h-16 items-center border-b px-4">
+      <div className="flex h-16 items-center border-b px-4 gap-2">
         {!collapsed && (
-          <h1 className="text-lg font-bold text-primary truncate">
-            AceStream Orchestrator
-          </h1>
+          <>
+            <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8" />
+            <h1 className="text-lg font-bold text-primary leading-tight">
+              <span className="block">AceStream</span>
+              <span className="block">Orchestrator</span>
+            </h1>
+          </>
         )}
         {collapsed && (
-          <span className="text-lg font-bold text-primary">AO</span>
+          <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8" />
         )}
       </div>
 

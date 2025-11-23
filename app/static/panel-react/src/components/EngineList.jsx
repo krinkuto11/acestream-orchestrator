@@ -1,14 +1,16 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Trash2, AlertTriangle, Activity, ChevronDown, ChevronUp } from 'lucide-react'
-import { timeAgo, formatTime } from '../utils/formatters'
+import { Trash2, AlertTriangle, Activity, ChevronDown, ChevronUp, Cpu, MemoryStick, Network, HardDrive } from 'lucide-react'
+import { timeAgo, formatTime, formatBytes } from '../utils/formatters'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Progress } from '@/components/ui/progress'
 
-function EngineCard({ engine, onDelete, showVpnLabel = false }) {
+function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
   const [isOpen, setIsOpen] = useState(false)
+  const [stats, setStats] = useState(null)
   
   const healthColors = {
     healthy: 'success',
@@ -18,6 +20,29 @@ function EngineCard({ engine, onDelete, showVpnLabel = false }) {
   
   const healthStatus = engine.health_status || 'unknown'
   const healthVariant = healthColors[healthStatus] || 'outline'
+
+  // Fetch Docker stats continuously (not just when expanded)
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const response = await fetch(`${orchUrl}/engines/${engine.container_id}/stats`)
+        if (response.ok) {
+          const data = await response.json()
+          setStats(data)
+        }
+      } catch (err) {
+        console.error('Failed to fetch engine stats:', err)
+      }
+    }
+    
+    // Fetch immediately
+    fetchStats()
+    
+    // Refresh stats every 3 seconds
+    const interval = setInterval(fetchStats, 3000)
+    
+    return () => clearInterval(interval)
+  }, [engine.container_id, orchUrl])
 
   return (
     <Card className="mb-3 hover:bg-accent/5 transition-colors">
@@ -71,12 +96,45 @@ function EngineCard({ engine, onDelete, showVpnLabel = false }) {
             <p className="text-sm font-medium">{timeAgo(engine.last_stream_usage)}</p>
           </div>
           {engine.last_health_check && (
-            <div className="col-span-2">
+            <div>
               <p className="text-xs text-muted-foreground">Last Health Check</p>
               <p className="text-sm font-medium">{formatTime(engine.last_health_check)}</p>
             </div>
           )}
         </div>
+
+        {/* Docker Stats Section - Always visible in main block */}
+        {stats && (
+          <div className="border-t pt-3 mb-3">
+            <div className="space-y-2">
+              {/* CPU */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Cpu className="h-3 w-3" />
+                    CPU
+                  </span>
+                  <span className="text-xs font-medium">{stats.cpu_percent.toFixed(1)}%</span>
+                </div>
+                <Progress value={Math.min(stats.cpu_percent, 100)} className="h-1.5" />
+              </div>
+              
+              {/* Memory */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                    <MemoryStick className="h-3 w-3" />
+                    Memory
+                  </span>
+                  <span className="text-xs font-medium">
+                    {formatBytes(stats.memory_usage)} ({stats.memory_percent.toFixed(1)}%)
+                  </span>
+                </div>
+                <Progress value={stats.memory_percent} className="h-1.5" />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Collapsible details section */}
         <Collapsible open={isOpen} onOpenChange={setIsOpen}>
@@ -101,7 +159,7 @@ function EngineCard({ engine, onDelete, showVpnLabel = false }) {
           </CollapsibleTrigger>
           <CollapsibleContent className="pt-3">
             <div className="border-t pt-3">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 mb-4">
                 {engine.platform && (
                   <div>
                     <p className="text-xs text-muted-foreground">Platform</p>
@@ -121,6 +179,44 @@ function EngineCard({ engine, onDelete, showVpnLabel = false }) {
                   </div>
                 )}
               </div>
+              
+              {/* Extended Docker Stats Section - Network and Block I/O */}
+              {stats && (
+                <div className="border-t pt-3">
+                  <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                    <Activity className="h-4 w-4" />
+                    Extended Stats
+                  </h4>
+                  
+                  <div className="space-y-3">
+                    {/* Network I/O */}
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Network className="h-3 w-3" />
+                          Network I/O
+                        </span>
+                        <span className="text-xs font-medium">
+                          ↓ {formatBytes(stats.network_rx_bytes)} / ↑ {formatBytes(stats.network_tx_bytes)}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    {/* Block I/O */}
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground flex items-center gap-1">
+                          <HardDrive className="h-3 w-3" />
+                          Block I/O
+                        </span>
+                        <span className="text-xs font-medium">
+                          Read: {formatBytes(stats.block_read_bytes)} / Write: {formatBytes(stats.block_write_bytes)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </CollapsibleContent>
         </Collapsible>
@@ -129,7 +225,7 @@ function EngineCard({ engine, onDelete, showVpnLabel = false }) {
   )
 }
 
-function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode }) {
+function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode, orchUrl }) {
   const isEmergencyFailed = emergencyMode?.active && emergencyMode?.failed_vpn === vpnName
   
   return (
@@ -172,6 +268,7 @@ function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode }) {
             engine={engine}
             onDelete={onDeleteEngine}
             showVpnLabel={false}
+            orchUrl={orchUrl}
           />
         ))
       )}
@@ -179,7 +276,7 @@ function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode }) {
   )
 }
 
-function EngineList({ engines, onDeleteEngine, vpnStatus }) {
+function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
   const isRedundantMode = vpnStatus?.mode === 'redundant'
   const emergencyMode = vpnStatus?.emergency_mode
   
@@ -216,6 +313,7 @@ function EngineList({ engines, onDeleteEngine, vpnStatus }) {
               engines={enginesByVpn[vpn1Name]}
               onDeleteEngine={onDeleteEngine}
               emergencyMode={emergencyMode}
+              orchUrl={orchUrl}
             />
           )}
           
@@ -226,6 +324,7 @@ function EngineList({ engines, onDeleteEngine, vpnStatus }) {
               engines={enginesByVpn[vpn2Name]}
               onDeleteEngine={onDeleteEngine}
               emergencyMode={emergencyMode}
+              orchUrl={orchUrl}
             />
           )}
         </div>
@@ -250,6 +349,7 @@ function EngineList({ engines, onDeleteEngine, vpnStatus }) {
             engine={engine}
             onDelete={onDeleteEngine}
             showVpnLabel={false}
+            orchUrl={orchUrl}
           />
         ))
       )}
