@@ -30,6 +30,11 @@ Gluetun VPN Integration:
 - `VPN_RESTART_ENGINES_ON_RECONNECT=true` If `true`, restarts engines assigned to a VPN when it reconnects after a disconnection.
 - `VPN_UNHEALTHY_RESTART_TIMEOUT_S=60` Force restart VPN container after being unhealthy for this many seconds. Defaults to 60.
 
+Acexy Proxy Integration:
+- `ACEXY_ENABLED=false` Enable bidirectional communication with Acexy proxy. When enabled, the orchestrator syncs with Acexy to detect and clean up stale streams that may not have been properly stopped.
+- `ACEXY_URL=` URL of the Acexy proxy API (e.g., `http://acexy:8080`). Required when `ACEXY_ENABLED=true`.
+- `ACEXY_SYNC_INTERVAL_S=30` How often to sync with Acexy to detect stale streams (in seconds). Defaults to 30.
+
 Ports:
 - `PORT_RANGE_HOST=19000-19999` available host ports.
 - `ACE_HTTP_RANGE=40000-44999` internal ports for `--http-port`.

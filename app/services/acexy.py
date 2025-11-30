@@ -78,6 +78,10 @@ class AcexyClient:
         """Get the last known health status."""
         return self._healthy
     
+    def get_last_health_check(self) -> Optional[datetime]:
+        """Get the timestamp of the last health check."""
+        return self._last_health_check
+    
     async def get_streams(self) -> Optional[List[AcexyStream]]:
         """
         Fetch streams from Acexy's /ace/streams endpoint.
@@ -286,11 +290,17 @@ class AcexySyncService:
     
     def get_status(self) -> Dict:
         """Get the status of the Acexy sync service."""
+        last_health_check = None
+        if self._client:
+            check_time = self._client.get_last_health_check()
+            if check_time:
+                last_health_check = check_time.isoformat()
+        
         return {
             "enabled": cfg.ACEXY_ENABLED,
             "url": cfg.ACEXY_URL if cfg.ACEXY_ENABLED else None,
             "healthy": self._client.is_healthy() if self._client else None,
-            "last_health_check": self._client._last_health_check.isoformat() if self._client and self._client._last_health_check else None,
+            "last_health_check": last_health_check,
             "sync_interval_seconds": cfg.ACEXY_SYNC_INTERVAL_S
         }
 
