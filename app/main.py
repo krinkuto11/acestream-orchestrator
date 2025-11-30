@@ -33,6 +33,7 @@ from .services.gluetun import gluetun_monitor
 from .services.docker_stats import get_container_stats, get_multiple_container_stats, get_total_stats
 from .services.docker_stats_collector import docker_stats_collector
 from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_cache, get_cache
+from .services.acexy import acexy_sync_service
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(health_monitor.start())  # Start health monitoring  
     asyncio.create_task(health_manager.start())  # Start proactive health management
     asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
+    asyncio.create_task(acexy_sync_service.start())  # Start Acexy sync service
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
     # Start cache cleanup task
@@ -132,6 +134,7 @@ async def lifespan(app: FastAPI):
     await health_manager.stop()  # Stop health management
     await docker_stats_collector.stop()  # Stop Docker stats collector
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
+    await acexy_sync_service.stop()  # Stop Acexy sync service
     await stop_cleanup_task()  # Stop cache cleanup
     
     # Give a small delay to ensure any pending operations complete
@@ -771,6 +774,19 @@ def get_health_status_endpoint():
     """Get detailed health status and management information."""
     return health_manager.get_health_summary()
 
+@app.get("/acexy/status")
+def get_acexy_status_endpoint():
+    """
+    Get Acexy proxy integration status.
+    
+    Returns information about the Acexy sync service including:
+    - Whether Acexy integration is enabled
+    - Acexy URL being used
+    - Health status of Acexy connection
+    - Sync interval configuration
+    """
+    return acexy_sync_service.get_status()
+
 @app.post("/health/circuit-breaker/reset", dependencies=[Depends(require_api_key)])
 def reset_circuit_breaker(operation_type: Optional[str] = None):
     """Reset circuit breakers (for manual intervention)."""
@@ -921,6 +937,7 @@ def get_orchestrator_status():
             "blocked_reason": blocked_reason,
             "blocked_reason_details": blocked_reason_details
         },
+        "acexy": acexy_sync_service.get_status(),
         "config": {
             "auto_delete": cfg.AUTO_DELETE,
             "grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
