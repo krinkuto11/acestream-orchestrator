@@ -306,6 +306,14 @@ class VpnContainerMonitor:
                 else:
                     logger.warning(f"No port forwarding info from '{self.container_name}'")
                     return None
+        except httpx.HTTPStatusError as e:
+            # 401 error means port forwarding is not supported by this VPN config
+            # This is normal and expected for some VPN providers - don't log as error
+            if e.response.status_code == 401:
+                logger.info(f"Port forwarding not supported by VPN config for '{self.container_name}' (401 Unauthorized)")
+                return None
+            logger.error(f"Failed to get forwarded port from '{self.container_name}': {e}")
+            return None
         except Exception as e:
             logger.error(f"Failed to get forwarded port from '{self.container_name}': {e}")
             return None
@@ -901,6 +909,14 @@ def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[in
             else:
                 logger.warning(f"No port forwarding information available from '{target_container}'")
                 return None
+    except httpx.HTTPStatusError as e:
+        # 401 error means port forwarding is not supported by this VPN config
+        # This is normal and expected for some VPN providers - don't log as error
+        if e.response.status_code == 401:
+            logger.info(f"Port forwarding not supported by VPN config for '{target_container}' (401 Unauthorized)")
+            return None
+        logger.error(f"Failed to get forwarded port from '{target_container}': {e}")
+        return None
     except Exception as e:
         logger.error(f"Failed to get forwarded port from '{target_container}': {e}")
         return None
