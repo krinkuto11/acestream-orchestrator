@@ -152,6 +152,26 @@ Response:
    - Provides all information a proxy needs including VPN, provisioning, and health status
    - Includes detailed provisioning status with recovery guidance
    - Returns capacity information, circuit breaker state, and system configuration
+   - Now includes Acexy sync status in the response
+
+ - GET /acexy/status → Acexy proxy integration status
+   - Returns information about the Acexy sync service
+   ```json
+   {
+     "enabled": true,
+     "url": "http://acexy:8080",
+     "healthy": true,
+     "last_health_check": "2025-11-30T18:00:00.000000+00:00",
+     "sync_interval_seconds": 30
+   }
+   ```
+   
+   **Fields:**
+   - `enabled`: Whether Acexy integration is enabled (ACEXY_ENABLED config)
+   - `url`: URL of the Acexy proxy API (ACEXY_URL config)
+   - `healthy`: Whether Acexy is responding to health checks (null if never checked)
+   - `last_health_check`: ISO8601 timestamp of last health check
+   - `sync_interval_seconds`: How often the orchestrator syncs with Acexy
 
  - GET /cache/stats → Cache statistics for monitoring and debugging
    - Returns cache hit/miss rates, entry counts, and memory usage

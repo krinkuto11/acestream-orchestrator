@@ -34,10 +34,10 @@ export function SettingsPage({
               id="server-url"
               value={orchUrl}
               onChange={(e) => setOrchUrl(e.target.value)}
-              placeholder="http://localhost:8000"
+              placeholder={typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8000'}
             />
             <p className="text-xs text-muted-foreground">
-              The base URL of the AceStream Orchestrator API
+              The base URL of the AceStream Orchestrator API. Defaults to the current browser origin.
             </p>
           </div>
 

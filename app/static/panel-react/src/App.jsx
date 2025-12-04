@@ -20,7 +20,16 @@ import { toast } from 'sonner'
 function AppContent() {
   const { resolvedTheme } = useTheme()
   useFavicon(resolvedTheme)
-  const [orchUrl, setOrchUrl] = useLocalStorage('orch_url', 'http://localhost:8000')
+  // Use the current browser origin as default URL so the UI works regardless of which IP/host is used to access it
+  const getDefaultOrchUrl = () => {
+    // If accessed via a browser, use the current origin (e.g., http://192.168.1.100:8000)
+    // This ensures the UI works when accessed from any IP address
+    if (typeof window !== 'undefined' && window.location) {
+      return window.location.origin
+    }
+    return 'http://localhost:8000'
+  }
+  const [orchUrl, setOrchUrl] = useLocalStorage('orch_url', getDefaultOrchUrl())
   const [apiKey, setApiKey] = useLocalStorage('orch_apikey', '')
   const [refreshInterval, setRefreshInterval] = useLocalStorage('refresh_interval', 5000)
   const [maxEventsDisplay, setMaxEventsDisplay] = useLocalStorage('max_events_display', 100)
