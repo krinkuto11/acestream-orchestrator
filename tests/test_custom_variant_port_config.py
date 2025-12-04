@@ -11,10 +11,15 @@ from unittest.mock import patch, MagicMock
 import os
 
 
-def test_custom_variant_uses_acestream_args_with_allocated_port():
+def test_custom_amd64_variant_uses_acestream_args_for_port_allocation():
     """
-    Test that custom amd64 variant with base_args uses ACESTREAM_ARGS
-    with the orchestrator-allocated port instead of defaulting to 6878.
+    Test that custom amd64 variants with base_args correctly use ACESTREAM_ARGS
+    for port configuration instead of CONF.
+    
+    This verifies that the variant config includes the necessary fields
+    (is_custom=True, base_args) that trigger the ACESTREAM_ARGS port allocation
+    path in the provisioner, ensuring engines use the orchestrator's port range
+    instead of defaulting to port 6878.
     """
     from app.services.custom_variant_config import (
         CustomVariantConfig,
