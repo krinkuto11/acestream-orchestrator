@@ -549,10 +549,17 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     cmd = None
     
     if variant_config["config_type"] == "env":
-        # ENV-based variants (krinkuto11-amd64, jopsis-amd64)
-        # Build ACESTREAM_ARGS for jopsis-amd64 or CONF for krinkuto11-amd64
-        if cfg.ENGINE_VARIANT == "jopsis-amd64":
+        # ENV-based variants (krinkuto11-amd64, jopsis-amd64, custom amd64)
+        # Determine if this variant uses ACESTREAM_ARGS (jopsis-style) or CONF (krinkuto11-style)
+        # Custom variants with base_args use ACESTREAM_ARGS; jopsis-amd64 also uses ACESTREAM_ARGS
+        uses_acestream_args = (
+            cfg.ENGINE_VARIANT == "jopsis-amd64" or 
+            (variant_config.get("is_custom") and variant_config.get("base_args") is not None)
+        )
+        
+        if uses_acestream_args:
             # Use ACESTREAM_ARGS environment variable with base args + port settings
+            # This applies to jopsis-amd64 and custom variants with base_args
             base_args = variant_config.get("base_args", "")
             port_args = f" --http-port {c_http} --https-port {c_https}"
             # Add P2P port if available
