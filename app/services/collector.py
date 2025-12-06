@@ -20,7 +20,7 @@ class Collector:
     3. Automatically ends stale streams
     
     With the acexy proxy now being stateless (only sending start events),
-    this collector is the ONLY way stale streams are detected and cleaned up.
+    this collector is the PRIMARY mechanism for detecting and cleaning up stale streams.
     The COLLECT_INTERVAL_S should be kept low (default 2 seconds) for quick detection.
     """
     def __init__(self):

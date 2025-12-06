@@ -144,7 +144,7 @@ The orchestrator automatically detects and handles stale streams using the Acest
 ### Detection Mechanism
 - **Endpoint**: `/ace/stat/<playback_session_id>`
 - **Detection Pattern**: `{"response": null, "error": "unknown playback session id"}`
-- **Frequency**: Every `COLLECT_INTERVAL_S` (default: 2 seconds for quick detection)
+- **Frequency**: Every `COLLECT_INTERVAL_S` (default: 2 seconds, improved from 5 seconds for quick detection)
 - **Action**: Automatically ends the stream in the orchestrator state
 
 ### How It Works
