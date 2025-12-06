@@ -2,7 +2,7 @@ import asyncio
 import httpx
 import logging
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 from .state import state
 from ..models.schemas import StreamStatSnapshot, StreamEndedEvent
 from ..core.config import cfg
@@ -20,7 +20,7 @@ class InactiveStreamTracker:
         self._inactive_conditions: Dict[str, Dict[str, Optional[datetime]]] = {}
         # Track last known values to detect changes
         # Format: {stream_id: {"last_pos": value, "last_status": value, "last_speed_down": value, "last_speed_up": value}}
-        self._last_values: Dict[str, Dict[str, any]] = {}
+        self._last_values: Dict[str, Dict[str, Any]] = {}
         # Threshold in seconds for considering a stream inactive
         self.INACTIVE_THRESHOLD_S = 30
     
