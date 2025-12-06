@@ -144,7 +144,7 @@ The orchestrator automatically detects and handles stale streams using the Acest
 ### Detection Mechanism
 - **Endpoint**: `/ace/stat/<playback_session_id>`
 - **Detection Pattern**: `{"response": null, "error": "unknown playback session id"}`
-- **Frequency**: Every `COLLECT_INTERVAL_S` (default: 5 seconds)
+- **Frequency**: Every `COLLECT_INTERVAL_S` (default: 2 seconds, improved from 5 seconds for quick detection)
 - **Action**: Automatically ends the stream in the orchestrator state
 
 ### How It Works
@@ -158,6 +158,7 @@ The orchestrator automatically detects and handles stale streams using the Acest
 - **Accurate State**: Ensures orchestrator state matches actual engine state
 - **Automatic Recovery**: No manual intervention needed when streams become stale
 - **Resource Efficiency**: Enables timely cleanup of idle engines
+- **Quick Detection**: Low polling interval (2s) ensures stale streams are detected rapidly
 
 ### Metrics
 Monitor stale stream detection using Prometheus metrics:
@@ -179,16 +180,20 @@ orch_stale_streams_detected_total
 2. Collector polls: GET /ace/stat/session_123 → {"response": {...stats...}}
 3. Stream stops on engine side (user disconnects, error, etc.)
 4. Collector polls: GET /ace/stat/session_123 → {"response": null, "error": "unknown playback session id"}
-5. Orchestrator detects stale stream
+5. Orchestrator detects stale stream (typically within 2 seconds)
 6. Stream automatically ended: state.on_stream_ended(...)
 7. Cleanup processes triggered (cache clear, container management)
 ```
 
 ### Configuration
-Stale stream detection is always enabled and uses the existing `COLLECT_INTERVAL_S` configuration:
+Stale stream detection is always enabled and is the PRIMARY mechanism for stream state management.
+The acexy proxy is now stateless and only sends stream started events.
+
 ```bash
 # .env
-COLLECT_INTERVAL_S=5  # How often to poll stream stats (default: 5 seconds)
+COLLECT_INTERVAL_S=2  # How often to poll stream stats (default: 2 seconds)
+                      # Lower values = faster stale stream detection
+                      # This is the only mechanism for detecting ended streams
 ```
 
 ### Logging

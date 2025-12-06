@@ -118,9 +118,10 @@ The orchestrator:
 **Technology**: Background asyncio task
 
 **Responsibilities**:
-- Polls stream statistics every `COLLECT_INTERVAL_S` seconds
+- **PRIMARY** mechanism for detecting stale/ended streams (via stat URL polling)
+- Polls stream statistics every `COLLECT_INTERVAL_S` seconds (default: 2s for quick detection)
 - Collects data from engine `stat_url` endpoints
-- Detects stale streams (stopped without notification)
+- Detects stale streams when engine returns "unknown playback session id"
 - Stores statistics in database and memory
 
 **Data Collected**:
@@ -253,14 +254,14 @@ The orchestrator:
 
 ### Stats Collection
 
-**Trigger**: Every `COLLECT_INTERVAL_S` seconds
+**Trigger**: Every `COLLECT_INTERVAL_S` seconds (default: 2s)
 
 **Process**:
 1. Fetch all active streams from database
 2. For each stream:
    - GET request to `stat_url`
    - Parse statistics data
-   - Check for stale stream indicators
+   - Check for stale stream indicators (primary stream state management)
    - Store in database and memory
 3. Limit stored samples to `STATS_HISTORY_MAX`
 

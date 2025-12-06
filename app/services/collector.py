@@ -10,6 +10,19 @@ from .metrics import orch_stale_streams_detected, on_stream_stat_update
 logger = logging.getLogger(__name__)
 
 class Collector:
+    """
+    Stream statistics collector and stale stream detector.
+    
+    This service is the PRIMARY mechanism for detecting stale streams.
+    It periodically polls stat URLs for all active streams and:
+    1. Collects stream statistics (peers, speed, etc.)
+    2. Detects stale streams when the engine returns "unknown playback session id"
+    3. Automatically ends stale streams
+    
+    With the acexy proxy now being stateless (only sending start events),
+    this collector is the PRIMARY mechanism for detecting and cleaning up stale streams.
+    The COLLECT_INTERVAL_S should be kept low (default 2 seconds) for quick detection.
+    """
     def __init__(self):
         self._task = None
         self._stop = asyncio.Event()
