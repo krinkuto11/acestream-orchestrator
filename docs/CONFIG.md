@@ -13,7 +13,7 @@ Variables and default values:
 - `IDLE_TTL_S=600` reserved for inactivity GC.
 
 Collector:
-- `COLLECT_INTERVAL_S=5`
+- `COLLECT_INTERVAL_S=2` How often to poll stream stat URLs (in seconds). This is the PRIMARY mechanism for detecting stale streams. Defaults to 2 seconds for quick detection.
 - `STATS_HISTORY_MAX=720` samples stored in memory per stream.
 
 Monitoring:
@@ -29,11 +29,6 @@ Gluetun VPN Integration:
 - `GLUETUN_HEALTH_CHECK_INTERVAL_S=5` Frequency of VPN health checks (in seconds). High frequency is recommended for availability.
 - `VPN_RESTART_ENGINES_ON_RECONNECT=true` If `true`, restarts engines assigned to a VPN when it reconnects after a disconnection.
 - `VPN_UNHEALTHY_RESTART_TIMEOUT_S=60` Force restart VPN container after being unhealthy for this many seconds. Defaults to 60.
-
-Acexy Proxy Integration:
-- `ACEXY_ENABLED=false` Enable bidirectional communication with Acexy proxy. When enabled, the orchestrator syncs with Acexy to detect and clean up stale streams that may not have been properly stopped.
-- `ACEXY_URL=` URL of the Acexy proxy API (e.g., `http://acexy:8080`). Required when `ACEXY_ENABLED=true`.
-- `ACEXY_SYNC_INTERVAL_S=30` How often to sync with Acexy to detect stale streams (in seconds). Defaults to 30.
 
 Ports:
 - `PORT_RANGE_HOST=19000-19999` available host ports.
