@@ -76,6 +76,8 @@ def test_collector_with_snake_case_fields():
                 mock_client,
                 "stream_snake",
                 "http://127.0.0.1:8080/ace/stat/test_session_snake"
+            ,
+                "http://127.0.0.1:8080/ace/cmd"
             )
     
     asyncio.run(run_test())
@@ -141,6 +143,8 @@ def test_collector_with_camel_case_fields():
                 mock_client,
                 "stream_camel",
                 "http://127.0.0.1:8081/ace/stat/test_session_camel"
+            ,
+                "http://127.0.0.1:8080/ace/cmd"
             )
     
     asyncio.run(run_test())
@@ -266,7 +270,9 @@ def test_collector_with_zero_speed_snake_case():
     async def run_test():
         with patch('app.services.collector.state', test_state):
             await collector._collect_one(mock_client, "zero_snake", 
-                                        "http://127.0.0.1:8083/ace/stat/test_zero_snake")
+                                        "http://127.0.0.1:8083/ace/stat/test_zero_snake",
+                "http://127.0.0.1:8080/ace/cmd"
+            )
     
     asyncio.run(run_test())
     
@@ -320,7 +326,9 @@ def test_collector_with_zero_speed_camel_case():
     async def run_test():
         with patch('app.services.collector.state', test_state):
             await collector._collect_one(mock_client, "zero_camel",
-                                        "http://127.0.0.1:8084/ace/stat/test_zero_camel")
+                                        "http://127.0.0.1:8084/ace/stat/test_zero_camel",
+                "http://127.0.0.1:8080/ace/cmd"
+            )
     
     asyncio.run(run_test())
     

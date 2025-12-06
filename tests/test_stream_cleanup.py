@@ -250,7 +250,8 @@ def test_collector_logs_correctly_for_stale_streams():
             await collector._collect_one(
                 mock_client,
                 "test_stream_log",
-                "http://127.0.0.1:8080/ace/stat/test_session_log"
+                "http://127.0.0.1:8080/ace/stat/test_session_log",
+                "http://127.0.0.1:8080/ace/cmd"
             )
     
     asyncio.run(run_test())
@@ -267,7 +268,8 @@ def test_collector_logs_correctly_for_stale_streams():
                 await collector._collect_one(
                     mock_client,
                     "test_stream_log",
-                    "http://127.0.0.1:8080/ace/stat/test_session_log"
+                    "http://127.0.0.1:8080/ace/stat/test_session_log",
+                    "http://127.0.0.1:8080/ace/cmd"
                 )
                 
                 # Check that INFO was NOT called for "Detected stale stream"
