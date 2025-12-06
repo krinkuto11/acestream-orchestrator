@@ -89,6 +89,8 @@ def test_rapid_stale_detection():
                 mock_client,
                 "rapid_test_stream",
                 "http://127.0.0.1:8080/ace/stat/test_session_rapid"
+            ,
+                "http://127.0.0.1:8080/ace/cmd"
             )
         
         detection_time = time.time() - start_time
