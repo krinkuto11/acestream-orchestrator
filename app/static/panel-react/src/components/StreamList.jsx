@@ -197,18 +197,17 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, deb
         </div>
 
         <div className="border-t pt-3 space-y-3">
-          <div>
-            <p className="text-xs text-muted-foreground">Engine</p>
-            <p className="text-sm font-medium truncate">
-              {stream.container_name || stream.container_id?.slice(0, 12) || 'N/A'}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Started</p>
-            <p className="text-sm font-medium">{formatTime(stream.started_at)}</p>
-          </div>
-          
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
+            <div>
+              <p className="text-xs text-muted-foreground">Engine</p>
+              <p className="text-sm font-medium truncate">
+                {stream.container_name || stream.container_id?.slice(0, 12) || 'N/A'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Started</p>
+              <p className="text-sm font-medium">{formatTime(stream.started_at)}</p>
+            </div>
             <div>
               <p className="text-xs text-muted-foreground flex items-center gap-1">
                 <Download className="h-3 w-3" /> Download
@@ -233,9 +232,6 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, deb
                 {stream.peers != null ? stream.peers : 'N/A'}
               </p>
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
             <div>
               <p className="text-xs text-muted-foreground">Total Downloaded</p>
               <p className="text-sm font-semibold">{formatBytes(stream.downloaded)}</p>

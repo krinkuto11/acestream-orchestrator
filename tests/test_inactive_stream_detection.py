@@ -30,7 +30,7 @@ Base.metadata.create_all(bind=db_engine)
 
 
 def test_inactive_tracker_livepos_unchanged():
-    """Test detection of inactive streams when livepos.pos is unchanged for >30 seconds."""
+    """Test detection of inactive streams when livepos.pos is unchanged for >15 seconds."""
     print("Testing livepos.pos unchanged detection...")
     
     tracker = InactiveStreamTracker()
@@ -48,12 +48,12 @@ def test_inactive_tracker_livepos_unchanged():
     
     # Simulate time passing by directly modifying the tracker's internal state
     tracker._inactive_conditions[stream_id]["livepos_inactive_since"] = \
-        datetime.now(timezone.utc) - timedelta(seconds=31)
+        datetime.now(timezone.utc) - timedelta(seconds=16)
     
-    # Third update with same pos=100 (now >30 seconds have passed)
+    # Third update with same pos=100 (now >15 seconds have passed)
     should_stop = tracker.update_stream(stream_id, livepos_pos=100, status="playing", 
                                        speed_down=1000, speed_up=500)
-    assert should_stop is True, "Should stop after >30 seconds of unchanged pos"
+    assert should_stop is True, "Should stop after >15 seconds of unchanged pos"
     
     print("✅ livepos.pos unchanged detection test passed!")
 
@@ -84,7 +84,7 @@ def test_inactive_tracker_livepos_changes():
 
 
 def test_inactive_tracker_prebuf_status():
-    """Test detection of inactive streams when status="prebuf" for >30 seconds."""
+    """Test detection of inactive streams when status="prebuf" for >10 seconds."""
     print("Testing status=prebuf detection...")
     
     tracker = InactiveStreamTracker()
@@ -97,12 +97,12 @@ def test_inactive_tracker_prebuf_status():
     
     # Simulate time passing by directly modifying the tracker's internal state
     tracker._inactive_conditions[stream_id]["prebuf_since"] = \
-        datetime.now(timezone.utc) - timedelta(seconds=31)
+        datetime.now(timezone.utc) - timedelta(seconds=11)
     
-    # Second update still with status="prebuf" (now >30 seconds)
+    # Second update still with status="prebuf" (now >10 seconds)
     should_stop = tracker.update_stream(stream_id, livepos_pos=None, status="prebuf", 
                                        speed_down=1000, speed_up=500)
-    assert should_stop is True, "Should stop after >30 seconds of prebuf status"
+    assert should_stop is True, "Should stop after >10 seconds of prebuf status"
     
     print("✅ status=prebuf detection test passed!")
 
@@ -133,7 +133,7 @@ def test_inactive_tracker_prebuf_changes():
 
 
 def test_inactive_tracker_zero_speed():
-    """Test detection of inactive streams when both speeds are 0 for >30 seconds."""
+    """Test detection of inactive streams when both speeds are 0 for >10 seconds."""
     print("Testing zero speed detection...")
     
     tracker = InactiveStreamTracker()
@@ -146,12 +146,12 @@ def test_inactive_tracker_zero_speed():
     
     # Simulate time passing by directly modifying the tracker's internal state
     tracker._inactive_conditions[stream_id]["zero_speed_since"] = \
-        datetime.now(timezone.utc) - timedelta(seconds=31)
+        datetime.now(timezone.utc) - timedelta(seconds=11)
     
-    # Second update still with both speeds at 0 (now >30 seconds)
+    # Second update still with both speeds at 0 (now >10 seconds)
     should_stop = tracker.update_stream(stream_id, livepos_pos=None, status="playing", 
                                        speed_down=0, speed_up=0)
-    assert should_stop is True, "Should stop after >30 seconds of zero speed"
+    assert should_stop is True, "Should stop after >10 seconds of zero speed"
     
     print("✅ Zero speed detection test passed!")
 
@@ -206,7 +206,7 @@ def test_inactive_tracker_one_speed_zero():
 
 
 def test_inactive_tracker_multiple_conditions():
-    """Test that any one condition being met for >30s triggers stop."""
+    """Test that any one condition being met for its threshold triggers stop."""
     print("Testing multiple conditions...")
     
     tracker = InactiveStreamTracker()
@@ -222,14 +222,63 @@ def test_inactive_tracker_multiple_conditions():
     
     # Simulate time passing only for prebuf (not livepos)
     tracker._inactive_conditions[stream_id]["prebuf_since"] = \
-        datetime.now(timezone.utc) - timedelta(seconds=31)
+        datetime.now(timezone.utc) - timedelta(seconds=11)
     
-    # Should stop due to prebuf even though livepos hasn't been inactive for 30s
+    # Should stop due to prebuf even though livepos hasn't been inactive for 15s
     should_stop = tracker.update_stream(stream_id, livepos_pos=100, status="prebuf", 
                                        speed_down=1000, speed_up=500)
-    assert should_stop is True, "Should stop when any condition is met for >30s"
+    assert should_stop is True, "Should stop when any condition is met for its threshold"
     
     print("✅ Multiple conditions test passed!")
+
+
+def test_inactive_tracker_low_speed():
+    """Test detection of inactive streams when download speed is below threshold for >20 seconds."""
+    print("Testing low speed detection...")
+    
+    tracker = InactiveStreamTracker()
+    stream_id = "test_stream_9"
+    
+    # First update with speed_down below threshold (300 KB/s < 400 KB/s)
+    should_stop = tracker.update_stream(stream_id, livepos_pos=None, status="playing", 
+                                       speed_down=300, speed_up=500)
+    assert should_stop is False, "Should not stop on first low speed update"
+    
+    # Simulate time passing by directly modifying the tracker's internal state
+    tracker._inactive_conditions[stream_id]["low_speed_since"] = \
+        datetime.now(timezone.utc) - timedelta(seconds=21)
+    
+    # Second update still with low speed (now >20 seconds)
+    should_stop = tracker.update_stream(stream_id, livepos_pos=None, status="playing", 
+                                       speed_down=300, speed_up=500)
+    assert should_stop is True, "Should stop after >20 seconds of low speed"
+    
+    print("✅ Low speed detection test passed!")
+
+
+def test_inactive_tracker_low_speed_changes():
+    """Test that tracker resets when speed increases above threshold."""
+    print("Testing low speed change resets tracking...")
+    
+    tracker = InactiveStreamTracker()
+    stream_id = "test_stream_10"
+    
+    # First update with low speed
+    tracker.update_stream(stream_id, livepos_pos=None, status="playing", 
+                         speed_down=300, speed_up=500)
+    
+    # Simulate time passing
+    tracker._inactive_conditions[stream_id]["low_speed_since"] = \
+        datetime.now(timezone.utc) - timedelta(seconds=15)
+    
+    # Update with speed above threshold (should reset tracking)
+    should_stop = tracker.update_stream(stream_id, livepos_pos=None, status="playing", 
+                                       speed_down=500, speed_up=500)
+    assert should_stop is False, "Should not stop when speed increases above threshold"
+    assert tracker._inactive_conditions[stream_id]["low_speed_since"] is None, \
+        "Low speed tracking should be reset"
+    
+    print("✅ Low speed change reset test passed!")
 
 
 def test_inactive_tracker_remove_stream():
@@ -256,7 +305,7 @@ def test_inactive_tracker_remove_stream():
 
 
 def test_collector_stops_inactive_stream_livepos():
-    """Test that collector stops stream when livepos.pos is unchanged for >30 seconds."""
+    """Test that collector stops stream when livepos.pos is unchanged for >15 seconds."""
     print("Testing collector stops stream with unchanged livepos...")
     
     # Create a fresh state
@@ -315,7 +364,7 @@ def test_collector_stops_inactive_stream_livepos():
             
             # Simulate time passing
             collector._inactive_tracker._inactive_conditions["test_stream_inactive_1"]["livepos_inactive_since"] = \
-                datetime.now(timezone.utc) - timedelta(seconds=31)
+                datetime.now(timezone.utc) - timedelta(seconds=16)
             
             # Mock for second collection (stop command)
             mock_client.get = AsyncMock(side_effect=[stat_response, stop_response])
@@ -347,7 +396,7 @@ def test_collector_stops_inactive_stream_livepos():
 
 
 def test_collector_stops_inactive_stream_prebuf():
-    """Test that collector stops stream when status=prebuf for >30 seconds."""
+    """Test that collector stops stream when status=prebuf for >10 seconds."""
     print("Testing collector stops stream with prebuf status...")
     
     # Create a fresh state
@@ -404,7 +453,7 @@ def test_collector_stops_inactive_stream_prebuf():
             
             # Simulate time passing
             collector._inactive_tracker._inactive_conditions["test_stream_inactive_2"]["prebuf_since"] = \
-                datetime.now(timezone.utc) - timedelta(seconds=31)
+                datetime.now(timezone.utc) - timedelta(seconds=11)
             
             # Mock for second collection
             mock_client.get = AsyncMock(side_effect=[stat_response, stop_response])
@@ -428,7 +477,7 @@ def test_collector_stops_inactive_stream_prebuf():
 
 
 def test_collector_stops_inactive_stream_zero_speed():
-    """Test that collector stops stream when both speeds are 0 for >30 seconds."""
+    """Test that collector stops stream when both speeds are 0 for >10 seconds."""
     print("Testing collector stops stream with zero speeds...")
     
     # Create a fresh state
@@ -485,7 +534,7 @@ def test_collector_stops_inactive_stream_zero_speed():
             
             # Simulate time passing
             collector._inactive_tracker._inactive_conditions["test_stream_inactive_3"]["zero_speed_since"] = \
-                datetime.now(timezone.utc) - timedelta(seconds=31)
+                datetime.now(timezone.utc) - timedelta(seconds=11)
             
             # Mock for second collection
             mock_client.get = AsyncMock(side_effect=[stat_response, stop_response])
@@ -520,6 +569,8 @@ if __name__ == "__main__":
     test_inactive_tracker_speed_changes()
     test_inactive_tracker_one_speed_zero()
     test_inactive_tracker_multiple_conditions()
+    test_inactive_tracker_low_speed()
+    test_inactive_tracker_low_speed_changes()
     test_inactive_tracker_remove_stream()
     
     # Collector integration tests

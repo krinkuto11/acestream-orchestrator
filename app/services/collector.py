@@ -16,20 +16,24 @@ class InactiveStreamTracker:
     
     def __init__(self):
         # Track when each condition first became true for each stream
-        # Format: {stream_id: {"livepos_inactive_since": datetime, "prebuf_since": datetime, "zero_speed_since": datetime}}
+        # Format: {stream_id: {"livepos_inactive_since": datetime, "prebuf_since": datetime, "zero_speed_since": datetime, "low_speed_since": datetime}}
         self._inactive_conditions: Dict[str, Dict[str, Optional[datetime]]] = {}
         # Track last known values to detect changes
         # Format: {stream_id: {"last_pos": value, "last_status": value, "last_speed_down": value, "last_speed_up": value}}
         self._last_values: Dict[str, Dict[str, Any]] = {}
-        # Threshold in seconds for considering a stream inactive
-        self.INACTIVE_THRESHOLD_S = 30
+        # Thresholds from config
+        self.LIVEPOS_THRESHOLD_S = cfg.INACTIVE_LIVEPOS_THRESHOLD_S
+        self.PREBUF_THRESHOLD_S = cfg.INACTIVE_PREBUF_THRESHOLD_S
+        self.ZERO_SPEED_THRESHOLD_S = cfg.INACTIVE_ZERO_SPEED_THRESHOLD_S
+        self.LOW_SPEED_THRESHOLD_KB = cfg.INACTIVE_LOW_SPEED_THRESHOLD_KB
+        self.LOW_SPEED_THRESHOLD_S = cfg.INACTIVE_LOW_SPEED_THRESHOLD_S
     
     def update_stream(self, stream_id: str, livepos_pos: Optional[int], status: Optional[str], 
                      speed_down: Optional[int], speed_up: Optional[int]) -> bool:
         """
         Update stream state and check if it should be stopped.
         
-        Returns True if the stream has been inactive for more than INACTIVE_THRESHOLD_S seconds.
+        Returns True if any condition has been met for longer than its threshold.
         """
         now = datetime.now(timezone.utc)
         
@@ -38,14 +42,15 @@ class InactiveStreamTracker:
             self._inactive_conditions[stream_id] = {
                 "livepos_inactive_since": None,
                 "prebuf_since": None,
-                "zero_speed_since": None
+                "zero_speed_since": None,
+                "low_speed_since": None
             }
             self._last_values[stream_id] = {}
         
         conditions = self._inactive_conditions[stream_id]
         last_vals = self._last_values[stream_id]
         
-        # Check condition 1: livepos/pos unchanged for >30 seconds
+        # Check condition 1: livepos/pos unchanged for >LIVEPOS_THRESHOLD_S seconds
         if livepos_pos is not None:
             last_pos = last_vals.get("last_pos")
             if last_pos is not None and last_pos == livepos_pos:
@@ -63,7 +68,7 @@ class InactiveStreamTracker:
             # No livepos data, can't track this condition
             conditions["livepos_inactive_since"] = None
         
-        # Check condition 2: status="prebuf" for >30 seconds
+        # Check condition 2: status="prebuf" for >PREBUF_THRESHOLD_S seconds
         if status is not None:
             if status == "prebuf":
                 if conditions["prebuf_since"] is None:
@@ -77,7 +82,7 @@ class InactiveStreamTracker:
         else:
             conditions["prebuf_since"] = None
         
-        # Check condition 3: download/upload speed both 0 for >30 seconds
+        # Check condition 3: download/upload speed both 0 for >ZERO_SPEED_THRESHOLD_S seconds
         # Use explicit comparison to handle None vs 0
         speed_down_is_zero = (speed_down is not None and speed_down == 0)
         speed_up_is_zero = (speed_up is not None and speed_up == 0)
@@ -91,16 +96,47 @@ class InactiveStreamTracker:
                 logger.debug(f"Stream {stream_id}: speeds changed (down={speed_down}, up={speed_up}), reset tracking")
             conditions["zero_speed_since"] = None
         
+        # Check condition 4: download speed below threshold for >LOW_SPEED_THRESHOLD_S seconds
+        # Convert threshold from KB/s to bytes/s for comparison (speed_down is in KB/s)
+        if speed_down is not None:
+            if speed_down < self.LOW_SPEED_THRESHOLD_KB:
+                if conditions["low_speed_since"] is None:
+                    conditions["low_speed_since"] = now
+                    logger.debug(f"Stream {stream_id}: download speed {speed_down} KB/s below threshold {self.LOW_SPEED_THRESHOLD_KB} KB/s, started tracking")
+            else:
+                if conditions["low_speed_since"] is not None:
+                    logger.debug(f"Stream {stream_id}: download speed {speed_down} KB/s above threshold, reset tracking")
+                conditions["low_speed_since"] = None
+        else:
+            conditions["low_speed_since"] = None
+        
         last_vals["last_speed_down"] = speed_down
         last_vals["last_speed_up"] = speed_up
         
-        # Check if any condition has been true for >INACTIVE_THRESHOLD_S seconds
-        for condition_name, since_time in conditions.items():
-            if since_time is not None:
-                elapsed = (now - since_time).total_seconds()
-                if elapsed >= self.INACTIVE_THRESHOLD_S:
-                    logger.info(f"Stream {stream_id}: inactive condition '{condition_name}' met for {elapsed:.1f}s (threshold: {self.INACTIVE_THRESHOLD_S}s)")
-                    return True
+        # Check if any condition has been true for longer than its threshold
+        if conditions["livepos_inactive_since"] is not None:
+            elapsed = (now - conditions["livepos_inactive_since"]).total_seconds()
+            if elapsed >= self.LIVEPOS_THRESHOLD_S:
+                logger.info(f"Stream {stream_id}: inactive condition 'livepos_inactive_since' met for {elapsed:.1f}s (threshold: {self.LIVEPOS_THRESHOLD_S}s)")
+                return True
+        
+        if conditions["prebuf_since"] is not None:
+            elapsed = (now - conditions["prebuf_since"]).total_seconds()
+            if elapsed >= self.PREBUF_THRESHOLD_S:
+                logger.info(f"Stream {stream_id}: inactive condition 'prebuf_since' met for {elapsed:.1f}s (threshold: {self.PREBUF_THRESHOLD_S}s)")
+                return True
+        
+        if conditions["zero_speed_since"] is not None:
+            elapsed = (now - conditions["zero_speed_since"]).total_seconds()
+            if elapsed >= self.ZERO_SPEED_THRESHOLD_S:
+                logger.info(f"Stream {stream_id}: inactive condition 'zero_speed_since' met for {elapsed:.1f}s (threshold: {self.ZERO_SPEED_THRESHOLD_S}s)")
+                return True
+        
+        if conditions["low_speed_since"] is not None:
+            elapsed = (now - conditions["low_speed_since"]).total_seconds()
+            if elapsed >= self.LOW_SPEED_THRESHOLD_S:
+                logger.info(f"Stream {stream_id}: inactive condition 'low_speed_since' met for {elapsed:.1f}s (threshold: {self.LOW_SPEED_THRESHOLD_S}s)")
+                return True
         
         return False
     
@@ -138,9 +174,10 @@ class Collector:
     1. Collects stream statistics (peers, speed, etc.)
     2. Detects stale streams when the engine returns "unknown playback session id"
     3. Detects inactive streams based on multiple conditions:
-       - livepos/pos unchanged for >30 seconds
-       - status="prebuf" for >30 seconds
-       - download/upload speed both 0 for >30 seconds
+       - livepos/pos unchanged for >INACTIVE_LIVEPOS_THRESHOLD_S seconds (default: 15s)
+       - status="prebuf" for >INACTIVE_PREBUF_THRESHOLD_S seconds (default: 10s)
+       - download/upload speed both 0 for >INACTIVE_ZERO_SPEED_THRESHOLD_S seconds (default: 10s)
+       - download speed below INACTIVE_LOW_SPEED_THRESHOLD_KB KB/s for >INACTIVE_LOW_SPEED_THRESHOLD_S seconds (default: <400 KB/s for 20s)
     4. Automatically stops inactive streams via command URL
     
     With the acexy proxy now being stateless (only sending start events),
