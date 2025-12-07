@@ -16,7 +16,7 @@ class Cfg(BaseModel):
     STARTUP_TIMEOUT_S: int = int(os.getenv("STARTUP_TIMEOUT_S", 25))
     IDLE_TTL_S: int = int(os.getenv("IDLE_TTL_S", 600))
 
-    COLLECT_INTERVAL_S: int = int(os.getenv("COLLECT_INTERVAL_S", 5))
+    COLLECT_INTERVAL_S: int = int(os.getenv("COLLECT_INTERVAL_S", 2))
     STATS_HISTORY_MAX: int = int(os.getenv("STATS_HISTORY_MAX", 720))
     
     # Docker monitoring configuration
@@ -76,11 +76,12 @@ class Cfg(BaseModel):
     DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
     DEBUG_LOG_DIR: str = os.getenv("DEBUG_LOG_DIR", "./debug_logs")
     
-    # Acexy proxy integration
-    # When enabled, the orchestrator syncs with Acexy to detect and cleanup stale streams
-    ACEXY_ENABLED: bool = os.getenv("ACEXY_ENABLED", "false").lower() == "true"
-    ACEXY_URL: str | None = os.getenv("ACEXY_URL")  # e.g., "http://acexy:8080"
-    ACEXY_SYNC_INTERVAL_S: int = int(os.getenv("ACEXY_SYNC_INTERVAL_S", 30))
+    # Inactive stream tracker configuration
+    INACTIVE_LIVEPOS_THRESHOLD_S: int = int(os.getenv("INACTIVE_LIVEPOS_THRESHOLD_S", 15))
+    INACTIVE_PREBUF_THRESHOLD_S: int = int(os.getenv("INACTIVE_PREBUF_THRESHOLD_S", 10))
+    INACTIVE_ZERO_SPEED_THRESHOLD_S: int = int(os.getenv("INACTIVE_ZERO_SPEED_THRESHOLD_S", 10))
+    INACTIVE_LOW_SPEED_THRESHOLD_KB: int = int(os.getenv("INACTIVE_LOW_SPEED_THRESHOLD_KB", 400))
+    INACTIVE_LOW_SPEED_THRESHOLD_S: int = int(os.getenv("INACTIVE_LOW_SPEED_THRESHOLD_S", 20))
 
     @model_validator(mode='after')
     def validate_replicas(self):
@@ -139,10 +140,16 @@ class Cfg(BaseModel):
             raise ValueError('GLUETUN_API_PORT must be between 1-65535')
         return v
 
-    @validator('STARTUP_TIMEOUT_S', 'IDLE_TTL_S', 'COLLECT_INTERVAL_S', 'MONITOR_INTERVAL_S', 'ENGINE_GRACE_PERIOD_S', 'AUTOSCALE_INTERVAL_S', 'GLUETUN_HEALTH_CHECK_INTERVAL_S', 'GLUETUN_PORT_CACHE_TTL_S')
+    @validator('STARTUP_TIMEOUT_S', 'IDLE_TTL_S', 'COLLECT_INTERVAL_S', 'MONITOR_INTERVAL_S', 'ENGINE_GRACE_PERIOD_S', 'AUTOSCALE_INTERVAL_S', 'GLUETUN_HEALTH_CHECK_INTERVAL_S', 'GLUETUN_PORT_CACHE_TTL_S', 'INACTIVE_LIVEPOS_THRESHOLD_S', 'INACTIVE_PREBUF_THRESHOLD_S', 'INACTIVE_ZERO_SPEED_THRESHOLD_S', 'INACTIVE_LOW_SPEED_THRESHOLD_S')
     def validate_positive_timeouts(cls, v):
         if v <= 0:
             raise ValueError('Timeout values must be > 0')
+        return v
+    
+    @validator('INACTIVE_LOW_SPEED_THRESHOLD_KB')
+    def validate_inactive_low_speed_threshold_kb(cls, v):
+        if v <= 0:
+            raise ValueError('INACTIVE_LOW_SPEED_THRESHOLD_KB must be > 0')
         return v
 
     @validator('STATS_HISTORY_MAX')
@@ -169,19 +176,6 @@ class Cfg(BaseModel):
             if self.GLUETUN_CONTAINER_NAME == self.GLUETUN_CONTAINER_NAME_2:
                 raise ValueError('GLUETUN_CONTAINER_NAME and GLUETUN_CONTAINER_NAME_2 must be different')
         return self
-    
-    @model_validator(mode='after')
-    def validate_acexy_config(self):
-        # If Acexy is enabled, ensure URL is provided
-        if self.ACEXY_ENABLED and not self.ACEXY_URL:
-            raise ValueError('ACEXY_URL is required when ACEXY_ENABLED is true')
-        return self
-    
-    @validator('ACEXY_SYNC_INTERVAL_S')
-    def validate_acexy_sync_interval(cls, v):
-        if v <= 0:
-            raise ValueError('ACEXY_SYNC_INTERVAL_S must be > 0')
-        return v
     
     @validator('ENGINE_MEMORY_LIMIT')
     def validate_engine_memory_limit(cls, v):

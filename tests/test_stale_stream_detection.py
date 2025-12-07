@@ -78,7 +78,8 @@ def test_stale_stream_detection():
             await collector._collect_one(
                 mock_client,
                 "test_stream_1",
-                "http://127.0.0.1:8080/ace/stat/test_session_123"
+                "http://127.0.0.1:8080/ace/stat/test_session_123",
+                "http://127.0.0.1:8080/ace/cmd"
             )
     
     asyncio.run(run_test())
@@ -147,7 +148,8 @@ def test_normal_stream_continues():
             await collector._collect_one(
                 mock_client,
                 "test_stream_2",
-                "http://127.0.0.1:8080/ace/stat/test_session_456"
+                "http://127.0.0.1:8080/ace/stat/test_session_456",
+                "http://127.0.0.1:8080/ace/cmd"
             )
     
     asyncio.run(run_test())
@@ -212,7 +214,8 @@ def test_other_errors_do_not_end_stream():
             await collector._collect_one(
                 mock_client,
                 "test_stream_3",
-                "http://127.0.0.1:8080/ace/stat/test_session_789"
+                "http://127.0.0.1:8080/ace/stat/test_session_789",
+                "http://127.0.0.1:8080/ace/cmd"
             )
     
     asyncio.run(run_test())
@@ -267,7 +270,8 @@ def test_http_errors_do_not_end_stream():
             await collector._collect_one(
                 mock_client,
                 "test_stream_4",
-                "http://127.0.0.1:8080/ace/stat/test_session_999"
+                "http://127.0.0.1:8080/ace/stat/test_session_999",
+                "http://127.0.0.1:8080/ace/cmd"
             )
     
     asyncio.run(run_test())

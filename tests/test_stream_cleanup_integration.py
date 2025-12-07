@@ -83,7 +83,9 @@ async def test_full_lifecycle():
             mock_client,
             "test_stream_full",
             "http://127.0.0.1:8080/ace/stat/test_session_full"
-        )
+        ,
+                "http://127.0.0.1:8080/ace/cmd"
+            )
     
     # Verify stream was ended
     stream = test_state.get_stream("test_stream_full")

@@ -101,7 +101,7 @@ def test_stream_lifecycle_with_stale_detection():
     
     async def process_stream_0():
         with patch('app.services.collector.state', test_state):
-            await collector._collect_one(mock_client, stream0.id, stream0.stat_url)
+            await collector._collect_one(mock_client, stream0.id, stream0.stat_url, stream0.command_url)
     
     asyncio.run(process_stream_0())
     
@@ -116,7 +116,7 @@ def test_stream_lifecycle_with_stale_detection():
     
     async def process_stream_1():
         with patch('app.services.collector.state', test_state):
-            await collector._collect_one(mock_client, stream1.id, stream1.stat_url)
+            await collector._collect_one(mock_client, stream1.id, stream1.stat_url, stream1.command_url)
     
     asyncio.run(process_stream_1())
     
@@ -134,7 +134,7 @@ def test_stream_lifecycle_with_stale_detection():
     
     async def process_stream_2():
         with patch('app.services.collector.state', test_state):
-            await collector._collect_one(mock_client, stream2.id, stream2.stat_url)
+            await collector._collect_one(mock_client, stream2.id, stream2.stat_url, stream2.command_url)
     
     asyncio.run(process_stream_2())
     
@@ -227,7 +227,8 @@ def test_multiple_collection_cycles():
             await collector._collect_one(
                 mock_client,
                 "test_stream_cycle",
-                stream_state.stat_url
+                stream_state.stat_url,
+                stream_state.command_url
             )
     
     asyncio.run(cycle_1())
@@ -245,7 +246,8 @@ def test_multiple_collection_cycles():
             await collector._collect_one(
                 mock_client,
                 "test_stream_cycle",
-                stream_state.stat_url
+                stream_state.stat_url,
+                stream_state.command_url
             )
     
     asyncio.run(cycle_2())
@@ -271,7 +273,8 @@ def test_multiple_collection_cycles():
             await collector._collect_one(
                 mock_client,
                 "test_stream_cycle",
-                stream_state.stat_url
+                stream_state.stat_url,
+                stream_state.command_url
             )
     
     asyncio.run(cycle_3())
@@ -290,7 +293,8 @@ def test_multiple_collection_cycles():
             await collector._collect_one(
                 mock_client,
                 "test_stream_cycle",
-                stream_state.stat_url
+                stream_state.stat_url,
+                stream_state.command_url
             )
     
     asyncio.run(cycle_4())
