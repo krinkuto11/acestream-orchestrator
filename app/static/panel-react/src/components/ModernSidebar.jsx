@@ -29,6 +29,10 @@ const navigation = [
   { name: 'Advanced Engine', href: '/advanced-engine-settings', icon: Sliders },
 ]
 
+// Sidebar width constants
+const SIDEBAR_WIDTH_EXPANDED = '16rem' // w-64 in Tailwind
+const SIDEBAR_WIDTH_COLLAPSED = '4rem' // w-16 in Tailwind
+
 export function ModernSidebar() {
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
@@ -48,7 +52,10 @@ export function ModernSidebar() {
 
   useEffect(() => {
     // Update CSS variable for sidebar width
-    document.documentElement.style.setProperty('--sidebar-width', collapsed ? '4rem' : '16rem')
+    document.documentElement.style.setProperty(
+      '--sidebar-width', 
+      collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED
+    )
   }, [collapsed])
 
   return (
