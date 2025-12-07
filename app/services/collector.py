@@ -97,7 +97,7 @@ class InactiveStreamTracker:
             conditions["zero_speed_since"] = None
         
         # Check condition 4: download speed below threshold for >LOW_SPEED_THRESHOLD_S seconds
-        # Convert threshold from KB/s to bytes/s for comparison (speed_down is in KB/s)
+        # Both speed_down and LOW_SPEED_THRESHOLD_KB are in KB/s units
         if speed_down is not None:
             if speed_down < self.LOW_SPEED_THRESHOLD_KB:
                 if conditions["low_speed_since"] is None:

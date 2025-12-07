@@ -176,7 +176,7 @@ export function SettingsPage({
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground mb-4">
             Configure thresholds for detecting and automatically stopping inactive streams. 
-            Changes are applied immediately but not persisted to environment variables.
+            Click Save Settings to apply changes immediately (not persisted to environment variables).
           </p>
           
           {loadingSettings ? (
@@ -252,9 +252,9 @@ export function SettingsPage({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="low-speed-threshold">Low Speed Duration Threshold (seconds)</Label>
+                <Label htmlFor="low-speed-duration-threshold">Low Speed Duration Threshold (seconds)</Label>
                 <Input
-                  id="low-speed-threshold"
+                  id="low-speed-duration-threshold"
                   type="number"
                   min="1"
                   value={inactiveStreamSettings.low_speed_threshold_s}

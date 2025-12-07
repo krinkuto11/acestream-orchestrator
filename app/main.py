@@ -848,15 +848,17 @@ def get_inactive_stream_tracker_settings():
     }
 
 @app.put("/inactive-stream-tracker/settings", dependencies=[Depends(require_api_key)])
-def update_inactive_stream_tracker_settings(
-    livepos_threshold_s: Optional[int] = None,
-    prebuf_threshold_s: Optional[int] = None,
-    zero_speed_threshold_s: Optional[int] = None,
-    low_speed_threshold_kb: Optional[int] = None,
-    low_speed_threshold_s: Optional[int] = None
+async def update_inactive_stream_tracker_settings(
+    settings: dict
 ):
     """Update inactive stream tracker settings (runtime only, not persisted)."""
     # Validate and update settings
+    livepos_threshold_s = settings.get("livepos_threshold_s")
+    prebuf_threshold_s = settings.get("prebuf_threshold_s")
+    zero_speed_threshold_s = settings.get("zero_speed_threshold_s")
+    low_speed_threshold_kb = settings.get("low_speed_threshold_kb")
+    low_speed_threshold_s = settings.get("low_speed_threshold_s")
+    
     if livepos_threshold_s is not None:
         if livepos_threshold_s <= 0:
             raise HTTPException(status_code=400, detail="livepos_threshold_s must be > 0")
