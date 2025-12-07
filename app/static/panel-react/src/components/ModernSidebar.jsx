@@ -46,9 +46,14 @@ export function ModernSidebar() {
       })
   }, [])
 
+  useEffect(() => {
+    // Update CSS variable for sidebar width
+    document.documentElement.style.setProperty('--sidebar-width', collapsed ? '4rem' : '16rem')
+  }, [collapsed])
+
   return (
     <div className={cn(
-      "flex h-screen flex-col border-r bg-card transition-all duration-300",
+      "fixed left-0 top-0 flex h-screen flex-col border-r bg-card transition-all duration-300",
       collapsed ? "w-16" : "w-64"
     )}>
       {/* Logo */}

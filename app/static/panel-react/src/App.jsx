@@ -128,10 +128,10 @@ function AppContent() {
 
   return (
     <BrowserRouter basename="/panel">
-      <div className="flex min-h-screen bg-background">
+      <div className="min-h-screen bg-background">
         <ModernSidebar />
         
-        <div className="flex-1 flex flex-col">
+        <div className="flex flex-col min-h-screen transition-all duration-300" style={{ marginLeft: 'var(--sidebar-width, 16rem)' }}>
           <ModernHeader 
             isConnected={isConnected}
             lastUpdate={lastUpdate}
