@@ -718,6 +718,48 @@ async def get_stream_livepos(stream_id: str):
         logger.error(f"Error processing livepos for stream {stream_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing livepos data: {str(e)}")
 
+@app.delete("/streams/{stream_id}", dependencies=[Depends(require_api_key)])
+async def stop_stream(stream_id: str):
+    """
+    Stop a stream by calling its command URL with method=stop.
+    Then marks the stream as ended in state.
+    """
+    import httpx
+    
+    # Get the stream from state
+    stream = state.get_stream(stream_id)
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+    
+    if stream.status != "started":
+        raise HTTPException(status_code=400, detail=f"Stream is not active (status: {stream.status})")
+    
+    if not stream.command_url:
+        raise HTTPException(status_code=400, detail="Stream has no command URL")
+    
+    # Call command URL with method=stop to stop the stream on the engine
+    stop_url = f"{stream.command_url}?method=stop"
+    logger.info(f"Stopping stream {stream_id} via command URL: {stop_url}")
+    
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(stop_url)
+            if response.status_code >= 300:
+                logger.warning(f"Stop command returned non-success status {response.status_code} for stream {stream_id}")
+    except Exception as e:
+        # Log but don't fail - we'll still mark the stream as ended
+        logger.warning(f"Failed to send stop command for stream {stream_id}: {e}")
+    
+    # Mark the stream as ended in our state
+    logger.info(f"Ending stream {stream_id} (reason: manual_stop_via_api)")
+    state.on_stream_ended(StreamEndedEvent(
+        container_id=stream.container_id,
+        stream_id=stream_id,
+        reason="manual_stop_via_api"
+    ))
+    
+    return {"message": "Stream stopped successfully", "stream_id": stream_id}
+
 # by-label
 from .services.inspect import inspect_container
 from .services.health import list_managed
@@ -793,6 +835,74 @@ def reset_circuit_breaker(operation_type: Optional[str] = None):
     from .services.circuit_breaker import circuit_breaker_manager
     circuit_breaker_manager.force_reset(operation_type)
     return {"message": f"Circuit breaker {'for ' + operation_type if operation_type else 'all'} reset successfully"}
+
+@app.get("/inactive-stream-tracker/settings")
+def get_inactive_stream_tracker_settings():
+    """Get current inactive stream tracker settings."""
+    return {
+        "livepos_threshold_s": cfg.INACTIVE_LIVEPOS_THRESHOLD_S,
+        "prebuf_threshold_s": cfg.INACTIVE_PREBUF_THRESHOLD_S,
+        "zero_speed_threshold_s": cfg.INACTIVE_ZERO_SPEED_THRESHOLD_S,
+        "low_speed_threshold_kb": cfg.INACTIVE_LOW_SPEED_THRESHOLD_KB,
+        "low_speed_threshold_s": cfg.INACTIVE_LOW_SPEED_THRESHOLD_S
+    }
+
+@app.put("/inactive-stream-tracker/settings", dependencies=[Depends(require_api_key)])
+async def update_inactive_stream_tracker_settings(
+    settings: dict
+):
+    """Update inactive stream tracker settings (runtime only, not persisted)."""
+    # Validate and update settings
+    livepos_threshold_s = settings.get("livepos_threshold_s")
+    prebuf_threshold_s = settings.get("prebuf_threshold_s")
+    zero_speed_threshold_s = settings.get("zero_speed_threshold_s")
+    low_speed_threshold_kb = settings.get("low_speed_threshold_kb")
+    low_speed_threshold_s = settings.get("low_speed_threshold_s")
+    
+    if livepos_threshold_s is not None:
+        if livepos_threshold_s <= 0:
+            raise HTTPException(status_code=400, detail="livepos_threshold_s must be > 0")
+        cfg.INACTIVE_LIVEPOS_THRESHOLD_S = livepos_threshold_s
+        collector._inactive_tracker.LIVEPOS_THRESHOLD_S = livepos_threshold_s
+    
+    if prebuf_threshold_s is not None:
+        if prebuf_threshold_s <= 0:
+            raise HTTPException(status_code=400, detail="prebuf_threshold_s must be > 0")
+        cfg.INACTIVE_PREBUF_THRESHOLD_S = prebuf_threshold_s
+        collector._inactive_tracker.PREBUF_THRESHOLD_S = prebuf_threshold_s
+    
+    if zero_speed_threshold_s is not None:
+        if zero_speed_threshold_s <= 0:
+            raise HTTPException(status_code=400, detail="zero_speed_threshold_s must be > 0")
+        cfg.INACTIVE_ZERO_SPEED_THRESHOLD_S = zero_speed_threshold_s
+        collector._inactive_tracker.ZERO_SPEED_THRESHOLD_S = zero_speed_threshold_s
+    
+    if low_speed_threshold_kb is not None:
+        if low_speed_threshold_kb <= 0:
+            raise HTTPException(status_code=400, detail="low_speed_threshold_kb must be > 0")
+        cfg.INACTIVE_LOW_SPEED_THRESHOLD_KB = low_speed_threshold_kb
+        collector._inactive_tracker.LOW_SPEED_THRESHOLD_KB = low_speed_threshold_kb
+    
+    if low_speed_threshold_s is not None:
+        if low_speed_threshold_s <= 0:
+            raise HTTPException(status_code=400, detail="low_speed_threshold_s must be > 0")
+        cfg.INACTIVE_LOW_SPEED_THRESHOLD_S = low_speed_threshold_s
+        collector._inactive_tracker.LOW_SPEED_THRESHOLD_S = low_speed_threshold_s
+    
+    logger.info(f"Updated inactive stream tracker settings: livepos={cfg.INACTIVE_LIVEPOS_THRESHOLD_S}s, "
+                f"prebuf={cfg.INACTIVE_PREBUF_THRESHOLD_S}s, zero_speed={cfg.INACTIVE_ZERO_SPEED_THRESHOLD_S}s, "
+                f"low_speed={cfg.INACTIVE_LOW_SPEED_THRESHOLD_KB}KB/s for {cfg.INACTIVE_LOW_SPEED_THRESHOLD_S}s")
+    
+    return {
+        "message": "Settings updated successfully (runtime only, not persisted to environment)",
+        "settings": {
+            "livepos_threshold_s": cfg.INACTIVE_LIVEPOS_THRESHOLD_S,
+            "prebuf_threshold_s": cfg.INACTIVE_PREBUF_THRESHOLD_S,
+            "zero_speed_threshold_s": cfg.INACTIVE_ZERO_SPEED_THRESHOLD_S,
+            "low_speed_threshold_kb": cfg.INACTIVE_LOW_SPEED_THRESHOLD_KB,
+            "low_speed_threshold_s": cfg.INACTIVE_LOW_SPEED_THRESHOLD_S
+        }
+    }
 
 @app.get("/orchestrator/status")
 def get_orchestrator_status():
