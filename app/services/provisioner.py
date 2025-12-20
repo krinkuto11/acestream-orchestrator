@@ -145,63 +145,6 @@ def _release_ports_from_labels(labels: dict):
             alloc.free_gluetun_port(int(hp) if hp else None, vpn_container)
         except Exception: pass
 
-def clear_acestream_cache(container_id: str) -> tuple[bool, int]:
-    """
-    Clear the AceStream cache in a container.
-    
-    Args:
-        container_id: The ID of the container to clear cache in
-        
-    Returns:
-        tuple[bool, int]: (success, cache_size_bytes) - True if cache was cleared successfully, 
-                         and the size of the cache before cleanup in bytes (0 if unknown)
-    """
-    try:
-        cli = get_client()
-        cont = cli.containers.get(container_id)
-        
-        # Check if container is running
-        if cont.status != "running":
-            logger.debug(f"Container {container_id[:12]} is not running, skipping cache cleanup")
-            return (False, 0)
-        
-        # Get cache size before cleanup
-        cache_size = 0
-        try:
-            size_result = cont.exec_run("du -sb /home/appuser/.ACEStream/.acestream_cache 2>/dev/null || echo 0", demux=False)
-            if size_result.exit_code == 0:
-                output = size_result.output.decode('utf-8').strip()
-                if output and output != '0':
-                    # Parse output like "12345\t/path/to/cache"
-                    cache_size = int(output.split()[0])
-        except Exception as e:
-            logger.debug(f"Failed to get cache size for container {container_id[:12]}: {e}")
-        
-        # Execute cache cleanup command
-        result = cont.exec_run("rm -rf /home/appuser/.ACEStream/.acestream_cache", demux=False)
-        
-        if result.exit_code == 0:
-            # Only log if meaningful amount of cache was cleared (>0MB)
-            cache_size_mb = cache_size / 1024 / 1024
-            if cache_size_mb > 0:
-                logger.info(f"Cleared {cache_size_mb:.1f}MB cache from {container_id[:12]}")
-            return (True, cache_size)
-        else:
-            logger.warning(f"Cache cleanup command returned non-zero exit code {result.exit_code} for container {container_id[:12]}")
-            return (False, cache_size)
-    except docker.errors.NotFound:
-        # Container doesn't exist - this is expected during cleanup/reprovisioning
-        logger.debug(f"Cannot clear cache - container {container_id[:12]} not found")
-        return (False, 0)
-    except docker.errors.APIError as e:
-        # API error (e.g., container not running) - log at debug level as this is expected
-        logger.debug(f"Cannot clear cache for container {container_id[:12]}: {e}")
-        return (False, 0)
-    except Exception as e:
-        # Catch-all for unexpected errors - keep at warning level
-        logger.warning(f"Failed to clear AceStream cache for container {container_id[:12]}: {e}")
-        return (False, 0)
-
 def stop_container(container_id: str):
     cli = get_client()
     cont = cli.containers.get(container_id)
@@ -754,8 +697,6 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         health_status="unknown",
         last_health_check=None,
         last_stream_usage=None,
-        last_cache_cleanup=None,
-        cache_size_bytes=None,
         vpn_container=vpn_container,
         engine_variant=engine_variant_name
     )

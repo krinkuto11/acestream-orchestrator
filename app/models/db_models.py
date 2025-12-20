@@ -17,8 +17,6 @@ class EngineRow(Base):
     forwarded: Mapped[bool] = mapped_column(Boolean, default=False)
     first_seen: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_seen: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    last_cache_cleanup: Mapped[datetime | None] = mapped_column(DateTime)
-    cache_size_bytes: Mapped[int | None] = mapped_column(Integer)
     vpn_container: Mapped[str | None] = mapped_column(String(128))
 
 class StreamRow(Base):
