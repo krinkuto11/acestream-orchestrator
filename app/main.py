@@ -10,7 +10,6 @@ import json
 import logging
 
 from .utils.logging import setup
-from .utils.debug_logger import init_debug_logger, get_debug_logger
 from .core.config import cfg
 from .services.autoscaler import ensure_minimum, scale_to, can_stop_engine
 from .services.provisioner import StartRequest, start_container, stop_container, AceProvisionRequest, AceProvisionResponse, start_acestream, HOST_LABEL_HTTP
@@ -39,16 +38,22 @@ logger = logging.getLogger(__name__)
 
 setup()
 
-# Initialize debug logger if enabled
-debug_logger = init_debug_logger(enabled=cfg.DEBUG_MODE, log_dir=cfg.DEBUG_LOG_DIR)
-if cfg.DEBUG_MODE:
-    logger.info(f"Debug mode enabled. Logs will be written to: {cfg.DEBUG_LOG_DIR}")
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup - Ensure clean start (dry run)
     Base.metadata.create_all(bind=engine)
     cleanup_on_shutdown()  # Clean any existing state and containers after DB is ready
+    
+    # Load custom variant configuration early to ensure it's available
+    from .services.custom_variant_config import load_config as load_custom_config
+    try:
+        custom_config = load_custom_config()
+        if custom_config and custom_config.enabled:
+            logger.info(f"Loaded custom engine variant configuration (platform: {custom_config.platform})")
+        else:
+            logger.debug("Custom engine variant is disabled or not configured")
+    except Exception as e:
+        logger.warning(f"Failed to load custom variant config during startup: {e}")
     
     # Load state from database first
     load_state_from_db()

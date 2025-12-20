@@ -42,8 +42,6 @@ class EngineState(BaseModel):
     health_status: Optional[Literal["healthy", "unhealthy", "unknown"]] = "unknown"
     last_health_check: Optional[datetime] = None
     last_stream_usage: Optional[datetime] = None
-    last_cache_cleanup: Optional[datetime] = None
-    cache_size_bytes: Optional[int] = None
     vpn_container: Optional[str] = None  # VPN container name this engine is assigned to
     # Engine version information
     engine_variant: Optional[str] = None
