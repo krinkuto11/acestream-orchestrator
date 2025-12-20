@@ -62,7 +62,8 @@ class VpnContainerMonitor:
         self._last_logged_status: Optional[str] = None
 
     async def check_health(self) -> bool:
-        """Check if VPN container is healthy."""        check_start = time.time()
+        """Check if VPN container is healthy."""
+        check_start = time.time()
         
         try:
             # Use increased timeout for better resilience during VPN lifecycle events
@@ -119,7 +120,7 @@ class VpnContainerMonitor:
         except Exception as e:
             duration = time.time() - check_start
             logger.error(f"Error checking VPN health for '{self.container_name}': {e}")
-            logger.debug("VPN operation"))
+            logger.debug("VPN operation")
             return False
 
     def is_healthy(self) -> Optional[bool]:
@@ -445,7 +446,10 @@ class GluetunMonitor:
                 pass
     
     async def _handle_health_transition(self, container_name: str, old_status: bool, new_status: bool):
-        """Handle VPN health status transitions for a specific container."""        now = datetime.now(timezone.utc)
+        """
+        Handle VPN health status transitions for a specific container.
+        """
+        now = datetime.now(timezone.utc)
         monitor = self._vpn_monitors.get(container_name)
         
         if not monitor:
@@ -505,7 +509,8 @@ class GluetunMonitor:
         2. Removes it from state so it's not exposed via /engines endpoint
         3. Sets recovery stabilization period to prevent premature cleanup
         4. Allows the autoscaler to provision a new forwarded engine with the new port
-        """        now = datetime.now(timezone.utc)
+        """
+        now = datetime.now(timezone.utc)
         
         try:
             from .state import state
@@ -554,7 +559,7 @@ class GluetunMonitor:
             
         except Exception as e:
             logger.error(f"Error handling port change for VPN '{container_name}': {e}")
-            logger.debug("VPN operation"))
+            logger.debug("VPN operation")
 
     async def _restart_engines_for_vpn(self, container_name: str):
         """Restart all engines assigned to a specific VPN container."""
