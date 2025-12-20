@@ -6,7 +6,6 @@ from pydantic import BaseModel
 from .docker_client import get_client, safe
 from ..core.config import cfg
 from .ports import alloc
-from ..utils.debug_logger import get_debug_logger
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +39,6 @@ class AceProvisionResponse(BaseModel):
 def start_container(req: StartRequest) -> dict:
     from .naming import generate_container_name
     
-    debug_log = get_debug_logger()
     start_time = time.time()
     
     cli = get_client()
@@ -53,10 +51,7 @@ def start_container(req: StartRequest) -> dict:
     # Generate a meaningful container name
     container_name = generate_container_name(req.name_prefix)
     
-    debug_log.log_provisioning("start_container_begin", 
-                               container_name=container_name,
-                               image=image_name,
-                               labels=labels)
+    logger.debug(f"Starting container: name={container_name}, image={image_name}")
     
     try:
         cont = safe(cli.containers.run,
@@ -70,11 +65,7 @@ def start_container(req: StartRequest) -> dict:
             restart_policy={"Name": "unless-stopped"})
     except RuntimeError as e:
         duration = time.time() - start_time
-        debug_log.log_provisioning("start_container_failed",
-                                   container_name=container_name,
-                                   duration=duration,
-                                   success=False,
-                                   error=str(e))
+        logger.error(f"Failed to start container {container_name}: {e} (duration: {duration:.2f}s)")
         # Provide more helpful error messages for common image issues
         error_msg = str(e).lower()
         if "not found" in error_msg or "pull access denied" in error_msg:
@@ -90,12 +81,7 @@ def start_container(req: StartRequest) -> dict:
         time.sleep(0.5); cont.reload()
     if cont.status != "running":
         duration = time.time() - start_time
-        debug_log.log_provisioning("start_container_timeout",
-                                   container_id=cont.id,
-                                   container_name=container_name,
-                                   duration=duration,
-                                   success=False,
-                                   error=f"Container failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status})")
+        logger.error(f"Container {container_name} ({cont.id[:12]}) failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status}, duration: {duration:.2f}s)")
         cont.remove(force=True)
         raise RuntimeError(f"Container failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status})")
     
@@ -104,19 +90,11 @@ def start_container(req: StartRequest) -> dict:
     actual_container_name = cont.attrs.get("Name", "").lstrip("/")
     
     duration = time.time() - start_time
-    debug_log.log_provisioning("start_container_success",
-                               container_id=cont.id,
-                               container_name=actual_container_name,
-                               duration=duration,
-                               success=True)
+    logger.info(f"Container started successfully: {actual_container_name} ({cont.id[:12]}, duration: {duration:.2f}s)")
     
     # Check for slow provisioning (stress indicator)
     if duration > cfg.STARTUP_TIMEOUT_S * 0.5:
-        debug_log.log_stress_event("slow_provisioning",
-                                   severity="warning",
-                                   description=f"Container provisioning took {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.5}s threshold)",
-                                   container_id=cont.id,
-                                   duration=duration)
+        logger.warning(f"Slow container provisioning detected: {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.5}s threshold) for {cont.id[:12]}")
     
     return {"container_id": cont.id, "container_name": actual_container_name}
 
@@ -313,12 +291,9 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     from .naming import generate_container_name
     import time
     
-    debug_log = get_debug_logger()
     provision_start = time.time()
     
-    debug_log.log_provisioning("start_acestream_begin",
-                               labels=req.labels,
-                               has_custom_env=bool(req.env))
+    logger.debug(f"Starting AceStream engine: labels={req.labels}, custom_env={bool(req.env)}")
     
     # Determine VPN assignment and check health
     vpn_container = None
@@ -634,12 +609,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         time.sleep(0.5); cont.reload()
     if cont.status != "running":
         duration = time.time() - provision_start
-        debug_log.log_provisioning("start_acestream_failed",
-                                   container_id=cont.id,
-                                   duration=duration,
-                                   success=False,
-                                   error="Container failed to start",
-                                   status=cont.status)
+        logger.error(f"AceStream engine {cont.id[:12]} failed to start (status: {cont.status}, duration: {duration:.2f}s)")
         _release_ports_from_labels(labels)
         cont.remove(force=True)
         raise RuntimeError("Arranque AceStream fallido")
@@ -650,20 +620,11 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     actual_container_name = cont.attrs.get("Name", "").lstrip("/")
     
     duration = time.time() - provision_start
-    debug_log.log_provisioning("start_acestream_success",
-                               container_id=cont.id,
-                               container_name=actual_container_name,
-                               host_http_port=host_http,
-                               duration=duration,
-                               success=True)
+    logger.info(f"AceStream engine started successfully: {actual_container_name} ({cont.id[:12]}, HTTP port: {host_http}, duration: {duration:.2f}s)")
     
     # Check for slow provisioning (stress indicator)
     if duration > cfg.STARTUP_TIMEOUT_S * 0.7:
-        debug_log.log_stress_event("slow_acestream_provisioning",
-                                   severity="warning",
-                                   description=f"AceStream provisioning took {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.7}s threshold)",
-                                   container_id=cont.id,
-                                   duration=duration)
+        logger.warning(f"Slow AceStream provisioning detected: {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.7}s threshold) for {cont.id[:12]}")
     
     # Add engine to state immediately to prevent race conditions during sequential provisioning
     # This ensures that subsequent calls to has_forwarded_engine() will see this engine

@@ -72,10 +72,6 @@ class Cfg(BaseModel):
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
     AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "false").lower() == "true"
     
-    # Debug mode configuration
-    DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
-    DEBUG_LOG_DIR: str = os.getenv("DEBUG_LOG_DIR", "./debug_logs")
-    
     # Inactive stream tracker configuration
     INACTIVE_LIVEPOS_THRESHOLD_S: int = int(os.getenv("INACTIVE_LIVEPOS_THRESHOLD_S", 15))
     INACTIVE_PREBUF_THRESHOLD_S: int = int(os.getenv("INACTIVE_PREBUF_THRESHOLD_S", 10))
