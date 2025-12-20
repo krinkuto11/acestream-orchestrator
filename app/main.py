@@ -50,6 +50,17 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     cleanup_on_shutdown()  # Clean any existing state and containers after DB is ready
     
+    # Load custom variant configuration early to ensure it's available
+    from .services.custom_variant_config import load_config as load_custom_config
+    try:
+        custom_config = load_custom_config()
+        if custom_config and custom_config.enabled:
+            logger.info(f"Loaded custom engine variant configuration (platform: {custom_config.platform})")
+        else:
+            logger.debug("Custom engine variant is disabled or not configured")
+    except Exception as e:
+        logger.warning(f"Failed to load custom variant config during startup: {e}")
+    
     # Load state from database first
     load_state_from_db()
     
