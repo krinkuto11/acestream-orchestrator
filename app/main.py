@@ -58,8 +58,10 @@ async def lifespan(app: FastAPI):
                 logger.info(f"Loading previously active template {active_template_id} for custom variant")
                 template = get_template(active_template_id)
                 if template:
-                    # Apply the template configuration
-                    save_custom_config(template.config)
+                    # Apply the template configuration, but preserve the enabled state
+                    template_config = template.config.copy(deep=True)
+                    template_config.enabled = custom_config.enabled
+                    save_custom_config(template_config)
                     logger.info(f"Successfully loaded template '{template.name}' (slot {active_template_id})")
                 else:
                     logger.warning(f"Active template {active_template_id} not found, using current config")
@@ -1334,8 +1336,14 @@ def activate_template(slot_id: int):
     if not template:
         raise HTTPException(status_code=404, detail=f"Template {slot_id} not found")
     
-    # Save the template config as the current custom variant config
-    success = save_custom_config(template.config)
+    # Get current config to preserve enabled state
+    current_config = get_custom_config()
+    current_enabled = current_config.enabled if current_config else False
+    
+    # Save the template config as the current custom variant config, preserving enabled state
+    template_config = template.config.copy(deep=True)
+    template_config.enabled = current_enabled
+    success = save_custom_config(template_config)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to activate template")
     
