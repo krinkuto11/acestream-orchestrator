@@ -110,7 +110,6 @@ function AppContent() {
       await fetchJSON(`${orchUrl}/streams/${encodeURIComponent(streamId)}`, {
         method: 'DELETE'
       })
-      setSelectedStream(null)
       toast.success('Stream stopped successfully')
       await fetchData()
     } catch (err) {
