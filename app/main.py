@@ -45,11 +45,24 @@ async def lifespan(app: FastAPI):
     cleanup_on_shutdown()  # Clean any existing state and containers after DB is ready
     
     # Load custom variant configuration early to ensure it's available
-    from .services.custom_variant_config import load_config as load_custom_config
+    from .services.custom_variant_config import load_config as load_custom_config, save_config as save_custom_config
+    from .services.template_manager import get_active_template_id, get_template
     try:
         custom_config = load_custom_config()
         if custom_config and custom_config.enabled:
             logger.info(f"Loaded custom engine variant configuration (platform: {custom_config.platform})")
+            
+            # If custom variant is enabled, load the active template if one was previously set
+            active_template_id = get_active_template_id()
+            if active_template_id is not None:
+                logger.info(f"Loading previously active template {active_template_id} for custom variant")
+                template = get_template(active_template_id)
+                if template:
+                    # Apply the template configuration
+                    save_custom_config(template.config)
+                    logger.info(f"Successfully loaded template '{template.name}' (slot {active_template_id})")
+                else:
+                    logger.warning(f"Active template {active_template_id} not found, using current config")
         else:
             logger.debug("Custom engine variant is disabled or not configured")
     except Exception as e:
@@ -841,73 +854,6 @@ def reset_circuit_breaker(operation_type: Optional[str] = None):
     circuit_breaker_manager.force_reset(operation_type)
     return {"message": f"Circuit breaker {'for ' + operation_type if operation_type else 'all'} reset successfully"}
 
-@app.get("/inactive-stream-tracker/settings")
-def get_inactive_stream_tracker_settings():
-    """Get current inactive stream tracker settings."""
-    return {
-        "livepos_threshold_s": cfg.INACTIVE_LIVEPOS_THRESHOLD_S,
-        "prebuf_threshold_s": cfg.INACTIVE_PREBUF_THRESHOLD_S,
-        "zero_speed_threshold_s": cfg.INACTIVE_ZERO_SPEED_THRESHOLD_S,
-        "low_speed_threshold_kb": cfg.INACTIVE_LOW_SPEED_THRESHOLD_KB,
-        "low_speed_threshold_s": cfg.INACTIVE_LOW_SPEED_THRESHOLD_S
-    }
-
-@app.put("/inactive-stream-tracker/settings", dependencies=[Depends(require_api_key)])
-async def update_inactive_stream_tracker_settings(
-    settings: dict
-):
-    """Update inactive stream tracker settings (runtime only, not persisted)."""
-    # Validate and update settings
-    livepos_threshold_s = settings.get("livepos_threshold_s")
-    prebuf_threshold_s = settings.get("prebuf_threshold_s")
-    zero_speed_threshold_s = settings.get("zero_speed_threshold_s")
-    low_speed_threshold_kb = settings.get("low_speed_threshold_kb")
-    low_speed_threshold_s = settings.get("low_speed_threshold_s")
-    
-    if livepos_threshold_s is not None:
-        if livepos_threshold_s <= 0:
-            raise HTTPException(status_code=400, detail="livepos_threshold_s must be > 0")
-        cfg.INACTIVE_LIVEPOS_THRESHOLD_S = livepos_threshold_s
-        collector._inactive_tracker.LIVEPOS_THRESHOLD_S = livepos_threshold_s
-    
-    if prebuf_threshold_s is not None:
-        if prebuf_threshold_s <= 0:
-            raise HTTPException(status_code=400, detail="prebuf_threshold_s must be > 0")
-        cfg.INACTIVE_PREBUF_THRESHOLD_S = prebuf_threshold_s
-        collector._inactive_tracker.PREBUF_THRESHOLD_S = prebuf_threshold_s
-    
-    if zero_speed_threshold_s is not None:
-        if zero_speed_threshold_s <= 0:
-            raise HTTPException(status_code=400, detail="zero_speed_threshold_s must be > 0")
-        cfg.INACTIVE_ZERO_SPEED_THRESHOLD_S = zero_speed_threshold_s
-        collector._inactive_tracker.ZERO_SPEED_THRESHOLD_S = zero_speed_threshold_s
-    
-    if low_speed_threshold_kb is not None:
-        if low_speed_threshold_kb <= 0:
-            raise HTTPException(status_code=400, detail="low_speed_threshold_kb must be > 0")
-        cfg.INACTIVE_LOW_SPEED_THRESHOLD_KB = low_speed_threshold_kb
-        collector._inactive_tracker.LOW_SPEED_THRESHOLD_KB = low_speed_threshold_kb
-    
-    if low_speed_threshold_s is not None:
-        if low_speed_threshold_s <= 0:
-            raise HTTPException(status_code=400, detail="low_speed_threshold_s must be > 0")
-        cfg.INACTIVE_LOW_SPEED_THRESHOLD_S = low_speed_threshold_s
-        collector._inactive_tracker.LOW_SPEED_THRESHOLD_S = low_speed_threshold_s
-    
-    logger.info(f"Updated inactive stream tracker settings: livepos={cfg.INACTIVE_LIVEPOS_THRESHOLD_S}s, "
-                f"prebuf={cfg.INACTIVE_PREBUF_THRESHOLD_S}s, zero_speed={cfg.INACTIVE_ZERO_SPEED_THRESHOLD_S}s, "
-                f"low_speed={cfg.INACTIVE_LOW_SPEED_THRESHOLD_KB}KB/s for {cfg.INACTIVE_LOW_SPEED_THRESHOLD_S}s")
-    
-    return {
-        "message": "Settings updated successfully (runtime only, not persisted to environment)",
-        "settings": {
-            "livepos_threshold_s": cfg.INACTIVE_LIVEPOS_THRESHOLD_S,
-            "prebuf_threshold_s": cfg.INACTIVE_PREBUF_THRESHOLD_S,
-            "zero_speed_threshold_s": cfg.INACTIVE_ZERO_SPEED_THRESHOLD_S,
-            "low_speed_threshold_kb": cfg.INACTIVE_LOW_SPEED_THRESHOLD_KB,
-            "low_speed_threshold_s": cfg.INACTIVE_LOW_SPEED_THRESHOLD_S
-        }
-    }
 
 @app.get("/orchestrator/status")
 def get_orchestrator_status():
