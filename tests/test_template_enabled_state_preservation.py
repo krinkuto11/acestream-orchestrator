@@ -36,7 +36,7 @@ def test_template_activation_preserves_enabled_state():
     try:
         for i in range(1, 11):
             delete_template(i)
-    except:
+    except Exception:
         pass
     
     # Create a template with enabled=False (as it might be saved)
@@ -113,7 +113,7 @@ def test_template_activation_preserves_disabled_state():
     try:
         for i in range(1, 11):
             delete_template(i)
-    except:
+    except Exception:
         pass
     
     # Create a template with enabled=True
@@ -168,7 +168,7 @@ if __name__ == "__main__":
     for i in range(1, 11):
         try:
             delete_template(i)
-        except:
+        except Exception:
             pass
     
     test_template_activation_preserves_enabled_state()
