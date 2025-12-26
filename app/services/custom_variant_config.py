@@ -104,6 +104,11 @@ class CustomVariantConfig(BaseModel):
     memory_limit: Optional[str] = None  # Docker memory limit (e.g., "512m", "2g")
     parameters: List[CustomVariantParameter] = []
     
+    # Torrent folder mount configuration
+    torrent_folder_mount_enabled: bool = False
+    torrent_folder_host_path: Optional[str] = None  # Host path to mount (e.g., "/mnt/torrents")
+    torrent_folder_container_path: str = "/root/.ACEStream/collected_torrent_files"  # Default container path
+    
     @validator('platform')
     def validate_platform(cls, v):
         valid_platforms = ['amd64', 'arm32', 'arm64']
@@ -125,6 +130,26 @@ class CustomVariantConfig(BaseModel):
         is_valid, error_msg = validate_memory_limit(v)
         if not is_valid:
             raise ValueError(error_msg)
+        return v
+    
+    @validator('torrent_folder_host_path')
+    def validate_torrent_folder_host_path(cls, v, values):
+        """Validate torrent folder host path when mount is enabled."""
+        # Only validate if mount is enabled
+        if values.get('torrent_folder_mount_enabled', False):
+            if not v or not v.strip():
+                raise ValueError("torrent_folder_host_path is required when torrent_folder_mount_enabled is True")
+            # Basic validation for path format (absolute path)
+            v = v.strip()
+            if not v.startswith('/'):
+                raise ValueError("torrent_folder_host_path must be an absolute path (start with /)")
+        return v
+    
+    @validator('torrent_folder_container_path')
+    def validate_torrent_folder_container_path(cls, v):
+        """Validate container path format."""
+        if v and not v.startswith('/'):
+            raise ValueError("torrent_folder_container_path must be an absolute path (start with /)")
         return v
 
 

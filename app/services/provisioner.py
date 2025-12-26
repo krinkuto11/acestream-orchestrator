@@ -303,8 +303,13 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         
         # In redundant mode, assign engine to VPN with round-robin load balancing
         if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+            # Check if in VPN recovery mode - force assign to recovery target
+            recovery_target = state.get_vpn_recovery_target()
+            if recovery_target:
+                vpn_container = recovery_target
+                logger.info(f"VPN recovery mode active: assigning engine to recovery target VPN '{vpn_container}'")
             # Check if in emergency mode - only assign to healthy VPN
-            if state.is_emergency_mode():
+            elif state.is_emergency_mode():
                 emergency_info = state.get_emergency_mode_info()
                 vpn_container = emergency_info['healthy_vpn']
                 logger.info(f"Emergency mode active: assigning engine to healthy VPN '{vpn_container}'")
@@ -562,6 +567,36 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         memory_limit = cfg.ENGINE_MEMORY_LIMIT
         logger.info(f"Applying global memory limit: {memory_limit}")
     
+    # Configure volume mounts for custom variants
+    volumes = None
+    if variant_config.get("is_custom"):
+        from .custom_variant_config import get_config as get_custom_config
+        custom_config = get_custom_config()
+        
+        # Check if torrent folder mount is enabled
+        if custom_config and custom_config.torrent_folder_mount_enabled:
+            if custom_config.torrent_folder_host_path:
+                # Get the container path - use user-specified if set via parameters, otherwise use default
+                container_path = custom_config.torrent_folder_container_path or "/root/.ACEStream/collected_torrent_files"
+                
+                # Check if user has overridden the cache-dir parameter
+                # If they have, we should use that path + /collected_torrent_files
+                for param in custom_config.parameters:
+                    if param.name == "--cache-dir" and param.enabled and param.value:
+                        cache_dir = param.value.replace("~", "/root")
+                        container_path = f"{cache_dir}/collected_torrent_files"
+                        break
+                
+                volumes = {
+                    custom_config.torrent_folder_host_path: {
+                        'bind': container_path,
+                        'mode': 'rw'
+                    }
+                }
+                logger.info(f"Mounting torrent folder: {custom_config.torrent_folder_host_path} -> {container_path}")
+            else:
+                logger.warning("Torrent folder mount enabled but host path not configured")
+    
     # Build container arguments, conditionally including ports
     container_args = {
         "image": variant_config["image"],
@@ -576,6 +611,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Add memory limit if configured
     if memory_limit:
         container_args["mem_limit"] = memory_limit
+    
+    # Add volumes if configured
+    if volumes:
+        container_args["volumes"] = volumes
     
     # Add command for CMD-based variants
     if cmd is not None:

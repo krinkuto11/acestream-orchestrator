@@ -695,44 +695,72 @@ class GluetunMonitor:
 
     async def _provision_engines_after_vpn_recovery(self, recovered_vpn: str):
         """
-        Provision engines after VPN recovery to restore full capacity.
+        Provision engines after VPN recovery to restore full capacity and balance.
         
         When a VPN fails, engines on it are removed and we run with reduced capacity.
-        When it recovers, this method provisions new engines to restore MIN_REPLICAS.
+        When it recovers, this method provisions new engines to restore MIN_REPLICAS
+        and ensure engines are balanced across both VPNs.
         """
         try:
             from .state import state
             from .provisioner import start_acestream, AceProvisionRequest
             
-            # Count current engines
-            all_engines = state.list_engines()
-            current_count = len(all_engines)
+            # Count current engines per VPN
+            vpn1_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
+            vpn2_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
+            current_count = vpn1_engines + vpn2_engines
             target_count = cfg.MIN_REPLICAS
             
             if current_count >= target_count:
                 logger.info(f"VPN '{recovered_vpn}' recovered - already at target capacity ({current_count}/{target_count})")
                 return
             
-            deficit = target_count - current_count
-            logger.info(f"VPN '{recovered_vpn}' recovered - provisioning {deficit} engines to restore capacity ({current_count}/{target_count})")
+            # Calculate how many engines to provision to the recovered VPN to achieve balance
+            # Target: split MIN_REPLICAS evenly between both VPNs
+            target_per_vpn = target_count // 2  # Integer division for even split
+            recovered_vpn_engines = vpn1_engines if recovered_vpn == cfg.GLUETUN_CONTAINER_NAME else vpn2_engines
             
-            # Provision engines - they will be assigned to recovered VPN via round-robin
-            # Note: Empty labels/env is intentional - provisioner will handle VPN assignment
-            provisioned = 0
-            failed = 0
-            for i in range(deficit):
-                try:
-                    logger.info(f"Provisioning recovery engine {i+1}/{deficit}")
-                    req = AceProvisionRequest(labels={}, env={})
-                    response = start_acestream(req)
-                    logger.info(f"Successfully provisioned recovery engine {response.container_id[:12]}")
-                    provisioned += 1
-                except Exception as e:
-                    logger.error(f"Failed to provision recovery engine {i+1}/{deficit}: {e}")
-                    failed += 1
-                    # Continue with remaining engines even if one fails
+            # Provision to recovered VPN to reach balanced state
+            # If MIN_REPLICAS is odd, the healthy VPN may have 1 more engine
+            deficit_for_recovered = max(0, target_per_vpn - recovered_vpn_engines)
             
-            logger.info(f"VPN recovery provisioning complete - successfully provisioned {provisioned}/{deficit} engines (failed: {failed})")
+            # If there's still a global deficit after balancing, add remaining engines to recovered VPN
+            global_deficit = target_count - current_count
+            engines_to_provision = min(deficit_for_recovered, global_deficit)
+            
+            if engines_to_provision == 0:
+                logger.info(f"VPN '{recovered_vpn}' recovered - engines already balanced (VPN1: {vpn1_engines}, VPN2: {vpn2_engines})")
+                return
+            
+            logger.info(f"VPN '{recovered_vpn}' recovered - provisioning {engines_to_provision} engines to restore balance "
+                       f"(current: VPN1={vpn1_engines}, VPN2={vpn2_engines}, target: {target_count} total)")
+            
+            # Temporarily set recovery mode to force all new engines to recovered VPN
+            state.enter_vpn_recovery_mode(recovered_vpn)
+            
+            try:
+                provisioned = 0
+                failed = 0
+                for i in range(engines_to_provision):
+                    try:
+                        logger.info(f"Provisioning recovery engine {i+1}/{engines_to_provision} to VPN '{recovered_vpn}'")
+                        req = AceProvisionRequest(labels={}, env={})
+                        response = start_acestream(req)
+                        logger.info(f"Successfully provisioned recovery engine {response.container_id[:12]} to VPN '{recovered_vpn}'")
+                        provisioned += 1
+                    except Exception as e:
+                        logger.error(f"Failed to provision recovery engine {i+1}/{engines_to_provision}: {e}")
+                        failed += 1
+                        # Continue with remaining engines even if one fails
+                
+                # Get final counts
+                final_vpn1 = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
+                final_vpn2 = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
+                logger.info(f"VPN recovery provisioning complete - provisioned {provisioned}/{engines_to_provision} engines "
+                           f"(failed: {failed}, final: VPN1={final_vpn1}, VPN2={final_vpn2})")
+            finally:
+                # Always exit recovery mode
+                state.exit_vpn_recovery_mode()
             
         except Exception as e:
             logger.error(f"Error provisioning engines after VPN '{recovered_vpn}' recovery: {e}")
