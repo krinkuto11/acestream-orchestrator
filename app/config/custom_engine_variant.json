@@ -169,7 +169,7 @@
     {
       "name": "--stats-report-interval",
       "type": "int",
-      "value": 60,
+      "value": 1,
       "enabled": true
     },
     {
@@ -193,7 +193,7 @@
     {
       "name": "--check-live-pos-interval",
       "type": "int",
-      "value": 10,
+      "value": 1,
       "enabled": true
     },
     {
