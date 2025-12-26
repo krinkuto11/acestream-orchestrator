@@ -20,16 +20,8 @@ import { toast } from 'sonner'
 function AppContent() {
   const { resolvedTheme } = useTheme()
   useFavicon(resolvedTheme)
-  // Use the current browser origin as default URL so the UI works regardless of which IP/host is used to access it
-  const getDefaultOrchUrl = () => {
-    // If accessed via a browser, use the current origin (e.g., http://192.168.1.100:8000)
-    // This ensures the UI works when accessed from any IP address
-    if (typeof window !== 'undefined' && window.location) {
-      return window.location.origin
-    }
-    return 'http://localhost:8000'
-  }
-  const [orchUrl, setOrchUrl] = useLocalStorage('orch_url', getDefaultOrchUrl())
+  // Always use the current browser origin as URL so the UI works regardless of which IP/host is used to access it
+  const orchUrl = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:8000'
   const [apiKey, setApiKey] = useLocalStorage('orch_apikey', '')
   const [refreshInterval, setRefreshInterval] = useLocalStorage('refresh_interval', 5000)
   const [maxEventsDisplay, setMaxEventsDisplay] = useLocalStorage('max_events_display', 100)
@@ -118,7 +110,6 @@ function AppContent() {
       await fetchJSON(`${orchUrl}/streams/${encodeURIComponent(streamId)}`, {
         method: 'DELETE'
       })
-      setSelectedStream(null)
       toast.success('Stream stopped successfully')
       await fetchData()
     } catch (err) {
@@ -215,8 +206,6 @@ function AppContent() {
                 path="/settings" 
                 element={
                   <SettingsPage
-                    orchUrl={orchUrl}
-                    setOrchUrl={setOrchUrl}
                     apiKey={apiKey}
                     setApiKey={setApiKey}
                     refreshInterval={refreshInterval}

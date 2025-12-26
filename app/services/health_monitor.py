@@ -2,7 +2,6 @@ import asyncio
 import logging
 import time
 from .state import state
-from ..utils.debug_logger import get_debug_logger
 from .event_logger import event_logger
 
 logger = logging.getLogger(__name__)
@@ -44,7 +43,6 @@ class HealthMonitor:
 
     async def _monitor_loop(self):
         """Main monitoring loop."""
-        debug_log = get_debug_logger()
         
         while self._running:
             check_start = time.time()
@@ -60,20 +58,11 @@ class HealthMonitor:
                 healthy_count = sum(1 for e in engines if e.health_status == "healthy")
                 unhealthy_count = sum(1 for e in engines if e.health_status == "unhealthy")
                 
-                debug_log.log_health_check("health_monitor_cycle",
-                                          status="completed",
-                                          duration=duration,
-                                          total_engines=len(engines),
-                                          healthy=healthy_count,
-                                          unhealthy=unhealthy_count)
+                logger.debug(f"Health check completed in {duration:.2f}s: {healthy_count} healthy, {unhealthy_count} unhealthy out of {len(engines)} engines")
                 
                 # Detect stress situation (high proportion of unhealthy engines)
                 if len(engines) > 0 and unhealthy_count / len(engines) > 0.3:
-                    debug_log.log_stress_event("high_unhealthy_engines",
-                                              severity="warning",
-                                              description=f"{unhealthy_count}/{len(engines)} engines unhealthy (>30%)",
-                                              unhealthy_count=unhealthy_count,
-                                              total=len(engines))
+                    logger.warning(f"High proportion of unhealthy engines: {unhealthy_count}/{len(engines)} (>30%)")
                     # Log event for high unhealthy engines
                     event_logger.log_event(
                         event_type="health",
@@ -88,11 +77,7 @@ class HealthMonitor:
                 
             except Exception as e:
                 duration = time.time() - check_start
-                logger.error(f"Error during health check: {e}")
-                debug_log.log_health_check("health_monitor_cycle",
-                                          status="error",
-                                          duration=duration,
-                                          error=str(e))
+                logger.error(f"Error during health check: {e} (duration: {duration:.2f}s)")
             
             try:
                 await asyncio.sleep(self.check_interval)

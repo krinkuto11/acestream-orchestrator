@@ -757,6 +757,57 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             </p>
           </div>
 
+          {/* Torrent Folder Mount Configuration */}
+          <div className="space-y-4 p-4 border rounded-lg">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="torrent-mount-enabled">Mount Torrent Folder to Host</Label>
+                <Switch
+                  id="torrent-mount-enabled"
+                  checked={config.torrent_folder_mount_enabled || false}
+                  onCheckedChange={(checked) => setConfig(prev => ({ ...prev, torrent_folder_mount_enabled: checked }))}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Mount engine's torrent folder to the host filesystem. Only applies to custom engine variants.
+              </p>
+            </div>
+
+            {config.torrent_folder_mount_enabled && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="torrent-host-path">Host Path (Required)</Label>
+                  <Input
+                    id="torrent-host-path"
+                    type="text"
+                    value={config.torrent_folder_host_path || ''}
+                    onChange={(e) => setConfig(prev => ({ ...prev, torrent_folder_host_path: e.target.value }))}
+                    placeholder="/mnt/torrents"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Absolute path on the host where torrent files will be stored. Must start with '/'.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="torrent-container-path">Container Path</Label>
+                  <Input
+                    id="torrent-container-path"
+                    type="text"
+                    // Default matches DEFAULT_TORRENT_FOLDER_PATH in custom_variant_config.py
+                    value={config.torrent_folder_container_path || '/root/.ACEStream/collected_torrent_files'}
+                    onChange={(e) => setConfig(prev => ({ ...prev, torrent_folder_container_path: e.target.value }))}
+                    placeholder="/root/.ACEStream/collected_torrent_files"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Path inside the container where torrents are stored. Default is /root/.ACEStream/collected_torrent_files.
+                    If you set a custom --cache-dir parameter, this will be automatically adjusted.
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+
           {!config.enabled && (
             <Alert>
               <Info className="h-4 w-4" />

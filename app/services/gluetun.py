@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 from typing import Optional, Dict
 from .docker_client import get_client
 from ..core.config import cfg
-from ..utils.debug_logger import get_debug_logger
 from .event_logger import event_logger
 from docker.errors import NotFound
 
@@ -64,7 +63,6 @@ class VpnContainerMonitor:
 
     async def check_health(self) -> bool:
         """Check if VPN container is healthy."""
-        debug_log = get_debug_logger()
         check_start = time.time()
         
         try:
@@ -80,11 +78,7 @@ class VpnContainerMonitor:
                 if self._last_logged_status != container.status:
                     logger.warning(f"VPN container '{self.container_name}' is not running (status: {container.status})")
                     self._last_logged_status = container.status
-                debug_log.log_vpn("health_check",
-                                 status="not_running",
-                                 duration=duration,
-                                 container_name=self.container_name,
-                                 container_status=container.status)
+                logger.debug("VPN operation")
                 return False
             
             # Check Docker health status if available
@@ -95,61 +89,38 @@ class VpnContainerMonitor:
                 
                 if health_status == "unhealthy":
                     logger.warning(f"VPN container '{self.container_name}' is unhealthy")
-                    debug_log.log_vpn("health_check",
-                                     status="unhealthy",
-                                     duration=duration,
-                                     container_name=self.container_name,
-                                     health_status=health_status)
+                    logger.debug("VPN operation")
                     return False
                 elif health_status == "healthy":
                     logger.debug(f"VPN container '{self.container_name}' is healthy")
                     # Reset logged status when container becomes healthy again
                     self._last_logged_status = None
-                    debug_log.log_vpn("health_check",
-                                     status="healthy",
-                                     duration=duration,
-                                     container_name=self.container_name,
-                                     health_status=health_status)
+                    logger.debug("VPN operation")
                     return True
                 else:
                     # Health status might be "starting" or "none"
                     logger.debug(f"VPN container '{self.container_name}' health status: {health_status}")
                     # Reset logged status when container is running
                     self._last_logged_status = None
-                    debug_log.log_vpn("health_check",
-                                     status=health_status,
-                                     duration=duration,
-                                     container_name=self.container_name,
-                                     health_status=health_status)
+                    logger.debug("VPN operation")
                     return True
             else:
                 duration = time.time() - check_start
                 logger.debug(f"VPN container '{self.container_name}' has no health check, considering healthy")
                 # Reset logged status when container is running
                 self._last_logged_status = None
-                debug_log.log_vpn("health_check",
-                                 status="healthy_no_healthcheck",
-                                 duration=duration,
-                                 container_name=self.container_name)
+                logger.debug("VPN operation")
                 return True
                 
         except NotFound:
             duration = time.time() - check_start
             logger.error(f"VPN container '{self.container_name}' not found")
-            debug_log.log_vpn("health_check",
-                             status="not_found",
-                             duration=duration,
-                             container_name=self.container_name,
-                             error="Container not found")
+            logger.debug("VPN operation")
             return False
         except Exception as e:
             duration = time.time() - check_start
             logger.error(f"Error checking VPN health for '{self.container_name}': {e}")
-            debug_log.log_vpn("health_check",
-                             status="error",
-                             duration=duration,
-                             container_name=self.container_name,
-                             error=str(e))
+            logger.debug("VPN operation")
             return False
 
     def is_healthy(self) -> Optional[bool]:
@@ -475,8 +446,9 @@ class GluetunMonitor:
                 pass
     
     async def _handle_health_transition(self, container_name: str, old_status: bool, new_status: bool):
-        """Handle VPN health status transitions for a specific container."""
-        debug_log = get_debug_logger()
+        """
+        Handle VPN health status transitions for a specific container.
+        """
         now = datetime.now(timezone.utc)
         monitor = self._vpn_monitors.get(container_name)
         
@@ -485,15 +457,8 @@ class GluetunMonitor:
         
         if old_status and not new_status:
             logger.warning(f"VPN '{container_name}' became unhealthy")
-            debug_log.log_vpn("transition",
-                             status="unhealthy",
-                             container_name=container_name,
-                             old_status=old_status,
-                             new_status=new_status)
-            debug_log.log_stress_event("vpn_disconnection",
-                                      severity="critical",
-                                      container_name=container_name,
-                                      description=f"VPN '{container_name}' became unhealthy")
+            logger.debug("VPN operation")
+            logger.warning("VPN stress event")
             monitor.invalidate_port_cache()
             
             # In redundant mode, enter emergency mode if one VPN fails
@@ -502,11 +467,7 @@ class GluetunMonitor:
             
         elif not old_status and new_status:
             logger.info(f"VPN '{container_name}' recovered and is now healthy")
-            debug_log.log_vpn("transition",
-                             status="healthy",
-                             container_name=container_name,
-                             old_status=old_status,
-                             new_status=new_status)
+            logger.debug("VPN operation")
             monitor.invalidate_port_cache()
             
             # Mark recovery time to prevent premature cleanup
@@ -522,17 +483,11 @@ class GluetunMonitor:
             # In single VPN mode, restart engines on reconnection
             if cfg.VPN_MODE == 'single' and cfg.VPN_RESTART_ENGINES_ON_RECONNECT and should_restart_engines:
                 logger.info(f"VPN '{container_name}' reconnected - triggering engine restart")
-                debug_log.log_vpn("restart_engines",
-                                 status="triggered",
-                                 container_name=container_name,
-                                 reason="vpn_reconnection")
+                logger.debug("VPN operation")
                 await self._restart_engines_for_vpn(container_name)
             elif cfg.VPN_MODE == 'single' and cfg.VPN_RESTART_ENGINES_ON_RECONNECT and not should_restart_engines:
                 logger.info(f"VPN '{container_name}' became healthy but skipping engine restart (grace period)")
-                debug_log.log_vpn("restart_engines",
-                                 status="skipped",
-                                 container_name=container_name,
-                                 reason="grace_period_or_instability")
+                logger.debug("VPN operation")
         
         # Call registered callbacks
         for callback in self._health_transition_callbacks:
@@ -555,7 +510,6 @@ class GluetunMonitor:
         3. Sets recovery stabilization period to prevent premature cleanup
         4. Allows the autoscaler to provision a new forwarded engine with the new port
         """
-        debug_log = get_debug_logger()
         now = datetime.now(timezone.utc)
         
         try:
@@ -563,11 +517,7 @@ class GluetunMonitor:
             from .provisioner import stop_container
             
             logger.warning(f"VPN '{container_name}' port changed from {old_port} to {new_port} - replacing forwarded engine")
-            debug_log.log_vpn("port_change_detected",
-                             status="replacing_forwarded_engine",
-                             container_name=container_name,
-                             old_port=old_port,
-                             new_port=new_port)
+            logger.debug("VPN operation")
             
             # Find the forwarded engine for this VPN
             forwarded_engine = None
@@ -601,12 +551,7 @@ class GluetunMonitor:
                 logger.info(f"Recovery stabilization period set for VPN '{container_name}' after port change "
                            f"({monitor._recovery_stabilization_period_s}s)")
             
-            debug_log.log_vpn("port_change_handled",
-                             status="forwarded_engine_replaced",
-                             container_name=container_name,
-                             old_port=old_port,
-                             new_port=new_port,
-                             engine_id=forwarded_engine.container_id[:12])
+            logger.debug("VPN operation")
             
             # The autoscaler will automatically provision a new forwarded engine
             # to maintain MIN_REPLICAS, and it will use the new forwarded port
@@ -614,12 +559,7 @@ class GluetunMonitor:
             
         except Exception as e:
             logger.error(f"Error handling port change for VPN '{container_name}': {e}")
-            debug_log.log_vpn("port_change_error",
-                             status="error",
-                             container_name=container_name,
-                             old_port=old_port,
-                             new_port=new_port,
-                             error=str(e))
+            logger.debug("VPN operation")
 
     async def _restart_engines_for_vpn(self, container_name: str):
         """Restart all engines assigned to a specific VPN container."""
@@ -755,44 +695,67 @@ class GluetunMonitor:
 
     async def _provision_engines_after_vpn_recovery(self, recovered_vpn: str):
         """
-        Provision engines after VPN recovery to restore full capacity.
+        Provision engines after VPN recovery to restore full capacity and balance.
         
         When a VPN fails, engines on it are removed and we run with reduced capacity.
-        When it recovers, this method provisions new engines to restore MIN_REPLICAS.
+        When it recovers, this method provisions new engines to restore MIN_REPLICAS
+        and ensure engines are balanced across both VPNs.
         """
         try:
             from .state import state
             from .provisioner import start_acestream, AceProvisionRequest
             
-            # Count current engines
-            all_engines = state.list_engines()
-            current_count = len(all_engines)
+            # Count current engines per VPN
+            vpn1_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
+            vpn2_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
+            current_count = vpn1_engines + vpn2_engines
             target_count = cfg.MIN_REPLICAS
             
             if current_count >= target_count:
                 logger.info(f"VPN '{recovered_vpn}' recovered - already at target capacity ({current_count}/{target_count})")
                 return
             
-            deficit = target_count - current_count
-            logger.info(f"VPN '{recovered_vpn}' recovered - provisioning {deficit} engines to restore capacity ({current_count}/{target_count})")
+            # Calculate how many engines to provision to the recovered VPN to achieve balance
+            # We want to provision all available engines to the recovered VPN to restore balance
+            global_deficit = target_count - current_count
             
-            # Provision engines - they will be assigned to recovered VPN via round-robin
-            # Note: Empty labels/env is intentional - provisioner will handle VPN assignment
-            provisioned = 0
-            failed = 0
-            for i in range(deficit):
-                try:
-                    logger.info(f"Provisioning recovery engine {i+1}/{deficit}")
-                    req = AceProvisionRequest(labels={}, env={})
-                    response = start_acestream(req)
-                    logger.info(f"Successfully provisioned recovery engine {response.container_id[:12]}")
-                    provisioned += 1
-                except Exception as e:
-                    logger.error(f"Failed to provision recovery engine {i+1}/{deficit}: {e}")
-                    failed += 1
-                    # Continue with remaining engines even if one fails
+            if global_deficit <= 0:
+                logger.info(f"VPN '{recovered_vpn}' recovered - already at target capacity ({current_count}/{target_count})")
+                return
             
-            logger.info(f"VPN recovery provisioning complete - successfully provisioned {provisioned}/{deficit} engines (failed: {failed})")
+            # Provision all deficit engines to the recovered VPN to restore balance
+            # This will move towards a balanced state over time, even if we can't fully balance in one go
+            engines_to_provision = global_deficit
+            
+            logger.info(f"VPN '{recovered_vpn}' recovered - provisioning {engines_to_provision} engines to restore balance "
+                       f"(current: VPN1={vpn1_engines}, VPN2={vpn2_engines}, target: {target_count} total)")
+            
+            # Temporarily set recovery mode to force all new engines to recovered VPN
+            state.enter_vpn_recovery_mode(recovered_vpn)
+            
+            try:
+                provisioned = 0
+                failed = 0
+                for i in range(engines_to_provision):
+                    try:
+                        logger.info(f"Provisioning recovery engine {i+1}/{engines_to_provision} to VPN '{recovered_vpn}'")
+                        req = AceProvisionRequest(labels={}, env={})
+                        response = start_acestream(req)
+                        logger.info(f"Successfully provisioned recovery engine {response.container_id[:12]} to VPN '{recovered_vpn}'")
+                        provisioned += 1
+                    except Exception as e:
+                        logger.error(f"Failed to provision recovery engine {i+1}/{engines_to_provision}: {e}")
+                        failed += 1
+                        # Continue with remaining engines even if one fails
+                
+                # Get final counts
+                final_vpn1 = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
+                final_vpn2 = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
+                logger.info(f"VPN recovery provisioning complete - provisioned {provisioned}/{engines_to_provision} engines "
+                           f"(failed: {failed}, final: VPN1={final_vpn1}, VPN2={final_vpn2})")
+            finally:
+                # Always exit recovery mode
+                state.exit_vpn_recovery_mode()
             
         except Exception as e:
             logger.error(f"Error provisioning engines after VPN '{recovered_vpn}' recovery: {e}")
