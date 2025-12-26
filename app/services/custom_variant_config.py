@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 # Default config file path
 DEFAULT_CONFIG_PATH = Path("app/config/custom_engine_variant.json")
 
+# Default torrent folder path inside containers
+DEFAULT_TORRENT_FOLDER_PATH = "/root/.ACEStream/collected_torrent_files"
+
 # Memory limit constants
 MIN_MEMORY_BYTES = 32 * 1024 * 1024  # 32MB minimum
 MAX_MEMORY_BYTES = 128 * 1024 * 1024 * 1024  # 128GB maximum
@@ -107,7 +110,7 @@ class CustomVariantConfig(BaseModel):
     # Torrent folder mount configuration
     torrent_folder_mount_enabled: bool = False
     torrent_folder_host_path: Optional[str] = None  # Host path to mount (e.g., "/mnt/torrents")
-    torrent_folder_container_path: str = "/root/.ACEStream/collected_torrent_files"  # Default container path
+    torrent_folder_container_path: str = DEFAULT_TORRENT_FOLDER_PATH  # Default container path
     
     @validator('platform')
     def validate_platform(cls, v):

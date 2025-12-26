@@ -570,14 +570,14 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Configure volume mounts for custom variants
     volumes = None
     if variant_config.get("is_custom"):
-        from .custom_variant_config import get_config as get_custom_config
+        from .custom_variant_config import get_config as get_custom_config, DEFAULT_TORRENT_FOLDER_PATH
         custom_config = get_custom_config()
         
         # Check if torrent folder mount is enabled
         if custom_config and custom_config.torrent_folder_mount_enabled:
             if custom_config.torrent_folder_host_path:
-                # Get the container path - use user-specified if set via parameters, otherwise use default
-                container_path = custom_config.torrent_folder_container_path or "/root/.ACEStream/collected_torrent_files"
+                # Get the container path - use user-specified if set, otherwise use default
+                container_path = custom_config.torrent_folder_container_path or DEFAULT_TORRENT_FOLDER_PATH
                 
                 # Check if user has overridden the cache-dir parameter
                 # If they have, we should use that path + /collected_torrent_files

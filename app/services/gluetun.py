@@ -716,21 +716,16 @@ class GluetunMonitor:
                 return
             
             # Calculate how many engines to provision to the recovered VPN to achieve balance
-            # Target: split MIN_REPLICAS evenly between both VPNs
-            target_per_vpn = target_count // 2  # Integer division for even split
-            recovered_vpn_engines = vpn1_engines if recovered_vpn == cfg.GLUETUN_CONTAINER_NAME else vpn2_engines
-            
-            # Provision to recovered VPN to reach balanced state
-            # If MIN_REPLICAS is odd, the healthy VPN may have 1 more engine
-            deficit_for_recovered = max(0, target_per_vpn - recovered_vpn_engines)
-            
-            # If there's still a global deficit after balancing, add remaining engines to recovered VPN
+            # We want to provision all available engines to the recovered VPN to restore balance
             global_deficit = target_count - current_count
-            engines_to_provision = min(deficit_for_recovered, global_deficit)
             
-            if engines_to_provision == 0:
-                logger.info(f"VPN '{recovered_vpn}' recovered - engines already balanced (VPN1: {vpn1_engines}, VPN2: {vpn2_engines})")
+            if global_deficit <= 0:
+                logger.info(f"VPN '{recovered_vpn}' recovered - already at target capacity ({current_count}/{target_count})")
                 return
+            
+            # Provision all deficit engines to the recovered VPN to restore balance
+            # This will move towards a balanced state over time, even if we can't fully balance in one go
+            engines_to_provision = global_deficit
             
             logger.info(f"VPN '{recovered_vpn}' recovered - provisioning {engines_to_provision} engines to restore balance "
                        f"(current: VPN1={vpn1_engines}, VPN2={vpn2_engines}, target: {target_count} total)")
