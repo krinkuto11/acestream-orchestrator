@@ -581,9 +581,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
                 
                 # Check if user has overridden the cache-dir parameter
                 # If they have, we should use that path + /collected_torrent_files
+                # Note: ~ is expanded to /root because AceStream runs as root in the container
                 for param in custom_config.parameters:
                     if param.name == "--cache-dir" and param.enabled and param.value:
-                        cache_dir = param.value.replace("~", "/root")
+                        cache_dir = param.value.replace("~", "/root")  # AceStream runs as root
                         container_path = f"{cache_dir}/collected_torrent_files"
                         break
                 

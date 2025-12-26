@@ -794,6 +794,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                   <Input
                     id="torrent-container-path"
                     type="text"
+                    // Default matches DEFAULT_TORRENT_FOLDER_PATH in custom_variant_config.py
                     value={config.torrent_folder_container_path || '/root/.ACEStream/collected_torrent_files'}
                     onChange={(e) => setConfig(prev => ({ ...prev, torrent_folder_container_path: e.target.value }))}
                     placeholder="/root/.ACEStream/collected_torrent_files"

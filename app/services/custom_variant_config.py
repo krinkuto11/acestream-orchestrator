@@ -138,12 +138,15 @@ class CustomVariantConfig(BaseModel):
     @validator('torrent_folder_host_path')
     def validate_torrent_folder_host_path(cls, v, values):
         """Validate torrent folder host path when mount is enabled."""
+        # Strip whitespace if value provided
+        if v:
+            v = v.strip()
+        
         # Only validate if mount is enabled
         if values.get('torrent_folder_mount_enabled', False):
-            if not v or not v.strip():
+            if not v:
                 raise ValueError("torrent_folder_host_path is required when torrent_folder_mount_enabled is True")
             # Basic validation for path format (absolute path)
-            v = v.strip()
             if not v.startswith('/'):
                 raise ValueError("torrent_folder_host_path must be an absolute path (start with /)")
         return v
