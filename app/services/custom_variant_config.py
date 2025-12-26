@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 # Default config file path
 DEFAULT_CONFIG_PATH = Path("app/config/custom_engine_variant.json")
 
+# Default torrent folder path inside containers
+DEFAULT_TORRENT_FOLDER_PATH = "/root/.ACEStream/collected_torrent_files"
+
 # Memory limit constants
 MIN_MEMORY_BYTES = 32 * 1024 * 1024  # 32MB minimum
 MAX_MEMORY_BYTES = 128 * 1024 * 1024 * 1024  # 128GB maximum
@@ -104,6 +107,11 @@ class CustomVariantConfig(BaseModel):
     memory_limit: Optional[str] = None  # Docker memory limit (e.g., "512m", "2g")
     parameters: List[CustomVariantParameter] = []
     
+    # Torrent folder mount configuration
+    torrent_folder_mount_enabled: bool = False
+    torrent_folder_host_path: Optional[str] = None  # Host path to mount (e.g., "/mnt/torrents")
+    torrent_folder_container_path: str = DEFAULT_TORRENT_FOLDER_PATH  # Default container path
+    
     @validator('platform')
     def validate_platform(cls, v):
         valid_platforms = ['amd64', 'arm32', 'arm64']
@@ -125,6 +133,29 @@ class CustomVariantConfig(BaseModel):
         is_valid, error_msg = validate_memory_limit(v)
         if not is_valid:
             raise ValueError(error_msg)
+        return v
+    
+    @validator('torrent_folder_host_path')
+    def validate_torrent_folder_host_path(cls, v, values):
+        """Validate torrent folder host path when mount is enabled."""
+        # Strip whitespace if value provided
+        if v:
+            v = v.strip()
+        
+        # Only validate if mount is enabled
+        if values.get('torrent_folder_mount_enabled', False):
+            if not v:
+                raise ValueError("torrent_folder_host_path is required when torrent_folder_mount_enabled is True")
+            # Basic validation for path format (absolute path)
+            if not v.startswith('/'):
+                raise ValueError("torrent_folder_host_path must be an absolute path (start with /)")
+        return v
+    
+    @validator('torrent_folder_container_path')
+    def validate_torrent_folder_container_path(cls, v):
+        """Validate container path format."""
+        if v and not v.startswith('/'):
+            raise ValueError("torrent_folder_container_path must be an absolute path (start with /)")
         return v
 
 

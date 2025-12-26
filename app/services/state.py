@@ -25,6 +25,11 @@ class State:
         # Reprovisioning mode state for coordinating system-wide reprovisioning
         self._reprovisioning_mode = False
         self._reprovisioning_entered_at: Optional[datetime] = None
+        
+        # VPN recovery mode state for directing engines to recovered VPN
+        self._vpn_recovery_mode = False
+        self._recovery_target_vpn: Optional[str] = None
+        self._vpn_recovery_entered_at: Optional[datetime] = None
 
     @staticmethod
     def now():
@@ -665,6 +670,63 @@ class State:
                 "duration_seconds": duration,
                 "entered_at": self._reprovisioning_entered_at.isoformat() if self._reprovisioning_entered_at else None
             }
+    
+    def enter_vpn_recovery_mode(self, target_vpn: str) -> bool:
+        """
+        Enter VPN recovery mode to direct all new engines to the specified VPN.
+        
+        This is used after a VPN recovers to ensure engines are provisioned to it
+        to restore balance, rather than using round-robin which would keep imbalance.
+        
+        Args:
+            target_vpn: VPN container name to direct all new engines to
+            
+        Returns:
+            bool: True if successfully entered VPN recovery mode, False if already in it
+        """
+        with self._lock:
+            if self._vpn_recovery_mode:
+                logger.warning(f"Already in VPN recovery mode (target: {self._recovery_target_vpn})")
+                return False
+            
+            self._vpn_recovery_mode = True
+            self._recovery_target_vpn = target_vpn
+            self._vpn_recovery_entered_at = self.now()
+            
+            logger.info(f"Entered VPN recovery mode - all new engines will be assigned to '{target_vpn}'")
+            return True
+    
+    def exit_vpn_recovery_mode(self) -> bool:
+        """
+        Exit VPN recovery mode and resume normal round-robin provisioning.
+        
+        Returns:
+            bool: True if successfully exited VPN recovery mode, False if wasn't in it
+        """
+        with self._lock:
+            if not self._vpn_recovery_mode:
+                logger.warning("Not in VPN recovery mode")
+                return False
+            
+            duration = (self.now() - self._vpn_recovery_entered_at).total_seconds() if self._vpn_recovery_entered_at else 0
+            target_vpn = self._recovery_target_vpn
+            
+            self._vpn_recovery_mode = False
+            self._recovery_target_vpn = None
+            self._vpn_recovery_entered_at = None
+            
+            logger.info(f"Exited VPN recovery mode after {duration:.1f}s (target was: {target_vpn}) - resuming normal round-robin")
+            return True
+    
+    def is_vpn_recovery_mode(self) -> bool:
+        """Check if system is in VPN recovery mode."""
+        with self._lock:
+            return self._vpn_recovery_mode
+    
+    def get_vpn_recovery_target(self) -> Optional[str]:
+        """Get the target VPN for recovery mode, or None if not in recovery mode."""
+        with self._lock:
+            return self._recovery_target_vpn if self._vpn_recovery_mode else None
     
     def cleanup_ended_streams(self, max_age_seconds: int = 3600) -> int:
         """
