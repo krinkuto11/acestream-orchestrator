@@ -17,9 +17,9 @@ class StreamCleanup:
     def __init__(self):
         self._task = None
         self._stop = asyncio.Event()
-        # Clean up streams older than 1 hour by default
+        # Clean up streams older than 5 minutes by default
         # This can be made configurable if needed
-        self._max_age_seconds = 3600
+        self._max_age_seconds = 300
 
     async def start(self):
         if self._task and not self._task.done():
