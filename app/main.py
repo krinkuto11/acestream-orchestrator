@@ -209,38 +209,48 @@ else:
     logger.warning(f"Panel directory {panel_dir} not found. /panel endpoint will not be available.")
 
 # Favicon routes - serve favicon files at root level for browser default requests
-if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
-    def serve_favicon(filename: str):
-        """Helper function to serve favicon files from panel directory."""
+# Try both built panel and source panel-react/public directories
+def serve_favicon(filename: str):
+    """Helper function to serve favicon files from panel directory or fallback to source."""
+    # Try built panel directory first
+    if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
         favicon_path = os.path.join(panel_dir, filename)
         if os.path.exists(favicon_path):
             return FileResponse(favicon_path)
-        raise HTTPException(status_code=404, detail="Not Found")
     
-    @app.get("/favicon.ico")
-    async def get_favicon_ico():
-        """Serve favicon.ico at root level."""
-        return serve_favicon("favicon.ico")
+    # Fallback to panel-react/public for development
+    panel_react_public = "app/static/panel-react/public"
+    if os.path.exists(panel_react_public):
+        favicon_path = os.path.join(panel_react_public, filename)
+        if os.path.exists(favicon_path):
+            return FileResponse(favicon_path)
     
-    @app.get("/favicon.svg")
-    async def get_favicon_svg():
-        """Serve favicon.svg at root level."""
-        return serve_favicon("favicon.svg")
-    
-    @app.get("/favicon-96x96.png")
-    async def get_favicon_96():
-        """Serve favicon-96x96.png at root level."""
-        return serve_favicon("favicon-96x96.png")
-    
-    @app.get("/favicon-96x96-dark.png")
-    async def get_favicon_96_dark():
-        """Serve favicon-96x96-dark.png at root level."""
-        return serve_favicon("favicon-96x96-dark.png")
-    
-    @app.get("/apple-touch-icon.png")
-    async def get_apple_touch_icon():
-        """Serve apple-touch-icon.png at root level."""
-        return serve_favicon("apple-touch-icon.png")
+    raise HTTPException(status_code=404, detail="Favicon not found")
+
+@app.get("/favicon.ico")
+async def get_favicon_ico():
+    """Serve favicon.ico at root level."""
+    return serve_favicon("favicon.ico")
+
+@app.get("/favicon.svg")
+async def get_favicon_svg():
+    """Serve favicon.svg at root level."""
+    return serve_favicon("favicon.svg")
+
+@app.get("/favicon-96x96.png")
+async def get_favicon_96():
+    """Serve favicon-96x96.png at root level."""
+    return serve_favicon("favicon-96x96.png")
+
+@app.get("/favicon-96x96-dark.png")
+async def get_favicon_96_dark():
+    """Serve favicon-96x96-dark.png at root level."""
+    return serve_favicon("favicon-96x96-dark.png")
+
+@app.get("/apple-touch-icon.png")
+async def get_apple_touch_icon():
+    """Serve apple-touch-icon.png at root level."""
+    return serve_favicon("apple-touch-icon.png")
 
 # Prometheus metrics endpoint with custom aggregated metrics
 from starlette.responses import Response

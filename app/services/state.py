@@ -216,6 +216,7 @@ class State:
         """
         Get streams enriched with their latest stats.
         Returns copies of stream objects with stats attached to avoid mutating the originals.
+        For ended streams, speed/peer data is set to None as it's no longer relevant.
         """
         with self._lock:
             streams = list(self.streams.values())
@@ -229,15 +230,26 @@ class State:
             for stream in streams:
                 # Create a copy using model_copy to avoid mutating the original
                 enriched = stream.model_copy()
-                stats = self.stream_stats.get(stream.id, [])
-                if stats:
-                    latest_stat = stats[-1]  # Get the most recent stat
-                    enriched.peers = latest_stat.peers
-                    enriched.speed_down = latest_stat.speed_down
-                    enriched.speed_up = latest_stat.speed_up
-                    enriched.downloaded = latest_stat.downloaded
-                    enriched.uploaded = latest_stat.uploaded
-                    enriched.livepos = latest_stat.livepos
+                
+                # Only add stats for active streams
+                if stream.status == "started":
+                    stats = self.stream_stats.get(stream.id, [])
+                    if stats:
+                        latest_stat = stats[-1]  # Get the most recent stat
+                        enriched.peers = latest_stat.peers
+                        enriched.speed_down = latest_stat.speed_down
+                        enriched.speed_up = latest_stat.speed_up
+                        enriched.downloaded = latest_stat.downloaded
+                        enriched.uploaded = latest_stat.uploaded
+                        enriched.livepos = latest_stat.livepos
+                else:
+                    # For ended streams, clear speed/peer data as it's no longer relevant
+                    enriched.peers = None
+                    enriched.speed_down = None
+                    enriched.speed_up = None
+                    enriched.livepos = None
+                    # Keep downloaded/uploaded totals for historical record
+                
                 enriched_streams.append(enriched)
             
             return enriched_streams
