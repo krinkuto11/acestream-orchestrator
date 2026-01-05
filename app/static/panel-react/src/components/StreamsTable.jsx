@@ -58,7 +58,7 @@ ChartJS.register(
   Legend
 )
 
-function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode }) {
+function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode, showSpeedColumns = true }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [stats, setStats] = useState([])
   const [loading, setLoading] = useState(false)
@@ -247,7 +247,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   return (
     <>
       <TableRow 
-        className={`cursor-pointer ${isEnded ? 'opacity-60' : ''}`}
+        className="cursor-pointer"
         onClick={() => setIsExpanded(!isExpanded)}
       >
         <TableCell className="w-[40px]">
@@ -288,42 +288,46 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
             <span className="text-sm">{formatTime(stream.started_at)}</span>
           </div>
         </TableCell>
-        <TableCell className="text-right">
-          {isActive ? (
-            <div className="flex items-center justify-end gap-1">
-              <Download className="h-3 w-3 text-success" />
-              <span className="text-sm font-semibold text-success">
-                {formatBytesPerSecond((stream.speed_down || 0) * 1024)}
-              </span>
-            </div>
-          ) : (
-            <span className="text-sm text-muted-foreground">—</span>
-          )}
-        </TableCell>
-        <TableCell className="text-right">
-          {isActive ? (
-            <div className="flex items-center justify-end gap-1">
-              <Upload className="h-3 w-3 text-destructive" />
-              <span className="text-sm font-semibold text-destructive">
-                {formatBytesPerSecond((stream.speed_up || 0) * 1024)}
-              </span>
-            </div>
-          ) : (
-            <span className="text-sm text-muted-foreground">—</span>
-          )}
-        </TableCell>
-        <TableCell className="text-right">
-          {isActive ? (
-            <div className="flex items-center justify-end gap-1">
-              <Users className="h-3 w-3 text-primary" />
-              <span className="text-sm font-semibold text-primary">
-                {stream.peers != null ? stream.peers : 'N/A'}
-              </span>
-            </div>
-          ) : (
-            <span className="text-sm text-muted-foreground">—</span>
-          )}
-        </TableCell>
+        {showSpeedColumns && (
+          <>
+            <TableCell className="text-right">
+              {isActive ? (
+                <div className="flex items-center justify-end gap-1">
+                  <Download className="h-3 w-3 text-success" />
+                  <span className="text-sm font-semibold text-success">
+                    {formatBytesPerSecond((stream.speed_down || 0) * 1024)}
+                  </span>
+                </div>
+              ) : (
+                <span className="text-sm text-muted-foreground">—</span>
+              )}
+            </TableCell>
+            <TableCell className="text-right">
+              {isActive ? (
+                <div className="flex items-center justify-end gap-1">
+                  <Upload className="h-3 w-3 text-destructive" />
+                  <span className="text-sm font-semibold text-destructive">
+                    {formatBytesPerSecond((stream.speed_up || 0) * 1024)}
+                  </span>
+                </div>
+              ) : (
+                <span className="text-sm text-muted-foreground">—</span>
+              )}
+            </TableCell>
+            <TableCell className="text-right">
+              {isActive ? (
+                <div className="flex items-center justify-end gap-1">
+                  <Users className="h-3 w-3 text-primary" />
+                  <span className="text-sm font-semibold text-primary">
+                    {stream.peers != null ? stream.peers : 'N/A'}
+                  </span>
+                </div>
+              ) : (
+                <span className="text-sm text-muted-foreground">—</span>
+              )}
+            </TableCell>
+          </>
+        )}
         <TableCell className="text-right">
           <span className="text-sm">{formatBytes(stream.downloaded)}</span>
         </TableCell>
@@ -333,7 +337,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       </TableRow>
       {isExpanded && (
         <TableRow>
-          <TableCell colSpan={10} className="p-6 bg-muted/50">
+          <TableCell colSpan={showSpeedColumns ? 10 : 7} className="p-6 bg-muted/50">
             <div className="space-y-6">
               {/* Stream Details */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -584,6 +588,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                     onStopStream={onStopStream}
                     onDeleteEngine={onDeleteEngine}
                     debugMode={debugMode}
+                    showSpeedColumns={false}
                   />
                 ))}
               </TableBody>

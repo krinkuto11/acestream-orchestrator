@@ -248,7 +248,12 @@ class State:
                     enriched.speed_down = None
                     enriched.speed_up = None
                     enriched.livepos = None
-                    # Keep downloaded/uploaded totals for historical record
+                    # Keep downloaded/uploaded totals for historical record from last stat
+                    stats = self.stream_stats.get(stream.id, [])
+                    if stats:
+                        latest_stat = stats[-1]
+                        enriched.downloaded = latest_stat.downloaded
+                        enriched.uploaded = latest_stat.uploaded
                 
                 enriched_streams.append(enriched)
             
