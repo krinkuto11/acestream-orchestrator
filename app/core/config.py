@@ -59,6 +59,9 @@ class Cfg(BaseModel):
     # Engine provisioning performance settings
     MAX_CONCURRENT_PROVISIONS: int = int(os.getenv("MAX_CONCURRENT_PROVISIONS", "5"))
     MIN_PROVISION_INTERVAL_S: float = float(os.getenv("MIN_PROVISION_INTERVAL_S", "0.5"))
+    
+    # Acexy integration settings
+    ACEXY_MAX_STREAMS_PER_ENGINE: int = int(os.getenv("ACEXY_MAX_STREAMS_PER_ENGINE", "3"))
 
     PORT_RANGE_HOST: str = os.getenv("PORT_RANGE_HOST", "19000-19999")
     ACE_HTTP_RANGE: str = os.getenv("ACE_HTTP_RANGE", "40000-44999")
@@ -147,6 +150,12 @@ class Cfg(BaseModel):
         valid_modes = ['single', 'redundant']
         if v not in valid_modes:
             raise ValueError(f'VPN_MODE must be one of: {", ".join(valid_modes)}')
+        return v
+
+    @validator('ACEXY_MAX_STREAMS_PER_ENGINE')
+    def validate_acexy_max_streams(cls, v):
+        if v <= 0:
+            raise ValueError('ACEXY_MAX_STREAMS_PER_ENGINE must be > 0')
         return v
 
     @model_validator(mode='after')

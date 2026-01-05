@@ -38,7 +38,8 @@ def ensure_minimum(initial_startup: bool = False):
     
     Args:
         initial_startup: If True, provisions MIN_REPLICAS total containers on startup.
-                        If False, maintains MIN_FREE_REPLICAS free/empty containers during runtime.
+                        If False, maintains MIN_FREE_REPLICAS free/empty containers during runtime
+                        OR provisions new engine when all engines have reached (ACEXY_MAX_STREAMS_PER_ENGINE - 1) streams.
     """
     try:
         from .replica_validator import replica_validator
@@ -69,10 +70,36 @@ def ensure_minimum(initial_startup: bool = False):
             deficit = target - total_running
             target_description = f"MIN_REPLICAS={cfg.MIN_REPLICAS} total containers"
         else:
-            # During runtime: ensure we have MIN_FREE_REPLICAS free containers
-            target = cfg.MIN_FREE_REPLICAS
-            deficit = target - free_count
-            target_description = f"MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} free engines"
+            # During runtime: check if we need to provision based on ACEXY_MAX_STREAMS_PER_ENGINE
+            # Count streams per engine
+            all_engines = state.list_engines()
+            if all_engines:
+                # Get stream counts per engine
+                engines_with_stream_counts = []
+                for engine in all_engines:
+                    stream_count = len(state.list_streams(status="started", container_id=engine.container_id))
+                    engines_with_stream_counts.append((engine.container_id, stream_count))
+                
+                # Check if all engines have at least (MAX_STREAMS - 1) streams
+                max_streams_threshold = cfg.ACEXY_MAX_STREAMS_PER_ENGINE - 1
+                all_engines_near_capacity = all(count >= max_streams_threshold for _, count in engines_with_stream_counts)
+                
+                if all_engines_near_capacity:
+                    # All engines have reached threshold, provision one new engine
+                    deficit = 1
+                    target = total_running + 1
+                    target_description = f"all engines at {max_streams_threshold}+ streams (ACEXY_MAX_STREAMS_PER_ENGINE={cfg.ACEXY_MAX_STREAMS_PER_ENGINE})"
+                    logger.info(f"All {len(all_engines)} engines have {max_streams_threshold}+ streams, provisioning new engine")
+                else:
+                    # Not all engines at capacity yet, check MIN_FREE_REPLICAS as fallback
+                    target = cfg.MIN_FREE_REPLICAS
+                    deficit = target - free_count
+                    target_description = f"MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} free engines"
+            else:
+                # No engines exist, use MIN_FREE_REPLICAS
+                target = cfg.MIN_FREE_REPLICAS
+                deficit = target - free_count
+                target_description = f"MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} free engines"
         
         # When using Gluetun, respect MAX_ACTIVE_REPLICAS as a hard limit
         if cfg.GLUETUN_CONTAINER_NAME:
