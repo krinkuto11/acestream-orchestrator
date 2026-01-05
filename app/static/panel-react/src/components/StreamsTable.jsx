@@ -246,28 +246,26 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
 
   return (
     <>
-      <TableRow 
-        className="cursor-pointer"
-        onClick={() => setIsExpanded(!isExpanded)}
-      >
+      <TableRow>
         <TableCell className="w-[40px]">
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0"
+            className="h-8 w-8 p-0 border border-white/20 hover:bg-white/10"
+            onClick={() => setIsExpanded(!isExpanded)}
           >
-            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            {isExpanded ? <ChevronUp className="h-4 w-4 text-white" /> : <ChevronDown className="h-4 w-4 text-white" />}
           </Button>
         </TableCell>
         <TableCell>
           <Badge variant={isActive ? "success" : "secondary"} className="flex items-center gap-1 w-fit">
             {isActive ? <PlayCircle className="h-3 w-3" /> : <Activity className="h-3 w-3" />}
-            {isActive ? 'ACTIVE' : 'ENDED'}
+            <span className="text-white">{isActive ? 'ACTIVE' : 'ENDED'}</span>
           </Badge>
         </TableCell>
         <TableCell className="font-medium">
           <div className="flex flex-col gap-1">
-            <span className="text-sm truncate max-w-[200px]" title={stream.id}>
+            <span className="text-sm text-white truncate max-w-[200px]" title={stream.id}>
               {stream.id.slice(0, TRUNCATED_STREAM_ID_LENGTH)}...
             </span>
             {isActive && bufferDuration !== null && (
@@ -278,14 +276,14 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           </div>
         </TableCell>
         <TableCell>
-          <span className="text-sm truncate max-w-[150px] block" title={stream.container_name || stream.container_id}>
+          <span className="text-sm text-white truncate max-w-[150px] block" title={stream.container_name || stream.container_id}>
             {stream.container_name || stream.container_id?.slice(0, TRUNCATED_CONTAINER_ID_LENGTH) || 'N/A'}
           </span>
         </TableCell>
         <TableCell>
           <div className="flex items-center gap-1">
             <Clock className="h-3 w-3 text-muted-foreground" />
-            <span className="text-sm">{formatTime(stream.started_at)}</span>
+            <span className="text-sm text-white">{formatTime(stream.started_at)}</span>
           </div>
         </TableCell>
         {showSpeedColumns && (
@@ -329,10 +327,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           </>
         )}
         <TableCell className="text-right">
-          <span className="text-sm">{formatBytes(stream.downloaded)}</span>
+          <span className="text-sm text-white">{formatBytes(stream.downloaded)}</span>
         </TableCell>
         <TableCell className="text-right">
-          <span className="text-sm">{formatBytes(stream.uploaded)}</span>
+          <span className="text-sm text-white">{formatBytes(stream.uploaded)}</span>
         </TableCell>
       </TableRow>
       {isExpanded && (
