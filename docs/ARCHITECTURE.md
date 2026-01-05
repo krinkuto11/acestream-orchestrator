@@ -118,10 +118,8 @@ The orchestrator:
 **Technology**: Background asyncio task
 
 **Responsibilities**:
-- **PRIMARY** mechanism for detecting stale/ended streams (via stat URL polling)
-- Polls stream statistics every `COLLECT_INTERVAL_S` seconds (default: 2s for quick detection)
+- Polls stream statistics every `COLLECT_INTERVAL_S` seconds (default: 1s)
 - Collects data from engine `stat_url` endpoints
-- Detects stale streams when engine returns "unknown playback session id"
 - Stores statistics in database and memory
 
 **Data Collected**:
@@ -193,17 +191,7 @@ The orchestrator:
 4. Unhealthy engines can be identified and handled
 ```
 
-### 4. Stale Stream Detection
-
-```
-1. Collector polls stream stat_url
-2. Engine returns: {"response": null, "error": "unknown playback session id"}
-3. Collector detects stale stream
-4. Automatically triggers stream_ended event
-5. Cache cleanup and container management as needed
-```
-
-### 5. VPN Monitoring (if configured)
+### 4. VPN Monitoring (if configured)
 
 ```
 1. VPN monitor runs in background (every 5s)
@@ -261,7 +249,6 @@ The orchestrator:
 2. For each stream:
    - GET request to `stat_url`
    - Parse statistics data
-   - Check for stale stream indicators (primary stream state management)
    - Store in database and memory
 3. Limit stored samples to `STATS_HISTORY_MAX`
 

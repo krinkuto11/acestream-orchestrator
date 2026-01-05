@@ -169,8 +169,7 @@ Response:
    ```
    
    **Note:** The acexy proxy is now stateless and only sends stream started events. 
-   Stream state is managed entirely through stat URL checking by the collector service.
-   The collector polls stat URLs every `COLLECT_INTERVAL_S` (default: 2 seconds) to detect stale streams.
+   Stream lifecycle is managed by Acexy itself.
 
  - GET /cache/stats → Cache statistics for monitoring and debugging
    - Returns cache hit/miss rates, entry counts, and memory usage
@@ -189,7 +188,6 @@ Response:
    - orch_collect_errors_total
    - orch_streams_active
    - orch_provision_total{kind="generic|acestream"}
-   - orch_stale_streams_detected_total - Stale streams detected and auto-ended
    - orch_total_uploaded_bytes - Cumulative bytes uploaded from all engines (all-time)
    - orch_total_downloaded_bytes - Cumulative bytes downloaded from all engines (all-time)
    - orch_total_uploaded_mb - Cumulative MB uploaded from all engines
