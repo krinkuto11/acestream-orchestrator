@@ -23,7 +23,6 @@ import {
   Activity
 } from 'lucide-react'
 import { formatTime, formatBytes, formatBytesPerSecond } from '../utils/formatters'
-import StreamProgressBar from './StreamProgressBar'
 import {
   Collapsible,
   CollapsibleContent,
@@ -271,14 +270,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
             <span className="text-sm truncate max-w-[200px]" title={stream.id}>
               {stream.id.slice(0, TRUNCATED_STREAM_ID_LENGTH)}...
             </span>
-            {isActive && stream.livepos && (
-              <div className="w-48">
-                <StreamProgressBar 
-                  streamId={stream.id} 
-                  orchUrl={orchUrl} 
-                  apiKey={apiKey} 
-                />
-              </div>
+            {isActive && bufferDuration !== null && (
+              <span className="text-xs text-muted-foreground">
+                {bufferDuration}s behind live
+              </span>
             )}
           </div>
         </TableCell>
@@ -294,28 +289,40 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           </div>
         </TableCell>
         <TableCell className="text-right">
-          <div className="flex items-center justify-end gap-1">
-            <Download className="h-3 w-3 text-green-600 dark:text-green-400" />
-            <span className="text-sm font-semibold text-green-600 dark:text-green-400">
-              {formatBytesPerSecond((stream.speed_down || 0) * 1024)}
-            </span>
-          </div>
+          {isActive ? (
+            <div className="flex items-center justify-end gap-1">
+              <Download className="h-3 w-3 text-success" />
+              <span className="text-sm font-semibold text-success">
+                {formatBytesPerSecond((stream.speed_down || 0) * 1024)}
+              </span>
+            </div>
+          ) : (
+            <span className="text-sm text-muted-foreground">—</span>
+          )}
         </TableCell>
         <TableCell className="text-right">
-          <div className="flex items-center justify-end gap-1">
-            <Upload className="h-3 w-3 text-red-600 dark:text-red-400" />
-            <span className="text-sm font-semibold text-red-600 dark:text-red-400">
-              {formatBytesPerSecond((stream.speed_up || 0) * 1024)}
-            </span>
-          </div>
+          {isActive ? (
+            <div className="flex items-center justify-end gap-1">
+              <Upload className="h-3 w-3 text-destructive" />
+              <span className="text-sm font-semibold text-destructive">
+                {formatBytesPerSecond((stream.speed_up || 0) * 1024)}
+              </span>
+            </div>
+          ) : (
+            <span className="text-sm text-muted-foreground">—</span>
+          )}
         </TableCell>
         <TableCell className="text-right">
-          <div className="flex items-center justify-end gap-1">
-            <Users className="h-3 w-3 text-blue-600 dark:text-blue-400" />
-            <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">
-              {stream.peers != null ? stream.peers : 'N/A'}
-            </span>
-          </div>
+          {isActive ? (
+            <div className="flex items-center justify-end gap-1">
+              <Users className="h-3 w-3 text-primary" />
+              <span className="text-sm font-semibold text-primary">
+                {stream.peers != null ? stream.peers : 'N/A'}
+              </span>
+            </div>
+          ) : (
+            <span className="text-sm text-muted-foreground">—</span>
+          )}
         </TableCell>
         <TableCell className="text-right">
           <span className="text-sm">{formatBytes(stream.downloaded)}</span>
@@ -554,9 +561,6 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
       {endedStreams.length > 0 && (
         <div>
           <h2 className="text-2xl font-semibold mb-4">Ended Streams ({endedStreams.length})</h2>
-          <p className="text-sm text-muted-foreground mb-4">
-            These streams have ended. Reload the page to clear them.
-          </p>
           <div className="rounded-md border">
             <Table>
               <TableHeader>
@@ -566,9 +570,6 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                   <TableHead>Stream ID</TableHead>
                   <TableHead>Engine</TableHead>
                   <TableHead>Started</TableHead>
-                  <TableHead className="text-right">Download</TableHead>
-                  <TableHead className="text-right">Upload</TableHead>
-                  <TableHead className="text-right">Peers</TableHead>
                   <TableHead className="text-right">Downloaded</TableHead>
                   <TableHead className="text-right">Uploaded</TableHead>
                 </TableRow>
