@@ -13,7 +13,7 @@ Variables and default values:
 - `IDLE_TTL_S=600` reserved for inactivity GC.
 
 Collector:
-- `COLLECT_INTERVAL_S=2` How often to poll stream stat URLs (in seconds). This is the PRIMARY mechanism for detecting stale streams. Defaults to 2 seconds for quick detection.
+- `COLLECT_INTERVAL_S=1` How often to poll stream stat URLs (in seconds). Defaults to 1 second.
 - `STATS_HISTORY_MAX=720` samples stored in memory per stream.
 
 Monitoring:
