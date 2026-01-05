@@ -197,10 +197,33 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   }
 
   // Format livepos timestamp for display
+  // AceStream API returns Unix timestamps (seconds since epoch)
   const formatLiveposTimestamp = (timestamp) => {
     if (!timestamp) return 'N/A'
-    const date = new Date(parseInt(timestamp) * 1000)
-    return date.toLocaleString()
+    
+    try {
+      const numTimestamp = parseInt(timestamp)
+      
+      // Validate timestamp is reasonable (between 2020 and 2050)
+      // Unix timestamp in seconds should be ~1.5-2.5 billion
+      if (isNaN(numTimestamp) || numTimestamp < 1577836800 || numTimestamp > 2524608000) {
+        console.warn('Invalid livepos timestamp:', timestamp)
+        return 'Invalid'
+      }
+      
+      // AceStream uses Unix timestamps in seconds, convert to milliseconds
+      const date = new Date(numTimestamp * 1000)
+      
+      // Additional validation: check if date is valid
+      if (isNaN(date.getTime())) {
+        return 'Invalid'
+      }
+      
+      return date.toLocaleString()
+    } catch (err) {
+      console.error('Error formatting livepos timestamp:', err)
+      return 'Error'
+    }
   }
 
   // Calculate buffer duration in seconds

@@ -258,6 +258,9 @@ class State:
             from ..core.config import cfg as _cfg
             if len(arr) > _cfg.STATS_HISTORY_MAX:
                 del arr[: len(arr) - _cfg.STATS_HISTORY_MAX]
+        # Note: livepos data is intentionally not persisted to database
+        # It's highly transient (updates every 1s) and would cause database bloat.
+        # It's only kept in memory for real-time access via /streams endpoint.
         with SessionLocal() as s:
             s.add(StatRow(stream_id=stream_id, ts=snap.ts, peers=snap.peers, speed_down=snap.speed_down,
                           speed_up=snap.speed_up, downloaded=snap.downloaded, uploaded=snap.uploaded, status=snap.status))

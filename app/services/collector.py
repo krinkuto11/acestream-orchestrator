@@ -122,14 +122,23 @@ class Collector:
             status = payload.get("status")
 
             # Extract livepos data (for live streams)
+            # AceStream engines return livepos object with fields that may vary by version:
+            # - pos: current playback position timestamp
+            # - live_first/first_ts/first: start of live buffer (preference: live_first > first_ts > first)
+            # - live_last/last_ts/last: end of live buffer (preference: live_last > last_ts > last)
+            # - buffer_pieces: number of buffered pieces
+            # Example from AceStream 3.x API: {"pos": "1767629806", "live_first": "1767628008", "live_last": "1767629808", ...}
             livepos_data = None
             livepos_raw = payload.get("livepos")
             if livepos_raw:
                 from ..models.schemas import LivePosData
                 livepos_data = LivePosData(
                     pos=livepos_raw.get("pos"),
+                    # Prefer live_first, fallback to first_ts, then first (for older versions)
                     live_first=livepos_raw.get("live_first") or livepos_raw.get("first_ts") or livepos_raw.get("first"),
+                    # Prefer live_last, fallback to last_ts, then last (for older versions)
                     live_last=livepos_raw.get("live_last") or livepos_raw.get("last_ts") or livepos_raw.get("last"),
+                    # Store both first_ts and last_ts for compatibility
                     first_ts=livepos_raw.get("first_ts") or livepos_raw.get("first"),
                     last_ts=livepos_raw.get("last_ts") or livepos_raw.get("last"),
                     buffer_pieces=livepos_raw.get("buffer_pieces")
