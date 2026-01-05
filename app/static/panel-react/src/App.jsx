@@ -32,6 +32,7 @@ function AppContent() {
   const [orchestratorStatus, setOrchestratorStatus] = useState(null)
   const [lastUpdate, setLastUpdate] = useState(null)
   const [isConnected, setIsConnected] = useState(false)
+  const [isInitialLoad, setIsInitialLoad] = useState(true)
 
   const fetchJSON = useCallback(async (url, options = {}) => {
     const headers = { ...options.headers }
@@ -72,10 +73,12 @@ function AppContent() {
       setOrchestratorStatus(orchStatus)
       setLastUpdate(new Date())
       setIsConnected(true)
+      setIsInitialLoad(false)
     } catch (err) {
       const errorMessage = err.message || String(err)
       toast.error(`Connection error: ${errorMessage}`)
       setIsConnected(false)
+      setIsInitialLoad(false)
     }
   }, [orchUrl, fetchJSON])
 
@@ -129,7 +132,15 @@ function AppContent() {
           />
           
           <main className="flex-1 overflow-y-auto p-6">
-            <Routes>
+            {isInitialLoad ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center">
+                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4"></div>
+                  <p className="text-muted-foreground">Loading...</p>
+                </div>
+              </div>
+            ) : (
+              <Routes>
               <Route 
                 path="/" 
                 element={
@@ -226,6 +237,7 @@ function AppContent() {
                 } 
               />
             </Routes>
+            )}
           </main>
         </div>
       </div>

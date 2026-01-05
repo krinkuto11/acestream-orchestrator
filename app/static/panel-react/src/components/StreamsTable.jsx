@@ -339,22 +339,22 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
                   <p className="text-xs text-muted-foreground">Stream ID</p>
-                  <p className="text-sm font-medium break-all">{stream.id}</p>
+                  <p className="text-sm font-medium text-foreground break-all">{stream.id}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Engine</p>
-                  <p className="text-sm font-medium">
+                  <p className="text-sm font-medium text-foreground">
                     {stream.container_name || stream.container_id?.slice(0, TRUNCATED_CONTAINER_ID_LENGTH) || 'N/A'}
                   </p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Started At</p>
-                  <p className="text-sm font-medium">{formatTime(stream.started_at)}</p>
+                  <p className="text-sm font-medium text-foreground">{formatTime(stream.started_at)}</p>
                 </div>
                 {isEnded && stream.ended_at && (
                   <div>
                     <p className="text-xs text-muted-foreground">Ended At</p>
-                    <p className="text-sm font-medium">{formatTime(stream.ended_at)}</p>
+                    <p className="text-sm font-medium text-foreground">{formatTime(stream.ended_at)}</p>
                   </div>
                 )}
                 
@@ -362,36 +362,36 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                 {stream.livepos && (
                   <>
                     <div className="col-span-full">
-                      <p className="text-sm font-semibold mb-2">Live Position Data</p>
+                      <p className="text-sm font-semibold text-foreground mb-2">Live Position Data</p>
                     </div>
                     {stream.livepos.pos && (
                       <div>
                         <p className="text-xs text-muted-foreground">Current Position</p>
-                        <p className="text-sm font-medium">{formatLiveposTimestamp(stream.livepos.pos)}</p>
+                        <p className="text-sm font-medium text-foreground">{formatLiveposTimestamp(stream.livepos.pos)}</p>
                       </div>
                     )}
                     {stream.livepos.live_first && (
                       <div>
                         <p className="text-xs text-muted-foreground">Live Start</p>
-                        <p className="text-sm font-medium">{formatLiveposTimestamp(stream.livepos.live_first)}</p>
+                        <p className="text-sm font-medium text-foreground">{formatLiveposTimestamp(stream.livepos.live_first)}</p>
                       </div>
                     )}
                     {stream.livepos.live_last && (
                       <div>
                         <p className="text-xs text-muted-foreground">Live End</p>
-                        <p className="text-sm font-medium">{formatLiveposTimestamp(stream.livepos.live_last)}</p>
+                        <p className="text-sm font-medium text-foreground">{formatLiveposTimestamp(stream.livepos.live_last)}</p>
                       </div>
                     )}
                     {stream.livepos.buffer_pieces && (
                       <div>
                         <p className="text-xs text-muted-foreground">Buffer Pieces</p>
-                        <p className="text-sm font-medium">{stream.livepos.buffer_pieces}</p>
+                        <p className="text-sm font-medium text-foreground">{stream.livepos.buffer_pieces}</p>
                       </div>
                     )}
                     {bufferDuration !== null && (
                       <div>
                         <p className="text-xs text-muted-foreground">Buffer Duration</p>
-                        <p className="text-sm font-medium">{bufferDuration}s</p>
+                        <p className="text-sm font-medium text-foreground">{bufferDuration}s</p>
                       </div>
                     )}
                   </>
@@ -403,25 +403,25 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                     {extendedStats.title && (
                       <div className="col-span-full">
                         <p className="text-xs text-muted-foreground">Title</p>
-                        <p className="text-sm font-medium break-all">{extendedStats.title}</p>
+                        <p className="text-sm font-medium text-foreground break-all">{extendedStats.title}</p>
                       </div>
                     )}
                     {extendedStats.content_type && (
                       <div>
                         <p className="text-xs text-muted-foreground">Content Type</p>
-                        <p className="text-sm font-medium">{extendedStats.content_type}</p>
+                        <p className="text-sm font-medium text-foreground">{extendedStats.content_type}</p>
                       </div>
                     )}
                     {extendedStats.transport_type && (
                       <div>
                         <p className="text-xs text-muted-foreground">Transport Type</p>
-                        <p className="text-sm font-medium">{extendedStats.transport_type}</p>
+                        <p className="text-sm font-medium text-foreground">{extendedStats.transport_type}</p>
                       </div>
                     )}
                     {extendedStats.infohash && (
                       <div className="col-span-full">
                         <p className="text-xs text-muted-foreground">Infohash</p>
-                        <p className="text-sm font-medium break-all">{extendedStats.infohash}</p>
+                        <p className="text-sm font-medium text-foreground break-all">{extendedStats.infohash}</p>
                       </div>
                     )}
                     {extendedStats.is_live !== undefined && (

@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from typing import Optional, List
 from datetime import datetime, timezone
 import asyncio
@@ -173,8 +174,6 @@ app.add_middleware(
 # Mount static files with validation and SPA fallback
 panel_dir = "app/static/panel"
 if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
-    from fastapi.responses import FileResponse
-    
     # Add catch-all route for SPA routing BEFORE mounting StaticFiles
     # This ensures direct navigation to subroutes like /panel/engines works
     @app.get("/panel/{full_path:path}")
