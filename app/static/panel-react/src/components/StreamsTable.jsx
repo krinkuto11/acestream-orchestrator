@@ -41,6 +41,14 @@ import {
   Legend
 } from 'chart.js'
 
+// Constants for display
+const TRUNCATED_STREAM_ID_LENGTH = 16
+const TRUNCATED_CONTAINER_ID_LENGTH = 12
+
+// Timestamp validation constants (Unix timestamps in seconds)
+const MIN_VALID_TIMESTAMP = 1577836800  // 2020-01-01 00:00:00 UTC
+const MAX_VALID_TIMESTAMP = 2524608000  // 2050-01-01 00:00:00 UTC
+
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -205,8 +213,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       const numTimestamp = parseInt(timestamp)
       
       // Validate timestamp is reasonable (between 2020 and 2050)
-      // Unix timestamp in seconds should be ~1.5-2.5 billion
-      if (isNaN(numTimestamp) || numTimestamp < 1577836800 || numTimestamp > 2524608000) {
+      if (isNaN(numTimestamp) || numTimestamp < MIN_VALID_TIMESTAMP || numTimestamp > MAX_VALID_TIMESTAMP) {
         console.warn('Invalid livepos timestamp:', timestamp)
         return 'Invalid'
       }
@@ -262,7 +269,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
         <TableCell className="font-medium">
           <div className="flex flex-col gap-1">
             <span className="text-sm truncate max-w-[200px]" title={stream.id}>
-              {stream.id.slice(0, 16)}...
+              {stream.id.slice(0, TRUNCATED_STREAM_ID_LENGTH)}...
             </span>
             {isActive && stream.livepos && (
               <div className="w-48">
@@ -277,7 +284,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
         </TableCell>
         <TableCell>
           <span className="text-sm truncate max-w-[150px] block" title={stream.container_name || stream.container_id}>
-            {stream.container_name || stream.container_id?.slice(0, 12) || 'N/A'}
+            {stream.container_name || stream.container_id?.slice(0, TRUNCATED_CONTAINER_ID_LENGTH) || 'N/A'}
           </span>
         </TableCell>
         <TableCell>
@@ -330,7 +337,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                 <div>
                   <p className="text-xs text-muted-foreground">Engine</p>
                   <p className="text-sm font-medium">
-                    {stream.container_name || stream.container_id?.slice(0, 12) || 'N/A'}
+                    {stream.container_name || stream.container_id?.slice(0, TRUNCATED_CONTAINER_ID_LENGTH) || 'N/A'}
                   </p>
                 </div>
                 <div>
