@@ -16,7 +16,7 @@ class Cfg(BaseModel):
     STARTUP_TIMEOUT_S: int = int(os.getenv("STARTUP_TIMEOUT_S", 25))
     IDLE_TTL_S: int = int(os.getenv("IDLE_TTL_S", 600))
 
-    COLLECT_INTERVAL_S: int = int(os.getenv("COLLECT_INTERVAL_S", 2))
+    COLLECT_INTERVAL_S: int = int(os.getenv("COLLECT_INTERVAL_S", 1))
     STATS_HISTORY_MAX: int = int(os.getenv("STATS_HISTORY_MAX", 720))
     
     # Docker monitoring configuration

@@ -237,6 +237,7 @@ class State:
                     enriched.speed_up = latest_stat.speed_up
                     enriched.downloaded = latest_stat.downloaded
                     enriched.uploaded = latest_stat.uploaded
+                    enriched.livepos = latest_stat.livepos
                 enriched_streams.append(enriched)
             
             return enriched_streams

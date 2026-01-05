@@ -121,6 +121,20 @@ class Collector:
             # Extract status field
             status = payload.get("status")
 
+            # Extract livepos data (for live streams)
+            livepos_data = None
+            livepos_raw = payload.get("livepos")
+            if livepos_raw:
+                from ..models.schemas import LivePosData
+                livepos_data = LivePosData(
+                    pos=livepos_raw.get("pos"),
+                    live_first=livepos_raw.get("live_first") or livepos_raw.get("first_ts") or livepos_raw.get("first"),
+                    live_last=livepos_raw.get("live_last") or livepos_raw.get("last_ts") or livepos_raw.get("last"),
+                    first_ts=livepos_raw.get("first_ts") or livepos_raw.get("first"),
+                    last_ts=livepos_raw.get("last_ts") or livepos_raw.get("last"),
+                    buffer_pieces=livepos_raw.get("buffer_pieces")
+                )
+
             snap = StreamStatSnapshot(
                 ts=datetime.now(timezone.utc),
                 peers=payload.get("peers"),
@@ -129,9 +143,10 @@ class Collector:
                 downloaded=payload.get("downloaded"),
                 uploaded=payload.get("uploaded"),
                 status=status,
+                livepos=livepos_data,
             )
             state.append_stat(stream_id, snap)
-            logger.debug(f"Appended stat for {stream_id}: peers={snap.peers} speed_down={snap.speed_down} speed_up={snap.speed_up} downloaded={snap.downloaded} uploaded={snap.uploaded} status={snap.status}")
+            logger.debug(f"Appended stat for {stream_id}: peers={snap.peers} speed_down={snap.speed_down} speed_up={snap.speed_up} downloaded={snap.downloaded} uploaded={snap.uploaded} status={snap.status} livepos={bool(livepos_data)}")
 
             # Update cumulative byte metrics
             try:
