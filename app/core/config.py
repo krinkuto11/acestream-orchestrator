@@ -84,6 +84,8 @@ class Cfg(BaseModel):
             raise ValueError('MIN_FREE_REPLICAS must be >= 0')
         if self.MIN_FREE_REPLICAS > self.MAX_REPLICAS:
             raise ValueError('MIN_FREE_REPLICAS must be <= MAX_REPLICAS')
+        if self.ACEXY_MAX_STREAMS_PER_ENGINE <= 0:
+            raise ValueError('ACEXY_MAX_STREAMS_PER_ENGINE must be > 0')
         return self
 
     @validator('MAX_REPLICAS')
@@ -150,12 +152,6 @@ class Cfg(BaseModel):
         valid_modes = ['single', 'redundant']
         if v not in valid_modes:
             raise ValueError(f'VPN_MODE must be one of: {", ".join(valid_modes)}')
-        return v
-
-    @validator('ACEXY_MAX_STREAMS_PER_ENGINE')
-    def validate_acexy_max_streams(cls, v):
-        if v <= 0:
-            raise ValueError('ACEXY_MAX_STREAMS_PER_ENGINE must be > 0')
         return v
 
     @model_validator(mode='after')
