@@ -645,8 +645,8 @@ def get_engine_stats(container_id: str):
     return stats
 
 @app.get("/streams", response_model=List[StreamState])
-def get_streams(status: Optional[str] = Query("started", pattern="^(started|ended)$"), container_id: Optional[str] = None):
-    """Get streams. By default, only returns started streams. Use status=ended to see ended streams."""
+def get_streams(status: Optional[str] = Query(None, pattern="^(started|ended)$"), container_id: Optional[str] = None):
+    """Get streams. By default, returns all streams. Use status=started or status=ended to filter."""
     return state.list_streams_with_stats(status=status, container_id=container_id)
 
 @app.get("/streams/{stream_id}/stats", response_model=List[StreamStatSnapshot])

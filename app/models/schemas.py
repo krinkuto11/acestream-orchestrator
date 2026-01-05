@@ -49,6 +49,15 @@ class EngineState(BaseModel):
     version: Optional[str] = None
     forwarded_port: Optional[int] = None  # For forwarded engines only
 
+class LivePosData(BaseModel):
+    """Live position data for live streams."""
+    pos: Optional[str] = None
+    live_first: Optional[str] = None
+    live_last: Optional[str] = None
+    first_ts: Optional[str] = None
+    last_ts: Optional[str] = None
+    buffer_pieces: Optional[str] = None
+
 class StreamState(BaseModel):
     id: str
     key_type: Literal["content_id", "infohash", "url", "magnet"]
@@ -67,6 +76,8 @@ class StreamState(BaseModel):
     speed_up: Optional[int] = None
     downloaded: Optional[int] = None
     uploaded: Optional[int] = None
+    # Live position data (for live streams)
+    livepos: Optional[LivePosData] = None
 
 class StreamStatSnapshot(BaseModel):
     ts: datetime
@@ -76,6 +87,7 @@ class StreamStatSnapshot(BaseModel):
     downloaded: Optional[int] = None
     uploaded: Optional[int] = None
     status: Optional[str] = None
+    livepos: Optional[LivePosData] = None
 
 class OrchestratorStatusResponse(BaseModel):
     """
