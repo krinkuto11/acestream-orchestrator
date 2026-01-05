@@ -23,7 +23,6 @@ import {
   Activity
 } from 'lucide-react'
 import { formatTime, formatBytes, formatBytesPerSecond } from '../utils/formatters'
-import StreamProgressBar from './StreamProgressBar'
 import {
   Collapsible,
   CollapsibleContent,
@@ -292,8 +291,8 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
         <TableCell className="text-right">
           {isActive ? (
             <div className="flex items-center justify-end gap-1">
-              <Download className="h-3 w-3 text-green-600 dark:text-green-400" />
-              <span className="text-sm font-semibold text-green-600 dark:text-green-400">
+              <Download className="h-3 w-3 text-success" />
+              <span className="text-sm font-semibold text-success">
                 {formatBytesPerSecond((stream.speed_down || 0) * 1024)}
               </span>
             </div>
@@ -304,8 +303,8 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
         <TableCell className="text-right">
           {isActive ? (
             <div className="flex items-center justify-end gap-1">
-              <Upload className="h-3 w-3 text-red-600 dark:text-red-400" />
-              <span className="text-sm font-semibold text-red-600 dark:text-red-400">
+              <Upload className="h-3 w-3 text-destructive" />
+              <span className="text-sm font-semibold text-destructive">
                 {formatBytesPerSecond((stream.speed_up || 0) * 1024)}
               </span>
             </div>
@@ -316,8 +315,8 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
         <TableCell className="text-right">
           {isActive ? (
             <div className="flex items-center justify-end gap-1">
-              <Users className="h-3 w-3 text-blue-600 dark:text-blue-400" />
-              <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">
+              <Users className="h-3 w-3 text-primary" />
+              <span className="text-sm font-semibold text-primary">
                 {stream.peers != null ? stream.peers : 'N/A'}
               </span>
             </div>
