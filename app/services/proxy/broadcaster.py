@@ -7,7 +7,7 @@ import time
 from typing import Optional, Set, AsyncIterator
 from collections import deque
 
-from .config import COPY_CHUNK_SIZE
+from .config import COPY_CHUNK_SIZE, USER_AGENT
 
 logger = logging.getLogger(__name__)
 
@@ -145,10 +145,17 @@ class StreamBroadcaster:
         try:
             logger.info(f"Starting stream fetch for {self.stream_id} from {self.playback_url}")
             
+            # Build headers - AceStream requires User-Agent to identify as media player
+            headers = {
+                "User-Agent": USER_AGENT,
+                "Accept": "*/*",
+            }
+            
             # Stream from playback URL
             async with self.http_client.stream(
                 "GET", 
                 self.playback_url,
+                headers=headers,
                 timeout=httpx.Timeout(60.0, connect=30.0, read=None, write=30.0)
             ) as response:
                 logger.info(f"Stream response received for {self.stream_id}, status: {response.status_code}")

@@ -5,6 +5,7 @@ import asyncio
 import httpx
 from unittest.mock import Mock, AsyncMock
 from app.services.proxy.broadcaster import StreamBroadcaster
+from app.services.proxy.config import USER_AGENT
 
 
 class MockStreamContext:
@@ -52,8 +53,16 @@ async def test_broadcaster_multiple_clients():
     # Start the broadcaster
     await broadcaster.start()
     
-    # Wait for first chunk
+    # Wait for first chunk to ensure stream has started
     await broadcaster.wait_for_first_chunk(timeout=5.0)
+    
+    # Verify headers were sent
+    assert mock_client.stream.called
+    call_args = mock_client.stream.call_args
+    assert "headers" in call_args.kwargs
+    headers = call_args.kwargs["headers"]
+    assert headers["User-Agent"] == USER_AGENT
+    assert headers["Accept"] == "*/*"
     
     # Add multiple clients
     queue1 = await broadcaster.add_client()
