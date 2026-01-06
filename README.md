@@ -11,6 +11,8 @@ Dynamic orchestration service for AceStream engines with health monitoring, usag
 
 Provisions AceStream engine containers on-demand, monitors their health, collects stream statistics, and provides a dashboard for operational visibility. Works with proxy services that request engines when needed.
 
+**NEW in v1.5.0**: Built-in streaming proxy with intelligent engine selection and client multiplexing. Stream directly from `/ace/getstream?id=<id>` without managing engines manually.
+
 ## Quick Start
 
 ### Standalone (No VPN)
@@ -49,6 +51,11 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 
 ## Core Features
 
+- **Built-in Streaming Proxy** (v1.5.0): Single endpoint for video streaming with intelligent engine selection
+  - Automatic engine selection (prioritizes forwarded, balances load)
+  - Client multiplexing (multiple clients, single stream)
+  - Automatic lifecycle management
+  - Production-ready design based on dispatcharr_proxy patterns
 - **Multiple Deployment Modes**: Standalone, single VPN, or redundant VPN with automatic failover
 - **Emergency Mode**: Automatic failover and recovery when one VPN fails in redundant mode
 - **Multiple Engine Variants**: Support for AMD64 and ARM architectures with optimized configurations
@@ -74,6 +81,21 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 - **Cache Management**: Intelligent cache cleanup for resource optimization
 
 ## Documentation
+
+### Streaming Proxy (v1.5.0)
+
+- **[Proxy API Documentation](docs/PROXY_API.md)** - Complete proxy endpoint reference
+  - `/ace/getstream` endpoint usage
+  - Engine selection algorithm
+  - Client multiplexing
+  - Monitoring and troubleshooting
+  
+- **[Proxy Deployment Guide](docs/PROXY_DEPLOYMENT.md)** - Deployment and integration guide
+  - Quick start examples
+  - Client integration (VLC, MPV, web players)
+  - Load balancer configuration
+  - Performance tuning
+  - Migration from acexy
 
 ### Getting Started
 
@@ -196,8 +218,13 @@ See [Configuration Reference](docs/CONFIG.md) for all options.
 ### Core API Endpoints
 
 ```bash
+# Streaming Proxy (v1.5.0)
+GET /ace/getstream?id=<content_id>  # Stream video content
+GET /proxy/status                    # Proxy status and sessions
+GET /proxy/sessions                  # Active streaming sessions
+
 # Provisioning
-POST /provision/acestream           # Start new engine
+POST /provision/acestream             # Start new engine
 
 # Events
 POST /events/stream_started         # Register stream
