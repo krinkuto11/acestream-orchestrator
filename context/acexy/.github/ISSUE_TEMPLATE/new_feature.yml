@@ -1,0 +1,75 @@
+name: New feature
+description: Suggest a new feature for Acexy
+title: "[Feature] "
+labels: [enhancement]
+assignees:
+  - Javinator9889
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please fill out the sections below to help us understand the new feature you are proposing.
+
+  - type: input
+    id: contact
+    attributes:
+      label: Contact Details
+      description: How can we get in touch with you if we need more info?
+      placeholder: ex. email@example.com or your GitHub username
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: New Functionality Description
+      description: Describe the new functionality you are proposing
+      placeholder: |
+        You can paste here some ideas on how it should be coded, but focus
+        mostly on the "why".
+        There are more details about how to suggest a new feature in the
+        [CONTRIBUTING.md](/CONTRIBUTING.md) file.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Actual Use Case (Business Need)
+      description: Tell us why this is important to be added
+      placeholder: This feature will change everything! 🚀
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Breaking Changes
+      description: If the new feature will break backwards compatibility, explain here why and how
+      placeholder: This feature breaks A, B, and C because of X, Y, and Z...
+    validations:
+      required: true
+
+  - type: input
+    id: actual
+    attributes:
+      label: Estimated Development Time
+      description: Do you have a general idea on how much time this will take? Elaborate here
+      placeholder: How much time do you think it will take?
+      value: About 2 weeks
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Feature Verification Steps
+      description: How can we verify that this feature works as expected?
+      placeholder: |
+        Every new feature should be backed up with tests. Explain here the way to check and
+        verify the feature's correct behavior, with detailed steps, outcomes, and even code if you
+        want!
+
+        This is crucial as it will simplify the workflow and development.
+    validations:
+      required: true
