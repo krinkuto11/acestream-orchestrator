@@ -99,16 +99,18 @@ class ProxyManager:
                 try:
                     from app.models.schemas import StreamEndedEvent
                     
-                    state = get_state()
-                    stream = state.get_stream(ace_id)
+                    # Construct stream_id as {ace_id}|{playback_session_id}
+                    stream_id = f"{ace_id}|{session.playback_session_id}"
                     
-                    if stream:
-                        event = StreamEndedEvent(
-                            container_id=session.container_id,
-                            stream_id=stream.id,
-                            reason="proxy_manager_stopped"
-                        )
-                        state.on_stream_ended(event)
+                    event = StreamEndedEvent(
+                        container_id=session.container_id,
+                        stream_id=stream_id,
+                        reason="proxy_manager_stopped"
+                    )
+                    
+                    state = get_state()
+                    state.on_stream_ended(event)
+                    logger.info(f"Marked proxy stream {stream_id} as ended in state database")
                 except Exception as e:
                     logger.error(f"Failed to mark stream {ace_id} as ended: {e}", exc_info=True)
                     
@@ -313,18 +315,18 @@ class ProxyManager:
                 try:
                     from app.models.schemas import StreamEndedEvent
                     
-                    # Find stream_id in state database
-                    state = get_state()
-                    stream = state.get_stream(ace_id)
+                    # Construct stream_id as {ace_id}|{playback_session_id}
+                    stream_id = f"{ace_id}|{session.playback_session_id}"
                     
-                    if stream:
-                        event = StreamEndedEvent(
-                            container_id=session.container_id,
-                            stream_id=stream.id,
-                            reason="idle_timeout"
-                        )
-                        state.on_stream_ended(event)
-                        logger.info(f"Marked proxy stream {ace_id} as ended in state database")
+                    event = StreamEndedEvent(
+                        container_id=session.container_id,
+                        stream_id=stream_id,
+                        reason="idle_timeout"
+                    )
+                    
+                    state = get_state()
+                    state.on_stream_ended(event)
+                    logger.info(f"Marked proxy stream {stream_id} as ended in state database")
                 except Exception as e:
                     logger.error(f"Failed to mark stream {ace_id} as ended: {e}", exc_info=True)
                     
