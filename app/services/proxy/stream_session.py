@@ -200,8 +200,9 @@ class StreamSession:
             logger.error(f"Error in stream_data for {self.stream_id}: {type(e).__name__}: {e}")
             raise
         finally:
-            # Remove this client from the broadcaster
-            await self.broadcaster.remove_client(queue)
+            # Remove this client from the broadcaster (if broadcaster still exists)
+            if self.broadcaster:
+                await self.broadcaster.remove_client(queue)
     
     async def stop_stream(self) -> bool:
         """Stop the stream by calling the AceStream command URL.
