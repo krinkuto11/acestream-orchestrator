@@ -16,6 +16,17 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 
+# Import state instance for stream tracking (avoid circular import by importing in methods)
+_state_instance = None
+
+def get_state():
+    """Get state instance (lazy load to avoid circular import)."""
+    global _state_instance
+    if _state_instance is None:
+        from app.services.state import state
+        _state_instance = state
+    return _state_instance
+
 
 class ProxyManager:
     """Manages all proxy stream sessions.
@@ -78,11 +89,31 @@ class ProxyManager:
         
         # Cleanup all active sessions
         async with self.sessions_lock:
-            sessions_to_cleanup = list(self.sessions.values())
+            sessions_to_cleanup = list(self.sessions.items())
         
-        for session in sessions_to_cleanup:
+        for ace_id, session in sessions_to_cleanup:
             try:
                 await session.cleanup()
+                
+                # Fire stream ended event
+                try:
+                    from app.models.schemas import StreamEndedEvent
+                    
+                    # Construct stream_id as {ace_id}|{playback_session_id}
+                    stream_id = f"{ace_id}|{session.playback_session_id}"
+                    
+                    event = StreamEndedEvent(
+                        container_id=session.container_id,
+                        stream_id=stream_id,
+                        reason="proxy_manager_stopped"
+                    )
+                    
+                    state = get_state()
+                    state.on_stream_ended(event)
+                    logger.info(f"Marked proxy stream {stream_id} as ended in state database")
+                except Exception as e:
+                    logger.error(f"Failed to mark stream {ace_id} as ended: {e}", exc_info=True)
+                    
             except Exception as e:
                 logger.error(f"Error cleaning up session {session.stream_id}: {e}")
         
@@ -160,6 +191,38 @@ class ProxyManager:
             # Store session
             async with self.sessions_lock:
                 self.sessions[ace_id] = session
+            
+            # Track stream in state database
+            try:
+                from app.models.schemas import StreamStartedEvent, EngineAddress, StreamKey, SessionInfo
+                
+                # Determine key type (assume infohash if 40 chars hex, else content_id)
+                key_type = "infohash" if len(ace_id) == 40 and all(c in '0123456789abcdefABCDEF' for c in ace_id) else "content_id"
+                
+                event = StreamStartedEvent(
+                    container_id=session.container_id,
+                    engine=EngineAddress(
+                        host=session.engine_host,
+                        port=session.engine_port
+                    ),
+                    stream=StreamKey(
+                        key_type=key_type,
+                        key=ace_id
+                    ),
+                    session=SessionInfo(
+                        playback_session_id=session.playback_session_id,
+                        stat_url=session.stat_url,
+                        command_url=session.command_url,
+                        is_live=1 if session.is_live else 0
+                    )
+                )
+                
+                state = get_state()
+                state.on_stream_started(event)
+                logger.info(f"Tracked proxy stream {ace_id} in state database")
+            except Exception as e:
+                logger.error(f"Failed to track stream {ace_id} in state database: {e}", exc_info=True)
+                # Don't fail the session creation if tracking fails
             
             logger.info(f"Session created for {ace_id} with {session.playback_session_id}")
             return session
@@ -247,6 +310,26 @@ class ProxyManager:
                 await session.cleanup()
                 async with self.sessions_lock:
                     self.sessions.pop(ace_id, None)
+                
+                # Fire stream ended event
+                try:
+                    from app.models.schemas import StreamEndedEvent
+                    
+                    # Construct stream_id as {ace_id}|{playback_session_id}
+                    stream_id = f"{ace_id}|{session.playback_session_id}"
+                    
+                    event = StreamEndedEvent(
+                        container_id=session.container_id,
+                        stream_id=stream_id,
+                        reason="idle_timeout"
+                    )
+                    
+                    state = get_state()
+                    state.on_stream_ended(event)
+                    logger.info(f"Marked proxy stream {stream_id} as ended in state database")
+                except Exception as e:
+                    logger.error(f"Failed to mark stream {ace_id} as ended: {e}", exc_info=True)
+                    
             except Exception as e:
                 logger.error(f"Error cleaning up session {ace_id}: {e}")
         

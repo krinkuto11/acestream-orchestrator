@@ -68,9 +68,10 @@ class StreamSession:
             True if initialization successful, False otherwise
         """
         try:
-            # Create HTTP client
+            # Create HTTP client with no read timeout for streaming
+            # connect: 10s, read: None (unlimited for streaming), write: 30s, pool: 30s
             self.http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(30.0, connect=10.0),
+                timeout=httpx.Timeout(30.0, connect=10.0, read=None),
                 follow_redirects=True,
             )
             
@@ -142,8 +143,14 @@ class StreamSession:
         try:
             logger.info(f"Starting stream data for {self.stream_id} from {self.playback_url}")
             
-            # Stream from playback URL
-            async with self.http_client.stream("GET", self.playback_url) as response:
+            # Stream from playback URL with explicit timeout override for this request
+            # Set a longer initial timeout for establishing the stream connection
+            async with self.http_client.stream(
+                "GET", 
+                self.playback_url,
+                timeout=httpx.Timeout(60.0, connect=30.0, read=None, write=30.0)
+            ) as response:
+                logger.info(f"Stream response received for {self.stream_id}, status: {response.status_code}")
                 response.raise_for_status()
                 
                 chunk_count = 0
@@ -172,12 +179,12 @@ class StreamSession:
                 logger.info(f"Stream {self.stream_id} ended normally after {chunk_count} chunks")
                 
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error streaming {self.stream_id}: {e}")
-            self.error = f"Stream error: {str(e)}"
+            logger.error(f"HTTP error streaming {self.stream_id}: {type(e).__name__}: {e}")
+            self.error = f"Stream error: {type(e).__name__}: {str(e)}"
             raise
         except Exception as e:
-            logger.error(f"Unexpected error streaming {self.stream_id}: {e}")
-            self.error = f"Unexpected error: {str(e)}"
+            logger.error(f"Unexpected error streaming {self.stream_id}: {type(e).__name__}: {e}")
+            self.error = f"Unexpected error: {type(e).__name__}: {str(e)}"
             raise
     
     async def stop_stream(self) -> bool:
