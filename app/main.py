@@ -2,12 +2,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from typing import Optional, List
 from datetime import datetime, timezone
 import asyncio
 import os
 import json
 import logging
+import httpx
 
 from .utils.logging import setup
 from .core.config import cfg
@@ -173,8 +175,6 @@ app.add_middleware(
 # Mount static files with validation and SPA fallback
 panel_dir = "app/static/panel"
 if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
-    from fastapi.responses import FileResponse
-    
     # Add catch-all route for SPA routing BEFORE mounting StaticFiles
     # This ensures direct navigation to subroutes like /panel/engines works
     @app.get("/panel/{full_path:path}")
@@ -209,38 +209,48 @@ else:
     logger.warning(f"Panel directory {panel_dir} not found. /panel endpoint will not be available.")
 
 # Favicon routes - serve favicon files at root level for browser default requests
-if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
-    def serve_favicon(filename: str):
-        """Helper function to serve favicon files from panel directory."""
+# Try both built panel and source panel-react/public directories
+def serve_favicon(filename: str):
+    """Helper function to serve favicon files from panel directory or fallback to source."""
+    # Try built panel directory first
+    if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
         favicon_path = os.path.join(panel_dir, filename)
         if os.path.exists(favicon_path):
             return FileResponse(favicon_path)
-        raise HTTPException(status_code=404, detail="Not Found")
     
-    @app.get("/favicon.ico")
-    async def get_favicon_ico():
-        """Serve favicon.ico at root level."""
-        return serve_favicon("favicon.ico")
+    # Fallback to panel-react/public for development
+    panel_react_public = "app/static/panel-react/public"
+    if os.path.exists(panel_react_public):
+        favicon_path = os.path.join(panel_react_public, filename)
+        if os.path.exists(favicon_path):
+            return FileResponse(favicon_path)
     
-    @app.get("/favicon.svg")
-    async def get_favicon_svg():
-        """Serve favicon.svg at root level."""
-        return serve_favicon("favicon.svg")
-    
-    @app.get("/favicon-96x96.png")
-    async def get_favicon_96():
-        """Serve favicon-96x96.png at root level."""
-        return serve_favicon("favicon-96x96.png")
-    
-    @app.get("/favicon-96x96-dark.png")
-    async def get_favicon_96_dark():
-        """Serve favicon-96x96-dark.png at root level."""
-        return serve_favicon("favicon-96x96-dark.png")
-    
-    @app.get("/apple-touch-icon.png")
-    async def get_apple_touch_icon():
-        """Serve apple-touch-icon.png at root level."""
-        return serve_favicon("apple-touch-icon.png")
+    raise HTTPException(status_code=404, detail="Favicon not found")
+
+@app.get("/favicon.ico")
+async def get_favicon_ico():
+    """Serve favicon.ico at root level."""
+    return serve_favicon("favicon.ico")
+
+@app.get("/favicon.svg")
+async def get_favicon_svg():
+    """Serve favicon.svg at root level."""
+    return serve_favicon("favicon.svg")
+
+@app.get("/favicon-96x96.png")
+async def get_favicon_96():
+    """Serve favicon-96x96.png at root level."""
+    return serve_favicon("favicon-96x96.png")
+
+@app.get("/favicon-96x96-dark.png")
+async def get_favicon_96_dark():
+    """Serve favicon-96x96-dark.png at root level."""
+    return serve_favicon("favicon-96x96-dark.png")
+
+@app.get("/apple-touch-icon.png")
+async def get_apple_touch_icon():
+    """Serve apple-touch-icon.png at root level."""
+    return serve_favicon("apple-touch-icon.png")
 
 # Prometheus metrics endpoint with custom aggregated metrics
 from starlette.responses import Response
@@ -645,8 +655,8 @@ def get_engine_stats(container_id: str):
     return stats
 
 @app.get("/streams", response_model=List[StreamState])
-def get_streams(status: Optional[str] = Query("started", pattern="^(started|ended)$"), container_id: Optional[str] = None):
-    """Get streams. By default, only returns started streams. Use status=ended to see ended streams."""
+def get_streams(status: Optional[str] = Query(None, pattern="^(started|ended)$"), container_id: Optional[str] = None):
+    """Get streams. By default, returns all streams. Use status=started or status=ended to filter."""
     return state.list_streams_with_stats(status=status, container_id=container_id)
 
 @app.get("/streams/{stream_id}/stats", response_model=List[StreamStatSnapshot])
@@ -744,8 +754,6 @@ async def stop_stream(stream_id: str):
     Stop a stream by calling its command URL with method=stop.
     Then marks the stream as ended in state.
     """
-    import httpx
-    
     # Get the stream from state
     stream = state.get_stream(stream_id)
     if not stream:
@@ -779,6 +787,86 @@ async def stop_stream(stream_id: str):
     ))
     
     return {"message": "Stream stopped successfully", "stream_id": stream_id}
+
+@app.post("/streams/batch-stop", dependencies=[Depends(require_api_key)])
+async def batch_stop_streams(command_urls: List[str]):
+    """
+    Batch stop multiple streams by calling their command URLs with method=stop.
+    Then marks each stream as ended in state.
+    
+    Request body: List of command URLs
+    Returns: List of results with success/failure status for each stream
+    """
+    results = []
+    
+    # Process each command URL
+    for command_url in command_urls:
+        result = {
+            "command_url": command_url,
+            "success": False,
+            "message": "",
+            "stream_id": None
+        }
+        
+        try:
+            # Find the stream by command URL
+            stream = None
+            for s in state.list_streams():
+                if s.command_url == command_url:
+                    stream = s
+                    break
+            
+            if not stream:
+                result["message"] = "Stream not found"
+                results.append(result)
+                continue
+            
+            result["stream_id"] = stream.id
+            
+            if stream.status != "started":
+                result["message"] = f"Stream is not active (status: {stream.status})"
+                results.append(result)
+                continue
+            
+            # Call command URL with method=stop to stop the stream on the engine
+            stop_url = f"{command_url}?method=stop"
+            logger.info(f"Batch stopping stream {stream.id} via command URL: {stop_url}")
+            
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    response = await client.get(stop_url)
+                    if response.status_code >= 300:
+                        logger.warning(f"Stop command returned non-success status {response.status_code} for stream {stream.id}")
+            except Exception as e:
+                # Log but don't fail - we'll still mark the stream as ended
+                logger.warning(f"Failed to send stop command for stream {stream.id}: {e}")
+            
+            # Mark the stream as ended in our state
+            logger.info(f"Ending stream {stream.id} (reason: batch_stop_via_api)")
+            state.on_stream_ended(StreamEndedEvent(
+                container_id=stream.container_id,
+                stream_id=stream.id,
+                reason="batch_stop_via_api"
+            ))
+            
+            result["success"] = True
+            result["message"] = "Stream stopped successfully"
+            
+        except Exception as e:
+            logger.error(f"Error stopping stream with command URL {command_url}: {e}")
+            result["message"] = f"Error: {str(e)}"
+        
+        results.append(result)
+    
+    # Count successes
+    success_count = sum(1 for r in results if r["success"])
+    
+    return {
+        "total": len(command_urls),
+        "success_count": success_count,
+        "failure_count": len(command_urls) - success_count,
+        "results": results
+    }
 
 # by-label
 from .services.inspect import inspect_container

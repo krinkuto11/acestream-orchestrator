@@ -66,6 +66,44 @@ Response:
 ```json
 {"updated": true, "stream": {…}}
 ```
+### Stream Management Operations
+
+ - DELETE /streams/{stream_id} (protected) → Stop a single stream
+   - Stops a stream by calling its command URL with method=stop
+   - Marks the stream as ended in state
+   - Returns: `{"message": "Stream stopped successfully", "stream_id": "..."}`
+
+ - POST /streams/batch-stop (protected) → Stop multiple streams in batch
+   - Body: Array of command URLs
+   ```json
+   [
+     "http://127.0.0.1:19023/ace/cmd/...",
+     "http://127.0.0.1:19024/ace/cmd/..."
+   ]
+   ```
+   - Response:
+   ```json
+   {
+     "total": 2,
+     "success_count": 2,
+     "failure_count": 0,
+     "results": [
+       {
+         "command_url": "http://127.0.0.1:19023/ace/cmd/...",
+         "success": true,
+         "message": "Stream stopped successfully",
+         "stream_id": "ch-42"
+       },
+       {
+         "command_url": "http://127.0.0.1:19024/ace/cmd/...",
+         "success": true,
+         "message": "Stream stopped successfully",
+         "stream_id": "ch-43"
+       }
+     ]
+   }
+   ```
+
 ### Read Operations
 
  - GET /engines → EngineState[]
@@ -169,8 +207,7 @@ Response:
    ```
    
    **Note:** The acexy proxy is now stateless and only sends stream started events. 
-   Stream state is managed entirely through stat URL checking by the collector service.
-   The collector polls stat URLs every `COLLECT_INTERVAL_S` (default: 2 seconds) to detect stale streams.
+   Stream lifecycle is managed by Acexy itself.
 
  - GET /cache/stats → Cache statistics for monitoring and debugging
    - Returns cache hit/miss rates, entry counts, and memory usage
@@ -189,7 +226,6 @@ Response:
    - orch_collect_errors_total
    - orch_streams_active
    - orch_provision_total{kind="generic|acestream"}
-   - orch_stale_streams_detected_total - Stale streams detected and auto-ended
    - orch_total_uploaded_bytes - Cumulative bytes uploaded from all engines (all-time)
    - orch_total_downloaded_bytes - Cumulative bytes downloaded from all engines (all-time)
    - orch_total_uploaded_mb - Cumulative MB uploaded from all engines

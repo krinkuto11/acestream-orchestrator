@@ -16,8 +16,10 @@ RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host pypi.pytho
 # Copy application files
 COPY app ./app
 
-# Build React dashboard
+# Build React dashboard (always rebuild to include latest changes)
 WORKDIR /app/app/static/panel-react
+# Clean any existing build artifacts first
+RUN rm -rf ../panel
 RUN npm install --ignore-scripts && npm run build
 
 # Return to app directory

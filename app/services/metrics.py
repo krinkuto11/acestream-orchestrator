@@ -2,9 +2,6 @@ from prometheus_client import Counter, Gauge, make_asgi_app, Enum
 import threading
 from typing import Dict, Optional
 
-# Stale stream detection metric
-orch_stale_streams_detected = Counter("orch_stale_streams_detected_total", "stale streams detected and auto-ended")
-
 # Aggregated metrics from all engines
 orch_total_uploaded_bytes = Gauge("orch_total_uploaded_bytes", "Total bytes uploaded from all engines")
 orch_total_downloaded_bytes = Gauge("orch_total_downloaded_bytes", "Total bytes downloaded from all engines")

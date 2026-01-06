@@ -208,85 +208,6 @@ def test_list_streams_defaults_to_started():
     print("✅ List streams filtering test passed!")
 
 
-def test_collector_logs_correctly_for_stale_streams():
-    """Test that collector only logs INFO when ending a started stream."""
-    print("Testing collector logging behavior...")
-    
-    # Create a fresh state
-    test_state = State()
-    
-    # Start a stream
-    evt = StreamStartedEvent(
-        container_id="test_container_log",
-        engine=EngineAddress(host="127.0.0.1", port=8080),
-        stream=StreamKey(key_type="content_id", key="test_stream_key"),
-        session=SessionInfo(
-            playback_session_id="test_session_log",
-            stat_url="http://127.0.0.1:8080/ace/stat/test_session_log",
-            command_url="http://127.0.0.1:8080/ace/cmd/test_session_log",
-            is_live=1
-        ),
-        labels={"stream_id": "test_stream_log"}
-    )
-    
-    test_state.on_stream_started(evt)
-    
-    # Create a mock HTTP response that indicates a stale stream
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "response": None,
-        "error": "unknown playback session id"
-    }
-    
-    mock_client = MagicMock()
-    mock_client.get = AsyncMock(return_value=mock_response)
-    
-    collector = Collector()
-    
-    # Run the collector once (should end the stream)
-    async def run_test():
-        with patch('app.services.collector.state', test_state):
-            await collector._collect_one(
-                mock_client,
-                "test_stream_log",
-                "http://127.0.0.1:8080/ace/stat/test_session_log",
-                "http://127.0.0.1:8080/ace/cmd"
-            )
-    
-    asyncio.run(run_test())
-    
-    # Verify stream was ended
-    stream = test_state.get_stream("test_stream_log")
-    assert stream.status == "ended"
-    
-    # Run collector again with the same mock (stream is now ended)
-    # This time it should log at DEBUG level, not INFO
-    async def run_test_2():
-        with patch('app.services.collector.state', test_state):
-            with patch('app.services.collector.logger') as mock_logger:
-                await collector._collect_one(
-                    mock_client,
-                    "test_stream_log",
-                    "http://127.0.0.1:8080/ace/stat/test_session_log",
-                    "http://127.0.0.1:8080/ace/cmd"
-                )
-                
-                # Check that INFO was NOT called for "Detected stale stream"
-                info_calls = [str(call) for call in mock_logger.info.call_args_list]
-                detected_calls = [c for c in info_calls if "Detected stale stream" in c]
-                assert len(detected_calls) == 0, f"Should not log INFO for already-ended stream, but got: {detected_calls}"
-                
-                # Check that DEBUG was called with the skip message
-                debug_calls = [str(call) for call in mock_logger.debug.call_args_list]
-                skip_calls = [c for c in debug_calls if "already ended" in c]
-                assert len(skip_calls) > 0, "Should log DEBUG when stream is already ended"
-    
-    asyncio.run(run_test_2())
-    
-    print("✅ Collector logging test passed!")
-
-
 if __name__ == "__main__":
     print("🧪 Running stream cleanup tests...\n")
     
@@ -294,6 +215,5 @@ if __name__ == "__main__":
     test_cleanup_keeps_recent_ended_streams()
     test_cleanup_keeps_started_streams()
     test_list_streams_defaults_to_started()
-    test_collector_logs_correctly_for_stale_streams()
     
     print("\n🎉 All stream cleanup tests passed!")

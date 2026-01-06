@@ -216,6 +216,7 @@ class State:
         """
         Get streams enriched with their latest stats.
         Returns copies of stream objects with stats attached to avoid mutating the originals.
+        For ended streams, speed/peer data is set to None as it's no longer relevant.
         """
         with self._lock:
             streams = list(self.streams.values())
@@ -229,14 +230,31 @@ class State:
             for stream in streams:
                 # Create a copy using model_copy to avoid mutating the original
                 enriched = stream.model_copy()
-                stats = self.stream_stats.get(stream.id, [])
-                if stats:
-                    latest_stat = stats[-1]  # Get the most recent stat
-                    enriched.peers = latest_stat.peers
-                    enriched.speed_down = latest_stat.speed_down
-                    enriched.speed_up = latest_stat.speed_up
-                    enriched.downloaded = latest_stat.downloaded
-                    enriched.uploaded = latest_stat.uploaded
+                
+                # Only add stats for active streams
+                if stream.status == "started":
+                    stats = self.stream_stats.get(stream.id, [])
+                    if stats:
+                        latest_stat = stats[-1]  # Get the most recent stat
+                        enriched.peers = latest_stat.peers
+                        enriched.speed_down = latest_stat.speed_down
+                        enriched.speed_up = latest_stat.speed_up
+                        enriched.downloaded = latest_stat.downloaded
+                        enriched.uploaded = latest_stat.uploaded
+                        enriched.livepos = latest_stat.livepos
+                else:
+                    # For ended streams, clear speed/peer data as it's no longer relevant
+                    enriched.peers = None
+                    enriched.speed_down = None
+                    enriched.speed_up = None
+                    enriched.livepos = None
+                    # Keep downloaded/uploaded totals for historical record from last stat
+                    stats = self.stream_stats.get(stream.id, [])
+                    if stats:
+                        latest_stat = stats[-1]
+                        enriched.downloaded = latest_stat.downloaded
+                        enriched.uploaded = latest_stat.uploaded
+                
                 enriched_streams.append(enriched)
             
             return enriched_streams
@@ -257,6 +275,9 @@ class State:
             from ..core.config import cfg as _cfg
             if len(arr) > _cfg.STATS_HISTORY_MAX:
                 del arr[: len(arr) - _cfg.STATS_HISTORY_MAX]
+        # Note: livepos data is intentionally not persisted to database
+        # It's highly transient (updates every 1s) and would cause database bloat.
+        # It's only kept in memory for real-time access via /streams endpoint.
         with SessionLocal() as s:
             s.add(StatRow(stream_id=stream_id, ts=snap.ts, peers=snap.peers, speed_down=snap.speed_down,
                           speed_up=snap.speed_up, downloaded=snap.downloaded, uploaded=snap.uploaded, status=snap.status))

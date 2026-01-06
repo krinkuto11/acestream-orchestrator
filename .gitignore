@@ -71,3 +71,6 @@ actionlint
 # User-generated custom template files (not the default config)
 app/config/custom_templates/
 # Note: app/config/custom_engine_variant.json is tracked as default but can be modified by users
+
+# Reference UI code (not part of project)
+qui-develop/

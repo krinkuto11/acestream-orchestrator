@@ -6,7 +6,7 @@ The acexy proxy is now stateless and only sends stream started events.
 These tests verify that:
 1. The deprecated AcexySyncService is a no-op
 2. The service returns correct deprecated status
-3. Stream state is managed via stat URL checking (tested in test_stale_stream_detection.py)
+3. Stream lifecycle is managed by Acexy
 """
 
 import sys
@@ -78,5 +78,4 @@ if __name__ == "__main__":
     test_acexy_backward_compatibility()
     
     print("\n🎉 All Acexy integration tests passed!")
-    print("\nNote: Stream state is now managed via stat URL checking.")
-    print("See test_stale_stream_detection.py for stat URL checking tests.")
+    print("\nNote: Stream lifecycle is now managed by Acexy.")

@@ -1,5 +1,5 @@
 import React from 'react'
-import StreamList from '@/components/StreamList'
+import StreamsTable from '@/components/StreamsTable'
 
 export function StreamsPage({ 
   streams, 
@@ -18,7 +18,7 @@ export function StreamsPage({
         </div>
       </div>
 
-      <StreamList
+      <StreamsTable
         streams={streams}
         orchUrl={orchUrl}
         apiKey={apiKey}

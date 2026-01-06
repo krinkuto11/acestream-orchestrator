@@ -64,7 +64,7 @@ export function ModernSidebar() {
       collapsed ? "w-16" : "w-64"
     )}>
       {/* Logo */}
-      <div className="flex h-16 items-center border-b px-4 gap-2">
+      <div className="flex h-16 items-center border-b px-6 gap-2">
         {!collapsed && (
           <>
             <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8" />

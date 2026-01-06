@@ -312,9 +312,7 @@ MONITOR_INTERVAL_S=10            # Docker health checks
 GLUETUN_HEALTH_CHECK_INTERVAL_S=5
 
 # Stats Collection
-# COLLECT_INTERVAL_S is the PRIMARY mechanism for detecting stale streams
-# Lower values = faster detection (default: 2s)
-COLLECT_INTERVAL_S=2
+COLLECT_INTERVAL_S=1             # How often to poll stream stats (default: 1s)
 STATS_HISTORY_MAX=720
 
 # Performance
