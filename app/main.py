@@ -9,6 +9,7 @@ import asyncio
 import os
 import json
 import logging
+import httpx
 
 from .utils.logging import setup
 from .core.config import cfg
@@ -753,8 +754,6 @@ async def stop_stream(stream_id: str):
     Stop a stream by calling its command URL with method=stop.
     Then marks the stream as ended in state.
     """
-    import httpx
-    
     # Get the stream from state
     stream = state.get_stream(stream_id)
     if not stream:
@@ -798,8 +797,6 @@ async def batch_stop_streams(command_urls: List[str]):
     Request body: List of command URLs
     Returns: List of results with success/failure status for each stream
     """
-    import httpx
-    
     results = []
     
     # Process each command URL
