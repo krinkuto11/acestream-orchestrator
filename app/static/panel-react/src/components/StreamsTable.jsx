@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Table,
   TableBody,
@@ -20,7 +21,10 @@ import {
   Trash2, 
   ExternalLink,
   Clock,
-  Activity
+  Activity,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react'
 import { formatTime, formatBytes, formatBytesPerSecond } from '../utils/formatters'
 import {
@@ -58,7 +62,7 @@ ChartJS.register(
   Legend
 )
 
-function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode, showSpeedColumns = true }) {
+function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode, showSpeedColumns = true, isSelected, onToggleSelect }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [stats, setStats] = useState([])
   const [loading, setLoading] = useState(false)
@@ -247,6 +251,15 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   return (
     <>
       <TableRow>
+        {showSpeedColumns && (
+          <TableCell className="w-[40px]">
+            <Checkbox
+              checked={isSelected}
+              onCheckedChange={onToggleSelect}
+              aria-label="Select stream"
+            />
+          </TableCell>
+        )}
         <TableCell className="w-[40px]">
           <Button
             variant="ghost"
@@ -335,7 +348,8 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       </TableRow>
       {isExpanded && (
         <TableRow>
-          <TableCell colSpan={showSpeedColumns ? 10 : 7} className="p-6 bg-muted/50">
+          {/* colspan: active streams have 11 cols (checkbox + expand + 9 data), ended streams have 7 cols (expand + 6 data) */}
+          <TableCell colSpan={showSpeedColumns ? 11 : 7} className="p-6 bg-muted/50">
             <div className="space-y-6">
               {/* Stream Details */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -514,12 +528,171 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
   // Separate active and ended streams
   const activeStreams = streams.filter(s => s.status === 'started')
   const endedStreams = streams.filter(s => s.status === 'ended')
+  
+  // State for sorting
+  const [sortColumn, setSortColumn] = useState(null)
+  const [sortDirection, setSortDirection] = useState('asc')
+  
+  // State for selection (only for active streams)
+  const [selectedStreams, setSelectedStreams] = useState(new Set())
+  
+  // State for ended streams collapsible
+  const [endedStreamsOpen, setEndedStreamsOpen] = useState(false)
+  
+  // State for batch operation
+  const [batchStopping, setBatchStopping] = useState(false)
+  
+  // Handle column header click for sorting
+  const handleSort = (column) => {
+    if (sortColumn === column) {
+      // Toggle direction
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortColumn(column)
+      setSortDirection('asc')
+    }
+  }
+  
+  // Sort streams based on current sort settings
+  const sortStreams = (streamsList) => {
+    if (!sortColumn) return streamsList
+    
+    return [...streamsList].sort((a, b) => {
+      let aVal = a[sortColumn]
+      let bVal = b[sortColumn]
+      
+      // Handle special cases
+      if (sortColumn === 'started_at') {
+        aVal = new Date(aVal).getTime()
+        bVal = new Date(bVal).getTime()
+      } else if (sortColumn === 'downloaded' || sortColumn === 'uploaded' || 
+                 sortColumn === 'speed_down' || sortColumn === 'speed_up' || 
+                 sortColumn === 'peers') {
+        aVal = aVal || 0
+        bVal = bVal || 0
+      } else if (typeof aVal === 'string' && typeof bVal === 'string') {
+        aVal = aVal.toLowerCase()
+        bVal = bVal.toLowerCase()
+      }
+      
+      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1
+      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1
+      return 0
+    })
+  }
+  
+  // Render sort icon
+  const SortIcon = ({ column }) => {
+    if (sortColumn !== column) {
+      return <ArrowUpDown className="ml-2 h-4 w-4 inline-block" />
+    }
+    return sortDirection === 'asc' 
+      ? <ArrowUp className="ml-2 h-4 w-4 inline-block" />
+      : <ArrowDown className="ml-2 h-4 w-4 inline-block" />
+  }
+  
+  // Handle select all
+  const handleSelectAll = (checked) => {
+    if (checked) {
+      setSelectedStreams(new Set(activeStreams.map(s => s.id)))
+    } else {
+      setSelectedStreams(new Set())
+    }
+  }
+  
+  // Handle individual selection
+  const handleToggleSelect = (streamId) => {
+    const newSelected = new Set(selectedStreams)
+    if (newSelected.has(streamId)) {
+      newSelected.delete(streamId)
+    } else {
+      newSelected.add(streamId)
+    }
+    setSelectedStreams(newSelected)
+  }
+  
+  // Check if all are selected
+  const allSelected = activeStreams.length > 0 && selectedStreams.size === activeStreams.length
+  const someSelected = selectedStreams.size > 0 && selectedStreams.size < activeStreams.length
+  
+  // Handle batch stop
+  const handleBatchStop = async () => {
+    if (selectedStreams.size === 0) return
+    
+    setBatchStopping(true)
+    
+    try {
+      // Get command URLs for selected streams
+      const commandUrls = activeStreams
+        .filter(s => selectedStreams.has(s.id))
+        .map(s => s.command_url)
+        .filter(url => url) // Filter out any null/undefined URLs
+      
+      if (commandUrls.length === 0) {
+        console.error('No valid command URLs found for selected streams')
+        setBatchStopping(false)
+        return
+      }
+      
+      // Call batch stop API
+      const headers = {
+        'Content-Type': 'application/json'
+      }
+      if (apiKey) {
+        headers['X-API-KEY'] = apiKey
+      }
+      
+      const response = await fetch(`${orchUrl}/streams/batch-stop`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(commandUrls)
+      })
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      
+      const result = await response.json()
+      console.log('Batch stop result:', result)
+      
+      // Clear selection
+      setSelectedStreams(new Set())
+      
+      // Optionally show a toast notification
+      if (result.success_count > 0) {
+        console.log(`Successfully stopped ${result.success_count} stream(s)`)
+      }
+      if (result.failure_count > 0) {
+        console.warn(`Failed to stop ${result.failure_count} stream(s)`)
+      }
+    } catch (error) {
+      console.error('Error during batch stop:', error)
+    } finally {
+      setBatchStopping(false)
+    }
+  }
+  
+  const sortedActiveStreams = sortStreams(activeStreams)
+  const sortedEndedStreams = sortStreams(endedStreams)
 
   return (
     <div className="space-y-6">
       {/* Active Streams Section */}
       <div>
-        <h2 className="text-2xl font-semibold mb-4">Active Streams ({activeStreams.length})</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-2xl font-semibold">Active Streams ({activeStreams.length})</h2>
+          {selectedStreams.size > 0 && (
+            <Button
+              variant="destructive"
+              onClick={handleBatchStop}
+              disabled={batchStopping}
+              className="flex items-center gap-2"
+            >
+              <StopCircle className="h-4 w-4" />
+              {batchStopping ? 'Stopping...' : `Stop Selected (${selectedStreams.size})`}
+            </Button>
+          )}
+        </div>
         {activeStreams.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             No active streams
@@ -529,20 +702,72 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[40px]">
+                    <Checkbox
+                      checked={someSelected ? "indeterminate" : allSelected}
+                      onCheckedChange={handleSelectAll}
+                      aria-label="Select all"
+                    />
+                  </TableHead>
                   <TableHead className="w-[40px]"></TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Stream ID</TableHead>
-                  <TableHead>Engine</TableHead>
-                  <TableHead>Started</TableHead>
-                  <TableHead className="text-right">Download</TableHead>
-                  <TableHead className="text-right">Upload</TableHead>
-                  <TableHead className="text-right">Peers</TableHead>
-                  <TableHead className="text-right">Downloaded</TableHead>
-                  <TableHead className="text-right">Uploaded</TableHead>
+                  <TableHead 
+                    className="cursor-pointer select-none"
+                    onClick={() => handleSort('status')}
+                  >
+                    Status <SortIcon column="status" />
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer select-none"
+                    onClick={() => handleSort('id')}
+                  >
+                    Stream ID <SortIcon column="id" />
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer select-none"
+                    onClick={() => handleSort('container_name')}
+                  >
+                    Engine <SortIcon column="container_name" />
+                  </TableHead>
+                  <TableHead 
+                    className="cursor-pointer select-none"
+                    onClick={() => handleSort('started_at')}
+                  >
+                    Started <SortIcon column="started_at" />
+                  </TableHead>
+                  <TableHead 
+                    className="text-right cursor-pointer select-none"
+                    onClick={() => handleSort('speed_down')}
+                  >
+                    Download <SortIcon column="speed_down" />
+                  </TableHead>
+                  <TableHead 
+                    className="text-right cursor-pointer select-none"
+                    onClick={() => handleSort('speed_up')}
+                  >
+                    Upload <SortIcon column="speed_up" />
+                  </TableHead>
+                  <TableHead 
+                    className="text-right cursor-pointer select-none"
+                    onClick={() => handleSort('peers')}
+                  >
+                    Peers <SortIcon column="peers" />
+                  </TableHead>
+                  <TableHead 
+                    className="text-right cursor-pointer select-none"
+                    onClick={() => handleSort('downloaded')}
+                  >
+                    Downloaded <SortIcon column="downloaded" />
+                  </TableHead>
+                  <TableHead 
+                    className="text-right cursor-pointer select-none"
+                    onClick={() => handleSort('uploaded')}
+                  >
+                    Uploaded <SortIcon column="uploaded" />
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {activeStreams.map((stream) => (
+                {sortedActiveStreams.map((stream) => (
                   <StreamTableRow
                     key={stream.id}
                     stream={stream}
@@ -551,6 +776,8 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                     onStopStream={onStopStream}
                     onDeleteEngine={onDeleteEngine}
                     debugMode={debugMode}
+                    isSelected={selectedStreams.has(stream.id)}
+                    onToggleSelect={() => handleToggleSelect(stream.id)}
                   />
                 ))}
               </TableBody>
@@ -559,40 +786,86 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
         )}
       </div>
 
-      {/* Ended Streams Section */}
+      {/* Ended Streams Section - Collapsible */}
       {endedStreams.length > 0 && (
-        <div>
-          <h2 className="text-2xl font-semibold mb-4">Ended Streams ({endedStreams.length})</h2>
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[40px]"></TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Stream ID</TableHead>
-                  <TableHead>Engine</TableHead>
-                  <TableHead>Started</TableHead>
-                  <TableHead className="text-right">Downloaded</TableHead>
-                  <TableHead className="text-right">Uploaded</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {endedStreams.map((stream) => (
-                  <StreamTableRow
-                    key={stream.id}
-                    stream={stream}
-                    orchUrl={orchUrl}
-                    apiKey={apiKey}
-                    onStopStream={onStopStream}
-                    onDeleteEngine={onDeleteEngine}
-                    debugMode={debugMode}
-                    showSpeedColumns={false}
-                  />
-                ))}
-              </TableBody>
-            </Table>
+        <Collapsible open={endedStreamsOpen} onOpenChange={setEndedStreamsOpen}>
+          <div className="flex items-center justify-between">
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="ghost"
+                className="flex items-center gap-2 p-0 hover:bg-transparent"
+              >
+                <h2 className="text-2xl font-semibold">Ended Streams ({endedStreams.length})</h2>
+                {endedStreamsOpen ? (
+                  <ChevronUp className="h-5 w-5" />
+                ) : (
+                  <ChevronDown className="h-5 w-5" />
+                )}
+              </Button>
+            </CollapsibleTrigger>
           </div>
-        </div>
+          <CollapsibleContent className="mt-4">
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[40px]"></TableHead>
+                    <TableHead 
+                      className="cursor-pointer select-none"
+                      onClick={() => handleSort('status')}
+                    >
+                      Status <SortIcon column="status" />
+                    </TableHead>
+                    <TableHead 
+                      className="cursor-pointer select-none"
+                      onClick={() => handleSort('id')}
+                    >
+                      Stream ID <SortIcon column="id" />
+                    </TableHead>
+                    <TableHead 
+                      className="cursor-pointer select-none"
+                      onClick={() => handleSort('container_name')}
+                    >
+                      Engine <SortIcon column="container_name" />
+                    </TableHead>
+                    <TableHead 
+                      className="cursor-pointer select-none"
+                      onClick={() => handleSort('started_at')}
+                    >
+                      Started <SortIcon column="started_at" />
+                    </TableHead>
+                    <TableHead 
+                      className="text-right cursor-pointer select-none"
+                      onClick={() => handleSort('downloaded')}
+                    >
+                      Downloaded <SortIcon column="downloaded" />
+                    </TableHead>
+                    <TableHead 
+                      className="text-right cursor-pointer select-none"
+                      onClick={() => handleSort('uploaded')}
+                    >
+                      Uploaded <SortIcon column="uploaded" />
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sortedEndedStreams.map((stream) => (
+                    <StreamTableRow
+                      key={stream.id}
+                      stream={stream}
+                      orchUrl={orchUrl}
+                      apiKey={apiKey}
+                      onStopStream={onStopStream}
+                      onDeleteEngine={onDeleteEngine}
+                      debugMode={debugMode}
+                      showSpeedColumns={false}
+                    />
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
       )}
     </div>
   )

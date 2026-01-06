@@ -9,6 +9,7 @@ import asyncio
 import os
 import json
 import logging
+import httpx
 
 from .utils.logging import setup
 from .core.config import cfg
@@ -753,8 +754,6 @@ async def stop_stream(stream_id: str):
     Stop a stream by calling its command URL with method=stop.
     Then marks the stream as ended in state.
     """
-    import httpx
-    
     # Get the stream from state
     stream = state.get_stream(stream_id)
     if not stream:
@@ -788,6 +787,86 @@ async def stop_stream(stream_id: str):
     ))
     
     return {"message": "Stream stopped successfully", "stream_id": stream_id}
+
+@app.post("/streams/batch-stop", dependencies=[Depends(require_api_key)])
+async def batch_stop_streams(command_urls: List[str]):
+    """
+    Batch stop multiple streams by calling their command URLs with method=stop.
+    Then marks each stream as ended in state.
+    
+    Request body: List of command URLs
+    Returns: List of results with success/failure status for each stream
+    """
+    results = []
+    
+    # Process each command URL
+    for command_url in command_urls:
+        result = {
+            "command_url": command_url,
+            "success": False,
+            "message": "",
+            "stream_id": None
+        }
+        
+        try:
+            # Find the stream by command URL
+            stream = None
+            for s in state.list_streams():
+                if s.command_url == command_url:
+                    stream = s
+                    break
+            
+            if not stream:
+                result["message"] = "Stream not found"
+                results.append(result)
+                continue
+            
+            result["stream_id"] = stream.id
+            
+            if stream.status != "started":
+                result["message"] = f"Stream is not active (status: {stream.status})"
+                results.append(result)
+                continue
+            
+            # Call command URL with method=stop to stop the stream on the engine
+            stop_url = f"{command_url}?method=stop"
+            logger.info(f"Batch stopping stream {stream.id} via command URL: {stop_url}")
+            
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    response = await client.get(stop_url)
+                    if response.status_code >= 300:
+                        logger.warning(f"Stop command returned non-success status {response.status_code} for stream {stream.id}")
+            except Exception as e:
+                # Log but don't fail - we'll still mark the stream as ended
+                logger.warning(f"Failed to send stop command for stream {stream.id}: {e}")
+            
+            # Mark the stream as ended in our state
+            logger.info(f"Ending stream {stream.id} (reason: batch_stop_via_api)")
+            state.on_stream_ended(StreamEndedEvent(
+                container_id=stream.container_id,
+                stream_id=stream.id,
+                reason="batch_stop_via_api"
+            ))
+            
+            result["success"] = True
+            result["message"] = "Stream stopped successfully"
+            
+        except Exception as e:
+            logger.error(f"Error stopping stream with command URL {command_url}: {e}")
+            result["message"] = f"Error: {str(e)}"
+        
+        results.append(result)
+    
+    # Count successes
+    success_count = sum(1 for r in results if r["success"])
+    
+    return {
+        "total": len(command_urls),
+        "success_count": success_count,
+        "failure_count": len(command_urls) - success_count,
+        "results": results
+    }
 
 # by-label
 from .services.inspect import inspect_container

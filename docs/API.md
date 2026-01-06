@@ -66,6 +66,44 @@ Response:
 ```json
 {"updated": true, "stream": {…}}
 ```
+### Stream Management Operations
+
+ - DELETE /streams/{stream_id} (protected) → Stop a single stream
+   - Stops a stream by calling its command URL with method=stop
+   - Marks the stream as ended in state
+   - Returns: `{"message": "Stream stopped successfully", "stream_id": "..."}`
+
+ - POST /streams/batch-stop (protected) → Stop multiple streams in batch
+   - Body: Array of command URLs
+   ```json
+   [
+     "http://127.0.0.1:19023/ace/cmd/...",
+     "http://127.0.0.1:19024/ace/cmd/..."
+   ]
+   ```
+   - Response:
+   ```json
+   {
+     "total": 2,
+     "success_count": 2,
+     "failure_count": 0,
+     "results": [
+       {
+         "command_url": "http://127.0.0.1:19023/ace/cmd/...",
+         "success": true,
+         "message": "Stream stopped successfully",
+         "stream_id": "ch-42"
+       },
+       {
+         "command_url": "http://127.0.0.1:19024/ace/cmd/...",
+         "success": true,
+         "message": "Stream stopped successfully",
+         "stream_id": "ch-43"
+       }
+     ]
+   }
+   ```
+
 ### Read Operations
 
  - GET /engines → EngineState[]
