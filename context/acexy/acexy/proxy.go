@@ -7,35 +7,28 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"javinator9889/acexy/lib/acexy"
-	"javinator9889/acexy/lib/debug"
 	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/dustin/go-humanize"
 )
 
 var (
-	addr                string
-	scheme              string
-	host                string
-	port                int
-	streamTimeout       time.Duration
-	m3u8                bool
-	emptyTimeout        time.Duration
-	size                Size
-	noResponseTimeout   time.Duration
-	maxStreamsPerEngine int
-	debugMode           bool
-	debugLogDir         string
+	addr              string
+	scheme            string
+	host              string
+	port              int
+	streamTimeout     time.Duration
+	m3u8              bool
+	emptyTimeout      time.Duration
+	size              Size
+	noResponseTimeout time.Duration
 )
 
 //go:embed LICENSE.short
@@ -46,7 +39,6 @@ const APIv1_URL = "/ace"
 
 type Proxy struct {
 	Acexy *acexy.Acexy
-	Orch  *orchClient
 }
 
 type Size struct {
@@ -62,42 +54,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.HandleStream(w, r)
 	case APIv1_URL + "/status":
 		p.HandleStatus(w, r)
-	case "/":
-		_, _ = fmt.Fprintln(w, LICENSE)
 	default:
 		http.NotFound(w, r)
 	}
 }
 
 func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
-	debugLog := debug.GetDebugLogger()
-	startTime := time.Now()
-	var statusCode int = http.StatusOK
-	var aceIDStr string
-
-	// Defer debug logging until the end
-	defer func() {
-		duration := time.Since(startTime)
-		debugLog.LogRequest(r.Method, r.URL.Path, duration, statusCode, aceIDStr)
-
-		// Detect slow requests (over 5 seconds)
-		if duration > 5*time.Second {
-			debugLog.LogStressEvent(
-				"slow_request",
-				"warning",
-				fmt.Sprintf("Request took %.2fs", duration.Seconds()),
-				map[string]interface{}{
-					"path":     r.URL.Path,
-					"ace_id":   aceIDStr,
-					"duration": duration.Seconds(),
-				},
-			)
-		}
-	}()
-
 	// Verify the request method
 	if r.Method != http.MethodGet {
-		statusCode = http.StatusMethodNotAllowed
 		slog.Error("Method not allowed", "method", r.Method, "path", r.URL.Path)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -107,239 +71,176 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// Verify the client has included the ID parameter
 	aceId, err := acexy.NewAceID(q.Get("id"), q.Get("infohash"))
 	if err != nil {
-		statusCode = http.StatusBadRequest
 		slog.Error("ID parameter is required", "path", r.URL.Path, "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	aceIDStr = aceId.String()
 
-	// Check that the client is not trying to force a PID
-	if _, ok := q["pid"]; ok {
-		statusCode = http.StatusBadRequest
+	// Verify the client has not included the PID parameter
+	if q.Has("pid") {
 		slog.Error("PID parameter is not allowed", "path", r.URL.Path)
 		http.Error(w, "PID parameter is not allowed", http.StatusBadRequest)
 		return
 	}
 
-	// Select the best available engine from orchestrator if configured
-	var selectedHost string
-	var selectedPort int
-	var selectedEngineContainerID string
-
-	if p.Orch != nil {
-		// Try to get an available engine from orchestrator
-		host, port, engineContainerID, err := p.Orch.SelectBestEngine()
-		if err != nil {
-			// Check if it's a structured provisioning error
-			var provErr *ProvisioningError
-			if errors.As(err, &provErr) {
-				statusCode = http.StatusServiceUnavailable
-				p.handleProvisioningError(w, provErr)
-				return
-			}
-
-			// Check if it's a provisioning issue and provide specific error messages (legacy)
-			if strings.Contains(err.Error(), "VPN") {
-				statusCode = http.StatusServiceUnavailable
-				slog.Error("Stream failed due to VPN issue", "error", err)
-				http.Error(w, "Service temporarily unavailable: VPN connection required", http.StatusServiceUnavailable)
-				return
-			}
-			if strings.Contains(err.Error(), "circuit breaker") {
-				statusCode = http.StatusServiceUnavailable
-				slog.Error("Stream failed due to circuit breaker", "error", err)
-				http.Error(w, "Service temporarily unavailable: Too many failures, please retry later", http.StatusServiceUnavailable)
-				return
-			}
-			if strings.Contains(err.Error(), "cannot provision") {
-				statusCode = http.StatusServiceUnavailable
-				slog.Error("Stream failed - provisioning blocked", "error", err)
-				http.Error(w, fmt.Sprintf("Service temporarily unavailable: %s", err.Error()), http.StatusServiceUnavailable)
-				return
-			}
-
-			slog.Warn("Failed to select engine from orchestrator, falling back to configured engine", "error", err)
-			selectedHost = p.Acexy.Host
-			selectedPort = p.Acexy.Port
-		} else {
-			selectedHost = host
-			selectedPort = port
-			selectedEngineContainerID = engineContainerID
-			slog.Info("Selected engine from orchestrator", "host", host, "port", port)
-		}
-	} else {
-		// No orchestrator configured, use the default configured engine
-		selectedHost = p.Acexy.Host
-		selectedPort = p.Acexy.Port
-	}
-
-	// Temporarily update acexy configuration for this request
-	originalHost := p.Acexy.Host
-	originalPort := p.Acexy.Port
-	p.Acexy.Host = selectedHost
-	p.Acexy.Port = selectedPort
-
-	// Restore original configuration after stream handling
-	defer func() {
-		p.Acexy.Host = originalHost
-		p.Acexy.Port = originalPort
-	}()
-
 	// Gather the stream information
 	stream, err := p.Acexy.FetchStream(aceId, q)
 	if err != nil {
-		statusCode = http.StatusInternalServerError
-		slog.Error("Failed to fetch stream", "stream", aceId, "error", err)
-
+		slog.Error("Failed to start stream", "stream", aceId, "error", err)
 		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Emit stream started event to orchestrator for internal tracking
-	var streamID string
-	if p.Orch != nil {
-		idType, key := aceId.ID()
-		playbackID := playbackIDFromStat(stream.StatURL)
-		streamID = key + "|" + playbackID
-		orchKeyType := mapAceIDTypeToOrchestrator(idType)
-		
-		slog.Debug("Emitting stream_started event to orchestrator",
-			"stream_id", streamID, "host", selectedHost, "port", selectedPort)
-		
-		p.Orch.EmitStarted(selectedHost, selectedPort, orchKeyType, key,
-			playbackID, stream.StatURL, stream.CommandURL, streamID, selectedEngineContainerID)
+	// And start playing the stream. The `StartStream` will dump the contents of the new or
+	// existing stream to the client. It takes an interface of `io.Writer` to write the stream
+	// contents to. The `http.ResponseWriter` implements the `io.Writer` interface, so we can
+	// pass it directly.
+	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
+	if err := p.Acexy.StartStream(stream, w); err != nil {
+		slog.Error("Failed to start stream", "stream", aceId, "error", err)
+		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	// Set response headers
+	// Update the client headers
+	w.WriteHeader(http.StatusOK)
+
+	// Defer the stream finish. This will be called when the request is done. When in M3U8 mode,
+	// the client connects directly to a subset of endpoints, so we are blind to what the client
+	// is doing. However, it periodically polls the M3U8 list to verify nothing has changed,
+	// simulating a new connection. Therefore, we can accumulate a lot of open streams and let
+	// the timeout finish them.
+	//
+	// When in MPEG-TS mode, the client connects to the endpoint and waits for the stream to finish.
+	// This is a blocking operation, so we can finish the stream when the client disconnects.
 	switch p.Acexy.Endpoint {
 	case acexy.M3U8_ENDPOINT:
 		w.Header().Set("Content-Type", "application/x-mpegURL")
+		timedOut := acexy.SetTimeout(streamTimeout)
+		defer func() {
+			<-timedOut
+			p.Acexy.StopStream(stream, w)
+		}()
 	case acexy.MPEG_TS_ENDPOINT:
 		w.Header().Set("Content-Type", "video/MP2T")
 		w.Header().Set("Transfer-Encoding", "chunked")
+		defer p.Acexy.StopStream(stream, w)
 	}
 
-	// Write headers before starting stream
-	w.WriteHeader(http.StatusOK)
-
-	// Start streaming - this blocks until complete or client disconnects
-	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
-	streamStartTime := time.Now()
-	copier, streamErr := p.Acexy.StartStream(stream, w)
-	streamDuration := time.Since(streamStartTime)
-	
-	// Determine reason for stream ending and classify the error
-	var reason string
-	var bytesCopied int64
-	var detailedReason string
-	
-	if copier != nil {
-		bytesCopied = copier.BytesCopied()
+	// And wait for the client to disconnect
+	select {
+	case <-r.Context().Done():
+		slog.Debug("Client disconnected", "path", r.URL.Path)
+	case <-p.Acexy.WaitStream(stream):
+		slog.Debug("Stream finished", "path", r.URL.Path)
 	}
-	
-	if streamErr != nil {
-		slog.Error("Failed to stream", "stream", aceId, "error", streamErr, "bytes_copied", bytesCopied, "duration", streamDuration)
-		
-		// Classify the error to determine appropriate reason with more detail
-		reason, detailedReason = classifyDisconnectReason(streamErr)
-		
-		// Log detailed disconnect information in debug mode
-		debugLog.LogDisconnect(streamID, aceIDStr, reason, streamErr.Error(), bytesCopied, streamDuration, map[string]interface{}{
-			"detailed_reason": detailedReason,
-			"engine_host":     selectedHost,
-			"engine_port":     selectedPort,
-			"container_id":    selectedEngineContainerID,
-		})
-	} else {
-		// Stream completed successfully
-		slog.Debug("Stream completed", "path", r.URL.Path, "id", aceId, "bytes_copied", bytesCopied, "duration", streamDuration)
-		reason = "completed"
-		detailedReason = "stream finished normally"
-		
-		// Log successful completion in debug mode
-		debugLog.LogDisconnect(streamID, aceIDStr, reason, "", bytesCopied, streamDuration, map[string]interface{}{
-			"detailed_reason": detailedReason,
-			"engine_host":     selectedHost,
-			"engine_port":     selectedPort,
-			"container_id":    selectedEngineContainerID,
-		})
-	}
-	
-	// Emit stream_ended event to orchestrator and send stop command to engine
-	if p.Orch != nil && streamID != "" {
-		slog.Debug("Stream ending, emitting stream_ended event",
-			"stream_id", streamID, "reason", reason)
-		p.Orch.EmitEnded(streamID, reason)
-		
-		// Send stop command to AceStream engine to clean up resources
-		if err := acexy.CloseStream(stream); err != nil {
-			slog.Debug("Failed to send stop command to engine", 
-				"stream_id", streamID, "error", err)
-		}
-	}
-}
-
-// handleProvisioningError handles structured provisioning errors and returns user-friendly responses
-func (p *Proxy) handleProvisioningError(w http.ResponseWriter, err *ProvisioningError) {
-	details := err.Details
-
-	// Log with structured data
-	slog.Error("Provisioning blocked",
-		"code", details.Code,
-		"message", details.Message,
-		"recovery_eta", details.RecoveryETASeconds,
-		"should_wait", details.ShouldWait)
-
-	// Set Retry-After header if recovery ETA is available
-	if details.RecoveryETASeconds > 0 {
-		w.Header().Set("Retry-After", fmt.Sprintf("%d", details.RecoveryETASeconds))
-	}
-
-	// Return user-friendly error based on code
-	var userMessage string
-	switch details.Code {
-	case "vpn_disconnected":
-		userMessage = "Service temporarily unavailable: VPN connection is being restored"
-	case "circuit_breaker":
-		userMessage = "Service temporarily unavailable: System is recovering from errors"
-	case "max_capacity":
-		userMessage = "Service at capacity: Please try again in a moment"
-	case "vpn_error":
-		userMessage = "Service temporarily unavailable: VPN error during provisioning"
-	default:
-		userMessage = "Service temporarily unavailable: " + details.Message
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusServiceUnavailable)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"error":       userMessage,
-		"retry_after": details.RecoveryETASeconds,
-	})
 }
 
 func (p *Proxy) HandleStatus(w http.ResponseWriter, r *http.Request) {
-	// Verify the request method
 	if r.Method != http.MethodGet {
 		slog.Error("Method not allowed", "method", r.Method, "path", r.URL.Path)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// In stateless mode, just return basic health status
-	_, err := p.Acexy.GetStatus(nil)
+	var aceId *acexy.AceID
+	q := r.URL.Query()
+	slog.Debug("Status request", "path", r.URL.Path, "query", q)
+	id, err := acexy.NewAceID(q.Get("id"), q.Get("infohash"))
+	if err == nil {
+		aceId = &id
+	} else {
+		// If no parameter is included, ask for the global status
+		aceId = nil
+	}
+
+	// Get the status of the stream
+	slog.Debug("Getting status", "id", aceId)
+	status, err := p.Acexy.GetStatus(aceId)
 	if err != nil {
 		slog.Error("Failed to get status", "error", err)
-		http.Error(w, "Failed to get status: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Stream not found", http.StatusNotFound)
 		return
 	}
 
-	// Return simple health check
+	slog.Debug("Status", "status", status)
+	// Write the status to the client as JSON
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status": "ok",
-	})
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		slog.Error("Failed to write status", "error", err)
+		http.Error(w, "Failed to write status", http.StatusInternalServerError)
+		return
+	}
+}
+
+func LookupEnvOrString(key string, def string) string {
+	if val, ok := os.LookupEnv(key); ok {
+		return val
+	}
+	return def
+}
+
+func LookupEnvOrInt(key string, def int) int {
+	if val, ok := os.LookupEnv(key); ok {
+		i, err := strconv.Atoi(val)
+		if err != nil {
+			slog.Error("Failed to parse environment variable", "key", key, "value", val)
+			return 0
+		}
+		return i
+	}
+	return def
+}
+
+func LookupEnvOrDuration(key string, def time.Duration) time.Duration {
+	if val, ok := os.LookupEnv(key); ok {
+		d, err := time.ParseDuration(val)
+		if err != nil {
+			slog.Error("Failed to parse environment variable", "key", key, "value", val)
+			return 0
+		}
+		return d
+	}
+	return def
+}
+
+func LookupEnvOrBool(key string, def bool) bool {
+	if val, ok := os.LookupEnv(key); ok {
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			slog.Error("Failed to parse environment variable", "key", key, "value", val)
+			return false
+		}
+		return b
+	}
+	return def
+}
+
+func LookupLogLevel() slog.Level {
+	if level, ok := os.LookupEnv("ACEXY_LOG_LEVEL"); ok {
+		var sl slog.Level
+
+		if err := sl.UnmarshalText([]byte(level)); err != nil {
+			slog.Warn("Failed to parse log level", "level", level)
+			return slog.LevelInfo
+		}
+		return sl
+	}
+	return slog.LevelInfo
+}
+
+func LookupEnvOrSize(key string, def uint64) *Size {
+	if val, ok := os.LookupEnv(key); ok {
+		if err := size.Set(val); err != nil {
+			slog.Error("Failed to parse environment variable", "key", key, "value", val)
+			return nil
+		}
+	} else {
+		size.Bytes = def
+	}
+	return &size
 }
 
 func (s *Size) Set(value string) error {
@@ -357,88 +258,70 @@ func (s *Size) Get() any { return s.Bytes }
 
 func parseArgs() {
 	// Parse the command-line arguments
-	flag.StringVar(&addr, "addr", "127.0.0.1:6878", "Server address")
-	flag.StringVar(&scheme, "scheme", "http", "AceStream scheme")
-	flag.StringVar(&host, "host", "127.0.0.1", "AceStream host (fallback when orchestrator not configured)")
-	flag.IntVar(&port, "port", 6878, "AceStream port (fallback when orchestrator not configured)")
-	flag.DurationVar(&streamTimeout, "timeout", 60*time.Second, "Stream timeout (M3U8 mode)")
-	flag.BoolVar(&m3u8, "m3u8", false, "M3U8 mode")
-	flag.DurationVar(&emptyTimeout, "emptyTimeout", 10*time.Second, "Empty timeout (no data copied)")
-	flag.DurationVar(&noResponseTimeout, "noResponseTimeout", 20*time.Second, "Timeout to receive first response byte from engine")
-	flag.IntVar(&maxStreamsPerEngine, "maxStreamsPerEngine", 1, "Maximum streams per engine when using orchestrator")
-	flag.BoolVar(&debugMode, "debugMode", false, "Enable debug mode with detailed logging")
-	flag.StringVar(&debugLogDir, "debugLogDir", "./debug_logs", "Directory for debug logs")
-	flag.Var(&size, "buffer", "Buffer size for copying (e.g. 1MiB)")
-	size.Default = 1 << 20
-
-	// Actually parse the command line flags
+	flag.BoolFunc("license", "print the license and exit", func(_ string) error {
+		fmt.Println(LICENSE)
+		os.Exit(0)
+		return nil
+	})
+	flag.StringVar(
+		&addr,
+		"addr",
+		LookupEnvOrString("ACEXY_LISTEN_ADDR", ":8080"),
+		"address to listen on. Can be set with ACEXY_LISTEN_ADDR environment variable",
+	)
+	flag.StringVar(
+		&scheme,
+		"scheme",
+		LookupEnvOrString("ACEXY_SCHEME", "http"),
+		"scheme to use for the AceStream middleware. Can be set with ACEXY_SCHEME environment variable",
+	)
+	flag.StringVar(
+		&host,
+		"acestream-host",
+		LookupEnvOrString("ACEXY_HOST", "localhost"),
+		"host to use for the AceStream middleware. Can be set with ACEXY_HOST environment variable",
+	)
+	flag.IntVar(
+		&port,
+		"acestream-port",
+		LookupEnvOrInt("ACEXY_PORT", 6878),
+		"port to use for the AceStream middleware. Can be set with ACEXY_PORT environment variable",
+	)
+	flag.DurationVar(
+		&streamTimeout,
+		"m3u8-stream-timeout",
+		LookupEnvOrDuration("ACEXY_M3U8_STREAM_TIMEOUT", 60*time.Second),
+		"timeout in human-readable format to finish the stream. "+
+			"Can be set with ACEXY_M3U8_STREAM_TIMEOUT environment variable",
+	)
+	flag.BoolVar(
+		&m3u8,
+		"m3u8",
+		LookupEnvOrBool("ACEXY_M3U8", false),
+		"enable M3U8 mode. Can be set with ACEXY_M3U8 environment variable.",
+	)
+	flag.DurationVar(
+		&emptyTimeout,
+		"empty-timeout",
+		LookupEnvOrDuration("ACEXY_EMPTY_TIMEOUT", 1*time.Minute),
+		"timeout in human-readable format to finish the stream when the source is empty. "+
+			"Can be set with ACEXY_EMPTY_TIMEOUT environment variable",
+	)
+	flag.Var(
+		LookupEnvOrSize("ACEXY_BUFFER_SIZE", 4*1024*1024),
+		"buffer-size",
+		"buffer size in human-readable format to use when copying the data. "+
+			"Can be set with ACEXY_BUFFER_SIZE environment variable",
+	)
+	flag.DurationVar(
+		&noResponseTimeout,
+		"no-response-timeout",
+		LookupEnvOrDuration("ACEXY_NO_RESPONSE_TIMEOUT", 1*time.Second),
+		"timeout in human-readable format to wait for a response from the AceStream middleware. "+
+			"Can be set with ACEXY_NO_RESPONSE_TIMEOUT environment variable. "+
+			"Depending on the network conditions, you may want to adjust this value",
+	)
 	flag.Parse()
-
-	// Env overrides
-	if v := os.Getenv("ACEXY_ADDR"); v != "" {
-		addr = v
-	}
-	if v := os.Getenv("ACEXY_SCHEME"); v != "" {
-		scheme = v
-	}
-	if v := os.Getenv("ACEXY_HOST"); v != "" {
-		host = v
-	}
-	if v := os.Getenv("ACEXY_PORT"); v != "" {
-		if p, err := strconv.Atoi(v); err == nil {
-			port = p
-		}
-	}
-	if v := os.Getenv("ACEXY_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			streamTimeout = d
-		}
-	}
-	if v := os.Getenv("ACEXY_M3U8"); v != "" {
-		m3u8 = v == "1" || v == "true" || v == "TRUE"
-	}
-	if v := os.Getenv("ACEXY_EMPTY_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			emptyTimeout = d
-		}
-	}
-	if v := os.Getenv("ACEXY_NO_RESPONSE_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			noResponseTimeout = d
-		}
-	}
-	if v := os.Getenv("ACEXY_BUFFER"); v != "" {
-		if s, err := humanize.ParseBytes(v); err == nil {
-			size.Bytes = s
-		}
-	}
-	if v := os.Getenv("ACEXY_MAX_STREAMS_PER_ENGINE"); v != "" {
-		if m, err := strconv.Atoi(v); err == nil && m > 0 {
-			maxStreamsPerEngine = m
-		}
-	}
-	if v := os.Getenv("DEBUG_MODE"); v != "" {
-		debugMode = v == "1" || v == "true" || v == "TRUE"
-	}
-	if v := os.Getenv("DEBUG_LOG_DIR"); v != "" {
-		debugLogDir = v
-	}
-}
-
-func LookupLogLevel() slog.Level {
-	logLevel := os.Getenv("ACEXY_LOG_LEVEL")
-	switch logLevel {
-	case "DEBUG":
-		return slog.LevelDebug
-	case "INFO":
-		return slog.LevelInfo
-	case "WARN":
-		return slog.LevelWarn
-	case "ERROR":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
 }
 
 func main() {
@@ -447,30 +330,12 @@ func main() {
 	slog.SetLogLoggerLevel(LookupLogLevel())
 	slog.Debug("CLI Args", "args", flag.CommandLine)
 
-	// Initialize debug logger
-	debug.InitDebugLogger(debugMode, debugLogDir)
-	if debugMode {
-		slog.Info("Debug mode enabled", "log_dir", debugLogDir)
-	}
-
 	var endpoint acexy.AcexyEndpoint
 	if m3u8 {
 		endpoint = acexy.M3U8_ENDPOINT
 	} else {
 		endpoint = acexy.MPEG_TS_ENDPOINT
 	}
-
-	// Create orchestrator client
-	orchURL := os.Getenv("ACEXY_ORCH_URL")
-	var orchClient *orchClient
-	if orchURL != "" {
-		orchClient = newOrchClient(orchURL)
-		orchClient.SetMaxStreamsPerEngine(maxStreamsPerEngine)
-		slog.Info("Orchestrator integration enabled", "url", orchURL, "max_streams_per_engine", maxStreamsPerEngine)
-	} else {
-		slog.Info("Orchestrator integration disabled - using fallback engine configuration", "host", host, "port", port)
-	}
-
 	// Create a new Acexy instance
 	acexy := &acexy.Acexy{
 		Scheme:            scheme,
@@ -478,18 +343,19 @@ func main() {
 		Port:              port,
 		Endpoint:          endpoint,
 		EmptyTimeout:      emptyTimeout,
-		BufferSize:        int(size.Get().(uint64)),
+		BufferSize:        int(size.Bytes),
 		NoResponseTimeout: noResponseTimeout,
 	}
 	acexy.Init()
+	slog.Debug("Acexy", "acexy", acexy)
 
 	// Create a new HTTP server
-	proxy := &Proxy{Acexy: acexy, Orch: orchClient}
+	proxy := &Proxy{Acexy: acexy}
 	mux := http.NewServeMux()
 	mux.Handle(APIv1_URL+"/getstream", proxy)
 	mux.Handle(APIv1_URL+"/getstream/", proxy)
 	mux.Handle(APIv1_URL+"/status", proxy)
-	mux.Handle("/", proxy) // Let proxy handle all other requests including root
+	mux.Handle("/", http.NotFoundHandler())
 
 	// Start the HTTP server
 	slog.Info("Starting server", "addr", addr)
@@ -497,146 +363,4 @@ func main() {
 		slog.Error("Failed to start server", "error", err)
 		os.Exit(1)
 	}
-}
-
-// mapAceIDTypeToOrchestrator maps acexy ID types to orchestrator expected types
-func mapAceIDTypeToOrchestrator(aceType acexy.AceIDType) string {
-	switch aceType {
-	case "infohash":
-		return "infohash"
-	case "id":
-		// In AceStream context, "id" typically refers to content_id
-		return "content_id"
-	default:
-		return "content_id" // default fallback
-	}
-}
-
-// playbackIDFromStat extracts the playback session ID from a stat URL
-func playbackIDFromStat(statURL string) string {
-	if statURL == "" {
-		return ""
-	}
-
-	// Validate the URL is parseable (basic check)
-	if !strings.Contains(statURL, "/") {
-		slog.Debug("Invalid stat URL format", "url", statURL)
-		return ""
-	}
-
-	// Parse URL to extract path components
-	// Expected format: .../ace/stat/<infohash>/<playback_session_id>
-	// We use simple string splitting for efficiency, but validate structure
-	urlPath := statURL
-	if idx := strings.Index(statURL, "://"); idx >= 0 {
-		// Remove scheme (http:// or https://)
-		urlPath = statURL[idx+3:]
-	}
-	if idx := strings.Index(urlPath, "/"); idx >= 0 {
-		// Remove host/port, keep only path
-		urlPath = urlPath[idx:]
-	}
-	
-	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
-	
-	// Find the "stat" segment and return the ID after it
-	// Expected: [..., "ace", "stat", <infohash>, <playback_session_id>]
-	for i, part := range parts {
-		if part == "stat" && i+2 < len(parts) {
-			return parts[i+2] // Return playback_session_id
-		}
-	}
-	
-	// Fallback: return last path component if structure is different
-	if len(parts) > 0 && parts[len(parts)-1] != "" {
-		slog.Debug("Using fallback playback ID extraction", "url", statURL, "id", parts[len(parts)-1])
-		return parts[len(parts)-1]
-	}
-	
-	slog.Warn("Could not extract playback ID from stat URL", "url", statURL)
-	return ""
-}
-
-// classifyDisconnectReason analyzes an error and returns a reason code and detailed description
-// This provides more thorough debugging information about why client disconnects occur
-func classifyDisconnectReason(err error) (reason string, detailedReason string) {
-	if err == nil {
-		return "completed", "stream finished normally"
-	}
-	
-	errStr := err.Error()
-	errStrLower := strings.ToLower(errStr)
-	
-	// Check for empty timeout error first (specific check before string matching)
-	if strings.Contains(errStrLower, "stream empty timeout") {
-		return "empty_timeout", "stream closed due to inactivity (no data received within timeout period)"
-	}
-	
-	// Check for client-side disconnects
-	if strings.Contains(errStrLower, "broken pipe") {
-		return "client_disconnected", "client closed connection (broken pipe)"
-	}
-	if strings.Contains(errStrLower, "connection reset by peer") {
-		return "client_disconnected", "client reset connection (RST packet received)"
-	}
-	if strings.Contains(errStrLower, "connection reset") {
-		return "client_disconnected", "connection reset by network or client"
-	}
-	if strings.Contains(errStrLower, "write: connection refused") {
-		return "client_disconnected", "client refused connection on write"
-	}
-	
-	// Check for timeout-related errors
-	if strings.Contains(errStrLower, "i/o timeout") {
-		return "timeout", "I/O operation timed out"
-	}
-	if strings.Contains(errStrLower, "deadline exceeded") {
-		return "timeout", "deadline exceeded (context timeout or read/write timeout)"
-	}
-	if strings.Contains(errStrLower, "timeout") {
-		return "timeout", "operation timed out"
-	}
-	
-	// Check for network errors
-	if strings.Contains(errStrLower, "network is unreachable") {
-		return "network_error", "network is unreachable"
-	}
-	if strings.Contains(errStrLower, "no route to host") {
-		return "network_error", "no route to host"
-	}
-	if strings.Contains(errStrLower, "host is down") {
-		return "network_error", "host is down"
-	}
-	
-	// Check for unexpected EOF - must check before generic "eof" to be specific
-	if strings.Contains(errStrLower, "unexpected eof") {
-		return "eof", "unexpected EOF during read"
-	}
-	
-	// Check for EOF-related errors
-	if errors.Is(err, io.EOF) {
-		return "eof", "unexpected EOF from source stream"
-	}
-	if strings.Contains(errStrLower, "eof") {
-		return "eof", "end of file encountered unexpectedly"
-	}
-	
-	// Check for closed pipe/connection errors
-	if errors.Is(err, io.ErrClosedPipe) {
-		return "closed_pipe", "write to closed pipe"
-	}
-	if strings.Contains(errStrLower, "use of closed network connection") {
-		return "closed_connection", "attempted to use closed network connection"
-	}
-	
-	// Check for buffer or memory errors
-	if strings.Contains(errStrLower, "no buffer space available") {
-		return "buffer_error", "system out of buffer space"
-	}
-	if strings.Contains(errStrLower, "cannot allocate memory") {
-		return "memory_error", "system out of memory"
-	}
-	
-	// Generic error fallback
-	return "error", fmt.Sprintf("unclassified error: %s", errStr)
 }

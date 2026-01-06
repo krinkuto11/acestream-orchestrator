@@ -1,44 +1,30 @@
 services:
   acexy:
-    container_name: acexy
-    image: ghcr.io/krinkuto11/acexy-orchestrator:latest
+    image: ghcr.io/javinator9889/acexy:0.2.0
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - 8080:8080/tcp
     environment:
-      ACEXY_ADDR: ":8080"            # Listen on port 8080
-      ACEXY_SCHEME: "http"           # Use HTTP
-      ACEXY_HOST: "acestream"        # Host is "acestream" or the name of the AceStream service
-      ACEXY_PORT: "6878"             # Port is 6878
-      ACEXY_TIMEOUT: "60s"           # Stream timeout when in M3U8 mode
-      ACEXY_M3U8: "false"            # Disable M3U8 mode
-      ACEXY_EMPTY_TIMEOUT: "60s"     # Timeout to close the connection if no data is received
-      ACEXY_BUFFER: "4.2MiB"         # Buffer size for smooth playback (prevents frame drops)
+      ACEXY_LISTEN_ADDR: ":8080"  # Listen on port 8080
+      ACEXY_SCHEME: "http"        # Use HTTP
+      ACEXY_HOST: "acestream"     # Host is "acestream" or the name of the AceStream service
+      ACEXY_PORT: "6878"          # Port is 6878
+      ACEXY_M3U8_STREAM_TIMEOUT: "60s"  # Timeout is 60 seconds when in M3U8 mode
+      ACEXY_M3U8: "false"         # Disable M3U8 mode
+      ACEXY_EMPTY_TIMEOUT: "60s"  # Timeout to close the connection if no data is received
+      ACEXY_BUFFER_SIZE: 4MB      # Buffer size is 4MB
       ACEXY_NO_RESPONSE_TIMEOUT: "10s"  # Timeout to close the connection if no response is received
-      # Orchestrator integration (optional)
-      ACEXY_ORCH_URL: "http://orchestrator:8000"           # Base URL for orchestrator API (leave empty to disable orchestrator integration)
-      ACEXY_ORCH_APIKEY: "contraseña"        # API key for orchestrator authentication (optional)
-      # ACEXY_CONTAINER_ID: ""       # Container ID for orchestrator identification (auto-detected if empty)
-      ACEXY_STREAM_GRACE_PERIOD: "5s"
-      TZ: Europe/Madrid
-      ACEXY_MAX_STREAMS_PER_ENGINE: 2
-    networks:
-      - aceserver
+    links:
+      - acestream
     depends_on:
-      - orchestrator
+      - acestream
 
-  orchestrator:
-    privileged: true
-    container_name: orchestrator
-    image: ghcr.io/krinkuto11/acestream-orchestrator:latest
-    env_file: .env
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    ports:
-      - "8000:8000"
-    restart: on-failure
-    networks:
-      - aceserver
-
-volumes:
-  orchestrator-db:
+  acestream:
+    image: martinbjeldbak/acestream-http-proxy:latest  # or whatever image you want to use
+    restart: unless-stopped
+    # you can expose here the ports if you want to access the acestream service directly
+    # ports:
+    #   - "6878:6878"
+    # environment:
+      # Flags for the AceStream server
+      # EXTRA_FLAGS: "--cache-dir /tmp --cache-limit 2 --cache-auto 1 --log-stderr --log-stderr-level error"
