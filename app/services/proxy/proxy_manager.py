@@ -16,16 +16,16 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 
-# Import state module for stream tracking (avoid circular import by importing in methods)
-_state = None
+# Import state instance for stream tracking (avoid circular import by importing in methods)
+_state_instance = None
 
 def get_state():
-    """Get state module instance (lazy load to avoid circular import)."""
-    global _state
-    if _state is None:
-        from app.services import state as state_module
-        _state = state_module
-    return _state
+    """Get state instance (lazy load to avoid circular import)."""
+    global _state_instance
+    if _state_instance is None:
+        from app.services.state import state
+        _state_instance = state
+    return _state_instance
 
 
 class ProxyManager:
