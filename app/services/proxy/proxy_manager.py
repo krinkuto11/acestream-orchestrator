@@ -273,6 +273,47 @@ class ProxyManager:
         
         return await session.client_manager.remove_client(client_id)
     
+    async def remove_failed_session(self, ace_id: str, reason: str = "stream_failed"):
+        """Remove a failed session and send stream ended event.
+        
+        Args:
+            ace_id: AceStream content ID
+            reason: Reason for failure
+        """
+        async with self.sessions_lock:
+            session = self.sessions.pop(ace_id, None)
+        
+        if not session:
+            logger.warning(f"Cannot remove failed session {ace_id}: not found")
+            return
+        
+        logger.info(f"Removing failed session {ace_id}: {reason}")
+        
+        # Clean up session resources
+        try:
+            await session.cleanup()
+        except Exception as e:
+            logger.error(f"Error cleaning up failed session {ace_id}: {e}")
+        
+        # Fire stream ended event
+        try:
+            from app.models.schemas import StreamEndedEvent
+            
+            # Construct stream_id as {ace_id}|{playback_session_id}
+            stream_id = f"{ace_id}|{session.playback_session_id}" if session.playback_session_id else ace_id
+            
+            event = StreamEndedEvent(
+                container_id=session.container_id,
+                stream_id=stream_id,
+                reason=reason
+            )
+            
+            state = get_state()
+            state.on_stream_ended(event)
+            logger.info(f"Marked failed proxy stream {stream_id} as ended in state database")
+        except Exception as e:
+            logger.error(f"Failed to mark stream {ace_id} as ended: {e}", exc_info=True)
+    
     async def _cleanup_loop(self):
         """Background task to cleanup idle sessions."""
         logger.info("Starting proxy cleanup loop")

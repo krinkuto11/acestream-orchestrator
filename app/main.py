@@ -1605,19 +1605,31 @@ async def ace_getstream(
         
         # Stream data generator
         async def stream_generator():
+            stream_failed = False
             try:
                 async for chunk in session.stream_data():
                     yield chunk
+            except RuntimeError as e:
+                # Stream failed to start or encountered an error
+                logger.error(f"Error streaming to client {client_id}: {e}")
+                stream_failed = True
+                # Remove the failed session from proxy manager
+                await proxy_manager.remove_failed_session(id, reason=f"stream_error: {str(e)}")
+                raise
             except Exception as e:
                 logger.error(f"Error streaming to client {client_id}: {e}")
+                stream_failed = True
                 raise
             finally:
-                # Remove client when done
-                remaining = await proxy_manager.remove_client(id, client_id)
-                logger.info(
-                    f"Client {client_id} disconnected from stream {id} "
-                    f"(remaining clients: {remaining})"
-                )
+                # Remove client when done (only if session wasn't already removed due to failure)
+                if not stream_failed:
+                    remaining = await proxy_manager.remove_client(id, client_id)
+                    logger.info(
+                        f"Client {client_id} disconnected from stream {id} "
+                        f"(remaining clients: {remaining})"
+                    )
+                else:
+                    logger.info(f"Client {client_id} disconnected due to stream failure")
         
         # Return streaming response
         return StreamingResponse(

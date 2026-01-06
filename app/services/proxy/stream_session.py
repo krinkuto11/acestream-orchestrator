@@ -117,9 +117,56 @@ class StreamSession:
                 logger.error(f"No playback URL for {self.stream_id}")
                 return False
             
+            # Log the URLs received from engine for debugging
+            logger.info(
+                f"Stream {self.stream_id} URLs from engine: "
+                f"playback_url={self.playback_url}, "
+                f"stat_url={self.stat_url}, "
+                f"command_url={self.command_url}"
+            )
+            
+            # Ensure playback_url uses the correct engine host/port
+            # The engine might return URLs with localhost or container-specific hostnames
+            # We need to rewrite them to use the engine_host:engine_port we know is accessible
+            from urllib.parse import urlparse, urlunparse
+            parsed_playback = urlparse(self.playback_url)
+            # Reconstruct playback_url with the correct host:port
+            self.playback_url = urlunparse((
+                parsed_playback.scheme,
+                f"{self.engine_host}:{self.engine_port}",
+                parsed_playback.path,
+                parsed_playback.params,
+                parsed_playback.query,
+                parsed_playback.fragment
+            ))
+            
+            # Do the same for stat_url and command_url
+            if self.stat_url:
+                parsed_stat = urlparse(self.stat_url)
+                self.stat_url = urlunparse((
+                    parsed_stat.scheme,
+                    f"{self.engine_host}:{self.engine_port}",
+                    parsed_stat.path,
+                    parsed_stat.params,
+                    parsed_stat.query,
+                    parsed_stat.fragment
+                ))
+            
+            if self.command_url:
+                parsed_cmd = urlparse(self.command_url)
+                self.command_url = urlunparse((
+                    parsed_cmd.scheme,
+                    f"{self.engine_host}:{self.engine_port}",
+                    parsed_cmd.path,
+                    parsed_cmd.params,
+                    parsed_cmd.query,
+                    parsed_cmd.fragment
+                ))
+            
             logger.info(
                 f"Stream {self.stream_id} initialized successfully "
-                f"(playback_session={self.playback_session_id}, is_live={self.is_live})"
+                f"(playback_session={self.playback_session_id}, is_live={self.is_live}, "
+                f"corrected_playback_url={self.playback_url})"
             )
             
             # Create broadcaster for multiplexing
