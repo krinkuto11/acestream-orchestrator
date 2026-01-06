@@ -348,6 +348,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       </TableRow>
       {isExpanded && (
         <TableRow>
+          {/* colspan: active streams have 11 cols (checkbox + expand + 9 data), ended streams have 7 cols (expand + 6 data) */}
           <TableCell colSpan={showSpeedColumns ? 11 : 7} className="p-6 bg-muted/50">
             <div className="space-y-6">
               {/* Stream Details */}
@@ -703,8 +704,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                 <TableRow>
                   <TableHead className="w-[40px]">
                     <Checkbox
-                      checked={allSelected}
-                      indeterminate={someSelected}
+                      checked={someSelected ? "indeterminate" : allSelected}
                       onCheckedChange={handleSelectAll}
                       aria-label="Select all"
                     />
