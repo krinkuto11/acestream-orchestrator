@@ -16,6 +16,12 @@ COPY_CHUNK_SIZE: Final[int] = 64 * 1024  # 64KB chunks for copying
 # AceStream engines require User-Agent to identify client as media player
 USER_AGENT: Final[str] = "VLC/3.0.21 LibVLC/3.0.21"
 
+# HTTP client configuration for AceStream compatibility
+# Based on acexy reference: compression must be disabled for AceStream middleware to work properly
+MAX_CONNECTIONS: Final[int] = 10  # Maximum connections per host
+MAX_KEEPALIVE_CONNECTIONS: Final[int] = 10  # Maximum keepalive connections
+KEEPALIVE_EXPIRY: Final[int] = 30  # Seconds before keepalive connection expires
+
 # Engine selection
 ENGINE_SELECTION_TIMEOUT: Final[int] = 5  # Seconds to wait for engine selection
 ENGINE_CACHE_TTL: Final[int] = 2  # Seconds to cache engine list

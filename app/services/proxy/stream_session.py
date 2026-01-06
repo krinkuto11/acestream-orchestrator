@@ -14,6 +14,9 @@ from .config import (
     EMPTY_STREAM_TIMEOUT,
     STREAM_BUFFER_SIZE,
     COPY_CHUNK_SIZE,
+    MAX_CONNECTIONS,
+    MAX_KEEPALIVE_CONNECTIONS,
+    KEEPALIVE_EXPIRY,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,11 +75,19 @@ class StreamSession:
             True if initialization successful, False otherwise
         """
         try:
-            # Create HTTP client with no read timeout for streaming
-            # connect: 10s, read: None (unlimited for streaming), write: 30s, pool: 30s
+            # Create HTTP client with specific configuration for AceStream compatibility
+            # Based on acexy reference: compression must be disabled and connections limited
+            # See: context/acexy/acexy/lib/acexy/acexy.go lines 105-114
+            limits = httpx.Limits(
+                max_connections=MAX_CONNECTIONS,
+                max_keepalive_connections=MAX_KEEPALIVE_CONNECTIONS,
+                keepalive_expiry=KEEPALIVE_EXPIRY,
+            )
+            
             self.http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(30.0, connect=10.0, read=None),
                 follow_redirects=True,
+                limits=limits,
             )
             
             # Build getstream URL

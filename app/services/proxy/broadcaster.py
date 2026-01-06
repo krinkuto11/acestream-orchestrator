@@ -145,10 +145,15 @@ class StreamBroadcaster:
         try:
             logger.info(f"Starting stream fetch for {self.stream_id} from {self.playback_url}")
             
-            # Build headers - AceStream requires User-Agent to identify as media player
+            # Build headers - AceStream requires specific headers for compatibility
+            # Based on acexy reference implementation:
+            # 1. User-Agent to identify as media player
+            # 2. Accept-Encoding: identity to disable compression (critical for AceStream)
+            # See: context/acexy/acexy/lib/acexy/acexy.go lines 105-114
             headers = {
                 "User-Agent": USER_AGENT,
                 "Accept": "*/*",
+                "Accept-Encoding": "identity",  # Disable compression - required for AceStream
             }
             
             # Stream from playback URL
