@@ -15,7 +15,7 @@ Tests the proxy's ability to fetch and stream data from an AceStream engine.
 ### Usage
 
 ```bash
-# Test with local engine
+# Test with local engine (run from project root)
 python tests/manual/test_proxy_playback.py --content-id <acestream_id>
 
 # Test with remote engine
@@ -120,7 +120,7 @@ Key success factors:
 # Install dependencies
 pip install -r requirements.txt
 
-# Run the test
+# Run the test from project root
 python tests/manual/test_proxy_playback.py --content-id <your_id>
 ```
 

@@ -9,6 +9,7 @@ It verifies that:
 3. Stream data can be read and written
 
 Usage:
+    # From project root
     python tests/manual/test_proxy_playback.py --engine-host localhost --engine-port 6878 --content-id <acestream_id>
 
 Requirements:
@@ -21,9 +22,6 @@ import argparse
 import sys
 import httpx
 from uuid import uuid4
-
-# Add parent directory to path
-sys.path.insert(0, '/home/runner/work/acestream-orchestrator/acestream-orchestrator')
 
 from app.services.proxy.config import (
     MAX_CONNECTIONS,
