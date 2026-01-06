@@ -126,11 +126,11 @@ class EngineSelector:
                 health_status = engine_state.health_status or "unknown"
                 
                 # Get engine host and port
-                host = cfg.DOCKER_HOST_IP
-                port = engine_state.host_http_port
+                host = engine_state.host  # Use the host from engine state
+                port = engine_state.port  # This is the host HTTP port
                 
                 if not port:
-                    logger.warning(f"Engine {container_id[:12]} has no HTTP port")
+                    logger.warning(f"Engine {container_id[:12]} has no port")
                     continue
                 
                 engines.append(EngineInfo(
