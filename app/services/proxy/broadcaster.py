@@ -7,7 +7,7 @@ import time
 from typing import Optional, Set, AsyncIterator
 from collections import deque
 
-from .config import COPY_CHUNK_SIZE
+from .config import COPY_CHUNK_SIZE, USER_AGENT
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +147,7 @@ class StreamBroadcaster:
             
             # Build headers - AceStream requires User-Agent to identify as media player
             headers = {
-                "User-Agent": "VLC/3.0.20 LibVLC/3.0.20",
+                "User-Agent": USER_AGENT,
                 "Accept": "*/*",
             }
             

@@ -12,6 +12,10 @@ CLIENT_TIMEOUT: Final[int] = 30  # Seconds before considering client disconnecte
 STREAM_BUFFER_SIZE: Final[int] = 4 * 1024 * 1024  # 4MB buffer for smooth streaming
 COPY_CHUNK_SIZE: Final[int] = 64 * 1024  # 64KB chunks for copying
 
+# HTTP headers for AceStream communication
+# AceStream engines require User-Agent to identify client as media player
+USER_AGENT: Final[str] = "VLC/3.0.21 LibVLC/3.0.21"
+
 # Engine selection
 ENGINE_SELECTION_TIMEOUT: Final[int] = 5  # Seconds to wait for engine selection
 ENGINE_CACHE_TTL: Final[int] = 2  # Seconds to cache engine list

@@ -5,6 +5,7 @@ import asyncio
 import httpx
 from unittest.mock import Mock, AsyncMock
 from app.services.proxy.broadcaster import StreamBroadcaster
+from app.services.proxy.config import USER_AGENT
 
 
 class MockStreamContext:
@@ -60,7 +61,7 @@ async def test_broadcaster_multiple_clients():
     call_args = mock_client.stream.call_args
     assert "headers" in call_args.kwargs
     headers = call_args.kwargs["headers"]
-    assert headers["User-Agent"] == "VLC/3.0.20 LibVLC/3.0.20"
+    assert headers["User-Agent"] == USER_AGENT
     assert headers["Accept"] == "*/*"
     
     # Add multiple clients
