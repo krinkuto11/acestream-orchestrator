@@ -94,18 +94,23 @@ class StreamBroadcaster:
         """
         queue = asyncio.Queue(maxsize=50)  # Buffer ~3.2MB per client
         
+        # Capture recent chunks snapshot before acquiring lock
+        # This minimizes lock hold time
+        recent_chunks_snapshot = list(self.recent_chunks)
+        
         async with self.queues_lock:
             self.client_queues.add(queue)
             logger.debug(f"Added client to broadcaster {self.stream_id} (total: {len(self.client_queues)})")
-            
-            # Send recent chunks to new client for immediate playback
-            for chunk in self.recent_chunks:
-                try:
-                    queue.put_nowait(chunk)
-                except asyncio.QueueFull:
-                    # If queue is full, skip old chunks
-                    logger.warning(f"Queue full when sending recent chunks to new client")
-                    break
+        
+        # Send recent chunks to new client AFTER releasing lock
+        # This prevents blocking the broadcaster during chunk sending
+        for chunk in recent_chunks_snapshot:
+            try:
+                queue.put_nowait(chunk)
+            except asyncio.QueueFull:
+                # If queue is full, skip old chunks
+                logger.warning(f"Queue full when sending recent chunks to new client")
+                break
         
         return queue
         
@@ -186,25 +191,45 @@ class StreamBroadcaster:
                         self.first_chunk_event.set()
                         logger.info(f"First chunk received for {self.stream_id} ({len(chunk)} bytes)")
                     
-                    # Broadcast to all clients
+                    # Broadcast to all clients in parallel (inspired by acexy's PMultiWriter)
+                    # Take a snapshot of queues to minimize lock hold time
                     async with self.queues_lock:
-                        dead_queues = []
-                        for queue in self.client_queues:
-                            try:
-                                # Use put_nowait to avoid blocking
-                                # If queue is full, client is too slow - drop them
-                                queue.put_nowait(chunk)
-                            except asyncio.QueueFull:
-                                logger.warning(f"Client queue full for {self.stream_id}, marking for removal")
-                                dead_queues.append(queue)
-                        
-                        # Remove dead queues
-                        for queue in dead_queues:
-                            self.client_queues.discard(queue)
-                            try:
-                                queue.put_nowait(None)  # Signal disconnection
-                            except:
-                                pass
+                        queues_snapshot = list(self.client_queues)
+                    
+                    # Broadcast to all queues in parallel without holding the lock
+                    # This matches acexy's pattern where writes happen concurrently
+                    dead_queues = []
+                    
+                    async def broadcast_to_queue(queue):
+                        try:
+                            # Use put_nowait to avoid blocking
+                            # If queue is full, client is too slow - drop them
+                            queue.put_nowait(chunk)
+                            return None
+                        except asyncio.QueueFull:
+                            logger.warning(f"Client queue full for {self.stream_id}, marking for removal")
+                            return queue
+                    
+                    # Broadcast to all clients concurrently
+                    results = await asyncio.gather(
+                        *[broadcast_to_queue(q) for q in queues_snapshot],
+                        return_exceptions=True
+                    )
+                    
+                    # Collect dead queues from results
+                    for result in results:
+                        if result is not None and not isinstance(result, Exception):
+                            dead_queues.append(result)
+                    
+                    # Remove dead queues (now requires lock again)
+                    if dead_queues:
+                        async with self.queues_lock:
+                            for queue in dead_queues:
+                                self.client_queues.discard(queue)
+                                try:
+                                    queue.put_nowait(None)  # Signal disconnection
+                                except:
+                                    pass
                     
                     # Log progress periodically
                     if self.chunk_count % 1000 == 0:
