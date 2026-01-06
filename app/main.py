@@ -35,6 +35,7 @@ from .services.docker_stats import get_container_stats, get_multiple_container_s
 from .services.docker_stats_collector import docker_stats_collector
 from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_cache, get_cache
 from .services.acexy import acexy_sync_service
+from .services.proxy.proxy_manager import ProxyManager
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,11 @@ async def lifespan(app: FastAPI):
     await start_cleanup_task(interval=60)
     logger.info("Cache service started")
     
+    # Start proxy manager
+    proxy_manager = ProxyManager.get_instance()
+    await proxy_manager.start()
+    logger.info("Proxy manager started")
+    
     yield
     
     # Shutdown
@@ -158,6 +164,11 @@ async def lifespan(app: FastAPI):
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
     await acexy_sync_service.stop()  # Stop Acexy sync service
     await stop_cleanup_task()  # Stop cache cleanup
+    
+    # Stop proxy manager
+    proxy_manager = ProxyManager.get_instance()
+    await proxy_manager.stop()
+    logger.info("Proxy manager stopped")
     
     # Give a small delay to ensure any pending operations complete
     await asyncio.sleep(0.1)
@@ -1543,5 +1554,152 @@ def clear_cache():
     cache = get_cache()
     cache.clear()
     return {"message": "Cache cleared successfully"}
+
+
+# ============================================================================
+# AceStream Proxy Endpoints
+# ============================================================================
+
+@app.get("/ace/getstream")
+async def ace_getstream(
+    id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+):
+    """Proxy endpoint for AceStream video streams.
+    
+    This endpoint:
+    1. Selects the best available engine (prioritizes forwarded, balances load)
+    2. Multiplexes multiple clients to the same stream
+    3. Automatically manages stream lifecycle
+    
+    Args:
+        id: AceStream content ID (infohash or content_id)
+        
+    Returns:
+        Streaming response with video data
+    """
+    from fastapi.responses import StreamingResponse
+    from uuid import uuid4
+    
+    proxy_manager = ProxyManager.get_instance()
+    
+    # Generate unique client ID
+    client_id = str(uuid4())
+    
+    try:
+        # Get or create session for this stream
+        session = await proxy_manager.get_or_create_session(id)
+        
+        if not session:
+            raise HTTPException(
+                status_code=503,
+                detail="Unable to provision stream. No engines available or stream initialization failed."
+            )
+        
+        # Add this client to the session
+        await proxy_manager.add_client(id, client_id)
+        
+        logger.info(
+            f"Client {client_id} connected to stream {id} "
+            f"(total clients: {session.client_manager.get_client_count()})"
+        )
+        
+        # Stream data generator
+        async def stream_generator():
+            try:
+                async for chunk in session.stream_data():
+                    yield chunk
+            except Exception as e:
+                logger.error(f"Error streaming to client {client_id}: {e}")
+                raise
+            finally:
+                # Remove client when done
+                remaining = await proxy_manager.remove_client(id, client_id)
+                logger.info(
+                    f"Client {client_id} disconnected from stream {id} "
+                    f"(remaining clients: {remaining})"
+                )
+        
+        # Return streaming response
+        return StreamingResponse(
+            stream_generator(),
+            media_type="video/mp2t",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Connection": "keep-alive",
+            }
+        )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in ace_getstream: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.get("/ace/manifest.m3u8")
+async def ace_manifest(
+    id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+):
+    """Proxy endpoint for AceStream HLS streams (M3U8).
+    
+    Note: This is a placeholder. Full HLS support would require
+    additional implementation to handle manifest parsing and segment proxying.
+    
+    Args:
+        id: AceStream content ID (infohash or content_id)
+        
+    Returns:
+        HLS manifest
+    """
+    # For now, redirect to getstream endpoint which works for most players
+    raise HTTPException(
+        status_code=501,
+        detail="HLS/M3U8 streaming not yet implemented. Use /ace/getstream for MPEG-TS streaming."
+    )
+
+
+@app.get("/proxy/status")
+async def proxy_status():
+    """Get proxy status and active sessions.
+    
+    Returns:
+        Proxy status including active sessions and client counts
+    """
+    proxy_manager = ProxyManager.get_instance()
+    status = await proxy_manager.get_status()
+    return status
+
+
+@app.get("/proxy/sessions")
+async def proxy_sessions():
+    """Get list of active proxy sessions.
+    
+    Returns:
+        List of active sessions with details
+    """
+    proxy_manager = ProxyManager.get_instance()
+    status = await proxy_manager.get_status()
+    return {"sessions": status.get("sessions", [])}
+
+
+@app.get("/proxy/sessions/{ace_id}")
+async def proxy_session_info(ace_id: str):
+    """Get detailed info for a specific proxy session.
+    
+    Args:
+        ace_id: AceStream content ID
+        
+    Returns:
+        Session details or 404 if not found
+    """
+    proxy_manager = ProxyManager.get_instance()
+    session_info = await proxy_manager.get_session_info(ace_id)
+    
+    if not session_info:
+        raise HTTPException(status_code=404, detail=f"Session {ace_id} not found")
+    
+    return session_info
+
 
 # WebSocket endpoint removed - using simple polling approach
