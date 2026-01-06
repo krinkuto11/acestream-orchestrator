@@ -68,9 +68,10 @@ class StreamSession:
             True if initialization successful, False otherwise
         """
         try:
-            # Create HTTP client
+            # Create HTTP client with no read timeout for streaming
+            # connect: 10s, read: None (unlimited for streaming), write: 30s, pool: 30s
             self.http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(30.0, connect=10.0),
+                timeout=httpx.Timeout(30.0, connect=10.0, read=None),
                 follow_redirects=True,
             )
             
