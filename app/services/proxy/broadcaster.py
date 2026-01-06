@@ -157,11 +157,14 @@ class StreamBroadcaster:
             }
             
             # Stream from playback URL
+            # Use timeout=None to disable overall timeout (allow indefinite streaming)
+            # Only set connect timeout to match acexy's behavior
+            # See: context/acexy/acexy/lib/acexy/acexy.go lines 105-114
             async with self.http_client.stream(
                 "GET", 
                 self.playback_url,
                 headers=headers,
-                timeout=httpx.Timeout(60.0, connect=30.0, read=None, write=30.0)
+                timeout=httpx.Timeout(timeout=None, connect=30.0, read=None, write=None, pool=None)
             ) as response:
                 logger.info(f"Stream response received for {self.stream_id}, status: {response.status_code}")
                 response.raise_for_status()
