@@ -295,6 +295,21 @@ python -m pytest tests/test_proxy_engine_selector.py tests/test_proxy_client_man
    - Unlimited clients per session
    - No bandwidth throttling
 
+## Recent Fixes
+
+### Compression Disable Fix (Based on acexy Reference)
+
+Fixed playback URL issues by disabling HTTP compression, based on the acexy reference implementation.
+
+**Problem**: Streams would fail to start or not deliver data to clients.
+
+**Solution**: 
+- Added `Accept-Encoding: identity` header to disable compression (critical for AceStream)
+- Configured HTTP client with connection limits (10 max connections per host)
+- Applied acexy's transport configuration settings
+
+**See**: `docs/PROXY_FIX_COMPRESSION.md` for detailed explanation and technical background.
+
 ## Migration Notes
 
 ### From acexy Proxy
