@@ -52,8 +52,16 @@ async def test_broadcaster_multiple_clients():
     # Start the broadcaster
     await broadcaster.start()
     
-    # Wait for first chunk
+    # Wait for first chunk to ensure stream has started
     await broadcaster.wait_for_first_chunk(timeout=5.0)
+    
+    # Verify headers were sent
+    assert mock_client.stream.called
+    call_args = mock_client.stream.call_args
+    assert "headers" in call_args.kwargs
+    headers = call_args.kwargs["headers"]
+    assert headers["User-Agent"] == "VLC/3.0.20 LibVLC/3.0.20"
+    assert headers["Accept"] == "*/*"
     
     # Add multiple clients
     queue1 = await broadcaster.add_client()
