@@ -186,7 +186,7 @@ class StreamSession:
             # Create buffer for stream data (Redis-backed)
             # Get Redis client from core utils
             try:
-                from core.utils import RedisClient
+                from app.core.utils import RedisClient
                 redis_client = RedisClient.get_client()
             except Exception as e:
                 logger.warning(f"Failed to get Redis client: {e}, using in-memory buffer")
@@ -248,9 +248,10 @@ class StreamSession:
             logger.debug(f"Client {client_id} connected to stream {self.stream_id}")
             
             # Wait a bit for buffer to have some data
+            # Check if stream manager has received any data or buffer has data
             max_wait = EMPTY_STREAM_TIMEOUT
             wait_start = time.time()
-            while self.buffer.index == 0:
+            while not self._has_data():
                 if time.time() - wait_start > max_wait:
                     logger.error(f"Timeout waiting for stream data for {self.stream_id}")
                     raise RuntimeError("Stream failed to start - no data received")
@@ -267,6 +268,26 @@ class StreamSession:
         except Exception as e:
             logger.error(f"Error in stream_data for {self.stream_id}: {type(e).__name__}: {e}")
             raise
+    
+    def _has_data(self) -> bool:
+        """Check if stream has started receiving data.
+        
+        Returns:
+            True if stream manager has received data or buffer has data, False otherwise
+        """
+        # Check if stream manager has received any chunks
+        if self.stream_manager and self.stream_manager.chunks_received > 0:
+            return True
+        
+        # Check if buffer has a non-zero index (completed chunks)
+        if self.buffer and self.buffer.index > 0:
+            return True
+        
+        # Check if buffer has data in its write buffer (data being accumulated)
+        if self.buffer and len(self.buffer._write_buffer) > 0:
+            return True
+        
+        return False
     
     async def stop_stream(self) -> bool:
         """Stop the stream by calling the AceStream command URL.
