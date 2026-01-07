@@ -379,6 +379,7 @@ class AceStreamDiagnostics:
             
             # Test getstream endpoint
             async with httpx.AsyncClient(timeout=30.0) as client:
+                # Generate unique PID for this request (following acexy pattern)
                 pid = str(uuid4())
                 getstream_url = (
                     f"http://{engine['host']}:{engine['port']}/ace/getstream"
@@ -387,6 +388,7 @@ class AceStreamDiagnostics:
                 
                 test.details["request_url"] = getstream_url
                 test.details["ace_id"] = ace_id
+                test.details["request_pid"] = pid  # Track the PID used in request
                 
                 try:
                     response = await client.get(getstream_url)
@@ -406,11 +408,20 @@ class AceStreamDiagnostics:
                         resp = data["response"]
                         playback_url = resp.get("playback_url")
                         stat_url = resp.get("stat_url")
+                        playback_session_id = resp.get("playback_session_id")
                         
                         test.details["playback_url"] = playback_url
                         test.details["stat_url"] = stat_url
-                        test.details["playback_session_id"] = resp.get("playback_session_id")
+                        test.details["playback_session_id"] = playback_session_id
                         test.details["is_live"] = resp.get("is_live")
+                        
+                        # Validate that playback_session_id is different from request PID
+                        # (as per acexy implementation, they should be different)
+                        if playback_session_id and playback_session_id == pid:
+                            logger.warning(
+                                f"Playback session ID matches request PID for {ace_id}, "
+                                "this might indicate an issue"
+                            )
                         
                         if playback_url:
                             test.status = "passed"

@@ -93,13 +93,19 @@ class StreamSession:
                 limits=limits,
             )
             
-            # Build getstream URL
+            # Build getstream URL with unique PID (following acexy pattern)
+            # The PID should be unique per request to avoid conflicts when multiple
+            # streams are accessed simultaneously
+            request_pid = str(uuid4())
             getstream_url = (
                 f"http://{self.engine_host}:{self.engine_port}/ace/getstream"
-                f"?id={self.ace_id}&format=json&pid={uuid4()}"
+                f"?id={self.ace_id}&format=json&pid={request_pid}"
             )
             
-            logger.info(f"Fetching stream {self.stream_id} from {getstream_url}")
+            logger.info(
+                f"Fetching stream {self.stream_id} from {getstream_url} "
+                f"(request_pid={request_pid})"
+            )
             
             # Request stream from AceStream
             response = await self.http_client.get(getstream_url)
@@ -125,6 +131,13 @@ class StreamSession:
             self.command_url = resp.get("command_url")
             self.playback_session_id = resp.get("playback_session_id")
             self.is_live = resp.get("is_live", 0) == 1
+            
+            # Log PID vs playback_session_id for debugging
+            # These should be different - PID is for the request, playback_session_id is from engine
+            logger.debug(
+                f"Stream {self.stream_id}: request_pid={request_pid}, "
+                f"playback_session_id={self.playback_session_id}"
+            )
             
             if not self.playback_url:
                 self.error = "No playback URL in AceStream response"
