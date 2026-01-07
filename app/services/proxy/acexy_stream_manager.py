@@ -95,6 +95,12 @@ class AcexyStreamManager:
         self.last_data_time: Optional[float] = None
         self.healthy = True
         
+        # Retry and robustness (from dispatcharr)
+        self.retry_count = 0
+        self.max_retries = 3
+        self.health_monitor_task: Optional[asyncio.Task] = None
+        self.connection_start_time: Optional[float] = None
+        
     async def start(self):
         """Start the stream manager."""
         if self.is_running:
@@ -105,6 +111,10 @@ class AcexyStreamManager:
         self.start_time = time.time()
         self.connection_event.clear()
         self.stream_task = asyncio.create_task(self._stream_loop())
+        
+        # Start health monitor task (from dispatcharr pattern)
+        self.health_monitor_task = asyncio.create_task(self._health_monitor_loop())
+        
         logger.info(f"Started AcexyStreamManager for {self.stream_id}")
     
     async def stop(self):
@@ -113,6 +123,15 @@ class AcexyStreamManager:
             return
         
         self.is_running = False
+        
+        # Cancel health monitor
+        if self.health_monitor_task:
+            self.health_monitor_task.cancel()
+            try:
+                await self.health_monitor_task
+            except asyncio.CancelledError:
+                pass
+            self.health_monitor_task = None
         
         # Cancel stream task
         if self.stream_task:
@@ -248,120 +267,168 @@ class AcexyStreamManager:
             return len(self.clients)
     
     async def _stream_loop(self):
-        """Main streaming loop following acexy pattern.
+        """Main streaming loop with retry logic (acexy + dispatcharr patterns).
         
-        Key acexy pattern (acexy.go StartStream):
-        1. Open HTTP connection to playback_url
-        2. Read chunks from response
-        3. Write each chunk to ALL clients in parallel
-        4. Handle client add/remove dynamically
+        Combines:
+        - Acexy's direct streaming approach
+        - Dispatcharr's retry and robustness logic
         """
-        try:
-            logger.info(
-                f"Starting acexy-style stream from {self.playback_url} for {self.stream_id}"
-            )
-            
-            # Build headers - CRITICAL for AceStream compatibility
-            # Based on acexy reference: must disable compression, set proper user agent
-            # See: context/acexy/acexy/lib/acexy/acexy.go lines 105-114
-            headers = {
-                "User-Agent": USER_AGENT,
-                "Accept": "*/*",
-                "Accept-Encoding": "identity",  # CRITICAL: Disable compression
-                "Connection": "keep-alive",
-            }
-            
-            # Stream from playback URL
-            # Note: HTTP client should already be configured with:
-            # - DisableCompression: true
-            # - MaxConnsPerHost: limited (10)
-            # - MaxIdleConns: limited (10)
-            async with self.http_client.stream(
-                "GET",
-                self.playback_url,
-                headers=headers,
-                timeout=httpx.Timeout(
-                    timeout=None,
-                    connect=30.0,
-                    read=None,
-                    write=None,
-                    pool=None
-                )
-            ) as response:
+        # Retry loop (from dispatcharr)
+        while self.is_running and self.retry_count < self.max_retries:
+            try:
                 logger.info(
-                    f"Stream response received for {self.stream_id}, "
-                    f"status: {response.status_code}, "
-                    f"content-type: {response.headers.get('content-type', 'unknown')}"
+                    f"Starting acexy-style stream from {self.playback_url} for {self.stream_id} "
+                    f"(attempt {self.retry_count + 1}/{self.max_retries})"
                 )
-                response.raise_for_status()
                 
-                self.is_connected = True
-                self.connection_event.set()
+                # Build headers - CRITICAL for AceStream compatibility
+                # Based on acexy reference: must disable compression, set proper user agent
+                # See: context/acexy/acexy/lib/acexy/acexy.go lines 105-114
+                headers = {
+                    "User-Agent": USER_AGENT,
+                    "Accept": "*/*",
+                    "Accept-Encoding": "identity",  # CRITICAL: Disable compression
+                    "Connection": "keep-alive",
+                }
                 
-                # Read and multicast chunks (acexy Copier pattern)
-                last_log_time = time.time()
-                last_data_time = time.time()
-                
-                async for chunk in response.aiter_bytes(chunk_size=self.buffer_size):
-                    if not chunk or not self.is_running:
-                        break
+                # Stream from playback URL
+                # Note: HTTP client should already be configured with:
+                # - DisableCompression: true
+                # - MaxConnsPerHost: limited (10)
+                # - MaxIdleConns: limited (10)
+                async with self.http_client.stream(
+                    "GET",
+                    self.playback_url,
+                    headers=headers,
+                    timeout=httpx.Timeout(
+                        timeout=None,
+                        connect=30.0,
+                        read=None,
+                        write=None,
+                        pool=None
+                    )
+                ) as response:
+                    logger.info(
+                        f"Stream response received for {self.stream_id}, "
+                        f"status: {response.status_code}, "
+                        f"content-type: {response.headers.get('content-type', 'unknown')}"
+                    )
+                    response.raise_for_status()
                     
-                    # Update stats
-                    self.chunks_received += 1
-                    self.bytes_received += len(chunk)
-                    self.last_data_time = time.time()
+                    self.is_connected = True
+                    self.connection_start_time = time.time()
+                    self.connection_event.set()
+                    
+                    # Reset retry count on successful connection
+                    if self.retry_count > 0:
+                        logger.info(
+                            f"Stream {self.stream_id} reconnected successfully after {self.retry_count} retries"
+                        )
+                        self.retry_count = 0
+                    
+                    # Read and multicast chunks (acexy Copier pattern)
+                    last_log_time = time.time()
                     last_data_time = time.time()
-                    self.healthy = True
                     
-                    # Write chunk to ALL clients in parallel (acexy PMultiWriter pattern)
-                    await self._multicast_chunk(chunk)
+                    async for chunk in response.aiter_bytes(chunk_size=self.buffer_size):
+                        if not chunk or not self.is_running:
+                            break
+                        
+                        # Update stats
+                        self.chunks_received += 1
+                        self.bytes_received += len(chunk)
+                        self.last_data_time = time.time()
+                        last_data_time = time.time()
+                        self.healthy = True
+                        
+                        # Write chunk to ALL clients in parallel (acexy PMultiWriter pattern)
+                        await self._multicast_chunk(chunk)
+                        
+                        # Log progress periodically
+                        if self.chunks_received % 1000 == 0:
+                            elapsed = time.time() - last_log_time
+                            rate = 1000 / elapsed if elapsed > 0 else 0
+                            client_count = len(self.clients)
+                            logger.debug(
+                                f"Stream {self.stream_id}: {self.chunks_received} chunks "
+                                f"({self.bytes_received / 1024 / 1024:.1f}MB), "
+                                f"{client_count} clients, "
+                                f"rate={rate:.1f} chunks/s"
+                            )
+                            last_log_time = time.time()
+                        
+                        # Check for empty timeout
+                        if time.time() - last_data_time > self.empty_timeout:
+                            logger.warning(
+                                f"Empty timeout reached for {self.stream_id} "
+                                f"(no data for {self.empty_timeout}s)"
+                            )
+                            break
                     
-                    # Log progress periodically
-                    if self.chunks_received % 1000 == 0:
-                        elapsed = time.time() - last_log_time
-                        rate = 1000 / elapsed if elapsed > 0 else 0
-                        client_count = len(self.clients)
-                        logger.debug(
-                            f"Stream {self.stream_id}: {self.chunks_received} chunks "
-                            f"({self.bytes_received / 1024 / 1024:.1f}MB), "
-                            f"{client_count} clients, "
-                            f"rate={rate:.1f} chunks/s"
-                        )
-                        last_log_time = time.time()
+                    logger.info(
+                        f"Stream {self.stream_id} ended normally after {self.chunks_received} chunks"
+                    )
+                    # Normal end - don't retry
+                    break
                     
-                    # Check for empty timeout
-                    if time.time() - last_data_time > self.empty_timeout:
-                        logger.warning(
-                            f"Empty timeout reached for {self.stream_id} "
-                            f"(no data for {self.empty_timeout}s)"
-                        )
-                        break
-                
-                logger.info(
-                    f"Stream {self.stream_id} ended normally after {self.chunks_received} chunks"
+            except httpx.HTTPError as e:
+                logger.error(
+                    f"HTTP error streaming {self.stream_id} (attempt {self.retry_count + 1}): "
+                    f"{type(e).__name__}: {e}"
                 )
+                self.error = e
+                self.healthy = False
+                self.is_connected = False
+                self.retry_count += 1
                 
-        except httpx.HTTPError as e:
-            logger.error(
-                f"HTTP error streaming {self.stream_id}: {type(e).__name__}: {e}"
-            )
-            self.error = e
-            self.healthy = False
-            self.connection_event.set()
+                # Signal connection event on first failure so wait_for_connection doesn't hang
+                if self.retry_count == 1:
+                    self.connection_event.set()
+                
+                # Calculate backoff delay (from dispatcharr)
+                if self.retry_count < self.max_retries and self.is_running:
+                    backoff_delay = min(2 ** self.retry_count, 10)  # Exponential backoff, max 10s
+                    logger.info(
+                        f"Retrying stream {self.stream_id} in {backoff_delay}s "
+                        f"(attempt {self.retry_count}/{self.max_retries})"
+                    )
+                    await asyncio.sleep(backoff_delay)
+                else:
+                    logger.error(
+                        f"Max retries ({self.max_retries}) reached for stream {self.stream_id}"
+                    )
+                    break
+                
+            except Exception as e:
+                logger.error(
+                    f"Unexpected error streaming {self.stream_id}: {e}",
+                    exc_info=True
+                )
+                self.error = e
+                self.healthy = False
+                self.is_connected = False
+                self.retry_count += 1
+                
+                # Signal connection event on first failure
+                if self.retry_count == 1:
+                    self.connection_event.set()
+                
+                # Retry with backoff
+                if self.retry_count < self.max_retries and self.is_running:
+                    backoff_delay = min(2 ** self.retry_count, 10)
+                    logger.info(
+                        f"Retrying stream {self.stream_id} in {backoff_delay}s after error "
+                        f"(attempt {self.retry_count}/{self.max_retries})"
+                    )
+                    await asyncio.sleep(backoff_delay)
+                else:
+                    logger.error(
+                        f"Max retries ({self.max_retries}) reached for stream {self.stream_id}"
+                    )
+                    break
             
-        except Exception as e:
-            logger.error(
-                f"Unexpected error streaming {self.stream_id}: {e}",
-                exc_info=True
-            )
-            self.error = e
-            self.healthy = False
-            self.connection_event.set()
-            
-        finally:
-            self.is_connected = False
-            # Notify all clients that stream has ended
-            await self._notify_all_clients_end()
+        # Notify all clients that stream has ended
+        await self._notify_all_clients_end()
     
     async def _multicast_chunk(self, chunk: bytes):
         """Multicast chunk to all connected clients in parallel.
@@ -448,3 +515,47 @@ class AcexyStreamManager:
                 return False
         
         return True
+    
+    async def _health_monitor_loop(self):
+        """Health monitoring loop (from dispatcharr pattern).
+        
+        Monitors stream health and triggers recovery if needed.
+        """
+        logger.info(f"Started health monitor for stream {self.stream_id}")
+        
+        try:
+            while self.is_running:
+                await asyncio.sleep(5.0)  # Check every 5 seconds
+                
+                if not self.is_connected:
+                    # Not connected yet or connection lost
+                    continue
+                
+                # Check if we're receiving data
+                if self.last_data_time:
+                    elapsed = time.time() - self.last_data_time
+                    
+                    if elapsed > 30:  # No data for 30 seconds
+                        logger.warning(
+                            f"Health monitor: No data for {elapsed:.1f}s on stream {self.stream_id}"
+                        )
+                        self.healthy = False
+                        
+                        # If stream has been stable for a while before this issue,
+                        # the connection might be temporarily disrupted
+                        # The retry logic in _stream_loop will handle reconnection
+                    else:
+                        # Data is flowing normally
+                        if not self.healthy:
+                            logger.info(
+                                f"Health monitor: Stream {self.stream_id} recovered"
+                            )
+                            self.healthy = True
+                
+        except asyncio.CancelledError:
+            logger.info(f"Health monitor stopped for stream {self.stream_id}")
+        except Exception as e:
+            logger.error(
+                f"Error in health monitor for stream {self.stream_id}: {e}",
+                exc_info=True
+            )
