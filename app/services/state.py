@@ -207,6 +207,40 @@ class State:
     def get_stream(self, stream_id: str) -> Optional[StreamState]:
         with self._lock:
             return self.streams.get(stream_id)
+    
+    def update_stream_metadata(
+        self, 
+        stream_id: str, 
+        resolution: Optional[str] = None,
+        fps: Optional[float] = None,
+        video_codec: Optional[str] = None,
+        audio_codec: Optional[str] = None
+    ):
+        """Update stream metadata (resolution, fps, codecs)."""
+        with self._lock:
+            st = self.streams.get(stream_id)
+            if not st:
+                logger.warning(f"Cannot update metadata for unknown stream {stream_id}")
+                return
+            
+            # Update in-memory state
+            if resolution is not None:
+                st.resolution = resolution
+            if fps is not None:
+                st.fps = fps
+            if video_codec is not None:
+                st.video_codec = video_codec
+            if audio_codec is not None:
+                st.audio_codec = audio_codec
+            
+            logger.info(
+                f"Updated metadata for stream {stream_id}: "
+                f"resolution={resolution}, fps={fps}, "
+                f"video_codec={video_codec}, audio_codec={audio_codec}"
+            )
+        
+        # Note: We don't persist metadata to database since it's transient
+        # and will be re-extracted on next stream start if needed
 
     def get_stream_stats(self, stream_id: str):
         with self._lock:

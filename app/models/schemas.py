@@ -78,6 +78,11 @@ class StreamState(BaseModel):
     uploaded: Optional[int] = None
     # Live position data (for live streams)
     livepos: Optional[LivePosData] = None
+    # Stream metadata (extracted when using FFmpeg mode)
+    resolution: Optional[str] = None  # e.g., "1920x1080"
+    fps: Optional[float] = None  # Frames per second
+    video_codec: Optional[str] = None  # e.g., "h264", "hevc"
+    audio_codec: Optional[str] = None  # e.g., "aac", "mp3"
 
 class StreamStatSnapshot(BaseModel):
     ts: datetime

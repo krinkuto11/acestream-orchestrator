@@ -75,6 +75,10 @@ class Cfg(BaseModel):
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
     AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "false").lower() == "true"
     DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
+    
+    # Proxy mode configuration
+    # Options: lightweight (direct pipe) or ffmpeg (with transcoding passthrough)
+    PROXY_MODE: str = os.getenv("PROXY_MODE", "lightweight")
 
     @model_validator(mode='after')
     def validate_replicas(self):
@@ -152,6 +156,13 @@ class Cfg(BaseModel):
         valid_modes = ['single', 'redundant']
         if v not in valid_modes:
             raise ValueError(f'VPN_MODE must be one of: {", ".join(valid_modes)}')
+        return v
+    
+    @validator('PROXY_MODE')
+    def validate_proxy_mode(cls, v):
+        valid_modes = ['lightweight', 'ffmpeg']
+        if v not in valid_modes:
+            raise ValueError(f'PROXY_MODE must be one of: {", ".join(valid_modes)}')
         return v
 
     @model_validator(mode='after')
