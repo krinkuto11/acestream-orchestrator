@@ -1714,34 +1714,4 @@ async def proxy_session_info(ace_id: str):
     return session_info
 
 
-@app.post("/diagnostics/run")
-async def run_diagnostics(request: dict):
-    """Run comprehensive AceStream proxy diagnostics.
-    
-    Args:
-        request: Dictionary with 'test_ace_ids' - list of AceStream IDs to test
-        
-    Returns:
-        Comprehensive diagnostic report
-    """
-    from .services.diagnostics import get_diagnostics
-    
-    test_ace_ids = request.get("test_ace_ids", [])
-    
-    if not isinstance(test_ace_ids, list):
-        raise HTTPException(status_code=400, detail="test_ace_ids must be a list")
-    
-    # Filter out empty strings and limit to 5 test IDs
-    test_ace_ids = [id.strip() for id in test_ace_ids if id.strip()][:5]
-    
-    if not test_ace_ids:
-        # If no test IDs provided, use a default test ID
-        test_ace_ids = ["0000000000000000000000000000000000000000"]  # Placeholder that will likely fail but tests the flow
-    
-    diagnostics = get_diagnostics()
-    report = await diagnostics.run_full_diagnostics(test_ace_ids)
-    
-    return report
-
-
 # WebSocket endpoint removed - using simple polling approach
