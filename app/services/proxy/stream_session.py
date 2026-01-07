@@ -272,6 +272,16 @@ class StreamSession:
     def _has_data(self) -> bool:
         """Check if stream has started receiving data.
         
+        This method checks multiple indicators to reliably detect if stream data
+        has arrived, which is more robust than only checking buffer.index. The buffer
+        only increments index after accumulating target_chunk_size (~320KB) of data,
+        which can take significant time during initial buffering. This method detects
+        data arrival earlier by also checking:
+        
+        - stream_manager.chunks_received: Data received from AceStream (earliest indicator)
+        - buffer.index: Completed chunks available in buffer
+        - buffer._write_buffer: Data being accumulated (before flush to storage)
+        
         Returns:
             True if stream manager has received data or buffer has data, False otherwise
         """
