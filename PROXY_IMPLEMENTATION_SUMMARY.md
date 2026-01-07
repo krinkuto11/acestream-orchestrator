@@ -2,7 +2,9 @@
 
 ## Overview
 
-This document summarizes the implementation of the AceStream Proxy feature for Orchestrator v1.5.0. It provides context for future development work and documents the current state of the implementation.
+This document summarizes the implementation of the AceStream Proxy feature for Orchestrator v1.5.0+. It provides context for future development work and documents the current state of the implementation.
+
+**Architecture Update (Latest)**: The proxy has been **reimplemented using the dispatcharr_proxy buffer-based pattern** for improved scalability and reliability. This replaces the previous broadcaster-based approach with a Redis-backed buffer system where each client reads independently at their own position.
 
 ## Problem Statement
 
@@ -38,10 +40,11 @@ The Orchestrator v1.5.0 release needed a proxy that allows video clients to get 
 - ✅ Detailed logging for debugging
 
 ### 5. Testing
-- ✅ 11 unit tests for engine selector
-- ✅ 6 unit tests for client manager
-- ✅ All tests passing
-- ✅ Coverage of core algorithms
+- ✅ 19 unit tests total (all passing)
+- ✅ 8 buffer-based multiplexing tests
+- ✅ 5 engine selector tests  
+- ✅ 6 client manager tests
+- ✅ Coverage of core algorithms and edge cases
 
 ### 6. Documentation
 - ✅ `docs/PROXY_API.md` - Complete API reference
@@ -72,10 +75,30 @@ The Orchestrator v1.5.0 release needed a proxy that allows video clients to get 
          │                   │
          ↓                   ↓
     ┌────────────────┐  ┌────────────────┐
+    │ StreamManager  │  │ StreamManager  │  (pulls from AceStream)
+    │ - Fetches data │  │ - Fetches data │
+    │ - Writes buffer│  │ - Writes buffer│
+    └────┬───────────┘  └────┬───────────┘
+         │                   │
+         ↓                   ↓
+    ┌────────────────┐  ┌────────────────┐
+    │ StreamBuffer   │  │ StreamBuffer   │  (Redis-backed storage)
+    │ - Redis chunks │  │ - Redis chunks │
+    │ - TS alignment │  │ - TS alignment │
+    └────┬───────────┘  └────┬───────────┘
+         │                   │
+         ↓                   ↓
+    ┌────────────────┐  ┌────────────────┐
     │ ClientManager  │  │ ClientManager  │  (tracks clients per session)
     │ - clients set  │  │ - clients set  │
     │ - activity     │  │ - activity     │
     └────────────────┘  └────────────────┘
+    
+    Multiple clients read from buffer independently:
+    
+    Client1 → StreamGenerator (reads buffer at index N)
+    Client2 → StreamGenerator (reads buffer at index N-3)
+    Client3 → StreamGenerator (reads buffer at index N-1)
          
     ┌────────────────────────────┐
     │     EngineSelector         │  (shared, with caching)
@@ -87,27 +110,39 @@ The Orchestrator v1.5.0 release needed a proxy that allows video clients to get 
 
 ### Key Design Decisions
 
-1. **FFmpeg-less Implementation**
-   - Direct MPEG-TS stream passthrough
-   - No transcoding overhead
-   - Lower latency and resource usage
+1. **Buffer-Based Multiplexing (dispatcharr_proxy pattern)**
+   - Redis-backed buffer stores stream chunks
+   - Each client reads independently at their own position
+   - More scalable than queue-based broadcasting
+   - Based on dispatcharr_proxy's proven pattern
 
-2. **Session-Based Multiplexing**
+2. **TS Packet Alignment**
+   - Buffer ensures proper 188-byte TS packet boundaries
+   - Prevents video corruption and playback issues
+   - Matches dispatcharr_proxy's reliability
+
+3. **Independent Client Positions**
+   - Each client can be at different buffer positions
+   - Late-joining clients start near buffer head
+   - Clients too far behind automatically catch up
+   - No blocking between clients
+
+4. **Session-Based Organization**
    - One session per unique `ace_id`
    - Multiple clients tracked per session
    - Automatic cleanup when clients = 0 for 5 minutes
 
-3. **Intelligent Scoring**
+5. **Intelligent Scoring**
    - Forwarded engines: +1000 (P2P performance)
    - Active streams: -10 each (load balancing)
    - Unhealthy: -1000 (reliability)
 
-4. **Stateless Architecture**
+6. **Stateless Architecture**
    - No persistent state for sessions
    - Recreated on demand
    - Self-cleaning via idle timeout
 
-5. **Production Patterns**
+7. **Production Patterns**
    - Async/await for I/O
    - Proper resource cleanup
    - Background tasks for maintenance
@@ -123,10 +158,14 @@ app/services/proxy/
 ├── config.py                  # Configuration constants
 ├── client_manager.py          # Client tracking and multiplexing
 ├── engine_selector.py         # Intelligent engine selection
+├── stream_buffer.py           # Redis-backed buffer (dispatcharr_proxy pattern)
+├── stream_manager.py          # Pulls from AceStream, writes to buffer
+├── stream_generator.py        # Reads from buffer, yields to clients
 ├── stream_session.py          # Stream session management
 └── proxy_manager.py           # Main proxy orchestration
 
 tests/
+├── test_proxy_buffer.py           # Buffer-based multiplexing tests
 ├── test_proxy_engine_selector.py  # Engine selector tests
 └── test_proxy_client_manager.py   # Client manager tests
 
@@ -195,9 +234,19 @@ SESSION_CLEANUP_INTERVAL = 60     # Cleanup check frequency
 
 ## Testing
 
-### Unit Tests (17 total, all passing)
+### Unit Tests (19 total, all passing)
 
-**Engine Selector** (11 tests):
+**Buffer & Multiplexing** (8 tests):
+- `test_stream_buffer_add_chunk` - Adding chunks to buffer
+- `test_stream_buffer_ts_packet_alignment` - TS packet alignment
+- `test_stream_buffer_get_chunk_memory` - In-memory retrieval
+- `test_stream_buffer_get_chunks_from` - Multiple chunk retrieval
+- `test_stream_manager_start_stop` - Manager lifecycle
+- `test_stream_generator_basic` - Basic generation
+- `test_stream_generator_empty_buffer_timeout` - Timeout handling
+- `test_stream_generator_catchup` - Client catch-up behavior
+
+**Engine Selector** (5 tests):
 - `test_engine_score_calculation` - Verify scoring algorithm
 - `test_select_best_engine_prioritizes_forwarded` - Forwarded priority
 - `test_select_best_engine_balances_load` - Load balancing
@@ -216,7 +265,7 @@ SESSION_CLEANUP_INTERVAL = 60     # Cleanup check frequency
 
 ```bash
 cd /home/runner/work/acestream-orchestrator/acestream-orchestrator
-python -m pytest tests/test_proxy_engine_selector.py tests/test_proxy_client_manager.py -v
+python -m pytest tests/test_proxy* -v
 ```
 
 ## Future Work
@@ -295,9 +344,46 @@ python -m pytest tests/test_proxy_engine_selector.py tests/test_proxy_client_man
    - Unlimited clients per session
    - No bandwidth throttling
 
-## Recent Fixes
+## Recent Changes
 
-### Broadcaster Lock Contention Fix (Latest)
+### Buffer-Based Multiplexing Implementation (Latest)
+
+Reimplemented stream multiplexing based on the proven dispatcharr_proxy pattern, replacing the broadcaster-based approach.
+
+**Changes**:
+- **stream_buffer.py**: New Redis-backed buffer with TS packet alignment
+- **stream_manager.py**: New manager that pulls from AceStream and writes to buffer
+- **stream_generator.py**: New generator that reads from buffer independently per client
+- **stream_session.py**: Updated to use buffer+manager instead of broadcaster
+- **Tests**: Added 8 comprehensive tests for buffer-based components
+
+**Benefits**:
+- **Better scalability**: Clients read independently without blocking each other
+- **More reliable**: Based on battle-tested dispatcharr_proxy pattern
+- **Position independence**: Each client can be at different buffer positions
+- **Automatic catch-up**: Clients too far behind automatically jump forward
+- **Redis-backed**: Buffer survives worker restarts (when Redis is available)
+- **TS alignment**: Proper 188-byte packet boundaries prevent corruption
+
+**Pattern Comparison**:
+
+Old (Broadcaster):
+```
+AceStream → Broadcaster → Queue1 → Client1
+                       → Queue2 → Client2
+                       → Queue3 → Client3
+```
+
+New (Buffer-based):
+```
+AceStream → StreamManager → Redis Buffer
+                              ↓
+Client1 → StreamGenerator → reads at index N
+Client2 → StreamGenerator → reads at index N-3  
+Client3 → StreamGenerator → reads at index N-1
+```
+
+### Broadcaster Lock Contention Fix (Previous)
 
 Fixed critical lock contention issues in the broadcaster multiplexing pipe, based on acexy's parallel writing pattern.
 

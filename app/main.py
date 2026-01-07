@@ -1607,7 +1607,7 @@ async def ace_getstream(
         async def stream_generator():
             stream_failed = False
             try:
-                async for chunk in session.stream_data():
+                async for chunk in session.stream_data(client_id):
                     yield chunk
             except RuntimeError as e:
                 # Stream failed to start or encountered an error
