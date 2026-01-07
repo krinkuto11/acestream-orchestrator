@@ -4,7 +4,7 @@ import asyncio
 import logging
 import httpx
 import time
-from typing import Optional
+from typing import Optional, Any
 
 from .stream_buffer import StreamBuffer
 from .config import COPY_CHUNK_SIZE, USER_AGENT

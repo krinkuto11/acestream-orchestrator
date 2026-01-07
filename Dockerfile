@@ -27,6 +27,9 @@ WORKDIR /app
 
 # Create startup script that runs both Redis and the app
 RUN echo '#!/bin/bash\n\
+# Configure memory overcommit (fixes Redis warning)\n\
+echo 1 > /proc/sys/vm/overcommit_memory 2>/dev/null || true\n\
+\n\
 # Start Redis in the background\n\
 redis-server --daemonize yes --bind 127.0.0.1 --port 6379\n\
 \n\
