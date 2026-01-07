@@ -12,8 +12,6 @@ from .client_manager import ClientManager
 from .stream_buffer import StreamBuffer
 from .stream_manager import StreamManager
 from .stream_generator import StreamGenerator
-from .acexy_stream_manager import AcexyStreamManager
-from .acexy_stream_generator import AcexyStreamGenerator
 from .config import (
     EMPTY_STREAM_TIMEOUT,
     STREAM_BUFFER_SIZE,
@@ -75,12 +73,9 @@ class StreamSession:
         # HTTP client for AceStream communication
         self.http_client: Optional[httpx.AsyncClient] = None
         
-        # Acexy-style stream manager for multiplexing
-        self.stream_manager: Optional[AcexyStreamManager] = None
-        
-        # Legacy buffer-based manager (kept for fallback/compatibility)
+        # Buffer and manager for multiplexing (new pattern)
         self.buffer: Optional[StreamBuffer] = None
-        self.legacy_stream_manager: Optional[StreamManager] = None
+        self.stream_manager: Optional[StreamManager] = None
         
     async def initialize(self) -> bool:
         """Initialize the stream session by fetching from AceStream engine.
@@ -207,23 +202,32 @@ class StreamSession:
                 f"corrected_playback_url={self.playback_url})"
             )
             
+            # Create buffer for stream data (Redis-backed)
+            # Get Redis client from core utils
+            try:
+                from app.core.utils import RedisClient
+                redis_client = RedisClient.get_client()
+            except Exception as e:
+                logger.warning(f"Failed to get Redis client: {e}, using in-memory buffer")
+                redis_client = None
+            
+            self.buffer = StreamBuffer(
+                stream_id=self.stream_id,
+                redis_client=redis_client
+            )
+            
             # Get proxy mode from config
             from app.core.config import cfg
             proxy_mode = cfg.PROXY_MODE
             
-            # Create acexy-style stream manager for direct streaming with multiwriter pattern
-            # This follows the acexy approach: one HTTP connection → parallel writes to all clients
-            logger.info(
-                f"Creating AcexyStreamManager for {self.stream_id} in {proxy_mode} mode"
-            )
-            
-            self.stream_manager = AcexyStreamManager(
+            # Create stream manager to pull from AceStream and write to buffer
+            self.stream_manager = StreamManager(
                 stream_id=self.stream_id,
                 playback_url=self.playback_url,
+                buffer=self.buffer,
                 http_client=self.http_client,
-                stream_session=self,  # Pass self for metadata storage
-                empty_timeout=EMPTY_STREAM_TIMEOUT,
-                buffer_size=COPY_CHUNK_SIZE,
+                proxy_mode=proxy_mode,
+                stream_session=self  # Pass self for metadata storage
             )
             
             # Start the stream manager
@@ -233,7 +237,7 @@ class StreamSession:
             # This prevents race condition where client tries to read before connection
             if not await self.stream_manager.wait_for_connection(timeout=30.0):
                 self.error = "Failed to establish connection to AceStream engine"
-                logger.error(f"AcexyStreamManager failed to connect for {self.stream_id}")
+                logger.error(f"StreamManager failed to connect for {self.stream_id}")
                 # Clean up the failed stream manager
                 await self.stream_manager.stop()
                 return False
@@ -252,12 +256,10 @@ class StreamSession:
             return False
     
     async def stream_data(self, client_id: str) -> AsyncIterator[bytes]:
-        """Stream data to client using acexy multiwriter pattern.
+        """Stream data from buffer to client.
         
-        In acexy pattern:
-        1. Client subscribes to the multiwriter (gets a queue)
-        2. Data flows: playback_url → stream_manager → all client queues in parallel
-        3. Client reads from its queue and yields to HTTP response
+        Multiple clients can call this method and they will all receive
+        data independently from the shared buffer.
         
         Args:
             client_id: Unique identifier for this client
@@ -265,31 +267,29 @@ class StreamSession:
         Yields:
             Chunks of stream data
         """
-        if not self.stream_manager:
-            raise RuntimeError("Stream not initialized or stream_manager not available")
+        if not self.buffer or not self.stream_manager:
+            raise RuntimeError("Stream not initialized or buffer not available")
         
-        # Add client to stream manager's multiwriter (get queue for this client)
-        queue = await self.stream_manager.add_client(client_id)
+        # Create a stream generator for this client
+        generator = StreamGenerator(
+            stream_id=self.stream_id,
+            client_id=client_id,
+            buffer=self.buffer,
+            initial_behind=3  # Start 3 chunks behind for buffering
+        )
         
         try:
-            logger.debug(f"Client {client_id} connected to stream {self.stream_id} (acexy pattern)")
+            logger.debug(f"Client {client_id} connected to stream {self.stream_id}")
             
-            # Wait a bit for stream to start receiving data
-            # Check if stream manager is healthy and connected
+            # Wait a bit for buffer to have some data
+            # Check if stream manager has received any data or buffer has data
             max_wait = EMPTY_STREAM_TIMEOUT
             wait_start = time.time()
-            while not await self._has_data():
+            while not self._has_data():
                 if time.time() - wait_start > max_wait:
                     logger.error(f"Timeout waiting for stream data for {self.stream_id}")
                     raise RuntimeError("Stream failed to start - no data received")
                 await asyncio.sleep(0.1)
-            
-            # Create acexy-style generator that reads from queue
-            generator = AcexyStreamGenerator(
-                stream_id=self.stream_id,
-                client_id=client_id,
-                queue=queue,
-            )
             
             # Stream from the generator
             async for chunk in generator.generate():
@@ -302,13 +302,6 @@ class StreamSession:
         except Exception as e:
             logger.error(f"Error in stream_data for {self.stream_id}: {type(e).__name__}: {e}")
             raise
-        finally:
-            # Remove client from stream manager
-            remaining = await self.stream_manager.remove_client(client_id)
-            logger.debug(
-                f"Client {client_id} removed from stream {self.stream_id}, "
-                f"{remaining} clients remaining"
-            )
     
     def update_metadata_in_state(self):
         """Update stream metadata in global state after extraction."""
@@ -324,20 +317,32 @@ class StreamSession:
         except Exception as e:
             logger.warning(f"Failed to update metadata in state for {self.stream_id}: {e}")
     
-    async def _has_data(self) -> bool:
+    def _has_data(self) -> bool:
         """Check if stream has started receiving data.
         
-        For acexy pattern, check if stream_manager is connected and healthy.
+        This method checks multiple indicators to reliably detect if stream data
+        has arrived, which is more robust than only checking buffer.index. The buffer
+        only increments index after accumulating target_chunk_size (~320KB) of data,
+        which can take significant time during initial buffering. This method detects
+        data arrival earlier by also checking:
+        
+        - stream_manager.chunks_received: Data received from AceStream (earliest indicator)
+        - buffer.index: Completed chunks available in buffer
+        - buffer._write_buffer: Data being accumulated (before flush to storage)
         
         Returns:
-            True if stream manager has received data, False otherwise
+            True if stream manager has received data or buffer has data, False otherwise
         """
         # Check if stream manager has received any chunks
         if self.stream_manager and self.stream_manager.chunks_received > 0:
             return True
         
-        # Check if stream manager is connected
-        if self.stream_manager and self.stream_manager.is_connected:
+        # Check if buffer has a non-zero index (completed chunks)
+        if self.buffer and self.buffer.index > 0:
+            return True
+        
+        # Check if buffer has data in its write buffer (data being accumulated)
+        if self.buffer and len(self.buffer._write_buffer) > 0:
             return True
         
         return False
@@ -381,11 +386,7 @@ class StreamSession:
                 await self.stream_manager.stop()
                 self.stream_manager = None
             
-            # Clean up legacy components if they exist
-            if self.legacy_stream_manager:
-                await self.legacy_stream_manager.stop()
-                self.legacy_stream_manager = None
-            
+            # Clean up buffer
             if self.buffer:
                 self.buffer.cleanup()
                 self.buffer = None
