@@ -6,6 +6,7 @@ import time
 from typing import AsyncIterator, Optional
 
 from .stream_buffer import StreamBuffer
+from .config import CATCHUP_THRESHOLD_CHUNKS, TIMEOUT_MAX_EMPTY_CYCLES
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ class StreamGenerator:
                     
                     # Check if we're too far behind (chunks expired)
                     chunks_behind = self.buffer.index - self.local_index
-                    if chunks_behind > 50:
+                    if chunks_behind > CATCHUP_THRESHOLD_CHUNKS:
                         # Jump forward to stay near buffer head
                         new_index = max(self.local_index, self.buffer.index - self.initial_behind)
                         logger.warning(
@@ -121,9 +122,9 @@ class StreamGenerator:
                     await asyncio.sleep(sleep_time)
                     
                     # Check for timeout
-                    if self.consecutive_empty > 300:  # 30 seconds with no data
+                    if self.consecutive_empty > TIMEOUT_MAX_EMPTY_CYCLES:
                         logger.warning(
-                            f"[{self.client_id}] Timeout: no data for 30 seconds "
+                            f"[{self.client_id}] Timeout: no data for ~30 seconds "
                             f"at index {self.local_index}"
                         )
                         break

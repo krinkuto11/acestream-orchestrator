@@ -161,9 +161,10 @@ async def test_stream_generator_empty_buffer_timeout():
     except Exception:
         pass
     
-    # Should have minimal chunks (maybe some keepalives)
     elapsed = asyncio.get_event_loop().time() - start
-    assert elapsed < 40  # Should timeout in 30 seconds
+    # Should timeout in ~30 seconds (TIMEOUT_MAX_EMPTY_CYCLES * 0.1s)
+    # Allow up to 40 seconds for safety margin
+    assert elapsed < 40  # Should timeout before hitting 40s limit
 
 
 @pytest.mark.asyncio

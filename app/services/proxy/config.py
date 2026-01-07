@@ -35,5 +35,10 @@ RETRY_DELAY: Final[int] = 1  # Seconds between retries
 STREAM_TYPE_MPEGTS = "mpegts"
 STREAM_TYPE_HLS = "hls"
 
+# Stream buffer configuration
+MEMORY_BUFFER_SIZE: Final[int] = 100  # Number of chunks to keep in memory fallback
+CATCHUP_THRESHOLD_CHUNKS: Final[int] = 50  # Chunks behind before auto-catchup
+TIMEOUT_MAX_EMPTY_CYCLES: Final[int] = 300  # Empty read cycles before timeout (~30s at 0.1s sleep)
+
 # Session cleanup
 SESSION_CLEANUP_INTERVAL: Final[int] = 60  # Seconds between cleanup runs

@@ -6,7 +6,7 @@ from typing import Optional, List, Tuple
 from collections import deque
 import redis
 
-from .config import COPY_CHUNK_SIZE
+from .config import COPY_CHUNK_SIZE, MEMORY_BUFFER_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class StreamBuffer:
         self._partial_packet = bytearray()
         
         # In-memory fallback if Redis not available
-        self._memory_chunks: deque = deque(maxlen=100)  # Keep last 100 chunks in memory
+        self._memory_chunks: deque = deque(maxlen=MEMORY_BUFFER_SIZE)  # Keep last N chunks in memory
         
         # Initialize from Redis if available
         if self.redis_client:

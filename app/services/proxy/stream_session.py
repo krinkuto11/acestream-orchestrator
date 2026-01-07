@@ -311,8 +311,6 @@ class StreamSession:
             if self.buffer:
                 self.buffer.cleanup()
                 self.buffer = None
-                await self.broadcaster.stop()
-                self.broadcaster = None
             
             # Try to stop the stream if still active
             if self.is_active and self.command_url:
