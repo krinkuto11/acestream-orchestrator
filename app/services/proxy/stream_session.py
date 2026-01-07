@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from .client_manager import ClientManager
-from .broadcaster import StreamBroadcaster
+from .stream_buffer import StreamBuffer
+from .stream_manager import StreamManager
+from .stream_generator import StreamGenerator
 from .config import (
     EMPTY_STREAM_TIMEOUT,
     STREAM_BUFFER_SIZE,
@@ -65,8 +67,9 @@ class StreamSession:
         # HTTP client for AceStream communication
         self.http_client: Optional[httpx.AsyncClient] = None
         
-        # Broadcaster for multiplexing
-        self.broadcaster: Optional[StreamBroadcaster] = None
+        # Buffer and manager for multiplexing (new pattern)
+        self.buffer: Optional[StreamBuffer] = None
+        self.stream_manager: Optional[StreamManager] = None
         
     async def initialize(self) -> bool:
         """Initialize the stream session by fetching from AceStream engine.
@@ -180,15 +183,30 @@ class StreamSession:
                 f"corrected_playback_url={self.playback_url})"
             )
             
-            # Create broadcaster for multiplexing
-            self.broadcaster = StreamBroadcaster(
+            # Create buffer for stream data (Redis-backed)
+            # Get Redis client from core utils
+            try:
+                from core.utils import RedisClient
+                redis_client = RedisClient.get_client()
+            except Exception as e:
+                logger.warning(f"Failed to get Redis client: {e}, using in-memory buffer")
+                redis_client = None
+            
+            self.buffer = StreamBuffer(
+                stream_id=self.stream_id,
+                redis_client=redis_client
+            )
+            
+            # Create stream manager to pull from AceStream and write to buffer
+            self.stream_manager = StreamManager(
                 stream_id=self.stream_id,
                 playback_url=self.playback_url,
+                buffer=self.buffer,
                 http_client=self.http_client
             )
             
-            # Start the broadcaster
-            await self.broadcaster.start()
+            # Start the stream manager
+            await self.stream_manager.start()
             
             self.is_active = True
             self.started_at = datetime.now(timezone.utc)
@@ -203,64 +221,52 @@ class StreamSession:
             logger.error(f"Unexpected error initializing stream {self.stream_id}: {e}")
             return False
     
-    async def stream_data(self) -> AsyncIterator[bytes]:
-        """Stream data from the AceStream playback URL via broadcaster.
+    async def stream_data(self, client_id: str) -> AsyncIterator[bytes]:
+        """Stream data from buffer to client.
         
         Multiple clients can call this method and they will all receive
-        the same stream data through the broadcaster's multiplexing.
+        data independently from the shared buffer.
         
+        Args:
+            client_id: Unique identifier for this client
+            
         Yields:
             Chunks of stream data
         """
-        if not self.broadcaster:
-            raise RuntimeError("Stream not initialized or broadcaster not available")
+        if not self.buffer or not self.stream_manager:
+            raise RuntimeError("Stream not initialized or buffer not available")
         
-        # Add this client to the broadcaster
-        queue = await self.broadcaster.add_client()
+        # Create a stream generator for this client
+        generator = StreamGenerator(
+            stream_id=self.stream_id,
+            client_id=client_id,
+            buffer=self.buffer,
+            initial_behind=3  # Start 3 chunks behind for buffering
+        )
         
         try:
-            logger.debug(f"Client connected to broadcaster for {self.stream_id}")
+            logger.debug(f"Client {client_id} connected to stream {self.stream_id}")
             
-            # Wait for first chunk to be available (with timeout)
-            # This ensures the client doesn't connect to an empty stream
-            try:
-                await self.broadcaster.wait_for_first_chunk(timeout=EMPTY_STREAM_TIMEOUT)
-            except asyncio.TimeoutError:
-                logger.error(f"Timeout waiting for stream data for {self.stream_id}")
-                raise RuntimeError("Stream failed to start - no data received")
+            # Wait a bit for buffer to have some data
+            max_wait = EMPTY_STREAM_TIMEOUT
+            wait_start = time.time()
+            while self.buffer.index == 0:
+                if time.time() - wait_start > max_wait:
+                    logger.error(f"Timeout waiting for stream data for {self.stream_id}")
+                    raise RuntimeError("Stream failed to start - no data received")
+                await asyncio.sleep(0.1)
             
-            # Stream from the queue
-            chunk_count = 0
-            while True:
-                try:
-                    # Wait for chunk from queue (with timeout to detect stalls)
-                    chunk = await asyncio.wait_for(queue.get(), timeout=30.0)
-                    
-                    if chunk is None:
-                        # End of stream signal
-                        logger.debug(f"End of stream signal for {self.stream_id}")
-                        break
-                    
-                    chunk_count += 1
-                    
-                    # Update client manager activity
-                    self.client_manager.update_activity()
-                    
-                    yield chunk
-                    
-                except asyncio.TimeoutError:
-                    logger.warning(f"Queue timeout for {self.stream_id} after {chunk_count} chunks")
-                    break
+            # Stream from the generator
+            async for chunk in generator.generate():
+                # Update client manager activity
+                self.client_manager.update_activity()
+                yield chunk
             
-            logger.info(f"Stream {self.stream_id} client disconnected after {chunk_count} chunks")
+            logger.info(f"Stream {self.stream_id} client {client_id} disconnected")
             
         except Exception as e:
             logger.error(f"Error in stream_data for {self.stream_id}: {type(e).__name__}: {e}")
             raise
-        finally:
-            # Remove this client from the broadcaster (if broadcaster still exists)
-            if self.broadcaster:
-                await self.broadcaster.remove_client(queue)
     
     async def stop_stream(self) -> bool:
         """Stop the stream by calling the AceStream command URL.
@@ -296,8 +302,15 @@ class StreamSession:
     async def cleanup(self):
         """Clean up resources."""
         try:
-            # Stop the broadcaster if active
-            if self.broadcaster:
+            # Stop the stream manager if active
+            if self.stream_manager:
+                await self.stream_manager.stop()
+                self.stream_manager = None
+            
+            # Clean up buffer
+            if self.buffer:
+                self.buffer.cleanup()
+                self.buffer = None
                 await self.broadcaster.stop()
                 self.broadcaster = None
             
