@@ -48,6 +48,9 @@ class StreamManager:
         self.stream_task: Optional[asyncio.Task] = None
         self.error: Optional[Exception] = None
         
+        # Connection event - signals when connection is established or failed
+        self.connection_event = asyncio.Event()
+        
         # Stats
         self.bytes_received = 0
         self.chunks_received = 0
@@ -65,6 +68,8 @@ class StreamManager:
         
         self.is_running = True
         self.start_time = time.time()
+        # Reset connection event for new start
+        self.connection_event.clear()
         self.stream_task = asyncio.create_task(self._stream_loop())
         logger.info(f"Started StreamManager for {self.stream_id}")
     
@@ -87,6 +92,37 @@ class StreamManager:
             f"Stopped StreamManager for {self.stream_id} "
             f"({self.chunks_received} chunks, {self.bytes_received / 1024 / 1024:.1f}MB)"
         )
+    
+    async def wait_for_connection(self, timeout: float = 30.0) -> bool:
+        """Wait for the stream manager to establish connection.
+        
+        Args:
+            timeout: Maximum time to wait for connection in seconds
+            
+        Returns:
+            True if connected successfully, False if timeout or connection failed
+        """
+        try:
+            await asyncio.wait_for(self.connection_event.wait(), timeout=timeout)
+            # Event was set - check if it was due to success or error
+            if self.error:
+                logger.error(
+                    f"StreamManager connection failed for {self.stream_id}: {self.error}"
+                )
+                return False
+            if not self.is_connected:
+                logger.error(
+                    f"StreamManager connection event set but not connected for {self.stream_id}"
+                )
+                return False
+            logger.info(f"StreamManager connected successfully for {self.stream_id}")
+            return True
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Timeout waiting for StreamManager connection for {self.stream_id} "
+                f"after {timeout}s"
+            )
+            return False
     
     async def _stream_loop(self):
         """Main loop that pulls data from AceStream and writes to buffer."""
@@ -115,6 +151,8 @@ class StreamManager:
                 response.raise_for_status()
                 
                 self.is_connected = True
+                # Signal that connection is established
+                self.connection_event.set()
                 last_log_time = time.time()
                 
                 async for chunk in response.aiter_bytes(chunk_size=COPY_CHUNK_SIZE):
@@ -150,11 +188,15 @@ class StreamManager:
             logger.error(f"HTTP error streaming {self.stream_id}: {type(e).__name__}: {e}")
             self.error = e
             self.healthy = False
+            # Signal connection event even on error so initialize() doesn't hang
+            self.connection_event.set()
             
         except Exception as e:
             logger.error(f"Unexpected error streaming {self.stream_id}: {e}", exc_info=True)
             self.error = e
             self.healthy = False
+            # Signal connection event even on error so initialize() doesn't hang
+            self.connection_event.set()
             
         finally:
             self.is_connected = False
