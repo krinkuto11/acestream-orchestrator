@@ -374,6 +374,32 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                   </div>
                 )}
                 
+                {/* Stream Metadata (when available from FFmpeg mode) */}
+                {stream.resolution && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Resolution</p>
+                    <p className="text-sm font-medium text-foreground">{stream.resolution}</p>
+                  </div>
+                )}
+                {stream.fps && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">FPS</p>
+                    <p className="text-sm font-medium text-foreground">{stream.fps.toFixed(2)}</p>
+                  </div>
+                )}
+                {stream.video_codec && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Video Codec</p>
+                    <p className="text-sm font-medium text-foreground">{stream.video_codec.toUpperCase()}</p>
+                  </div>
+                )}
+                {stream.audio_codec && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Audio Codec</p>
+                    <p className="text-sm font-medium text-foreground">{stream.audio_codec.toUpperCase()}</p>
+                  </div>
+                )}
+                
                 {/* LivePos Information */}
                 {stream.livepos && (
                   <>

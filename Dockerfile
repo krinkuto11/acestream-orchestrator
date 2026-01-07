@@ -2,10 +2,10 @@ FROM python:3.12-slim
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 
-# Update pip and install Node.js, npm, and Redis
+# Update pip and install Node.js, npm, Redis, and FFmpeg
 RUN pip install --upgrade pip && \
     apt-get update && \
-    apt-get install -y nodejs npm redis-server && \
+    apt-get install -y nodejs npm redis-server ffmpeg && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

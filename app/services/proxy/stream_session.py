@@ -64,6 +64,12 @@ class StreamSession:
         self.is_active: bool = False
         self.error: Optional[str] = None
         
+        # Stream metadata (for FFmpeg mode)
+        self.resolution: Optional[str] = None  # e.g., "1920x1080"
+        self.fps: Optional[float] = None  # Frames per second
+        self.video_codec: Optional[str] = None  # e.g., "h264", "hevc"
+        self.audio_codec: Optional[str] = None  # e.g., "aac", "mp3"
+        
         # HTTP client for AceStream communication
         self.http_client: Optional[httpx.AsyncClient] = None
         
@@ -210,12 +216,18 @@ class StreamSession:
                 redis_client=redis_client
             )
             
+            # Get proxy mode from config
+            from app.core.config import cfg
+            proxy_mode = cfg.PROXY_MODE
+            
             # Create stream manager to pull from AceStream and write to buffer
             self.stream_manager = StreamManager(
                 stream_id=self.stream_id,
                 playback_url=self.playback_url,
                 buffer=self.buffer,
-                http_client=self.http_client
+                http_client=self.http_client,
+                proxy_mode=proxy_mode,
+                stream_session=self  # Pass self for metadata storage
             )
             
             # Start the stream manager
@@ -290,6 +302,20 @@ class StreamSession:
         except Exception as e:
             logger.error(f"Error in stream_data for {self.stream_id}: {type(e).__name__}: {e}")
             raise
+    
+    def update_metadata_in_state(self):
+        """Update stream metadata in global state after extraction."""
+        try:
+            from app.services.state import state
+            state.update_stream_metadata(
+                stream_id=self.stream_id,
+                resolution=self.resolution,
+                fps=self.fps,
+                video_codec=self.video_codec,
+                audio_codec=self.audio_codec
+            )
+        except Exception as e:
+            logger.warning(f"Failed to update metadata in state for {self.stream_id}: {e}")
     
     def _has_data(self) -> bool:
         """Check if stream has started receiving data.
