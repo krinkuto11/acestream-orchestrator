@@ -208,6 +208,15 @@ class StreamSession:
             # Start the stream manager
             await self.stream_manager.start()
             
+            # Wait for connection to be established before marking as active
+            # This prevents race condition where client tries to read before connection
+            if not await self.stream_manager.wait_for_connection(timeout=30.0):
+                self.error = "Failed to establish connection to AceStream engine"
+                logger.error(f"StreamManager failed to connect for {self.stream_id}")
+                # Clean up the failed stream manager
+                await self.stream_manager.stop()
+                return False
+            
             self.is_active = True
             self.started_at = datetime.now(timezone.utc)
             return True
