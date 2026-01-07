@@ -158,7 +158,8 @@ class Cfg(BaseModel):
             raise ValueError(f'VPN_MODE must be one of: {", ".join(valid_modes)}')
         return v
     
-    @validator('PROXY_MODE')
+    @field_validator('PROXY_MODE')
+    @classmethod
     def validate_proxy_mode(cls, v):
         valid_modes = ['lightweight', 'ffmpeg']
         if v not in valid_modes:
