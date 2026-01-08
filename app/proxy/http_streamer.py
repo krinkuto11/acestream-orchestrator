@@ -44,8 +44,9 @@ class HTTPStreamReader:
         """Thread worker that reads HTTP stream and writes to pipe"""
         try:
             # Build headers - mimic VLC player for better compatibility
+            # Use provided user_agent or fall back to VLC default if None
             headers = {
-                'User-Agent': self.user_agent or VLC_USER_AGENT,
+                'User-Agent': self.user_agent if self.user_agent else VLC_USER_AGENT,
                 'Accept': '*/*',
                 'Accept-Encoding': 'identity',
                 'Connection': 'keep-alive',

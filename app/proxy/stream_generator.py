@@ -153,11 +153,7 @@ class StreamGenerator:
             # Wait before checking again
             gevent.sleep(check_interval)
         
-        # Timeout - but still proceed if we have at least some data
-        if self.buffer.index > 0:
-            logger.warning(f"[{self.client_id}] Initial data wait timeout, but buffer has data (index: {self.buffer.index})")
-            return True
-        
+        # Timeout - no data arrived
         logger.error(f"[{self.client_id}] Timeout waiting for initial data (buffer still empty after {timeout}s)")
         return False
     
