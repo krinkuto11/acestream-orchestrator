@@ -72,14 +72,31 @@ class StreamManager:
         }
         
         try:
+            # Build full URL for logging
+            full_url = f"{url}?format=json&infohash={self.content_id}"
             logger.info(f"Requesting stream from AceStream engine: {url}")
+            logger.debug(f"Full request URL: {full_url}")
+            logger.debug(f"Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}, Container: {self.engine_container_id}")
+            
             response = requests.get(url, params=params, timeout=10)
+            
+            # Log response details in debug mode
+            logger.debug(f"AceStream response status: {response.status_code}")
+            logger.debug(f"AceStream response headers: {dict(response.headers)}")
+            
             response.raise_for_status()
             
             data = response.json()
             
+            # Log full response in debug mode
+            logger.debug(f"AceStream response body: {data}")
+            
             if data.get("error"):
-                raise RuntimeError(f"AceStream engine returned error: {data['error']}")
+                error_msg = data['error']
+                logger.error(f"AceStream engine returned error: {error_msg}")
+                logger.error(f"Error details - Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}, Container: {self.engine_container_id}")
+                logger.debug(f"Full error response: {data}")
+                raise RuntimeError(f"AceStream engine returned error: {error_msg}")
             
             resp_data = data.get("response", {})
             self.playback_url = resp_data.get("playback_url")
@@ -89,15 +106,28 @@ class StreamManager:
             self.is_live = resp_data.get("is_live", 1)
             
             if not self.playback_url:
+                logger.error("No playback_url in AceStream response")
+                logger.error(f"Error details - Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}")
+                logger.debug(f"Response data: {resp_data}")
                 raise RuntimeError("No playback_url in AceStream response")
             
             logger.info(f"AceStream session started: playback_session_id={self.playback_session_id}")
             logger.info(f"Playback URL: {self.playback_url}")
+            logger.debug(f"Stat URL: {self.stat_url}")
+            logger.debug(f"Command URL: {self.command_url}")
+            logger.debug(f"Is Live: {self.is_live}")
             
             return True
             
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to request stream from AceStream engine: {e}")
+            logger.error(f"Request details - URL: {full_url}, Engine: {self.engine_host}:{self.engine_port}")
+            logger.debug(f"Exception details: {e}", exc_info=True)
+            return False
         except Exception as e:
             logger.error(f"Failed to request stream from AceStream engine: {e}")
+            logger.error(f"Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}")
+            logger.debug(f"Exception details: {e}", exc_info=True)
             return False
     
     def _send_stream_started_event(self):
@@ -131,6 +161,11 @@ class StreamManager:
             headers = {}
             if self.api_key:
                 headers['X-API-KEY'] = self.api_key
+                logger.debug(f"Sending stream started event with API key to {orchestrator_url}/events/stream_started")
+            else:
+                logger.warning("No API key configured for stream started event - may fail with 401 Unauthorized")
+            
+            logger.debug(f"Stream started event data: {event_data}")
             
             response = requests.post(
                 f"{orchestrator_url}/events/stream_started",
@@ -138,6 +173,9 @@ class StreamManager:
                 headers=headers,
                 timeout=5
             )
+            
+            logger.debug(f"Stream started event response status: {response.status_code}")
+            
             response.raise_for_status()
             
             # Get stream_id from response
@@ -146,8 +184,16 @@ class StreamManager:
             
             logger.info(f"Sent stream started event to orchestrator: stream_id={self.stream_id}")
             
+        except requests.exceptions.HTTPError as e:
+            if e.response and e.response.status_code == 401:
+                logger.error(f"Failed to send stream started event - 401 Unauthorized. Check API_KEY configuration.")
+                logger.error(f"API key present: {bool(self.api_key)}, Orchestrator URL: {orchestrator_url}")
+            else:
+                logger.warning(f"Failed to send stream started event to orchestrator: {e}")
+            logger.debug(f"Exception details: {e}", exc_info=True)
         except Exception as e:
             logger.warning(f"Failed to send stream started event to orchestrator: {e}")
+            logger.debug(f"Exception details: {e}", exc_info=True)
     
     def _send_stream_ended_event(self, reason="normal"):
         """Send stream ended event to orchestrator"""
@@ -163,6 +209,11 @@ class StreamManager:
             headers = {}
             if self.api_key:
                 headers['X-API-KEY'] = self.api_key
+                logger.debug(f"Sending stream ended event with API key to {orchestrator_url}/events/stream_ended")
+            else:
+                logger.warning("No API key configured for stream ended event - may fail with 401 Unauthorized")
+            
+            logger.debug(f"Stream ended event data: {event_data}")
             
             response = requests.post(
                 f"{orchestrator_url}/events/stream_ended",
@@ -170,16 +221,30 @@ class StreamManager:
                 headers=headers,
                 timeout=5
             )
+            
+            logger.debug(f"Stream ended event response status: {response.status_code}")
+            
             response.raise_for_status()
             
             logger.info(f"Sent stream ended event to orchestrator: stream_id={self.stream_id}, reason={reason}")
             
+        except requests.exceptions.HTTPError as e:
+            if e.response and e.response.status_code == 401:
+                logger.error(f"Failed to send stream ended event - 401 Unauthorized. Check API_KEY configuration.")
+                logger.error(f"API key present: {bool(self.api_key)}, Orchestrator URL: {orchestrator_url}")
+            else:
+                logger.warning(f"Failed to send stream ended event to orchestrator: {e}")
+            logger.debug(f"Exception details: {e}", exc_info=True)
         except Exception as e:
             logger.warning(f"Failed to send stream ended event to orchestrator: {e}")
+            logger.debug(f"Exception details: {e}", exc_info=True)
     
     def start_stream(self):
         """Start streaming from AceStream engine"""
         try:
+            logger.debug(f"Starting HTTP stream reader for playback URL: {self.playback_url}")
+            logger.debug(f"Chunk size: {ConfigHelper.chunk_size()}")
+            
             # Create HTTP stream reader with VLC user agent for better compatibility
             # Some AceStream engines may behave differently based on the user agent
             self.http_reader = HTTPStreamReader(
@@ -201,6 +266,8 @@ class StreamManager:
             
         except Exception as e:
             logger.error(f"Failed to start stream: {e}")
+            logger.error(f"Details - Playback URL: {self.playback_url}, Content ID: {self.content_id}")
+            logger.debug(f"Exception details: {e}", exc_info=True)
             return False
     
     def run(self):
