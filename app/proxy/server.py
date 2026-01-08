@@ -9,7 +9,6 @@ import socket
 import os
 import time
 import json
-import gevent
 import redis
 
 from .stream_manager import StreamManager
@@ -131,7 +130,10 @@ class ProxyServer:
                     remaining = data.get('remaining_clients', 0)
                     if remaining == 0:
                         logger.info(f"Last client disconnected for {content_id}, scheduling cleanup")
-                        gevent.spawn_later(Config.CHANNEL_SHUTDOWN_DELAY, self._stop_stream, content_id)
+                        # Use threading.Timer instead of gevent.spawn_later
+                        timer = threading.Timer(Config.CHANNEL_SHUTDOWN_DELAY, self._stop_stream, args=[content_id])
+                        timer.daemon = True
+                        timer.start()
         
         except Exception as e:
             logger.error(f"Error handling event: {e}")
@@ -175,8 +177,10 @@ class ProxyServer:
             owner_key = RedisKeys.stream_owner(content_id)
             self.redis_client.set(owner_key, self.worker_id, ex=300)
             
-            # Start stream manager in background
-            gevent.spawn(stream_manager.run)
+            # Start stream manager in background thread
+            # Using threading.Thread instead of gevent.spawn because uvicorn doesn't use gevent worker
+            thread = threading.Thread(target=stream_manager.run, daemon=True, name=f"stream-{content_id[:8]}")
+            thread.start()
             
             logger.info(f"Started stream for content_id={content_id}")
             return True
@@ -261,4 +265,7 @@ class ProxyServer:
             
             if client_count == 0:
                 logger.info(f"No clients left for {content_id}, scheduling stop")
-                gevent.spawn_later(Config.CHANNEL_SHUTDOWN_DELAY, self._stop_stream, content_id)
+                # Use threading.Timer instead of gevent.spawn_later
+                timer = threading.Timer(Config.CHANNEL_SHUTDOWN_DELAY, self._stop_stream, args=[content_id])
+                timer.daemon = True
+                timer.start()

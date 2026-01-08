@@ -9,7 +9,6 @@ import logging
 import time
 import requests
 import os
-import gevent
 from typing import Optional
 
 from .http_streamer import HTTPStreamReader
@@ -293,7 +292,7 @@ class StreamManager:
             except Exception as e:
                 logger.error(f"Error in health monitor: {e}")
             
-            gevent.sleep(self.health_check_interval)
+            time.sleep(self.health_check_interval)
     
     def stop(self):
         """Stop the stream manager"""
