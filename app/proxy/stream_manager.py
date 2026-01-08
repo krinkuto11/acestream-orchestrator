@@ -67,12 +67,12 @@ class StreamManager:
         """Request stream from AceStream engine API"""
         url = f"http://{self.engine_host}:{self.engine_port}/ace/getstream"
         params = {
-            "format": "json",
-            "infohash": self.content_id
+            "id": self.content_id,
+            "format": "json"
         }
         
         # Build full URL for logging (define early to avoid NameError in exception handlers)
-        full_url = f"{url}?format=json&infohash={self.content_id}"
+        full_url = f"{url}?id={self.content_id}&format=json"
         
         try:
             logger.info(f"Requesting stream from AceStream engine: {url}")

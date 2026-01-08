@@ -48,7 +48,7 @@ GET /ace/getstream?id=INFOHASH
   
 ### 3. StreamManager Connects to Engine
 ```http
-GET http://engine:port/ace/getstream?format=json&infohash=INFOHASH
+GET http://engine:port/ace/getstream?id=INFOHASH&format=json
 ```
 
 Response:
