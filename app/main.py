@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -1562,77 +1562,96 @@ def clear_cache():
 @app.get("/ace/getstream")
 async def ace_getstream(
     id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+    request: Request = None,
 ):
-    """Proxy endpoint for AceStream video streams.
+    """Proxy endpoint for AceStream video streams with multiplexing.
     
     This endpoint:
     1. Selects the best available engine (prioritizes forwarded, balances load)
-    2. Multiplexes multiple clients to the same stream
-    3. Automatically manages stream lifecycle
+    2. Multiplexes multiple clients to the same stream via battle-tested ts_proxy architecture
+    3. Automatically manages stream lifecycle with heartbeat monitoring
+    4. Sends events to orchestrator for panel visibility
     
     Args:
         id: AceStream content ID (infohash or content_id)
+        request: FastAPI Request object for client info
         
     Returns:
         Streaming response with video data
     """
     from fastapi.responses import StreamingResponse
     from uuid import uuid4
-    
-    proxy_manager = ProxyManager.get_instance()
+    from app.proxy.stream_generator import create_stream_generator
+    from app.proxy.utils import get_client_ip
     
     # Generate unique client ID
     client_id = str(uuid4())
     
+    # Get client info
+    client_ip = get_client_ip(request) if request else "unknown"
+    user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
+    
     try:
-        # Get or create session for this stream
-        session = await proxy_manager.get_or_create_session(id)
-        
-        if not session:
+        # Select best engine
+        engines = state.list_engines()
+        if not engines:
             raise HTTPException(
                 status_code=503,
-                detail="Unable to provision stream. No engines available or stream initialization failed."
+                detail="No engines available"
             )
         
-        # Add this client to the session
-        await proxy_manager.add_client(id, client_id)
+        # Engine selection: prioritize forwarded, balance load
+        active_streams = state.list_streams(status="started")
+        engine_loads = {}
+        for stream in active_streams:
+            cid = stream.container_id
+            engine_loads[cid] = engine_loads.get(cid, 0) + 1
+        
+        # Sort: (load, not forwarded) - prefer forwarded when equal load
+        engines_sorted = sorted(engines, key=lambda e: (
+            engine_loads.get(e.container_id, 0),
+            not e.forwarded
+        ))
+        selected_engine = engines_sorted[0]
         
         logger.info(
-            f"Client {client_id} connected to stream {id} "
-            f"(total clients: {session.client_manager.get_client_count()})"
+            f"Selected engine {selected_engine.container_id[:12]} for stream {id} "
+            f"(forwarded={selected_engine.forwarded}, current_load={engine_loads.get(selected_engine.container_id, 0)})"
         )
         
-        # Stream data generator
-        async def stream_generator():
-            stream_failed = False
-            try:
-                async for chunk in session.stream_data(client_id):
-                    yield chunk
-            except RuntimeError as e:
-                # Stream failed to start or encountered an error
-                logger.error(f"Error streaming to client {client_id}: {e}")
-                stream_failed = True
-                # Remove the failed session from proxy manager
-                await proxy_manager.remove_failed_session(id, reason=f"stream_error: {str(e)}")
-                raise
-            except Exception as e:
-                logger.error(f"Error streaming to client {client_id}: {e}")
-                stream_failed = True
-                raise
-            finally:
-                # Remove client when done (only if session wasn't already removed due to failure)
-                if not stream_failed:
-                    remaining = await proxy_manager.remove_client(id, client_id)
-                    logger.info(
-                        f"Client {client_id} disconnected from stream {id} "
-                        f"(remaining clients: {remaining})"
-                    )
-                else:
-                    logger.info(f"Client {client_id} disconnected due to stream failure")
+        # Get proxy instance
+        proxy = ProxyManager.get_instance()
+        
+        # Start stream if not exists (idempotent)
+        success = proxy.start_stream(
+            content_id=id,
+            engine_host=selected_engine.host,
+            engine_port=selected_engine.port,
+            engine_container_id=selected_engine.container_id
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to start stream session"
+            )
+        
+        logger.info(
+            f"Client {client_id} connecting to stream {id} from {client_ip}"
+        )
+        
+        # Create stream generator
+        generator = create_stream_generator(
+            content_id=id,
+            client_id=client_id,
+            client_ip=client_ip,
+            client_user_agent=user_agent,
+            stream_initializing=False
+        )
         
         # Return streaming response
         return StreamingResponse(
-            stream_generator(),
+            generator.generate(),
             media_type="video/mp2t",
             headers={
                 "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -1646,6 +1665,7 @@ async def ace_getstream(
     except Exception as e:
         logger.error(f"Unexpected error in ace_getstream: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 
 
 @app.get("/ace/manifest.m3u8")
