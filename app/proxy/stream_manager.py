@@ -1,6 +1,7 @@
 """
 Stream Manager for AceStream connections.
 Simplified adaptation from ts_proxy - focuses on AceStream engine API integration.
+Sends stream start/stop events to orchestrator for panel visibility.
 """
 
 import threading
@@ -16,7 +17,7 @@ from .stream_buffer import StreamBuffer
 from .client_manager import ClientManager
 from .redis_keys import RedisKeys
 from .constants import StreamState, EventType, StreamMetadataField
-from .config_helper import ConfigHelper
+from .config_helper import ConfigHelper, Config
 from .utils import get_logger
 
 logger = get_logger()
@@ -25,20 +26,23 @@ logger = get_logger()
 class StreamManager:
     """Manages connection to AceStream engine and stream health"""
     
-    def __init__(self, content_id, engine_host, engine_port, buffer, client_manager, worker_id=None):
+    def __init__(self, content_id, engine_host, engine_port, engine_container_id, buffer, client_manager, worker_id=None, api_key=None):
         # Basic properties
         self.content_id = content_id
         self.engine_host = engine_host
         self.engine_port = engine_port
+        self.engine_container_id = engine_container_id  # Added for events
         self.buffer = buffer
         self.client_manager = client_manager
         self.worker_id = worker_id
+        self.api_key = api_key  # API key for orchestrator events
         
         # Stream session info (from AceStream API)
         self.playback_url = None
         self.stat_url = None
         self.command_url = None
         self.playback_session_id = None
+        self.is_live = None
         
         # Connection state
         self.running = True
@@ -54,6 +58,9 @@ class StreamManager:
         # Health monitoring
         self.last_data_time = time.time()
         self.health_check_interval = 5
+        
+        # Orchestrator event tracking
+        self.stream_id = None  # Will be set after sending start event
         
         logger.info(f"StreamManager initialized for content_id={content_id}")
     
@@ -80,6 +87,7 @@ class StreamManager:
             self.stat_url = resp_data.get("stat_url")
             self.command_url = resp_data.get("command_url")
             self.playback_session_id = resp_data.get("playback_session_id")
+            self.is_live = resp_data.get("is_live", 1)
             
             if not self.playback_url:
                 raise RuntimeError("No playback_url in AceStream response")
@@ -92,6 +100,83 @@ class StreamManager:
         except Exception as e:
             logger.error(f"Failed to request stream from AceStream engine: {e}")
             return False
+    
+    def _send_stream_started_event(self):
+        """Send stream started event to orchestrator"""
+        try:
+            # Get orchestrator URL from environment
+            orchestrator_url = os.getenv('ORCHESTRATOR_URL', 'http://localhost:8000')
+            
+            event_data = {
+                "container_id": self.engine_container_id,
+                "engine": {
+                    "host": self.engine_host,
+                    "port": self.engine_port
+                },
+                "stream": {
+                    "key_type": "infohash",
+                    "key": self.content_id
+                },
+                "session": {
+                    "playback_session_id": self.playback_session_id,
+                    "stat_url": self.stat_url,
+                    "command_url": self.command_url,
+                    "is_live": self.is_live
+                },
+                "labels": {
+                    "source": "proxy",
+                    "worker_id": self.worker_id or "unknown"
+                }
+            }
+            
+            headers = {}
+            if self.api_key:
+                headers['X-API-KEY'] = self.api_key
+            
+            response = requests.post(
+                f"{orchestrator_url}/events/stream_started",
+                json=event_data,
+                headers=headers,
+                timeout=5
+            )
+            response.raise_for_status()
+            
+            # Get stream_id from response
+            result = response.json()
+            self.stream_id = result.get('id')
+            
+            logger.info(f"Sent stream started event to orchestrator: stream_id={self.stream_id}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to send stream started event to orchestrator: {e}")
+    
+    def _send_stream_ended_event(self, reason="normal"):
+        """Send stream ended event to orchestrator"""
+        try:
+            orchestrator_url = os.getenv('ORCHESTRATOR_URL', 'http://localhost:8000')
+            
+            event_data = {
+                "container_id": self.engine_container_id,
+                "stream_id": self.stream_id,
+                "reason": reason
+            }
+            
+            headers = {}
+            if self.api_key:
+                headers['X-API-KEY'] = self.api_key
+            
+            response = requests.post(
+                f"{orchestrator_url}/events/stream_ended",
+                json=event_data,
+                headers=headers,
+                timeout=5
+            )
+            response.raise_for_status()
+            
+            logger.info(f"Sent stream ended event to orchestrator: stream_id={self.stream_id}, reason={reason}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to send stream ended event to orchestrator: {e}")
     
     def start_stream(self):
         """Start streaming from AceStream engine"""
@@ -120,6 +205,7 @@ class StreamManager:
     
     def run(self):
         """Main execution loop"""
+        stream_end_reason = "normal"
         try:
             # Start health monitor
             health_thread = threading.Thread(target=self._monitor_health, daemon=True)
@@ -128,11 +214,16 @@ class StreamManager:
             # Request stream from engine
             if not self.request_stream_from_engine():
                 logger.error("Failed to request stream from engine")
+                stream_end_reason = "failed_to_start"
                 return
+            
+            # Send stream started event to orchestrator
+            self._send_stream_started_event()
             
             # Start streaming
             if not self.start_stream():
                 logger.error("Failed to start stream")
+                stream_end_reason = "failed_to_start"
                 return
             
             # Process stream data
@@ -140,7 +231,10 @@ class StreamManager:
             
         except Exception as e:
             logger.error(f"Stream error: {e}", exc_info=True)
+            stream_end_reason = "error"
         finally:
+            # Send stream ended event
+            self._send_stream_ended_event(reason=stream_end_reason)
             self._cleanup()
     
     def _process_stream_data(self):
@@ -221,6 +315,10 @@ class StreamManager:
                 logger.info("Sent stop command to AceStream engine")
             except Exception as e:
                 logger.warning(f"Failed to send stop command: {e}")
+        
+        # Send ended event if we haven't already
+        if self.stream_id:
+            self._send_stream_ended_event(reason="stopped")
     
     def _cleanup(self):
         """Cleanup resources"""

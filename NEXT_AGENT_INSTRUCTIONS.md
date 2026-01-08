@@ -33,6 +33,10 @@ All 9 core proxy files have been implemented and tested.
 - ✅ Engine selection from orchestrator state
 - ✅ Playback URL streaming
 - ✅ Stop command on cleanup
+- ✅ **Stream start/stop events sent to orchestrator** ✨ NEW
+  - Events visible in orchestrator panel
+  - Stream stats tracked automatically
+  - Proper integration with orchestrator state
 
 ## Architecture
 
