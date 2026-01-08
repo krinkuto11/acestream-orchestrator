@@ -1852,4 +1852,91 @@ def clear_all_looping_streams():
     looping_streams_tracker.clear_all()
     return {"message": "All looping streams cleared"}
 
+@app.get("/proxy/config")
+def get_proxy_config():
+    """
+    Get current proxy configuration settings.
+    
+    Returns proxy buffer and streaming settings that can be adjusted at runtime.
+    """
+    from .proxy import constants as proxy_constants
+    from .proxy.config_helper import Config as ProxyConfig
+    
+    return {
+        "vlc_user_agent": proxy_constants.VLC_USER_AGENT,
+        "initial_data_wait_timeout": proxy_constants.INITIAL_DATA_WAIT_TIMEOUT,
+        "initial_data_check_interval": proxy_constants.INITIAL_DATA_CHECK_INTERVAL,
+        "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
+        "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
+        "chunk_size": ProxyConfig.CHUNK_SIZE,
+        "buffer_chunk_size": ProxyConfig.BUFFER_CHUNK_SIZE,
+        "redis_chunk_ttl": ProxyConfig.REDIS_CHUNK_TTL,
+        "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+    }
+
+@app.post("/proxy/config", dependencies=[Depends(require_api_key)])
+def update_proxy_config(
+    initial_data_wait_timeout: Optional[int] = None,
+    initial_data_check_interval: Optional[float] = None,
+    connection_timeout: Optional[int] = None,
+    stream_timeout: Optional[int] = None,
+    channel_shutdown_delay: Optional[int] = None,
+):
+    """
+    Update proxy configuration settings at runtime.
+    
+    Args:
+        initial_data_wait_timeout: Maximum seconds to wait for initial data in buffer (min: 1, max: 60)
+        initial_data_check_interval: Seconds between buffer checks (min: 0.1, max: 2.0)
+        connection_timeout: Connection timeout in seconds (min: 5, max: 60)
+        stream_timeout: Stream timeout in seconds (min: 10, max: 300)
+        channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
+    
+    Note: This updates the runtime configuration but does not persist to .env file.
+    Changes take effect for new streams only.
+    """
+    from .proxy import constants as proxy_constants
+    from .proxy.config_helper import Config as ProxyConfig
+    
+    # Validation and updates
+    if initial_data_wait_timeout is not None:
+        if initial_data_wait_timeout < 1 or initial_data_wait_timeout > 60:
+            raise HTTPException(status_code=400, detail="initial_data_wait_timeout must be between 1 and 60 seconds")
+        proxy_constants.INITIAL_DATA_WAIT_TIMEOUT = initial_data_wait_timeout
+    
+    if initial_data_check_interval is not None:
+        if initial_data_check_interval < 0.1 or initial_data_check_interval > 2.0:
+            raise HTTPException(status_code=400, detail="initial_data_check_interval must be between 0.1 and 2.0 seconds")
+        proxy_constants.INITIAL_DATA_CHECK_INTERVAL = initial_data_check_interval
+    
+    if connection_timeout is not None:
+        if connection_timeout < 5 or connection_timeout > 60:
+            raise HTTPException(status_code=400, detail="connection_timeout must be between 5 and 60 seconds")
+        ProxyConfig.CONNECTION_TIMEOUT = connection_timeout
+    
+    if stream_timeout is not None:
+        if stream_timeout < 10 or stream_timeout > 300:
+            raise HTTPException(status_code=400, detail="stream_timeout must be between 10 and 300 seconds")
+        ProxyConfig.STREAM_TIMEOUT = stream_timeout
+    
+    if channel_shutdown_delay is not None:
+        if channel_shutdown_delay < 1 or channel_shutdown_delay > 60:
+            raise HTTPException(status_code=400, detail="channel_shutdown_delay must be between 1 and 60 seconds")
+        ProxyConfig.CHANNEL_SHUTDOWN_DELAY = channel_shutdown_delay
+    
+    logger.info(f"Proxy configuration updated: initial_data_wait_timeout={proxy_constants.INITIAL_DATA_WAIT_TIMEOUT}, "
+                f"initial_data_check_interval={proxy_constants.INITIAL_DATA_CHECK_INTERVAL}, "
+                f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
+                f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
+                f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}")
+    
+    return {
+        "message": "Proxy configuration updated",
+        "initial_data_wait_timeout": proxy_constants.INITIAL_DATA_WAIT_TIMEOUT,
+        "initial_data_check_interval": proxy_constants.INITIAL_DATA_CHECK_INTERVAL,
+        "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
+        "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
+        "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+    }
+
 
