@@ -223,6 +223,7 @@ function AppContent() {
                     setRefreshInterval={setRefreshInterval}
                     maxEventsDisplay={maxEventsDisplay}
                     setMaxEventsDisplay={setMaxEventsDisplay}
+                    orchUrl={orchUrl}
                   />
                 } 
               />

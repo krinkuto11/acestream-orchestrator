@@ -213,6 +213,5 @@ Potential enhancements for the cache system:
 1. **Configurable TTL**: Make TTL values configurable via environment variables
 2. **Cache warming**: Pre-populate cache on startup
 3. **More endpoints**: Add caching to other expensive endpoints
-4. **Redis backend**: Optional Redis cache for multi-instance deployments
 5. **Metrics export**: Export cache metrics to Prometheus
 6. **Adaptive TTL**: Adjust TTL based on load and hit rate

@@ -3,6 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { AlertCircle, CheckCircle2 } from 'lucide-react'
 
 export function SettingsPage({
   apiKey,
@@ -10,8 +13,70 @@ export function SettingsPage({
   refreshInterval,
   setRefreshInterval,
   maxEventsDisplay,
-  setMaxEventsDisplay
+  setMaxEventsDisplay,
+  orchUrl
 }) {
+  const [loopDetectionEnabled, setLoopDetectionEnabled] = useState(false)
+  const [loopDetectionThresholdMinutes, setLoopDetectionThresholdMinutes] = useState(60)
+  const [loopDetectionLoading, setLoopDetectionLoading] = useState(false)
+  const [loopDetectionMessage, setLoopDetectionMessage] = useState(null)
+  const [loopDetectionError, setLoopDetectionError] = useState(null)
+
+  // Load loop detection config on mount
+  useEffect(() => {
+    fetchLoopDetectionConfig()
+  }, [orchUrl])
+
+  const fetchLoopDetectionConfig = async () => {
+    try {
+      const response = await fetch(`${orchUrl}/stream-loop-detection/config`)
+      if (response.ok) {
+        const data = await response.json()
+        setLoopDetectionEnabled(data.enabled)
+        setLoopDetectionThresholdMinutes(Math.round(data.threshold_minutes))
+      }
+    } catch (err) {
+      console.error('Failed to fetch loop detection config:', err)
+    }
+  }
+
+  const saveLoopDetectionConfig = async () => {
+    if (!apiKey) {
+      setLoopDetectionError('API Key is required to update settings')
+      return
+    }
+
+    setLoopDetectionLoading(true)
+    setLoopDetectionMessage(null)
+    setLoopDetectionError(null)
+
+    try {
+      const thresholdSeconds = loopDetectionThresholdMinutes * 60
+      const response = await fetch(
+        `${orchUrl}/stream-loop-detection/config?enabled=${loopDetectionEnabled}&threshold_seconds=${thresholdSeconds}`,
+        {
+          method: 'POST',
+          headers: {
+            'X-API-KEY': apiKey
+          }
+        }
+      )
+
+      if (response.ok) {
+        const data = await response.json()
+        setLoopDetectionMessage(data.message)
+        // Refresh config to show updated values
+        await fetchLoopDetectionConfig()
+      } else {
+        const errorData = await response.json()
+        setLoopDetectionError(errorData.detail || 'Failed to update configuration')
+      }
+    } catch (err) {
+      setLoopDetectionError('Failed to save configuration: ' + err.message)
+    } finally {
+      setLoopDetectionLoading(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -90,6 +155,78 @@ export function SettingsPage({
               Maximum number of events to display in the Event Log page
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Stream Loop Detection</CardTitle>
+          <CardDescription>
+            Automatically stop streams that are looping (no new data being fed into the network)
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="loop-detection-enabled">Enable Loop Detection</Label>
+            <Select 
+              value={loopDetectionEnabled ? "true" : "false"} 
+              onValueChange={(val) => setLoopDetectionEnabled(val === "true")}
+            >
+              <SelectTrigger id="loop-detection-enabled">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="true">Enabled</SelectItem>
+                <SelectItem value="false">Disabled</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              When enabled, streams will be automatically stopped if they fall behind live by the configured threshold
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="loop-detection-threshold">Threshold (Minutes)</Label>
+            <Input
+              id="loop-detection-threshold"
+              type="number"
+              min="1"
+              value={loopDetectionThresholdMinutes}
+              onChange={(e) => setLoopDetectionThresholdMinutes(parseInt(e.target.value) || 60)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Stop stream if broadcast position (live_last) is behind current time by this many minutes
+              ({loopDetectionThresholdMinutes} minutes = {(loopDetectionThresholdMinutes / 60).toFixed(2)} hours)
+            </p>
+          </div>
+
+          <div className="pt-4">
+            <Button 
+              onClick={saveLoopDetectionConfig}
+              disabled={loopDetectionLoading || !apiKey}
+            >
+              {loopDetectionLoading ? 'Saving...' : 'Save Loop Detection Settings'}
+            </Button>
+            {!apiKey && (
+              <p className="text-xs text-destructive mt-2">
+                API Key is required to update settings
+              </p>
+            )}
+          </div>
+
+          {loopDetectionMessage && (
+            <div className="flex items-center gap-2 p-3 bg-success/10 border border-success rounded-md">
+              <CheckCircle2 className="h-4 w-4 text-success" />
+              <span className="text-sm text-success">{loopDetectionMessage}</span>
+            </div>
+          )}
+
+          {loopDetectionError && (
+            <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive rounded-md">
+              <AlertCircle className="h-4 w-4 text-destructive" />
+              <span className="text-sm text-destructive">{loopDetectionError}</span>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
