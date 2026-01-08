@@ -7,3 +7,6 @@ tenacity==9.0.0
 prometheus-client==0.20.0
 python-dotenv==1.0.1
 SQLAlchemy==2.0.32
+redis==5.0.1
+gevent==24.2.1
+requests==2.31.0
