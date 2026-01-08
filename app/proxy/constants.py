@@ -80,3 +80,10 @@ TS_PACKET_SIZE = 188
 TS_SYNC_BYTE = 0x47
 NULL_PID_HIGH = 0x1F
 NULL_PID_LOW = 0xFF
+
+# HTTP streaming constants
+VLC_USER_AGENT = "VLC/3.0.21 LibVLC/3.0.21"
+
+# Stream generator constants
+INITIAL_DATA_WAIT_TIMEOUT = 10  # Maximum seconds to wait for initial data in buffer
+INITIAL_DATA_CHECK_INTERVAL = 0.2  # Seconds between buffer checks

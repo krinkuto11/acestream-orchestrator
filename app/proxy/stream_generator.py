@@ -10,7 +10,7 @@ import gevent
 from .config_helper import ConfigHelper
 from .utils import get_logger, create_ts_packet
 from .redis_keys import RedisKeys
-from .constants import StreamMetadataField
+from .constants import StreamMetadataField, INITIAL_DATA_WAIT_TIMEOUT, INITIAL_DATA_CHECK_INTERVAL
 
 logger = get_logger()
 
@@ -137,8 +137,8 @@ class StreamGenerator:
         playback URL and fetch the first chunks. Without this wait, clients will
         see an empty buffer and disconnect prematurely.
         """
-        timeout = 10  # Maximum 10 seconds to wait for initial data
-        check_interval = 0.2  # Check every 200ms
+        timeout = INITIAL_DATA_WAIT_TIMEOUT
+        check_interval = INITIAL_DATA_CHECK_INTERVAL
         start_time = time.time()
         
         logger.info(f"[{self.client_id}] Waiting for initial data in buffer...")

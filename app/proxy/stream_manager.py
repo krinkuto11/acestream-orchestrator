@@ -16,7 +16,7 @@ from .http_streamer import HTTPStreamReader
 from .stream_buffer import StreamBuffer
 from .client_manager import ClientManager
 from .redis_keys import RedisKeys
-from .constants import StreamState, EventType, StreamMetadataField
+from .constants import StreamState, EventType, StreamMetadataField, VLC_USER_AGENT
 from .config_helper import ConfigHelper, Config
 from .utils import get_logger
 
@@ -185,7 +185,7 @@ class StreamManager:
             # Some AceStream engines may behave differently based on the user agent
             self.http_reader = HTTPStreamReader(
                 url=self.playback_url,
-                user_agent="VLC/3.0.21 LibVLC/3.0.21",
+                user_agent=VLC_USER_AGENT,
                 chunk_size=ConfigHelper.chunk_size()
             )
             

@@ -8,6 +8,7 @@ import os
 import requests
 from requests.adapters import HTTPAdapter
 from .utils import get_logger
+from .constants import VLC_USER_AGENT
 
 logger = get_logger()
 
@@ -44,7 +45,7 @@ class HTTPStreamReader:
         try:
             # Build headers - mimic VLC player for better compatibility
             headers = {
-                'User-Agent': self.user_agent or 'VLC/3.0.21 LibVLC/3.0.21',
+                'User-Agent': self.user_agent or VLC_USER_AGENT,
                 'Accept': '*/*',
                 'Accept-Encoding': 'identity',
                 'Connection': 'keep-alive',
