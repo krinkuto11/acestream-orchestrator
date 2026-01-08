@@ -146,7 +146,5 @@ def test_proxy_server_uses_threading():
     assert 'gevent.spawn' not in source_without_comments, "ProxyServer.start_stream should NOT use gevent.spawn (outside comments)"
     assert 'thread.start()' in source, "ProxyServer.start_stream should call thread.start()"
 
-
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
