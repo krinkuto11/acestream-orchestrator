@@ -10,7 +10,7 @@ import gevent
 from .config_helper import ConfigHelper
 from .utils import get_logger, create_ts_packet
 from .redis_keys import RedisKeys
-from .constants import StreamMetadataField, INITIAL_DATA_WAIT_TIMEOUT, INITIAL_DATA_CHECK_INTERVAL
+from .constants import StreamMetadataField
 
 logger = get_logger()
 
@@ -66,6 +66,10 @@ class StreamGenerator:
                 return
             
             # Main streaming loop
+            # Get no data timeout settings
+            no_data_max_checks = ConfigHelper.no_data_timeout_checks()
+            no_data_check_interval = ConfigHelper.no_data_check_interval()
+            
             while True:
                 # Get chunks from buffer
                 chunks = self.buffer.get_chunks(self.local_index)
@@ -89,13 +93,14 @@ class StreamGenerator:
                     # No data available
                     self.consecutive_empty += 1
                     
-                    # Check if stream has ended
-                    if self.consecutive_empty > 30:
-                        logger.info(f"[{self.client_id}] Stream ended (no data)")
+                    # Check if stream has ended (no data for too long)
+                    if self.consecutive_empty > no_data_max_checks:
+                        timeout_seconds = no_data_max_checks * no_data_check_interval
+                        logger.info(f"[{self.client_id}] Stream ended (no data for {timeout_seconds:.1f}s)")
                         break
                     
                     # Wait a bit before retrying
-                    gevent.sleep(0.1)
+                    gevent.sleep(no_data_check_interval)
                 
                 # Refresh client TTL periodically
                 if time.time() - self.last_ttl_refresh >= self.ttl_refresh_interval:
@@ -137,11 +142,11 @@ class StreamGenerator:
         playback URL and fetch the first chunks. Without this wait, clients will
         see an empty buffer and disconnect prematurely.
         """
-        timeout = INITIAL_DATA_WAIT_TIMEOUT
-        check_interval = INITIAL_DATA_CHECK_INTERVAL
+        timeout = ConfigHelper.initial_data_wait_timeout()
+        check_interval = ConfigHelper.initial_data_check_interval()
         start_time = time.time()
         
-        logger.info(f"[{self.client_id}] Waiting for initial data in buffer...")
+        logger.info(f"[{self.client_id}] Waiting for initial data in buffer (timeout: {timeout}s)...")
         
         while time.time() - start_time < timeout:
             # Check if buffer has any data
