@@ -218,7 +218,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
             <div className="space-y-2">
               <Label>Buffer Chunk Size</Label>
               <div className="px-3 py-2 bg-muted rounded-md font-mono text-sm">
-                {(bufferChunkSize / 1024).toFixed(0)} KB
+                {bufferChunkSize > 0 ? (bufferChunkSize / 1024).toFixed(0) : '0'} KB
               </div>
             </div>
           </div>
