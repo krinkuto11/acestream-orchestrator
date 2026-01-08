@@ -77,7 +77,12 @@ class HTTPStreamReader:
 
             if self.response.status_code != 200:
                 logger.error(f"HTTP {self.response.status_code} from {self.url}")
-                logger.debug(f"Response text: {self.response.text[:500] if self.response.text else 'empty'}")
+                # Log a preview of the response body (limited to avoid loading entire response into memory)
+                try:
+                    response_preview = self.response.content[:500].decode('utf-8', errors='ignore')
+                    logger.debug(f"Response preview: {response_preview}")
+                except Exception:
+                    logger.debug("Could not read response preview")
                 return
 
             logger.info(f"HTTP reader connected successfully, streaming data...")
