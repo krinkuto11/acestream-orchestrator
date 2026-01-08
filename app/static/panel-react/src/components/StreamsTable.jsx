@@ -644,7 +644,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
         'Content-Type': 'application/json'
       }
       if (apiKey) {
-        headers['X-API-KEY'] = apiKey
+        headers['Authorization'] = `Bearer ${apiKey}`
       }
       
       const response = await fetch(`${orchUrl}/streams/batch-stop`, {

@@ -57,7 +57,7 @@ export function SettingsPage({
         {
           method: 'POST',
           headers: {
-            'X-API-KEY': apiKey
+            'Authorization': `Bearer ${apiKey}`
           }
         }
       )
