@@ -37,6 +37,7 @@ from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_ca
 from .services.acexy import acexy_sync_service
 from .services.stream_loop_detector import stream_loop_detector
 from .services.looping_streams import looping_streams_tracker
+from .services.proxy_manager import ProxyManager
 
 logger = logging.getLogger(__name__)
 
