@@ -175,8 +175,10 @@ class ProxyServer:
             owner_key = RedisKeys.stream_owner(content_id)
             self.redis_client.set(owner_key, self.worker_id, ex=300)
             
-            # Start stream manager in background
-            gevent.spawn(stream_manager.run)
+            # Start stream manager in background thread
+            # Using threading.Thread instead of gevent.spawn because uvicorn doesn't use gevent worker
+            thread = threading.Thread(target=stream_manager.run, daemon=True, name=f"stream-{content_id[:8]}")
+            thread.start()
             
             logger.info(f"Started stream for content_id={content_id}")
             return True
