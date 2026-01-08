@@ -17,7 +17,7 @@ FROM alpine:3.18 AS final-stage
 
 COPY --from=build-stage /acexy         /acexy
 EXPOSE 8080
-ENV ACEXY_LISTEN_ADDR=":8080"
+ENV ACEXY_ADDR=":8080"
 # USER acestream:acestream
 
 # Install curl for healthcheck
@@ -25,6 +25,6 @@ RUN apk add --no-cache curl
 
 # Healthcheck against the HTTP status endpoint
 HEALTHCHECK --interval=10s --timeout=10s --start-period=1s \
-    CMD curl -qf http://localhost${ACEXY_LISTEN_ADDR}/ace/status || exit 1
+    CMD curl -qf http://localhost:8080/ace/status || exit 1
 
 ENTRYPOINT [ "/acexy" ]
