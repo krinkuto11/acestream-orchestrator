@@ -185,7 +185,7 @@ class StreamGenerator:
         # Wait for initial data in buffer before starting streaming
         # This gives the HTTP streamer time to fetch data from the playback URL
         if not self._wait_for_initial_data():
-            logger.error(f"[{self.client_id}] Timeout waiting for initial data")
+            # Error already logged in _wait_for_initial_data
             return False
         
         # Start from current buffer position
