@@ -79,7 +79,8 @@ class HTTPStreamReader:
                 logger.error(f"HTTP {self.response.status_code} from {self.url}")
                 # Log a preview of the response body (limited to avoid loading entire response into memory)
                 try:
-                    response_preview = self.response.content[:500].decode('utf-8', errors='ignore')
+                    # Read only first 500 bytes without loading entire response
+                    response_preview = next(self.response.iter_content(chunk_size=500), b'').decode('utf-8', errors='ignore')
                     logger.debug(f"Response preview: {response_preview}")
                 except Exception:
                     logger.debug("Could not read response preview")

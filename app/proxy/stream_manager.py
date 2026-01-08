@@ -120,14 +120,10 @@ class StreamManager:
             
             return True
             
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to request stream from AceStream engine: {e}")
-            logger.error(f"Request details - URL: {full_url}, Engine: {self.engine_host}:{self.engine_port}")
-            logger.debug(f"Exception details: {e}", exc_info=True)
-            return False
         except Exception as e:
+            # Log detailed error information for both request and general exceptions
             logger.error(f"Failed to request stream from AceStream engine: {e}")
-            logger.error(f"Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}")
+            logger.error(f"Request details - URL: {full_url}, Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}")
             logger.debug(f"Exception details: {e}", exc_info=True)
             return False
     
