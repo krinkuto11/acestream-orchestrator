@@ -181,10 +181,11 @@ class StreamManager:
     def start_stream(self):
         """Start streaming from AceStream engine"""
         try:
-            # Create HTTP stream reader
+            # Create HTTP stream reader with VLC user agent for better compatibility
+            # Some AceStream engines may behave differently based on the user agent
             self.http_reader = HTTPStreamReader(
                 url=self.playback_url,
-                user_agent="AceStreamProxy/1.0",
+                user_agent="VLC/3.0.21 LibVLC/3.0.21",
                 chunk_size=ConfigHelper.chunk_size()
             )
             

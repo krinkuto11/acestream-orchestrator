@@ -130,6 +130,37 @@ class StreamGenerator:
         logger.error(f"[{self.client_id}] Stream initialization timeout")
         return False
     
+    def _wait_for_initial_data(self):
+        """Wait for initial data to arrive in the buffer before starting streaming.
+        
+        This is critical because the HTTP streamer needs time to connect to the
+        playback URL and fetch the first chunks. Without this wait, clients will
+        see an empty buffer and disconnect prematurely.
+        """
+        timeout = 10  # Maximum 10 seconds to wait for initial data
+        check_interval = 0.2  # Check every 200ms
+        start_time = time.time()
+        
+        logger.info(f"[{self.client_id}] Waiting for initial data in buffer...")
+        
+        while time.time() - start_time < timeout:
+            # Check if buffer has any data
+            if self.buffer.index > 0:
+                elapsed = time.time() - start_time
+                logger.info(f"[{self.client_id}] Initial data available after {elapsed:.2f}s (buffer index: {self.buffer.index})")
+                return True
+            
+            # Wait before checking again
+            gevent.sleep(check_interval)
+        
+        # Timeout - but still proceed if we have at least some data
+        if self.buffer.index > 0:
+            logger.warning(f"[{self.client_id}] Initial data wait timeout, but buffer has data (index: {self.buffer.index})")
+            return True
+        
+        logger.error(f"[{self.client_id}] Timeout waiting for initial data (buffer still empty after {timeout}s)")
+        return False
+    
     def _setup_streaming(self):
         """Setup streaming parameters"""
         from .server import ProxyServer
@@ -150,6 +181,12 @@ class StreamGenerator:
         
         # Add client
         self.client_manager.add_client(self.client_id, self.client_ip, self.client_user_agent)
+        
+        # Wait for initial data in buffer before starting streaming
+        # This gives the HTTP streamer time to fetch data from the playback URL
+        if not self._wait_for_initial_data():
+            logger.error(f"[{self.client_id}] Timeout waiting for initial data")
+            return False
         
         # Start from current buffer position
         self.local_index = self.buffer.index

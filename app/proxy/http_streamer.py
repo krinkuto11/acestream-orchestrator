@@ -42,10 +42,13 @@ class HTTPStreamReader:
     def _read_stream(self):
         """Thread worker that reads HTTP stream and writes to pipe"""
         try:
-            # Build headers
-            headers = {}
-            if self.user_agent:
-                headers['User-Agent'] = self.user_agent
+            # Build headers - mimic VLC player for better compatibility
+            headers = {
+                'User-Agent': self.user_agent or 'VLC/3.0.21 LibVLC/3.0.21',
+                'Accept': '*/*',
+                'Accept-Encoding': 'identity',
+                'Connection': 'keep-alive',
+            }
 
             logger.info(f"HTTP reader connecting to {self.url}")
 
