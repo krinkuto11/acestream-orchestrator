@@ -1719,7 +1719,7 @@ def get_stream_loop_detection_config():
     }
 
 @app.post("/stream-loop-detection/config", dependencies=[Depends(require_api_key)])
-def update_stream_loop_detection_config(enabled: bool, threshold_seconds: int):
+async def update_stream_loop_detection_config(enabled: bool, threshold_seconds: int):
     """
     Update stream loop detection configuration.
     
@@ -1737,13 +1737,12 @@ def update_stream_loop_detection_config(enabled: bool, threshold_seconds: int):
     cfg.STREAM_LOOP_DETECTION_THRESHOLD_S = threshold_seconds
     
     # Restart the loop detector if enabled
-    import asyncio
     if enabled:
-        asyncio.create_task(stream_loop_detector.stop())
-        asyncio.create_task(stream_loop_detector.start())
+        await stream_loop_detector.stop()
+        await stream_loop_detector.start()
         logger.info(f"Stream loop detection restarted with threshold {threshold_seconds}s")
     else:
-        asyncio.create_task(stream_loop_detector.stop())
+        await stream_loop_detector.stop()
         logger.info("Stream loop detection disabled")
     
     return {
