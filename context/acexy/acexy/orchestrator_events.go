@@ -662,6 +662,54 @@ func (c *orchClient) GetEngineStreams(containerID string) ([]streamState, error)
 	return streams, nil
 }
 
+// IsStreamLooping checks if a stream ID is marked as looping
+func (c *orchClient) IsStreamLooping(aceID string) (bool, error) {
+	if c == nil {
+		return false, fmt.Errorf("orchestrator client not configured")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, c.base+"/looping-streams", nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if c.key != "" {
+		req.Header.Set("Authorization", "Bearer "+c.key)
+	}
+
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		// If we can't reach the endpoint, assume stream is not looping (fail open)
+		slog.Debug("Failed to check looping streams (assuming not looping)", "error", err)
+		return false, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		// If endpoint returns error, assume stream is not looping (fail open)
+		slog.Debug("Looping streams endpoint returned error (assuming not looping)", "status", resp.StatusCode)
+		return false, nil
+	}
+
+	var result struct {
+		StreamIDs []string `json:"stream_ids"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		// If we can't decode response, assume stream is not looping (fail open)
+		slog.Debug("Failed to decode looping streams response (assuming not looping)", "error", err)
+		return false, nil
+	}
+
+	// Check if aceID is in the list
+	for _, id := range result.StreamIDs {
+		if id == aceID {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 // calculateWaitTime determines how long to wait before retrying based on recovery ETA
 func calculateWaitTime(recoveryETA, attempt int) int {
 	if recoveryETA > 0 {
@@ -821,12 +869,29 @@ func (c *orchClient) ProvisionAcestream() (*aceProvisionResponse, error) {
 // Returns host, port, containerID, and error. Prioritizes healthy engines first, then forwarded engines (faster),
 // then among engines with the same health status, forwarded status, and stream count, chooses the one with the
 // oldest last_stream_usage timestamp.
-func (c *orchClient) SelectBestEngine() (string, int, string, error) {
+func (c *orchClient) SelectBestEngine(aceID string) (string, int, string, error) {
 	debugLog := debug.GetDebugLogger()
 	startTime := time.Now()
 
 	if c == nil {
 		return "", 0, "", fmt.Errorf("orchestrator client not configured")
+	}
+
+	// First, check if this stream ID is in the looping streams list
+	if isLooping, err := c.IsStreamLooping(aceID); err == nil && isLooping {
+		slog.Warn("Stream is marked as looping, rejecting playback", "ace_id", aceID)
+		duration := time.Since(startTime)
+		debugLog.LogEngineSelection("select_best_engine", "", 0, "", duration, "stream_is_looping")
+		return "", 0, "", &ProvisioningError{
+			StatusCode: http.StatusServiceUnavailable,
+			Details: &ProvisionError{
+				Code:               "stream_looping",
+				Message:            "This stream has been detected as looping (no new data). Playback is not available.",
+				RecoveryETASeconds: 0,
+				ShouldWait:         false,
+				CanRetry:           false,
+			},
+		}
 	}
 
 	// Get all available engines

@@ -6,6 +6,7 @@ from typing import Optional
 from .state import state
 from ..core.config import cfg
 from ..models.schemas import StreamEndedEvent
+from .looping_streams import looping_streams_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class StreamLoopDetector:
         self._task = None
         self._stop = asyncio.Event()
         self._first_check_completed = {}  # Track which streams have had their first valid check
-        self._check_interval_s = 10  # Check every 10 seconds
+        self._check_interval_s = cfg.STREAM_LOOP_CHECK_INTERVAL_S  # Configurable check interval
 
     async def start(self):
         if not cfg.STREAM_LOOP_DETECTION_ENABLED:
@@ -36,8 +37,12 @@ class StreamLoopDetector:
         if self._task and not self._task.done():
             return
         self._stop.clear()
+        
+        # Update check interval from config
+        self._check_interval_s = cfg.STREAM_LOOP_CHECK_INTERVAL_S
+        
         self._task = asyncio.create_task(self._run())
-        logger.info(f"Stream loop detector started (threshold: {cfg.STREAM_LOOP_DETECTION_THRESHOLD_S}s)")
+        logger.info(f"Stream loop detector started (threshold: {cfg.STREAM_LOOP_DETECTION_THRESHOLD_S}s, check_interval: {self._check_interval_s}s)")
 
     async def stop(self):
         self._stop.set()
@@ -128,6 +133,10 @@ class StreamLoopDetector:
                     f"Stream {stream.id} is {time_behind}s behind live (threshold: {cfg.STREAM_LOOP_DETECTION_THRESHOLD_S}s). "
                     f"Stopping stream due to loop detection."
                 )
+                
+                # Add stream key to looping streams tracker
+                # This allows Acexy to check if a stream is looping before selecting an engine
+                looping_streams_tracker.add_looping_stream(stream.key)
                 
                 # Stop the stream via command URL
                 await self._stop_stream(client, stream, time_behind)

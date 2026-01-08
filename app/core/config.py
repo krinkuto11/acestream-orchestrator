@@ -81,6 +81,11 @@ class Cfg(BaseModel):
     # If live_last is behind current time by this amount, stream will be stopped
     STREAM_LOOP_DETECTION_THRESHOLD_S: int = int(os.getenv("STREAM_LOOP_DETECTION_THRESHOLD_S", "3600"))  # Default 1 hour
     STREAM_LOOP_DETECTION_ENABLED: bool = os.getenv("STREAM_LOOP_DETECTION_ENABLED", "false").lower() == "true"
+    # Check interval for stream loop detection (in seconds)
+    STREAM_LOOP_CHECK_INTERVAL_S: int = int(os.getenv("STREAM_LOOP_CHECK_INTERVAL_S", "10"))  # Default 10 seconds
+    # Retention time for looping stream IDs in the tracker (in minutes)
+    # 0 or None = indefinite retention
+    STREAM_LOOP_RETENTION_MINUTES: int = int(os.getenv("STREAM_LOOP_RETENTION_MINUTES", "0"))  # Default indefinite
 
     @model_validator(mode='after')
     def validate_replicas(self):
