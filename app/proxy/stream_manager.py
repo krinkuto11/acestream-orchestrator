@@ -157,7 +157,7 @@ class StreamManager:
             
             headers = {}
             if self.api_key:
-                headers['X-API-KEY'] = self.api_key
+                headers['Authorization'] = f'Bearer {self.api_key}'
                 logger.debug(f"Sending stream started event with API key to {orchestrator_url}/events/stream_started")
             else:
                 logger.warning("No API key configured for stream started event - may fail with 401 Unauthorized")
@@ -205,7 +205,7 @@ class StreamManager:
             
             headers = {}
             if self.api_key:
-                headers['X-API-KEY'] = self.api_key
+                headers['Authorization'] = f'Bearer {self.api_key}'
                 logger.debug(f"Sending stream ended event with API key to {orchestrator_url}/events/stream_ended")
             else:
                 logger.warning("No API key configured for stream ended event - may fail with 401 Unauthorized")
