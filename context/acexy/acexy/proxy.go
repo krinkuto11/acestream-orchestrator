@@ -129,7 +129,7 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	if p.Orch != nil {
 		// Try to get an available engine from orchestrator
-		host, port, engineContainerID, err := p.Orch.SelectBestEngine()
+		host, port, engineContainerID, err := p.Orch.SelectBestEngine(aceIDStr)
 		if err != nil {
 			// Check if it's a structured provisioning error
 			var provErr *ProvisioningError

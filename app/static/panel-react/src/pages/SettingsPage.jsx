@@ -18,13 +18,18 @@ export function SettingsPage({
 }) {
   const [loopDetectionEnabled, setLoopDetectionEnabled] = useState(false)
   const [loopDetectionThresholdMinutes, setLoopDetectionThresholdMinutes] = useState(60)
+  const [loopDetectionCheckIntervalSeconds, setLoopDetectionCheckIntervalSeconds] = useState(10)
+  const [loopDetectionRetentionMinutes, setLoopDetectionRetentionMinutes] = useState(0)
   const [loopDetectionLoading, setLoopDetectionLoading] = useState(false)
   const [loopDetectionMessage, setLoopDetectionMessage] = useState(null)
   const [loopDetectionError, setLoopDetectionError] = useState(null)
+  const [loopingStreams, setLoopingStreams] = useState([])
+  const [loopingStreamsLoading, setLoopingStreamsLoading] = useState(false)
 
   // Load loop detection config on mount
   useEffect(() => {
     fetchLoopDetectionConfig()
+    fetchLoopingStreams()
   }, [orchUrl])
 
   const fetchLoopDetectionConfig = async () => {
@@ -34,9 +39,78 @@ export function SettingsPage({
         const data = await response.json()
         setLoopDetectionEnabled(data.enabled)
         setLoopDetectionThresholdMinutes(Math.round(data.threshold_minutes))
+        setLoopDetectionCheckIntervalSeconds(data.check_interval_seconds || 10)
+        setLoopDetectionRetentionMinutes(data.retention_minutes || 0)
       }
     } catch (err) {
       console.error('Failed to fetch loop detection config:', err)
+    }
+  }
+
+  const fetchLoopingStreams = async () => {
+    setLoopingStreamsLoading(true)
+    try {
+      const response = await fetch(`${orchUrl}/looping-streams`)
+      if (response.ok) {
+        const data = await response.json()
+        setLoopingStreams(Object.entries(data.streams || {}).map(([id, time]) => ({ id, time })))
+      }
+    } catch (err) {
+      console.error('Failed to fetch looping streams:', err)
+    } finally {
+      setLoopingStreamsLoading(false)
+    }
+  }
+
+  const removeLoopingStream = async (streamId) => {
+    if (!apiKey) {
+      setLoopDetectionError('API Key is required to remove streams')
+      return
+    }
+
+    try {
+      const response = await fetch(`${orchUrl}/looping-streams/${streamId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+        }
+      })
+
+      if (response.ok) {
+        setLoopDetectionMessage(`Stream ${streamId.substring(0, 16)}... removed from looping list`)
+        await fetchLoopingStreams()
+      } else {
+        const errorData = await response.json()
+        setLoopDetectionError(errorData.detail || 'Failed to remove stream')
+      }
+    } catch (err) {
+      setLoopDetectionError('Failed to remove stream: ' + err.message)
+    }
+  }
+
+  const clearAllLoopingStreams = async () => {
+    if (!apiKey) {
+      setLoopDetectionError('API Key is required to clear streams')
+      return
+    }
+
+    try {
+      const response = await fetch(`${orchUrl}/looping-streams/clear`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+        }
+      })
+
+      if (response.ok) {
+        setLoopDetectionMessage('All looping streams cleared')
+        await fetchLoopingStreams()
+      } else {
+        const errorData = await response.json()
+        setLoopDetectionError(errorData.detail || 'Failed to clear streams')
+      }
+    } catch (err) {
+      setLoopDetectionError('Failed to clear streams: ' + err.message)
     }
   }
 
@@ -53,7 +127,7 @@ export function SettingsPage({
     try {
       const thresholdSeconds = loopDetectionThresholdMinutes * 60
       const response = await fetch(
-        `${orchUrl}/stream-loop-detection/config?enabled=${loopDetectionEnabled}&threshold_seconds=${thresholdSeconds}`,
+        `${orchUrl}/stream-loop-detection/config?enabled=${loopDetectionEnabled}&threshold_seconds=${thresholdSeconds}&check_interval_seconds=${loopDetectionCheckIntervalSeconds}&retention_minutes=${loopDetectionRetentionMinutes}`,
         {
           method: 'POST',
           headers: {
@@ -200,6 +274,37 @@ export function SettingsPage({
             </p>
           </div>
 
+          <div className="space-y-2">
+            <Label htmlFor="loop-detection-check-interval">Check Interval (Seconds)</Label>
+            <Input
+              id="loop-detection-check-interval"
+              type="number"
+              min="5"
+              value={loopDetectionCheckIntervalSeconds}
+              onChange={(e) => setLoopDetectionCheckIntervalSeconds(parseInt(e.target.value) || 10)}
+            />
+            <p className="text-xs text-muted-foreground">
+              How often to check streams for loop detection (minimum: 5 seconds)
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="loop-detection-retention">Retention Time (Minutes)</Label>
+            <Input
+              id="loop-detection-retention"
+              type="number"
+              min="0"
+              value={loopDetectionRetentionMinutes}
+              onChange={(e) => setLoopDetectionRetentionMinutes(parseInt(e.target.value) || 0)}
+            />
+            <p className="text-xs text-muted-foreground">
+              How long to keep looping stream IDs in the list. Set to 0 for indefinite retention.
+              {loopDetectionRetentionMinutes === 0 
+                ? ' (Currently: Indefinite - streams remain until manually removed)' 
+                : ` (Currently: ${loopDetectionRetentionMinutes} minutes = ${(loopDetectionRetentionMinutes / 60).toFixed(2)} hours)`}
+            </p>
+          </div>
+
           <div className="pt-4">
             <Button 
               onClick={saveLoopDetectionConfig}
@@ -227,6 +332,60 @@ export function SettingsPage({
               <span className="text-sm text-destructive">{loopDetectionError}</span>
             </div>
           )}
+
+          {/* Looping Streams List */}
+          <div className="pt-4 border-t">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-sm font-semibold">Looping Streams</h3>
+                <p className="text-xs text-muted-foreground">
+                  Streams currently marked as looping. Acexy will reject playback attempts for these streams.
+                </p>
+              </div>
+              {loopingStreams.length > 0 && (
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={clearAllLoopingStreams}
+                  disabled={!apiKey}
+                >
+                  Clear All
+                </Button>
+              )}
+            </div>
+            
+            {loopingStreamsLoading ? (
+              <div className="text-center py-4 text-muted-foreground">
+                Loading looping streams...
+              </div>
+            ) : loopingStreams.length === 0 ? (
+              <div className="text-center py-4 text-muted-foreground">
+                No looping streams detected
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {loopingStreams.map(({ id, time }) => (
+                  <div key={id} className="flex items-center justify-between p-3 bg-muted/50 rounded-md">
+                    <div className="flex-1">
+                      <div className="font-mono text-sm">{id}</div>
+                      <div className="text-xs text-muted-foreground">
+                        Detected: {new Date(time).toLocaleString()}
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeLoopingStream(id)}
+                      disabled={!apiKey}
+                      className="ml-2"
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
     </div>
