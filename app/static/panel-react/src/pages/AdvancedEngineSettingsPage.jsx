@@ -219,7 +219,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-KEY': apiKey
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify(config)
       })
@@ -246,7 +246,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-KEY': apiKey
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
           name: templateName,
@@ -273,7 +273,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}/activate`, {
               method: 'POST',
               headers: {
-                'X-API-KEY': apiKey
+                'Authorization': `Bearer ${apiKey}`
               }
             })
             toast.success(`Template ${editingTemplateSlot} automatically activated as the first template`)
@@ -309,7 +309,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-KEY': apiKey
+        'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
         name: templateName,
@@ -336,7 +336,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-KEY': apiKey
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify(config)
       })
@@ -350,7 +350,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       await fetchJSON(`${orchUrl}/custom-variant/reprovision`, {
         method: 'POST',
         headers: {
-          'X-API-KEY': apiKey
+          'Authorization': `Bearer ${apiKey}`
         }
       })
       
@@ -375,7 +375,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-KEY': apiKey
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
           name: name,
@@ -405,7 +405,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       const response = await fetchJSON(`${orchUrl}/custom-variant/templates/${slotId}/activate`, {
         method: 'POST',
         headers: {
-          'X-API-KEY': apiKey
+          'Authorization': `Bearer ${apiKey}`
         }
       })
       
@@ -431,7 +431,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       await fetchJSON(`${orchUrl}/custom-variant/templates/${slotId}`, {
         method: 'DELETE',
         headers: {
-          'X-API-KEY': apiKey
+          'Authorization': `Bearer ${apiKey}`
         }
       })
       
@@ -467,7 +467,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-KEY': apiKey
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
           json_data: fileContent
@@ -487,7 +487,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-KEY': apiKey
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
           name: newName
@@ -703,7 +703,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                       const response = await fetchJSON(`${orchUrl}/custom-variant/templates/${firstTemplate.slot_id}/activate`, {
                         method: 'POST',
                         headers: {
-                          'X-API-KEY': apiKey
+                          'Authorization': `Bearer ${apiKey}`
                         }
                       })
                       toast.success(`Auto-loaded template: ${firstTemplate.name}`)

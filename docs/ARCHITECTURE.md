@@ -19,7 +19,7 @@ The AceStream Orchestrator is a dynamic container orchestration service that pro
 
 ### Objective
 
-Launch AceStream containers on-demand to serve streams requested by a proxy. The orchestrator provides intelligent health monitoring, usage tracking, and a modern dashboard interface for operational visibility.
+Launch AceStream containers on-demand with intelligent health monitoring and usage tracking. The orchestrator provides intelligent health monitoring, usage tracking, and a modern dashboard interface for operational visibility.
 
 ### Core Functionality
 

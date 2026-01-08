@@ -35,7 +35,7 @@ from .services.docker_stats import get_container_stats, get_multiple_container_s
 from .services.docker_stats_collector import docker_stats_collector
 from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_cache, get_cache
 from .services.acexy import acexy_sync_service
-from .services.proxy.proxy_manager import ProxyManager
+from .services.stream_loop_detector import stream_loop_detector
 
 logger = logging.getLogger(__name__)
 
@@ -141,16 +141,12 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(health_manager.start())  # Start proactive health management
     asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
     asyncio.create_task(acexy_sync_service.start())  # Start Acexy sync service
+    asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
     # Start cache cleanup task
     await start_cleanup_task(interval=60)
     logger.info("Cache service started")
-    
-    # Start proxy manager
-    proxy_manager = ProxyManager.get_instance()
-    await proxy_manager.start()
-    logger.info("Proxy manager started")
     
     yield
     
@@ -163,12 +159,8 @@ async def lifespan(app: FastAPI):
     await docker_stats_collector.stop()  # Stop Docker stats collector
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
     await acexy_sync_service.stop()  # Stop Acexy sync service
+    await stream_loop_detector.stop()  # Stop stream loop detector
     await stop_cleanup_task()  # Stop cache cleanup
-    
-    # Stop proxy manager
-    proxy_manager = ProxyManager.get_instance()
-    await proxy_manager.stop()
-    logger.info("Proxy manager stopped")
     
     # Give a small delay to ensure any pending operations complete
     await asyncio.sleep(0.1)
@@ -1715,3 +1707,50 @@ async def proxy_session_info(ace_id: str):
 
 
 # WebSocket endpoint removed - using simple polling approach
+
+@app.get("/stream-loop-detection/config")
+def get_stream_loop_detection_config():
+    """Get current stream loop detection configuration."""
+    return {
+        "enabled": cfg.STREAM_LOOP_DETECTION_ENABLED,
+        "threshold_seconds": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S,
+        "threshold_minutes": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S / 60,
+        "threshold_hours": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S / 3600,
+    }
+
+@app.post("/stream-loop-detection/config", dependencies=[Depends(require_api_key)])
+def update_stream_loop_detection_config(enabled: bool, threshold_seconds: int):
+    """
+    Update stream loop detection configuration.
+    
+    Args:
+        enabled: Whether to enable stream loop detection
+        threshold_seconds: Threshold in seconds for detecting stale streams
+    
+    Note: This updates the runtime configuration but does not persist to .env file.
+    """
+    if threshold_seconds < 60:
+        raise HTTPException(status_code=400, detail="Threshold must be at least 60 seconds")
+    
+    # Update config
+    cfg.STREAM_LOOP_DETECTION_ENABLED = enabled
+    cfg.STREAM_LOOP_DETECTION_THRESHOLD_S = threshold_seconds
+    
+    # Restart the loop detector if enabled
+    import asyncio
+    if enabled:
+        asyncio.create_task(stream_loop_detector.stop())
+        asyncio.create_task(stream_loop_detector.start())
+        logger.info(f"Stream loop detection restarted with threshold {threshold_seconds}s")
+    else:
+        asyncio.create_task(stream_loop_detector.stop())
+        logger.info("Stream loop detection disabled")
+    
+    return {
+        "message": "Stream loop detection configuration updated",
+        "enabled": enabled,
+        "threshold_seconds": threshold_seconds,
+        "threshold_minutes": threshold_seconds / 60,
+        "threshold_hours": threshold_seconds / 3600,
+    }
+

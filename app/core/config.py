@@ -76,9 +76,11 @@ class Cfg(BaseModel):
     AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "false").lower() == "true"
     DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
     
-    # Proxy mode configuration
-    # Options: lightweight (direct pipe) or ffmpeg (with transcoding passthrough)
-    PROXY_MODE: str = os.getenv("PROXY_MODE", "lightweight")
+    # Stream loop detection configuration
+    # Threshold for detecting stale streams (in seconds)
+    # If live_last is behind current time by this amount, stream will be stopped
+    STREAM_LOOP_DETECTION_THRESHOLD_S: int = int(os.getenv("STREAM_LOOP_DETECTION_THRESHOLD_S", "3600"))  # Default 1 hour
+    STREAM_LOOP_DETECTION_ENABLED: bool = os.getenv("STREAM_LOOP_DETECTION_ENABLED", "false").lower() == "true"
 
     @model_validator(mode='after')
     def validate_replicas(self):
@@ -156,14 +158,6 @@ class Cfg(BaseModel):
         valid_modes = ['single', 'redundant']
         if v not in valid_modes:
             raise ValueError(f'VPN_MODE must be one of: {", ".join(valid_modes)}')
-        return v
-    
-    @field_validator('PROXY_MODE')
-    @classmethod
-    def validate_proxy_mode(cls, v):
-        valid_modes = ['lightweight', 'ffmpeg']
-        if v not in valid_modes:
-            raise ValueError(f'PROXY_MODE must be one of: {", ".join(valid_modes)}')
         return v
 
     @model_validator(mode='after')

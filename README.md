@@ -9,9 +9,7 @@ Dynamic orchestration service for AceStream engines with health monitoring, usag
 
 ## What It Does
 
-Provisions AceStream engine containers on-demand, monitors their health, collects stream statistics, and provides a dashboard for operational visibility. Works with proxy services that request engines when needed.
-
-**NEW in v1.5.0**: Built-in streaming proxy with intelligent engine selection and client multiplexing. Stream directly from `/ace/getstream?id=<id>` without managing engines manually.
+Provisions AceStream engine containers on-demand, monitors their health, collects stream statistics, and provides a dashboard for operational visibility.
 
 ## Quick Start
 
@@ -51,11 +49,10 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 
 ## Core Features
 
-- **Built-in Streaming Proxy** (v1.5.0): Single endpoint for video streaming with intelligent engine selection
-  - Automatic engine selection (prioritizes forwarded, balances load)
-  - Client multiplexing (multiple clients, single stream)
-  - Automatic lifecycle management
-  - Production-ready design based on dispatcharr_proxy patterns
+- **Stream Loop Detection** (v1.6.0): Automatically detect and stop streams that are looping (no new data)
+  - Configurable threshold via UI
+  - Monitors broadcast position (live_last) against real time
+  - Automatic stream cleanup when threshold exceeded
 - **Multiple Deployment Modes**: Standalone, single VPN, or redundant VPN with automatic failover
 - **Emergency Mode**: Automatic failover and recovery when one VPN fails in redundant mode
 - **Multiple Engine Variants**: Support for AMD64 and ARM architectures with optimized configurations
@@ -73,7 +70,7 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 - **Reprovisioning Progress**: Real-time progress indicators when reprovisioning engines
 - **Health Monitoring**: Automatic detection of engine issues with real-time status updates
 - **Usage Tracking**: Track engine idle time for intelligent load balancing
-- **Modern Web Dashboard**: Real-time monitoring interface built with React and Material-UI
+- **Modern Web Dashboard**: Real-time monitoring interface built with React
 - **VPN Integration**: Gluetun VPN support with port forwarding and automatic failover
 - **Forwarded Engines**: Intelligent P2P port management for optimal connectivity
 - **Prometheus Metrics**: Built-in metrics endpoint for monitoring and alerting
@@ -81,23 +78,6 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 - **Cache Management**: Intelligent cache cleanup for resource optimization
 
 ## Documentation
-
-### Streaming Proxy (v1.5.0)
-
-- **[Proxy API Documentation](docs/PROXY_API.md)** - Complete proxy endpoint reference
-  - `/ace/getstream` endpoint usage
-  - Engine selection algorithm
-  - Client multiplexing
-  - Monitoring and troubleshooting
-  
-- **[Proxy Deployment Guide](docs/PROXY_DEPLOYMENT.md)** - Deployment and integration guide
-  - Quick start examples
-  - Client integration (VLC, MPV, web players)
-  - Load balancer configuration
-  - Performance tuning
-  - Migration from acexy
-
-### Getting Started
 
 - **[Deployment Guide](docs/DEPLOY.md)** - Complete deployment instructions for all modes
   - Standalone deployment
@@ -218,11 +198,6 @@ See [Configuration Reference](docs/CONFIG.md) for all options.
 ### Core API Endpoints
 
 ```bash
-# Streaming Proxy (v1.5.0)
-GET /ace/getstream?id=<content_id>  # Stream video content
-GET /proxy/status                    # Proxy status and sessions
-GET /proxy/sessions                  # Active streaming sessions
-
 # Provisioning
 POST /provision/acestream             # Start new engine
 
@@ -234,6 +209,10 @@ POST /events/stream_ended           # Unregister stream
 GET /engines                        # List engines with health status
 GET /streams?status=started         # List active streams
 GET /vpn/status                     # VPN status (if configured)
+
+# Stream Loop Detection (v1.6.0)
+GET /stream-loop-detection/config   # Get loop detection settings
+POST /stream-loop-detection/config  # Update loop detection settings
 
 # Monitoring
 GET /health                         # Service health

@@ -339,6 +339,17 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
             </TableCell>
           </>
         )}
+        {showSpeedColumns && (
+          <TableCell className="text-right">
+            {isActive && stream.livepos && stream.livepos.live_last ? (
+              <span className="text-sm text-white">
+                {formatLiveposTimestamp(stream.livepos.live_last)}
+              </span>
+            ) : (
+              <span className="text-sm text-muted-foreground">—</span>
+            )}
+          </TableCell>
+        )}
         <TableCell className="text-right">
           <span className="text-sm text-white">{formatBytes(stream.downloaded)}</span>
         </TableCell>
@@ -348,8 +359,8 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       </TableRow>
       {isExpanded && (
         <TableRow>
-          {/* colspan: active streams have 11 cols (checkbox + expand + 9 data), ended streams have 7 cols (expand + 6 data) */}
-          <TableCell colSpan={showSpeedColumns ? 11 : 7} className="p-6 bg-muted/50">
+          {/* colspan: active streams have 12 cols (checkbox + expand + 10 data), ended streams have 7 cols (expand + 6 data) */}
+          <TableCell colSpan={showSpeedColumns ? 12 : 7} className="p-6 bg-muted/50">
             <div className="space-y-6">
               {/* Stream Details */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -374,32 +385,6 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                   </div>
                 )}
                 
-                {/* Stream Metadata (when available from FFmpeg mode) */}
-                {stream.resolution && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Resolution</p>
-                    <p className="text-sm font-medium text-foreground">{stream.resolution}</p>
-                  </div>
-                )}
-                {stream.fps && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">FPS</p>
-                    <p className="text-sm font-medium text-foreground">{stream.fps.toFixed(2)}</p>
-                  </div>
-                )}
-                {stream.video_codec && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Video Codec</p>
-                    <p className="text-sm font-medium text-foreground">{stream.video_codec.toUpperCase()}</p>
-                  </div>
-                )}
-                {stream.audio_codec && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Audio Codec</p>
-                    <p className="text-sm font-medium text-foreground">{stream.audio_codec.toUpperCase()}</p>
-                  </div>
-                )}
-                
                 {/* LivePos Information */}
                 {stream.livepos && (
                   <>
@@ -416,12 +401,6 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                       <div>
                         <p className="text-xs text-muted-foreground">Live Start</p>
                         <p className="text-sm font-medium text-foreground">{formatLiveposTimestamp(stream.livepos.live_first)}</p>
-                      </div>
-                    )}
-                    {stream.livepos.live_last && (
-                      <div>
-                        <p className="text-xs text-muted-foreground">Live End</p>
-                        <p className="text-sm font-medium text-foreground">{formatLiveposTimestamp(stream.livepos.live_last)}</p>
                       </div>
                     )}
                     {stream.livepos.buffer_pieces && (
@@ -665,7 +644,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
         'Content-Type': 'application/json'
       }
       if (apiKey) {
-        headers['X-API-KEY'] = apiKey
+        headers['Authorization'] = `Bearer ${apiKey}`
       }
       
       const response = await fetch(`${orchUrl}/streams/batch-stop`, {
@@ -777,6 +756,11 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                     onClick={() => handleSort('peers')}
                   >
                     Peers <SortIcon column="peers" />
+                  </TableHead>
+                  <TableHead 
+                    className="text-right"
+                  >
+                    Broadcast Position
                   </TableHead>
                   <TableHead 
                     className="text-right cursor-pointer select-none"

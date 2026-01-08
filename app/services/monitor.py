@@ -80,7 +80,11 @@ class DockerMonitor:
                 logger.error(f"Error in periodic autoscaling: {e}")
     
     def _cleanup_empty_engines(self):
-        """Clean up engines that have been empty past their grace period."""
+        """Clean up engines that have been empty past their grace period.
+        
+        Prioritizes non-forwarded engines for cleanup to ensure forwarded engines
+        (which have P2P port forwarding) are preserved as long as possible.
+        """
         try:
             # In redundant VPN mode, don't clean up engines if:
             # 1. One VPN is unhealthy (system is in degraded mode)
@@ -115,15 +119,21 @@ class DockerMonitor:
             used_container_ids = {stream.container_id for stream in active_streams}
             
             # Find empty engines that can be stopped
-            for engine in all_engines:
-                if engine.container_id not in used_container_ids:
-                    if can_stop_engine(engine.container_id, bypass_grace_period=False):
-                        try:
-                            logger.info(f"Cleaning up empty engine {engine.container_id[:12]} after grace period")
-                            stop_container(engine.container_id)
-                            state.remove_engine(engine.container_id)
-                        except Exception as e:
-                            logger.error(f"Failed to cleanup engine {engine.container_id[:12]}: {e}")
+            empty_engines = [e for e in all_engines if e.container_id not in used_container_ids]
+            
+            # Sort engines: non-forwarded first, then forwarded
+            # This ensures we always try to stop non-forwarded engines before forwarded ones
+            empty_engines.sort(key=lambda e: (e.forwarded, e.container_id))
+            
+            for engine in empty_engines:
+                if can_stop_engine(engine.container_id, bypass_grace_period=False):
+                    try:
+                        engine_type = "forwarded" if engine.forwarded else "non-forwarded"
+                        logger.info(f"Cleaning up empty {engine_type} engine {engine.container_id[:12]} after grace period")
+                        stop_container(engine.container_id)
+                        state.remove_engine(engine.container_id)
+                    except Exception as e:
+                        logger.error(f"Failed to cleanup engine {engine.container_id[:12]}: {e}")
                             
         except Exception as e:
             logger.error(f"Error cleaning up empty engines: {e}")
