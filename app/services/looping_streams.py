@@ -43,7 +43,7 @@ class LoopingStreamsTracker:
             minutes: Retention time in minutes. None or 0 means indefinite retention.
         """
         with self._lock:
-            self._retention_minutes = minutes if minutes and minutes > 0 else None
+            self._retention_minutes = minutes if (minutes is not None and minutes > 0) else None
             logger.info(f"Looping streams retention set to: {minutes if self._retention_minutes else 'indefinite'} minutes")
     
     def get_retention_minutes(self) -> Optional[int]:

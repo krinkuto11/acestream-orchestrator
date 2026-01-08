@@ -33,14 +33,14 @@ def test_remove_looping_stream():
     
     # Remove it
     removed = looping_streams_tracker.remove_looping_stream(stream_id)
-    assert removed == True
+    assert removed
     
     # Verify it was removed
     assert not looping_streams_tracker.is_looping(stream_id)
     
     # Try to remove again (should return False)
     removed = looping_streams_tracker.remove_looping_stream(stream_id)
-    assert removed == False
+    assert not removed
 
 
 def test_get_looping_streams():
