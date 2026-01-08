@@ -49,7 +49,7 @@ ProxyServer.start_stream(content_id, engine_host, engine_port)
     ↓
 StreamManager.request_stream_from_engine()
     ↓
-AceStream Engine: GET /ace/getstream?format=json&infohash=X
+AceStream Engine: GET /ace/getstream?id=X&format=json
     → Response: {playback_url, stat_url, command_url, playback_session_id}
     ↓
 HTTPStreamReader(playback_url) → pipe → StreamBuffer (Redis)

@@ -27,7 +27,7 @@ Successfully implemented full battle-tested ts_proxy architecture adapted for Ac
 ### AceStream Engine Integration ✨
 
 Implemented complete workflow:
-1. **Request stream**: `GET /ace/getstream?format=json&infohash=HASH`
+1. **Request stream**: `GET /ace/getstream?id=HASH&format=json`
 2. **Parse response**: Extract playback_url, stat_url, command_url
 3. **Stream data**: HTTPStreamReader → pipe → StreamBuffer → clients
 4. **Multiplexing**: Multiple clients share single engine stream
