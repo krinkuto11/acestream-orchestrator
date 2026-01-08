@@ -53,6 +53,7 @@ class HTTPStreamReader:
             }
 
             logger.info(f"HTTP reader connecting to {self.url}")
+            logger.debug(f"Request headers: {headers}")
 
             # Create session
             self.session = requests.Session()
@@ -63,6 +64,7 @@ class HTTPStreamReader:
             self.session.mount('https://', adapter)
 
             # Stream the URL
+            logger.debug(f"Initiating HTTP GET request with timeout=(5, 30)")
             self.response = self.session.get(
                 self.url,
                 headers=headers,
@@ -70,8 +72,18 @@ class HTTPStreamReader:
                 timeout=(5, 30)  # 5s connect, 30s read
             )
 
+            logger.debug(f"HTTP response status: {self.response.status_code}")
+            logger.debug(f"HTTP response headers: {dict(self.response.headers)}")
+
             if self.response.status_code != 200:
                 logger.error(f"HTTP {self.response.status_code} from {self.url}")
+                # Log a preview of the response body (limited to avoid loading entire response into memory)
+                try:
+                    # Read only first 500 bytes without loading entire response
+                    response_preview = next(self.response.iter_content(chunk_size=500), b'').decode('utf-8', errors='ignore')
+                    logger.debug(f"Response preview: {response_preview}")
+                except Exception:
+                    logger.debug("Could not read response preview")
                 return
 
             logger.info(f"HTTP reader connected successfully, streaming data...")
