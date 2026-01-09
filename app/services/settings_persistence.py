@@ -10,8 +10,8 @@ from typing import Dict, Optional, Any
 
 logger = logging.getLogger(__name__)
 
-# Default config directory
-CONFIG_DIR = Path("/home/runner/work/acestream-orchestrator/acestream-orchestrator/app/config")
+# Default config directory - use relative path from this file
+CONFIG_DIR = Path(__file__).parent.parent / "config"
 
 # Config file paths
 PROXY_CONFIG_FILE = CONFIG_DIR / "proxy_settings.json"

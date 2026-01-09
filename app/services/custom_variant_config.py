@@ -14,8 +14,8 @@ from pydantic import BaseModel, Field, validator
 
 logger = logging.getLogger(__name__)
 
-# Default config file path
-DEFAULT_CONFIG_PATH = Path("app/config/custom_engine_variant.json")
+# Default config file path - use relative path from this file
+DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config" / "custom_engine_variant.json"
 
 # Default torrent folder path inside containers
 DEFAULT_TORRENT_FOLDER_PATH = "/root/.ACEStream/collected_torrent_files"
