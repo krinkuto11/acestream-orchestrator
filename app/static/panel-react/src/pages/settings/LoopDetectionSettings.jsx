@@ -250,7 +250,7 @@ export function LoopDetectionSettings({ apiKey, orchUrl }) {
               <div>
                 <h3 className="text-sm font-semibold">Looping Streams</h3>
                 <p className="text-xs text-muted-foreground">
-                  Streams currently marked as looping. Acexy will reject playback attempts for these streams.
+                  Streams currently marked as looping. The proxy will reject playback attempts for these streams.
                 </p>
               </div>
               {loopingStreams.length > 0 && (

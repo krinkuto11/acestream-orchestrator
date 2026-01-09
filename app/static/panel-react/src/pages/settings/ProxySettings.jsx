@@ -18,6 +18,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [connectionTimeout, setConnectionTimeout] = useState(10)
   const [streamTimeout, setStreamTimeout] = useState(60)
   const [channelShutdownDelay, setChannelShutdownDelay] = useState(5)
+  const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(3)
   
   // Read-only config for display
   const [vlcUserAgent, setVlcUserAgent] = useState('')
@@ -40,6 +41,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
         setConnectionTimeout(data.connection_timeout)
         setStreamTimeout(data.stream_timeout)
         setChannelShutdownDelay(data.channel_shutdown_delay)
+        setMaxStreamsPerEngine(data.max_streams_per_engine || 3)
         setVlcUserAgent(data.vlc_user_agent)
         setChunkSize(data.chunk_size)
         setBufferChunkSize(data.buffer_chunk_size)
@@ -68,6 +70,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
       params.append('connection_timeout', connectionTimeout)
       params.append('stream_timeout', streamTimeout)
       params.append('channel_shutdown_delay', channelShutdownDelay)
+      params.append('max_streams_per_engine', maxStreamsPerEngine)
       
       const response = await fetch(`${orchUrl}/proxy/config?${params}`, {
         method: 'POST',
@@ -225,6 +228,34 @@ export function ProxySettings({ apiKey, orchUrl }) {
             <p className="text-xs text-muted-foreground">
               Delay before shutting down streams with no active clients.
               <br /><strong>Range:</strong> 1-60 seconds. <strong>Default:</strong> 5 seconds.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+      
+      <Card>
+        <CardHeader>
+          <CardTitle>Engine Provisioning Settings</CardTitle>
+          <CardDescription>
+            Configure how the orchestrator provisions new engines based on stream load
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="max-streams-per-engine">Maximum Streams Per Engine</Label>
+            <Input
+              id="max-streams-per-engine"
+              type="number"
+              min="1"
+              max="20"
+              value={maxStreamsPerEngine}
+              onChange={(e) => setMaxStreamsPerEngine(parseInt(e.target.value) || 3)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Maximum number of streams per engine before provisioning a new engine.
+              When all engines reach this threshold minus one (e.g., 2 streams for max of 3), 
+              the orchestrator will automatically provision a new engine.
+              <br /><strong>Range:</strong> 1-20 streams. <strong>Default:</strong> 3 streams.
             </p>
           </div>
         </CardContent>

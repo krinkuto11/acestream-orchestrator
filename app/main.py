@@ -130,6 +130,8 @@ async def lifespan(app: FastAPI):
                 ProxyConfig.STREAM_TIMEOUT = proxy_settings['stream_timeout']
             if 'channel_shutdown_delay' in proxy_settings:
                 ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_settings['channel_shutdown_delay']
+            if 'max_streams_per_engine' in proxy_settings:
+                cfg.ACEXY_MAX_STREAMS_PER_ENGINE = proxy_settings['max_streams_per_engine']
             logger.info("Proxy settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
@@ -2082,6 +2084,7 @@ def get_proxy_config():
         "buffer_chunk_size": ProxyConfig.BUFFER_CHUNK_SIZE,
         "redis_chunk_ttl": ProxyConfig.REDIS_CHUNK_TTL,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
     }
 
 @app.post("/proxy/config", dependencies=[Depends(require_api_key)])
@@ -2093,6 +2096,7 @@ def update_proxy_config(
     connection_timeout: Optional[int] = None,
     stream_timeout: Optional[int] = None,
     channel_shutdown_delay: Optional[int] = None,
+    max_streams_per_engine: Optional[int] = None,
 ):
     """
     Update proxy configuration settings at runtime.
@@ -2105,6 +2109,7 @@ def update_proxy_config(
         connection_timeout: Connection timeout in seconds (min: 5, max: 60)
         stream_timeout: Stream timeout in seconds (min: 10, max: 300)
         channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
+        max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
     
     Note: This updates the runtime configuration but does not persist to .env file.
     Changes take effect for new streams only.
@@ -2148,13 +2153,19 @@ def update_proxy_config(
             raise HTTPException(status_code=400, detail="channel_shutdown_delay must be between 1 and 60 seconds")
         ProxyConfig.CHANNEL_SHUTDOWN_DELAY = channel_shutdown_delay
     
+    if max_streams_per_engine is not None:
+        if max_streams_per_engine < 1 or max_streams_per_engine > 20:
+            raise HTTPException(status_code=400, detail="max_streams_per_engine must be between 1 and 20")
+        cfg.ACEXY_MAX_STREAMS_PER_ENGINE = max_streams_per_engine
+    
     logger.info(f"Proxy configuration updated: initial_data_wait_timeout={ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT}, "
                 f"initial_data_check_interval={ProxyConfig.INITIAL_DATA_CHECK_INTERVAL}, "
                 f"no_data_timeout_checks={ProxyConfig.NO_DATA_TIMEOUT_CHECKS}, "
                 f"no_data_check_interval={ProxyConfig.NO_DATA_CHECK_INTERVAL}, "
                 f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
                 f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
-                f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}")
+                f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
+                f"max_streams_per_engine={cfg.ACEXY_MAX_STREAMS_PER_ENGINE}")
     
     # Persist settings to JSON file
     from .services.settings_persistence import SettingsPersistence
@@ -2166,6 +2177,7 @@ def update_proxy_config(
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
     }
     if SettingsPersistence.save_proxy_config(config_to_save):
         logger.info("Proxy configuration persisted to JSON file")
@@ -2179,6 +2191,7 @@ def update_proxy_config(
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
     }
 
 
