@@ -49,6 +49,13 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 
 ## Core Features
 
+- **Stream Multiplexing Proxy**: Native proxy supporting multiple clients per stream
+  - Automatic stream sharing across concurrent clients
+  - Redis-backed ring buffer for efficient data distribution
+  - Heartbeat-based client tracking and cleanup
+  - Configurable buffer and grace periods
+  - Load balanced engine selection
+  - Seamless failover on engine unavailability
 - **Stream Loop Detection** (v1.6.0): Automatically detect and stop streams that are looping (no new data)
   - Configurable threshold via UI
   - Monitors broadcast position (live_last) against real time

@@ -164,12 +164,15 @@ async def lifespan(app: FastAPI):
                 cfg.MAX_REPLICAS = engine_settings['max_replicas']
             if 'auto_delete' in engine_settings:
                 cfg.AUTO_DELETE = engine_settings['auto_delete']
+            if 'engine_variant' in engine_settings:
+                # Update engine variant preference
+                cfg.ENGINE_VARIANT = engine_settings['engine_variant']
             if 'use_custom_variant' in engine_settings:
                 # Update custom variant enabled state if needed
                 if custom_config and custom_config.enabled != engine_settings['use_custom_variant']:
                     custom_config.enabled = engine_settings['use_custom_variant']
                     save_custom_config(custom_config)
-            logger.info(f"Engine settings loaded from persistent storage: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}")
+            logger.info(f"Engine settings loaded from persistent storage: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}, ENGINE_VARIANT={cfg.ENGINE_VARIANT}")
         else:
             # No persisted settings found - create default settings from current config
             logger.info("No persisted engine settings found, creating defaults")
@@ -2293,7 +2296,8 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
     
     if settings.engine_variant is not None:
         current_settings["engine_variant"] = settings.engine_variant
-        # Don't update cfg.ENGINE_VARIANT at runtime, only persist for next restart
+        # Update cfg.ENGINE_VARIANT at runtime so it takes effect during reprovisioning
+        cfg.ENGINE_VARIANT = settings.engine_variant
     
     if settings.use_custom_variant is not None:
         current_settings["use_custom_variant"] = settings.use_custom_variant

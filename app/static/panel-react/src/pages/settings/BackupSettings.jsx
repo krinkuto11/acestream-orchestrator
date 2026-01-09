@@ -6,9 +6,10 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Download, Upload, FileArchive, CheckCircle, AlertTriangle, Info } from 'lucide-react'
-import { toast } from 'sonner'
+import { useNotifications } from '@/context/NotificationContext'
 
 export function BackupSettings({ apiKey, orchUrl }) {
+  const { addNotification } = useNotifications()
   const [importing, setImporting] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [importOptions, setImportOptions] = useState({
@@ -61,10 +62,10 @@ export function BackupSettings({ apiKey, orchUrl }) {
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
       
-      toast.success('Settings exported successfully')
+      addNotification('Settings exported successfully', 'success')
     } catch (err) {
       console.error('Export error:', err)
-      toast.error(`Failed to export settings: ${err.message}`)
+      addNotification(`Failed to export settings: ${err.message}`, 'error')
     } finally {
       setExporting(false)
     }
@@ -117,18 +118,18 @@ export function BackupSettings({ apiKey, orchUrl }) {
       if (imported.engine) messages.push('Engine settings')
       
       if (messages.length > 0) {
-        toast.success(`Imported: ${messages.join(', ')}`)
+        addNotification(`Imported: ${messages.join(', ')}`, 'success')
       }
       
       if (imported.errors && imported.errors.length > 0) {
-        toast.warning(`Import completed with ${imported.errors.length} error(s)`)
+        addNotification(`Import completed with ${imported.errors.length} error(s)`, 'warning')
       }
       
       // Clear the file input
       event.target.value = ''
     } catch (err) {
       console.error('Import error:', err)
-      toast.error(`Failed to import settings: ${err.message}`)
+      addNotification(`Failed to import settings: ${err.message}`, 'error')
       setImportResult(null)
     } finally {
       setImporting(false)
