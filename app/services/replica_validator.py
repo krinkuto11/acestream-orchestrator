@@ -310,7 +310,7 @@ class ReplicaValidator:
     def get_docker_active_replicas_count(self) -> int:
         """
         Get the actual number of running containers from Docker socket.
-        This is the most reliable source of truth for MAX_ACTIVE_REPLICAS enforcement.
+        This is the most reliable source of truth for MAX_REPLICAS enforcement.
         """
         try:
             docker_status = self.get_docker_container_status()

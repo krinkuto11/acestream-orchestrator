@@ -136,12 +136,12 @@ class PortAllocator:
                 return port
             
             # Fallback to global allocation (backwards compatibility)
-            # Check if we've reached the maximum number of active replicas
-            if len(self._used_gluetun_ports) >= cfg.MAX_ACTIVE_REPLICAS:
-                raise RuntimeError(f"Maximum active replicas limit reached ({cfg.MAX_ACTIVE_REPLICAS})")
+            # Check if we've reached the maximum number of replicas
+            if len(self._used_gluetun_ports) >= cfg.MAX_REPLICAS:
+                raise RuntimeError(f"Maximum replicas limit reached ({cfg.MAX_REPLICAS})")
             
             # Find the next available port starting from 19000
-            for port in range(self._gluetun_port_base, self._gluetun_port_base + cfg.MAX_ACTIVE_REPLICAS):
+            for port in range(self._gluetun_port_base, self._gluetun_port_base + cfg.MAX_REPLICAS):
                 if port not in self._used_gluetun_ports:
                     self._used_gluetun_ports.add(port)
                     return port

@@ -46,9 +46,6 @@ class Cfg(BaseModel):
     VPN_RESTART_ENGINES_ON_RECONNECT: bool = os.getenv("VPN_RESTART_ENGINES_ON_RECONNECT", "true").lower() == "true"
     VPN_UNHEALTHY_RESTART_TIMEOUT_S: int = int(os.getenv("VPN_UNHEALTHY_RESTART_TIMEOUT_S", 60))
     
-    # Maximum active replicas when using Gluetun (port range allocation)
-    MAX_ACTIVE_REPLICAS: int = int(os.getenv("MAX_ACTIVE_REPLICAS", 20))
-    
     # VPN-specific port ranges for redundant mode
     # These map VPN container names to their port ranges in the format "min-max"
     # Example: GLUETUN_PORT_RANGE_1=19000-19499 for first VPN
@@ -106,12 +103,6 @@ class Cfg(BaseModel):
         min_replicas = values.get('MIN_REPLICAS', 0)
         if v < min_replicas:
             raise ValueError('MAX_REPLICAS must be >= MIN_REPLICAS')
-        return v
-
-    @validator('MAX_ACTIVE_REPLICAS')
-    def validate_max_active_replicas(cls, v):
-        if v <= 0:
-            raise ValueError('MAX_ACTIVE_REPLICAS must be > 0')
         return v
 
     @validator('ENGINE_VARIANT')
