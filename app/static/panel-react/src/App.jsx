@@ -11,7 +11,6 @@ import { HealthPage } from './pages/HealthPage'
 import { VPNPage } from './pages/VPNPage'
 import { MetricsPage } from './pages/MetricsPage'
 import { SettingsPage } from './pages/SettingsPage'
-import { AdvancedEngineSettingsPage } from './pages/AdvancedEngineSettingsPage'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import { useFavicon } from './hooks/useFavicon'
 import { Toaster } from '@/components/ui/sonner'
@@ -162,6 +161,7 @@ function AppContent() {
                     onDeleteEngine={handleDeleteEngine}
                     vpnStatus={vpnStatus}
                     orchUrl={orchUrl}
+                    apiKey={apiKey}
                     fetchJSON={fetchJSON}
                   />
                 } 
@@ -224,16 +224,6 @@ function AppContent() {
                     maxEventsDisplay={maxEventsDisplay}
                     setMaxEventsDisplay={setMaxEventsDisplay}
                     orchUrl={orchUrl}
-                  />
-                } 
-              />
-              <Route 
-                path="/advanced-engine-settings" 
-                element={
-                  <AdvancedEngineSettingsPage
-                    orchUrl={orchUrl}
-                    apiKey={apiKey}
-                    fetchJSON={fetchJSON}
                   />
                 } 
               />

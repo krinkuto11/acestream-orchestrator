@@ -16,6 +16,7 @@ CONFIG_DIR = Path(__file__).parent.parent / "config"
 # Config file paths
 PROXY_CONFIG_FILE = CONFIG_DIR / "proxy_settings.json"
 LOOP_DETECTION_CONFIG_FILE = CONFIG_DIR / "loop_detection_settings.json"
+ENGINE_SETTINGS_FILE = CONFIG_DIR / "engine_settings.json"
 
 
 class SettingsPersistence:
@@ -114,4 +115,49 @@ class SettingsPersistence:
             return config
         except Exception as e:
             logger.error(f"Failed to load loop detection configuration: {e}")
+            return None
+    
+    @staticmethod
+    def save_engine_settings(config: Dict[str, Any]) -> bool:
+        """
+        Save engine settings configuration to JSON file.
+        
+        Args:
+            config: Dictionary containing engine settings configuration
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            SettingsPersistence.ensure_config_dir()
+            
+            with open(ENGINE_SETTINGS_FILE, 'w') as f:
+                json.dump(config, f, indent=2)
+            
+            logger.info(f"Engine settings configuration saved to {ENGINE_SETTINGS_FILE}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save engine settings configuration: {e}")
+            return False
+    
+    @staticmethod
+    def load_engine_settings() -> Optional[Dict[str, Any]]:
+        """
+        Load engine settings configuration from JSON file.
+        
+        Returns:
+            Dictionary containing engine settings configuration, or None if file doesn't exist or error occurs
+        """
+        try:
+            if not ENGINE_SETTINGS_FILE.exists():
+                logger.debug(f"Engine settings config file not found: {ENGINE_SETTINGS_FILE}")
+                return None
+            
+            with open(ENGINE_SETTINGS_FILE, 'r') as f:
+                config = json.load(f)
+            
+            logger.info(f"Engine settings configuration loaded from {ENGINE_SETTINGS_FILE}")
+            return config
+        except Exception as e:
+            logger.error(f"Failed to load engine settings configuration: {e}")
             return None

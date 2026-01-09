@@ -111,7 +111,7 @@ You should see **2** (one per VPN) instead of just 1.
 
 ### Engines not starting?
 
-1. Check if port ranges are large enough for your `MAX_ACTIVE_REPLICAS`
+1. Check if port ranges are large enough for your `MAX_REPLICAS` setting
 2. Verify no overlap between the two port ranges
 3. Check orchestrator logs for detailed errors
 

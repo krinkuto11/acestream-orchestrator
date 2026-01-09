@@ -150,6 +150,42 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to load persisted loop detection settings: {e}")
     
+    # Load engine settings
+    try:
+        engine_settings = SettingsPersistence.load_engine_settings()
+        if engine_settings:
+            logger.info("Loading persisted engine settings")
+            if 'min_replicas' in engine_settings:
+                cfg.MIN_REPLICAS = engine_settings['min_replicas']
+            if 'max_replicas' in engine_settings:
+                cfg.MAX_REPLICAS = engine_settings['max_replicas']
+            if 'auto_delete' in engine_settings:
+                cfg.AUTO_DELETE = engine_settings['auto_delete']
+            if 'use_custom_variant' in engine_settings:
+                # Update custom variant enabled state if needed
+                if custom_config and custom_config.enabled != engine_settings['use_custom_variant']:
+                    custom_config.enabled = engine_settings['use_custom_variant']
+                    save_custom_config(custom_config)
+            logger.info(f"Engine settings loaded from persistent storage: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}")
+        else:
+            # No persisted settings found - create default settings from current config
+            logger.info("No persisted engine settings found, creating defaults")
+            from .services.custom_variant_config import detect_platform
+            default_settings = {
+                "min_replicas": cfg.MIN_REPLICAS,
+                "max_replicas": cfg.MAX_REPLICAS,
+                "auto_delete": cfg.AUTO_DELETE,
+                "engine_variant": cfg.ENGINE_VARIANT,
+                "use_custom_variant": custom_config.enabled if custom_config else False,
+                "platform": detect_platform(),
+            }
+            if SettingsPersistence.save_engine_settings(default_settings):
+                logger.info(f"Default engine settings created and saved: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}")
+            else:
+                logger.warning("Failed to save default engine settings")
+    except Exception as e:
+        logger.warning(f"Failed to load persisted engine settings: {e}")
+    
     # Load state from database first
     load_state_from_db()
     
@@ -2145,6 +2181,123 @@ def update_proxy_config(
     }
 
 
+
+# ============================================================================
+# Engine Settings Endpoints
+# ============================================================================
+
+@app.get("/settings/engine")
+def get_engine_settings():
+    """Get current engine configuration settings."""
+    from .services.custom_variant_config import detect_platform, get_config as get_custom_config
+    
+    # Try to load from persisted settings first
+    from .services.settings_persistence import SettingsPersistence
+    persisted = SettingsPersistence.load_engine_settings()
+    
+    # If persisted settings exist, use them
+    if persisted:
+        return persisted
+    
+    # Build default response from current runtime config
+    custom_config = get_custom_config()
+    
+    default_settings = {
+        "min_replicas": cfg.MIN_REPLICAS,
+        "max_replicas": cfg.MAX_REPLICAS,
+        "auto_delete": cfg.AUTO_DELETE,
+        "engine_variant": cfg.ENGINE_VARIANT,
+        "use_custom_variant": custom_config.enabled if custom_config else False,
+        "platform": detect_platform(),
+    }
+    
+    # Save defaults for future use
+    try:
+        if SettingsPersistence.save_engine_settings(default_settings):
+            logger.info("Created default engine settings on first access")
+    except Exception as e:
+        logger.warning(f"Failed to save default engine settings: {e}")
+    
+    return default_settings
+
+@app.post("/settings/engine", dependencies=[Depends(require_api_key)])
+async def update_engine_settings(
+    min_replicas: Optional[int] = None,
+    max_replicas: Optional[int] = None,
+    auto_delete: Optional[bool] = None,
+    engine_variant: Optional[str] = None,
+    use_custom_variant: Optional[bool] = None,
+):
+    """
+    Update engine configuration settings.
+    
+    Args:
+        min_replicas: Minimum number of engine replicas to maintain (min: 0, max: 50)
+        max_replicas: Maximum number of engine replicas allowed (min: 1, max: 100)
+        auto_delete: Whether to automatically delete engines when stopped
+        engine_variant: Engine variant to use (when not using custom variant)
+        use_custom_variant: Whether to use custom variant configuration
+    
+    Note: Changes are persisted to JSON and will be applied on next restart.
+    Some changes may require reprovisioning engines.
+    """
+    from .services.settings_persistence import SettingsPersistence
+    
+    # Load current persisted settings or use runtime config as base
+    current_settings = SettingsPersistence.load_engine_settings() or {
+        "min_replicas": cfg.MIN_REPLICAS,
+        "max_replicas": cfg.MAX_REPLICAS,
+        "auto_delete": cfg.AUTO_DELETE,
+        "engine_variant": cfg.ENGINE_VARIANT,
+        "use_custom_variant": False,
+    }
+    
+    # Validation and updates
+    if min_replicas is not None:
+        if min_replicas < 0 or min_replicas > 50:
+            raise HTTPException(status_code=400, detail="min_replicas must be between 0 and 50")
+        current_settings["min_replicas"] = min_replicas
+        cfg.MIN_REPLICAS = min_replicas
+    
+    if max_replicas is not None:
+        if max_replicas < 1 or max_replicas > 100:
+            raise HTTPException(status_code=400, detail="max_replicas must be between 1 and 100")
+        current_settings["max_replicas"] = max_replicas
+        cfg.MAX_REPLICAS = max_replicas
+    
+    # Validate min_replicas <= max_replicas
+    if current_settings["min_replicas"] > current_settings["max_replicas"]:
+        raise HTTPException(status_code=400, detail="min_replicas must be <= max_replicas")
+    
+    if auto_delete is not None:
+        current_settings["auto_delete"] = auto_delete
+        cfg.AUTO_DELETE = auto_delete
+    
+    if engine_variant is not None:
+        current_settings["engine_variant"] = engine_variant
+        # Don't update cfg.ENGINE_VARIANT at runtime, only persist for next restart
+    
+    if use_custom_variant is not None:
+        current_settings["use_custom_variant"] = use_custom_variant
+        # Update custom variant config
+        from .services.custom_variant_config import get_config as get_custom_config, save_config as save_custom_config
+        custom_config = get_custom_config()
+        if custom_config:
+            custom_config.enabled = use_custom_variant
+            save_custom_config(custom_config)
+    
+    # Persist settings to JSON file
+    if SettingsPersistence.save_engine_settings(current_settings):
+        logger.info(f"Engine settings persisted: {current_settings}")
+    else:
+        logger.warning("Failed to persist engine settings to JSON file")
+    
+    return {
+        "message": "Engine settings updated and persisted",
+        **current_settings
+    }
+
+
 # ============================================================================
 # Settings Backup/Restore Endpoints
 # ============================================================================
@@ -2233,6 +2386,17 @@ async def export_settings(api_key_param: str = Depends(require_api_key)):
             except Exception as e:
                 logger.warning(f"Failed to export loop detection settings: {e}")
             
+            # Export engine settings
+            try:
+                from .services.settings_persistence import SettingsPersistence
+                engine_settings = SettingsPersistence.load_engine_settings()
+                if engine_settings:
+                    engine_json = json.dumps(engine_settings, indent=2)
+                    zip_file.writestr("engine_settings.json", engine_json)
+                    logger.info("Added engine settings to backup")
+            except Exception as e:
+                logger.warning(f"Failed to export engine settings: {e}")
+            
             # Add metadata
             metadata = {
                 "export_date": datetime.now(timezone.utc).isoformat(),
@@ -2264,6 +2428,7 @@ async def import_settings_data(
     import_templates: bool = Query(True),
     import_proxy: bool = Query(True),
     import_loop_detection: bool = Query(True),
+    import_engine: bool = Query(True),
     api_key_param: str = Depends(require_api_key)
 ):
     """
@@ -2274,12 +2439,14 @@ async def import_settings_data(
         import_templates: Whether to import templates  
         import_proxy: Whether to import proxy settings
         import_loop_detection: Whether to import loop detection settings
+        import_engine: Whether to import engine settings
     
     Returns:
         Summary of imported settings
     """
     import zipfile
     import io
+    from .services.settings_persistence import SettingsPersistence
     
     try:
         # Read the uploaded file data
@@ -2294,6 +2461,7 @@ async def import_settings_data(
             "active_template": False,
             "proxy": False,
             "loop_detection": False,
+            "engine": False,
             "errors": []
         }
         
@@ -2403,6 +2571,33 @@ async def import_settings_data(
                         imported["errors"].append(error_msg)
                 except Exception as e:
                     error_msg = f"Failed to import loop detection settings: {e}"
+                    logger.error(error_msg)
+                    imported["errors"].append(error_msg)
+            
+            # Import engine settings
+            if import_engine and "engine_settings.json" in zip_file.namelist():
+                try:
+                    engine_data = zip_file.read("engine_settings.json").decode('utf-8')
+                    engine_dict = json.loads(engine_data)
+                    
+                    # Update runtime config
+                    if 'min_replicas' in engine_dict:
+                        cfg.MIN_REPLICAS = engine_dict['min_replicas']
+                    if 'max_replicas' in engine_dict:
+                        cfg.MAX_REPLICAS = engine_dict['max_replicas']
+                    if 'auto_delete' in engine_dict:
+                        cfg.AUTO_DELETE = engine_dict['auto_delete']
+                    
+                    # Persist to file
+                    if SettingsPersistence.save_engine_settings(engine_dict):
+                        imported["engine"] = True
+                        logger.info("Imported engine settings")
+                    else:
+                        error_msg = "Failed to persist engine settings to file"
+                        logger.error(error_msg)
+                        imported["errors"].append(error_msg)
+                except Exception as e:
+                    error_msg = f"Failed to import engine settings: {e}"
                     logger.error(error_msg)
                     imported["errors"].append(error_msg)
         
