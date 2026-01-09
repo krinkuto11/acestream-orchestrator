@@ -1731,17 +1731,32 @@ async def ace_getstream(
                 detail="No engines available"
             )
         
-        # Engine selection: prioritize forwarded, balance load
+        # Engine selection: fill engines sequentially to near-capacity before using new ones
+        # Priority: 1. Engine with most streams (but not at max), 2. Forwarded engine
         active_streams = state.list_streams(status="started")
         engine_loads = {}
         for stream in active_streams:
             cid = stream.container_id
             engine_loads[cid] = engine_loads.get(cid, 0) + 1
         
-        # Sort: (load, not forwarded) - prefer forwarded when equal load
-        engines_sorted = sorted(engines, key=lambda e: (
-            engine_loads.get(e.container_id, 0),
-            not e.forwarded
+        # Filter out engines at max capacity
+        max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
+        available_engines = [
+            e for e in engines 
+            if engine_loads.get(e.container_id, 0) < max_streams
+        ]
+        
+        if not available_engines:
+            raise HTTPException(
+                status_code=503,
+                detail=f"All engines at maximum capacity ({max_streams} streams per engine)"
+            )
+        
+        # Sort: (negative load, not forwarded) - prefer highest load first, then forwarded
+        # Using negative load so engines with MORE streams come first
+        engines_sorted = sorted(available_engines, key=lambda e: (
+            -engine_loads.get(e.container_id, 0),  # Negative for descending order (most streams first)
+            not e.forwarded  # Forwarded engines preferred when load is equal
         ))
         selected_engine = engines_sorted[0]
         
