@@ -91,6 +91,8 @@ def test_stream_manager_sends_events():
         
         # Mock engine response
         mock_engine_response = Mock()
+        mock_engine_response.status_code = 200
+        mock_engine_response.headers = {}  # Add headers attribute
         mock_engine_response.json.return_value = {
             "response": {
                 "playback_url": "http://127.0.0.1:6878/ace/r/test",
