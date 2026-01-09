@@ -72,9 +72,11 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const [extendedStatsError, setExtendedStatsError] = useState(null)
   const [clients, setClients] = useState([])
   const [clientsLoading, setClientsLoading] = useState(false)
-  const hasClientsDataRef = useRef(false) // Track if we have fetched clients at least once
-  const hasStatsDataRef = useRef(false) // Track if we have fetched stats at least once
-  const hasExtendedStatsDataRef = useRef(false) // Track if we have fetched extended stats at least once
+  
+  // Track if we have fetched data at least once to prevent loading flicker on refreshes
+  const hasClientsDataRef = useRef(false)
+  const hasStatsDataRef = useRef(false)
+  const hasExtendedStatsDataRef = useRef(false)
 
   const isActive = stream.status === 'started'
   const isEnded = stream.status === 'ended'
@@ -541,7 +543,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                             <TableRow key={client.client_id || idx}>
                               <TableCell className="font-mono text-xs">
                                 <span className="truncate max-w-[200px] block" title={client.client_id}>
-                                  {client.client_id?.slice(0, TRUNCATED_CLIENT_ID_LENGTH)}...
+                                  {client.client_id && client.client_id.length > TRUNCATED_CLIENT_ID_LENGTH
+                                    ? `${client.client_id.slice(0, TRUNCATED_CLIENT_ID_LENGTH)}...`
+                                    : client.client_id || 'N/A'
+                                  }
                                 </span>
                               </TableCell>
                               <TableCell className="text-sm">
