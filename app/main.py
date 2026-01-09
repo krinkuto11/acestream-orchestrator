@@ -1778,8 +1778,15 @@ async def get_stream_clients(stream_key: str):
                     key_str = key.decode('utf-8')
                     value_str = value.decode('utf-8')
                     
-                    # Convert numeric fields
-                    if key_str in ['connected_at', 'last_active', 'bytes_sent', 'chunks_sent', 'stats_updated_at']:
+                    # Convert numeric fields with appropriate type
+                    if key_str in ['chunks_sent']:
+                        # Integer fields
+                        try:
+                            client_info[key_str] = int(value_str)
+                        except ValueError:
+                            client_info[key_str] = value_str
+                    elif key_str in ['connected_at', 'last_active', 'bytes_sent', 'stats_updated_at']:
+                        # Float/timestamp fields
                         try:
                             client_info[key_str] = float(value_str)
                         except ValueError:

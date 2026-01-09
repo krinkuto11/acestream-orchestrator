@@ -47,6 +47,7 @@ import {
 // Constants for display
 const TRUNCATED_STREAM_ID_LENGTH = 16
 const TRUNCATED_CONTAINER_ID_LENGTH = 12
+const TRUNCATED_CLIENT_ID_LENGTH = 16
 
 // Timestamp validation constants (Unix timestamps in seconds)
 const MIN_VALID_TIMESTAMP = 1577836800  // 2020-01-01 00:00:00 UTC
@@ -155,18 +156,20 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     }
   }, [stream, orchUrl, isExpanded])
 
+  const refreshData = useCallback(() => {
+    fetchStats()
+    fetchClients()
+  }, [fetchStats, fetchClients])
+
   useEffect(() => {
     if (isExpanded && isActive) {
       fetchStats()
       fetchExtendedStats()
       fetchClients()
-      const interval = setInterval(() => {
-        fetchStats()
-        fetchClients()
-      }, 10000)
+      const interval = setInterval(refreshData, 10000)
       return () => clearInterval(interval)
     }
-  }, [fetchStats, fetchExtendedStats, fetchClients, isExpanded, isActive])
+  }, [refreshData, fetchStats, fetchExtendedStats, fetchClients, isExpanded, isActive])
 
   const chartData = {
     labels: stats.map(s => new Date(s.ts).toLocaleTimeString()),
@@ -503,7 +506,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                             <div className="flex items-center justify-between">
                               <p className="text-xs text-muted-foreground">Client ID</p>
                               <p className="text-xs font-mono text-foreground truncate max-w-[200px]" title={client.client_id}>
-                                {client.client_id?.slice(0, 16)}...
+                                {client.client_id?.slice(0, TRUNCATED_CLIENT_ID_LENGTH)}...
                               </p>
                             </div>
                             {client.ip_address && (
