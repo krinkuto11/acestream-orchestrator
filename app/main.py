@@ -1733,6 +1733,70 @@ async def proxy_session_info(ace_id: str):
     return session_info
 
 
+@app.get("/proxy/streams/{stream_key}/clients")
+async def get_stream_clients(stream_key: str):
+    """Get list of clients connected to a specific stream.
+    
+    Args:
+        stream_key: AceStream content ID (infohash)
+        
+    Returns:
+        List of client details or empty list if no clients
+    """
+    from .proxy.server import ProxyServer
+    from .proxy.redis_keys import RedisKeys
+    import redis
+    
+    try:
+        proxy_server = ProxyServer.get_instance()
+        
+        # Get client manager for this stream
+        client_manager = proxy_server.client_managers.get(stream_key)
+        if not client_manager:
+            # Stream not active in proxy, return empty list
+            return {"clients": []}
+        
+        # Get clients from Redis
+        redis_client = proxy_server.redis_client
+        if not redis_client:
+            return {"clients": []}
+        
+        clients_set_key = RedisKeys.clients(stream_key)
+        client_ids = redis_client.smembers(clients_set_key)
+        
+        clients = []
+        for client_id_bytes in client_ids:
+            client_id = client_id_bytes.decode('utf-8')
+            client_key = RedisKeys.client_metadata(stream_key, client_id)
+            
+            # Get client metadata
+            client_data = redis_client.hgetall(client_key)
+            if client_data:
+                # Decode Redis data
+                client_info = {}
+                for key, value in client_data.items():
+                    key_str = key.decode('utf-8')
+                    value_str = value.decode('utf-8')
+                    
+                    # Convert numeric fields
+                    if key_str in ['connected_at', 'last_active', 'bytes_sent', 'chunks_sent', 'stats_updated_at']:
+                        try:
+                            client_info[key_str] = float(value_str)
+                        except ValueError:
+                            client_info[key_str] = value_str
+                    else:
+                        client_info[key_str] = value_str
+                
+                client_info['client_id'] = client_id
+                clients.append(client_info)
+        
+        return {"clients": clients}
+        
+    except Exception as e:
+        logger.error(f"Error getting clients for stream {stream_key}: {e}")
+        return {"clients": []}
+
+
 # WebSocket endpoint removed - using simple polling approach
 
 @app.get("/stream-loop-detection/config")
@@ -1864,8 +1928,10 @@ def get_proxy_config():
     
     return {
         "vlc_user_agent": proxy_constants.VLC_USER_AGENT,
-        "initial_data_wait_timeout": proxy_constants.INITIAL_DATA_WAIT_TIMEOUT,
-        "initial_data_check_interval": proxy_constants.INITIAL_DATA_CHECK_INTERVAL,
+        "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
+        "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
+        "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
+        "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "chunk_size": ProxyConfig.CHUNK_SIZE,
@@ -1878,6 +1944,8 @@ def get_proxy_config():
 def update_proxy_config(
     initial_data_wait_timeout: Optional[int] = None,
     initial_data_check_interval: Optional[float] = None,
+    no_data_timeout_checks: Optional[int] = None,
+    no_data_check_interval: Optional[float] = None,
     connection_timeout: Optional[int] = None,
     stream_timeout: Optional[int] = None,
     channel_shutdown_delay: Optional[int] = None,
@@ -1888,6 +1956,8 @@ def update_proxy_config(
     Args:
         initial_data_wait_timeout: Maximum seconds to wait for initial data in buffer (min: 1, max: 60)
         initial_data_check_interval: Seconds between buffer checks (min: 0.1, max: 2.0)
+        no_data_timeout_checks: Number of consecutive empty checks before declaring stream ended (min: 5, max: 600)
+        no_data_check_interval: Seconds between checks when no data is available (min: 0.01, max: 1.0)
         connection_timeout: Connection timeout in seconds (min: 5, max: 60)
         stream_timeout: Stream timeout in seconds (min: 10, max: 300)
         channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
@@ -1902,12 +1972,22 @@ def update_proxy_config(
     if initial_data_wait_timeout is not None:
         if initial_data_wait_timeout < 1 or initial_data_wait_timeout > 60:
             raise HTTPException(status_code=400, detail="initial_data_wait_timeout must be between 1 and 60 seconds")
-        proxy_constants.INITIAL_DATA_WAIT_TIMEOUT = initial_data_wait_timeout
+        ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT = initial_data_wait_timeout
     
     if initial_data_check_interval is not None:
         if initial_data_check_interval < 0.1 or initial_data_check_interval > 2.0:
             raise HTTPException(status_code=400, detail="initial_data_check_interval must be between 0.1 and 2.0 seconds")
-        proxy_constants.INITIAL_DATA_CHECK_INTERVAL = initial_data_check_interval
+        ProxyConfig.INITIAL_DATA_CHECK_INTERVAL = initial_data_check_interval
+    
+    if no_data_timeout_checks is not None:
+        if no_data_timeout_checks < 5 or no_data_timeout_checks > 600:
+            raise HTTPException(status_code=400, detail="no_data_timeout_checks must be between 5 and 600")
+        ProxyConfig.NO_DATA_TIMEOUT_CHECKS = no_data_timeout_checks
+    
+    if no_data_check_interval is not None:
+        if no_data_check_interval < 0.01 or no_data_check_interval > 1.0:
+            raise HTTPException(status_code=400, detail="no_data_check_interval must be between 0.01 and 1.0 seconds")
+        ProxyConfig.NO_DATA_CHECK_INTERVAL = no_data_check_interval
     
     if connection_timeout is not None:
         if connection_timeout < 5 or connection_timeout > 60:
@@ -1924,16 +2004,20 @@ def update_proxy_config(
             raise HTTPException(status_code=400, detail="channel_shutdown_delay must be between 1 and 60 seconds")
         ProxyConfig.CHANNEL_SHUTDOWN_DELAY = channel_shutdown_delay
     
-    logger.info(f"Proxy configuration updated: initial_data_wait_timeout={proxy_constants.INITIAL_DATA_WAIT_TIMEOUT}, "
-                f"initial_data_check_interval={proxy_constants.INITIAL_DATA_CHECK_INTERVAL}, "
+    logger.info(f"Proxy configuration updated: initial_data_wait_timeout={ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT}, "
+                f"initial_data_check_interval={ProxyConfig.INITIAL_DATA_CHECK_INTERVAL}, "
+                f"no_data_timeout_checks={ProxyConfig.NO_DATA_TIMEOUT_CHECKS}, "
+                f"no_data_check_interval={ProxyConfig.NO_DATA_CHECK_INTERVAL}, "
                 f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
                 f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
                 f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}")
     
     return {
         "message": "Proxy configuration updated",
-        "initial_data_wait_timeout": proxy_constants.INITIAL_DATA_WAIT_TIMEOUT,
-        "initial_data_check_interval": proxy_constants.INITIAL_DATA_CHECK_INTERVAL,
+        "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
+        "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
+        "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
+        "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,

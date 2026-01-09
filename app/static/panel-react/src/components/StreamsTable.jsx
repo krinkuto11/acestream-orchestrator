@@ -69,6 +69,8 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const [extendedStats, setExtendedStats] = useState(null)
   const [extendedStatsLoading, setExtendedStatsLoading] = useState(false)
   const [extendedStatsError, setExtendedStatsError] = useState(null)
+  const [clients, setClients] = useState([])
+  const [clientsLoading, setClientsLoading] = useState(false)
 
   const isActive = stream.status === 'started'
   const isEnded = stream.status === 'ended'
@@ -130,14 +132,41 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     }
   }, [stream, orchUrl, apiKey, isExpanded])
 
+  const fetchClients = useCallback(async () => {
+    if (!stream || !isExpanded || !stream.key) return
+    
+    setClientsLoading(true)
+    try {
+      const response = await fetch(
+        `${orchUrl}/proxy/streams/${encodeURIComponent(stream.key)}/clients`
+      )
+      
+      if (response.ok) {
+        const data = await response.json()
+        setClients(data.clients || [])
+      } else {
+        setClients([])
+      }
+    } catch (err) {
+      console.error('Failed to fetch clients:', err)
+      setClients([])
+    } finally {
+      setClientsLoading(false)
+    }
+  }, [stream, orchUrl, isExpanded])
+
   useEffect(() => {
     if (isExpanded && isActive) {
       fetchStats()
       fetchExtendedStats()
-      const interval = setInterval(fetchStats, 10000)
+      fetchClients()
+      const interval = setInterval(() => {
+        fetchStats()
+        fetchClients()
+      }, 10000)
       return () => clearInterval(interval)
     }
-  }, [fetchStats, fetchExtendedStats, isExpanded, isActive])
+  }, [fetchStats, fetchExtendedStats, fetchClients, isExpanded, isActive])
 
   const chartData = {
     labels: stats.map(s => new Date(s.ts).toLocaleTimeString()),
@@ -456,6 +485,64 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                   </>
                 )}
               </div>
+
+              {/* Connected Clients */}
+              {isActive && (
+                <div className="border-t pt-4">
+                  <p className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <Users className="h-4 w-4" />
+                    Connected Clients ({clients.length})
+                  </p>
+                  {clientsLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading clients...</p>
+                  ) : clients.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {clients.map((client, idx) => (
+                        <div key={client.client_id || idx} className="p-3 bg-muted/30 rounded-md border border-border">
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <p className="text-xs text-muted-foreground">Client ID</p>
+                              <p className="text-xs font-mono text-foreground truncate max-w-[200px]" title={client.client_id}>
+                                {client.client_id?.slice(0, 16)}...
+                              </p>
+                            </div>
+                            {client.ip_address && (
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs text-muted-foreground">IP Address</p>
+                                <p className="text-xs font-medium text-foreground">{client.ip_address}</p>
+                              </div>
+                            )}
+                            {client.connected_at && (
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs text-muted-foreground">Connected</p>
+                                <p className="text-xs text-foreground">
+                                  {new Date(client.connected_at * 1000).toLocaleTimeString()}
+                                </p>
+                              </div>
+                            )}
+                            {client.bytes_sent !== undefined && (
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs text-muted-foreground">Bytes Sent</p>
+                                <p className="text-xs text-foreground">{formatBytes(client.bytes_sent)}</p>
+                              </div>
+                            )}
+                            {client.user_agent && (
+                              <div className="col-span-full">
+                                <p className="text-xs text-muted-foreground">User Agent</p>
+                                <p className="text-xs font-mono text-foreground truncate" title={client.user_agent}>
+                                  {client.user_agent}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No clients connected</p>
+                  )}
+                </div>
+              )}
 
               {/* Links */}
               <div className="flex gap-4">
