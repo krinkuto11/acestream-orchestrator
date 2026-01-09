@@ -10,6 +10,9 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [message, setMessage] = useState(null)
   const [error, setError] = useState(null)
   
+  // Default values
+  const DEFAULT_MAX_STREAMS_PER_ENGINE = 3
+  
   // Proxy config state
   const [initialDataWaitTimeout, setInitialDataWaitTimeout] = useState(10)
   const [initialDataCheckInterval, setInitialDataCheckInterval] = useState(0.2)
@@ -18,7 +21,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [connectionTimeout, setConnectionTimeout] = useState(10)
   const [streamTimeout, setStreamTimeout] = useState(60)
   const [channelShutdownDelay, setChannelShutdownDelay] = useState(5)
-  const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(3)
+  const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(DEFAULT_MAX_STREAMS_PER_ENGINE)
   
   // Read-only config for display
   const [vlcUserAgent, setVlcUserAgent] = useState('')
@@ -41,7 +44,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
         setConnectionTimeout(data.connection_timeout)
         setStreamTimeout(data.stream_timeout)
         setChannelShutdownDelay(data.channel_shutdown_delay)
-        setMaxStreamsPerEngine(data.max_streams_per_engine || 3)
+        setMaxStreamsPerEngine(data.max_streams_per_engine || DEFAULT_MAX_STREAMS_PER_ENGINE)
         setVlcUserAgent(data.vlc_user_agent)
         setChunkSize(data.chunk_size)
         setBufferChunkSize(data.buffer_chunk_size)

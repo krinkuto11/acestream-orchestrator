@@ -2158,14 +2158,17 @@ def update_proxy_config(
             raise HTTPException(status_code=400, detail="max_streams_per_engine must be between 1 and 20")
         cfg.ACEXY_MAX_STREAMS_PER_ENGINE = max_streams_per_engine
     
-    logger.info(f"Proxy configuration updated: initial_data_wait_timeout={ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT}, "
-                f"initial_data_check_interval={ProxyConfig.INITIAL_DATA_CHECK_INTERVAL}, "
-                f"no_data_timeout_checks={ProxyConfig.NO_DATA_TIMEOUT_CHECKS}, "
-                f"no_data_check_interval={ProxyConfig.NO_DATA_CHECK_INTERVAL}, "
-                f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
-                f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
-                f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
-                f"max_streams_per_engine={cfg.ACEXY_MAX_STREAMS_PER_ENGINE}")
+    logger.info(
+        f"Proxy configuration updated: "
+        f"initial_data_wait_timeout={ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT}, "
+        f"initial_data_check_interval={ProxyConfig.INITIAL_DATA_CHECK_INTERVAL}, "
+        f"no_data_timeout_checks={ProxyConfig.NO_DATA_TIMEOUT_CHECKS}, "
+        f"no_data_check_interval={ProxyConfig.NO_DATA_CHECK_INTERVAL}, "
+        f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
+        f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
+        f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
+        f"max_streams_per_engine={cfg.ACEXY_MAX_STREAMS_PER_ENGINE}"
+    )
     
     # Persist settings to JSON file
     from .services.settings_persistence import SettingsPersistence
