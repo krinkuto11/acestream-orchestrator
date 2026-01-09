@@ -167,6 +167,22 @@ async def lifespan(app: FastAPI):
                     custom_config.enabled = engine_settings['use_custom_variant']
                     save_custom_config(custom_config)
             logger.info(f"Engine settings loaded from persistent storage: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}")
+        else:
+            # No persisted settings found - create default settings from current config
+            logger.info("No persisted engine settings found, creating defaults")
+            from .services.custom_variant_config import detect_platform
+            default_settings = {
+                "min_replicas": cfg.MIN_REPLICAS,
+                "max_replicas": cfg.MAX_REPLICAS,
+                "auto_delete": cfg.AUTO_DELETE,
+                "engine_variant": cfg.ENGINE_VARIANT,
+                "use_custom_variant": custom_config.enabled if custom_config else False,
+                "platform": detect_platform(),
+            }
+            if SettingsPersistence.save_engine_settings(default_settings):
+                logger.info(f"Default engine settings created and saved: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}")
+            else:
+                logger.warning("Failed to save default engine settings")
     except Exception as e:
         logger.warning(f"Failed to load persisted engine settings: {e}")
     
@@ -2179,14 +2195,14 @@ def get_engine_settings():
     from .services.settings_persistence import SettingsPersistence
     persisted = SettingsPersistence.load_engine_settings()
     
-    # If persisted settings exist, use them; otherwise use current runtime config
+    # If persisted settings exist, use them
     if persisted:
         return persisted
     
     # Build default response from current runtime config
     custom_config = get_custom_config()
     
-    return {
+    default_settings = {
         "min_replicas": cfg.MIN_REPLICAS,
         "max_replicas": cfg.MAX_REPLICAS,
         "auto_delete": cfg.AUTO_DELETE,
@@ -2194,6 +2210,15 @@ def get_engine_settings():
         "use_custom_variant": custom_config.enabled if custom_config else False,
         "platform": detect_platform(),
     }
+    
+    # Save defaults for future use
+    try:
+        if SettingsPersistence.save_engine_settings(default_settings):
+            logger.info("Created default engine settings on first access")
+    except Exception as e:
+        logger.warning(f"Failed to save default engine settings: {e}")
+    
+    return default_settings
 
 @app.post("/settings/engine", dependencies=[Depends(require_api_key)])
 async def update_engine_settings(

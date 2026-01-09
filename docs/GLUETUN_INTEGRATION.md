@@ -36,10 +36,8 @@ GLUETUN_HEALTH_CHECK_INTERVAL_S=5
 # Optional: Restart engines on VPN reconnect (default: true)
 VPN_RESTART_ENGINES_ON_RECONNECT=true
 
-# Optional: Maximum number of active engine replicas when using Gluetun (default: 20)
-# This limits the number of engine instances that can run simultaneously
-# Ports will be allocated starting from 19000
-MAX_ACTIVE_REPLICAS=20
+# Note: Engine replica limits are now controlled by MAX_REPLICAS setting
+# Configure via UI (Engine Configuration tab) or engine_settings.json
 ```
 
 ## Docker Compose Setup
