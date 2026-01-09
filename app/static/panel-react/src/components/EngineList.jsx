@@ -8,9 +8,17 @@ import { timeAgo, formatTime, formatBytes } from '../utils/formatters'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Progress } from '@/components/ui/progress'
 
+// Simple in-memory cache for engine stats to prevent flickering when switching tabs
+const statsCache = new Map()
+const STATS_CACHE_TTL = 3000 // 3 seconds
+
 function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
   const [isOpen, setIsOpen] = useState(false)
-  const [stats, setStats] = useState(null)
+  const [stats, setStats] = useState(() => {
+    // Initialize with cached stats if available
+    const cached = statsCache.get(engine.container_id)
+    return cached?.data || null
+  })
   
   const healthColors = {
     healthy: 'success',
@@ -24,11 +32,26 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
   // Fetch Docker stats continuously (not just when expanded)
   useEffect(() => {
     const fetchStats = async () => {
+      // Check cache first
+      const cached = statsCache.get(engine.container_id)
+      const now = Date.now()
+      
+      if (cached && (now - cached.timestamp) < STATS_CACHE_TTL) {
+        // Use cached data
+        setStats(cached.data)
+        return
+      }
+      
       try {
         const response = await fetch(`${orchUrl}/engines/${engine.container_id}/stats`)
         if (response.ok) {
           const data = await response.json()
           setStats(data)
+          // Update cache
+          statsCache.set(engine.container_id, {
+            data,
+            timestamp: now
+          })
         }
       } catch (err) {
         console.error('Failed to fetch engine stats:', err)
