@@ -25,7 +25,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
       
       const headers = {}
       if (apiKey) {
-        headers['X-API-KEY'] = apiKey
+        headers['Authorization'] = `Bearer ${apiKey}`
       }
       
       const response = await fetch(`${orchUrl}/settings/export`, {
@@ -79,7 +79,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
       
       const headers = {}
       if (apiKey) {
-        headers['X-API-KEY'] = apiKey
+        headers['Authorization'] = `Bearer ${apiKey}`
       }
       
       // Build query params for import options

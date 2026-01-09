@@ -92,5 +92,5 @@ INITIAL_DATA_CHECK_INTERVAL = 0.2  # Seconds between buffer checks
 
 # No data tolerance constants - how long to wait when no data is received during streaming
 # This is separate from initial data wait - this is for detecting stream end
-NO_DATA_TIMEOUT_CHECKS = 30  # Number of consecutive empty checks before declaring stream ended
-NO_DATA_CHECK_INTERVAL = 0.1  # Seconds between checks when no data is available
+NO_DATA_TIMEOUT_CHECKS = 60  # Number of consecutive empty checks before declaring stream ended
+NO_DATA_CHECK_INTERVAL = 1  # Seconds between checks when no data is available

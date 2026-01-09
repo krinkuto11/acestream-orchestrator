@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
     
     # Load custom variant configuration early to ensure it's available
     from .services.custom_variant_config import load_config as load_custom_config, save_config as save_custom_config
-    from .services.template_manager import get_active_template_id, get_template, set_active_template
+    from .services.template_manager import get_active_template_id, get_template, set_active_template, list_templates
     try:
         custom_config = load_custom_config()
         if custom_config and custom_config.enabled:
@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
                 template = get_template(active_template_id)
                 if template:
                     # Apply the template configuration, but preserve the enabled state
-                    template_config = template.config.copy(deep=True)
+                    template_config = template.config.model_copy(deep=True)
                     template_config.enabled = custom_config.enabled
                     save_custom_config(template_config)
                     # Ensure active template is set (in case it was only loaded but not set)
@@ -73,14 +73,34 @@ async def lifespan(app: FastAPI):
                 else:
                     logger.warning(f"Active template {active_template_id} not found, using current config")
             else:
-                # Custom variant is enabled but no active template - this means user enabled custom mode
-                # without selecting a template. Ensure we have a valid platform loaded.
-                if not custom_config.platform:
-                    logger.warning("Custom variant enabled but no platform set, detecting platform...")
-                    from .services.custom_variant_config import detect_platform
-                    custom_config.platform = detect_platform()
-                    save_custom_config(custom_config)
-                    logger.info(f"Set custom variant platform to detected platform: {custom_config.platform}")
+                # Custom variant is enabled but no active template
+                # Try to auto-load the first available template
+                logger.info("Custom variant enabled but no active template, checking for available templates...")
+                templates = list_templates()
+                first_available = next((t for t in templates if t['exists']), None)
+                
+                if first_available:
+                    logger.info(f"Auto-loading first available template (slot {first_available['slot_id']})")
+                    template = get_template(first_available['slot_id'])
+                    if template:
+                        # Apply the template configuration, but preserve the enabled state
+                        template_config = template.config.model_copy(deep=True)
+                        template_config.enabled = custom_config.enabled
+                        save_custom_config(template_config)
+                        # Set as active template
+                        set_active_template(first_available['slot_id'])
+                        logger.info(f"Successfully auto-loaded template '{template.name}' (slot {first_available['slot_id']})")
+                    else:
+                        logger.warning(f"Failed to load template from slot {first_available['slot_id']}")
+                else:
+                    # No templates available - ensure we have a valid platform loaded
+                    logger.info("No templates available, using current custom variant config")
+                    if not custom_config.platform:
+                        logger.warning("Custom variant enabled but no platform set, detecting platform...")
+                        from .services.custom_variant_config import detect_platform
+                        custom_config.platform = detect_platform()
+                        save_custom_config(custom_config)
+                        logger.info(f"Set custom variant platform to detected platform: {custom_config.platform}")
         else:
             logger.debug("Custom engine variant is disabled or not configured")
     except Exception as e:
@@ -1494,7 +1514,7 @@ def activate_template(slot_id: int):
     current_enabled = current_config.enabled if current_config else False
     
     # Save the template config as the current custom variant config, preserving enabled state
-    template_config = template.config.copy(deep=True)
+    template_config = template.config.model_copy(deep=True)
     template_config.enabled = current_enabled
     success = save_custom_config(template_config)
     if not success:

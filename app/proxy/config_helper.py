@@ -49,8 +49,8 @@ class Config:
     
     # Stream data tolerance - how long to wait when no data is received
     # Total timeout = NO_DATA_TIMEOUT_CHECKS * NO_DATA_CHECK_INTERVAL seconds
-    NO_DATA_TIMEOUT_CHECKS = int(os.getenv('PROXY_NO_DATA_TIMEOUT_CHECKS', '30'))
-    NO_DATA_CHECK_INTERVAL = float(os.getenv('PROXY_NO_DATA_CHECK_INTERVAL', '0.1'))
+    NO_DATA_TIMEOUT_CHECKS = int(os.getenv('PROXY_NO_DATA_TIMEOUT_CHECKS', '60'))
+    NO_DATA_CHECK_INTERVAL = float(os.getenv('PROXY_NO_DATA_CHECK_INTERVAL', '1'))
     
     # Initial data wait settings
     INITIAL_DATA_WAIT_TIMEOUT = int(os.getenv('PROXY_INITIAL_DATA_WAIT_TIMEOUT', '10'))

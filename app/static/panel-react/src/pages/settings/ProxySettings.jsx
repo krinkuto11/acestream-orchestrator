@@ -13,8 +13,8 @@ export function ProxySettings({ apiKey, orchUrl }) {
   // Proxy config state
   const [initialDataWaitTimeout, setInitialDataWaitTimeout] = useState(10)
   const [initialDataCheckInterval, setInitialDataCheckInterval] = useState(0.2)
-  const [noDataTimeoutChecks, setNoDataTimeoutChecks] = useState(30)
-  const [noDataCheckInterval, setNoDataCheckInterval] = useState(0.1)
+  const [noDataTimeoutChecks, setNoDataTimeoutChecks] = useState(60)
+  const [noDataCheckInterval, setNoDataCheckInterval] = useState(1)
   const [connectionTimeout, setConnectionTimeout] = useState(10)
   const [streamTimeout, setStreamTimeout] = useState(60)
   const [channelShutdownDelay, setChannelShutdownDelay] = useState(5)
@@ -147,8 +147,8 @@ export function ProxySettings({ apiKey, orchUrl }) {
             />
             <p className="text-xs text-muted-foreground">
               Number of consecutive empty buffer checks before declaring stream ended.
-              Total timeout = checks × interval. Example: 30 checks × 0.1s = 3s timeout.
-              <br /><strong>Range:</strong> 5-600 checks. <strong>Default:</strong> 30 checks.
+              Total timeout = checks × interval. Example: 60 checks × 1s = 60s timeout.
+              <br /><strong>Range:</strong> 5-600 checks. <strong>Default:</strong> 60 checks.
             </p>
           </div>
           
@@ -165,8 +165,8 @@ export function ProxySettings({ apiKey, orchUrl }) {
             />
             <p className="text-xs text-muted-foreground">
               Seconds between buffer checks when no data is available during streaming.
-              For unstable streams, increase timeout checks or interval. Example: 100 checks × 0.1s = 10s tolerance.
-              <br /><strong>Range:</strong> 0.01-1.0 seconds. <strong>Default:</strong> 0.1 seconds.
+              For unstable streams, increase timeout checks or interval. Example: 100 checks × 1s = 100s tolerance.
+              <br /><strong>Range:</strong> 0.01-1.0 seconds. <strong>Default:</strong> 1 second.
             </p>
           </div>
         </CardContent>
