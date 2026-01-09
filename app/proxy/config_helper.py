@@ -47,6 +47,15 @@ class Config:
     HEALTH_CHECK_INTERVAL = int(os.getenv('PROXY_HEALTH_CHECK_INTERVAL', '5'))
     GHOST_CLIENT_MULTIPLIER = float(os.getenv('PROXY_GHOST_CLIENT_MULTIPLIER', '5.0'))
     
+    # Stream data tolerance - how long to wait when no data is received
+    # Total timeout = NO_DATA_TIMEOUT_CHECKS * NO_DATA_CHECK_INTERVAL seconds
+    NO_DATA_TIMEOUT_CHECKS = int(os.getenv('PROXY_NO_DATA_TIMEOUT_CHECKS', '30'))
+    NO_DATA_CHECK_INTERVAL = float(os.getenv('PROXY_NO_DATA_CHECK_INTERVAL', '0.1'))
+    
+    # Initial data wait settings
+    INITIAL_DATA_WAIT_TIMEOUT = int(os.getenv('PROXY_INITIAL_DATA_WAIT_TIMEOUT', '10'))
+    INITIAL_DATA_CHECK_INTERVAL = float(os.getenv('PROXY_INITIAL_DATA_CHECK_INTERVAL', '0.2'))
+    
     @staticmethod
     def get_channel_shutdown_delay():
         """Get channel shutdown delay in seconds."""
@@ -142,3 +151,23 @@ class ConfigHelper:
         This controls how long we wait for each chunk before timing out.
         """
         return Config.CHUNK_TIMEOUT
+    
+    @staticmethod
+    def no_data_timeout_checks():
+        """Get number of consecutive empty checks before declaring stream ended."""
+        return Config.NO_DATA_TIMEOUT_CHECKS
+    
+    @staticmethod
+    def no_data_check_interval():
+        """Get interval in seconds between checks when no data is available."""
+        return Config.NO_DATA_CHECK_INTERVAL
+    
+    @staticmethod
+    def initial_data_wait_timeout():
+        """Get maximum seconds to wait for initial data in buffer."""
+        return Config.INITIAL_DATA_WAIT_TIMEOUT
+    
+    @staticmethod
+    def initial_data_check_interval():
+        """Get seconds between buffer checks during initial data wait."""
+        return Config.INITIAL_DATA_CHECK_INTERVAL

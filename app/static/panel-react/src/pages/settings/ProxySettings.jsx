@@ -13,6 +13,8 @@ export function ProxySettings({ apiKey, orchUrl }) {
   // Proxy config state
   const [initialDataWaitTimeout, setInitialDataWaitTimeout] = useState(10)
   const [initialDataCheckInterval, setInitialDataCheckInterval] = useState(0.2)
+  const [noDataTimeoutChecks, setNoDataTimeoutChecks] = useState(30)
+  const [noDataCheckInterval, setNoDataCheckInterval] = useState(0.1)
   const [connectionTimeout, setConnectionTimeout] = useState(10)
   const [streamTimeout, setStreamTimeout] = useState(60)
   const [channelShutdownDelay, setChannelShutdownDelay] = useState(5)
@@ -33,6 +35,8 @@ export function ProxySettings({ apiKey, orchUrl }) {
         const data = await response.json()
         setInitialDataWaitTimeout(data.initial_data_wait_timeout)
         setInitialDataCheckInterval(data.initial_data_check_interval)
+        setNoDataTimeoutChecks(data.no_data_timeout_checks)
+        setNoDataCheckInterval(data.no_data_check_interval)
         setConnectionTimeout(data.connection_timeout)
         setStreamTimeout(data.stream_timeout)
         setChannelShutdownDelay(data.channel_shutdown_delay)
@@ -59,6 +63,8 @@ export function ProxySettings({ apiKey, orchUrl }) {
       const params = new URLSearchParams()
       params.append('initial_data_wait_timeout', initialDataWaitTimeout)
       params.append('initial_data_check_interval', initialDataCheckInterval)
+      params.append('no_data_timeout_checks', noDataTimeoutChecks)
+      params.append('no_data_check_interval', noDataCheckInterval)
       params.append('connection_timeout', connectionTimeout)
       params.append('stream_timeout', streamTimeout)
       params.append('channel_shutdown_delay', channelShutdownDelay)
@@ -126,6 +132,41 @@ export function ProxySettings({ apiKey, orchUrl }) {
             <p className="text-xs text-muted-foreground">
               How often to check if initial data has arrived in the buffer.
               <br /><strong>Range:</strong> 0.1-2.0 seconds. <strong>Default:</strong> 0.2 seconds.
+            </p>
+          </div>
+          
+          <div className="space-y-2">
+            <Label htmlFor="no-data-timeout-checks">No Data Timeout Checks</Label>
+            <Input
+              id="no-data-timeout-checks"
+              type="number"
+              min="5"
+              max="600"
+              value={noDataTimeoutChecks}
+              onChange={(e) => setNoDataTimeoutChecks(parseInt(e.target.value) || 30)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Number of consecutive empty buffer checks before declaring stream ended.
+              Total timeout = checks × interval. Example: 30 checks × 0.1s = 3s timeout.
+              <br /><strong>Range:</strong> 5-600 checks. <strong>Default:</strong> 30 checks.
+            </p>
+          </div>
+          
+          <div className="space-y-2">
+            <Label htmlFor="no-data-check-interval">No Data Check Interval (seconds)</Label>
+            <Input
+              id="no-data-check-interval"
+              type="number"
+              min="0.01"
+              max="1.0"
+              step="0.01"
+              value={noDataCheckInterval}
+              onChange={(e) => setNoDataCheckInterval(parseFloat(e.target.value) || 0.1)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Seconds between buffer checks when no data is available during streaming.
+              For unstable streams, increase timeout checks or interval. Example: 100 checks × 0.1s = 10s tolerance.
+              <br /><strong>Range:</strong> 0.01-1.0 seconds. <strong>Default:</strong> 0.1 seconds.
             </p>
           </div>
         </CardContent>

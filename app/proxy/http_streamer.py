@@ -90,22 +90,37 @@ class HTTPStreamReader:
 
             # Stream chunks to pipe
             chunk_count = 0
-            for chunk in self.response.iter_content(chunk_size=self.chunk_size):
-                if not self.running:
-                    break
-
-                if chunk:
-                    try:
-                        # Write binary data to pipe
-                        os.write(self.pipe_write, chunk)
-                        chunk_count += 1
-
-                        # Log progress periodically
-                        if chunk_count % 1000 == 0:
-                            logger.debug(f"HTTP reader streamed {chunk_count} chunks")
-                    except OSError as e:
-                        logger.error(f"Pipe write error: {e}")
+            try:
+                for chunk in self.response.iter_content(chunk_size=self.chunk_size):
+                    # Check if we should stop before processing chunk
+                    if not self.running:
+                        logger.debug("HTTP reader stopping (running=False)")
                         break
+
+                    if chunk:
+                        try:
+                            # Write binary data to pipe
+                            os.write(self.pipe_write, chunk)
+                            chunk_count += 1
+
+                            # Log progress periodically
+                            if chunk_count % 1000 == 0:
+                                logger.debug(f"HTTP reader streamed {chunk_count} chunks")
+                        except OSError as e:
+                            logger.error(f"Pipe write error: {e}")
+                            break
+            except AttributeError as e:
+                # This can happen if response is closed during iteration
+                # Check if it's the specific 'read' error we expect during shutdown
+                error_msg = str(e)
+                if not self.running and ('read' in error_msg or 'NoneType' in error_msg):
+                    logger.debug("HTTP reader stopped during iteration (expected)")
+                else:
+                    # Unexpected AttributeError - re-raise to avoid masking bugs
+                    logger.error(f"Unexpected attribute error in HTTP reader: {e}", exc_info=True)
+                    raise
+            except Exception as e:
+                logger.error(f"HTTP reader streaming error: {e}", exc_info=True)
 
             logger.info("HTTP stream ended")
 
@@ -128,10 +143,16 @@ class HTTPStreamReader:
         logger.info("Stopping HTTP stream reader")
         self.running = False
 
+        # Wait a moment for the read loop to notice running=False and exit
+        # This prevents closing the response while it's still being read
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=0.5)
+
         # Close response
         if self.response:
             try:
                 self.response.close()
+                self.response = None
             except:
                 pass
 
@@ -139,6 +160,7 @@ class HTTPStreamReader:
         if self.session:
             try:
                 self.session.close()
+                self.session = None
             except:
                 pass
 
@@ -150,6 +172,6 @@ class HTTPStreamReader:
             except:
                 pass
 
-        # Wait for thread
+        # Final wait for thread if it's still alive
         if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+            self.thread.join(timeout=1.5)
