@@ -247,6 +247,49 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
                     del _empty_engine_timestamps[container_id]
                 logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} (currently: {free_count} free, would become: {free_count - 1})")
                 return False
+        
+        # Check 3: In redundant VPN mode, maintain balanced distribution across VPNs
+        # Don't stop engines that would break the balance (prefer stopping from the VPN with more engines)
+        if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+            # Get the engine's VPN assignment
+            engine = state.get_engine(container_id)
+            if engine and engine.vpn_container:
+                vpn1_name = cfg.GLUETUN_CONTAINER_NAME
+                vpn2_name = cfg.GLUETUN_CONTAINER_NAME_2
+                
+                # Count engines per VPN
+                vpn1_engines = state.get_engines_by_vpn(vpn1_name)
+                vpn2_engines = state.get_engines_by_vpn(vpn2_name)
+                vpn1_count = len(vpn1_engines)
+                vpn2_count = len(vpn2_engines)
+                
+                engine_vpn = engine.vpn_container
+                
+                # Determine if stopping this engine would unbalance the distribution
+                # Allow stopping only if this VPN has MORE engines than the other VPN
+                # or if both have equal counts (balanced)
+                if engine_vpn == vpn1_name:
+                    # This engine is on VPN1
+                    if vpn1_count < vpn2_count:
+                        # VPN1 has fewer engines, don't stop this one
+                        if container_id in _empty_engine_timestamps:
+                            del _empty_engine_timestamps[container_id]
+                        logger.debug(
+                            f"Engine {container_id[:12]} cannot be stopped - would unbalance VPN distribution "
+                            f"(VPN1: {vpn1_count} engines, VPN2: {vpn2_count} engines)"
+                        )
+                        return False
+                elif engine_vpn == vpn2_name:
+                    # This engine is on VPN2
+                    if vpn2_count < vpn1_count:
+                        # VPN2 has fewer engines, don't stop this one
+                        if container_id in _empty_engine_timestamps:
+                            del _empty_engine_timestamps[container_id]
+                        logger.debug(
+                            f"Engine {container_id[:12]} cannot be stopped - would unbalance VPN distribution "
+                            f"(VPN1: {vpn1_count} engines, VPN2: {vpn2_count} engines)"
+                        )
+                        return False
     except Exception as e:
         logger.error(f"Error checking replica constraints: {e}")
         # On error, err on the side of caution and don't stop the engine
