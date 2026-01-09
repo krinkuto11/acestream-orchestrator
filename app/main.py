@@ -291,7 +291,13 @@ async def lifespan(app: FastAPI):
     
     cleanup_on_shutdown()
 
-app = FastAPI(title="On-Demand Orchestrator", lifespan=lifespan)
+__version__ = "1.5.1"
+
+app = FastAPI(
+    title="On-Demand Orchestrator",
+    version=__version__,
+    lifespan=lifespan
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -378,6 +384,15 @@ async def get_favicon_96_dark():
 async def get_apple_touch_icon():
     """Serve apple-touch-icon.png at root level."""
     return serve_favicon("apple-touch-icon.png")
+
+# Version endpoint
+@app.get("/version")
+def get_version():
+    """Get the current version of the orchestrator."""
+    return {
+        "version": __version__,
+        "title": "AceStream Orchestrator"
+    }
 
 # Prometheus metrics endpoint with custom aggregated metrics
 from starlette.responses import Response
