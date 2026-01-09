@@ -306,7 +306,8 @@ class ClientManager:
                     logger.debug(f"Owner handling CLIENT_DISCONNECTED for client {client_id} locally")
                     if remaining == 0:
                         logger.debug(f"No clients left - triggering immediate shutdown check")
-                        # Use threading.Thread instead of gevent.spawn for consistency
+                        # Use threading.Thread instead of gevent.spawn
+                        # gevent.spawn doesn't work in uvicorn's default threading environment
                         thread = threading.Thread(
                             target=self.proxy_server.handle_client_disconnect,
                             args=(self.content_id,),

@@ -184,9 +184,9 @@ def test_vpn_balance_enforcement():
         cfg.GLUETUN_CONTAINER_NAME_2 = original_vpn2
         cfg.MIN_REPLICAS = original_min_replicas
         cfg.ENGINE_GRACE_PERIOD_S = original_grace
-        if original_list_managed:
+        if original_list_managed is not None:
             autoscaler.list_managed = original_list_managed
-        if rv_module:
+        if original_list_managed is not None:
             rv_module.list_managed = original_list_managed
         state.engines.clear()
         state.streams.clear()
@@ -314,9 +314,9 @@ def test_vpn_balance_respects_min_replicas():
         cfg.GLUETUN_CONTAINER_NAME_2 = original_vpn2
         cfg.MIN_REPLICAS = original_min_replicas
         cfg.ENGINE_GRACE_PERIOD_S = original_grace
-        if original_list_managed:
+        if original_list_managed is not None:
             autoscaler.list_managed = original_list_managed
-        if rv_module:
+        if original_list_managed is not None:
             rv_module.list_managed = original_list_managed
         state.engines.clear()
         state.streams.clear()
