@@ -1731,8 +1731,11 @@ async def ace_getstream(
                 detail="No engines available"
             )
         
-        # Engine selection: fill engines sequentially to near-capacity before using new ones
-        # Priority: 1. Engine with most streams (but not at max), 2. Forwarded engine
+        # Engine selection: fill engines in layers (round-robin across all engines)
+        # Layer 1: All engines get 1 stream before any gets 2
+        # Layer 2: All engines get 2 streams before any gets 3
+        # Continue until layer (MAX_STREAMS - 1) is filled, then provision new engine
+        # Priority: 1. Engine with LEAST streams (not at max), 2. Forwarded engine
         active_streams = state.list_streams(status="started")
         engine_loads = {}
         for stream in active_streams:
@@ -1752,10 +1755,10 @@ async def ace_getstream(
                 detail=f"All engines at maximum capacity ({max_streams} streams per engine)"
             )
         
-        # Sort: (negative load, not forwarded) - prefer highest load first, then forwarded
-        # Using negative load so engines with MORE streams come first
+        # Sort: (load, not forwarded) - prefer LEAST load first (layer filling), then forwarded
+        # This ensures all engines reach same level before any engine gets another stream
         engines_sorted = sorted(available_engines, key=lambda e: (
-            -engine_loads.get(e.container_id, 0),  # Negative for descending order (most streams first)
+            engine_loads.get(e.container_id, 0),  # Ascending order (least streams first)
             not e.forwarded  # Forwarded engines preferred when load is equal
         ))
         selected_engine = engines_sorted[0]

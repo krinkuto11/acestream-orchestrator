@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-Test to verify that engine selection fills engines sequentially.
+Test to verify that engine selection fills engines in layers (round-robin).
 
 When MAX_STREAMS_PER_ENGINE=5:
-- Engines should fill to 4 streams before assigning to a new engine
-- Priority: 1. Engine with most streams (not at max), 2. Forwarded engine
+- Layer 1: All engines get 1 stream before any gets 2
+- Layer 2: All engines get 2 streams before any gets 3
+- Continue until layer 4 (MAX-1) is complete
+- Then provision new engine
+- Priority: 1. Engine with LEAST streams (not at max), 2. Forwarded engine
 """
 
 import sys
@@ -13,10 +16,10 @@ import os
 # Add app to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-def test_engine_selection_sequential_filling():
-    """Test that engine selection prioritizes filling existing engines before new ones."""
+def test_engine_selection_layer_filling():
+    """Test that engine selection fills engines in layers (round-robin)."""
     
-    print("\n🧪 Testing sequential engine filling behavior...")
+    print("\n🧪 Testing layer-based engine filling behavior...")
     
     from app.services.state import state
     from app.core.config import cfg
@@ -79,50 +82,21 @@ def test_engine_selection_sequential_filling():
             if not available_engines:
                 return None
             
-            # Sort: (negative load, not forwarded) - prefer highest load first, then forwarded
+            # Sort: (load, not forwarded) - prefer LEAST load first (layer filling), then forwarded
             engines_sorted = sorted(available_engines, key=lambda e: (
-                -engine_loads.get(e.container_id, 0),
-                not e.forwarded
+                engine_loads.get(e.container_id, 0),  # Ascending order (least streams first)
+                not e.forwarded  # Forwarded engines preferred when load is equal
             ))
             return engines_sorted[0]
         
-        # Test 1: First stream should go to forwarded engine (engine_0)
-        print("\nTest 1: First stream selection (all engines empty)")
-        selected = select_engine()
-        assert selected is not None, "Should select an engine"
-        assert selected.container_id == "engine_0", f"First stream should go to forwarded engine, got {selected.container_id}"
-        print(f"✅ Correctly selected forwarded engine (engine_0)")
-        
-        # Add first stream to engine_0
-        stream = StreamState(
-            id="stream_1",
-            container_id="engine_0",
-            key="test_key_1",
-            key_type="infohash",
-            playback_session_id="session_1",
-            stat_url="http://localhost:19000/stat",
-            command_url="http://localhost:19000/cmd",
-            is_live=True,
-            started_at=now,
-            status="started"
-        )
-        state.streams[stream.id] = stream
-        
-        # Test 2: Second stream should still go to engine_0 (fill it first)
-        print("\nTest 2: Second stream selection (engine_0 has 1 stream)")
-        selected = select_engine()
-        assert selected is not None, "Should select an engine"
-        assert selected.container_id == "engine_0", f"Should continue filling engine_0, got {selected.container_id}"
-        print(f"✅ Correctly selected engine_0 again (has 1 stream)")
-        
-        # Add streams to engine_0 until it has 4 streams
-        for i in range(2, 5):
+        # Helper to add a stream to an engine
+        def add_stream_to_engine(engine_id, stream_num):
             stream = StreamState(
-                id=f"stream_{i}",
-                container_id="engine_0",
-                key=f"test_key_{i}",
+                id=f"stream_{stream_num}",
+                container_id=engine_id,
+                key=f"test_key_{stream_num}",
                 key_type="infohash",
-                playback_session_id=f"session_{i}",
+                playback_session_id=f"session_{stream_num}",
                 stat_url=f"http://localhost:19000/stat",
                 command_url=f"http://localhost:19000/cmd",
                 is_live=True,
@@ -131,104 +105,112 @@ def test_engine_selection_sequential_filling():
             )
             state.streams[stream.id] = stream
         
-        # Test 3: With engine_0 at 4 streams, next should go to engine_1 (not forwarded but empty)
-        print("\nTest 3: Fifth stream selection (engine_0 has 4 streams, others empty)")
+        # Test Layer 1: All engines should get 1 stream before any gets 2
+        print("\n=== Testing Layer 1 (all engines get 1 stream first) ===")
+        
+        # Stream 1 should go to engine_0 (forwarded, has 0 streams)
         selected = select_engine()
-        assert selected is not None, "Should select an engine"
-        # Should select engine_0 still since it only has 4 streams (max is 5)
-        assert selected.container_id == "engine_0", f"Should still fill engine_0 to capacity, got {selected.container_id}"
-        print(f"✅ Correctly selected engine_0 (4 streams, can take one more)")
+        assert selected.container_id == "engine_0", f"First stream should go to forwarded engine, got {selected.container_id}"
+        add_stream_to_engine(selected.container_id, 1)
+        print(f"✓ Stream 1 → engine_0 (forwarded)")
         
-        # Add 5th stream to engine_0 (now at max capacity)
-        stream = StreamState(
-            id="stream_5",
-            container_id="engine_0",
-            key="test_key_5",
-            key_type="infohash",
-            playback_session_id="session_5",
-            stat_url="http://localhost:19000/stat",
-            command_url="http://localhost:19000/cmd",
-            is_live=True,
-            started_at=now,
-            status="started"
-        )
-        state.streams[stream.id] = stream
-        
-        # Test 4: With engine_0 at max (5 streams), should move to engine_1
-        print("\nTest 4: Sixth stream selection (engine_0 at max=5, others empty)")
+        # Stream 2 should go to engine_1 (has 0 streams, engine_0 has 1)
         selected = select_engine()
-        assert selected is not None, "Should select an engine"
-        assert selected.container_id == "engine_1", f"Should select engine_1 now that engine_0 is full, got {selected.container_id}"
-        print(f"✅ Correctly selected engine_1 (engine_0 is at max capacity)")
+        assert selected.container_id == "engine_1", f"Second stream should go to engine_1, got {selected.container_id}"
+        add_stream_to_engine(selected.container_id, 2)
+        print(f"✓ Stream 2 → engine_1 (completing layer 1)")
         
-        # Add 4 streams to engine_1
-        for i in range(6, 10):
-            stream = StreamState(
-                id=f"stream_{i}",
-                container_id="engine_1",
-                key=f"test_key_{i}",
-                key_type="infohash",
-                playback_session_id=f"session_{i}",
-                stat_url="http://localhost:19001/stat",
-                command_url="http://localhost:19001/cmd",
-                is_live=True,
-                started_at=now,
-                status="started"
-            )
-            state.streams[stream.id] = stream
-        
-        # Test 5: With engine_0 and engine_1 having 5 and 4 streams respectively, should go to engine_1
-        print("\nTest 5: Stream selection (engine_0=5, engine_1=4, engine_2=0)")
+        # Stream 3 should go to engine_2 (has 0 streams, others have 1)
         selected = select_engine()
-        assert selected is not None, "Should select an engine"
-        assert selected.container_id == "engine_1", f"Should select engine_1 (has 4 streams), got {selected.container_id}"
-        print(f"✅ Correctly selected engine_1 (has most streams but not at max)")
+        assert selected.container_id == "engine_2", f"Third stream should go to engine_2, got {selected.container_id}"
+        add_stream_to_engine(selected.container_id, 3)
+        print(f"✓ Stream 3 → engine_2 (completing layer 1)")
         
-        # Fill engine_1 to max
-        stream = StreamState(
-            id="stream_10",
-            container_id="engine_1",
-            key="test_key_10",
-            key_type="infohash",
-            playback_session_id="session_10",
-            stat_url="http://localhost:19001/stat",
-            command_url="http://localhost:19001/cmd",
-            is_live=True,
-            started_at=now,
-            status="started"
-        )
-        state.streams[stream.id] = stream
+        print("✅ Layer 1 complete: all engines have 1 stream")
         
-        # Test 6: With engine_0 and engine_1 both at max, should go to engine_2
-        print("\nTest 6: Stream selection (engine_0=5, engine_1=5, engine_2=0)")
+        # Test Layer 2: All engines should get 2nd stream before any gets 3rd
+        print("\n=== Testing Layer 2 (all engines get 2 streams) ===")
+        
+        # Stream 4 should go to engine_0 (forwarded, all have 1 stream)
         selected = select_engine()
-        assert selected is not None, "Should select an engine"
-        assert selected.container_id == "engine_2", f"Should select engine_2 (only one available), got {selected.container_id}"
-        print(f"✅ Correctly selected engine_2 (only available engine)")
+        assert selected.container_id == "engine_0", f"Should go to forwarded engine when all equal, got {selected.container_id}"
+        add_stream_to_engine(selected.container_id, 4)
+        print(f"✓ Stream 4 → engine_0 (forwarded priority at equal load)")
         
-        # Fill all engines to max
-        for i in range(11, 16):
-            stream = StreamState(
-                id=f"stream_{i}",
-                container_id="engine_2",
-                key=f"test_key_{i}",
-                key_type="infohash",
-                playback_session_id=f"session_{i}",
-                stat_url="http://localhost:19002/stat",
-                command_url="http://localhost:19002/cmd",
-                is_live=True,
-                started_at=now,
-                status="started"
-            )
-            state.streams[stream.id] = stream
+        # Stream 5 should go to engine_1 or engine_2 (both have 1)
+        selected = select_engine()
+        assert selected.container_id in ["engine_1", "engine_2"], f"Should go to engine with 1 stream, got {selected.container_id}"
+        add_stream_to_engine(selected.container_id, 5)
+        print(f"✓ Stream 5 → {selected.container_id}")
         
-        # Test 7: All engines at max capacity
-        print("\nTest 7: All engines at max capacity (engine_0=5, engine_1=5, engine_2=5)")
+        # Stream 6 should go to the remaining engine with 1 stream
+        selected = select_engine()
+        active_streams = state.list_streams(status="started")
+        engine_loads = {s.container_id: 0 for s in state.list_engines()}
+        for stream in active_streams:
+            engine_loads[stream.container_id] = engine_loads.get(stream.container_id, 0) + 1
+        
+        # Should select engine with only 1 stream
+        assert engine_loads[selected.container_id] == 1, f"Should select engine with 1 stream, got engine with {engine_loads[selected.container_id]}"
+        add_stream_to_engine(selected.container_id, 6)
+        print(f"✓ Stream 6 → {selected.container_id} (completing layer 2)")
+        
+        print("✅ Layer 2 complete: all engines have 2 streams")
+        
+        # Verify all engines have 2 streams now
+        active_streams = state.list_streams(status="started")
+        engine_loads = {}
+        for stream in active_streams:
+            engine_loads[stream.container_id] = engine_loads.get(stream.container_id, 0) + 1
+        
+        for i in range(3):
+            assert engine_loads.get(f"engine_{i}", 0) == 2, f"Engine {i} should have 2 streams, has {engine_loads.get(f'engine_{i}', 0)}"
+        
+        # Continue filling to layer 4 (MAX_STREAMS - 1)
+        print("\n=== Testing Layers 3 and 4 ===")
+        stream_num = 7
+        for layer in [3, 4]:
+            for i in range(3):
+                selected = select_engine()
+                add_stream_to_engine(selected.container_id, stream_num)
+                stream_num += 1
+            print(f"✅ Layer {layer} complete: all engines have {layer} streams")
+        
+        # Verify all engines have 4 streams (MAX - 1)
+        active_streams = state.list_streams(status="started")
+        engine_loads = {}
+        for stream in active_streams:
+            engine_loads[stream.container_id] = engine_loads.get(stream.container_id, 0) + 1
+        
+        for i in range(3):
+            actual_load = engine_loads.get(f"engine_{i}", 0)
+            assert actual_load == 4, f"Engine {i} should have 4 streams (MAX-1), has {actual_load}"
+        
+        print("\n✅ All engines at layer 4 (MAX_STREAMS - 1 = 4)")
+        print("   Now ready for new engine provisioning when autoscaler runs")
+        
+        # Test filling to max capacity
+        print("\n=== Testing Layer 5 (max capacity) ===")
+        for i in range(3):
+            selected = select_engine()
+            add_stream_to_engine(selected.container_id, stream_num)
+            stream_num += 1
+        
+        # Verify all engines at max
+        active_streams = state.list_streams(status="started")
+        engine_loads = {}
+        for stream in active_streams:
+            engine_loads[stream.container_id] = engine_loads.get(stream.container_id, 0) + 1
+        
+        for i in range(3):
+            assert engine_loads.get(f"engine_{i}", 0) == 5, f"Engine {i} should be at max (5), has {engine_loads.get(f'engine_{i}', 0)}"
+        
+        # Should return None when all at max
         selected = select_engine()
         assert selected is None, "Should return None when all engines at max capacity"
-        print(f"✅ Correctly returned None when all engines at max capacity")
+        print("✅ All engines at max capacity (5 streams)")
         
-        print("\n✅ All engine selection tests passed!")
+        print("\n✅ All layer-based filling tests passed!")
         return True
         
     finally:
@@ -309,7 +291,7 @@ def test_forwarded_priority_at_equal_load():
         ]
         
         engines_sorted = sorted(available_engines, key=lambda e: (
-            -engine_loads.get(e.container_id, 0),
+            engine_loads.get(e.container_id, 0),
             not e.forwarded
         ))
         selected = engines_sorted[0]
@@ -329,7 +311,7 @@ def test_forwarded_priority_at_equal_load():
 
 if __name__ == "__main__":
     try:
-        test_engine_selection_sequential_filling()
+        test_engine_selection_layer_filling()
         test_forwarded_priority_at_equal_load()
         print("\n✅ All tests passed!")
         sys.exit(0)
