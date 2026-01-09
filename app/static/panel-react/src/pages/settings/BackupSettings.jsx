@@ -16,6 +16,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
     templates: true,
     proxy: true,
     loop_detection: true,
+    engine: true,
   })
   const [importResult, setImportResult] = useState(null)
 
@@ -88,6 +89,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
         import_templates: importOptions.templates,
         import_proxy: importOptions.proxy,
         import_loop_detection: importOptions.loop_detection,
+        import_engine: importOptions.engine,
       })
       
       const response = await fetch(`${orchUrl}/settings/import?${params}`, {
@@ -112,6 +114,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
       if (imported.active_template) messages.push('Active template')
       if (imported.proxy) messages.push('Proxy settings')
       if (imported.loop_detection) messages.push('Loop detection settings')
+      if (imported.engine) messages.push('Engine settings')
       
       if (messages.length > 0) {
         toast.success(`Imported: ${messages.join(', ')}`)
@@ -175,6 +178,10 @@ export function BackupSettings({ apiKey, orchUrl }) {
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle className="h-3 w-3" />
+                  Engine settings (min/max replicas, auto-delete)
+                </li>
+                <li className="flex items-center gap-2">
+                  <CheckCircle className="h-3 w-3" />
                   Proxy configuration
                 </li>
                 <li className="flex items-center gap-2">
@@ -231,6 +238,20 @@ export function BackupSettings({ apiKey, orchUrl }) {
                     className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
                   >
                     Custom Engine Templates & Active Template
+                  </Label>
+                </div>
+                
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="import-engine"
+                    checked={importOptions.engine}
+                    onCheckedChange={() => toggleImportOption('engine')}
+                  />
+                  <Label
+                    htmlFor="import-engine"
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                  >
+                    Engine Settings (Min/Max Replicas, Auto-Delete)
                   </Label>
                 </div>
                 
@@ -305,6 +326,9 @@ export function BackupSettings({ apiKey, orchUrl }) {
                       )}
                       {importResult.imported.active_template && (
                         <Badge variant="success">Active Template</Badge>
+                      )}
+                      {importResult.imported.engine && (
+                        <Badge variant="success">Engine Settings</Badge>
                       )}
                       {importResult.imported.proxy && (
                         <Badge variant="success">Proxy Settings</Badge>
