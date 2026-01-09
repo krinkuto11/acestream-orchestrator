@@ -7,7 +7,6 @@ import threading
 import logging
 import time
 import json
-import gevent
 from typing import Set, Optional
 from redis.exceptions import ConnectionError, TimeoutError
 
@@ -307,7 +306,14 @@ class ClientManager:
                     logger.debug(f"Owner handling CLIENT_DISCONNECTED for client {client_id} locally")
                     if remaining == 0:
                         logger.debug(f"No clients left - triggering immediate shutdown check")
-                        gevent.spawn(self.proxy_server.handle_client_disconnect, self.content_id)
+                        # Use threading.Thread instead of gevent.spawn for consistency
+                        thread = threading.Thread(
+                            target=self.proxy_server.handle_client_disconnect,
+                            args=(self.content_id,),
+                            daemon=True,
+                            name=f"client-disconnect-{self.content_id[:8]}"
+                        )
+                        thread.start()
                 else:
                     # We're not the owner - publish event
                     logger.debug(f"Non-owner publishing CLIENT_DISCONNECTED event for client {client_id}")
