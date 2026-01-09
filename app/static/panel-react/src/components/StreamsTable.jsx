@@ -422,6 +422,66 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           {/* colspan: active streams have 12 cols (checkbox + expand + 10 data), ended streams have 7 cols (expand + 6 data) */}
           <TableCell colSpan={showSpeedColumns ? 12 : 7} className="p-6 bg-muted/50">
             <div className="space-y-6">
+              {/* Connected Clients - Moved to top */}
+              {isActive && (
+                <div>
+                  <p className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <Users className="h-4 w-4" />
+                    Connected Clients ({clients.length})
+                  </p>
+                  {clientsLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading clients...</p>
+                  ) : clients.length > 0 ? (
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-white">Client ID</TableHead>
+                            <TableHead className="text-white">IP Address</TableHead>
+                            <TableHead className="text-white">Connected At</TableHead>
+                            <TableHead className="text-right text-white">Bytes Sent</TableHead>
+                            <TableHead className="text-white">User Agent</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {clients.map((client, idx) => (
+                            <TableRow key={client.client_id || idx}>
+                              <TableCell className="font-mono text-xs text-white">
+                                <span className="truncate max-w-[200px] block" title={client.client_id}>
+                                  {client.client_id && client.client_id.length > TRUNCATED_CLIENT_ID_LENGTH
+                                    ? `${client.client_id.slice(0, TRUNCATED_CLIENT_ID_LENGTH)}...`
+                                    : client.client_id || 'N/A'
+                                  }
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-sm text-white">
+                                {client.ip_address || 'N/A'}
+                              </TableCell>
+                              <TableCell className="text-sm text-white">
+                                {client.connected_at 
+                                  ? new Date(client.connected_at * 1000).toLocaleString()
+                                  : 'N/A'
+                                }
+                              </TableCell>
+                              <TableCell className="text-right text-sm text-white">
+                                {client.bytes_sent !== undefined ? formatBytes(client.bytes_sent) : 'N/A'}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs text-white">
+                                <span className="truncate max-w-[300px] block" title={client.user_agent}>
+                                  {client.user_agent || 'N/A'}
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No clients connected</p>
+                  )}
+                </div>
+              )}
+
               {/* Stream Details */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
@@ -516,66 +576,6 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                   </>
                 )}
               </div>
-
-              {/* Connected Clients */}
-              {isActive && (
-                <div className="border-t pt-4">
-                  <p className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                    <Users className="h-4 w-4" />
-                    Connected Clients ({clients.length})
-                  </p>
-                  {clientsLoading ? (
-                    <p className="text-sm text-muted-foreground">Loading clients...</p>
-                  ) : clients.length > 0 ? (
-                    <div className="rounded-md border">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Client ID</TableHead>
-                            <TableHead>IP Address</TableHead>
-                            <TableHead>Connected At</TableHead>
-                            <TableHead className="text-right">Bytes Sent</TableHead>
-                            <TableHead>User Agent</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {clients.map((client, idx) => (
-                            <TableRow key={client.client_id || idx}>
-                              <TableCell className="font-mono text-xs">
-                                <span className="truncate max-w-[200px] block" title={client.client_id}>
-                                  {client.client_id && client.client_id.length > TRUNCATED_CLIENT_ID_LENGTH
-                                    ? `${client.client_id.slice(0, TRUNCATED_CLIENT_ID_LENGTH)}...`
-                                    : client.client_id || 'N/A'
-                                  }
-                                </span>
-                              </TableCell>
-                              <TableCell className="text-sm">
-                                {client.ip_address || 'N/A'}
-                              </TableCell>
-                              <TableCell className="text-sm">
-                                {client.connected_at 
-                                  ? new Date(client.connected_at * 1000).toLocaleString()
-                                  : 'N/A'
-                                }
-                              </TableCell>
-                              <TableCell className="text-right text-sm">
-                                {client.bytes_sent !== undefined ? formatBytes(client.bytes_sent) : 'N/A'}
-                              </TableCell>
-                              <TableCell className="font-mono text-xs">
-                                <span className="truncate max-w-[300px] block" title={client.user_agent}>
-                                  {client.user_agent || 'N/A'}
-                                </span>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No clients connected</p>
-                  )}
-                </div>
-              )}
 
               {/* Links */}
               <div className="flex gap-4">
