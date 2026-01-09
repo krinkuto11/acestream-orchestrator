@@ -224,6 +224,10 @@ class ClientManager:
                     init_key = f"ace_proxy:stream:{self.content_id}:init_time"
                     self.redis_client.delete(init_key)
                     
+                    # Clear last disconnect time since we now have a client
+                    disconnect_key = RedisKeys.last_client_disconnect(self.content_id)
+                    self.redis_client.delete(disconnect_key)
+                    
                     self._notify_owner_of_activity()
                     
                     # Publish client connected event
