@@ -1,5 +1,5 @@
 {
-  "enabled": false,
+  "enabled": true,
   "platform": "amd64",
   "arm_version": "3.2.13",
   "memory_limit": null,
@@ -169,7 +169,7 @@
     {
       "name": "--stats-report-interval",
       "type": "int",
-      "value": 1,
+      "value": 60,
       "enabled": true
     },
     {
@@ -193,7 +193,7 @@
     {
       "name": "--check-live-pos-interval",
       "type": "int",
-      "value": 1,
+      "value": 10,
       "enabled": true
     },
     {
@@ -214,5 +214,8 @@
       "value": 3,
       "enabled": true
     }
-  ]
+  ],
+  "torrent_folder_mount_enabled": false,
+  "torrent_folder_host_path": null,
+  "torrent_folder_container_path": "/root/.ACEStream/collected_torrent_files"
 }
