@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { GeneralSettings } from './settings/GeneralSettings'
 import { ProxySettings } from './settings/ProxySettings'
 import { LoopDetectionSettings } from './settings/LoopDetectionSettings'
+import { BackupSettings } from './settings/BackupSettings'
 
 export function SettingsPage({
   apiKey,
@@ -23,10 +24,11 @@ export function SettingsPage({
       </div>
 
       <Tabs defaultValue="general" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-3 lg:w-[600px]">
+        <TabsList className="grid w-full grid-cols-4 lg:w-[800px]">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="proxy">Proxy</TabsTrigger>
           <TabsTrigger value="loop-detection">Loop Detection</TabsTrigger>
+          <TabsTrigger value="backup">Backup & Restore</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="space-y-6">
@@ -49,6 +51,13 @@ export function SettingsPage({
 
         <TabsContent value="loop-detection" className="space-y-6">
           <LoopDetectionSettings
+            apiKey={apiKey}
+            orchUrl={orchUrl}
+          />
+        </TabsContent>
+
+        <TabsContent value="backup" className="space-y-6">
+          <BackupSettings
             apiKey={apiKey}
             orchUrl={orchUrl}
           />
