@@ -51,7 +51,7 @@ function AppContent() {
     try {
       const [enginesData, streamsData, vpnData, orchStatus] = await Promise.all([
         fetchJSON(`${orchUrl}/engines`),
-        fetchJSON(`${orchUrl}/streams`),
+        fetchJSON(`${orchUrl}/streams?status=started`),
         fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false })),
         fetchJSON(`${orchUrl}/orchestrator/status`).catch(() => null)
       ])

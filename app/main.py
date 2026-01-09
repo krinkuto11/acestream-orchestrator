@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
     
     # Load custom variant configuration early to ensure it's available
     from .services.custom_variant_config import load_config as load_custom_config, save_config as save_custom_config
-    from .services.template_manager import get_active_template_id, get_template
+    from .services.template_manager import get_active_template_id, get_template, set_active_template
     try:
         custom_config = load_custom_config()
         if custom_config and custom_config.enabled:
@@ -67,9 +67,20 @@ async def lifespan(app: FastAPI):
                     template_config = template.config.copy(deep=True)
                     template_config.enabled = custom_config.enabled
                     save_custom_config(template_config)
+                    # Ensure active template is set (in case it was only loaded but not set)
+                    set_active_template(active_template_id)
                     logger.info(f"Successfully loaded template '{template.name}' (slot {active_template_id})")
                 else:
                     logger.warning(f"Active template {active_template_id} not found, using current config")
+            else:
+                # Custom variant is enabled but no active template - this means user enabled custom mode
+                # without selecting a template. Ensure we have a valid platform loaded.
+                if not custom_config.platform:
+                    logger.warning("Custom variant enabled but no platform set, detecting platform...")
+                    from .services.custom_variant_config import detect_platform
+                    custom_config.platform = detect_platform()
+                    save_custom_config(custom_config)
+                    logger.info(f"Set custom variant platform to detected platform: {custom_config.platform}")
         else:
             logger.debug("Custom engine variant is disabled or not configured")
     except Exception as e:
@@ -2112,5 +2123,277 @@ def update_proxy_config(
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
     }
+
+
+# ============================================================================
+# Settings Backup/Restore Endpoints
+# ============================================================================
+
+# Backup format version - increment when backup structure changes
+BACKUP_FORMAT_VERSION = "1.0"
+
+@app.get("/settings/export")
+async def export_settings(api_key_param: str = Depends(require_api_key)):
+    """
+    Export all settings (custom engine settings, templates, proxy, loop detection) as a ZIP file.
+    
+    Returns:
+        ZIP file containing all settings as JSON files
+    """
+    import zipfile
+    import io
+    
+    try:
+        # Create an in-memory ZIP file
+        zip_buffer = io.BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Export custom engine variant config
+            try:
+                custom_config = get_custom_config()
+                if custom_config:
+                    config_json = json.dumps(custom_config.dict(), indent=2)
+                    zip_file.writestr("custom_engine_variant.json", config_json)
+                    logger.info("Added custom engine variant config to backup")
+            except Exception as e:
+                logger.warning(f"Failed to export custom engine variant config: {e}")
+            
+            # Export all custom templates
+            try:
+                templates_list = list_templates()
+                for template_info in templates_list:
+                    if template_info['exists']:
+                        template = get_template(template_info['slot_id'])
+                        if template:
+                            template_json = json.dumps(template.to_dict(), indent=2)
+                            zip_file.writestr(f"templates/template_{template.slot_id}.json", template_json)
+                logger.info(f"Added {sum(1 for t in templates_list if t['exists'])} templates to backup")
+            except Exception as e:
+                logger.warning(f"Failed to export templates: {e}")
+            
+            # Export active template ID
+            try:
+                active_id = get_active_template_id()
+                if active_id is not None:
+                    active_template_json = json.dumps({"active_template_id": active_id}, indent=2)
+                    zip_file.writestr("active_template.json", active_template_json)
+                    logger.info(f"Added active template ID ({active_id}) to backup")
+            except Exception as e:
+                logger.warning(f"Failed to export active template ID: {e}")
+            
+            # Export proxy settings
+            try:
+                from .proxy.config_helper import Config as ProxyConfig
+                proxy_settings = {
+                    "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
+                    "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
+                    "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
+                    "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
+                    "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
+                    "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
+                    "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+                }
+                proxy_json = json.dumps(proxy_settings, indent=2)
+                zip_file.writestr("proxy_settings.json", proxy_json)
+                logger.info("Added proxy settings to backup")
+            except Exception as e:
+                logger.warning(f"Failed to export proxy settings: {e}")
+            
+            # Export loop detection settings
+            try:
+                loop_settings = {
+                    "enabled": cfg.STREAM_LOOP_DETECTION_ENABLED,
+                    "threshold_seconds": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S,
+                    "check_interval_seconds": cfg.STREAM_LOOP_CHECK_INTERVAL_S,
+                    "retention_minutes": cfg.STREAM_LOOP_RETENTION_MINUTES,
+                }
+                loop_json = json.dumps(loop_settings, indent=2)
+                zip_file.writestr("loop_detection_settings.json", loop_json)
+                logger.info("Added loop detection settings to backup")
+            except Exception as e:
+                logger.warning(f"Failed to export loop detection settings: {e}")
+            
+            # Add metadata
+            metadata = {
+                "export_date": datetime.now(timezone.utc).isoformat(),
+                "version": BACKUP_FORMAT_VERSION,
+                "description": "AceStream Orchestrator Settings Backup"
+            }
+            zip_file.writestr("metadata.json", json.dumps(metadata, indent=2))
+        
+        # Prepare the ZIP for download
+        zip_buffer.seek(0)
+        
+        from starlette.responses import StreamingResponse
+        return StreamingResponse(
+            io.BytesIO(zip_buffer.getvalue()),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename=orchestrator_settings_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to export settings: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to export settings: {str(e)}")
+
+
+@app.post("/settings/import")
+async def import_settings_data(
+    request: Request,
+    import_custom_variant: bool = Query(True),
+    import_templates: bool = Query(True),
+    import_proxy: bool = Query(True),
+    import_loop_detection: bool = Query(True),
+    api_key_param: str = Depends(require_api_key)
+):
+    """
+    Import settings from uploaded ZIP file data.
+    
+    Query Parameters:
+        import_custom_variant: Whether to import custom engine variant config
+        import_templates: Whether to import templates  
+        import_proxy: Whether to import proxy settings
+        import_loop_detection: Whether to import loop detection settings
+    
+    Returns:
+        Summary of imported settings
+    """
+    import zipfile
+    import io
+    
+    try:
+        # Read the uploaded file data
+        file_data = await request.body()
+        
+        if not file_data:
+            raise HTTPException(status_code=400, detail="No file data provided")
+        
+        imported = {
+            "custom_variant": False,
+            "templates": 0,
+            "active_template": False,
+            "proxy": False,
+            "loop_detection": False,
+            "errors": []
+        }
+        
+        # Create a BytesIO object from the uploaded data
+        zip_buffer = io.BytesIO(file_data)
+        
+        with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
+            # Import custom engine variant config
+            if import_custom_variant and "custom_engine_variant.json" in zip_file.namelist():
+                try:
+                    config_data = zip_file.read("custom_engine_variant.json").decode('utf-8')
+                    config_dict = json.loads(config_data)
+                    config = CustomVariantConfig(**config_dict)
+                    if save_custom_config(config):
+                        reload_config()
+                        imported["custom_variant"] = True
+                        logger.info("Imported custom engine variant config")
+                except Exception as e:
+                    error_msg = f"Failed to import custom engine variant config: {e}"
+                    logger.error(error_msg)
+                    imported["errors"].append(error_msg)
+            
+            # Import templates
+            if import_templates:
+                template_files = [f for f in zip_file.namelist() if f.startswith("templates/")]
+                for template_file in template_files:
+                    try:
+                        template_data = zip_file.read(template_file).decode('utf-8')
+                        template_dict = json.loads(template_data)
+                        
+                        slot_id = template_dict['slot_id']
+                        name = template_dict['name']
+                        config = CustomVariantConfig(**template_dict['config'])
+                        
+                        if save_template(slot_id, name, config):
+                            imported["templates"] += 1
+                            logger.info(f"Imported template {slot_id}: {name}")
+                    except Exception as e:
+                        error_msg = f"Failed to import template from {template_file}: {e}"
+                        logger.error(error_msg)
+                        imported["errors"].append(error_msg)
+            
+            # Import active template ID
+            if import_templates and "active_template.json" in zip_file.namelist():
+                try:
+                    active_data = zip_file.read("active_template.json").decode('utf-8')
+                    active_dict = json.loads(active_data)
+                    active_id = active_dict.get('active_template_id')
+                    if active_id is not None:
+                        set_active_template(active_id)
+                        imported["active_template"] = True
+                        logger.info(f"Set active template to {active_id}")
+                except Exception as e:
+                    error_msg = f"Failed to import active template ID: {e}"
+                    logger.error(error_msg)
+                    imported["errors"].append(error_msg)
+            
+            # Import proxy settings
+            if import_proxy and "proxy_settings.json" in zip_file.namelist():
+                try:
+                    from .proxy.config_helper import Config as ProxyConfig
+                    proxy_data = zip_file.read("proxy_settings.json").decode('utf-8')
+                    proxy_dict = json.loads(proxy_data)
+                    
+                    ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT = proxy_dict.get('initial_data_wait_timeout', ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT)
+                    ProxyConfig.INITIAL_DATA_CHECK_INTERVAL = proxy_dict.get('initial_data_check_interval', ProxyConfig.INITIAL_DATA_CHECK_INTERVAL)
+                    ProxyConfig.NO_DATA_TIMEOUT_CHECKS = proxy_dict.get('no_data_timeout_checks', ProxyConfig.NO_DATA_TIMEOUT_CHECKS)
+                    ProxyConfig.NO_DATA_CHECK_INTERVAL = proxy_dict.get('no_data_check_interval', ProxyConfig.NO_DATA_CHECK_INTERVAL)
+                    ProxyConfig.CONNECTION_TIMEOUT = proxy_dict.get('connection_timeout', ProxyConfig.CONNECTION_TIMEOUT)
+                    ProxyConfig.STREAM_TIMEOUT = proxy_dict.get('stream_timeout', ProxyConfig.STREAM_TIMEOUT)
+                    ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_dict.get('channel_shutdown_delay', ProxyConfig.CHANNEL_SHUTDOWN_DELAY)
+                    
+                    # Persist to file
+                    if SettingsPersistence.save_proxy_config(proxy_dict):
+                        imported["proxy"] = True
+                        logger.info("Imported proxy settings")
+                    else:
+                        error_msg = "Failed to persist proxy settings to file"
+                        logger.error(error_msg)
+                        imported["errors"].append(error_msg)
+                except Exception as e:
+                    error_msg = f"Failed to import proxy settings: {e}"
+                    logger.error(error_msg)
+                    imported["errors"].append(error_msg)
+            
+            # Import loop detection settings
+            if import_loop_detection and "loop_detection_settings.json" in zip_file.namelist():
+                try:
+                    loop_data = zip_file.read("loop_detection_settings.json").decode('utf-8')
+                    loop_dict = json.loads(loop_data)
+                    
+                    cfg.STREAM_LOOP_DETECTION_ENABLED = loop_dict.get('enabled', cfg.STREAM_LOOP_DETECTION_ENABLED)
+                    cfg.STREAM_LOOP_DETECTION_THRESHOLD_S = loop_dict.get('threshold_seconds', cfg.STREAM_LOOP_DETECTION_THRESHOLD_S)
+                    cfg.STREAM_LOOP_CHECK_INTERVAL_S = loop_dict.get('check_interval_seconds', cfg.STREAM_LOOP_CHECK_INTERVAL_S)
+                    cfg.STREAM_LOOP_RETENTION_MINUTES = loop_dict.get('retention_minutes', cfg.STREAM_LOOP_RETENTION_MINUTES)
+                    
+                    # Update tracker retention
+                    looping_streams_tracker.set_retention_minutes(cfg.STREAM_LOOP_RETENTION_MINUTES)
+                    
+                    # Persist to file
+                    if SettingsPersistence.save_loop_detection_config(loop_dict):
+                        imported["loop_detection"] = True
+                        logger.info("Imported loop detection settings")
+                    else:
+                        error_msg = "Failed to persist loop detection settings to file"
+                        logger.error(error_msg)
+                        imported["errors"].append(error_msg)
+                except Exception as e:
+                    error_msg = f"Failed to import loop detection settings: {e}"
+                    logger.error(error_msg)
+                    imported["errors"].append(error_msg)
+        
+        return {
+            "message": "Settings imported successfully",
+            "imported": imported
+        }
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid ZIP file")
+    except Exception as e:
+        logger.error(f"Failed to import settings: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to import settings: {str(e)}")
 
 
