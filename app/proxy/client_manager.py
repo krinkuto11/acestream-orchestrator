@@ -339,6 +339,18 @@ class ClientManager:
             logger.error(f"Error getting total client count: {e}")
             return len(self.clients)  # Fall back to local count
     
+    def update_client_bytes_sent(self, client_id, bytes_sent):
+        """Update bytes_sent metric for a specific client in Redis"""
+        if not self.redis_client:
+            return
+        
+        try:
+            client_key = RedisKeys.client_metadata(self.content_id, client_id)
+            self.redis_client.hset(client_key, "bytes_sent", str(bytes_sent))
+            self.redis_client.hset(client_key, "stats_updated_at", str(time.time()))
+        except Exception as e:
+            logger.error(f"Error updating client bytes_sent: {e}")
+    
     def refresh_client_ttl(self):
         """Refresh TTL for active clients to prevent expiration"""
         if not self.redis_client:

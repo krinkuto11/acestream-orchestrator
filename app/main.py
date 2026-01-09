@@ -75,6 +75,50 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to load custom variant config during startup: {e}")
     
+    # Load persisted settings (Proxy and Loop Detection)
+    from .services.settings_persistence import SettingsPersistence
+    from .proxy.config_helper import Config as ProxyConfig
+    
+    # Load proxy settings
+    try:
+        proxy_settings = SettingsPersistence.load_proxy_config()
+        if proxy_settings:
+            logger.info("Loading persisted proxy settings")
+            if 'initial_data_wait_timeout' in proxy_settings:
+                ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT = proxy_settings['initial_data_wait_timeout']
+            if 'initial_data_check_interval' in proxy_settings:
+                ProxyConfig.INITIAL_DATA_CHECK_INTERVAL = proxy_settings['initial_data_check_interval']
+            if 'no_data_timeout_checks' in proxy_settings:
+                ProxyConfig.NO_DATA_TIMEOUT_CHECKS = proxy_settings['no_data_timeout_checks']
+            if 'no_data_check_interval' in proxy_settings:
+                ProxyConfig.NO_DATA_CHECK_INTERVAL = proxy_settings['no_data_check_interval']
+            if 'connection_timeout' in proxy_settings:
+                ProxyConfig.CONNECTION_TIMEOUT = proxy_settings['connection_timeout']
+            if 'stream_timeout' in proxy_settings:
+                ProxyConfig.STREAM_TIMEOUT = proxy_settings['stream_timeout']
+            if 'channel_shutdown_delay' in proxy_settings:
+                ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_settings['channel_shutdown_delay']
+            logger.info("Proxy settings loaded from persistent storage")
+    except Exception as e:
+        logger.warning(f"Failed to load persisted proxy settings: {e}")
+    
+    # Load loop detection settings
+    try:
+        loop_settings = SettingsPersistence.load_loop_detection_config()
+        if loop_settings:
+            logger.info("Loading persisted loop detection settings")
+            if 'enabled' in loop_settings:
+                cfg.STREAM_LOOP_DETECTION_ENABLED = loop_settings['enabled']
+            if 'threshold_seconds' in loop_settings:
+                cfg.STREAM_LOOP_DETECTION_THRESHOLD_S = loop_settings['threshold_seconds']
+            if 'check_interval_seconds' in loop_settings:
+                cfg.STREAM_LOOP_CHECK_INTERVAL_S = loop_settings['check_interval_seconds']
+            if 'retention_minutes' in loop_settings:
+                cfg.STREAM_LOOP_RETENTION_MINUTES = loop_settings['retention_minutes']
+            logger.info("Loop detection settings loaded from persistent storage")
+    except Exception as e:
+        logger.warning(f"Failed to load persisted loop detection settings: {e}")
+    
     # Load state from database first
     load_state_from_db()
     
@@ -1879,8 +1923,19 @@ async def update_stream_loop_detection_config(
         await stream_loop_detector.stop()
         logger.info("Stream loop detection disabled")
     
+    # Persist settings to JSON file
+    from .services.settings_persistence import SettingsPersistence
+    config_to_save = {
+        "enabled": enabled,
+        "threshold_seconds": threshold_seconds,
+        "check_interval_seconds": cfg.STREAM_LOOP_CHECK_INTERVAL_S,
+        "retention_minutes": cfg.STREAM_LOOP_RETENTION_MINUTES,
+    }
+    if SettingsPersistence.save_loop_detection_config(config_to_save):
+        logger.info("Loop detection configuration persisted to JSON file")
+    
     return {
-        "message": "Stream loop detection configuration updated",
+        "message": "Stream loop detection configuration updated and persisted",
         "enabled": enabled,
         "threshold_seconds": threshold_seconds,
         "threshold_minutes": threshold_seconds / 60,
@@ -2033,8 +2088,22 @@ def update_proxy_config(
                 f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
                 f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}")
     
+    # Persist settings to JSON file
+    from .services.settings_persistence import SettingsPersistence
+    config_to_save = {
+        "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
+        "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
+        "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
+        "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
+        "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
+        "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
+        "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+    }
+    if SettingsPersistence.save_proxy_config(config_to_save):
+        logger.info("Proxy configuration persisted to JSON file")
+    
     return {
-        "message": "Proxy configuration updated",
+        "message": "Proxy configuration updated and persisted",
         "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
         "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
         "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,

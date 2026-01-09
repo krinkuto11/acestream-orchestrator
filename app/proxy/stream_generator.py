@@ -208,6 +208,10 @@ class StreamGenerator:
             
             self.last_stats_time = now
             self.last_stats_bytes = self.bytes_sent
+            
+            # Update bytes_sent in Redis
+            if hasattr(self, 'client_manager') and self.client_manager:
+                self.client_manager.update_client_bytes_sent(self.client_id, self.bytes_sent)
     
     def _refresh_ttl(self):
         """Refresh client TTL in Redis"""

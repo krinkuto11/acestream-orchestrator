@@ -299,7 +299,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
         <div className="text-xs text-blue-500">
           <strong>Note:</strong> Changes to proxy settings affect new streams only. 
           Existing active streams will continue using their original settings. 
-          These settings are runtime-only and will reset to environment variable defaults on restart.
+          Settings are persisted to a JSON file and will be restored on restart.
         </div>
       </div>
     </div>
