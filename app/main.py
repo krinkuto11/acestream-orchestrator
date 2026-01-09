@@ -294,6 +294,23 @@ def provision(req: StartRequest):
 
 @app.post("/provision/acestream", response_model=AceProvisionResponse, dependencies=[Depends(require_api_key)])
 def provision_acestream(req: AceProvisionRequest):
+    # Check if stream is on the looping blacklist
+    from .services.looping_streams import looping_streams_tracker
+    
+    if looping_streams_tracker.is_looping(req.content_id):
+        logger.warning(f"Provisioning denied: Stream {req.content_id} is on looping blacklist")
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "stream_blacklisted",
+                "code": "looping_stream",
+                "message": "This stream has been detected as looping (no new data) and is temporarily blacklisted",
+                "recovery_eta_seconds": 0,
+                "can_retry": False,
+                "should_wait": False
+            }
+        )
+    
     # Check provisioning status before attempting
     from .services.circuit_breaker import circuit_breaker_manager
     
