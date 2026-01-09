@@ -45,7 +45,9 @@ ACEXY_MAX_STREAMS_PER_ENGINE=5
 # Minimum initial engines on startup (default: 2)
 MIN_REPLICAS=2
 
-# Minimum free (empty) engines to maintain during runtime (default: 1)
+# Minimum free engines for lookahead buffer check (default: 1)
+# Note: This does NOT trigger provisioning, only prevents duplicate provisioning
+# when lookahead is triggered but free engines already exist
 MIN_FREE_REPLICAS=1
 
 # Maximum total engines when using VPN (default: 6)
@@ -143,9 +145,10 @@ T+76   New stream → engine_3 (back to layer 1)
 - **Provisioning time**: Buffer is limited by time to fill remaining layer slots
 
 ### Mitigation Strategies
-1. **Adjust `MIN_FREE_REPLICAS`**: Keep more idle engines ready for sudden spikes
-2. **Lower `ACEXY_MAX_STREAMS_PER_ENGINE`**: Triggers provisioning more frequently
-3. **Faster provisioning**: Optimize container startup time
+1. **Lower `ACEXY_MAX_STREAMS_PER_ENGINE`**: Triggers lookahead provisioning earlier and more frequently
+2. **Increase `MIN_REPLICAS`**: Start with more engines on initial startup
+3. **Faster provisioning**: Optimize container startup time to reduce lag between trigger and availability
+4. **Note on `MIN_FREE_REPLICAS`**: This setting only affects the lookahead buffer check and does NOT trigger provisioning on its own
 4. **Health monitoring**: Quickly detect and replace unhealthy engines
 
 ## Implementation Details
