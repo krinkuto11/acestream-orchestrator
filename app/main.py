@@ -2129,6 +2129,9 @@ def update_proxy_config(
 # Settings Backup/Restore Endpoints
 # ============================================================================
 
+# Backup format version - increment when backup structure changes
+BACKUP_FORMAT_VERSION = "1.0"
+
 @app.get("/settings/export")
 async def export_settings(api_key_param: str = Depends(require_api_key)):
     """
@@ -2213,7 +2216,7 @@ async def export_settings(api_key_param: str = Depends(require_api_key)):
             # Add metadata
             metadata = {
                 "export_date": datetime.now(timezone.utc).isoformat(),
-                "version": "1.0",
+                "version": BACKUP_FORMAT_VERSION,
                 "description": "AceStream Orchestrator Settings Backup"
             }
             zip_file.writestr("metadata.json", json.dumps(metadata, indent=2))
@@ -2344,9 +2347,13 @@ async def import_settings_data(
                     ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_dict.get('channel_shutdown_delay', ProxyConfig.CHANNEL_SHUTDOWN_DELAY)
                     
                     # Persist to file
-                    SettingsPersistence.save_proxy_config(proxy_dict)
-                    imported["proxy"] = True
-                    logger.info("Imported proxy settings")
+                    if SettingsPersistence.save_proxy_config(proxy_dict):
+                        imported["proxy"] = True
+                        logger.info("Imported proxy settings")
+                    else:
+                        error_msg = "Failed to persist proxy settings to file"
+                        logger.error(error_msg)
+                        imported["errors"].append(error_msg)
                 except Exception as e:
                     error_msg = f"Failed to import proxy settings: {e}"
                     logger.error(error_msg)
@@ -2367,9 +2374,13 @@ async def import_settings_data(
                     looping_streams_tracker.set_retention_minutes(cfg.STREAM_LOOP_RETENTION_MINUTES)
                     
                     # Persist to file
-                    SettingsPersistence.save_loop_detection_config(loop_dict)
-                    imported["loop_detection"] = True
-                    logger.info("Imported loop detection settings")
+                    if SettingsPersistence.save_loop_detection_config(loop_dict):
+                        imported["loop_detection"] = True
+                        logger.info("Imported loop detection settings")
+                    else:
+                        error_msg = "Failed to persist loop detection settings to file"
+                        logger.error(error_msg)
+                        imported["errors"].append(error_msg)
                 except Exception as e:
                     error_msg = f"Failed to import loop detection settings: {e}"
                     logger.error(error_msg)
