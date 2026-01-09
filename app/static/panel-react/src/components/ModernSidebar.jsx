@@ -10,7 +10,6 @@ import {
   ShieldCheck,
   ChevronLeft,
   ChevronRight,
-  Sliders,
   FileText
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
@@ -26,7 +25,6 @@ const navigation = [
   { name: 'VPN', href: '/vpn', icon: Wifi },
   { name: 'Metrics', href: '/metrics', icon: BarChart3 },
   { name: 'Settings', href: '/settings', icon: Settings },
-  { name: 'Advanced Engine', href: '/advanced-engine-settings', icon: Sliders },
 ]
 
 // Sidebar width constants
