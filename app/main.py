@@ -1567,10 +1567,11 @@ async def ace_getstream(
     """Proxy endpoint for AceStream video streams with multiplexing.
     
     This endpoint:
-    1. Selects the best available engine (prioritizes forwarded, balances load)
-    2. Multiplexes multiple clients to the same stream via battle-tested ts_proxy architecture
-    3. Automatically manages stream lifecycle with heartbeat monitoring
-    4. Sends events to orchestrator for panel visibility
+    1. Checks if stream is blacklisted for looping
+    2. Selects the best available engine (prioritizes forwarded, balances load)
+    3. Multiplexes multiple clients to the same stream via battle-tested ts_proxy architecture
+    4. Automatically manages stream lifecycle with heartbeat monitoring
+    5. Sends events to orchestrator for panel visibility
     
     Args:
         id: AceStream content ID (infohash or content_id)
@@ -1583,6 +1584,19 @@ async def ace_getstream(
     from uuid import uuid4
     from app.proxy.stream_generator import create_stream_generator
     from app.proxy.utils import get_client_ip
+    from .services.looping_streams import looping_streams_tracker
+    
+    # Check if stream is on the looping blacklist
+    if looping_streams_tracker.is_looping(id):
+        logger.warning(f"Stream request denied: {id} is on looping blacklist")
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "stream_blacklisted",
+                "code": "looping_stream",
+                "message": "This stream has been detected as looping (no new data) and is temporarily blacklisted"
+            }
+        )
     
     # Generate unique client ID
     client_id = str(uuid4())

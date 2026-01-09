@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -72,6 +72,11 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const [extendedStatsError, setExtendedStatsError] = useState(null)
   const [clients, setClients] = useState([])
   const [clientsLoading, setClientsLoading] = useState(false)
+  
+  // Track if we have fetched data at least once to prevent loading flicker on refreshes
+  const hasClientsDataRef = useRef(false)
+  const hasStatsDataRef = useRef(false)
+  const hasExtendedStatsDataRef = useRef(false)
 
   const isActive = stream.status === 'started'
   const isEnded = stream.status === 'ended'
@@ -79,7 +84,11 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const fetchStats = useCallback(async () => {
     if (!stream || !isExpanded) return
     
-    setLoading(true)
+    // Only show loading if we don't have data yet
+    if (!hasStatsDataRef.current) {
+      setLoading(true)
+    }
+    
     try {
       const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
       const headers = {}
@@ -95,9 +104,11 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       if (response.ok) {
         const data = await response.json()
         setStats(data)
+        hasStatsDataRef.current = true
       }
     } catch (err) {
       console.error('Failed to fetch stats:', err)
+      // Keep existing stats on error
     } finally {
       setLoading(false)
     }
@@ -106,8 +117,12 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const fetchExtendedStats = useCallback(async () => {
     if (!stream || !isExpanded) return
     
-    setExtendedStatsLoading(true)
+    // Only show loading if we don't have data yet
+    if (!hasExtendedStatsDataRef.current) {
+      setExtendedStatsLoading(true)
+    }
     setExtendedStatsError(null)
+    
     try {
       const headers = {}
       if (apiKey) {
@@ -122,12 +137,16 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       if (response.ok) {
         const data = await response.json()
         setExtendedStats(data)
+        hasExtendedStatsDataRef.current = true
       } else {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
     } catch (err) {
       console.error('Failed to fetch extended stats:', err)
-      setExtendedStatsError(err.message || String(err))
+      // Only set error if we don't have cached data
+      if (!hasExtendedStatsDataRef.current) {
+        setExtendedStatsError(err.message || String(err))
+      }
     } finally {
       setExtendedStatsLoading(false)
     }
@@ -136,7 +155,11 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const fetchClients = useCallback(async () => {
     if (!stream || !isExpanded || !stream.key) return
     
-    setClientsLoading(true)
+    // Only show loading indicator if we don't have any data yet
+    if (!hasClientsDataRef.current) {
+      setClientsLoading(true)
+    }
+    
     try {
       const response = await fetch(
         `${orchUrl}/proxy/streams/${encodeURIComponent(stream.key)}/clients`
@@ -145,12 +168,17 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       if (response.ok) {
         const data = await response.json()
         setClients(data.clients || [])
-      } else {
+        hasClientsDataRef.current = true
+      } else if (!hasClientsDataRef.current) {
+        // Only clear clients on error if we had no data
         setClients([])
       }
     } catch (err) {
       console.error('Failed to fetch clients:', err)
-      setClients([])
+      // Keep existing clients on error if we had data
+      if (!hasClientsDataRef.current) {
+        setClients([])
+      }
     } finally {
       setClientsLoading(false)
     }
@@ -499,47 +527,49 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                   {clientsLoading ? (
                     <p className="text-sm text-muted-foreground">Loading clients...</p>
                   ) : clients.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {clients.map((client, idx) => (
-                        <div key={client.client_id || idx} className="p-3 bg-muted/30 rounded-md border border-border">
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between">
-                              <p className="text-xs text-muted-foreground">Client ID</p>
-                              <p className="text-xs font-mono text-foreground truncate max-w-[200px]" title={client.client_id}>
-                                {client.client_id?.slice(0, TRUNCATED_CLIENT_ID_LENGTH)}...
-                              </p>
-                            </div>
-                            {client.ip_address && (
-                              <div className="flex items-center justify-between">
-                                <p className="text-xs text-muted-foreground">IP Address</p>
-                                <p className="text-xs font-medium text-foreground">{client.ip_address}</p>
-                              </div>
-                            )}
-                            {client.connected_at && (
-                              <div className="flex items-center justify-between">
-                                <p className="text-xs text-muted-foreground">Connected</p>
-                                <p className="text-xs text-foreground">
-                                  {new Date(client.connected_at * 1000).toLocaleTimeString()}
-                                </p>
-                              </div>
-                            )}
-                            {client.bytes_sent !== undefined && (
-                              <div className="flex items-center justify-between">
-                                <p className="text-xs text-muted-foreground">Bytes Sent</p>
-                                <p className="text-xs text-foreground">{formatBytes(client.bytes_sent)}</p>
-                              </div>
-                            )}
-                            {client.user_agent && (
-                              <div className="col-span-full">
-                                <p className="text-xs text-muted-foreground">User Agent</p>
-                                <p className="text-xs font-mono text-foreground truncate" title={client.user_agent}>
-                                  {client.user_agent}
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Client ID</TableHead>
+                            <TableHead>IP Address</TableHead>
+                            <TableHead>Connected At</TableHead>
+                            <TableHead className="text-right">Bytes Sent</TableHead>
+                            <TableHead>User Agent</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {clients.map((client, idx) => (
+                            <TableRow key={client.client_id || idx}>
+                              <TableCell className="font-mono text-xs">
+                                <span className="truncate max-w-[200px] block" title={client.client_id}>
+                                  {client.client_id && client.client_id.length > TRUNCATED_CLIENT_ID_LENGTH
+                                    ? `${client.client_id.slice(0, TRUNCATED_CLIENT_ID_LENGTH)}...`
+                                    : client.client_id || 'N/A'
+                                  }
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-sm">
+                                {client.ip_address || 'N/A'}
+                              </TableCell>
+                              <TableCell className="text-sm">
+                                {client.connected_at 
+                                  ? new Date(client.connected_at * 1000).toLocaleString()
+                                  : 'N/A'
+                                }
+                              </TableCell>
+                              <TableCell className="text-right text-sm">
+                                {client.bytes_sent !== undefined ? formatBytes(client.bytes_sent) : 'N/A'}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs">
+                                <span className="truncate max-w-[300px] block" title={client.user_agent}>
+                                  {client.user_agent || 'N/A'}
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
                     </div>
                   ) : (
                     <p className="text-sm text-muted-foreground">No clients connected</p>

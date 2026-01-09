@@ -60,6 +60,7 @@ class StreamManager:
         
         # Orchestrator event tracking
         self.stream_id = None  # Will be set after sending start event
+        self._ended_event_sent = False  # Track if we've already sent the ended event
         
         logger.info(f"StreamManager initialized for content_id={content_id}")
     
@@ -194,6 +195,16 @@ class StreamManager:
     
     def _send_stream_ended_event(self, reason="normal"):
         """Send stream ended event to orchestrator"""
+        # Check if we've already sent the ended event
+        if self._ended_event_sent:
+            logger.debug(f"Stream ended event already sent for stream_id={self.stream_id}, skipping")
+            return
+        
+        # Check if we have a stream_id to send
+        if not self.stream_id:
+            logger.warning(f"No stream_id available for content_id={self.content_id}, cannot send ended event")
+            return
+        
         try:
             orchestrator_url = os.getenv('ORCHESTRATOR_URL', 'http://localhost:8000')
             
@@ -222,6 +233,9 @@ class StreamManager:
             logger.debug(f"Stream ended event response status: {response.status_code}")
             
             response.raise_for_status()
+            
+            # Mark as sent
+            self._ended_event_sent = True
             
             logger.info(f"Sent stream ended event to orchestrator: stream_id={self.stream_id}, reason={reason}")
             
@@ -380,9 +394,8 @@ class StreamManager:
             except Exception as e:
                 logger.warning(f"Failed to send stop command: {e}")
         
-        # Send ended event if we haven't already
-        if self.stream_id:
-            self._send_stream_ended_event(reason="stopped")
+        # Send ended event (will check if already sent)
+        self._send_stream_ended_event(reason="stopped")
     
     def _cleanup(self):
         """Cleanup resources"""
