@@ -111,10 +111,14 @@ class HTTPStreamReader:
                             break
             except AttributeError as e:
                 # This can happen if response is closed during iteration
-                if not self.running:
+                # Check if it's the specific 'read' error we expect during shutdown
+                error_msg = str(e)
+                if not self.running and ('read' in error_msg or 'NoneType' in error_msg):
                     logger.debug("HTTP reader stopped during iteration (expected)")
                 else:
-                    logger.error(f"HTTP reader attribute error: {e}", exc_info=True)
+                    # Unexpected AttributeError - re-raise to avoid masking bugs
+                    logger.error(f"Unexpected attribute error in HTTP reader: {e}", exc_info=True)
+                    raise
             except Exception as e:
                 logger.error(f"HTTP reader streaming error: {e}", exc_info=True)
 

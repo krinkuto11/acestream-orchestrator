@@ -85,6 +85,8 @@ NULL_PID_LOW = 0xFF
 VLC_USER_AGENT = "VLC/3.0.21 LibVLC/3.0.21"
 
 # Stream generator constants
+# NOTE: These are documentation-only defaults. Actual values are read from environment
+# via ConfigHelper (see config_helper.py). Update .env to customize these values.
 INITIAL_DATA_WAIT_TIMEOUT = 10  # Maximum seconds to wait for initial data in buffer
 INITIAL_DATA_CHECK_INTERVAL = 0.2  # Seconds between buffer checks
 
