@@ -38,8 +38,8 @@ def ensure_minimum(initial_startup: bool = False):
     
     Args:
         initial_startup: If True, provisions MIN_REPLICAS total containers on startup.
-                        If False, maintains MIN_FREE_REPLICAS free/empty containers during runtime
-                        OR provisions new engine when all engines have reached (ACEXY_MAX_STREAMS_PER_ENGINE - 1) streams.
+                        If False, uses layer-based lookahead provisioning - provisions new engine
+                        when ANY engine reaches (ACEXY_MAX_STREAMS_PER_ENGINE - 1) streams.
     """
     try:
         from .replica_validator import replica_validator
@@ -71,7 +71,8 @@ def ensure_minimum(initial_startup: bool = False):
             target_description = f"MIN_REPLICAS={cfg.MIN_REPLICAS} total containers"
         else:
             # During runtime: check if we need to provision based on ACEXY_MAX_STREAMS_PER_ENGINE
-            # Count streams per engine
+            # LOOKAHEAD PROVISIONING: Start provisioning when FIRST engine reaches (MAX-1)
+            # This gives time for the new engine to spin up before capacity is exhausted
             all_engines = state.list_engines()
             if all_engines:
                 # Get stream counts per engine
@@ -80,26 +81,89 @@ def ensure_minimum(initial_startup: bool = False):
                     stream_count = len(state.list_streams(status="started", container_id=engine.container_id))
                     engines_with_stream_counts.append((engine.container_id, stream_count))
                 
-                # Check if all engines have at least (MAX_STREAMS - 1) streams
+                # Calculate min and max stream counts
+                stream_counts = [count for _, count in engines_with_stream_counts]
+                min_streams = min(stream_counts)
+                max_streams = max(stream_counts)
+                
+                # LOOKAHEAD TRIGGER: Check if ANY engine has reached (MAX_STREAMS - 1)
+                # This provides early warning and provisioning buffer
                 max_streams_threshold = cfg.ACEXY_MAX_STREAMS_PER_ENGINE - 1
+                any_engine_near_capacity = any(count >= max_streams_threshold for _, count in engines_with_stream_counts)
+                
+                # Check if all engines have at least (MAX_STREAMS - 1) streams
                 all_engines_near_capacity = all(count >= max_streams_threshold for _, count in engines_with_stream_counts)
                 
-                if all_engines_near_capacity:
-                    # All engines have reached threshold, provision one new engine
-                    deficit = 1
-                    target = total_running + 1
-                    target_description = f"all engines at {max_streams_threshold}+ streams (ACEXY_MAX_STREAMS_PER_ENGINE={cfg.ACEXY_MAX_STREAMS_PER_ENGINE})"
-                    logger.info(f"All {len(all_engines)} engines have {max_streams_threshold}+ streams, provisioning new engine")
+                # Get the current lookahead layer
+                lookahead_layer = state.get_lookahead_layer()
+                
+                # Check if all engines have reached the previous lookahead layer
+                # This prevents repeated provisioning until ALL engines (including newly provisioned ones)
+                # reach the layer that triggered the last provisioning
+                all_at_lookahead_layer = lookahead_layer is None or min_streams >= lookahead_layer
+                
+                if any_engine_near_capacity:
+                    # At least one engine has reached threshold - use lookahead provisioning
+                    # Provision new engine to be ready before overflow occurs
+                    if all_engines_near_capacity:
+                        # All engines at threshold - this is the critical moment
+                        # Only provision if all engines have reached the previous lookahead layer
+                        if all_at_lookahead_layer:
+                            deficit = 1
+                            target = total_running + 1
+                            target_description = f"all engines at layer {max_streams_threshold} (LOOKAHEAD: preparing for overflow)"
+                            logger.info(f"All {len(all_engines)} engines at layer {max_streams_threshold}, provisioning new engine (lookahead)")
+                            # Set lookahead layer to current minimum to prevent re-triggering
+                            # until the new engine also reaches this layer
+                            state.set_lookahead_layer(min_streams)
+                        else:
+                            # All engines are near capacity but haven't reached lookahead layer yet
+                            deficit = 0
+                            target = total_running
+                            target_description = f"waiting for all engines to reach layer {lookahead_layer}"
+                            logger.debug(f"Lookahead blocked: min_streams={min_streams}, lookahead_layer={lookahead_layer}")
+                    else:
+                        # Only some engines at threshold - check if we already have a free engine ready
+                        # If we have MIN_FREE_REPLICAS free engines, don't provision yet
+                        if free_count >= cfg.MIN_FREE_REPLICAS:
+                            # We have free engines ready for when needed
+                            deficit = 0
+                            target = total_running
+                            target_description = f"lookahead buffer satisfied (free engines: {free_count})"
+                            logger.debug(f"Some engines at layer {max_streams_threshold}, but {free_count} free engines available")
+                        else:
+                            # Start provisioning to have engine ready when needed
+                            # Only provision if all engines have reached the previous lookahead layer
+                            if all_at_lookahead_layer:
+                                deficit = 1
+                                target = total_running + 1
+                                target_description = f"lookahead triggered (first engine at layer {max_streams_threshold})"
+                                logger.info(f"Lookahead provisioning: first engine reached layer {max_streams_threshold}, preparing new engine")
+                                # Set lookahead layer to current minimum to prevent re-triggering
+                                state.set_lookahead_layer(min_streams)
+                            else:
+                                # Some engines near capacity but haven't reached lookahead layer yet
+                                deficit = 0
+                                target = total_running
+                                target_description = f"waiting for all engines to reach layer {lookahead_layer}"
+                                logger.debug(f"Lookahead blocked: min_streams={min_streams}, lookahead_layer={lookahead_layer}")
                 else:
-                    # Not all engines at capacity yet, check MIN_FREE_REPLICAS as fallback
-                    target = cfg.MIN_FREE_REPLICAS
-                    deficit = target - free_count
-                    target_description = f"MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} free engines"
+                    # No engines at threshold yet - reset lookahead layer if it was set
+                    # This allows fresh provisioning when load increases again
+                    if lookahead_layer is not None and min_streams < lookahead_layer:
+                        # Engines have dropped below the lookahead layer, reset it
+                        state.reset_lookahead_layer()
+                        logger.debug(f"Reset lookahead layer: engines dropped below previous threshold")
+                    
+                    # No provisioning needed
+                    deficit = 0
+                    target = total_running
+                    target_description = f"no engines at layer {max_streams_threshold} yet (lookahead not triggered)"
             else:
-                # No engines exist, use MIN_FREE_REPLICAS
-                target = cfg.MIN_FREE_REPLICAS
-                deficit = target - free_count
-                target_description = f"MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} free engines"
+                # No engines exist - provision minimum initial engines
+                target = cfg.MIN_REPLICAS
+                deficit = target - total_running
+                target_description = f"MIN_REPLICAS={cfg.MIN_REPLICAS} total containers (no engines exist)"
         
         # When using Gluetun, respect MAX_REPLICAS as a hard limit
         if cfg.GLUETUN_CONTAINER_NAME:

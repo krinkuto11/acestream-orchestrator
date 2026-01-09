@@ -30,6 +30,11 @@ class State:
         self._vpn_recovery_mode = False
         self._recovery_target_vpn: Optional[str] = None
         self._vpn_recovery_entered_at: Optional[datetime] = None
+        
+        # Lookahead provisioning tracking
+        # Tracks the minimum stream count across all engines when lookahead was last triggered
+        # This prevents repeated lookahead triggers until all engines reach this layer
+        self._lookahead_layer: Optional[int] = None
 
     @staticmethod
     def now():
@@ -782,6 +787,30 @@ class State:
         """Get the target VPN for recovery mode, or None if not in recovery mode."""
         with self._lock:
             return self._recovery_target_vpn if self._vpn_recovery_mode else None
+    
+    def set_lookahead_layer(self, layer: int) -> None:
+        """
+        Set the lookahead layer (minimum stream count) when provisioning is triggered.
+        This prevents repeated lookahead triggers until all engines reach this layer.
+        
+        Args:
+            layer: The minimum stream count across all engines when lookahead was triggered
+        """
+        with self._lock:
+            self._lookahead_layer = layer
+            logger.info(f"Lookahead layer set to {layer} - next lookahead trigger will wait until all engines reach layer {layer}")
+    
+    def get_lookahead_layer(self) -> Optional[int]:
+        """Get the current lookahead layer, or None if not set."""
+        with self._lock:
+            return self._lookahead_layer
+    
+    def reset_lookahead_layer(self) -> None:
+        """Reset the lookahead layer tracking."""
+        with self._lock:
+            if self._lookahead_layer is not None:
+                logger.info(f"Resetting lookahead layer (was {self._lookahead_layer})")
+            self._lookahead_layer = None
     
     def cleanup_ended_streams(self, max_age_seconds: int = 3600) -> int:
         """

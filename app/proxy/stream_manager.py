@@ -9,6 +9,7 @@ import logging
 import time
 import requests
 import os
+import uuid
 from typing import Optional
 
 from .http_streamer import HTTPStreamReader
@@ -67,18 +68,25 @@ class StreamManager:
     def request_stream_from_engine(self):
         """Request stream from AceStream engine API"""
         url = f"http://{self.engine_host}:{self.engine_port}/ace/getstream"
+        
+        # Generate unique PID to prevent errors when multiple streams access the same engine
+        # This matches the implementation in context/acexy.go lines 328-339
+        pid = str(uuid.uuid4())
+        
         params = {
             "id": self.content_id,
-            "format": "json"
+            "format": "json",
+            "pid": pid
         }
         
         # Build full URL for logging (define early to avoid NameError in exception handlers)
-        full_url = f"{url}?id={self.content_id}&format=json"
+        full_url = f"{url}?id={self.content_id}&format=json&pid={pid}"
         
         try:
             logger.info(f"Requesting stream from AceStream engine: {url}")
             logger.debug(f"Full request URL: {full_url}")
             logger.debug(f"Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}, Container: {self.engine_container_id}")
+            logger.debug(f"Generated PID: {pid}")
             
             response = requests.get(url, params=params, timeout=10)
             
