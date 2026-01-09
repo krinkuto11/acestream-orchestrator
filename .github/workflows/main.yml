@@ -16,7 +16,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     permissions:
       contents: read
       packages: write
@@ -25,7 +25,7 @@ jobs:
         include:
           - platform: linux/amd64
           - platform: linux/arm64
-          - platform: linux/arm/v7
+          #- platform: linux/arm/v7
 
     steps:
     - name: Checkout repository

@@ -1,10 +1,11 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from typing import Optional, List
 from datetime import datetime, timezone
+from pydantic import BaseModel
 import asyncio
 import os
 import json
@@ -35,6 +36,9 @@ from .services.docker_stats import get_container_stats, get_multiple_container_s
 from .services.docker_stats_collector import docker_stats_collector
 from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_cache, get_cache
 from .services.acexy import acexy_sync_service
+from .services.stream_loop_detector import stream_loop_detector
+from .services.looping_streams import looping_streams_tracker
+from .proxy.manager import ProxyManager
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +52,7 @@ async def lifespan(app: FastAPI):
     
     # Load custom variant configuration early to ensure it's available
     from .services.custom_variant_config import load_config as load_custom_config, save_config as save_custom_config
-    from .services.template_manager import get_active_template_id, get_template
+    from .services.template_manager import get_active_template_id, get_template, set_active_template, list_templates
     try:
         custom_config = load_custom_config()
         if custom_config and custom_config.enabled:
@@ -61,19 +65,138 @@ async def lifespan(app: FastAPI):
                 template = get_template(active_template_id)
                 if template:
                     # Apply the template configuration, but preserve the enabled state
-                    template_config = template.config.copy(deep=True)
+                    template_config = template.config.model_copy(deep=True)
                     template_config.enabled = custom_config.enabled
                     save_custom_config(template_config)
+                    # Ensure active template is set (in case it was only loaded but not set)
+                    set_active_template(active_template_id)
                     logger.info(f"Successfully loaded template '{template.name}' (slot {active_template_id})")
                 else:
                     logger.warning(f"Active template {active_template_id} not found, using current config")
+            else:
+                # Custom variant is enabled but no active template
+                # Try to auto-load the first available template
+                logger.info("Custom variant enabled but no active template, checking for available templates...")
+                templates = list_templates()
+                first_available = next((t for t in templates if t['exists']), None)
+                
+                if first_available:
+                    logger.info(f"Auto-loading first available template (slot {first_available['slot_id']})")
+                    template = get_template(first_available['slot_id'])
+                    if template:
+                        # Apply the template configuration, but preserve the enabled state
+                        template_config = template.config.model_copy(deep=True)
+                        template_config.enabled = custom_config.enabled
+                        save_custom_config(template_config)
+                        # Set as active template
+                        set_active_template(first_available['slot_id'])
+                        logger.info(f"Successfully auto-loaded template '{template.name}' (slot {first_available['slot_id']})")
+                    else:
+                        logger.warning(f"Failed to load template from slot {first_available['slot_id']}")
+                else:
+                    # No templates available - ensure we have a valid platform loaded
+                    logger.info("No templates available, using current custom variant config")
+                    if not custom_config.platform:
+                        logger.warning("Custom variant enabled but no platform set, detecting platform...")
+                        from .services.custom_variant_config import detect_platform
+                        custom_config.platform = detect_platform()
+                        save_custom_config(custom_config)
+                        logger.info(f"Set custom variant platform to detected platform: {custom_config.platform}")
         else:
             logger.debug("Custom engine variant is disabled or not configured")
     except Exception as e:
         logger.warning(f"Failed to load custom variant config during startup: {e}")
     
+    # Load persisted settings (Proxy and Loop Detection)
+    from .services.settings_persistence import SettingsPersistence
+    from .proxy.config_helper import Config as ProxyConfig
+    
+    # Load proxy settings
+    try:
+        proxy_settings = SettingsPersistence.load_proxy_config()
+        if proxy_settings:
+            logger.info("Loading persisted proxy settings")
+            if 'initial_data_wait_timeout' in proxy_settings:
+                ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT = proxy_settings['initial_data_wait_timeout']
+            if 'initial_data_check_interval' in proxy_settings:
+                ProxyConfig.INITIAL_DATA_CHECK_INTERVAL = proxy_settings['initial_data_check_interval']
+            if 'no_data_timeout_checks' in proxy_settings:
+                ProxyConfig.NO_DATA_TIMEOUT_CHECKS = proxy_settings['no_data_timeout_checks']
+            if 'no_data_check_interval' in proxy_settings:
+                ProxyConfig.NO_DATA_CHECK_INTERVAL = proxy_settings['no_data_check_interval']
+            if 'connection_timeout' in proxy_settings:
+                ProxyConfig.CONNECTION_TIMEOUT = proxy_settings['connection_timeout']
+            if 'stream_timeout' in proxy_settings:
+                ProxyConfig.STREAM_TIMEOUT = proxy_settings['stream_timeout']
+            if 'channel_shutdown_delay' in proxy_settings:
+                ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_settings['channel_shutdown_delay']
+            if 'max_streams_per_engine' in proxy_settings:
+                cfg.ACEXY_MAX_STREAMS_PER_ENGINE = proxy_settings['max_streams_per_engine']
+            logger.info("Proxy settings loaded from persistent storage")
+    except Exception as e:
+        logger.warning(f"Failed to load persisted proxy settings: {e}")
+    
+    # Load loop detection settings
+    try:
+        loop_settings = SettingsPersistence.load_loop_detection_config()
+        if loop_settings:
+            logger.info("Loading persisted loop detection settings")
+            if 'enabled' in loop_settings:
+                cfg.STREAM_LOOP_DETECTION_ENABLED = loop_settings['enabled']
+            if 'threshold_seconds' in loop_settings:
+                cfg.STREAM_LOOP_DETECTION_THRESHOLD_S = loop_settings['threshold_seconds']
+            if 'check_interval_seconds' in loop_settings:
+                cfg.STREAM_LOOP_CHECK_INTERVAL_S = loop_settings['check_interval_seconds']
+            if 'retention_minutes' in loop_settings:
+                cfg.STREAM_LOOP_RETENTION_MINUTES = loop_settings['retention_minutes']
+            logger.info("Loop detection settings loaded from persistent storage")
+    except Exception as e:
+        logger.warning(f"Failed to load persisted loop detection settings: {e}")
+    
+    # Load engine settings
+    try:
+        engine_settings = SettingsPersistence.load_engine_settings()
+        if engine_settings:
+            logger.info("Loading persisted engine settings")
+            if 'min_replicas' in engine_settings:
+                cfg.MIN_REPLICAS = engine_settings['min_replicas']
+            if 'max_replicas' in engine_settings:
+                cfg.MAX_REPLICAS = engine_settings['max_replicas']
+            if 'auto_delete' in engine_settings:
+                cfg.AUTO_DELETE = engine_settings['auto_delete']
+            if 'engine_variant' in engine_settings:
+                # Update engine variant preference
+                cfg.ENGINE_VARIANT = engine_settings['engine_variant']
+            if 'use_custom_variant' in engine_settings:
+                # Update custom variant enabled state if needed
+                if custom_config and custom_config.enabled != engine_settings['use_custom_variant']:
+                    custom_config.enabled = engine_settings['use_custom_variant']
+                    save_custom_config(custom_config)
+            logger.info(f"Engine settings loaded from persistent storage: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}, ENGINE_VARIANT={cfg.ENGINE_VARIANT}")
+        else:
+            # No persisted settings found - create default settings from current config
+            logger.info("No persisted engine settings found, creating defaults")
+            from .services.custom_variant_config import detect_platform
+            default_settings = {
+                "min_replicas": cfg.MIN_REPLICAS,
+                "max_replicas": cfg.MAX_REPLICAS,
+                "auto_delete": cfg.AUTO_DELETE,
+                "engine_variant": cfg.ENGINE_VARIANT,
+                "use_custom_variant": custom_config.enabled if custom_config else False,
+                "platform": detect_platform(),
+            }
+            if SettingsPersistence.save_engine_settings(default_settings):
+                logger.info(f"Default engine settings created and saved: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}")
+            else:
+                logger.warning("Failed to save default engine settings")
+    except Exception as e:
+        logger.warning(f"Failed to load persisted engine settings: {e}")
+    
     # Load state from database first
     load_state_from_db()
+    
+    # Initialize looping streams tracker with configured retention
+    looping_streams_tracker.set_retention_minutes(cfg.STREAM_LOOP_RETENTION_MINUTES)
     
     # Start Gluetun monitoring BEFORE provisioning to avoid race condition
     # This ensures health checks work when ensure_minimum() tries to start engines
@@ -140,6 +263,8 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(health_manager.start())  # Start proactive health management
     asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
     asyncio.create_task(acexy_sync_service.start())  # Start Acexy sync service
+    asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
+    asyncio.create_task(looping_streams_tracker.start())  # Start looping streams tracker
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
     # Start cache cleanup task
@@ -157,6 +282,8 @@ async def lifespan(app: FastAPI):
     await docker_stats_collector.stop()  # Stop Docker stats collector
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
     await acexy_sync_service.stop()  # Stop Acexy sync service
+    await stream_loop_detector.stop()  # Stop stream loop detector
+    await looping_streams_tracker.stop()  # Stop looping streams tracker
     await stop_cleanup_task()  # Stop cache cleanup
     
     # Give a small delay to ensure any pending operations complete
@@ -1429,7 +1556,7 @@ def activate_template(slot_id: int):
     current_enabled = current_config.enabled if current_config else False
     
     # Save the template config as the current custom variant config, preserving enabled state
-    template_config = template.config.copy(deep=True)
+    template_config = template.config.model_copy(deep=True)
     template_config.enabled = current_enabled
     success = save_custom_config(template_config)
     if not success:
@@ -1544,4 +1671,966 @@ def clear_cache():
     cache.clear()
     return {"message": "Cache cleared successfully"}
 
+
+# ============================================================================
+# AceStream Proxy Endpoints
+# ============================================================================
+
+@app.get("/ace/getstream")
+async def ace_getstream(
+    id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+    request: Request = None,
+):
+    """Proxy endpoint for AceStream video streams with multiplexing.
+    
+    This endpoint:
+    1. Checks if stream is blacklisted for looping
+    2. Selects the best available engine (prioritizes forwarded, balances load)
+    3. Multiplexes multiple clients to the same stream via battle-tested ts_proxy architecture
+    4. Automatically manages stream lifecycle with heartbeat monitoring
+    5. Sends events to orchestrator for panel visibility
+    
+    Args:
+        id: AceStream content ID (infohash or content_id)
+        request: FastAPI Request object for client info
+        
+    Returns:
+        Streaming response with video data
+    """
+    from fastapi.responses import StreamingResponse
+    from uuid import uuid4
+    from app.proxy.stream_generator import create_stream_generator
+    from app.proxy.utils import get_client_ip
+    from .services.looping_streams import looping_streams_tracker
+    
+    # Check if stream is on the looping blacklist
+    if looping_streams_tracker.is_looping(id):
+        logger.warning(f"Stream request denied: {id} is on looping blacklist")
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "stream_blacklisted",
+                "code": "looping_stream",
+                "message": "This stream has been detected as looping (no new data) and is temporarily blacklisted"
+            }
+        )
+    
+    # Generate unique client ID
+    client_id = str(uuid4())
+    
+    # Get client info
+    client_ip = get_client_ip(request) if request else "unknown"
+    user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
+    
+    try:
+        # Select best engine
+        engines = state.list_engines()
+        if not engines:
+            raise HTTPException(
+                status_code=503,
+                detail="No engines available"
+            )
+        
+        # Engine selection: prioritize forwarded, balance load
+        active_streams = state.list_streams(status="started")
+        engine_loads = {}
+        for stream in active_streams:
+            cid = stream.container_id
+            engine_loads[cid] = engine_loads.get(cid, 0) + 1
+        
+        # Sort: (load, not forwarded) - prefer forwarded when equal load
+        engines_sorted = sorted(engines, key=lambda e: (
+            engine_loads.get(e.container_id, 0),
+            not e.forwarded
+        ))
+        selected_engine = engines_sorted[0]
+        
+        logger.info(
+            f"Selected engine {selected_engine.container_id[:12]} for stream {id} "
+            f"(forwarded={selected_engine.forwarded}, current_load={engine_loads.get(selected_engine.container_id, 0)})"
+        )
+        
+        # Get proxy instance
+        proxy = ProxyManager.get_instance()
+        
+        # Start stream if not exists (idempotent)
+        success = proxy.start_stream(
+            content_id=id,
+            engine_host=selected_engine.host,
+            engine_port=selected_engine.port,
+            engine_container_id=selected_engine.container_id
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to start stream session"
+            )
+        
+        logger.info(
+            f"Client {client_id} connecting to stream {id} from {client_ip}"
+        )
+        
+        # Create stream generator
+        generator = create_stream_generator(
+            content_id=id,
+            client_id=client_id,
+            client_ip=client_ip,
+            client_user_agent=user_agent,
+            stream_initializing=False
+        )
+        
+        # Return streaming response
+        return StreamingResponse(
+            generator.generate(),
+            media_type="video/mp2t",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Connection": "keep-alive",
+            }
+        )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in ace_getstream: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+
+@app.get("/ace/manifest.m3u8")
+async def ace_manifest(
+    id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+):
+    """Proxy endpoint for AceStream HLS streams (M3U8).
+    
+    Note: This is a placeholder. Full HLS support would require
+    additional implementation to handle manifest parsing and segment proxying.
+    
+    Args:
+        id: AceStream content ID (infohash or content_id)
+        
+    Returns:
+        HLS manifest
+    """
+    # For now, redirect to getstream endpoint which works for most players
+    raise HTTPException(
+        status_code=501,
+        detail="HLS/M3U8 streaming not yet implemented. Use /ace/getstream for MPEG-TS streaming."
+    )
+
+
+@app.get("/proxy/status")
+async def proxy_status():
+    """Get proxy status and active sessions.
+    
+    Returns:
+        Proxy status including active sessions and client counts
+    """
+    proxy_manager = ProxyManager.get_instance()
+    status = await proxy_manager.get_status()
+    return status
+
+
+@app.get("/proxy/sessions")
+async def proxy_sessions():
+    """Get list of active proxy sessions.
+    
+    Returns:
+        List of active sessions with details
+    """
+    proxy_manager = ProxyManager.get_instance()
+    status = await proxy_manager.get_status()
+    return {"sessions": status.get("sessions", [])}
+
+
+@app.get("/proxy/sessions/{ace_id}")
+async def proxy_session_info(ace_id: str):
+    """Get detailed info for a specific proxy session.
+    
+    Args:
+        ace_id: AceStream content ID
+        
+    Returns:
+        Session details or 404 if not found
+    """
+    proxy_manager = ProxyManager.get_instance()
+    session_info = await proxy_manager.get_session_info(ace_id)
+    
+    if not session_info:
+        raise HTTPException(status_code=404, detail=f"Session {ace_id} not found")
+    
+    return session_info
+
+
+@app.get("/proxy/streams/{stream_key}/clients")
+async def get_stream_clients(stream_key: str):
+    """Get list of clients connected to a specific stream.
+    
+    Args:
+        stream_key: AceStream content ID (infohash)
+        
+    Returns:
+        List of client details or empty list if no clients
+    """
+    from .proxy.server import ProxyServer
+    from .proxy.redis_keys import RedisKeys
+    import redis
+    
+    try:
+        proxy_server = ProxyServer.get_instance()
+        
+        # Get client manager for this stream
+        client_manager = proxy_server.client_managers.get(stream_key)
+        if not client_manager:
+            # Stream not active in proxy, return empty list
+            return {"clients": []}
+        
+        # Get clients from Redis
+        redis_client = proxy_server.redis_client
+        if not redis_client:
+            return {"clients": []}
+        
+        clients_set_key = RedisKeys.clients(stream_key)
+        client_ids = redis_client.smembers(clients_set_key)
+        
+        clients = []
+        for client_id_bytes in client_ids:
+            client_id = client_id_bytes.decode('utf-8')
+            client_key = RedisKeys.client_metadata(stream_key, client_id)
+            
+            # Get client metadata
+            client_data = redis_client.hgetall(client_key)
+            if client_data:
+                # Decode Redis data
+                client_info = {}
+                for key, value in client_data.items():
+                    key_str = key.decode('utf-8')
+                    value_str = value.decode('utf-8')
+                    
+                    # Convert numeric fields with appropriate type
+                    if key_str in ['chunks_sent']:
+                        # Integer fields
+                        try:
+                            client_info[key_str] = int(value_str)
+                        except ValueError:
+                            client_info[key_str] = value_str
+                    elif key_str in ['connected_at', 'last_active', 'bytes_sent', 'stats_updated_at']:
+                        # Float/timestamp fields
+                        try:
+                            client_info[key_str] = float(value_str)
+                        except ValueError:
+                            client_info[key_str] = value_str
+                    else:
+                        client_info[key_str] = value_str
+                
+                client_info['client_id'] = client_id
+                clients.append(client_info)
+        
+        return {"clients": clients}
+        
+    except Exception as e:
+        logger.error(f"Error getting clients for stream {stream_key}: {e}")
+        return {"clients": []}
+
+
 # WebSocket endpoint removed - using simple polling approach
+
+@app.get("/stream-loop-detection/config")
+def get_stream_loop_detection_config():
+    """Get current stream loop detection configuration."""
+    return {
+        "enabled": cfg.STREAM_LOOP_DETECTION_ENABLED,
+        "threshold_seconds": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S,
+        "threshold_minutes": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S / 60,
+        "threshold_hours": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S / 3600,
+        "check_interval_seconds": cfg.STREAM_LOOP_CHECK_INTERVAL_S,
+        "retention_minutes": cfg.STREAM_LOOP_RETENTION_MINUTES,
+    }
+
+@app.post("/stream-loop-detection/config", dependencies=[Depends(require_api_key)])
+async def update_stream_loop_detection_config(
+    enabled: bool, 
+    threshold_seconds: int,
+    check_interval_seconds: Optional[int] = None,
+    retention_minutes: Optional[int] = None
+):
+    """
+    Update stream loop detection configuration.
+    
+    Args:
+        enabled: Whether to enable stream loop detection
+        threshold_seconds: Threshold in seconds for detecting stale streams
+        check_interval_seconds: How often to check streams (in seconds)
+        retention_minutes: How long to keep looping stream IDs (0 = indefinite)
+    
+    Note: This updates the runtime configuration but does not persist to .env file.
+    """
+    if threshold_seconds < 60:
+        raise HTTPException(status_code=400, detail="Threshold must be at least 60 seconds")
+    
+    if check_interval_seconds is not None and check_interval_seconds < 5:
+        raise HTTPException(status_code=400, detail="Check interval must be at least 5 seconds")
+    
+    if retention_minutes is not None and retention_minutes < 0:
+        raise HTTPException(status_code=400, detail="Retention minutes must be 0 or greater")
+    
+    # Update config
+    cfg.STREAM_LOOP_DETECTION_ENABLED = enabled
+    cfg.STREAM_LOOP_DETECTION_THRESHOLD_S = threshold_seconds
+    
+    if check_interval_seconds is not None:
+        cfg.STREAM_LOOP_CHECK_INTERVAL_S = check_interval_seconds
+    
+    if retention_minutes is not None:
+        cfg.STREAM_LOOP_RETENTION_MINUTES = retention_minutes
+        looping_streams_tracker.set_retention_minutes(retention_minutes)
+    
+    # Restart the loop detector if enabled
+    if enabled:
+        await stream_loop_detector.stop()
+        await stream_loop_detector.start()
+        logger.info(f"Stream loop detection restarted with threshold {threshold_seconds}s, check_interval {cfg.STREAM_LOOP_CHECK_INTERVAL_S}s")
+    else:
+        await stream_loop_detector.stop()
+        logger.info("Stream loop detection disabled")
+    
+    # Persist settings to JSON file
+    from .services.settings_persistence import SettingsPersistence
+    config_to_save = {
+        "enabled": enabled,
+        "threshold_seconds": threshold_seconds,
+        "check_interval_seconds": cfg.STREAM_LOOP_CHECK_INTERVAL_S,
+        "retention_minutes": cfg.STREAM_LOOP_RETENTION_MINUTES,
+    }
+    if SettingsPersistence.save_loop_detection_config(config_to_save):
+        logger.info("Loop detection configuration persisted to JSON file")
+    
+    return {
+        "message": "Stream loop detection configuration updated and persisted",
+        "enabled": enabled,
+        "threshold_seconds": threshold_seconds,
+        "threshold_minutes": threshold_seconds / 60,
+        "threshold_hours": threshold_seconds / 3600,
+        "check_interval_seconds": cfg.STREAM_LOOP_CHECK_INTERVAL_S,
+        "retention_minutes": cfg.STREAM_LOOP_RETENTION_MINUTES,
+    }
+
+@app.get("/looping-streams")
+def get_looping_streams():
+    """
+    Get list of AceStream IDs that have been detected as looping.
+    
+    This endpoint is used by Acexy proxy to check if a stream is looping
+    before selecting an engine. If a stream ID is in this list, Acexy
+    should return an error response to prevent playback attempts.
+    
+    Returns:
+        Dict with:
+        - stream_ids: List of looping stream IDs
+        - streams: Dict mapping stream_id to detection time
+        - retention_minutes: Current retention setting (0 = indefinite)
+    """
+    return {
+        "stream_ids": list(looping_streams_tracker.get_looping_stream_ids()),
+        "streams": looping_streams_tracker.get_looping_streams(),
+        "retention_minutes": looping_streams_tracker.get_retention_minutes() or 0,
+    }
+
+@app.delete("/looping-streams/{stream_id}", dependencies=[Depends(require_api_key)])
+def remove_looping_stream(stream_id: str):
+    """
+    Manually remove a stream ID from the looping streams list.
+    
+    Args:
+        stream_id: The AceStream content ID to remove
+        
+    Returns:
+        Success message if removed, error if not found
+    """
+    if looping_streams_tracker.remove_looping_stream(stream_id):
+        return {"message": f"Stream {stream_id} removed from looping list"}
+    else:
+        raise HTTPException(status_code=404, detail=f"Stream {stream_id} not found in looping list")
+
+@app.post("/looping-streams/clear", dependencies=[Depends(require_api_key)])
+def clear_all_looping_streams():
+    """
+    Clear all looping streams from the tracker.
+    
+    Returns:
+        Success message
+    """
+    looping_streams_tracker.clear_all()
+    return {"message": "All looping streams cleared"}
+
+@app.get("/proxy/config")
+def get_proxy_config():
+    """
+    Get current proxy configuration settings.
+    
+    Returns proxy buffer and streaming settings that can be adjusted at runtime.
+    """
+    from .proxy import constants as proxy_constants
+    from .proxy.config_helper import Config as ProxyConfig
+    
+    return {
+        "vlc_user_agent": proxy_constants.VLC_USER_AGENT,
+        "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
+        "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
+        "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
+        "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
+        "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
+        "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
+        "chunk_size": ProxyConfig.CHUNK_SIZE,
+        "buffer_chunk_size": ProxyConfig.BUFFER_CHUNK_SIZE,
+        "redis_chunk_ttl": ProxyConfig.REDIS_CHUNK_TTL,
+        "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+    }
+
+@app.post("/proxy/config", dependencies=[Depends(require_api_key)])
+def update_proxy_config(
+    initial_data_wait_timeout: Optional[int] = None,
+    initial_data_check_interval: Optional[float] = None,
+    no_data_timeout_checks: Optional[int] = None,
+    no_data_check_interval: Optional[float] = None,
+    connection_timeout: Optional[int] = None,
+    stream_timeout: Optional[int] = None,
+    channel_shutdown_delay: Optional[int] = None,
+    max_streams_per_engine: Optional[int] = None,
+):
+    """
+    Update proxy configuration settings at runtime.
+    
+    Args:
+        initial_data_wait_timeout: Maximum seconds to wait for initial data in buffer (min: 1, max: 60)
+        initial_data_check_interval: Seconds between buffer checks (min: 0.1, max: 2.0)
+        no_data_timeout_checks: Number of consecutive empty checks before declaring stream ended (min: 5, max: 600)
+        no_data_check_interval: Seconds between checks when no data is available (min: 0.01, max: 1.0)
+        connection_timeout: Connection timeout in seconds (min: 5, max: 60)
+        stream_timeout: Stream timeout in seconds (min: 10, max: 300)
+        channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
+        max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
+    
+    Note: This updates the runtime configuration but does not persist to .env file.
+    Changes take effect for new streams only.
+    """
+    from .proxy import constants as proxy_constants
+    from .proxy.config_helper import Config as ProxyConfig
+    
+    # Validation and updates
+    if initial_data_wait_timeout is not None:
+        if initial_data_wait_timeout < 1 or initial_data_wait_timeout > 60:
+            raise HTTPException(status_code=400, detail="initial_data_wait_timeout must be between 1 and 60 seconds")
+        ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT = initial_data_wait_timeout
+    
+    if initial_data_check_interval is not None:
+        if initial_data_check_interval < 0.1 or initial_data_check_interval > 2.0:
+            raise HTTPException(status_code=400, detail="initial_data_check_interval must be between 0.1 and 2.0 seconds")
+        ProxyConfig.INITIAL_DATA_CHECK_INTERVAL = initial_data_check_interval
+    
+    if no_data_timeout_checks is not None:
+        if no_data_timeout_checks < 5 or no_data_timeout_checks > 600:
+            raise HTTPException(status_code=400, detail="no_data_timeout_checks must be between 5 and 600")
+        ProxyConfig.NO_DATA_TIMEOUT_CHECKS = no_data_timeout_checks
+    
+    if no_data_check_interval is not None:
+        if no_data_check_interval < 0.01 or no_data_check_interval > 1.0:
+            raise HTTPException(status_code=400, detail="no_data_check_interval must be between 0.01 and 1.0 seconds")
+        ProxyConfig.NO_DATA_CHECK_INTERVAL = no_data_check_interval
+    
+    if connection_timeout is not None:
+        if connection_timeout < 5 or connection_timeout > 60:
+            raise HTTPException(status_code=400, detail="connection_timeout must be between 5 and 60 seconds")
+        ProxyConfig.CONNECTION_TIMEOUT = connection_timeout
+    
+    if stream_timeout is not None:
+        if stream_timeout < 10 or stream_timeout > 300:
+            raise HTTPException(status_code=400, detail="stream_timeout must be between 10 and 300 seconds")
+        ProxyConfig.STREAM_TIMEOUT = stream_timeout
+    
+    if channel_shutdown_delay is not None:
+        if channel_shutdown_delay < 1 or channel_shutdown_delay > 60:
+            raise HTTPException(status_code=400, detail="channel_shutdown_delay must be between 1 and 60 seconds")
+        ProxyConfig.CHANNEL_SHUTDOWN_DELAY = channel_shutdown_delay
+    
+    if max_streams_per_engine is not None:
+        if max_streams_per_engine < 1 or max_streams_per_engine > 20:
+            raise HTTPException(status_code=400, detail="max_streams_per_engine must be between 1 and 20")
+        cfg.ACEXY_MAX_STREAMS_PER_ENGINE = max_streams_per_engine
+    
+    logger.info(
+        f"Proxy configuration updated: "
+        f"initial_data_wait_timeout={ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT}, "
+        f"initial_data_check_interval={ProxyConfig.INITIAL_DATA_CHECK_INTERVAL}, "
+        f"no_data_timeout_checks={ProxyConfig.NO_DATA_TIMEOUT_CHECKS}, "
+        f"no_data_check_interval={ProxyConfig.NO_DATA_CHECK_INTERVAL}, "
+        f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
+        f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
+        f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
+        f"max_streams_per_engine={cfg.ACEXY_MAX_STREAMS_PER_ENGINE}"
+    )
+    
+    # Persist settings to JSON file
+    from .services.settings_persistence import SettingsPersistence
+    config_to_save = {
+        "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
+        "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
+        "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
+        "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
+        "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
+        "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
+        "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+    }
+    if SettingsPersistence.save_proxy_config(config_to_save):
+        logger.info("Proxy configuration persisted to JSON file")
+    
+    return {
+        "message": "Proxy configuration updated and persisted",
+        "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
+        "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
+        "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
+        "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
+        "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
+        "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
+        "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+    }
+
+
+
+# ============================================================================
+# Engine Settings Endpoints
+# ============================================================================
+
+class EngineSettingsUpdate(BaseModel):
+    """Model for updating engine settings."""
+    min_replicas: Optional[int] = None
+    max_replicas: Optional[int] = None
+    auto_delete: Optional[bool] = None
+    engine_variant: Optional[str] = None
+    use_custom_variant: Optional[bool] = None
+    platform: Optional[str] = None  # Read-only, just for compatibility
+
+@app.get("/settings/engine")
+def get_engine_settings():
+    """Get current engine configuration settings."""
+    from .services.custom_variant_config import detect_platform, get_config as get_custom_config
+    
+    # Try to load from persisted settings first
+    from .services.settings_persistence import SettingsPersistence
+    persisted = SettingsPersistence.load_engine_settings()
+    
+    # If persisted settings exist, use them
+    if persisted:
+        return persisted
+    
+    # Build default response from current runtime config
+    custom_config = get_custom_config()
+    
+    default_settings = {
+        "min_replicas": cfg.MIN_REPLICAS,
+        "max_replicas": cfg.MAX_REPLICAS,
+        "auto_delete": cfg.AUTO_DELETE,
+        "engine_variant": cfg.ENGINE_VARIANT,
+        "use_custom_variant": custom_config.enabled if custom_config else False,
+        "platform": detect_platform(),
+    }
+    
+    # Save defaults for future use
+    try:
+        if SettingsPersistence.save_engine_settings(default_settings):
+            logger.info("Created default engine settings on first access")
+    except Exception as e:
+        logger.warning(f"Failed to save default engine settings: {e}")
+    
+    return default_settings
+
+@app.post("/settings/engine", dependencies=[Depends(require_api_key)])
+async def update_engine_settings(settings: EngineSettingsUpdate):
+    """
+    Update engine configuration settings.
+    
+    Args:
+        settings: Engine settings to update
+    
+    Note: Changes are persisted to JSON and will be applied on next restart.
+    Some changes may require reprovisioning engines.
+    """
+    from .services.settings_persistence import SettingsPersistence
+    from .services.custom_variant_config import detect_platform
+    
+    # Load current persisted settings or use runtime config as base
+    current_settings = SettingsPersistence.load_engine_settings() or {
+        "min_replicas": cfg.MIN_REPLICAS,
+        "max_replicas": cfg.MAX_REPLICAS,
+        "auto_delete": cfg.AUTO_DELETE,
+        "engine_variant": cfg.ENGINE_VARIANT,
+        "use_custom_variant": False,
+        "platform": detect_platform(),
+    }
+    
+    # Validation and updates
+    if settings.min_replicas is not None:
+        if settings.min_replicas < 0 or settings.min_replicas > 50:
+            raise HTTPException(status_code=400, detail="min_replicas must be between 0 and 50")
+        current_settings["min_replicas"] = settings.min_replicas
+        cfg.MIN_REPLICAS = settings.min_replicas
+    
+    if settings.max_replicas is not None:
+        if settings.max_replicas < 1 or settings.max_replicas > 100:
+            raise HTTPException(status_code=400, detail="max_replicas must be between 1 and 100")
+        current_settings["max_replicas"] = settings.max_replicas
+        cfg.MAX_REPLICAS = settings.max_replicas
+    
+    # Validate min_replicas <= max_replicas
+    if current_settings["min_replicas"] > current_settings["max_replicas"]:
+        raise HTTPException(status_code=400, detail="min_replicas must be <= max_replicas")
+    
+    if settings.auto_delete is not None:
+        current_settings["auto_delete"] = settings.auto_delete
+        cfg.AUTO_DELETE = settings.auto_delete
+    
+    if settings.engine_variant is not None:
+        current_settings["engine_variant"] = settings.engine_variant
+        # Update cfg.ENGINE_VARIANT at runtime so it takes effect during reprovisioning
+        cfg.ENGINE_VARIANT = settings.engine_variant
+    
+    if settings.use_custom_variant is not None:
+        current_settings["use_custom_variant"] = settings.use_custom_variant
+        # Update custom variant config
+        from .services.custom_variant_config import get_config as get_custom_config, save_config as save_custom_config
+        custom_config = get_custom_config()
+        if custom_config:
+            custom_config.enabled = settings.use_custom_variant
+            save_custom_config(custom_config)
+    
+    # Persist settings to JSON file
+    if SettingsPersistence.save_engine_settings(current_settings):
+        logger.info(f"Engine settings persisted: {current_settings}")
+    else:
+        logger.warning("Failed to persist engine settings to JSON file")
+    
+    return {
+        "message": "Engine settings updated and persisted",
+        **current_settings
+    }
+
+
+# ============================================================================
+# Settings Backup/Restore Endpoints
+# ============================================================================
+
+# Backup format version - increment when backup structure changes
+BACKUP_FORMAT_VERSION = "1.0"
+
+@app.get("/settings/export")
+async def export_settings(api_key_param: str = Depends(require_api_key)):
+    """
+    Export all settings (custom engine settings, templates, proxy, loop detection) as a ZIP file.
+    
+    Returns:
+        ZIP file containing all settings as JSON files
+    """
+    import zipfile
+    import io
+    
+    try:
+        # Create an in-memory ZIP file
+        zip_buffer = io.BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Export custom engine variant config
+            try:
+                custom_config = get_custom_config()
+                if custom_config:
+                    config_json = json.dumps(custom_config.dict(), indent=2)
+                    zip_file.writestr("custom_engine_variant.json", config_json)
+                    logger.info("Added custom engine variant config to backup")
+            except Exception as e:
+                logger.warning(f"Failed to export custom engine variant config: {e}")
+            
+            # Export all custom templates
+            try:
+                templates_list = list_templates()
+                for template_info in templates_list:
+                    if template_info['exists']:
+                        template = get_template(template_info['slot_id'])
+                        if template:
+                            template_json = json.dumps(template.to_dict(), indent=2)
+                            zip_file.writestr(f"templates/template_{template.slot_id}.json", template_json)
+                logger.info(f"Added {sum(1 for t in templates_list if t['exists'])} templates to backup")
+            except Exception as e:
+                logger.warning(f"Failed to export templates: {e}")
+            
+            # Export active template ID
+            try:
+                active_id = get_active_template_id()
+                if active_id is not None:
+                    active_template_json = json.dumps({"active_template_id": active_id}, indent=2)
+                    zip_file.writestr("active_template.json", active_template_json)
+                    logger.info(f"Added active template ID ({active_id}) to backup")
+            except Exception as e:
+                logger.warning(f"Failed to export active template ID: {e}")
+            
+            # Export proxy settings
+            try:
+                from .proxy.config_helper import Config as ProxyConfig
+                proxy_settings = {
+                    "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
+                    "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
+                    "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
+                    "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
+                    "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
+                    "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
+                    "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+                }
+                proxy_json = json.dumps(proxy_settings, indent=2)
+                zip_file.writestr("proxy_settings.json", proxy_json)
+                logger.info("Added proxy settings to backup")
+            except Exception as e:
+                logger.warning(f"Failed to export proxy settings: {e}")
+            
+            # Export loop detection settings
+            try:
+                loop_settings = {
+                    "enabled": cfg.STREAM_LOOP_DETECTION_ENABLED,
+                    "threshold_seconds": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S,
+                    "check_interval_seconds": cfg.STREAM_LOOP_CHECK_INTERVAL_S,
+                    "retention_minutes": cfg.STREAM_LOOP_RETENTION_MINUTES,
+                }
+                loop_json = json.dumps(loop_settings, indent=2)
+                zip_file.writestr("loop_detection_settings.json", loop_json)
+                logger.info("Added loop detection settings to backup")
+            except Exception as e:
+                logger.warning(f"Failed to export loop detection settings: {e}")
+            
+            # Export engine settings
+            try:
+                from .services.settings_persistence import SettingsPersistence
+                engine_settings = SettingsPersistence.load_engine_settings()
+                if engine_settings:
+                    engine_json = json.dumps(engine_settings, indent=2)
+                    zip_file.writestr("engine_settings.json", engine_json)
+                    logger.info("Added engine settings to backup")
+            except Exception as e:
+                logger.warning(f"Failed to export engine settings: {e}")
+            
+            # Add metadata
+            metadata = {
+                "export_date": datetime.now(timezone.utc).isoformat(),
+                "version": BACKUP_FORMAT_VERSION,
+                "description": "AceStream Orchestrator Settings Backup"
+            }
+            zip_file.writestr("metadata.json", json.dumps(metadata, indent=2))
+        
+        # Prepare the ZIP for download
+        zip_buffer.seek(0)
+        
+        from starlette.responses import StreamingResponse
+        return StreamingResponse(
+            io.BytesIO(zip_buffer.getvalue()),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename=orchestrator_settings_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to export settings: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to export settings: {str(e)}")
+
+
+@app.post("/settings/import")
+async def import_settings_data(
+    request: Request,
+    import_custom_variant: bool = Query(True),
+    import_templates: bool = Query(True),
+    import_proxy: bool = Query(True),
+    import_loop_detection: bool = Query(True),
+    import_engine: bool = Query(True),
+    api_key_param: str = Depends(require_api_key)
+):
+    """
+    Import settings from uploaded ZIP file data.
+    
+    Query Parameters:
+        import_custom_variant: Whether to import custom engine variant config
+        import_templates: Whether to import templates  
+        import_proxy: Whether to import proxy settings
+        import_loop_detection: Whether to import loop detection settings
+        import_engine: Whether to import engine settings
+    
+    Returns:
+        Summary of imported settings
+    """
+    import zipfile
+    import io
+    from .services.settings_persistence import SettingsPersistence
+    
+    try:
+        # Read the uploaded file data
+        file_data = await request.body()
+        
+        if not file_data:
+            raise HTTPException(status_code=400, detail="No file data provided")
+        
+        imported = {
+            "custom_variant": False,
+            "templates": 0,
+            "active_template": False,
+            "proxy": False,
+            "loop_detection": False,
+            "engine": False,
+            "errors": []
+        }
+        
+        # Create a BytesIO object from the uploaded data
+        zip_buffer = io.BytesIO(file_data)
+        
+        with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
+            # Import custom engine variant config
+            if import_custom_variant and "custom_engine_variant.json" in zip_file.namelist():
+                try:
+                    config_data = zip_file.read("custom_engine_variant.json").decode('utf-8')
+                    config_dict = json.loads(config_data)
+                    config = CustomVariantConfig(**config_dict)
+                    if save_custom_config(config):
+                        reload_config()
+                        imported["custom_variant"] = True
+                        logger.info("Imported custom engine variant config")
+                except Exception as e:
+                    error_msg = f"Failed to import custom engine variant config: {e}"
+                    logger.error(error_msg)
+                    imported["errors"].append(error_msg)
+            
+            # Import templates
+            if import_templates:
+                template_files = [f for f in zip_file.namelist() if f.startswith("templates/")]
+                for template_file in template_files:
+                    try:
+                        template_data = zip_file.read(template_file).decode('utf-8')
+                        template_dict = json.loads(template_data)
+                        
+                        slot_id = template_dict['slot_id']
+                        name = template_dict['name']
+                        config = CustomVariantConfig(**template_dict['config'])
+                        
+                        if save_template(slot_id, name, config):
+                            imported["templates"] += 1
+                            logger.info(f"Imported template {slot_id}: {name}")
+                    except Exception as e:
+                        error_msg = f"Failed to import template from {template_file}: {e}"
+                        logger.error(error_msg)
+                        imported["errors"].append(error_msg)
+            
+            # Import active template ID
+            if import_templates and "active_template.json" in zip_file.namelist():
+                try:
+                    active_data = zip_file.read("active_template.json").decode('utf-8')
+                    active_dict = json.loads(active_data)
+                    active_id = active_dict.get('active_template_id')
+                    if active_id is not None:
+                        set_active_template(active_id)
+                        imported["active_template"] = True
+                        logger.info(f"Set active template to {active_id}")
+                except Exception as e:
+                    error_msg = f"Failed to import active template ID: {e}"
+                    logger.error(error_msg)
+                    imported["errors"].append(error_msg)
+            
+            # Import proxy settings
+            if import_proxy and "proxy_settings.json" in zip_file.namelist():
+                try:
+                    from .proxy.config_helper import Config as ProxyConfig
+                    proxy_data = zip_file.read("proxy_settings.json").decode('utf-8')
+                    proxy_dict = json.loads(proxy_data)
+                    
+                    ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT = proxy_dict.get('initial_data_wait_timeout', ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT)
+                    ProxyConfig.INITIAL_DATA_CHECK_INTERVAL = proxy_dict.get('initial_data_check_interval', ProxyConfig.INITIAL_DATA_CHECK_INTERVAL)
+                    ProxyConfig.NO_DATA_TIMEOUT_CHECKS = proxy_dict.get('no_data_timeout_checks', ProxyConfig.NO_DATA_TIMEOUT_CHECKS)
+                    ProxyConfig.NO_DATA_CHECK_INTERVAL = proxy_dict.get('no_data_check_interval', ProxyConfig.NO_DATA_CHECK_INTERVAL)
+                    ProxyConfig.CONNECTION_TIMEOUT = proxy_dict.get('connection_timeout', ProxyConfig.CONNECTION_TIMEOUT)
+                    ProxyConfig.STREAM_TIMEOUT = proxy_dict.get('stream_timeout', ProxyConfig.STREAM_TIMEOUT)
+                    ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_dict.get('channel_shutdown_delay', ProxyConfig.CHANNEL_SHUTDOWN_DELAY)
+                    
+                    # Persist to file
+                    if SettingsPersistence.save_proxy_config(proxy_dict):
+                        imported["proxy"] = True
+                        logger.info("Imported proxy settings")
+                    else:
+                        error_msg = "Failed to persist proxy settings to file"
+                        logger.error(error_msg)
+                        imported["errors"].append(error_msg)
+                except Exception as e:
+                    error_msg = f"Failed to import proxy settings: {e}"
+                    logger.error(error_msg)
+                    imported["errors"].append(error_msg)
+            
+            # Import loop detection settings
+            if import_loop_detection and "loop_detection_settings.json" in zip_file.namelist():
+                try:
+                    loop_data = zip_file.read("loop_detection_settings.json").decode('utf-8')
+                    loop_dict = json.loads(loop_data)
+                    
+                    cfg.STREAM_LOOP_DETECTION_ENABLED = loop_dict.get('enabled', cfg.STREAM_LOOP_DETECTION_ENABLED)
+                    cfg.STREAM_LOOP_DETECTION_THRESHOLD_S = loop_dict.get('threshold_seconds', cfg.STREAM_LOOP_DETECTION_THRESHOLD_S)
+                    cfg.STREAM_LOOP_CHECK_INTERVAL_S = loop_dict.get('check_interval_seconds', cfg.STREAM_LOOP_CHECK_INTERVAL_S)
+                    cfg.STREAM_LOOP_RETENTION_MINUTES = loop_dict.get('retention_minutes', cfg.STREAM_LOOP_RETENTION_MINUTES)
+                    
+                    # Update tracker retention
+                    looping_streams_tracker.set_retention_minutes(cfg.STREAM_LOOP_RETENTION_MINUTES)
+                    
+                    # Persist to file
+                    if SettingsPersistence.save_loop_detection_config(loop_dict):
+                        imported["loop_detection"] = True
+                        logger.info("Imported loop detection settings")
+                    else:
+                        error_msg = "Failed to persist loop detection settings to file"
+                        logger.error(error_msg)
+                        imported["errors"].append(error_msg)
+                except Exception as e:
+                    error_msg = f"Failed to import loop detection settings: {e}"
+                    logger.error(error_msg)
+                    imported["errors"].append(error_msg)
+            
+            # Import engine settings
+            if import_engine and "engine_settings.json" in zip_file.namelist():
+                try:
+                    engine_data = zip_file.read("engine_settings.json").decode('utf-8')
+                    engine_dict = json.loads(engine_data)
+                    
+                    # Update runtime config
+                    if 'min_replicas' in engine_dict:
+                        cfg.MIN_REPLICAS = engine_dict['min_replicas']
+                    if 'max_replicas' in engine_dict:
+                        cfg.MAX_REPLICAS = engine_dict['max_replicas']
+                    if 'auto_delete' in engine_dict:
+                        cfg.AUTO_DELETE = engine_dict['auto_delete']
+                    
+                    # Persist to file
+                    if SettingsPersistence.save_engine_settings(engine_dict):
+                        imported["engine"] = True
+                        logger.info("Imported engine settings")
+                    else:
+                        error_msg = "Failed to persist engine settings to file"
+                        logger.error(error_msg)
+                        imported["errors"].append(error_msg)
+                except Exception as e:
+                    error_msg = f"Failed to import engine settings: {e}"
+                    logger.error(error_msg)
+                    imported["errors"].append(error_msg)
+        
+        return {
+            "message": "Settings imported successfully",
+            "imported": imported
+        }
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid ZIP file")
+    except Exception as e:
+        logger.error(f"Failed to import settings: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to import settings: {str(e)}")
+
+

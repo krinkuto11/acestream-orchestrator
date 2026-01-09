@@ -9,9 +9,9 @@ class Cfg(BaseModel):
     ENGINE_VARIANT: str = os.getenv("ENGINE_VARIANT", "krinkuto11-amd64")
     ENGINE_ARM32_VERSION: str = os.getenv("ENGINE_ARM32_VERSION", "arm32-v3.2.13")
     ENGINE_ARM64_VERSION: str = os.getenv("ENGINE_ARM64_VERSION", "arm64-v3.2.13")
-    MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 1))
+    MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 2))
     MIN_FREE_REPLICAS: int = int(os.getenv("MIN_FREE_REPLICAS", 1))
-    MAX_REPLICAS: int = int(os.getenv("MAX_REPLICAS", 20))
+    MAX_REPLICAS: int = int(os.getenv("MAX_REPLICAS", 6))
     CONTAINER_LABEL: str = os.getenv("CONTAINER_LABEL", "ondemand.app=myservice")
     STARTUP_TIMEOUT_S: int = int(os.getenv("STARTUP_TIMEOUT_S", 25))
     IDLE_TTL_S: int = int(os.getenv("IDLE_TTL_S", 600))
@@ -46,9 +46,6 @@ class Cfg(BaseModel):
     VPN_RESTART_ENGINES_ON_RECONNECT: bool = os.getenv("VPN_RESTART_ENGINES_ON_RECONNECT", "true").lower() == "true"
     VPN_UNHEALTHY_RESTART_TIMEOUT_S: int = int(os.getenv("VPN_UNHEALTHY_RESTART_TIMEOUT_S", 60))
     
-    # Maximum active replicas when using Gluetun (port range allocation)
-    MAX_ACTIVE_REPLICAS: int = int(os.getenv("MAX_ACTIVE_REPLICAS", 20))
-    
     # VPN-specific port ranges for redundant mode
     # These map VPN container names to their port ranges in the format "min-max"
     # Example: GLUETUN_PORT_RANGE_1=19000-19499 for first VPN
@@ -73,8 +70,19 @@ class Cfg(BaseModel):
 
     API_KEY: str | None = os.getenv("API_KEY")
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
-    AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "false").lower() == "true"
+    AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "true").lower() == "true"
     DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
+    
+    # Stream loop detection configuration
+    # Threshold for detecting stale streams (in seconds)
+    # If live_last is behind current time by this amount, stream will be stopped
+    STREAM_LOOP_DETECTION_THRESHOLD_S: int = int(os.getenv("STREAM_LOOP_DETECTION_THRESHOLD_S", "3600"))  # Default 1 hour
+    STREAM_LOOP_DETECTION_ENABLED: bool = os.getenv("STREAM_LOOP_DETECTION_ENABLED", "false").lower() == "true"
+    # Check interval for stream loop detection (in seconds)
+    STREAM_LOOP_CHECK_INTERVAL_S: int = int(os.getenv("STREAM_LOOP_CHECK_INTERVAL_S", "10"))  # Default 10 seconds
+    # Retention time for looping stream IDs in the tracker (in minutes)
+    # 0 or None = indefinite retention
+    STREAM_LOOP_RETENTION_MINUTES: int = int(os.getenv("STREAM_LOOP_RETENTION_MINUTES", "0"))  # Default indefinite
 
     @model_validator(mode='after')
     def validate_replicas(self):
@@ -95,12 +103,6 @@ class Cfg(BaseModel):
         min_replicas = values.get('MIN_REPLICAS', 0)
         if v < min_replicas:
             raise ValueError('MAX_REPLICAS must be >= MIN_REPLICAS')
-        return v
-
-    @validator('MAX_ACTIVE_REPLICAS')
-    def validate_max_active_replicas(cls, v):
-        if v <= 0:
-            raise ValueError('MAX_ACTIVE_REPLICAS must be > 0')
         return v
 
     @validator('ENGINE_VARIANT')

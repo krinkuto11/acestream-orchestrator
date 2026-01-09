@@ -1,15 +1,73 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import EngineList from '@/components/EngineList'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Progress } from '@/components/ui/progress'
-import { RefreshCw, AlertCircle, CheckCircle } from 'lucide-react'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { RefreshCw, AlertCircle, CheckCircle, Save, Settings2 } from 'lucide-react'
+import { useNotifications } from '@/context/NotificationContext'
+import { AdvancedEngineSettingsPage } from './AdvancedEngineSettingsPage'
 
-export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, fetchJSON }) {
+// Platform-specific variants mapping
+const VARIANT_OPTIONS = {
+  amd64: [
+    { value: 'krinkuto11-amd64', label: 'Krinkuto11 AMD64' },
+    { value: 'jopsis-amd64', label: 'Jopsis AMD64' },
+    { value: 'custom', label: 'Custom Variant' },
+  ],
+  arm32: [
+    { value: 'jopsis-arm32', label: 'Jopsis ARM32' },
+    { value: 'custom', label: 'Custom Variant' },
+  ],
+  arm64: [
+    { value: 'jopsis-arm64', label: 'Jopsis ARM64' },
+    { value: 'custom', label: 'Custom Variant' },
+  ],
+}
+
+export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKey, fetchJSON }) {
+  const { addNotification } = useNotifications()
   const [reprovisionStatus, setReprovisionStatus] = useState(null)
   const [isReprovisioning, setIsReprovisioning] = useState(false)
   const [showSuccessMessage, setShowSuccessMessage] = useState(false)
   const [showErrorMessage, setShowErrorMessage] = useState(false)
+  
+  // Engine settings state
+  const [engineSettings, setEngineSettings] = useState({
+    min_replicas: 2,
+    max_replicas: 6,
+    auto_delete: true,
+    engine_variant: 'krinkuto11-amd64',
+    use_custom_variant: false,
+    platform: 'amd64',
+  })
+  const [loadingSettings, setLoadingSettings] = useState(true)
+  const [savingSettings, setSavingSettings] = useState(false)
+  const [settingsChanged, setSettingsChanged] = useState(false)
+
+  // Load engine settings
+  const loadEngineSettings = useCallback(async () => {
+    try {
+      setLoadingSettings(true)
+      const settings = await fetchJSON(`${orchUrl}/settings/engine`)
+      setEngineSettings(settings)
+      setSettingsChanged(false)
+    } catch (err) {
+      console.error('Failed to load engine settings:', err)
+      addNotification(`Failed to load engine settings: ${err.message}`, 'error')
+    } finally {
+      setLoadingSettings(false)
+    }
+  }, [orchUrl, fetchJSON])
+
+  useEffect(() => {
+    loadEngineSettings()
+  }, [loadEngineSettings])
 
   // Poll for reprovision status
   useEffect(() => {
@@ -56,6 +114,51 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, fetch
       setShowErrorMessage(false)
     }
   }, [])
+
+  // Handle settings change
+  const handleSettingChange = (key, value) => {
+    setEngineSettings(prev => ({ ...prev, [key]: value }))
+    setSettingsChanged(true)
+  }
+
+  // Save engine settings
+  const handleSaveSettings = useCallback(async () => {
+    try {
+      setSavingSettings(true)
+      
+      await fetchJSON(`${orchUrl}/settings/engine`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(engineSettings)
+      })
+      
+      addNotification('Engine settings saved successfully', 'success')
+      setSettingsChanged(false)
+    } catch (err) {
+      addNotification(`Failed to save engine settings: ${err.message}`, 'error')
+    } finally {
+      setSavingSettings(false)
+    }
+  }, [orchUrl, fetchJSON, engineSettings, apiKey])
+
+  // Get available variants for current platform
+  const availableVariants = VARIANT_OPTIONS[engineSettings.platform] || VARIANT_OPTIONS.amd64
+
+  // Determine which variant is selected (custom or specific variant)
+  const selectedVariant = engineSettings.use_custom_variant ? 'custom' : engineSettings.engine_variant
+
+  // Handle variant change
+  const handleVariantChange = (value) => {
+    if (value === 'custom') {
+      handleSettingChange('use_custom_variant', true)
+    } else {
+      handleSettingChange('use_custom_variant', false)
+      handleSettingChange('engine_variant', value)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -134,12 +237,175 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, fetch
         </Card>
       )}
 
-      <EngineList
-        engines={engines}
-        onDeleteEngine={onDeleteEngine}
-        vpnStatus={vpnStatus}
-        orchUrl={orchUrl}
-      />
+      {/* Tabs for Engine Status and Configuration */}
+      <Tabs defaultValue="status" className="w-full">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="status">Engine Status</TabsTrigger>
+          <TabsTrigger value="configuration">Engine Configuration</TabsTrigger>
+        </TabsList>
+
+        {/* Engine Status Tab */}
+        <TabsContent value="status" className="space-y-6 mt-6">
+          <EngineList
+            engines={engines}
+            onDeleteEngine={onDeleteEngine}
+            vpnStatus={vpnStatus}
+            orchUrl={orchUrl}
+          />
+        </TabsContent>
+
+        {/* Engine Configuration Tab */}
+        <TabsContent value="configuration" className="space-y-6 mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings2 className="h-5 w-5" />
+                Engine Configuration
+              </CardTitle>
+              <CardDescription>
+                Configure engine variant, replica counts, and automatic cleanup settings
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Engine Variant Selector */}
+              <div className="space-y-2">
+                <Label htmlFor="engine-variant">Engine Variant</Label>
+                <Select
+                  value={selectedVariant}
+                  onValueChange={handleVariantChange}
+                  disabled={loadingSettings}
+                >
+                  <SelectTrigger id="engine-variant">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableVariants.map(variant => (
+                      <SelectItem key={variant.value} value={variant.value}>
+                        {variant.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Select the AceStream engine variant to use. Custom variant allows full parameter configuration.
+                  Detected platform: <strong>{engineSettings.platform}</strong>
+                </p>
+              </div>
+
+              {/* MIN_REPLICAS */}
+              <div className="space-y-2">
+                <Label htmlFor="min-replicas">Minimum Replicas</Label>
+                <Input
+                  id="min-replicas"
+                  type="number"
+                  min="0"
+                  max="50"
+                  value={engineSettings.min_replicas}
+                  onChange={(e) => handleSettingChange('min_replicas', parseInt(e.target.value) || 0)}
+                  disabled={loadingSettings}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Minimum number of engine replicas to maintain (0-50, default: 2)
+                </p>
+              </div>
+
+              {/* MAX_REPLICAS */}
+              <div className="space-y-2">
+                <Label htmlFor="max-replicas">Maximum Replicas</Label>
+                <Input
+                  id="max-replicas"
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={engineSettings.max_replicas}
+                  onChange={(e) => handleSettingChange('max_replicas', parseInt(e.target.value) || 1)}
+                  disabled={loadingSettings}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Maximum number of engine replicas allowed (1-100, default: 6)
+                </p>
+              </div>
+
+              {/* AUTO_DELETE */}
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <Label htmlFor="auto-delete">Automatic Engine Cleanup</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Automatically delete engines when they are stopped (default: true)
+                  </p>
+                </div>
+                <Switch
+                  id="auto-delete"
+                  checked={engineSettings.auto_delete}
+                  onCheckedChange={(checked) => handleSettingChange('auto_delete', checked)}
+                  disabled={loadingSettings}
+                />
+              </div>
+
+              {/* Save Settings Button */}
+              <div className="flex justify-end gap-2 pt-4 border-t">
+                {settingsChanged && (
+                  <Button
+                    onClick={handleSaveSettings}
+                    disabled={savingSettings || loadingSettings}
+                    className="flex items-center gap-2"
+                  >
+                    <Save className="h-4 w-4" />
+                    {savingSettings ? 'Saving...' : 'Save Settings'}
+                  </Button>
+                )}
+                <Button
+                  variant={settingsChanged ? "outline" : "default"}
+                  onClick={() => {
+                    if (window.confirm('Are you sure you want to reprovision all engines with the new settings? This will interrupt all active streams.')) {
+                      // Save settings first if there are changes
+                      const savePromise = settingsChanged ? handleSaveSettings() : Promise.resolve()
+                      savePromise.then(() => {
+                        // Trigger reprovision after saving
+                        fetchJSON(`${orchUrl}/custom-variant/reprovision`, {
+                          method: 'POST',
+                          headers: {
+                            'Authorization': `Bearer ${apiKey}`
+                          }
+                        }).then(() => {
+                          addNotification('Reprovisioning started', 'success')
+                        }).catch(err => {
+                          addNotification(`Failed to start reprovision: ${err.message}`, 'error')
+                        })
+                      })
+                    }
+                  }}
+                  disabled={isReprovisioning || loadingSettings}
+                  className="flex items-center gap-2"
+                >
+                  <RefreshCw className={isReprovisioning ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+                  {isReprovisioning ? 'Reprovisioning...' : (settingsChanged ? 'Save & Reprovision' : 'Reprovision')}
+                </Button>
+              </div>
+
+              {settingsChanged && (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    You have unsaved changes. Click "Save Settings" to persist them, or "Save & Reprovision" to apply them immediately to all engines.
+                  </AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Advanced Engine Settings - Only show when custom variant is selected */}
+          {engineSettings.use_custom_variant && (
+            <div className="mt-6">
+              <AdvancedEngineSettingsPage
+                orchUrl={orchUrl}
+                apiKey={apiKey}
+                fetchJSON={fetchJSON}
+              />
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

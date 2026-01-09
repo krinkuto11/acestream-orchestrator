@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { ModernSidebar } from './components/ModernSidebar'
 import { ModernHeader } from './components/ModernHeader'
 import { ThemeProvider, useTheme } from './components/ThemeProvider'
+import { NotificationProvider, useNotifications } from './context/NotificationContext'
 import { OverviewPage } from './pages/OverviewPage'
 import { EnginesPage } from './pages/EnginesPage'
 import { StreamsPage } from './pages/StreamsPage'
@@ -11,14 +12,12 @@ import { HealthPage } from './pages/HealthPage'
 import { VPNPage } from './pages/VPNPage'
 import { MetricsPage } from './pages/MetricsPage'
 import { SettingsPage } from './pages/SettingsPage'
-import { AdvancedEngineSettingsPage } from './pages/AdvancedEngineSettingsPage'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import { useFavicon } from './hooks/useFavicon'
-import { Toaster } from '@/components/ui/sonner'
-import { toast } from 'sonner'
 
 function AppContent() {
   const { resolvedTheme } = useTheme()
+  const { addNotification } = useNotifications()
   useFavicon(resolvedTheme)
   // Always use the current browser origin as URL so the UI works regardless of which IP/host is used to access it
   const orchUrl = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:8000'
@@ -51,7 +50,7 @@ function AppContent() {
     try {
       const [enginesData, streamsData, vpnData, orchStatus] = await Promise.all([
         fetchJSON(`${orchUrl}/engines`),
-        fetchJSON(`${orchUrl}/streams`),
+        fetchJSON(`${orchUrl}/streams?status=started`),
         fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false })),
         fetchJSON(`${orchUrl}/orchestrator/status`).catch(() => null)
       ])
@@ -76,7 +75,7 @@ function AppContent() {
       setIsInitialLoad(false)
     } catch (err) {
       const errorMessage = err.message || String(err)
-      toast.error(`Connection error: ${errorMessage}`)
+      addNotification(`Connection error: ${errorMessage}`, 'error')
       setIsConnected(false)
       setIsInitialLoad(false)
     }
@@ -97,10 +96,10 @@ function AppContent() {
       await fetchJSON(`${orchUrl}/containers/${encodeURIComponent(containerId)}`, {
         method: 'DELETE'
       })
-      toast.success('Engine deleted successfully')
+      addNotification('Engine deleted successfully', 'success')
       await fetchData()
     } catch (err) {
-      toast.error(`Failed to delete engine: ${err.message}`)
+      addNotification(`Failed to delete engine: ${err.message}`, 'error')
     }
   }, [orchUrl, fetchJSON, fetchData])
 
@@ -113,10 +112,10 @@ function AppContent() {
       await fetchJSON(`${orchUrl}/streams/${encodeURIComponent(streamId)}`, {
         method: 'DELETE'
       })
-      toast.success('Stream stopped successfully')
+      addNotification('Stream stopped successfully', 'success')
       await fetchData()
     } catch (err) {
-      toast.error(`Failed to stop stream: ${err.message}`)
+      addNotification(`Failed to stop stream: ${err.message}`, 'error')
     }
   }, [orchUrl, fetchJSON, fetchData])
 
@@ -162,6 +161,7 @@ function AppContent() {
                     onDeleteEngine={handleDeleteEngine}
                     vpnStatus={vpnStatus}
                     orchUrl={orchUrl}
+                    apiKey={apiKey}
                     fetchJSON={fetchJSON}
                   />
                 } 
@@ -223,16 +223,7 @@ function AppContent() {
                     setRefreshInterval={setRefreshInterval}
                     maxEventsDisplay={maxEventsDisplay}
                     setMaxEventsDisplay={setMaxEventsDisplay}
-                  />
-                } 
-              />
-              <Route 
-                path="/advanced-engine-settings" 
-                element={
-                  <AdvancedEngineSettingsPage
                     orchUrl={orchUrl}
-                    apiKey={apiKey}
-                    fetchJSON={fetchJSON}
                   />
                 } 
               />
@@ -241,8 +232,6 @@ function AppContent() {
           </main>
         </div>
       </div>
-      
-      <Toaster />
     </BrowserRouter>
   )
 }
@@ -250,7 +239,9 @@ function AppContent() {
 function App() {
   return (
     <ThemeProvider defaultTheme="light">
-      <AppContent />
+      <NotificationProvider>
+        <AppContent />
+      </NotificationProvider>
     </ThemeProvider>
   )
 }

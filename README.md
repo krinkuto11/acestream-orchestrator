@@ -9,7 +9,7 @@ Dynamic orchestration service for AceStream engines with health monitoring, usag
 
 ## What It Does
 
-Provisions AceStream engine containers on-demand, monitors their health, collects stream statistics, and provides a dashboard for operational visibility. Works with proxy services that request engines when needed.
+Provisions AceStream engine containers on-demand, monitors their health, collects stream statistics, and provides a dashboard for operational visibility.
 
 ## Quick Start
 
@@ -49,6 +49,17 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 
 ## Core Features
 
+- **Stream Multiplexing Proxy**: Native proxy supporting multiple clients per stream
+  - Automatic stream sharing across concurrent clients
+  - Redis-backed ring buffer for efficient data distribution
+  - Heartbeat-based client tracking and cleanup
+  - Configurable buffer and grace periods
+  - Load balanced engine selection
+  - Seamless failover on engine unavailability
+- **Stream Loop Detection** (v1.6.0): Automatically detect and stop streams that are looping (no new data)
+  - Configurable threshold via UI
+  - Monitors broadcast position (live_last) against real time
+  - Automatic stream cleanup when threshold exceeded
 - **Multiple Deployment Modes**: Standalone, single VPN, or redundant VPN with automatic failover
 - **Emergency Mode**: Automatic failover and recovery when one VPN fails in redundant mode
 - **Multiple Engine Variants**: Support for AMD64 and ARM architectures with optimized configurations
@@ -66,7 +77,7 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 - **Reprovisioning Progress**: Real-time progress indicators when reprovisioning engines
 - **Health Monitoring**: Automatic detection of engine issues with real-time status updates
 - **Usage Tracking**: Track engine idle time for intelligent load balancing
-- **Modern Web Dashboard**: Real-time monitoring interface built with React and Material-UI
+- **Modern Web Dashboard**: Real-time monitoring interface built with React
 - **VPN Integration**: Gluetun VPN support with port forwarding and automatic failover
 - **Forwarded Engines**: Intelligent P2P port management for optimal connectivity
 - **Prometheus Metrics**: Built-in metrics endpoint for monitoring and alerting
@@ -74,8 +85,6 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 - **Cache Management**: Intelligent cache cleanup for resource optimization
 
 ## Documentation
-
-### Getting Started
 
 - **[Deployment Guide](docs/DEPLOY.md)** - Complete deployment instructions for all modes
   - Standalone deployment
@@ -197,7 +206,7 @@ See [Configuration Reference](docs/CONFIG.md) for all options.
 
 ```bash
 # Provisioning
-POST /provision/acestream           # Start new engine
+POST /provision/acestream             # Start new engine
 
 # Events
 POST /events/stream_started         # Register stream
@@ -207,6 +216,10 @@ POST /events/stream_ended           # Unregister stream
 GET /engines                        # List engines with health status
 GET /streams?status=started         # List active streams
 GET /vpn/status                     # VPN status (if configured)
+
+# Stream Loop Detection (v1.6.0)
+GET /stream-loop-detection/config   # Get loop detection settings
+POST /stream-loop-detection/config  # Update loop detection settings
 
 # Monitoring
 GET /health                         # Service health

@@ -400,12 +400,12 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         c_https = user_https_port
         # Reserve this port to avoid conflicts
         # HTTPS ports always use the regular HTTPS range, not Gluetun ports
-        # HTTPS ports don't count against MAX_ACTIVE_REPLICAS
+        # HTTPS ports don't count against MAX_REPLICAS
         alloc.reserve_https(c_https)
     else:
         # No user https port - use orchestrator allocation
         # HTTPS ports always use the regular HTTPS range, regardless of Gluetun
-        # HTTPS ports don't count against MAX_ACTIVE_REPLICAS
+        # HTTPS ports don't count against MAX_REPLICAS
         c_https = alloc.alloc_https(avoid=c_http)
 
     # Get variant configuration

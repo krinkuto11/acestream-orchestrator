@@ -72,5 +72,9 @@ actionlint
 app/config/custom_templates/
 # Note: app/config/custom_engine_variant.json is tracked as default but can be modified by users
 
+# Runtime settings persistence files (generated at runtime)
+app/config/proxy_settings.json
+app/config/loop_detection_settings.json
+
 # Reference UI code (not part of project)
 qui-develop/

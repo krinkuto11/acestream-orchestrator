@@ -101,9 +101,9 @@ def ensure_minimum(initial_startup: bool = False):
                 deficit = target - free_count
                 target_description = f"MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} free engines"
         
-        # When using Gluetun, respect MAX_ACTIVE_REPLICAS as a hard limit
+        # When using Gluetun, respect MAX_REPLICAS as a hard limit
         if cfg.GLUETUN_CONTAINER_NAME:
-            max_new_containers = cfg.MAX_ACTIVE_REPLICAS - total_running
+            max_new_containers = cfg.MAX_REPLICAS - total_running
             if deficit > max_new_containers:
                 deficit = max_new_containers
         
@@ -111,21 +111,21 @@ def ensure_minimum(initial_startup: bool = False):
             logger.debug(f"Sufficient replicas available for {target_description} (total: {total_running}, used: {used_engines}, free: {free_count})")
             return  # Already have enough
         
-        # Check if already at MAX_ACTIVE_REPLICAS limit (when using Gluetun)
+        # Check if already at MAX_REPLICAS limit (when using Gluetun)
         if cfg.GLUETUN_CONTAINER_NAME and deficit > 0:
-            max_new_containers = cfg.MAX_ACTIVE_REPLICAS - total_running
+            max_new_containers = cfg.MAX_REPLICAS - total_running
             if max_new_containers <= 0:
                 logger.warning(
-                    f"Cannot start containers - already at MAX_ACTIVE_REPLICAS limit ({cfg.MAX_ACTIVE_REPLICAS}). "
+                    f"Cannot start containers - already at MAX_REPLICAS limit ({cfg.MAX_REPLICAS}). "
                     f"Current state: total={total_running}, used={used_engines}, free={free_count}. "
-                    f"To maintain {target_description}, increase MAX_ACTIVE_REPLICAS."
+                    f"To maintain {target_description}, increase MAX_REPLICAS."
                 )
                 return
             # Adjust deficit to not exceed the limit
             if deficit > max_new_containers:
                 logger.info(
                     f"Reducing planned containers from {deficit} to {max_new_containers} to stay within "
-                    f"MAX_ACTIVE_REPLICAS limit ({cfg.MAX_ACTIVE_REPLICAS}). "
+                    f"MAX_REPLICAS limit ({cfg.MAX_REPLICAS}). "
                     f"Current state: total={total_running}, used={used_engines}, free={free_count}"
                 )
                 deficit = max_new_containers
@@ -247,6 +247,49 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
                     del _empty_engine_timestamps[container_id]
                 logger.debug(f"Engine {container_id[:12]} cannot be stopped - would violate MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} (currently: {free_count} free, would become: {free_count - 1})")
                 return False
+        
+        # Check 3: In redundant VPN mode, maintain balanced distribution across VPNs
+        # Don't stop engines that would break the balance (prefer stopping from the VPN with more engines)
+        if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+            # Get the engine's VPN assignment
+            engine = state.get_engine(container_id)
+            if engine and engine.vpn_container:
+                vpn1_name = cfg.GLUETUN_CONTAINER_NAME
+                vpn2_name = cfg.GLUETUN_CONTAINER_NAME_2
+                
+                # Count engines per VPN
+                vpn1_engines = state.get_engines_by_vpn(vpn1_name)
+                vpn2_engines = state.get_engines_by_vpn(vpn2_name)
+                vpn1_count = len(vpn1_engines)
+                vpn2_count = len(vpn2_engines)
+                
+                engine_vpn = engine.vpn_container
+                
+                # Determine if stopping this engine would unbalance the distribution
+                # Allow stopping only if this VPN has MORE engines than the other VPN
+                # or if both have equal counts (balanced)
+                if engine_vpn == vpn1_name:
+                    # This engine is on VPN1
+                    if vpn1_count < vpn2_count:
+                        # VPN1 has fewer engines, don't stop this one
+                        if container_id in _empty_engine_timestamps:
+                            del _empty_engine_timestamps[container_id]
+                        logger.debug(
+                            f"Engine {container_id[:12]} cannot be stopped - would unbalance VPN distribution "
+                            f"(VPN1: {vpn1_count} engines, VPN2: {vpn2_count} engines)"
+                        )
+                        return False
+                elif engine_vpn == vpn2_name:
+                    # This engine is on VPN2
+                    if vpn2_count < vpn1_count:
+                        # VPN2 has fewer engines, don't stop this one
+                        if container_id in _empty_engine_timestamps:
+                            del _empty_engine_timestamps[container_id]
+                        logger.debug(
+                            f"Engine {container_id[:12]} cannot be stopped - would unbalance VPN distribution "
+                            f"(VPN1: {vpn1_count} engines, VPN2: {vpn2_count} engines)"
+                        )
+                        return False
     except Exception as e:
         logger.error(f"Error checking replica constraints: {e}")
         # On error, err on the side of caution and don't stop the engine
@@ -283,9 +326,8 @@ def scale_to(demand: int):
     
     desired = min(max(cfg.MIN_REPLICAS, demand), cfg.MAX_REPLICAS)
     
-    # When using Gluetun, also cap at MAX_ACTIVE_REPLICAS
-    if cfg.GLUETUN_CONTAINER_NAME:
-        desired = min(desired, cfg.MAX_ACTIVE_REPLICAS)
+    # When using Gluetun, MAX_REPLICAS already serves as the hard limit
+    # No need for additional capping since desired is already capped at MAX_REPLICAS above
     
     # Use reliable Docker count
     docker_status = replica_validator.get_docker_container_status()

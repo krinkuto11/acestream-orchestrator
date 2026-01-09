@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -47,6 +47,7 @@ import {
 // Constants for display
 const TRUNCATED_STREAM_ID_LENGTH = 16
 const TRUNCATED_CONTAINER_ID_LENGTH = 12
+const TRUNCATED_CLIENT_ID_LENGTH = 16
 
 // Timestamp validation constants (Unix timestamps in seconds)
 const MIN_VALID_TIMESTAMP = 1577836800  // 2020-01-01 00:00:00 UTC
@@ -69,6 +70,13 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const [extendedStats, setExtendedStats] = useState(null)
   const [extendedStatsLoading, setExtendedStatsLoading] = useState(false)
   const [extendedStatsError, setExtendedStatsError] = useState(null)
+  const [clients, setClients] = useState([])
+  const [clientsLoading, setClientsLoading] = useState(false)
+  
+  // Track if we have fetched data at least once to prevent loading flicker on refreshes
+  const hasClientsDataRef = useRef(false)
+  const hasStatsDataRef = useRef(false)
+  const hasExtendedStatsDataRef = useRef(false)
 
   const isActive = stream.status === 'started'
   const isEnded = stream.status === 'ended'
@@ -76,7 +84,11 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const fetchStats = useCallback(async () => {
     if (!stream || !isExpanded) return
     
-    setLoading(true)
+    // Only show loading if we don't have data yet
+    if (!hasStatsDataRef.current) {
+      setLoading(true)
+    }
+    
     try {
       const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
       const headers = {}
@@ -92,9 +104,11 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       if (response.ok) {
         const data = await response.json()
         setStats(data)
+        hasStatsDataRef.current = true
       }
     } catch (err) {
       console.error('Failed to fetch stats:', err)
+      // Keep existing stats on error
     } finally {
       setLoading(false)
     }
@@ -103,8 +117,12 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const fetchExtendedStats = useCallback(async () => {
     if (!stream || !isExpanded) return
     
-    setExtendedStatsLoading(true)
+    // Only show loading if we don't have data yet
+    if (!hasExtendedStatsDataRef.current) {
+      setExtendedStatsLoading(true)
+    }
     setExtendedStatsError(null)
+    
     try {
       const headers = {}
       if (apiKey) {
@@ -119,25 +137,67 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       if (response.ok) {
         const data = await response.json()
         setExtendedStats(data)
+        hasExtendedStatsDataRef.current = true
       } else {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
     } catch (err) {
       console.error('Failed to fetch extended stats:', err)
-      setExtendedStatsError(err.message || String(err))
+      // Only set error if we don't have cached data
+      if (!hasExtendedStatsDataRef.current) {
+        setExtendedStatsError(err.message || String(err))
+      }
     } finally {
       setExtendedStatsLoading(false)
     }
   }, [stream, orchUrl, apiKey, isExpanded])
 
+  const fetchClients = useCallback(async () => {
+    if (!stream || !isExpanded || !stream.key) return
+    
+    // Only show loading indicator if we don't have any data yet
+    if (!hasClientsDataRef.current) {
+      setClientsLoading(true)
+    }
+    
+    try {
+      const response = await fetch(
+        `${orchUrl}/proxy/streams/${encodeURIComponent(stream.key)}/clients`
+      )
+      
+      if (response.ok) {
+        const data = await response.json()
+        setClients(data.clients || [])
+        hasClientsDataRef.current = true
+      } else if (!hasClientsDataRef.current) {
+        // Only clear clients on error if we had no data
+        setClients([])
+      }
+    } catch (err) {
+      console.error('Failed to fetch clients:', err)
+      // Keep existing clients on error if we had data
+      if (!hasClientsDataRef.current) {
+        setClients([])
+      }
+    } finally {
+      setClientsLoading(false)
+    }
+  }, [stream, orchUrl, isExpanded])
+
+  const refreshData = useCallback(() => {
+    fetchStats()
+    fetchClients()
+  }, [fetchStats, fetchClients])
+
   useEffect(() => {
     if (isExpanded && isActive) {
       fetchStats()
       fetchExtendedStats()
-      const interval = setInterval(fetchStats, 10000)
+      fetchClients()
+      const interval = setInterval(refreshData, 10000)
       return () => clearInterval(interval)
     }
-  }, [fetchStats, fetchExtendedStats, isExpanded, isActive])
+  }, [refreshData, fetchStats, fetchExtendedStats, fetchClients, isExpanded, isActive])
 
   const chartData = {
     labels: stats.map(s => new Date(s.ts).toLocaleTimeString()),
@@ -339,6 +399,17 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
             </TableCell>
           </>
         )}
+        {showSpeedColumns && (
+          <TableCell className="text-right">
+            {isActive && stream.livepos && stream.livepos.live_last ? (
+              <span className="text-sm text-white">
+                {formatLiveposTimestamp(stream.livepos.live_last)}
+              </span>
+            ) : (
+              <span className="text-sm text-muted-foreground">—</span>
+            )}
+          </TableCell>
+        )}
         <TableCell className="text-right">
           <span className="text-sm text-white">{formatBytes(stream.downloaded)}</span>
         </TableCell>
@@ -348,9 +419,69 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       </TableRow>
       {isExpanded && (
         <TableRow>
-          {/* colspan: active streams have 11 cols (checkbox + expand + 9 data), ended streams have 7 cols (expand + 6 data) */}
-          <TableCell colSpan={showSpeedColumns ? 11 : 7} className="p-6 bg-muted/50">
+          {/* colspan: active streams have 12 cols (checkbox + expand + 10 data), ended streams have 7 cols (expand + 6 data) */}
+          <TableCell colSpan={showSpeedColumns ? 12 : 7} className="p-6 bg-muted/50">
             <div className="space-y-6">
+              {/* Connected Clients - Moved to top */}
+              {isActive && (
+                <div>
+                  <p className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <Users className="h-4 w-4" />
+                    Connected Clients ({clients.length})
+                  </p>
+                  {clientsLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading clients...</p>
+                  ) : clients.length > 0 ? (
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-white">Client ID</TableHead>
+                            <TableHead className="text-white">IP Address</TableHead>
+                            <TableHead className="text-white">Connected At</TableHead>
+                            <TableHead className="text-right text-white">Bytes Sent</TableHead>
+                            <TableHead className="text-white">User Agent</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {clients.map((client, idx) => (
+                            <TableRow key={client.client_id || idx}>
+                              <TableCell className="font-mono text-xs text-white">
+                                <span className="truncate max-w-[200px] block" title={client.client_id}>
+                                  {client.client_id && client.client_id.length > TRUNCATED_CLIENT_ID_LENGTH
+                                    ? `${client.client_id.slice(0, TRUNCATED_CLIENT_ID_LENGTH)}...`
+                                    : client.client_id || 'N/A'
+                                  }
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-sm text-white">
+                                {client.ip_address || 'N/A'}
+                              </TableCell>
+                              <TableCell className="text-sm text-white">
+                                {client.connected_at 
+                                  ? new Date(client.connected_at * 1000).toLocaleString()
+                                  : 'N/A'
+                                }
+                              </TableCell>
+                              <TableCell className="text-right text-sm text-white">
+                                {client.bytes_sent !== undefined ? formatBytes(client.bytes_sent) : 'N/A'}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs text-white">
+                                <span className="truncate max-w-[300px] block" title={client.user_agent}>
+                                  {client.user_agent || 'N/A'}
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No clients connected</p>
+                  )}
+                </div>
+              )}
+
               {/* Stream Details */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
@@ -390,12 +521,6 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                       <div>
                         <p className="text-xs text-muted-foreground">Live Start</p>
                         <p className="text-sm font-medium text-foreground">{formatLiveposTimestamp(stream.livepos.live_first)}</p>
-                      </div>
-                    )}
-                    {stream.livepos.live_last && (
-                      <div>
-                        <p className="text-xs text-muted-foreground">Live End</p>
-                        <p className="text-sm font-medium text-foreground">{formatLiveposTimestamp(stream.livepos.live_last)}</p>
                       </div>
                     )}
                     {stream.livepos.buffer_pieces && (
@@ -639,7 +764,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
         'Content-Type': 'application/json'
       }
       if (apiKey) {
-        headers['X-API-KEY'] = apiKey
+        headers['Authorization'] = `Bearer ${apiKey}`
       }
       
       const response = await fetch(`${orchUrl}/streams/batch-stop`, {
@@ -751,6 +876,11 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                     onClick={() => handleSort('peers')}
                   >
                     Peers <SortIcon column="peers" />
+                  </TableHead>
+                  <TableHead 
+                    className="text-right"
+                  >
+                    Broadcast Position
                   </TableHead>
                   <TableHead 
                     className="text-right cursor-pointer select-none"

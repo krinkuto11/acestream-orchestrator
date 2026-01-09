@@ -1,0 +1,8 @@
+{
+  "min_replicas": 3,
+  "max_replicas": 10,
+  "auto_delete": false,
+  "engine_variant": "krinkuto11-amd64",
+  "use_custom_variant": true,
+  "platform": "amd64"
+}
