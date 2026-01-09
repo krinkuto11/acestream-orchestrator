@@ -38,8 +38,8 @@ def ensure_minimum(initial_startup: bool = False):
     
     Args:
         initial_startup: If True, provisions MIN_REPLICAS total containers on startup.
-                        If False, maintains MIN_FREE_REPLICAS free/empty containers during runtime
-                        OR provisions new engine when all engines have reached (ACEXY_MAX_STREAMS_PER_ENGINE - 1) streams.
+                        If False, uses layer-based lookahead provisioning - provisions new engine
+                        when ANY engine reaches (ACEXY_MAX_STREAMS_PER_ENGINE - 1) streams.
     """
     try:
         from .replica_validator import replica_validator
@@ -114,15 +114,16 @@ def ensure_minimum(initial_startup: bool = False):
                             target_description = f"lookahead triggered (first engine at layer {max_streams_threshold})"
                             logger.info(f"Lookahead provisioning: first engine reached layer {max_streams_threshold}, preparing new engine")
                 else:
-                    # No engines at threshold yet, check MIN_FREE_REPLICAS as fallback
-                    target = cfg.MIN_FREE_REPLICAS
-                    deficit = target - free_count
-                    target_description = f"MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} free engines"
+                    # No engines at threshold yet - no provisioning needed
+                    # Rely solely on lookahead provisioning during runtime
+                    deficit = 0
+                    target = total_running
+                    target_description = f"no engines at layer {max_streams_threshold} yet (lookahead not triggered)"
             else:
-                # No engines exist, use MIN_FREE_REPLICAS
-                target = cfg.MIN_FREE_REPLICAS
-                deficit = target - free_count
-                target_description = f"MIN_FREE_REPLICAS={cfg.MIN_FREE_REPLICAS} free engines"
+                # No engines exist - provision minimum initial engines
+                target = cfg.MIN_REPLICAS
+                deficit = target - total_running
+                target_description = f"MIN_REPLICAS={cfg.MIN_REPLICAS} total containers (no engines exist)"
         
         # When using Gluetun, respect MAX_REPLICAS as a hard limit
         if cfg.GLUETUN_CONTAINER_NAME:
