@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
                 template = get_template(active_template_id)
                 if template:
                     # Apply the template configuration, but preserve the enabled state
-                    template_config = template.config.copy(deep=True)
+                    template_config = template.config.model_copy(deep=True)
                     template_config.enabled = custom_config.enabled
                     save_custom_config(template_config)
                     # Ensure active template is set (in case it was only loaded but not set)
@@ -84,7 +84,7 @@ async def lifespan(app: FastAPI):
                     template = get_template(first_available['slot_id'])
                     if template:
                         # Apply the template configuration, but preserve the enabled state
-                        template_config = template.config.copy(deep=True)
+                        template_config = template.config.model_copy(deep=True)
                         template_config.enabled = custom_config.enabled
                         save_custom_config(template_config)
                         # Set as active template
@@ -1514,7 +1514,7 @@ def activate_template(slot_id: int):
     current_enabled = current_config.enabled if current_config else False
     
     # Save the template config as the current custom variant config, preserving enabled state
-    template_config = template.config.copy(deep=True)
+    template_config = template.config.model_copy(deep=True)
     template_config.enabled = current_enabled
     success = save_custom_config(template_config)
     if not success:
