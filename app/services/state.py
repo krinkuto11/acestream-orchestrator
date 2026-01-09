@@ -798,7 +798,7 @@ class State:
         """
         with self._lock:
             self._lookahead_layer = layer
-            logger.info(f"Lookahead layer set to {layer} - next lookahead trigger will wait until all engines reach this layer")
+            logger.info(f"Lookahead layer set to {layer} - next lookahead trigger will wait until all engines reach layer {layer}")
     
     def get_lookahead_layer(self) -> Optional[int]:
         """Get the current lookahead layer, or None if not set."""

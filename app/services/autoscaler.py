@@ -120,8 +120,8 @@ def ensure_minimum(initial_startup: bool = False):
                             # All engines are near capacity but haven't reached lookahead layer yet
                             deficit = 0
                             target = total_running
-                            target_description = f"all engines at layer {max_streams_threshold}, but waiting for all to reach lookahead layer {lookahead_layer} (min: {min_streams})"
-                            logger.debug(f"Lookahead blocked: waiting for all engines to reach layer {lookahead_layer} (currently min: {min_streams}, max: {max_streams})")
+                            target_description = f"waiting for all engines to reach layer {lookahead_layer}"
+                            logger.debug(f"Lookahead blocked: min_streams={min_streams}, lookahead_layer={lookahead_layer}")
                     else:
                         # Only some engines at threshold - check if we already have a free engine ready
                         # If we have MIN_FREE_REPLICAS free engines, don't provision yet
@@ -145,8 +145,8 @@ def ensure_minimum(initial_startup: bool = False):
                                 # Some engines near capacity but haven't reached lookahead layer yet
                                 deficit = 0
                                 target = total_running
-                                target_description = f"lookahead triggered but waiting for all to reach layer {lookahead_layer} (min: {min_streams})"
-                                logger.debug(f"Lookahead blocked: waiting for all engines to reach layer {lookahead_layer} (currently min: {min_streams}, max: {max_streams})")
+                                target_description = f"waiting for all engines to reach layer {lookahead_layer}"
+                                logger.debug(f"Lookahead blocked: min_streams={min_streams}, lookahead_layer={lookahead_layer}")
                 else:
                     # No engines at threshold yet - reset lookahead layer if it was set
                     # This allows fresh provisioning when load increases again
