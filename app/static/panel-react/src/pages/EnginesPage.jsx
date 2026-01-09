@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { RefreshCw, AlertCircle, CheckCircle, Save, Settings2 } from 'lucide-react'
-import { toast } from 'sonner'
+import { useNotifications } from '@/context/NotificationContext'
 import { AdvancedEngineSettingsPage } from './AdvancedEngineSettingsPage'
 
 // Platform-specific variants mapping
@@ -31,6 +31,7 @@ const VARIANT_OPTIONS = {
 }
 
 export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKey, fetchJSON }) {
+  const { addNotification } = useNotifications()
   const [reprovisionStatus, setReprovisionStatus] = useState(null)
   const [isReprovisioning, setIsReprovisioning] = useState(false)
   const [showSuccessMessage, setShowSuccessMessage] = useState(false)
@@ -58,7 +59,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
       setSettingsChanged(false)
     } catch (err) {
       console.error('Failed to load engine settings:', err)
-      toast.error(`Failed to load engine settings: ${err.message}`)
+      addNotification(`Failed to load engine settings: ${err.message}`, 'error')
     } finally {
       setLoadingSettings(false)
     }
@@ -134,10 +135,10 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
         body: JSON.stringify(engineSettings)
       })
       
-      toast.success('Engine settings saved successfully')
+      addNotification('Engine settings saved successfully', 'success')
       setSettingsChanged(false)
     } catch (err) {
-      toast.error(`Failed to save engine settings: ${err.message}`)
+      addNotification(`Failed to save engine settings: ${err.message}`, 'error')
     } finally {
       setSavingSettings(false)
     }
@@ -367,9 +368,9 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                             'Authorization': `Bearer ${apiKey}`
                           }
                         }).then(() => {
-                          toast.success('Reprovisioning started')
+                          addNotification('Reprovisioning started', 'success')
                         }).catch(err => {
-                          toast.error(`Failed to start reprovision: ${err.message}`)
+                          addNotification(`Failed to start reprovision: ${err.message}`, 'error')
                         })
                       })
                     }

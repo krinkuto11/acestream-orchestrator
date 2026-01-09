@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Save, RefreshCw, AlertCircle, Info, Cpu, Upload, Download, Trash2, Plus, Edit, Pencil } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
-import { toast } from 'sonner'
+import { useNotifications } from '@/context/NotificationContext'
 
 // Parameter metadata for UI rendering
 const parameterCategories = {
@@ -93,6 +93,7 @@ const parameterCategories = {
 }
 
 export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
+  const { addNotification } = useNotifications()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [reprovisioning, setReprovisioning] = useState(false)
@@ -140,7 +141,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       setPlatform(platformData)
       setVpnEnabled(vpnStatus.enabled || false)
     } catch (err) {
-      toast.error(`Failed to load configuration: ${err.message}`)
+      addNotification(`Failed to load configuration: ${err.message}`, 'error')
     } finally {
       setLoading(false)
     }
@@ -164,14 +165,14 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           const statusTime = new Date(status.timestamp)
           const now = new Date()
           if ((now - statusTime) < 5000) {
-            toast.success(status.message)
+            addNotification(status.message, 'success')
           }
         } else if (status.status === 'error' && status.message) {
           // Only show toast if status changed recently
           const statusTime = new Date(status.timestamp)
           const now = new Date()
           if ((now - statusTime) < 5000) {
-            toast.error(status.message)
+            addNotification(status.message, 'error')
           }
         }
       }
@@ -224,9 +225,9 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         body: JSON.stringify(config)
       })
       
-      toast.success('Platform configuration saved successfully')
+      addNotification('Platform configuration saved successfully', 'success')
     } catch (err) {
-      toast.error(`Failed to save platform configuration: ${err.message}`)
+      addNotification(`Failed to save platform configuration: ${err.message}`, 'error')
     } finally {
       setSaving(false)
     }
@@ -235,7 +236,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   // Save template being edited
   const handleSaveTemplate = useCallback(async () => {
     if (!editingTemplateSlot) {
-      toast.error('No template is being edited')
+      addNotification('No template is being edited', 'error')
       return
     }
 
@@ -254,7 +255,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         })
       })
       
-      toast.success(`Template ${editingTemplateSlot} saved successfully`)
+      addNotification(`Template ${editingTemplateSlot} saved successfully`, 'success')
       
       // If we're editing the active template, show reprovision warning
       if (editingTemplateSlot === activeTemplateId) {
@@ -276,7 +277,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                 'Authorization': `Bearer ${apiKey}`
               }
             })
-            toast.success(`Template ${editingTemplateSlot} automatically activated as the first template`)
+            addNotification(`Template ${editingTemplateSlot} automatically activated as the first template`, 'success')
             await fetchConfig()
             await fetchTemplates()
           } catch (err) {
@@ -288,7 +289,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       setEditingTemplateSlot(null)
       setTemplateName('')
     } catch (err) {
-      toast.error(`Failed to save template: ${err.message}`)
+      addNotification(`Failed to save template: ${err.message}`, 'error')
     } finally {
       setSaving(false)
     }
@@ -344,7 +345,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       // If editing a template, save it as well
       if (editingTemplateSlot) {
         await saveCurrentTemplate()
-        toast.success(`Template ${editingTemplateSlot} saved before reprovisioning`)
+        addNotification(`Template ${editingTemplateSlot} saved before reprovisioning`, 'success')
       }
       
       await fetchJSON(`${orchUrl}/custom-variant/reprovision`, {
@@ -354,15 +355,15 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         }
       })
       
-      toast.success('Settings saved. Reprovisioning started. Engines will be recreated shortly.')
+      addNotification('Settings saved. Reprovisioning started. Engines will be recreated shortly.', 'success')
       
       // Start polling for status
       await checkReprovisionStatus()
     } catch (err) {
       if (err.message.includes('409')) {
-        toast.error('Reprovisioning operation already in progress')
+        addNotification('Reprovisioning operation already in progress', 'error')
       } else {
-        toast.error(`Failed to reprovision: ${err.message}`)
+        addNotification(`Failed to reprovision: ${err.message}`, 'error')
       }
       setReprovisioning(false)
     }
@@ -383,13 +384,13 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         })
       })
       
-      toast.success(`Template saved to slot ${slotId}`)
+      addNotification(`Template saved to slot ${slotId}`, 'success')
       await fetchTemplates()
       setShowTemplateDialog(false)
       setEditingTemplateSlot(null)  // Exit editing mode
       setTemplateName('')
     } catch (err) {
-      toast.error(`Failed to save template: ${err.message}`)
+      addNotification(`Failed to save template: ${err.message}`, 'error')
     }
   }, [orchUrl, apiKey, config, fetchJSON, fetchTemplates])
 
@@ -397,7 +398,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     // Enter editing mode for a new template
     setEditingTemplateSlot(slotId)
     setTemplateName(`Template ${slotId}`)
-    toast.info(`Creating new template in slot ${slotId}. Configure parameters below and save.`)
+    addNotification(`Creating new template in slot ${slotId}. Configure parameters below and save.`, 'info')
   }, [])
 
   const handleLoadTemplate = useCallback(async (slotId) => {
@@ -409,7 +410,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         }
       })
       
-      toast.success(response.message)
+      addNotification(response.message, 'success')
       await fetchConfig()
       await fetchTemplates()
       
@@ -418,7 +419,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         setConfig(prev => ({ ...prev, enabled: true }))
       }
     } catch (err) {
-      toast.error(`Failed to load template: ${err.message}`)
+      addNotification(`Failed to load template: ${err.message}`, 'error')
     }
   }, [orchUrl, apiKey, fetchJSON, fetchConfig, fetchTemplates, config])
 
@@ -435,10 +436,10 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         }
       })
       
-      toast.success(`Template ${slotId} deleted`)
+      addNotification(`Template ${slotId} deleted`, 'success')
       await fetchTemplates()
     } catch (err) {
-      toast.error(`Failed to delete template: ${err.message}`)
+      addNotification(`Failed to delete template: ${err.message}`, 'error')
     }
   }, [orchUrl, apiKey, fetchJSON, fetchTemplates])
 
@@ -455,9 +456,9 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
       
-      toast.success(`Template ${slotId} exported`)
+      addNotification(`Template ${slotId} exported`, 'success')
     } catch (err) {
-      toast.error(`Failed to export template: ${err.message}`)
+      addNotification(`Failed to export template: ${err.message}`, 'error')
     }
   }, [orchUrl])
 
@@ -474,10 +475,10 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         })
       })
       
-      toast.success(`Template imported to slot ${slotId}`)
+      addNotification(`Template imported to slot ${slotId}`, 'success')
       await fetchTemplates()
     } catch (err) {
-      toast.error(`Failed to import template: ${err.message}`)
+      addNotification(`Failed to import template: ${err.message}`, 'error')
     }
   }, [orchUrl, apiKey, fetchJSON, fetchTemplates])
 
@@ -494,11 +495,11 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         })
       })
       
-      toast.success(`Template renamed successfully`)
+      addNotification(`Template renamed successfully`, 'success')
       await fetchTemplates()
       setShowRenameDialog(false)
     } catch (err) {
-      toast.error(`Failed to rename template: ${err.message}`)
+      addNotification(`Failed to rename template: ${err.message}`, 'error')
     }
   }, [orchUrl, apiKey, fetchJSON, fetchTemplates])
 
@@ -518,9 +519,9 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       setEditingTemplateSlot(slotId)
       setTemplateName(template.name)
       
-      toast.success(`Loaded template ${slotId} for editing. Make your changes and save below.`)
+      addNotification(`Loaded template ${slotId} for editing. Make your changes and save below.`)
     } catch (err) {
-      toast.error(`Failed to load template for editing: ${err.message}`)
+      addNotification(`Failed to load template for editing: ${err.message}`)
     }
   }, [orchUrl, fetchJSON])
 
@@ -706,11 +707,11 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                           'Authorization': `Bearer ${apiKey}`
                         }
                       })
-                      toast.success(`Auto-loaded template: ${firstTemplate.name}`)
+                      addNotification(`Auto-loaded template: ${firstTemplate.name}`)
                       await fetchConfig()
                       await fetchTemplates()
                     } catch (err) {
-                      toast.error(`Failed to auto-load template: ${err.message}`)
+                      addNotification(`Failed to auto-load template: ${err.message}`)
                     }
                   }
                 }
