@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from typing import Optional, List
 from datetime import datetime, timezone
+from pydantic import BaseModel
 import asyncio
 import os
 import json
@@ -2186,6 +2187,15 @@ def update_proxy_config(
 # Engine Settings Endpoints
 # ============================================================================
 
+class EngineSettingsUpdate(BaseModel):
+    """Model for updating engine settings."""
+    min_replicas: Optional[int] = None
+    max_replicas: Optional[int] = None
+    auto_delete: Optional[bool] = None
+    engine_variant: Optional[str] = None
+    use_custom_variant: Optional[bool] = None
+    platform: Optional[str] = None  # Read-only, just for compatibility
+
 @app.get("/settings/engine")
 def get_engine_settings():
     """Get current engine configuration settings."""
@@ -2221,27 +2231,18 @@ def get_engine_settings():
     return default_settings
 
 @app.post("/settings/engine", dependencies=[Depends(require_api_key)])
-async def update_engine_settings(
-    min_replicas: Optional[int] = None,
-    max_replicas: Optional[int] = None,
-    auto_delete: Optional[bool] = None,
-    engine_variant: Optional[str] = None,
-    use_custom_variant: Optional[bool] = None,
-):
+async def update_engine_settings(settings: EngineSettingsUpdate):
     """
     Update engine configuration settings.
     
     Args:
-        min_replicas: Minimum number of engine replicas to maintain (min: 0, max: 50)
-        max_replicas: Maximum number of engine replicas allowed (min: 1, max: 100)
-        auto_delete: Whether to automatically delete engines when stopped
-        engine_variant: Engine variant to use (when not using custom variant)
-        use_custom_variant: Whether to use custom variant configuration
+        settings: Engine settings to update
     
     Note: Changes are persisted to JSON and will be applied on next restart.
     Some changes may require reprovisioning engines.
     """
     from .services.settings_persistence import SettingsPersistence
+    from .services.custom_variant_config import detect_platform
     
     # Load current persisted settings or use runtime config as base
     current_settings = SettingsPersistence.load_engine_settings() or {
@@ -2250,40 +2251,41 @@ async def update_engine_settings(
         "auto_delete": cfg.AUTO_DELETE,
         "engine_variant": cfg.ENGINE_VARIANT,
         "use_custom_variant": False,
+        "platform": detect_platform(),
     }
     
     # Validation and updates
-    if min_replicas is not None:
-        if min_replicas < 0 or min_replicas > 50:
+    if settings.min_replicas is not None:
+        if settings.min_replicas < 0 or settings.min_replicas > 50:
             raise HTTPException(status_code=400, detail="min_replicas must be between 0 and 50")
-        current_settings["min_replicas"] = min_replicas
-        cfg.MIN_REPLICAS = min_replicas
+        current_settings["min_replicas"] = settings.min_replicas
+        cfg.MIN_REPLICAS = settings.min_replicas
     
-    if max_replicas is not None:
-        if max_replicas < 1 or max_replicas > 100:
+    if settings.max_replicas is not None:
+        if settings.max_replicas < 1 or settings.max_replicas > 100:
             raise HTTPException(status_code=400, detail="max_replicas must be between 1 and 100")
-        current_settings["max_replicas"] = max_replicas
-        cfg.MAX_REPLICAS = max_replicas
+        current_settings["max_replicas"] = settings.max_replicas
+        cfg.MAX_REPLICAS = settings.max_replicas
     
     # Validate min_replicas <= max_replicas
     if current_settings["min_replicas"] > current_settings["max_replicas"]:
         raise HTTPException(status_code=400, detail="min_replicas must be <= max_replicas")
     
-    if auto_delete is not None:
-        current_settings["auto_delete"] = auto_delete
-        cfg.AUTO_DELETE = auto_delete
+    if settings.auto_delete is not None:
+        current_settings["auto_delete"] = settings.auto_delete
+        cfg.AUTO_DELETE = settings.auto_delete
     
-    if engine_variant is not None:
-        current_settings["engine_variant"] = engine_variant
+    if settings.engine_variant is not None:
+        current_settings["engine_variant"] = settings.engine_variant
         # Don't update cfg.ENGINE_VARIANT at runtime, only persist for next restart
     
-    if use_custom_variant is not None:
-        current_settings["use_custom_variant"] = use_custom_variant
+    if settings.use_custom_variant is not None:
+        current_settings["use_custom_variant"] = settings.use_custom_variant
         # Update custom variant config
         from .services.custom_variant_config import get_config as get_custom_config, save_config as save_custom_config
         custom_config = get_custom_config()
         if custom_config:
-            custom_config.enabled = use_custom_variant
+            custom_config.enabled = settings.use_custom_variant
             save_custom_config(custom_config)
     
     # Persist settings to JSON file

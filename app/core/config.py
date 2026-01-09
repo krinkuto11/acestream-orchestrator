@@ -9,9 +9,9 @@ class Cfg(BaseModel):
     ENGINE_VARIANT: str = os.getenv("ENGINE_VARIANT", "krinkuto11-amd64")
     ENGINE_ARM32_VERSION: str = os.getenv("ENGINE_ARM32_VERSION", "arm32-v3.2.13")
     ENGINE_ARM64_VERSION: str = os.getenv("ENGINE_ARM64_VERSION", "arm64-v3.2.13")
-    MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 1))
+    MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 2))
     MIN_FREE_REPLICAS: int = int(os.getenv("MIN_FREE_REPLICAS", 1))
-    MAX_REPLICAS: int = int(os.getenv("MAX_REPLICAS", 20))
+    MAX_REPLICAS: int = int(os.getenv("MAX_REPLICAS", 6))
     CONTAINER_LABEL: str = os.getenv("CONTAINER_LABEL", "ondemand.app=myservice")
     STARTUP_TIMEOUT_S: int = int(os.getenv("STARTUP_TIMEOUT_S", 25))
     IDLE_TTL_S: int = int(os.getenv("IDLE_TTL_S", 600))
@@ -70,7 +70,7 @@ class Cfg(BaseModel):
 
     API_KEY: str | None = os.getenv("API_KEY")
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
-    AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "false").lower() == "true"
+    AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "true").lower() == "true"
     DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
     
     # Stream loop detection configuration

@@ -129,6 +129,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify(engineSettings)
       })
@@ -140,7 +141,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     } finally {
       setSavingSettings(false)
     }
-  }, [orchUrl, fetchJSON, engineSettings])
+  }, [orchUrl, fetchJSON, engineSettings, apiKey])
 
   // Get available variants for current platform
   const availableVariants = VARIANT_OPTIONS[engineSettings.platform] || VARIANT_OPTIONS.amd64
@@ -342,44 +343,50 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
 
               {/* Save Settings Button */}
               <div className="flex justify-end gap-2 pt-4 border-t">
-                <Button
-                  onClick={handleSaveSettings}
-                  disabled={savingSettings || loadingSettings || !settingsChanged}
-                  className="flex items-center gap-2"
-                >
-                  <Save className="h-4 w-4" />
-                  {savingSettings ? 'Saving...' : 'Save Settings'}
-                </Button>
                 {settingsChanged && (
                   <Button
-                    variant="outline"
-                    onClick={() => {
-                      if (window.confirm('Are you sure you want to reprovision all engines with the new settings? This will interrupt all active streams.')) {
-                        handleSaveSettings().then(() => {
-                          // Trigger reprovision after saving
-                          fetchJSON(`${orchUrl}/custom-variant/reprovision`, {
-                            method: 'POST',
-                          }).then(() => {
-                            toast.success('Reprovisioning started')
-                          }).catch(err => {
-                            toast.error(`Failed to start reprovision: ${err.message}`)
-                          })
-                        })
-                      }
-                    }}
+                    onClick={handleSaveSettings}
+                    disabled={savingSettings || loadingSettings}
                     className="flex items-center gap-2"
                   >
-                    <RefreshCw className="h-4 w-4" />
-                    Save & Reprovision
+                    <Save className="h-4 w-4" />
+                    {savingSettings ? 'Saving...' : 'Save Settings'}
                   </Button>
                 )}
+                <Button
+                  variant={settingsChanged ? "outline" : "default"}
+                  onClick={() => {
+                    if (window.confirm('Are you sure you want to reprovision all engines with the new settings? This will interrupt all active streams.')) {
+                      // Save settings first if there are changes
+                      const savePromise = settingsChanged ? handleSaveSettings() : Promise.resolve()
+                      savePromise.then(() => {
+                        // Trigger reprovision after saving
+                        fetchJSON(`${orchUrl}/custom-variant/reprovision`, {
+                          method: 'POST',
+                          headers: {
+                            'Authorization': `Bearer ${apiKey}`
+                          }
+                        }).then(() => {
+                          toast.success('Reprovisioning started')
+                        }).catch(err => {
+                          toast.error(`Failed to start reprovision: ${err.message}`)
+                        })
+                      })
+                    }
+                  }}
+                  disabled={isReprovisioning || loadingSettings}
+                  className="flex items-center gap-2"
+                >
+                  <RefreshCw className={isReprovisioning ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+                  {isReprovisioning ? 'Reprovisioning...' : (settingsChanged ? 'Save & Reprovision' : 'Reprovision')}
+                </Button>
               </div>
 
-              {!settingsChanged && (
+              {settingsChanged && (
                 <Alert>
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>
-                    Changes to these settings require saving. Some changes may also require reprovisioning engines.
+                    You have unsaved changes. Click "Save Settings" to persist them, or "Save & Reprovision" to apply them immediately to all engines.
                   </AlertDescription>
                 </Alert>
               )}
