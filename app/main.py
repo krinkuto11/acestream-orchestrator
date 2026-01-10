@@ -2475,6 +2475,7 @@ async def export_settings(api_key_param: str = Depends(require_api_key)):
                     "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
                     "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
                     "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+                    "stream_mode": ProxyConfig.STREAM_MODE,
                 }
                 proxy_json = json.dumps(proxy_settings, indent=2)
                 zip_file.writestr("proxy_settings.json", proxy_json)
@@ -2643,6 +2644,14 @@ async def import_settings_data(
                     ProxyConfig.CONNECTION_TIMEOUT = proxy_dict.get('connection_timeout', ProxyConfig.CONNECTION_TIMEOUT)
                     ProxyConfig.STREAM_TIMEOUT = proxy_dict.get('stream_timeout', ProxyConfig.STREAM_TIMEOUT)
                     ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_dict.get('channel_shutdown_delay', ProxyConfig.CHANNEL_SHUTDOWN_DELAY)
+                    
+                    # Validate and set stream_mode
+                    if 'stream_mode' in proxy_dict:
+                        mode = proxy_dict['stream_mode']
+                        if mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
+                            logger.warning(f"HLS mode not supported for variant {cfg.ENGINE_VARIANT}, reverting to TS mode")
+                            proxy_dict['stream_mode'] = 'TS'
+                        ProxyConfig.STREAM_MODE = proxy_dict['stream_mode']
                     
                     # Persist to file
                     if SettingsPersistence.save_proxy_config(proxy_dict):
