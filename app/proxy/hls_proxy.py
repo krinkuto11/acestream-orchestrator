@@ -12,20 +12,54 @@ import m3u8
 import os
 from typing import Dict, Optional, Set
 from urllib.parse import urljoin, urlparse
+from .config_helper import ConfigHelper
 
 logger = logging.getLogger(__name__)
 
 
 class HLSConfig:
-    """Configuration for HLS proxy"""
+    """Configuration for HLS proxy - uses ConfigHelper for environment-based settings"""
     DEFAULT_USER_AGENT = "VLC/3.0.16 LibVLC/3.0.16"
-    MAX_SEGMENTS = 20
-    INITIAL_SEGMENTS = 3
-    WINDOW_SIZE = 6
-    BUFFER_READY_TIMEOUT = 30
-    FIRST_SEGMENT_TIMEOUT = 30
-    INITIAL_BUFFER_SECONDS = 10
-    MAX_INITIAL_SEGMENTS = 10
+    
+    @staticmethod
+    def MAX_SEGMENTS():
+        """Maximum number of segments to buffer"""
+        return ConfigHelper.hls_max_segments()
+    
+    @staticmethod
+    def INITIAL_SEGMENTS():
+        """Minimum number of segments before playback"""
+        return ConfigHelper.hls_initial_segments()
+    
+    @staticmethod
+    def WINDOW_SIZE():
+        """Number of segments in manifest window"""
+        return ConfigHelper.hls_window_size()
+    
+    @staticmethod
+    def BUFFER_READY_TIMEOUT():
+        """Timeout for initial buffer to be ready"""
+        return ConfigHelper.hls_buffer_ready_timeout()
+    
+    @staticmethod
+    def FIRST_SEGMENT_TIMEOUT():
+        """Timeout for first segment to be available"""
+        return ConfigHelper.hls_first_segment_timeout()
+    
+    @staticmethod
+    def INITIAL_BUFFER_SECONDS():
+        """Target duration for initial buffer"""
+        return ConfigHelper.hls_initial_buffer_seconds()
+    
+    @staticmethod
+    def MAX_INITIAL_SEGMENTS():
+        """Maximum segments to fetch during initial buffering"""
+        return ConfigHelper.hls_max_initial_segments()
+    
+    @staticmethod
+    def SEGMENT_FETCH_INTERVAL():
+        """Multiplier for manifest fetch interval (relative to target duration)"""
+        return ConfigHelper.hls_segment_fetch_interval()
 
 
 class StreamBuffer:

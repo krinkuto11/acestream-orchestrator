@@ -97,18 +97,36 @@ def test_stream_manager():
     
     from app.proxy.hls_proxy import StreamManager
     
+    # Create session info dict
+    session_info = {
+        'playback_session_id': 'test_session_123',
+        'stat_url': 'http://example.com/stat',
+        'command_url': 'http://example.com/command',
+        'is_live': 1
+    }
+    
     manager = StreamManager(
         playback_url="http://example.com/test.m3u8",
-        channel_id="test_channel"
+        channel_id="test_channel",
+        engine_host="localhost",
+        engine_port=6878,
+        engine_container_id="test_container_123",
+        session_info=session_info,
+        api_key=None
     )
     
     assert manager.channel_id == "test_channel", "Channel ID should be set"
     assert manager.playback_url == "http://example.com/test.m3u8", "Playback URL should be set"
     assert manager.running == True, "Manager should be running initially"
     assert manager.initial_buffering == True, "Manager should start in initial buffering mode"
+    assert manager.engine_host == "localhost", "Engine host should be set"
+    assert manager.engine_port == 6878, "Engine port should be set"
+    assert manager.playback_session_id == "test_session_123", "Session ID should be set"
     
     print(f"✓ Stream manager created for channel: {manager.channel_id}")
     print(f"✓ Playback URL: {manager.playback_url}")
+    print(f"✓ Engine: {manager.engine_host}:{manager.engine_port}")
+    print(f"✓ Session ID: {manager.playback_session_id}")
     print(f"✓ Initial buffering: {manager.initial_buffering}")
     print(f"✓ Target duration: {manager.target_duration}s")
     print()

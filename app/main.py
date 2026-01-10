@@ -2288,6 +2288,15 @@ def get_proxy_config():
         "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "engine_variant": cfg.ENGINE_VARIANT,
+        # HLS-specific settings
+        "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
+        "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
+        "hls_window_size": ProxyConfig.HLS_WINDOW_SIZE,
+        "hls_buffer_ready_timeout": ProxyConfig.HLS_BUFFER_READY_TIMEOUT,
+        "hls_first_segment_timeout": ProxyConfig.HLS_FIRST_SEGMENT_TIMEOUT,
+        "hls_initial_buffer_seconds": ProxyConfig.HLS_INITIAL_BUFFER_SECONDS,
+        "hls_max_initial_segments": ProxyConfig.HLS_MAX_INITIAL_SEGMENTS,
+        "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
     }
 
 @app.post("/proxy/config", dependencies=[Depends(require_api_key)])
@@ -2301,6 +2310,15 @@ def update_proxy_config(
     channel_shutdown_delay: Optional[int] = None,
     max_streams_per_engine: Optional[int] = None,
     stream_mode: Optional[str] = None,
+    # HLS-specific parameters
+    hls_max_segments: Optional[int] = None,
+    hls_initial_segments: Optional[int] = None,
+    hls_window_size: Optional[int] = None,
+    hls_buffer_ready_timeout: Optional[int] = None,
+    hls_first_segment_timeout: Optional[int] = None,
+    hls_initial_buffer_seconds: Optional[int] = None,
+    hls_max_initial_segments: Optional[int] = None,
+    hls_segment_fetch_interval: Optional[float] = None,
 ):
     """
     Update proxy configuration settings at runtime.
@@ -2315,6 +2333,14 @@ def update_proxy_config(
         channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
         max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
         stream_mode: Stream mode - 'TS' for MPEG-TS or 'HLS' for HLS streaming
+        hls_max_segments: Maximum HLS segments to buffer (min: 5, max: 100)
+        hls_initial_segments: Minimum HLS segments before playback (min: 1, max: 10)
+        hls_window_size: Number of segments in HLS manifest window (min: 3, max: 20)
+        hls_buffer_ready_timeout: Timeout for HLS initial buffer (min: 5, max: 120)
+        hls_first_segment_timeout: Timeout for first HLS segment (min: 5, max: 120)
+        hls_initial_buffer_seconds: Target duration for HLS initial buffer (min: 5, max: 60)
+        hls_max_initial_segments: Maximum segments to fetch during HLS initial buffering (min: 1, max: 20)
+        hls_segment_fetch_interval: Multiplier for HLS manifest fetch interval (min: 0.1, max: 2.0)
     
     Note: This updates the runtime configuration but does not persist to .env file.
     Changes take effect for new streams only.
@@ -2376,6 +2402,47 @@ def update_proxy_config(
         
         ProxyConfig.STREAM_MODE = stream_mode
     
+    # HLS-specific settings validation and updates
+    if hls_max_segments is not None:
+        if hls_max_segments < 5 or hls_max_segments > 100:
+            raise HTTPException(status_code=400, detail="hls_max_segments must be between 5 and 100")
+        ProxyConfig.HLS_MAX_SEGMENTS = hls_max_segments
+    
+    if hls_initial_segments is not None:
+        if hls_initial_segments < 1 or hls_initial_segments > 10:
+            raise HTTPException(status_code=400, detail="hls_initial_segments must be between 1 and 10")
+        ProxyConfig.HLS_INITIAL_SEGMENTS = hls_initial_segments
+    
+    if hls_window_size is not None:
+        if hls_window_size < 3 or hls_window_size > 20:
+            raise HTTPException(status_code=400, detail="hls_window_size must be between 3 and 20")
+        ProxyConfig.HLS_WINDOW_SIZE = hls_window_size
+    
+    if hls_buffer_ready_timeout is not None:
+        if hls_buffer_ready_timeout < 5 or hls_buffer_ready_timeout > 120:
+            raise HTTPException(status_code=400, detail="hls_buffer_ready_timeout must be between 5 and 120 seconds")
+        ProxyConfig.HLS_BUFFER_READY_TIMEOUT = hls_buffer_ready_timeout
+    
+    if hls_first_segment_timeout is not None:
+        if hls_first_segment_timeout < 5 or hls_first_segment_timeout > 120:
+            raise HTTPException(status_code=400, detail="hls_first_segment_timeout must be between 5 and 120 seconds")
+        ProxyConfig.HLS_FIRST_SEGMENT_TIMEOUT = hls_first_segment_timeout
+    
+    if hls_initial_buffer_seconds is not None:
+        if hls_initial_buffer_seconds < 5 or hls_initial_buffer_seconds > 60:
+            raise HTTPException(status_code=400, detail="hls_initial_buffer_seconds must be between 5 and 60 seconds")
+        ProxyConfig.HLS_INITIAL_BUFFER_SECONDS = hls_initial_buffer_seconds
+    
+    if hls_max_initial_segments is not None:
+        if hls_max_initial_segments < 1 or hls_max_initial_segments > 20:
+            raise HTTPException(status_code=400, detail="hls_max_initial_segments must be between 1 and 20")
+        ProxyConfig.HLS_MAX_INITIAL_SEGMENTS = hls_max_initial_segments
+    
+    if hls_segment_fetch_interval is not None:
+        if hls_segment_fetch_interval < 0.1 or hls_segment_fetch_interval > 2.0:
+            raise HTTPException(status_code=400, detail="hls_segment_fetch_interval must be between 0.1 and 2.0")
+        ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL = hls_segment_fetch_interval
+    
     logger.info(
         f"Proxy configuration updated: "
         f"initial_data_wait_timeout={ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT}, "
@@ -2398,6 +2465,43 @@ def update_proxy_config(
         "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
+        "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "stream_mode": ProxyConfig.STREAM_MODE,
+        # HLS-specific settings
+        "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
+        "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
+        "hls_window_size": ProxyConfig.HLS_WINDOW_SIZE,
+        "hls_buffer_ready_timeout": ProxyConfig.HLS_BUFFER_READY_TIMEOUT,
+        "hls_first_segment_timeout": ProxyConfig.HLS_FIRST_SEGMENT_TIMEOUT,
+        "hls_initial_buffer_seconds": ProxyConfig.HLS_INITIAL_BUFFER_SECONDS,
+        "hls_max_initial_segments": ProxyConfig.HLS_MAX_INITIAL_SEGMENTS,
+        "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
+    }
+    if SettingsPersistence.save_proxy_config(config_to_save):
+        logger.info("Proxy configuration persisted to JSON file")
+    
+    return {
+        "message": "Proxy configuration updated and persisted",
+        "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
+        "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
+        "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
+        "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
+        "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
+        "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
+        "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "stream_mode": ProxyConfig.STREAM_MODE,
+        # HLS-specific settings
+        "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
+        "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
+        "hls_window_size": ProxyConfig.HLS_WINDOW_SIZE,
+        "hls_buffer_ready_timeout": ProxyConfig.HLS_BUFFER_READY_TIMEOUT,
+        "hls_first_segment_timeout": ProxyConfig.HLS_FIRST_SEGMENT_TIMEOUT,
+        "hls_initial_buffer_seconds": ProxyConfig.HLS_INITIAL_BUFFER_SECONDS,
+        "hls_max_initial_segments": ProxyConfig.HLS_MAX_INITIAL_SEGMENTS,
+        "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
+    }
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
