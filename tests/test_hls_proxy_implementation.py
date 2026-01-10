@@ -39,15 +39,15 @@ def test_hls_config():
     
     from app.proxy.hls_proxy import HLSConfig
     
-    # Verify default config values
-    assert HLSConfig.MAX_SEGMENTS == 20, "MAX_SEGMENTS should be 20"
-    assert HLSConfig.INITIAL_SEGMENTS == 3, "INITIAL_SEGMENTS should be 3"
-    assert HLSConfig.WINDOW_SIZE == 6, "WINDOW_SIZE should be 6"
+    # Verify default config values (now using methods)
+    assert HLSConfig.MAX_SEGMENTS() == 20, "MAX_SEGMENTS should be 20"
+    assert HLSConfig.INITIAL_SEGMENTS() == 3, "INITIAL_SEGMENTS should be 3"
+    assert HLSConfig.WINDOW_SIZE() == 6, "WINDOW_SIZE should be 6"
     
-    print(f"✓ MAX_SEGMENTS: {HLSConfig.MAX_SEGMENTS}")
-    print(f"✓ INITIAL_SEGMENTS: {HLSConfig.INITIAL_SEGMENTS}")
-    print(f"✓ WINDOW_SIZE: {HLSConfig.WINDOW_SIZE}")
-    print(f"✓ BUFFER_READY_TIMEOUT: {HLSConfig.BUFFER_READY_TIMEOUT}s")
+    print(f"✓ MAX_SEGMENTS: {HLSConfig.MAX_SEGMENTS()}")
+    print(f"✓ INITIAL_SEGMENTS: {HLSConfig.INITIAL_SEGMENTS()}")
+    print(f"✓ WINDOW_SIZE: {HLSConfig.WINDOW_SIZE()}")
+    print(f"✓ BUFFER_READY_TIMEOUT: {HLSConfig.BUFFER_READY_TIMEOUT()}s")
     print()
     
     return True

@@ -79,9 +79,9 @@ class StreamBuffer:
         with self.lock:
             self.buffer[key] = value
             # Cleanup old segments if we exceed MAX_SEGMENTS
-            if len(self.buffer) > HLSConfig.MAX_SEGMENTS:
+            if len(self.buffer) > HLSConfig.MAX_SEGMENTS():
                 keys = sorted(self.buffer.keys())
-                to_remove = keys[:-HLSConfig.MAX_SEGMENTS]
+                to_remove = keys[:-HLSConfig.MAX_SEGMENTS()]
                 for k in to_remove:
                     del self.buffer[k]
     
@@ -315,7 +315,7 @@ class StreamFetcher:
                 self._fetch_latest_segment(manifest, response.url)
                 
                 # Wait before next manifest fetch
-                time.sleep(self.manager.target_duration * 0.5)
+                time.sleep(self.manager.target_duration * HLSConfig.SEGMENT_FETCH_INTERVAL())
                 
                 # Reset retry delay on success
                 retry_delay = 1
@@ -335,8 +335,8 @@ class StreamFetcher:
             current_duration += float(segment.duration)
             segments_to_fetch.append(segment)
             
-            if (current_duration >= HLSConfig.INITIAL_BUFFER_SECONDS or 
-                len(segments_to_fetch) >= HLSConfig.MAX_INITIAL_SEGMENTS):
+            if (current_duration >= HLSConfig.INITIAL_BUFFER_SECONDS() or 
+                len(segments_to_fetch) >= HLSConfig.MAX_INITIAL_SEGMENTS()):
                 break
         
         # Reverse to chronological order
@@ -530,7 +530,7 @@ class HLSProxyServer:
         buffer = self.stream_buffers[channel_id]
         
         # Wait for initial buffer
-        if not manager.buffer_ready.wait(HLSConfig.BUFFER_READY_TIMEOUT):
+        if not manager.buffer_ready.wait(HLSConfig.BUFFER_READY_TIMEOUT()):
             raise TimeoutError("Timeout waiting for initial buffer")
         
         # Wait for first segment
@@ -540,7 +540,7 @@ class HLSProxyServer:
             if available:
                 break
             
-            if time.time() - start_time > HLSConfig.FIRST_SEGMENT_TIMEOUT:
+            if time.time() - start_time > HLSConfig.FIRST_SEGMENT_TIMEOUT():
                 raise TimeoutError("Timeout waiting for first segment")
             
             time.sleep(0.1)
@@ -549,10 +549,10 @@ class HLSProxyServer:
         available = sorted(buffer.keys())
         max_seq = max(available)
         
-        if len(available) <= HLSConfig.INITIAL_SEGMENTS:
+        if len(available) <= HLSConfig.INITIAL_SEGMENTS():
             min_seq = min(available)
         else:
-            min_seq = max(min(available), max_seq - HLSConfig.WINDOW_SIZE + 1)
+            min_seq = max(min(available), max_seq - HLSConfig.WINDOW_SIZE() + 1)
         
         # Generate manifest lines
         manifest_lines = [
