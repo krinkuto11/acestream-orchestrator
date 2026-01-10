@@ -132,6 +132,14 @@ async def lifespan(app: FastAPI):
                 ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_settings['channel_shutdown_delay']
             if 'max_streams_per_engine' in proxy_settings:
                 cfg.ACEXY_MAX_STREAMS_PER_ENGINE = proxy_settings['max_streams_per_engine']
+            if 'stream_mode' in proxy_settings:
+                # Validate stream_mode before loading
+                mode = proxy_settings['stream_mode']
+                if mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
+                    logger.warning(f"HLS mode not supported for variant {cfg.ENGINE_VARIANT}, reverting to TS mode")
+                    ProxyConfig.STREAM_MODE = 'TS'
+                else:
+                    ProxyConfig.STREAM_MODE = mode
             logger.info("Proxy settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
@@ -1698,25 +1706,46 @@ async def ace_getstream(
 ):
     """Proxy endpoint for AceStream video streams with multiplexing.
     
+    This endpoint supports both MPEG-TS and HLS streaming modes based on proxy configuration.
+    The mode can be configured in Proxy Settings (HLS only available for krinkuto11-amd64 variant).
+    
     This endpoint:
     1. Checks if stream is blacklisted for looping
-    2. Selects the best available engine (prioritizes forwarded, balances load)
-    3. Multiplexes multiple clients to the same stream via battle-tested ts_proxy architecture
-    4. Automatically manages stream lifecycle with heartbeat monitoring
-    5. Sends events to orchestrator for panel visibility
+    2. Validates HLS mode is supported if configured
+    3. Selects the best available engine (prioritizes forwarded, balances load)
+    4. Multiplexes multiple clients to the same stream via battle-tested ts_proxy architecture
+    5. Automatically manages stream lifecycle with heartbeat monitoring
+    6. Sends events to orchestrator for panel visibility
     
     Args:
         id: AceStream content ID (infohash or content_id)
         request: FastAPI Request object for client info
         
     Returns:
-        Streaming response with video data
+        Streaming response with video data (TS or HLS based on configuration)
     """
     from fastapi.responses import StreamingResponse
     from uuid import uuid4
     from app.proxy.stream_generator import create_stream_generator
     from app.proxy.utils import get_client_ip
+    from app.proxy.config_helper import Config as ProxyConfig
     from .services.looping_streams import looping_streams_tracker
+    
+    # Get current stream mode
+    stream_mode = ProxyConfig.STREAM_MODE
+    
+    # Check if HLS mode is configured but not supported
+    if stream_mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
+        logger.error(f"HLS mode configured but not supported for variant {cfg.ENGINE_VARIANT}")
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "error": "hls_not_supported",
+                "message": f"HLS streaming is only supported for krinkuto11-amd64 variant. Current variant: {cfg.ENGINE_VARIANT}. Please change stream mode to TS in Proxy Settings.",
+                "current_variant": cfg.ENGINE_VARIANT,
+                "current_mode": stream_mode
+            }
+        )
     
     # Check if stream is on the looping blacklist
     if looping_streams_tracker.is_looping(id):
@@ -1779,7 +1808,7 @@ async def ace_getstream(
         selected_engine = engines_sorted[0]
         
         logger.info(
-            f"Selected engine {selected_engine.container_id[:12]} for stream {id} "
+            f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {id} "
             f"(forwarded={selected_engine.forwarded}, current_load={engine_loads.get(selected_engine.container_id, 0)})"
         )
         
@@ -1801,7 +1830,7 @@ async def ace_getstream(
             )
         
         logger.info(
-            f"Client {client_id} connecting to stream {id} from {client_ip}"
+            f"Client {client_id} connecting to {stream_mode} stream {id} from {client_ip}"
         )
         
         # Create stream generator
@@ -1813,10 +1842,16 @@ async def ace_getstream(
             stream_initializing=False
         )
         
+        # Determine media type and headers based on stream mode
+        if stream_mode == 'HLS':
+            media_type = "application/vnd.apple.mpegurl"
+        else:
+            media_type = "video/mp2t"
+        
         # Return streaming response
         return StreamingResponse(
             generator.generate(),
-            media_type="video/mp2t",
+            media_type=media_type,
             headers={
                 "Cache-Control": "no-cache, no-store, must-revalidate",
                 "Connection": "keep-alive",
@@ -1838,19 +1873,19 @@ async def ace_manifest(
 ):
     """Proxy endpoint for AceStream HLS streams (M3U8).
     
-    Note: This is a placeholder. Full HLS support would require
-    additional implementation to handle manifest parsing and segment proxying.
+    Note: This endpoint is deprecated. Use /ace/getstream which now supports both TS and HLS modes
+    based on the proxy configuration.
     
     Args:
         id: AceStream content ID (infohash or content_id)
         
     Returns:
-        HLS manifest
+        Redirects to /ace/getstream
     """
-    # For now, redirect to getstream endpoint which works for most players
     raise HTTPException(
-        status_code=501,
-        detail="HLS/M3U8 streaming not yet implemented. Use /ace/getstream for MPEG-TS streaming."
+        status_code=301,
+        detail="This endpoint is deprecated. Use /ace/getstream which now supports both TS and HLS modes based on proxy settings.",
+        headers={"Location": f"/ace/getstream?id={id}"}
     )
 
 
@@ -2121,6 +2156,8 @@ def get_proxy_config():
         "redis_chunk_ttl": ProxyConfig.REDIS_CHUNK_TTL,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "stream_mode": ProxyConfig.STREAM_MODE,
+        "engine_variant": cfg.ENGINE_VARIANT,
     }
 
 @app.post("/proxy/config", dependencies=[Depends(require_api_key)])
@@ -2133,6 +2170,7 @@ def update_proxy_config(
     stream_timeout: Optional[int] = None,
     channel_shutdown_delay: Optional[int] = None,
     max_streams_per_engine: Optional[int] = None,
+    stream_mode: Optional[str] = None,
 ):
     """
     Update proxy configuration settings at runtime.
@@ -2146,6 +2184,7 @@ def update_proxy_config(
         stream_timeout: Stream timeout in seconds (min: 10, max: 300)
         channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
         max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
+        stream_mode: Stream mode - 'TS' for MPEG-TS or 'HLS' for HLS streaming
     
     Note: This updates the runtime configuration but does not persist to .env file.
     Changes take effect for new streams only.
@@ -2194,6 +2233,19 @@ def update_proxy_config(
             raise HTTPException(status_code=400, detail="max_streams_per_engine must be between 1 and 20")
         cfg.ACEXY_MAX_STREAMS_PER_ENGINE = max_streams_per_engine
     
+    if stream_mode is not None:
+        if stream_mode not in ['TS', 'HLS']:
+            raise HTTPException(status_code=400, detail="stream_mode must be either 'TS' or 'HLS'")
+        
+        # Check if HLS is supported for the current engine variant
+        if stream_mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"HLS streaming is only supported for krinkuto11-amd64 variant. Current variant: {cfg.ENGINE_VARIANT}"
+            )
+        
+        ProxyConfig.STREAM_MODE = stream_mode
+    
     logger.info(
         f"Proxy configuration updated: "
         f"initial_data_wait_timeout={ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT}, "
@@ -2203,7 +2255,8 @@ def update_proxy_config(
         f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
         f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
-        f"max_streams_per_engine={cfg.ACEXY_MAX_STREAMS_PER_ENGINE}"
+        f"max_streams_per_engine={cfg.ACEXY_MAX_STREAMS_PER_ENGINE}, "
+        f"stream_mode={ProxyConfig.STREAM_MODE}"
     )
     
     # Persist settings to JSON file
@@ -2217,6 +2270,7 @@ def update_proxy_config(
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "stream_mode": ProxyConfig.STREAM_MODE,
     }
     if SettingsPersistence.save_proxy_config(config_to_save):
         logger.info("Proxy configuration persisted to JSON file")
@@ -2231,6 +2285,7 @@ def update_proxy_config(
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "stream_mode": ProxyConfig.STREAM_MODE,
     }
 
 
@@ -2420,6 +2475,7 @@ async def export_settings(api_key_param: str = Depends(require_api_key)):
                     "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
                     "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
                     "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+                    "stream_mode": ProxyConfig.STREAM_MODE,
                 }
                 proxy_json = json.dumps(proxy_settings, indent=2)
                 zip_file.writestr("proxy_settings.json", proxy_json)
@@ -2588,6 +2644,14 @@ async def import_settings_data(
                     ProxyConfig.CONNECTION_TIMEOUT = proxy_dict.get('connection_timeout', ProxyConfig.CONNECTION_TIMEOUT)
                     ProxyConfig.STREAM_TIMEOUT = proxy_dict.get('stream_timeout', ProxyConfig.STREAM_TIMEOUT)
                     ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_dict.get('channel_shutdown_delay', ProxyConfig.CHANNEL_SHUTDOWN_DELAY)
+                    
+                    # Validate and set stream_mode
+                    if 'stream_mode' in proxy_dict:
+                        mode = proxy_dict['stream_mode']
+                        if mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
+                            logger.warning(f"HLS mode not supported for variant {cfg.ENGINE_VARIANT}, reverting to TS mode")
+                            proxy_dict['stream_mode'] = 'TS'
+                        ProxyConfig.STREAM_MODE = proxy_dict['stream_mode']
                     
                     # Persist to file
                     if SettingsPersistence.save_proxy_config(proxy_dict):
