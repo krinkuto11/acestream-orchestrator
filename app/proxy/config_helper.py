@@ -56,6 +56,9 @@ class Config:
     INITIAL_DATA_WAIT_TIMEOUT = int(os.getenv('PROXY_INITIAL_DATA_WAIT_TIMEOUT', '10'))
     INITIAL_DATA_CHECK_INTERVAL = float(os.getenv('PROXY_INITIAL_DATA_CHECK_INTERVAL', '0.2'))
     
+    # Stream mode (TS or HLS)
+    STREAM_MODE = os.getenv('PROXY_STREAM_MODE', 'TS')  # Default to MPEG-TS for backwards compatibility
+    
     @staticmethod
     def get_channel_shutdown_delay():
         """Get channel shutdown delay in seconds."""
@@ -171,3 +174,8 @@ class ConfigHelper:
     def initial_data_check_interval():
         """Get seconds between buffer checks during initial data wait."""
         return Config.INITIAL_DATA_CHECK_INTERVAL
+    
+    @staticmethod
+    def stream_mode():
+        """Get stream mode (TS or HLS)."""
+        return Config.STREAM_MODE

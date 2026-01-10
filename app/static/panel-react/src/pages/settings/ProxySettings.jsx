@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { AlertCircle, CheckCircle2, Info } from 'lucide-react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 export function ProxySettings({ apiKey, orchUrl }) {
   const [loading, setLoading] = useState(false)
@@ -22,11 +23,16 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [streamTimeout, setStreamTimeout] = useState(60)
   const [channelShutdownDelay, setChannelShutdownDelay] = useState(5)
   const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(DEFAULT_MAX_STREAMS_PER_ENGINE)
+  const [streamMode, setStreamMode] = useState('TS')
+  const [engineVariant, setEngineVariant] = useState('')
   
   // Read-only config for display
   const [vlcUserAgent, setVlcUserAgent] = useState('')
   const [chunkSize, setChunkSize] = useState(0)
   const [bufferChunkSize, setBufferChunkSize] = useState(0)
+  
+  // Check if HLS is supported
+  const hlsSupported = engineVariant.startsWith('krinkuto11-amd64')
   
   useEffect(() => {
     fetchProxyConfig()
@@ -45,6 +51,8 @@ export function ProxySettings({ apiKey, orchUrl }) {
         setStreamTimeout(data.stream_timeout)
         setChannelShutdownDelay(data.channel_shutdown_delay)
         setMaxStreamsPerEngine(data.max_streams_per_engine || DEFAULT_MAX_STREAMS_PER_ENGINE)
+        setStreamMode(data.stream_mode || 'TS')
+        setEngineVariant(data.engine_variant || '')
         setVlcUserAgent(data.vlc_user_agent)
         setChunkSize(data.chunk_size)
         setBufferChunkSize(data.buffer_chunk_size)
@@ -74,6 +82,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
       params.append('stream_timeout', streamTimeout)
       params.append('channel_shutdown_delay', channelShutdownDelay)
       params.append('max_streams_per_engine', maxStreamsPerEngine)
+      params.append('stream_mode', streamMode)
       
       const response = await fetch(`${orchUrl}/proxy/config?${params}`, {
         method: 'POST',
@@ -99,6 +108,55 @@ export function ProxySettings({ apiKey, orchUrl }) {
   
   return (
     <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Stream Mode</CardTitle>
+          <CardDescription>
+            Choose between MPEG-TS and HLS streaming modes
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="stream-mode">Stream Mode</Label>
+            <Select 
+              value={streamMode} 
+              onValueChange={setStreamMode}
+              disabled={!hlsSupported && streamMode === 'TS'}
+            >
+              <SelectTrigger id="stream-mode">
+                <SelectValue placeholder="Select stream mode" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="TS">MPEG-TS (Transport Stream)</SelectItem>
+                <SelectItem value="HLS" disabled={!hlsSupported}>
+                  HLS (HTTP Live Streaming) {!hlsSupported && '- Requires krinkuto11-amd64 variant'}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              The /ace/getstream endpoint will return streams in the selected mode.
+              {!hlsSupported && (
+                <>
+                  <br />
+                  <span className="text-amber-600 font-semibold">
+                    ⚠️ HLS mode is only available for krinkuto11-amd64 engine variant.
+                    Current variant: {engineVariant || 'Unknown'}
+                  </span>
+                </>
+              )}
+              {hlsSupported && (
+                <>
+                  <br />
+                  <span className="text-green-600 font-semibold">
+                    ✓ HLS mode is supported for your current variant ({engineVariant})
+                  </span>
+                </>
+              )}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+      
       <Card>
         <CardHeader>
           <CardTitle>Stream Buffer Settings</CardTitle>
@@ -334,6 +392,10 @@ export function ProxySettings({ apiKey, orchUrl }) {
           <strong>Note:</strong> Changes to proxy settings affect new streams only. 
           Existing active streams will continue using their original settings. 
           Settings are persisted to a JSON file and will be restored on restart.
+          <br />
+          <strong>Stream Mode:</strong> The /ace/getstream endpoint will return streams in {streamMode} format.
+          {streamMode === 'HLS' && ' HLS manifests (.m3u8) and segments will be served.'}
+          {streamMode === 'TS' && ' MPEG-TS (video/mp2t) streams will be served.'}
         </div>
       </div>
     </div>

@@ -67,7 +67,15 @@ class StreamManager:
     
     def request_stream_from_engine(self):
         """Request stream from AceStream engine API"""
-        url = f"http://{self.engine_host}:{self.engine_port}/ace/getstream"
+        # Check stream mode to determine which endpoint to use
+        stream_mode = Config.STREAM_MODE
+        
+        if stream_mode == 'HLS':
+            # HLS mode - use manifest.m3u8 endpoint
+            url = f"http://{self.engine_host}:{self.engine_port}/ace/manifest.m3u8"
+        else:
+            # TS mode (default) - use getstream endpoint
+            url = f"http://{self.engine_host}:{self.engine_port}/ace/getstream"
         
         # Generate unique PID to prevent errors when multiple streams access the same engine
         # This matches the implementation in context/acexy.go lines 328-339
@@ -83,7 +91,7 @@ class StreamManager:
         full_url = f"{url}?id={self.content_id}&format=json&pid={pid}"
         
         try:
-            logger.info(f"Requesting stream from AceStream engine: {url}")
+            logger.info(f"Requesting stream from AceStream engine in {stream_mode} mode: {url}")
             logger.debug(f"Full request URL: {full_url}")
             logger.debug(f"Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}, Container: {self.engine_container_id}")
             logger.debug(f"Generated PID: {pid}")
