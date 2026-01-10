@@ -2502,25 +2502,6 @@ def update_proxy_config(
         "hls_max_initial_segments": ProxyConfig.HLS_MAX_INITIAL_SEGMENTS,
         "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
     }
-        "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
-        "stream_mode": ProxyConfig.STREAM_MODE,
-    }
-    if SettingsPersistence.save_proxy_config(config_to_save):
-        logger.info("Proxy configuration persisted to JSON file")
-    
-    return {
-        "message": "Proxy configuration updated and persisted",
-        "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
-        "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
-        "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
-        "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
-        "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
-        "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
-        "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
-        "stream_mode": ProxyConfig.STREAM_MODE,
-    }
 
 
 
