@@ -1843,7 +1843,7 @@ async def ace_getstream(
                     logger.error(f"AceStream engine returned error: {error_msg}")
                     raise HTTPException(status_code=500, detail=f"AceStream engine error: {error_msg}")
                 
-                # Get playback URL from response
+                # Get session info from response
                 resp_data = data.get("response", {})
                 playback_url = resp_data.get("playback_url")
                 
@@ -1853,19 +1853,40 @@ async def ace_getstream(
                 
                 logger.info(f"HLS playback URL: {playback_url}")
                 
-                # Initialize HLS proxy channel
+                # Get API key from environment
+                api_key = os.getenv('API_KEY')
+                
+                # Prepare session info for event tracking
+                session_info = {
+                    'playback_session_id': resp_data.get('playback_session_id'),
+                    'stat_url': resp_data.get('stat_url'),
+                    'command_url': resp_data.get('command_url'),
+                    'is_live': resp_data.get('is_live', 1)
+                }
+                
+                # Initialize HLS proxy channel (or add client to existing channel)
                 hls_proxy = HLSProxyServer.get_instance()
                 hls_proxy.initialize_channel(
                     channel_id=id,
-                    playback_url=playback_url
+                    playback_url=playback_url,
+                    engine_host=selected_engine.host,
+                    engine_port=selected_engine.port,
+                    engine_container_id=selected_engine.container_id,
+                    session_info=session_info,
+                    api_key=api_key
                 )
                 
                 # Get and return the manifest
                 try:
                     manifest_content = hls_proxy.get_manifest(id)
                     
+                    # Create a cleanup callback to remove client when connection ends
                     async def manifest_generator():
-                        yield manifest_content.encode('utf-8')
+                        try:
+                            yield manifest_content.encode('utf-8')
+                        finally:
+                            # Remove client when generator finishes (client disconnected)
+                            hls_proxy.remove_client(id)
                     
                     return StreamingResponse(
                         manifest_generator(),
@@ -1877,6 +1898,8 @@ async def ace_getstream(
                     )
                 except TimeoutError as e:
                     logger.error(f"Timeout getting HLS manifest: {e}")
+                    # Remove client on error
+                    hls_proxy.remove_client(id)
                     raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
                 
             except requests.exceptions.RequestException as e:
