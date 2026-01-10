@@ -1812,51 +1812,113 @@ async def ace_getstream(
             f"(forwarded={selected_engine.forwarded}, current_load={engine_loads.get(selected_engine.container_id, 0)})"
         )
         
-        # Get proxy instance
-        proxy = ProxyManager.get_instance()
-        
-        # Start stream if not exists (idempotent)
-        success = proxy.start_stream(
-            content_id=id,
-            engine_host=selected_engine.host,
-            engine_port=selected_engine.port,
-            engine_container_id=selected_engine.container_id
-        )
-        
-        if not success:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to start stream session"
-            )
-        
         logger.info(
             f"Client {client_id} connecting to {stream_mode} stream {id} from {client_ip}"
         )
         
-        # Create stream generator
-        generator = create_stream_generator(
-            content_id=id,
-            client_id=client_id,
-            client_ip=client_ip,
-            client_user_agent=user_agent,
-            stream_initializing=False
-        )
-        
-        # Determine media type and headers based on stream mode
+        # Handle HLS mode differently from TS mode
         if stream_mode == 'HLS':
-            media_type = "application/vnd.apple.mpegurl"
-        else:
-            media_type = "video/mp2t"
-        
-        # Return streaming response
-        return StreamingResponse(
-            generator.generate(),
-            media_type=media_type,
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Connection": "keep-alive",
+            # For HLS, use the FastAPI-based HLS proxy
+            from app.proxy.hls_proxy import HLSProxyServer
+            import requests
+            from uuid import uuid4
+            
+            # Request HLS manifest from AceStream engine
+            hls_url = f"http://{selected_engine.host}:{selected_engine.port}/ace/manifest.m3u8"
+            pid = str(uuid4())
+            params = {
+                "id": id,
+                "format": "json",
+                "pid": pid
             }
-        )
+            
+            try:
+                logger.info(f"Requesting HLS stream from engine: {hls_url}")
+                response = requests.get(hls_url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                
+                if data.get("error"):
+                    error_msg = data['error']
+                    logger.error(f"AceStream engine returned error: {error_msg}")
+                    raise HTTPException(status_code=500, detail=f"AceStream engine error: {error_msg}")
+                
+                # Get playback URL from response
+                resp_data = data.get("response", {})
+                playback_url = resp_data.get("playback_url")
+                
+                if not playback_url:
+                    logger.error("No playback_url in AceStream response")
+                    raise HTTPException(status_code=500, detail="No playback URL in engine response")
+                
+                logger.info(f"HLS playback URL: {playback_url}")
+                
+                # Initialize HLS proxy channel
+                hls_proxy = HLSProxyServer.get_instance()
+                hls_proxy.initialize_channel(
+                    channel_id=id,
+                    playback_url=playback_url
+                )
+                
+                # Get and return the manifest
+                try:
+                    manifest_content = hls_proxy.get_manifest(id)
+                    
+                    async def manifest_generator():
+                        yield manifest_content.encode('utf-8')
+                    
+                    return StreamingResponse(
+                        manifest_generator(),
+                        media_type="application/vnd.apple.mpegurl",
+                        headers={
+                            "Cache-Control": "no-cache, no-store, must-revalidate",
+                            "Connection": "keep-alive",
+                        }
+                    )
+                except TimeoutError as e:
+                    logger.error(f"Timeout getting HLS manifest: {e}")
+                    raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to request HLS stream from engine: {e}")
+                raise HTTPException(status_code=503, detail=f"Engine communication error: {str(e)}")
+        else:
+            # TS mode - use existing ts_proxy architecture
+            # Get proxy instance
+            proxy = ProxyManager.get_instance()
+            
+            # Start stream if not exists (idempotent)
+            success = proxy.start_stream(
+                content_id=id,
+                engine_host=selected_engine.host,
+                engine_port=selected_engine.port,
+                engine_container_id=selected_engine.container_id
+            )
+            
+            if not success:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to start stream session"
+                )
+            
+            # Create stream generator
+            generator = create_stream_generator(
+                content_id=id,
+                client_id=client_id,
+                client_ip=client_ip,
+                client_user_agent=user_agent,
+                stream_initializing=False
+            )
+            
+            # Return streaming response with TS data
+            return StreamingResponse(
+                generator.generate(),
+                media_type="video/mp2t",
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Connection": "keep-alive",
+                }
+            )
         
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -1864,6 +1926,51 @@ async def ace_getstream(
     except Exception as e:
         logger.error(f"Unexpected error in ace_getstream: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+
+@app.get("/ace/hls/{content_id}/segment/{segment_path:path}")
+async def ace_hls_segment(
+    content_id: str,
+    segment_path: str,
+):
+    """Proxy endpoint for HLS segments.
+    
+    This endpoint serves individual HLS segments from the buffered stream.
+    It's used when the stream mode is set to HLS.
+    
+    Args:
+        content_id: AceStream content ID (infohash or content_id)
+        segment_path: Segment filename from the M3U8 manifest (e.g., "123.ts")
+        
+    Returns:
+        Streaming response with segment data
+    """
+    from fastapi.responses import Response
+    from app.proxy.hls_proxy import HLSProxyServer
+    
+    logger.debug(f"HLS segment request: content_id={content_id}, segment={segment_path}")
+    
+    try:
+        hls_proxy = HLSProxyServer.get_instance()
+        segment_data = hls_proxy.get_segment(content_id, segment_path)
+        
+        # Return segment data directly
+        return Response(
+            content=segment_data,
+            media_type="video/MP2T",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Connection": "keep-alive",
+            }
+        )
+    except ValueError as e:
+        logger.warning(f"Segment not found: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error serving HLS segment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Segment error: {str(e)}")
+
 
 
 
