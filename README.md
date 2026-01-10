@@ -58,6 +58,11 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
   - Configurable buffer and grace periods
   - Load balanced engine selection
   - Seamless failover on engine unavailability
+  - **HLS Proxy Mode** (v1.6.0): Toggle between MPEG-TS and HLS streaming modes
+    - Unified `/ace/getstream` endpoint for both modes
+    - HLS support for krinkuto11-amd64 variant
+    - Dynamic mode switching via Proxy Settings
+    - See [HLS Proxy Documentation](docs/HLS_PROXY.md)
 - **Stream Loop Detection** (v1.6.0): Automatically detect and stop streams that are looping (no new data)
   - Configurable threshold via UI
   - Monitors broadcast position (live_last) against real time
