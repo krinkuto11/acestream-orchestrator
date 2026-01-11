@@ -1766,8 +1766,12 @@ async def ace_getstream(
     client_ip = get_client_ip(request) if request else "unknown"
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
     
-    try:
-        # Select best engine
+    def select_best_engine():
+        """Select the best available engine using layer-based load balancing.
+        
+        Returns tuple of (selected_engine, current_load)
+        Raises HTTPException if no engines available or all at capacity.
+        """
         engines = state.list_engines()
         if not engines:
             raise HTTPException(
@@ -1806,16 +1810,11 @@ async def ace_getstream(
             not e.forwarded  # Forwarded engines preferred when load is equal
         ))
         selected_engine = engines_sorted[0]
+        current_load = engine_loads.get(selected_engine.container_id, 0)
         
-        logger.info(
-            f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {id} "
-            f"(forwarded={selected_engine.forwarded}, current_load={engine_loads.get(selected_engine.container_id, 0)})"
-        )
-        
-        logger.info(
-            f"Client {client_id} connecting to {stream_mode} stream {id} from {client_ip}"
-        )
-        
+        return selected_engine, current_load
+    
+    try:
         # Handle HLS mode differently from TS mode
         if stream_mode == 'HLS':
             # For HLS, use the FastAPI-based HLS proxy
@@ -1826,79 +1825,102 @@ async def ace_getstream(
             # Get HLS proxy instance
             hls_proxy = HLSProxyServer.get_instance()
             
-            # Check if channel already exists
-            if not hls_proxy.has_channel(id):
-                # Channel doesn't exist - request from AceStream engine to create new session
-                hls_url = f"http://{selected_engine.host}:{selected_engine.port}/ace/manifest.m3u8"
-                pid = str(uuid4())
-                params = {
-                    "id": id,
-                    "format": "json",
-                    "pid": pid
-                }
+            # Check if channel already exists - do this BEFORE engine selection to avoid
+            # unnecessary computation and logging on every manifest/segment request
+            if hls_proxy.has_channel(id):
+                # Channel already exists - reuse existing session
+                # Skip engine selection and just serve the manifest
+                logger.debug(f"HLS channel {id} already exists, serving manifest to client {client_id} from {client_ip}")
                 
                 try:
-                    logger.info(f"Requesting HLS stream from engine: {hls_url}")
-                    response = requests.get(hls_url, params=params, timeout=10)
-                    response.raise_for_status()
-                    data = response.json()
+                    # Track client activity for this request
+                    hls_proxy.record_client_activity(id, client_ip)
                     
-                    if data.get("error"):
-                        error_msg = data['error']
-                        logger.error(f"AceStream engine returned error: {error_msg}")
-                        raise HTTPException(status_code=500, detail=f"AceStream engine error: {error_msg}")
+                    manifest_content = hls_proxy.get_manifest(id)
                     
-                    # Get session info from response
-                    resp_data = data.get("response", {})
-                    playback_url = resp_data.get("playback_url")
+                    # Note: In HLS, clients make multiple requests (manifest + segments)
+                    # Client activity is tracked on each request, not per connection
+                    # DO NOT remove client here - let inactivity timeout handle cleanup
                     
-                    if not playback_url:
-                        logger.error("No playback_url in AceStream response")
-                        raise HTTPException(status_code=500, detail="No playback URL in engine response")
-                    
-                    logger.info(f"HLS playback URL: {playback_url}")
-                    
-                    # Get API key from environment
-                    api_key = os.getenv('API_KEY')
-                    
-                    # Prepare session info for event tracking
-                    session_info = {
-                        'playback_session_id': resp_data.get('playback_session_id'),
-                        'stat_url': resp_data.get('stat_url'),
-                        'command_url': resp_data.get('command_url'),
-                        'is_live': resp_data.get('is_live', 1)
-                    }
-                    
-                    # Initialize HLS proxy channel
-                    hls_proxy.initialize_channel(
-                        channel_id=id,
-                        playback_url=playback_url,
-                        engine_host=selected_engine.host,
-                        engine_port=selected_engine.port,
-                        engine_container_id=selected_engine.container_id,
-                        session_info=session_info,
-                        api_key=api_key
+                    return StreamingResponse(
+                        iter([manifest_content.encode('utf-8')]),
+                        media_type="application/vnd.apple.mpegurl",
+                        headers={
+                            "Cache-Control": "no-cache, no-store, must-revalidate",
+                            "Connection": "keep-alive",
+                        }
                     )
-                    
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"Failed to request HLS stream from engine: {e}")
-                    raise HTTPException(status_code=503, detail=f"Engine communication error: {str(e)}")
-            else:
-                # Channel already exists - reuse existing session
-                logger.info(f"HLS channel {id} already exists, reusing existing session")
+                except TimeoutError as e:
+                    logger.error(f"Timeout getting HLS manifest: {e}")
+                    raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
             
-            # Get and return the manifest (for both new and existing channels)
+            # Channel doesn't exist - need to select engine and create new session
+            selected_engine, current_load = select_best_engine()
+            
+            logger.info(
+                f"Selected engine {selected_engine.container_id[:12]} for new {stream_mode} stream {id} "
+                f"(forwarded={selected_engine.forwarded}, current_load={current_load})"
+            )
+            
+            logger.info(
+                f"Client {client_id} initializing new {stream_mode} stream {id} from {client_ip}"
+            )
+            
+            # Request new session from AceStream engine
+            hls_url = f"http://{selected_engine.host}:{selected_engine.port}/ace/manifest.m3u8"
+            pid = str(uuid4())
+            params = {
+                "id": id,
+                "format": "json",
+                "pid": pid
+            }
+            
             try:
-                # Track client activity for this request
-                from app.proxy.utils import get_client_ip
-                client_ip = get_client_ip(request)
+                logger.info(f"Requesting HLS stream from engine: {hls_url}")
+                response = requests.get(hls_url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                
+                if data.get("error"):
+                    error_msg = data['error']
+                    logger.error(f"AceStream engine returned error: {error_msg}")
+                    raise HTTPException(status_code=500, detail=f"AceStream engine error: {error_msg}")
+                
+                # Get session info from response
+                resp_data = data.get("response", {})
+                playback_url = resp_data.get("playback_url")
+                
+                if not playback_url:
+                    logger.error("No playback_url in AceStream response")
+                    raise HTTPException(status_code=500, detail="No playback URL in engine response")
+                
+                logger.info(f"HLS playback URL: {playback_url}")
+                
+                # Get API key from environment
+                api_key = os.getenv('API_KEY')
+                
+                # Prepare session info for event tracking
+                session_info = {
+                    'playback_session_id': resp_data.get('playback_session_id'),
+                    'stat_url': resp_data.get('stat_url'),
+                    'command_url': resp_data.get('command_url'),
+                    'is_live': resp_data.get('is_live', 1)
+                }
+                
+                # Initialize HLS proxy channel
+                hls_proxy.initialize_channel(
+                    channel_id=id,
+                    playback_url=playback_url,
+                    engine_host=selected_engine.host,
+                    engine_port=selected_engine.port,
+                    engine_container_id=selected_engine.container_id,
+                    session_info=session_info,
+                    api_key=api_key
+                )
+                
+                # Track client activity and get manifest for the newly created channel
                 hls_proxy.record_client_activity(id, client_ip)
-                
                 manifest_content = hls_proxy.get_manifest(id)
-                
-                # Note: In HLS, clients make multiple requests (manifest + segments)
-                # Client activity is tracked on each request, not per connection
-                # DO NOT remove client here - let inactivity timeout handle cleanup
                 
                 return StreamingResponse(
                     iter([manifest_content.encode('utf-8')]),
@@ -1908,11 +1930,26 @@ async def ace_getstream(
                         "Connection": "keep-alive",
                     }
                 )
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to request HLS stream from engine: {e}")
+                raise HTTPException(status_code=503, detail=f"Engine communication error: {str(e)}")
             except TimeoutError as e:
                 logger.error(f"Timeout getting HLS manifest: {e}")
                 raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
         else:
             # TS mode - use existing ts_proxy architecture
+            selected_engine, current_load = select_best_engine()
+            
+            logger.info(
+                f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {id} "
+                f"(forwarded={selected_engine.forwarded}, current_load={current_load})"
+            )
+            
+            logger.info(
+                f"Client {client_id} connecting to {stream_mode} stream {id} from {client_ip}"
+            )
+            
             # Get proxy instance
             proxy = ProxyManager.get_instance()
             
