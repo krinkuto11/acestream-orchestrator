@@ -1878,18 +1878,19 @@ async def ace_getstream(
                 
                 # Get and return the manifest
                 try:
+                    # Track client activity for this request
+                    from app.proxy.utils import get_client_ip
+                    client_ip = get_client_ip(request)
+                    hls_proxy.record_client_activity(id, client_ip)
+                    
                     manifest_content = hls_proxy.get_manifest(id)
                     
-                    # Create a cleanup callback to remove client when connection ends
-                    async def manifest_generator():
-                        try:
-                            yield manifest_content.encode('utf-8')
-                        finally:
-                            # Remove client when generator finishes (client disconnected)
-                            hls_proxy.remove_client(id)
+                    # Note: In HLS, clients make multiple requests (manifest + segments)
+                    # Client activity is tracked on each request, not per connection
+                    # DO NOT remove client here - let inactivity timeout handle cleanup
                     
                     return StreamingResponse(
-                        manifest_generator(),
+                        iter([manifest_content.encode('utf-8')]),
                         media_type="application/vnd.apple.mpegurl",
                         headers={
                             "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -1898,8 +1899,6 @@ async def ace_getstream(
                     )
                 except TimeoutError as e:
                     logger.error(f"Timeout getting HLS manifest: {e}")
-                    # Remove client on error
-                    hls_proxy.remove_client(id)
                     raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
                 
             except requests.exceptions.RequestException as e:
@@ -1956,6 +1955,7 @@ async def ace_getstream(
 async def ace_hls_segment(
     content_id: str,
     segment_path: str,
+    request: Request,
 ):
     """Proxy endpoint for HLS segments.
     
@@ -1965,17 +1965,24 @@ async def ace_hls_segment(
     Args:
         content_id: AceStream content ID (infohash or content_id)
         segment_path: Segment filename from the M3U8 manifest (e.g., "123.ts")
+        request: FastAPI Request object for client info
         
     Returns:
         Streaming response with segment data
     """
     from fastapi.responses import Response
     from app.proxy.hls_proxy import HLSProxyServer
+    from app.proxy.utils import get_client_ip
     
     logger.debug(f"HLS segment request: content_id={content_id}, segment={segment_path}")
     
     try:
         hls_proxy = HLSProxyServer.get_instance()
+        
+        # Track client activity for this segment request
+        client_ip = get_client_ip(request)
+        hls_proxy.record_client_activity(content_id, client_ip)
+        
         segment_data = hls_proxy.get_segment(content_id, segment_path)
         
         # Return segment data directly

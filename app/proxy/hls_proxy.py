@@ -62,6 +62,53 @@ class HLSConfig:
         return ConfigHelper.hls_segment_fetch_interval()
 
 
+class ClientManager:
+    """Manages client connections and activity tracking (adapted from context/hls_proxy)"""
+    
+    def __init__(self):
+        self.last_activity: Dict[str, float] = {}  # Maps client IPs to last activity timestamp
+        self.lock = threading.Lock()
+        
+    def record_activity(self, client_ip: str):
+        """Record client activity timestamp"""
+        with self.lock:
+            prev_time = self.last_activity.get(client_ip)
+            current_time = time.time()
+            self.last_activity[client_ip] = current_time
+            if not prev_time:
+                logger.info(f"New client connected: {client_ip}")
+            else:
+                logger.debug(f"Client activity: {client_ip}")
+                
+    def cleanup_inactive(self, timeout: float) -> bool:
+        """Remove inactive clients and return True if no clients remain"""
+        now = time.time()
+        with self.lock:
+            active_clients = {
+                ip: last_time 
+                for ip, last_time in self.last_activity.items()
+                if (now - last_time) < timeout
+            }
+            
+            removed = set(self.last_activity.keys()) - set(active_clients.keys())
+            if removed:
+                for ip in removed:
+                    inactive_time = now - self.last_activity[ip]
+                    logger.warning(f"Client {ip} inactive for {inactive_time:.1f}s, removing")
+            
+            self.last_activity = active_clients
+            if active_clients:
+                oldest = min(now - t for t in active_clients.values())
+                logger.debug(f"Active clients: {len(active_clients)}, oldest activity: {oldest:.1f}s ago")
+            
+            return len(active_clients) == 0
+    
+    def has_clients(self) -> bool:
+        """Check if there are any active clients"""
+        with self.lock:
+            return len(self.last_activity) > 0
+
+
 class StreamBuffer:
     """Thread-safe buffer for HLS segments"""
     
@@ -134,11 +181,17 @@ class StreamManager:
         self.stream_id = None  # Will be set after sending start event
         self._ended_event_sent = False  # Track if we've already sent the ended event
         
+        # Client management (for activity-based cleanup)
+        self.client_manager: Optional[ClientManager] = None
+        self.cleanup_thread: Optional[threading.Thread] = None
+        self.cleanup_running = False
+        
         logger.info(f"Initialized HLS stream manager for channel {channel_id}")
     
     def stop(self):
         """Stop the stream manager"""
         self.running = False
+        self.cleanup_running = False
         logger.info(f"Stopping stream manager for channel {self.channel_id}")
         
         # Send stop command to AceStream engine
@@ -270,6 +323,40 @@ class StreamManager:
         except Exception as e:
             logger.warning(f"Failed to send HLS stream ended event to orchestrator: {e}")
             logger.debug(f"Exception details: {e}", exc_info=True)
+    
+    def start_cleanup_monitoring(self, proxy_server):
+        """Start background thread for client inactivity monitoring (adapted from context/hls_proxy)"""
+        def cleanup_loop():
+            # Use a small initial delay to allow first client to connect
+            time.sleep(2)
+            
+            # Monitor client activity
+            while self.cleanup_running and self.running:
+                try:
+                    # Calculate timeout based on target duration (similar to reference implementation)
+                    # Use 3x target duration as timeout (configurable via CLIENT_TIMEOUT_FACTOR)
+                    timeout = self.target_duration * 3.0
+                    
+                    if self.client_manager and self.client_manager.cleanup_inactive(timeout):
+                        logger.info(f"Channel {self.channel_id}: All clients disconnected for {timeout:.1f}s")
+                        # Stop the channel via proxy server
+                        proxy_server.stop_channel(self.channel_id)
+                        break
+                except Exception as e:
+                    logger.error(f"Cleanup error for channel {self.channel_id}: {e}")
+                
+                # Check every few seconds
+                time.sleep(5)
+        
+        if not self.cleanup_running:
+            self.cleanup_running = True
+            self.cleanup_thread = threading.Thread(
+                target=cleanup_loop,
+                name=f"HLS-Cleanup-{self.channel_id[:8]}",
+                daemon=True
+            )
+            self.cleanup_thread.start()
+            logger.info(f"Started cleanup monitoring for HLS channel {self.channel_id}")
 
 
 class StreamFetcher:
@@ -417,25 +504,24 @@ class HLSProxyServer:
     def __init__(self):
         self.stream_managers: Dict[str, StreamManager] = {}
         self.stream_buffers: Dict[str, StreamBuffer] = {}
+        self.client_managers: Dict[str, ClientManager] = {}  # Track client activity per channel
         self.fetch_threads: Dict[str, threading.Thread] = {}
-        self.client_counts: Dict[str, int] = {}  # Track number of clients per channel
-        self.lock = threading.Lock()  # Lock for thread-safe client tracking
+        self.lock = threading.Lock()  # Lock for thread-safe operations
         logger.info("HLS ProxyServer initialized")
     
     def initialize_channel(self, channel_id: str, playback_url: str, engine_host: str, 
                           engine_port: int, engine_container_id: str, session_info: Dict[str, any],
                           api_key: Optional[str] = None):
-        """Initialize a new HLS channel (or add client to existing channel)"""
+        """Initialize a new HLS channel"""
         with self.lock:
-            # If channel already exists, just increment client count
+            # If channel already exists, just return (client will be tracked on requests)
             if channel_id in self.stream_managers:
-                self.client_counts[channel_id] = self.client_counts.get(channel_id, 0) + 1
-                logger.info(f"HLS channel {channel_id} already exists, added client (total clients: {self.client_counts[channel_id]})")
+                logger.info(f"HLS channel {channel_id} already exists")
                 return
             
             logger.info(f"Initializing HLS channel {channel_id} with URL {playback_url}")
             
-            # Create manager and buffer
+            # Create manager, buffer, and client manager
             manager = StreamManager(
                 playback_url=playback_url,
                 channel_id=channel_id,
@@ -446,10 +532,14 @@ class HLSProxyServer:
                 api_key=api_key
             )
             buffer = StreamBuffer()
+            client_manager = ClientManager()
+            
+            # Link client manager to stream manager
+            manager.client_manager = client_manager
             
             self.stream_managers[channel_id] = manager
             self.stream_buffers[channel_id] = buffer
-            self.client_counts[channel_id] = 1
+            self.client_managers[channel_id] = client_manager
             
             # Send stream started event to orchestrator
             manager._send_stream_started_event()
@@ -464,27 +554,15 @@ class HLSProxyServer:
             thread.start()
             self.fetch_threads[channel_id] = thread
             
-            logger.info(f"HLS channel {channel_id} initialized with 1 client")
+            # Start cleanup monitoring
+            manager.start_cleanup_monitoring(self)
+            
+            logger.info(f"HLS channel {channel_id} initialized")
     
-    def remove_client(self, channel_id: str):
-        """Remove a client from a channel and stop if no clients remain"""
-        with self.lock:
-            if channel_id not in self.client_counts:
-                logger.warning(f"Attempt to remove client from non-existent HLS channel {channel_id}")
-                return
-            
-            self.client_counts[channel_id] -= 1
-            remaining_clients = self.client_counts[channel_id]
-            
-            logger.info(f"Client removed from HLS channel {channel_id}, remaining clients: {remaining_clients}")
-            
-            # If no clients remain, schedule channel cleanup
-            if remaining_clients <= 0:
-                logger.info(f"No clients left for HLS channel {channel_id}, scheduling stop")
-                # Use threading.Timer for delayed cleanup (similar to TS proxy)
-                timer = threading.Timer(5.0, self.stop_channel, args=[channel_id])
-                timer.daemon = True
-                timer.start()
+    def record_client_activity(self, channel_id: str, client_ip: str):
+        """Record client activity for a channel (called on each manifest/segment request)"""
+        if channel_id in self.client_managers:
+            self.client_managers[channel_id].record_activity(client_ip)
     
     def stop_channel(self, channel_id: str, reason: str = "normal"):
         """Stop and cleanup a channel"""
@@ -493,9 +571,9 @@ class HLSProxyServer:
                 logger.debug(f"HLS channel {channel_id} already stopped")
                 return
             
-            # Check if there are still clients (in case new ones connected during timer delay)
-            if self.client_counts.get(channel_id, 0) > 0:
-                logger.info(f"Cancelling stop for HLS channel {channel_id} - clients reconnected")
+            # Check if there are still active clients
+            if channel_id in self.client_managers and self.client_managers[channel_id].has_clients():
+                logger.info(f"Cancelling stop for HLS channel {channel_id} - clients still active")
                 return
             
             logger.info(f"Stopping HLS channel {channel_id}")
@@ -514,10 +592,10 @@ class HLSProxyServer:
             # Cleanup
             del self.stream_managers[channel_id]
             del self.stream_buffers[channel_id]
+            if channel_id in self.client_managers:
+                del self.client_managers[channel_id]
             if channel_id in self.fetch_threads:
                 del self.fetch_threads[channel_id]
-            if channel_id in self.client_counts:
-                del self.client_counts[channel_id]
             
             logger.info(f"HLS channel {channel_id} stopped and cleaned up")
     
