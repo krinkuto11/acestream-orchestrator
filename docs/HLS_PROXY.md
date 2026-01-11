@@ -91,11 +91,30 @@ vlc "http://localhost:8000/ace/getstream?id=94c2fd8fb9bc8f2fc71a2cbe9d4b866f227a
    - **HLS Mode**: `/ace/manifest.m3u8?id=<id>&format=json&pid=<uuid>`
 4. **Response**: The orchestrator proxies the stream with the appropriate media type
 
+### Non-Blocking Architecture
+
+The HLS proxy uses an asynchronous design to prevent blocking the orchestrator:
+
+- **Event Sending**: Stream started/ended events are sent in background daemon threads
+- **Segment Fetching**: HLS segments are fetched in dedicated background threads
+- **No Blocking**: The main request handler returns immediately without waiting for HTTP calls
+- **UI Responsiveness**: The dashboard remains responsive even during stream initialization
+
+This ensures that starting or stopping HLS streams doesn't block other orchestrator processes or make the UI unresponsive.
+
 ### PID Parameter
 
 Both modes include a unique PID (Process ID) parameter to prevent conflicts when multiple clients access the same engine. This matches the behavior of the original AceXY implementation.
 
 ## Troubleshooting
+
+### UI Becomes Unresponsive When Stream Starts
+
+**Symptom**: Dashboard/UI freezes or becomes unresponsive when starting HLS streams
+
+**Cause**: Fixed in recent versions - event sending now runs asynchronously
+
+**Solution**: Upgrade to the latest version. Event sending (stream started/ended) now runs in background threads and doesn't block the request handler.
 
 ### HLS Option Not Available
 
