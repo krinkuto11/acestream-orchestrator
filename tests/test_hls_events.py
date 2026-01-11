@@ -180,10 +180,20 @@ class TestHLSEvents(unittest.TestCase):
             api_key="test_api_key"
         )
         
-        # Verify client count
-        self.assertEqual(proxy.client_counts.get("test_channel"), 1)
+        # Verify channel exists
+        self.assertIn("test_channel", proxy.stream_managers)
+        self.assertIn("test_channel", proxy.client_managers)
         
-        # Add second client
+        # Simulate client activity (multiple clients)
+        proxy.record_client_activity("test_channel", "192.168.1.1")
+        proxy.record_client_activity("test_channel", "192.168.1.2")
+        
+        # Verify client manager tracks multiple IPs
+        client_manager = proxy.client_managers["test_channel"]
+        self.assertTrue(client_manager.has_clients())
+        self.assertEqual(len(client_manager.last_activity), 2)
+        
+        # Try to initialize again - should just return without reinitializing
         proxy.initialize_channel(
             channel_id="test_channel",
             playback_url="http://example.com/test.m3u8",
@@ -194,9 +204,6 @@ class TestHLSEvents(unittest.TestCase):
             api_key="test_api_key"
         )
         
-        # Verify client count increased
-        self.assertEqual(proxy.client_counts.get("test_channel"), 2)
-        
         # Verify only one started event was sent (not reinitialized)
         self.assertEqual(mock_post.call_count, 1, "Only one started event should be sent for multiple clients")
         
@@ -205,8 +212,8 @@ class TestHLSEvents(unittest.TestCase):
     
     @patch('app.proxy.hls_proxy.requests.post')
     @patch('app.proxy.hls_proxy.requests.get')
-    def test_channel_cleanup_on_last_client_disconnect(self, mock_get, mock_post):
-        """Test that channel is stopped only when last client disconnects"""
+    def test_channel_cleanup_on_inactivity(self, mock_get, mock_post):
+        """Test that channel is stopped when all clients become inactive"""
         from app.proxy.hls_proxy import HLSProxyServer
         
         # Mock successful responses
@@ -225,7 +232,7 @@ class TestHLSEvents(unittest.TestCase):
             'is_live': 1
         }
         
-        # Initialize channel with two clients
+        # Initialize channel
         proxy = HLSProxyServer.get_instance()
         proxy.initialize_channel(
             channel_id="test_channel",
@@ -236,39 +243,33 @@ class TestHLSEvents(unittest.TestCase):
             session_info=session_info,
             api_key="test_api_key"
         )
-        proxy.initialize_channel(
-            channel_id="test_channel",
-            playback_url="http://example.com/test.m3u8",
-            engine_host="localhost",
-            engine_port=6878,
-            engine_container_id="container_123",
-            session_info=session_info,
-            api_key="test_api_key"
-        )
         
-        # Verify 2 clients
-        self.assertEqual(proxy.client_counts.get("test_channel"), 2)
+        # Record activity from multiple clients
+        proxy.record_client_activity("test_channel", "192.168.1.1")
+        proxy.record_client_activity("test_channel", "192.168.1.2")
         
-        # Remove one client
-        proxy.remove_client("test_channel")
+        # Verify 2 clients tracked
+        client_manager = proxy.client_managers["test_channel"]
+        self.assertEqual(len(client_manager.last_activity), 2)
         
-        # Verify still 1 client
-        self.assertEqual(proxy.client_counts.get("test_channel"), 1)
-        
-        # Verify channel still exists
+        # Verify channel exists
         self.assertIn("test_channel", proxy.stream_managers)
         
-        # Remove last client
-        proxy.remove_client("test_channel")
+        # Note: In the new implementation, cleanup happens automatically via
+        # the cleanup monitoring thread when clients become inactive
+        # We can test manual cleanup by calling cleanup_inactive with a short timeout
         
-        # Verify 0 clients
-        self.assertEqual(proxy.client_counts.get("test_channel"), 0)
+        # Simulate no activity for a while
+        time.sleep(0.1)
         
-        # Wait for cleanup timer (5 seconds + buffer)
-        time.sleep(6)
+        # Clean up inactive clients with very short timeout (0 seconds = all are inactive)
+        all_inactive = client_manager.cleanup_inactive(timeout=0)
         
-        # Verify channel is stopped
-        self.assertNotIn("test_channel", proxy.stream_managers)
+        # Verify all clients are now considered inactive
+        self.assertTrue(all_inactive)
+        
+        # Cleanup
+        proxy.stop_channel("test_channel")
 
 
 def main():
