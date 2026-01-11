@@ -351,6 +351,13 @@ class StreamManager:
             # Monitor client activity
             while self.cleanup_running and self.running:
                 try:
+                    # Skip cleanup during initial buffering to avoid premature timeout
+                    # Initial buffering can take significant time due to network delays
+                    if self.initial_buffering:
+                        logger.debug(f"Channel {self.channel_id}: Skipping cleanup during initial buffering")
+                        time.sleep(5)
+                        continue
+                    
                     # Calculate timeout based on target duration (similar to reference implementation)
                     # Use 3x target duration as timeout (configurable via CLIENT_TIMEOUT_FACTOR)
                     timeout = self.target_duration * 3.0
