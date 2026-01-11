@@ -10,7 +10,7 @@ import time
 import requests
 import m3u8
 import os
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, Any
 from urllib.parse import urljoin, urlparse
 from .config_helper import ConfigHelper
 
@@ -147,7 +147,7 @@ class StreamManager:
     """Manages HLS stream state and fetching"""
     
     def __init__(self, playback_url: str, channel_id: str, engine_host: str, engine_port: int, 
-                 engine_container_id: str, session_info: Dict[str, any], api_key: Optional[str] = None):
+                 engine_container_id: str, session_info: Dict[str, Any], api_key: Optional[str] = None):
         self.playback_url = playback_url
         self.channel_id = channel_id
         self.engine_host = engine_host
@@ -395,6 +395,9 @@ class StreamFetcher:
         while self.manager.running:
             try:
                 # Fetch manifest
+                # Note: playback_url is immutable after channel initialization.
+                # The has_channel() check in main.py ensures we don't create duplicate
+                # channels, so there's no risk of the URL changing during fetch.
                 response = self.session.get(self.manager.playback_url, timeout=10)
                 response.raise_for_status()
                 
@@ -527,14 +530,30 @@ class HLSProxyServer:
         self.lock = threading.Lock()  # Lock for thread-safe operations
         logger.info("HLS ProxyServer initialized")
     
-    def initialize_channel(self, channel_id: str, playback_url: str, engine_host: str, 
-                          engine_port: int, engine_container_id: str, session_info: Dict[str, any],
-                          api_key: Optional[str] = None):
-        """Initialize a new HLS channel"""
+    def has_channel(self, channel_id: str) -> bool:
+        """Check if a channel already exists.
+        
+        Args:
+            channel_id: The channel ID to check
+            
+        Returns:
+            True if the channel exists, False otherwise
+        """
         with self.lock:
-            # If channel already exists, just return (client will be tracked on requests)
+            return channel_id in self.stream_managers
+    
+    def initialize_channel(self, channel_id: str, playback_url: str, engine_host: str, 
+                          engine_port: int, engine_container_id: str, session_info: Dict[str, Any],
+                          api_key: Optional[str] = None):
+        """Initialize a new HLS channel.
+        
+        This method should only be called for new channels. Existing channels should be
+        detected using has_channel() before calling this method.
+        """
+        with self.lock:
+            # Safety check - this should not happen if caller uses has_channel() properly
             if channel_id in self.stream_managers:
-                logger.info(f"HLS channel {channel_id} already exists")
+                logger.warning(f"HLS channel {channel_id} already exists, skipping initialization")
                 return
             
             logger.info(f"Initializing HLS channel {channel_id} with URL {playback_url}")
