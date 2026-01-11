@@ -263,6 +263,23 @@ async def lifespan(app: FastAPI):
     # On startup, provision MIN_REPLICAS total containers
     ensure_minimum(initial_startup=True)
     
+    # Initialize ProxyServer in background to avoid blocking later API calls
+    # This prevents blocking when /proxy/streams/{stream_key}/clients is called
+    # from the panel while an HLS stream is active
+    def init_proxy_server():
+        """Initialize ProxyServer in background thread"""
+        try:
+            from .proxy.server import ProxyServer
+            ProxyServer.get_instance()
+            logger.info("ProxyServer pre-initialized during startup")
+        except Exception as e:
+            logger.warning(f"Failed to pre-initialize ProxyServer: {e}")
+    
+    # Run in thread to avoid blocking startup
+    import threading
+    init_thread = threading.Thread(target=init_proxy_server, daemon=True, name="ProxyServer-Init")
+    init_thread.start()
+    
     # Start remaining monitoring services
     asyncio.create_task(collector.start())
     asyncio.create_task(stream_cleanup.start())  # Start stream cleanup service
