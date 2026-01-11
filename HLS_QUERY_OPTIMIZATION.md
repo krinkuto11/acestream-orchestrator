@@ -110,25 +110,25 @@ Reorganize the HLS handling to check for channel existence **before** engine sel
 
 **Before**: For a typical 30-second HLS session (5 manifest requests)
 ```
-Request #1: 5 INFO messages
-Request #2: 3 INFO messages  
-Request #3: 3 INFO messages
-Request #4: 3 INFO messages
-Request #5: 3 INFO messages
+Request #1: 5 INFO messages (channel creation)
+Request #2: 3 INFO messages (channel reuse)
+Request #3: 3 INFO messages (channel reuse)
+Request #4: 3 INFO messages (channel reuse)
+Request #5: 3 INFO messages (channel reuse)
 Total: 17 INFO messages
 ```
 
 **After**: For the same 30-second session
 ```
-Request #1: 5 INFO messages
-Request #2: 1 DEBUG message
-Request #3: 1 DEBUG message
-Request #4: 1 DEBUG message
-Request #5: 1 DEBUG message
+Request #1: 5 INFO messages (channel creation)
+Request #2: 1 DEBUG message (channel reuse)
+Request #3: 1 DEBUG message (channel reuse)
+Request #4: 1 DEBUG message (channel reuse)
+Request #5: 1 DEBUG message (channel reuse)
 Total: 5 INFO messages, 4 DEBUG messages
 ```
 
-**Improvement**: ~70% reduction in INFO log noise
+**Improvement**: ~71% reduction in INFO log noise (17 → 5)
 
 ### Performance
 

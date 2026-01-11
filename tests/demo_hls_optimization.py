@@ -36,7 +36,7 @@ def simulate_before_fix():
             print("  [INFO] HLS channel XYZ already exists, reusing existing session")
         print()
     
-    print("Total INFO log messages: 5 requests × 2-6 lines = 12+ INFO messages")
+    print("Total INFO log messages: 5 (first request) + 4×3 (subsequent requests) = 17 INFO messages")
     print("Engine selection computations: 5 (once per request)")
     print()
 
@@ -87,7 +87,7 @@ def main():
     print("IMPROVEMENT SUMMARY")
     print("=" * 80)
     print()
-    print("✓ INFO log messages reduced by ~58% (12+ → 5)")
+    print("✓ INFO log messages reduced by ~71% (17 → 5)")
     print("✓ Engine selection overhead reduced by 80% (5 → 1)")
     print("✓ Subsequent requests use DEBUG level for minimal noise")
     print("✓ Behavior now matches TS proxy (select engine only once per stream)")
