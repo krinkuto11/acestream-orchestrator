@@ -11,6 +11,7 @@ import os
 import json
 import logging
 import httpx
+import threading
 
 from .utils.logging import setup
 from .core.config import cfg
@@ -43,6 +44,26 @@ from .proxy.manager import ProxyManager
 logger = logging.getLogger(__name__)
 
 setup()
+
+# Event to track ProxyServer initialization
+_proxy_server_ready = threading.Event()
+
+def _init_proxy_server():
+    """Initialize ProxyServer in background thread during startup.
+    
+    This prevents blocking when /proxy/streams/{stream_key}/clients is called
+    from the panel while an HLS stream is active. The endpoint triggers lazy
+    initialization of ProxyServer which connects to Redis and starts threads,
+    blocking the HTTP response in single-worker uvicorn mode.
+    """
+    try:
+        from .proxy.server import ProxyServer
+        ProxyServer.get_instance()
+        logger.info("ProxyServer pre-initialized during startup")
+    except Exception as e:
+        logger.warning(f"Failed to pre-initialize ProxyServer: {e}")
+    finally:
+        _proxy_server_ready.set()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -264,20 +285,7 @@ async def lifespan(app: FastAPI):
     ensure_minimum(initial_startup=True)
     
     # Initialize ProxyServer in background to avoid blocking later API calls
-    # This prevents blocking when /proxy/streams/{stream_key}/clients is called
-    # from the panel while an HLS stream is active
-    def init_proxy_server():
-        """Initialize ProxyServer in background thread"""
-        try:
-            from .proxy.server import ProxyServer
-            ProxyServer.get_instance()
-            logger.info("ProxyServer pre-initialized during startup")
-        except Exception as e:
-            logger.warning(f"Failed to pre-initialize ProxyServer: {e}")
-    
-    # Run in thread to avoid blocking startup
-    import threading
-    init_thread = threading.Thread(target=init_proxy_server, daemon=True, name="ProxyServer-Init")
+    init_thread = threading.Thread(target=_init_proxy_server, daemon=True, name="ProxyServer-Init")
     init_thread.start()
     
     # Start remaining monitoring services
