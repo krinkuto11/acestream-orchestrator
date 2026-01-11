@@ -10,7 +10,7 @@ import time
 import requests
 import m3u8
 import os
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, Any
 from urllib.parse import urljoin, urlparse
 from .config_helper import ConfigHelper
 
@@ -147,7 +147,7 @@ class StreamManager:
     """Manages HLS stream state and fetching"""
     
     def __init__(self, playback_url: str, channel_id: str, engine_host: str, engine_port: int, 
-                 engine_container_id: str, session_info: Dict[str, any], api_key: Optional[str] = None):
+                 engine_container_id: str, session_info: Dict[str, Any], api_key: Optional[str] = None):
         self.playback_url = playback_url
         self.channel_id = channel_id
         self.engine_host = engine_host
@@ -189,7 +189,7 @@ class StreamManager:
         
         logger.info(f"Initialized HLS stream manager for channel {channel_id}")
     
-    def update_playback_url(self, new_playback_url: str, session_info: Dict[str, any]):
+    def update_playback_url(self, new_playback_url: str, session_info: Dict[str, Any]):
         """Update the playback URL and session info for this stream.
         
         This is called when a new client connects to an existing channel and gets
@@ -557,7 +557,7 @@ class HLSProxyServer:
         logger.info("HLS ProxyServer initialized")
     
     def initialize_channel(self, channel_id: str, playback_url: str, engine_host: str, 
-                          engine_port: int, engine_container_id: str, session_info: Dict[str, any],
+                          engine_port: int, engine_container_id: str, session_info: Dict[str, Any],
                           api_key: Optional[str] = None):
         """Initialize a new HLS channel or update existing channel's playback URL.
         
