@@ -282,6 +282,10 @@ async def lifespan(app: FastAPI):
     # Initialize ProxyServer in background to avoid blocking later API calls
     init_thread = threading.Thread(target=_init_proxy_server, daemon=True, name="ProxyServer-Init")
     init_thread.start()
+    # Note: We don't wait for ProxyServer initialization to complete because:
+    # 1. The app won't receive HTTP requests until lifespan completes
+    # 2. By the time panel loads, initialization should be done (happens in parallel)
+    # 3. ProxyServer.get_instance() is thread-safe (singleton pattern)
     
     # Start remaining monitoring services
     asyncio.create_task(collector.start())
