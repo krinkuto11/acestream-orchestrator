@@ -199,6 +199,9 @@ class StreamManager:
             new_playback_url: New playback URL from AceStream engine
             session_info: Updated session information
         """
+        # Update all session-related data atomically under the lock to ensure
+        # consistency between playback_url and session info. Lock contention is
+        # minimal since this is just updating a few variables.
         with self._playback_url_lock:
             old_url = self.playback_url
             self.playback_url = new_playback_url
