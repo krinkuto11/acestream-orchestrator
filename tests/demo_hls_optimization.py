@@ -87,7 +87,7 @@ def main():
     print("IMPROVEMENT SUMMARY")
     print("=" * 80)
     print()
-    print("✓ INFO log messages reduced by ~60% (12+ → 5)")
+    print("✓ INFO log messages reduced by ~58% (12+ → 5)")
     print("✓ Engine selection overhead reduced by 80% (5 → 1)")
     print("✓ Subsequent requests use DEBUG level for minimal noise")
     print("✓ Behavior now matches TS proxy (select engine only once per stream)")

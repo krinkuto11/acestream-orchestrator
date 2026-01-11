@@ -1766,6 +1766,54 @@ async def ace_getstream(
     client_ip = get_client_ip(request) if request else "unknown"
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
     
+    def select_best_engine():
+        """Select the best available engine using layer-based load balancing.
+        
+        Returns tuple of (selected_engine, current_load)
+        Raises HTTPException if no engines available or all at capacity.
+        """
+        engines = state.list_engines()
+        if not engines:
+            raise HTTPException(
+                status_code=503,
+                detail="No engines available"
+            )
+        
+        # Engine selection: fill engines in layers (round-robin across all engines)
+        # Layer 1: All engines get 1 stream before any gets 2
+        # Layer 2: All engines get 2 streams before any gets 3
+        # Continue until layer (MAX_STREAMS - 1) is filled, then provision new engine
+        # Priority: 1. Engine with LEAST streams (not at max), 2. Forwarded engine
+        active_streams = state.list_streams(status="started")
+        engine_loads = {}
+        for stream in active_streams:
+            cid = stream.container_id
+            engine_loads[cid] = engine_loads.get(cid, 0) + 1
+        
+        # Filter out engines at max capacity
+        max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
+        available_engines = [
+            e for e in engines 
+            if engine_loads.get(e.container_id, 0) < max_streams
+        ]
+        
+        if not available_engines:
+            raise HTTPException(
+                status_code=503,
+                detail=f"All engines at maximum capacity ({max_streams} streams per engine)"
+            )
+        
+        # Sort: (load, not forwarded) - prefer LEAST load first (layer filling), then forwarded
+        # This ensures all engines reach same level before any engine gets another stream
+        engines_sorted = sorted(available_engines, key=lambda e: (
+            engine_loads.get(e.container_id, 0),  # Ascending order (least streams first)
+            not e.forwarded  # Forwarded engines preferred when load is equal
+        ))
+        selected_engine = engines_sorted[0]
+        current_load = engine_loads.get(selected_engine.container_id, 0)
+        
+        return selected_engine, current_load
+    
     try:
         # Handle HLS mode differently from TS mode
         if stream_mode == 'HLS':
@@ -1807,49 +1855,11 @@ async def ace_getstream(
                     raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
             
             # Channel doesn't exist - need to select engine and create new session
-            # Select best engine
-            engines = state.list_engines()
-            if not engines:
-                raise HTTPException(
-                    status_code=503,
-                    detail="No engines available"
-                )
-            
-            # Engine selection: fill engines in layers (round-robin across all engines)
-            # Layer 1: All engines get 1 stream before any gets 2
-            # Layer 2: All engines get 2 streams before any gets 3
-            # Continue until layer (MAX_STREAMS - 1) is filled, then provision new engine
-            # Priority: 1. Engine with LEAST streams (not at max), 2. Forwarded engine
-            active_streams = state.list_streams(status="started")
-            engine_loads = {}
-            for stream in active_streams:
-                cid = stream.container_id
-                engine_loads[cid] = engine_loads.get(cid, 0) + 1
-            
-            # Filter out engines at max capacity
-            max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
-            available_engines = [
-                e for e in engines 
-                if engine_loads.get(e.container_id, 0) < max_streams
-            ]
-            
-            if not available_engines:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"All engines at maximum capacity ({max_streams} streams per engine)"
-                )
-            
-            # Sort: (load, not forwarded) - prefer LEAST load first (layer filling), then forwarded
-            # This ensures all engines reach same level before any engine gets another stream
-            engines_sorted = sorted(available_engines, key=lambda e: (
-                engine_loads.get(e.container_id, 0),  # Ascending order (least streams first)
-                not e.forwarded  # Forwarded engines preferred when load is equal
-            ))
-            selected_engine = engines_sorted[0]
+            selected_engine, current_load = select_best_engine()
             
             logger.info(
                 f"Selected engine {selected_engine.container_id[:12]} for new {stream_mode} stream {id} "
-                f"(forwarded={selected_engine.forwarded}, current_load={engine_loads.get(selected_engine.container_id, 0)})"
+                f"(forwarded={selected_engine.forwarded}, current_load={current_load})"
             )
             
             logger.info(
@@ -1929,49 +1939,11 @@ async def ace_getstream(
                 raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
         else:
             # TS mode - use existing ts_proxy architecture
-            # Select best engine
-            engines = state.list_engines()
-            if not engines:
-                raise HTTPException(
-                    status_code=503,
-                    detail="No engines available"
-                )
-            
-            # Engine selection: fill engines in layers (round-robin across all engines)
-            # Layer 1: All engines get 1 stream before any gets 2
-            # Layer 2: All engines get 2 streams before any gets 3
-            # Continue until layer (MAX_STREAMS - 1) is filled, then provision new engine
-            # Priority: 1. Engine with LEAST streams (not at max), 2. Forwarded engine
-            active_streams = state.list_streams(status="started")
-            engine_loads = {}
-            for stream in active_streams:
-                cid = stream.container_id
-                engine_loads[cid] = engine_loads.get(cid, 0) + 1
-            
-            # Filter out engines at max capacity
-            max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
-            available_engines = [
-                e for e in engines 
-                if engine_loads.get(e.container_id, 0) < max_streams
-            ]
-            
-            if not available_engines:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"All engines at maximum capacity ({max_streams} streams per engine)"
-                )
-            
-            # Sort: (load, not forwarded) - prefer LEAST load first (layer filling), then forwarded
-            # This ensures all engines reach same level before any engine gets another stream
-            engines_sorted = sorted(available_engines, key=lambda e: (
-                engine_loads.get(e.container_id, 0),  # Ascending order (least streams first)
-                not e.forwarded  # Forwarded engines preferred when load is equal
-            ))
-            selected_engine = engines_sorted[0]
+            selected_engine, current_load = select_best_engine()
             
             logger.info(
                 f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {id} "
-                f"(forwarded={selected_engine.forwarded}, current_load={engine_loads.get(selected_engine.container_id, 0)})"
+                f"(forwarded={selected_engine.forwarded}, current_load={current_load})"
             )
             
             logger.info(
