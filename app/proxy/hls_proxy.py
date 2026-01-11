@@ -203,67 +203,42 @@ class StreamManager:
                 logger.warning(f"Failed to send stop command: {e}")
     
     def _send_stream_started_event(self):
-        """Send stream started event to orchestrator in background thread"""
+        """Send stream started event to orchestrator using internal handler (no HTTP)"""
         def _send_event():
             try:
-                # Get orchestrator URL from environment
-                orchestrator_url = os.getenv('ORCHESTRATOR_URL', 'http://localhost:8000')
+                # Import here to avoid circular dependencies
+                from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
+                from ..services.internal_events import handle_stream_started
                 
-                event_data = {
-                    "container_id": self.engine_container_id,
-                    "engine": {
-                        "host": self.engine_host,
-                        "port": self.engine_port
-                    },
-                    "stream": {
-                        "key_type": "infohash",
-                        "key": self.channel_id
-                    },
-                    "session": {
-                        "playback_session_id": self.playback_session_id,
-                        "stat_url": self.stat_url,
-                        "command_url": self.command_url,
-                        "is_live": self.is_live
-                    },
-                    "labels": {
+                # Build event object
+                event = StreamStartedEvent(
+                    container_id=self.engine_container_id,
+                    engine=EngineAddress(
+                        host=self.engine_host,
+                        port=self.engine_port
+                    ),
+                    stream=StreamKey(
+                        key_type="infohash",
+                        key=self.channel_id
+                    ),
+                    session=SessionInfo(
+                        playback_session_id=self.playback_session_id,
+                        stat_url=self.stat_url,
+                        command_url=self.command_url,
+                        is_live=self.is_live
+                    ),
+                    labels={
                         "source": "hls_proxy",
                         "stream_mode": "HLS"
                     }
-                }
-                
-                headers = {}
-                if self.api_key:
-                    headers['Authorization'] = f'Bearer {self.api_key}'
-                    logger.debug(f"Sending HLS stream started event with API key to {orchestrator_url}/events/stream_started")
-                else:
-                    logger.warning("No API key configured for HLS stream started event - may fail with 401 Unauthorized")
-                
-                logger.debug(f"HLS stream started event data: {event_data}")
-                
-                response = requests.post(
-                    f"{orchestrator_url}/events/stream_started",
-                    json=event_data,
-                    headers=headers,
-                    timeout=5
                 )
                 
-                logger.debug(f"HLS stream started event response status: {response.status_code}")
-                
-                response.raise_for_status()
-                
-                # Get stream_id from response
-                result = response.json()
-                self.stream_id = result.get('id')
+                # Call internal handler directly (no HTTP request)
+                result = handle_stream_started(event)
+                self.stream_id = result.id
                 
                 logger.info(f"Sent HLS stream started event to orchestrator: stream_id={self.stream_id}")
                 
-            except requests.exceptions.HTTPError as e:
-                if e.response and e.response.status_code == 401:
-                    logger.error(f"Failed to send HLS stream started event - 401 Unauthorized. Check API_KEY configuration.")
-                    logger.error(f"API key present: {bool(self.api_key)}, Orchestrator URL: {orchestrator_url}")
-                else:
-                    logger.warning(f"Failed to send HLS stream started event to orchestrator: {e}")
-                logger.debug(f"Exception details: {e}", exc_info=True)
             except Exception as e:
                 logger.warning(f"Failed to send HLS stream started event to orchestrator: {e}")
                 logger.debug(f"Exception details: {e}", exc_info=True)
@@ -277,7 +252,7 @@ class StreamManager:
         event_thread.start()
     
     def _send_stream_ended_event(self, reason="normal"):
-        """Send stream ended event to orchestrator in background thread"""
+        """Send stream ended event to orchestrator using internal handler (no HTTP)"""
         # Check if we've already sent the ended event
         if self._ended_event_sent:
             logger.debug(f"HLS stream ended event already sent for stream_id={self.stream_id}, skipping")
@@ -290,46 +265,25 @@ class StreamManager:
         
         def _send_event():
             try:
-                orchestrator_url = os.getenv('ORCHESTRATOR_URL', 'http://localhost:8000')
+                # Import here to avoid circular dependencies
+                from ..models.schemas import StreamEndedEvent
+                from ..services.internal_events import handle_stream_ended
                 
-                event_data = {
-                    "container_id": self.engine_container_id,
-                    "stream_id": self.stream_id,
-                    "reason": reason
-                }
-                
-                headers = {}
-                if self.api_key:
-                    headers['Authorization'] = f'Bearer {self.api_key}'
-                    logger.debug(f"Sending HLS stream ended event with API key to {orchestrator_url}/events/stream_ended")
-                else:
-                    logger.warning("No API key configured for HLS stream ended event - may fail with 401 Unauthorized")
-                
-                logger.debug(f"HLS stream ended event data: {event_data}")
-                
-                response = requests.post(
-                    f"{orchestrator_url}/events/stream_ended",
-                    json=event_data,
-                    headers=headers,
-                    timeout=5
+                # Build event object
+                event = StreamEndedEvent(
+                    container_id=self.engine_container_id,
+                    stream_id=self.stream_id,
+                    reason=reason
                 )
                 
-                logger.debug(f"HLS stream ended event response status: {response.status_code}")
-                
-                response.raise_for_status()
+                # Call internal handler directly (no HTTP request)
+                handle_stream_ended(event)
                 
                 # Mark as sent
                 self._ended_event_sent = True
                 
                 logger.info(f"Sent HLS stream ended event to orchestrator: stream_id={self.stream_id}, reason={reason}")
                 
-            except requests.exceptions.HTTPError as e:
-                if e.response and e.response.status_code == 401:
-                    logger.error(f"Failed to send HLS stream ended event - 401 Unauthorized. Check API_KEY configuration.")
-                    logger.error(f"API key present: {bool(self.api_key)}, Orchestrator URL: {orchestrator_url}")
-                else:
-                    logger.warning(f"Failed to send HLS stream ended event to orchestrator: {e}")
-                logger.debug(f"Exception details: {e}", exc_info=True)
             except Exception as e:
                 logger.warning(f"Failed to send HLS stream ended event to orchestrator: {e}")
                 logger.debug(f"Exception details: {e}", exc_info=True)
