@@ -395,6 +395,9 @@ class StreamFetcher:
         while self.manager.running:
             try:
                 # Fetch manifest
+                # Note: playback_url is immutable after channel initialization.
+                # The has_channel() check in main.py ensures we don't create duplicate
+                # channels, so there's no risk of the URL changing during fetch.
                 response = self.session.get(self.manager.playback_url, timeout=10)
                 response.raise_for_status()
                 
