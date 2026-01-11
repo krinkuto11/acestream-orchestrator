@@ -11,6 +11,7 @@ import os
 import json
 import logging
 import httpx
+import threading
 
 from .utils.logging import setup
 from .core.config import cfg
@@ -43,6 +44,21 @@ from .proxy.manager import ProxyManager
 logger = logging.getLogger(__name__)
 
 setup()
+
+def _init_proxy_server():
+    """Initialize ProxyServer in background thread during startup.
+    
+    This prevents blocking when /proxy/streams/{stream_key}/clients is called
+    from the panel while an HLS stream is active. The endpoint triggers lazy
+    initialization of ProxyServer which connects to Redis and starts threads,
+    blocking the HTTP response in single-worker uvicorn mode.
+    """
+    try:
+        from .proxy.server import ProxyServer
+        ProxyServer.get_instance()
+        logger.info("ProxyServer pre-initialized during startup")
+    except Exception as e:
+        logger.warning(f"Failed to pre-initialize ProxyServer: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -262,6 +278,14 @@ async def lifespan(app: FastAPI):
     # Now provision engines with Gluetun health checks working
     # On startup, provision MIN_REPLICAS total containers
     ensure_minimum(initial_startup=True)
+    
+    # Initialize ProxyServer in background to avoid blocking later API calls
+    init_thread = threading.Thread(target=_init_proxy_server, daemon=True, name="ProxyServer-Init")
+    init_thread.start()
+    # Note: We don't wait for ProxyServer initialization to complete because:
+    # 1. The app won't receive HTTP requests until lifespan completes
+    # 2. By the time panel loads, initialization should be done (happens in parallel)
+    # 3. ProxyServer.get_instance() is thread-safe (singleton pattern)
     
     # Start remaining monitoring services
     asyncio.create_task(collector.start())
