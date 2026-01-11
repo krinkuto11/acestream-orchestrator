@@ -207,17 +207,17 @@ class StreamManager:
         def _send_event():
             try:
                 # Import here to avoid circular dependencies
-                from ..models.schemas import StreamStartedEvent, StreamInfo, EngineInfo, SessionInfo
+                from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
                 from ..services.internal_events import handle_stream_started
                 
                 # Build event object
                 event = StreamStartedEvent(
                     container_id=self.engine_container_id,
-                    engine=EngineInfo(
+                    engine=EngineAddress(
                         host=self.engine_host,
                         port=self.engine_port
                     ),
-                    stream=StreamInfo(
+                    stream=StreamKey(
                         key_type="infohash",
                         key=self.channel_id
                     ),
