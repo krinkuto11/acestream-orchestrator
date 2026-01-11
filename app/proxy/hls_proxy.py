@@ -154,6 +154,7 @@ class StreamManager:
         self.engine_port = engine_port
         self.engine_container_id = engine_container_id
         self.running = True
+        self._playback_url_lock = threading.Lock()  # Lock for thread-safe playback URL updates
         
         # Session info from AceStream API
         self.playback_session_id = session_info.get('playback_session_id')
@@ -187,6 +188,30 @@ class StreamManager:
         self.cleanup_running = False
         
         logger.info(f"Initialized HLS stream manager for channel {channel_id}")
+    
+    def update_playback_url(self, new_playback_url: str, session_info: Dict[str, any]):
+        """Update the playback URL and session info for this stream.
+        
+        This is called when a new client connects to an existing channel and gets
+        a new playback session from the AceStream engine.
+        
+        Args:
+            new_playback_url: New playback URL from AceStream engine
+            session_info: Updated session information
+        """
+        with self._playback_url_lock:
+            old_url = self.playback_url
+            self.playback_url = new_playback_url
+            
+            # Update session info
+            self.playback_session_id = session_info.get('playback_session_id')
+            self.stat_url = session_info.get('stat_url')
+            self.command_url = session_info.get('command_url')
+            self.is_live = session_info.get('is_live', 1)
+            
+            logger.info(f"Updated playback URL for channel {self.channel_id}")
+            logger.debug(f"Old URL: {old_url}")
+            logger.debug(f"New URL: {new_playback_url}")
     
     def stop(self):
         """Stop the stream manager"""
@@ -394,8 +419,12 @@ class StreamFetcher:
         
         while self.manager.running:
             try:
+                # Get current playback URL (thread-safe)
+                with self.manager._playback_url_lock:
+                    current_playback_url = self.manager.playback_url
+                
                 # Fetch manifest
-                response = self.session.get(self.manager.playback_url, timeout=10)
+                response = self.session.get(current_playback_url, timeout=10)
                 response.raise_for_status()
                 
                 manifest = m3u8.loads(response.text)
@@ -530,11 +559,17 @@ class HLSProxyServer:
     def initialize_channel(self, channel_id: str, playback_url: str, engine_host: str, 
                           engine_port: int, engine_container_id: str, session_info: Dict[str, any],
                           api_key: Optional[str] = None):
-        """Initialize a new HLS channel"""
+        """Initialize a new HLS channel or update existing channel's playback URL.
+        
+        When a channel already exists (another client is already connected), this updates
+        the playback URL to the new session URL to prevent 403 Forbidden errors.
+        """
         with self.lock:
-            # If channel already exists, just return (client will be tracked on requests)
+            # If channel already exists, update the playback URL for the new session
             if channel_id in self.stream_managers:
-                logger.info(f"HLS channel {channel_id} already exists")
+                logger.info(f"HLS channel {channel_id} already exists, updating playback URL")
+                manager = self.stream_managers[channel_id]
+                manager.update_playback_url(playback_url, session_info)
                 return
             
             logger.info(f"Initializing HLS channel {channel_id} with URL {playback_url}")
