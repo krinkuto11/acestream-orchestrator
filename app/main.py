@@ -45,9 +45,6 @@ logger = logging.getLogger(__name__)
 
 setup()
 
-# Event to track ProxyServer initialization
-_proxy_server_ready = threading.Event()
-
 def _init_proxy_server():
     """Initialize ProxyServer in background thread during startup.
     
@@ -62,8 +59,6 @@ def _init_proxy_server():
         logger.info("ProxyServer pre-initialized during startup")
     except Exception as e:
         logger.warning(f"Failed to pre-initialize ProxyServer: {e}")
-    finally:
-        _proxy_server_ready.set()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
