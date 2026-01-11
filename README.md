@@ -13,6 +13,12 @@ Dynamic orchestration service for AceStream engines with health monitoring, usag
 
 Provisions AceStream engine containers on-demand, monitors their health, collects stream statistics, and provides a dashboard for operational visibility.
 
+**How to play a stream:**<br/>
+In VLC or other player that supports playing a network stream:
+```
+<orchestrator_ip>:<port|8000>/ace/getstream?id=<id>
+```
+
 ## Quick Start
 
 ### Standalone (No VPN)
