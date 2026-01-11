@@ -41,7 +41,7 @@ def test_cleanup_skips_during_initial_buffering():
     )
     
     # Verify initial state
-    assert manager.initial_buffering == True, "Manager should start in initial_buffering state"
+    assert manager.initial_buffering, "Manager should start in initial_buffering state"
     
     # Create client manager and add a client
     client_manager = ClientManager()
