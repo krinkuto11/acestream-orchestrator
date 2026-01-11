@@ -5,6 +5,11 @@ This module provides functions to handle stream started/ended events without
 making HTTP requests. This avoids deadlocks when uvicorn runs in single-worker
 mode, as the proxy can call these functions directly instead of POSTing to
 localhost:8000/events/*.
+
+SECURITY NOTE: These functions do NOT require API key authentication because they
+are internal to the orchestrator process and only called by trusted proxy threads.
+External access to stream events still requires API key authentication via the
+HTTP endpoints in main.py (/events/stream_started, /events/stream_ended).
 """
 
 import logging
