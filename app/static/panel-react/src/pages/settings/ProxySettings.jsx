@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { AlertCircle, CheckCircle2, Info } from 'lucide-react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 export function ProxySettings({ apiKey, orchUrl }) {
   const [loading, setLoading] = useState(false)
@@ -22,11 +23,26 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [streamTimeout, setStreamTimeout] = useState(60)
   const [channelShutdownDelay, setChannelShutdownDelay] = useState(5)
   const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(DEFAULT_MAX_STREAMS_PER_ENGINE)
+  const [streamMode, setStreamMode] = useState('TS')
+  const [engineVariant, setEngineVariant] = useState('')
+  
+  // HLS-specific state
+  const [hlsMaxSegments, setHlsMaxSegments] = useState(20)
+  const [hlsInitialSegments, setHlsInitialSegments] = useState(3)
+  const [hlsWindowSize, setHlsWindowSize] = useState(6)
+  const [hlsBufferReadyTimeout, setHlsBufferReadyTimeout] = useState(30)
+  const [hlsFirstSegmentTimeout, setHlsFirstSegmentTimeout] = useState(30)
+  const [hlsInitialBufferSeconds, setHlsInitialBufferSeconds] = useState(10)
+  const [hlsMaxInitialSegments, setHlsMaxInitialSegments] = useState(10)
+  const [hlsSegmentFetchInterval, setHlsSegmentFetchInterval] = useState(0.5)
   
   // Read-only config for display
   const [vlcUserAgent, setVlcUserAgent] = useState('')
   const [chunkSize, setChunkSize] = useState(0)
   const [bufferChunkSize, setBufferChunkSize] = useState(0)
+  
+  // Check if HLS is supported
+  const hlsSupported = engineVariant.startsWith('krinkuto11-amd64')
   
   useEffect(() => {
     fetchProxyConfig()
@@ -45,9 +61,20 @@ export function ProxySettings({ apiKey, orchUrl }) {
         setStreamTimeout(data.stream_timeout)
         setChannelShutdownDelay(data.channel_shutdown_delay)
         setMaxStreamsPerEngine(data.max_streams_per_engine || DEFAULT_MAX_STREAMS_PER_ENGINE)
+        setStreamMode(data.stream_mode || 'TS')
+        setEngineVariant(data.engine_variant || '')
         setVlcUserAgent(data.vlc_user_agent)
         setChunkSize(data.chunk_size)
         setBufferChunkSize(data.buffer_chunk_size)
+        // HLS-specific settings
+        setHlsMaxSegments(data.hls_max_segments || 20)
+        setHlsInitialSegments(data.hls_initial_segments || 3)
+        setHlsWindowSize(data.hls_window_size || 6)
+        setHlsBufferReadyTimeout(data.hls_buffer_ready_timeout || 30)
+        setHlsFirstSegmentTimeout(data.hls_first_segment_timeout || 30)
+        setHlsInitialBufferSeconds(data.hls_initial_buffer_seconds || 10)
+        setHlsMaxInitialSegments(data.hls_max_initial_segments || 10)
+        setHlsSegmentFetchInterval(data.hls_segment_fetch_interval || 0.5)
       }
     } catch (err) {
       console.error('Failed to fetch proxy config:', err)
@@ -74,6 +101,16 @@ export function ProxySettings({ apiKey, orchUrl }) {
       params.append('stream_timeout', streamTimeout)
       params.append('channel_shutdown_delay', channelShutdownDelay)
       params.append('max_streams_per_engine', maxStreamsPerEngine)
+      params.append('stream_mode', streamMode)
+      // HLS-specific parameters
+      params.append('hls_max_segments', hlsMaxSegments)
+      params.append('hls_initial_segments', hlsInitialSegments)
+      params.append('hls_window_size', hlsWindowSize)
+      params.append('hls_buffer_ready_timeout', hlsBufferReadyTimeout)
+      params.append('hls_first_segment_timeout', hlsFirstSegmentTimeout)
+      params.append('hls_initial_buffer_seconds', hlsInitialBufferSeconds)
+      params.append('hls_max_initial_segments', hlsMaxInitialSegments)
+      params.append('hls_segment_fetch_interval', hlsSegmentFetchInterval)
       
       const response = await fetch(`${orchUrl}/proxy/config?${params}`, {
         method: 'POST',
@@ -99,6 +136,55 @@ export function ProxySettings({ apiKey, orchUrl }) {
   
   return (
     <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Stream Mode</CardTitle>
+          <CardDescription>
+            Choose between MPEG-TS and HLS streaming modes
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="stream-mode">Stream Mode</Label>
+            <Select 
+              value={streamMode} 
+              onValueChange={setStreamMode}
+              disabled={!hlsSupported && streamMode === 'TS'}
+            >
+              <SelectTrigger id="stream-mode">
+                <SelectValue placeholder="Select stream mode" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="TS">MPEG-TS (Transport Stream)</SelectItem>
+                <SelectItem value="HLS" disabled={!hlsSupported}>
+                  HLS (HTTP Live Streaming) {!hlsSupported && '- Requires krinkuto11-amd64 variant'}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              The /ace/getstream endpoint will return streams in the selected mode.
+              {!hlsSupported && (
+                <>
+                  <br />
+                  <span className="text-amber-600 font-semibold">
+                    ⚠️ HLS mode is only available for krinkuto11-amd64 engine variant.
+                    Current variant: {engineVariant || 'Unknown'}
+                  </span>
+                </>
+              )}
+              {hlsSupported && (
+                <>
+                  <br />
+                  <span className="text-green-600 font-semibold">
+                    ✓ HLS mode is supported for your current variant ({engineVariant})
+                  </span>
+                </>
+              )}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+      
       <Card>
         <CardHeader>
           <CardTitle>Stream Buffer Settings</CardTitle>
@@ -264,6 +350,155 @@ export function ProxySettings({ apiKey, orchUrl }) {
         </CardContent>
       </Card>
       
+      {streamMode === 'HLS' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>HLS Buffering Settings</CardTitle>
+            <CardDescription>
+              Configure HLS segment buffering and playback parameters
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="hls-max-segments">Max Segments to Buffer</Label>
+                <Input
+                  id="hls-max-segments"
+                  type="number"
+                  min="5"
+                  max="100"
+                  value={hlsMaxSegments}
+                  onChange={(e) => setHlsMaxSegments(parseInt(e.target.value) || 20)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Maximum number of segments to keep in buffer.
+                  <br /><strong>Range:</strong> 5-100. <strong>Default:</strong> 20.
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="hls-initial-segments">Initial Segments</Label>
+                <Input
+                  id="hls-initial-segments"
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={hlsInitialSegments}
+                  onChange={(e) => setHlsInitialSegments(parseInt(e.target.value) || 3)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Minimum segments before starting playback.
+                  <br /><strong>Range:</strong> 1-10. <strong>Default:</strong> 3.
+                </p>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="hls-window-size">Manifest Window Size</Label>
+                <Input
+                  id="hls-window-size"
+                  type="number"
+                  min="3"
+                  max="20"
+                  value={hlsWindowSize}
+                  onChange={(e) => setHlsWindowSize(parseInt(e.target.value) || 6)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Number of segments in manifest window.
+                  <br /><strong>Range:</strong> 3-20. <strong>Default:</strong> 6.
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="hls-initial-buffer-seconds">Initial Buffer Duration (sec)</Label>
+                <Input
+                  id="hls-initial-buffer-seconds"
+                  type="number"
+                  min="5"
+                  max="60"
+                  value={hlsInitialBufferSeconds}
+                  onChange={(e) => setHlsInitialBufferSeconds(parseInt(e.target.value) || 10)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Target duration for initial buffer.
+                  <br /><strong>Range:</strong> 5-60s. <strong>Default:</strong> 10s.
+                </p>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="hls-buffer-ready-timeout">Buffer Ready Timeout (sec)</Label>
+                <Input
+                  id="hls-buffer-ready-timeout"
+                  type="number"
+                  min="5"
+                  max="120"
+                  value={hlsBufferReadyTimeout}
+                  onChange={(e) => setHlsBufferReadyTimeout(parseInt(e.target.value) || 30)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Timeout for initial buffer to be ready.
+                  <br /><strong>Range:</strong> 5-120s. <strong>Default:</strong> 30s.
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="hls-first-segment-timeout">First Segment Timeout (sec)</Label>
+                <Input
+                  id="hls-first-segment-timeout"
+                  type="number"
+                  min="5"
+                  max="120"
+                  value={hlsFirstSegmentTimeout}
+                  onChange={(e) => setHlsFirstSegmentTimeout(parseInt(e.target.value) || 30)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Timeout for first segment to be available.
+                  <br /><strong>Range:</strong> 5-120s. <strong>Default:</strong> 30s.
+                </p>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="hls-max-initial-segments">Max Initial Segments</Label>
+                <Input
+                  id="hls-max-initial-segments"
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={hlsMaxInitialSegments}
+                  onChange={(e) => setHlsMaxInitialSegments(parseInt(e.target.value) || 10)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Maximum segments to fetch during initial buffering.
+                  <br /><strong>Range:</strong> 1-20. <strong>Default:</strong> 10.
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="hls-segment-fetch-interval">Fetch Interval Multiplier</Label>
+                <Input
+                  id="hls-segment-fetch-interval"
+                  type="number"
+                  min="0.1"
+                  max="2.0"
+                  step="0.1"
+                  value={hlsSegmentFetchInterval}
+                  onChange={(e) => setHlsSegmentFetchInterval(parseFloat(e.target.value) || 0.5)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Multiplier for manifest fetch interval (× segment duration).
+                  <br /><strong>Range:</strong> 0.1-2.0. <strong>Default:</strong> 0.5.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      
       <Card>
         <CardHeader>
           <CardTitle>Read-Only Configuration</CardTitle>
@@ -334,6 +569,10 @@ export function ProxySettings({ apiKey, orchUrl }) {
           <strong>Note:</strong> Changes to proxy settings affect new streams only. 
           Existing active streams will continue using their original settings. 
           Settings are persisted to a JSON file and will be restored on restart.
+          <br />
+          <strong>Stream Mode:</strong> The /ace/getstream endpoint will return streams in {streamMode} format.
+          {streamMode === 'HLS' && ' HLS manifests (.m3u8) and segments will be served.'}
+          {streamMode === 'TS' && ' MPEG-TS (video/mp2t) streams will be served.'}
         </div>
       </div>
     </div>

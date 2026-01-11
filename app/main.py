@@ -11,6 +11,7 @@ import os
 import json
 import logging
 import httpx
+import threading
 
 from .utils.logging import setup
 from .core.config import cfg
@@ -43,6 +44,21 @@ from .proxy.manager import ProxyManager
 logger = logging.getLogger(__name__)
 
 setup()
+
+def _init_proxy_server():
+    """Initialize ProxyServer in background thread during startup.
+    
+    This prevents blocking when /proxy/streams/{stream_key}/clients is called
+    from the panel while an HLS stream is active. The endpoint triggers lazy
+    initialization of ProxyServer which connects to Redis and starts threads,
+    blocking the HTTP response in single-worker uvicorn mode.
+    """
+    try:
+        from .proxy.server import ProxyServer
+        ProxyServer.get_instance()
+        logger.info("ProxyServer pre-initialized during startup")
+    except Exception as e:
+        logger.warning(f"Failed to pre-initialize ProxyServer: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -132,6 +148,14 @@ async def lifespan(app: FastAPI):
                 ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_settings['channel_shutdown_delay']
             if 'max_streams_per_engine' in proxy_settings:
                 cfg.ACEXY_MAX_STREAMS_PER_ENGINE = proxy_settings['max_streams_per_engine']
+            if 'stream_mode' in proxy_settings:
+                # Validate stream_mode before loading
+                mode = proxy_settings['stream_mode']
+                if mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
+                    logger.warning(f"HLS mode not supported for variant {cfg.ENGINE_VARIANT}, reverting to TS mode")
+                    ProxyConfig.STREAM_MODE = 'TS'
+                else:
+                    ProxyConfig.STREAM_MODE = mode
             logger.info("Proxy settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
@@ -254,6 +278,14 @@ async def lifespan(app: FastAPI):
     # Now provision engines with Gluetun health checks working
     # On startup, provision MIN_REPLICAS total containers
     ensure_minimum(initial_startup=True)
+    
+    # Initialize ProxyServer in background to avoid blocking later API calls
+    init_thread = threading.Thread(target=_init_proxy_server, daemon=True, name="ProxyServer-Init")
+    init_thread.start()
+    # Note: We don't wait for ProxyServer initialization to complete because:
+    # 1. The app won't receive HTTP requests until lifespan completes
+    # 2. By the time panel loads, initialization should be done (happens in parallel)
+    # 3. ProxyServer.get_instance() is thread-safe (singleton pattern)
     
     # Start remaining monitoring services
     asyncio.create_task(collector.start())
@@ -1413,6 +1445,16 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
             # Clear state
             cleanup_on_shutdown()
             
+            # Switch HLS mode back to TS (MPEG-TS) if it was set to HLS
+            # This prevents issues when users change engine variants since HLS may not be supported on all variants
+            current_stream_mode = os.getenv('PROXY_STREAM_MODE', 'TS')
+            if current_stream_mode == 'HLS':
+                logger.info("Switching stream mode from HLS to TS (MPEG-TS) for reprovisioning")
+                os.environ['PROXY_STREAM_MODE'] = 'TS'
+                # Reload the config to pick up the change
+                from .proxy.config_helper import Config
+                Config.STREAM_MODE = 'TS'
+            
             # Reload custom config to ensure we have latest settings
             reload_config()
             
@@ -1698,25 +1740,46 @@ async def ace_getstream(
 ):
     """Proxy endpoint for AceStream video streams with multiplexing.
     
+    This endpoint supports both MPEG-TS and HLS streaming modes based on proxy configuration.
+    The mode can be configured in Proxy Settings (HLS only available for krinkuto11-amd64 variant).
+    
     This endpoint:
     1. Checks if stream is blacklisted for looping
-    2. Selects the best available engine (prioritizes forwarded, balances load)
-    3. Multiplexes multiple clients to the same stream via battle-tested ts_proxy architecture
-    4. Automatically manages stream lifecycle with heartbeat monitoring
-    5. Sends events to orchestrator for panel visibility
+    2. Validates HLS mode is supported if configured
+    3. Selects the best available engine (prioritizes forwarded, balances load)
+    4. Multiplexes multiple clients to the same stream via battle-tested ts_proxy architecture
+    5. Automatically manages stream lifecycle with heartbeat monitoring
+    6. Sends events to orchestrator for panel visibility
     
     Args:
         id: AceStream content ID (infohash or content_id)
         request: FastAPI Request object for client info
         
     Returns:
-        Streaming response with video data
+        Streaming response with video data (TS or HLS based on configuration)
     """
     from fastapi.responses import StreamingResponse
     from uuid import uuid4
     from app.proxy.stream_generator import create_stream_generator
     from app.proxy.utils import get_client_ip
+    from app.proxy.config_helper import Config as ProxyConfig
     from .services.looping_streams import looping_streams_tracker
+    
+    # Get current stream mode
+    stream_mode = ProxyConfig.STREAM_MODE
+    
+    # Check if HLS mode is configured but not supported
+    if stream_mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
+        logger.error(f"HLS mode configured but not supported for variant {cfg.ENGINE_VARIANT}")
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "error": "hls_not_supported",
+                "message": f"HLS streaming is only supported for krinkuto11-amd64 variant. Current variant: {cfg.ENGINE_VARIANT}. Please change stream mode to TS in Proxy Settings.",
+                "current_variant": cfg.ENGINE_VARIANT,
+                "current_mode": stream_mode
+            }
+        )
     
     # Check if stream is on the looping blacklist
     if looping_streams_tracker.is_looping(id):
@@ -1737,8 +1800,12 @@ async def ace_getstream(
     client_ip = get_client_ip(request) if request else "unknown"
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
     
-    try:
-        # Select best engine
+    def select_best_engine():
+        """Select the best available engine using layer-based load balancing.
+        
+        Returns tuple of (selected_engine, current_load)
+        Raises HTTPException if no engines available or all at capacity.
+        """
         engines = state.list_engines()
         if not engines:
             raise HTTPException(
@@ -1777,51 +1844,181 @@ async def ace_getstream(
             not e.forwarded  # Forwarded engines preferred when load is equal
         ))
         selected_engine = engines_sorted[0]
+        current_load = engine_loads.get(selected_engine.container_id, 0)
         
-        logger.info(
-            f"Selected engine {selected_engine.container_id[:12]} for stream {id} "
-            f"(forwarded={selected_engine.forwarded}, current_load={engine_loads.get(selected_engine.container_id, 0)})"
-        )
-        
-        # Get proxy instance
-        proxy = ProxyManager.get_instance()
-        
-        # Start stream if not exists (idempotent)
-        success = proxy.start_stream(
-            content_id=id,
-            engine_host=selected_engine.host,
-            engine_port=selected_engine.port,
-            engine_container_id=selected_engine.container_id
-        )
-        
-        if not success:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to start stream session"
+        return selected_engine, current_load
+    
+    try:
+        # Handle HLS mode differently from TS mode
+        if stream_mode == 'HLS':
+            # For HLS, use the FastAPI-based HLS proxy
+            from app.proxy.hls_proxy import HLSProxyServer
+            import requests
+            from uuid import uuid4
+            
+            # Get HLS proxy instance
+            hls_proxy = HLSProxyServer.get_instance()
+            
+            # Check if channel already exists - do this BEFORE engine selection to avoid
+            # unnecessary computation and logging on every manifest/segment request
+            if hls_proxy.has_channel(id):
+                # Channel already exists - reuse existing session
+                # Skip engine selection and just serve the manifest
+                logger.debug(f"HLS channel {id} already exists, serving manifest to client {client_id} from {client_ip}")
+                
+                try:
+                    # Track client activity for this request
+                    hls_proxy.record_client_activity(id, client_ip)
+                    
+                    manifest_content = hls_proxy.get_manifest(id)
+                    
+                    # Note: In HLS, clients make multiple requests (manifest + segments)
+                    # Client activity is tracked on each request, not per connection
+                    # DO NOT remove client here - let inactivity timeout handle cleanup
+                    
+                    return StreamingResponse(
+                        iter([manifest_content.encode('utf-8')]),
+                        media_type="application/vnd.apple.mpegurl",
+                        headers={
+                            "Cache-Control": "no-cache, no-store, must-revalidate",
+                            "Connection": "keep-alive",
+                        }
+                    )
+                except TimeoutError as e:
+                    logger.error(f"Timeout getting HLS manifest: {e}")
+                    raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
+            
+            # Channel doesn't exist - need to select engine and create new session
+            selected_engine, current_load = select_best_engine()
+            
+            logger.info(
+                f"Selected engine {selected_engine.container_id[:12]} for new {stream_mode} stream {id} "
+                f"(forwarded={selected_engine.forwarded}, current_load={current_load})"
             )
-        
-        logger.info(
-            f"Client {client_id} connecting to stream {id} from {client_ip}"
-        )
-        
-        # Create stream generator
-        generator = create_stream_generator(
-            content_id=id,
-            client_id=client_id,
-            client_ip=client_ip,
-            client_user_agent=user_agent,
-            stream_initializing=False
-        )
-        
-        # Return streaming response
-        return StreamingResponse(
-            generator.generate(),
-            media_type="video/mp2t",
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Connection": "keep-alive",
+            
+            logger.info(
+                f"Client {client_id} initializing new {stream_mode} stream {id} from {client_ip}"
+            )
+            
+            # Request new session from AceStream engine
+            hls_url = f"http://{selected_engine.host}:{selected_engine.port}/ace/manifest.m3u8"
+            pid = str(uuid4())
+            params = {
+                "id": id,
+                "format": "json",
+                "pid": pid
             }
-        )
+            
+            try:
+                logger.info(f"Requesting HLS stream from engine: {hls_url}")
+                response = requests.get(hls_url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                
+                if data.get("error"):
+                    error_msg = data['error']
+                    logger.error(f"AceStream engine returned error: {error_msg}")
+                    raise HTTPException(status_code=500, detail=f"AceStream engine error: {error_msg}")
+                
+                # Get session info from response
+                resp_data = data.get("response", {})
+                playback_url = resp_data.get("playback_url")
+                
+                if not playback_url:
+                    logger.error("No playback_url in AceStream response")
+                    raise HTTPException(status_code=500, detail="No playback URL in engine response")
+                
+                logger.info(f"HLS playback URL: {playback_url}")
+                
+                # Get API key from environment
+                api_key = os.getenv('API_KEY')
+                
+                # Prepare session info for event tracking
+                session_info = {
+                    'playback_session_id': resp_data.get('playback_session_id'),
+                    'stat_url': resp_data.get('stat_url'),
+                    'command_url': resp_data.get('command_url'),
+                    'is_live': resp_data.get('is_live', 1)
+                }
+                
+                # Initialize HLS proxy channel
+                hls_proxy.initialize_channel(
+                    channel_id=id,
+                    playback_url=playback_url,
+                    engine_host=selected_engine.host,
+                    engine_port=selected_engine.port,
+                    engine_container_id=selected_engine.container_id,
+                    session_info=session_info,
+                    api_key=api_key
+                )
+                
+                # Track client activity and get manifest for the newly created channel
+                hls_proxy.record_client_activity(id, client_ip)
+                manifest_content = hls_proxy.get_manifest(id)
+                
+                return StreamingResponse(
+                    iter([manifest_content.encode('utf-8')]),
+                    media_type="application/vnd.apple.mpegurl",
+                    headers={
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Connection": "keep-alive",
+                    }
+                )
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to request HLS stream from engine: {e}")
+                raise HTTPException(status_code=503, detail=f"Engine communication error: {str(e)}")
+            except TimeoutError as e:
+                logger.error(f"Timeout getting HLS manifest: {e}")
+                raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
+        else:
+            # TS mode - use existing ts_proxy architecture
+            selected_engine, current_load = select_best_engine()
+            
+            logger.info(
+                f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {id} "
+                f"(forwarded={selected_engine.forwarded}, current_load={current_load})"
+            )
+            
+            logger.info(
+                f"Client {client_id} connecting to {stream_mode} stream {id} from {client_ip}"
+            )
+            
+            # Get proxy instance
+            proxy = ProxyManager.get_instance()
+            
+            # Start stream if not exists (idempotent)
+            success = proxy.start_stream(
+                content_id=id,
+                engine_host=selected_engine.host,
+                engine_port=selected_engine.port,
+                engine_container_id=selected_engine.container_id
+            )
+            
+            if not success:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to start stream session"
+                )
+            
+            # Create stream generator
+            generator = create_stream_generator(
+                content_id=id,
+                client_id=client_id,
+                client_ip=client_ip,
+                client_user_agent=user_agent,
+                stream_initializing=False
+            )
+            
+            # Return streaming response with TS data
+            return StreamingResponse(
+                generator.generate(),
+                media_type="video/mp2t",
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Connection": "keep-alive",
+                }
+            )
         
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -1832,25 +2029,78 @@ async def ace_getstream(
 
 
 
+@app.get("/ace/hls/{content_id}/segment/{segment_path:path}")
+async def ace_hls_segment(
+    content_id: str,
+    segment_path: str,
+    request: Request,
+):
+    """Proxy endpoint for HLS segments.
+    
+    This endpoint serves individual HLS segments from the buffered stream.
+    It's used when the stream mode is set to HLS.
+    
+    Args:
+        content_id: AceStream content ID (infohash or content_id)
+        segment_path: Segment filename from the M3U8 manifest (e.g., "123.ts")
+        request: FastAPI Request object for client info
+        
+    Returns:
+        Streaming response with segment data
+    """
+    from fastapi.responses import Response
+    from app.proxy.hls_proxy import HLSProxyServer
+    from app.proxy.utils import get_client_ip
+    
+    logger.debug(f"HLS segment request: content_id={content_id}, segment={segment_path}")
+    
+    try:
+        hls_proxy = HLSProxyServer.get_instance()
+        
+        # Track client activity for this segment request
+        client_ip = get_client_ip(request)
+        hls_proxy.record_client_activity(content_id, client_ip)
+        
+        segment_data = hls_proxy.get_segment(content_id, segment_path)
+        
+        # Return segment data directly
+        return Response(
+            content=segment_data,
+            media_type="video/MP2T",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Connection": "keep-alive",
+            }
+        )
+    except ValueError as e:
+        logger.warning(f"Segment not found: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error serving HLS segment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Segment error: {str(e)}")
+
+
+
+
 @app.get("/ace/manifest.m3u8")
 async def ace_manifest(
     id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
 ):
     """Proxy endpoint for AceStream HLS streams (M3U8).
     
-    Note: This is a placeholder. Full HLS support would require
-    additional implementation to handle manifest parsing and segment proxying.
+    Note: This endpoint is deprecated. Use /ace/getstream which now supports both TS and HLS modes
+    based on the proxy configuration.
     
     Args:
         id: AceStream content ID (infohash or content_id)
         
     Returns:
-        HLS manifest
+        Redirects to /ace/getstream
     """
-    # For now, redirect to getstream endpoint which works for most players
     raise HTTPException(
-        status_code=501,
-        detail="HLS/M3U8 streaming not yet implemented. Use /ace/getstream for MPEG-TS streaming."
+        status_code=301,
+        detail="This endpoint is deprecated. Use /ace/getstream which now supports both TS and HLS modes based on proxy settings.",
+        headers={"Location": f"/ace/getstream?id={id}"}
     )
 
 
@@ -2121,6 +2371,17 @@ def get_proxy_config():
         "redis_chunk_ttl": ProxyConfig.REDIS_CHUNK_TTL,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "stream_mode": ProxyConfig.STREAM_MODE,
+        "engine_variant": cfg.ENGINE_VARIANT,
+        # HLS-specific settings
+        "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
+        "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
+        "hls_window_size": ProxyConfig.HLS_WINDOW_SIZE,
+        "hls_buffer_ready_timeout": ProxyConfig.HLS_BUFFER_READY_TIMEOUT,
+        "hls_first_segment_timeout": ProxyConfig.HLS_FIRST_SEGMENT_TIMEOUT,
+        "hls_initial_buffer_seconds": ProxyConfig.HLS_INITIAL_BUFFER_SECONDS,
+        "hls_max_initial_segments": ProxyConfig.HLS_MAX_INITIAL_SEGMENTS,
+        "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
     }
 
 @app.post("/proxy/config", dependencies=[Depends(require_api_key)])
@@ -2133,6 +2394,16 @@ def update_proxy_config(
     stream_timeout: Optional[int] = None,
     channel_shutdown_delay: Optional[int] = None,
     max_streams_per_engine: Optional[int] = None,
+    stream_mode: Optional[str] = None,
+    # HLS-specific parameters
+    hls_max_segments: Optional[int] = None,
+    hls_initial_segments: Optional[int] = None,
+    hls_window_size: Optional[int] = None,
+    hls_buffer_ready_timeout: Optional[int] = None,
+    hls_first_segment_timeout: Optional[int] = None,
+    hls_initial_buffer_seconds: Optional[int] = None,
+    hls_max_initial_segments: Optional[int] = None,
+    hls_segment_fetch_interval: Optional[float] = None,
 ):
     """
     Update proxy configuration settings at runtime.
@@ -2146,6 +2417,15 @@ def update_proxy_config(
         stream_timeout: Stream timeout in seconds (min: 10, max: 300)
         channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
         max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
+        stream_mode: Stream mode - 'TS' for MPEG-TS or 'HLS' for HLS streaming
+        hls_max_segments: Maximum HLS segments to buffer (min: 5, max: 100)
+        hls_initial_segments: Minimum HLS segments before playback (min: 1, max: 10)
+        hls_window_size: Number of segments in HLS manifest window (min: 3, max: 20)
+        hls_buffer_ready_timeout: Timeout for HLS initial buffer (min: 5, max: 120)
+        hls_first_segment_timeout: Timeout for first HLS segment (min: 5, max: 120)
+        hls_initial_buffer_seconds: Target duration for HLS initial buffer (min: 5, max: 60)
+        hls_max_initial_segments: Maximum segments to fetch during HLS initial buffering (min: 1, max: 20)
+        hls_segment_fetch_interval: Multiplier for HLS manifest fetch interval (min: 0.1, max: 2.0)
     
     Note: This updates the runtime configuration but does not persist to .env file.
     Changes take effect for new streams only.
@@ -2194,6 +2474,60 @@ def update_proxy_config(
             raise HTTPException(status_code=400, detail="max_streams_per_engine must be between 1 and 20")
         cfg.ACEXY_MAX_STREAMS_PER_ENGINE = max_streams_per_engine
     
+    if stream_mode is not None:
+        if stream_mode not in ['TS', 'HLS']:
+            raise HTTPException(status_code=400, detail="stream_mode must be either 'TS' or 'HLS'")
+        
+        # Check if HLS is supported for the current engine variant
+        if stream_mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"HLS streaming is only supported for krinkuto11-amd64 variant. Current variant: {cfg.ENGINE_VARIANT}"
+            )
+        
+        ProxyConfig.STREAM_MODE = stream_mode
+    
+    # HLS-specific settings validation and updates
+    if hls_max_segments is not None:
+        if hls_max_segments < 5 or hls_max_segments > 100:
+            raise HTTPException(status_code=400, detail="hls_max_segments must be between 5 and 100")
+        ProxyConfig.HLS_MAX_SEGMENTS = hls_max_segments
+    
+    if hls_initial_segments is not None:
+        if hls_initial_segments < 1 or hls_initial_segments > 10:
+            raise HTTPException(status_code=400, detail="hls_initial_segments must be between 1 and 10")
+        ProxyConfig.HLS_INITIAL_SEGMENTS = hls_initial_segments
+    
+    if hls_window_size is not None:
+        if hls_window_size < 3 or hls_window_size > 20:
+            raise HTTPException(status_code=400, detail="hls_window_size must be between 3 and 20")
+        ProxyConfig.HLS_WINDOW_SIZE = hls_window_size
+    
+    if hls_buffer_ready_timeout is not None:
+        if hls_buffer_ready_timeout < 5 or hls_buffer_ready_timeout > 120:
+            raise HTTPException(status_code=400, detail="hls_buffer_ready_timeout must be between 5 and 120 seconds")
+        ProxyConfig.HLS_BUFFER_READY_TIMEOUT = hls_buffer_ready_timeout
+    
+    if hls_first_segment_timeout is not None:
+        if hls_first_segment_timeout < 5 or hls_first_segment_timeout > 120:
+            raise HTTPException(status_code=400, detail="hls_first_segment_timeout must be between 5 and 120 seconds")
+        ProxyConfig.HLS_FIRST_SEGMENT_TIMEOUT = hls_first_segment_timeout
+    
+    if hls_initial_buffer_seconds is not None:
+        if hls_initial_buffer_seconds < 5 or hls_initial_buffer_seconds > 60:
+            raise HTTPException(status_code=400, detail="hls_initial_buffer_seconds must be between 5 and 60 seconds")
+        ProxyConfig.HLS_INITIAL_BUFFER_SECONDS = hls_initial_buffer_seconds
+    
+    if hls_max_initial_segments is not None:
+        if hls_max_initial_segments < 1 or hls_max_initial_segments > 20:
+            raise HTTPException(status_code=400, detail="hls_max_initial_segments must be between 1 and 20")
+        ProxyConfig.HLS_MAX_INITIAL_SEGMENTS = hls_max_initial_segments
+    
+    if hls_segment_fetch_interval is not None:
+        if hls_segment_fetch_interval < 0.1 or hls_segment_fetch_interval > 2.0:
+            raise HTTPException(status_code=400, detail="hls_segment_fetch_interval must be between 0.1 and 2.0")
+        ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL = hls_segment_fetch_interval
+    
     logger.info(
         f"Proxy configuration updated: "
         f"initial_data_wait_timeout={ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT}, "
@@ -2203,7 +2537,8 @@ def update_proxy_config(
         f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
         f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
-        f"max_streams_per_engine={cfg.ACEXY_MAX_STREAMS_PER_ENGINE}"
+        f"max_streams_per_engine={cfg.ACEXY_MAX_STREAMS_PER_ENGINE}, "
+        f"stream_mode={ProxyConfig.STREAM_MODE}"
     )
     
     # Persist settings to JSON file
@@ -2217,6 +2552,16 @@ def update_proxy_config(
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "stream_mode": ProxyConfig.STREAM_MODE,
+        # HLS-specific settings
+        "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
+        "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
+        "hls_window_size": ProxyConfig.HLS_WINDOW_SIZE,
+        "hls_buffer_ready_timeout": ProxyConfig.HLS_BUFFER_READY_TIMEOUT,
+        "hls_first_segment_timeout": ProxyConfig.HLS_FIRST_SEGMENT_TIMEOUT,
+        "hls_initial_buffer_seconds": ProxyConfig.HLS_INITIAL_BUFFER_SECONDS,
+        "hls_max_initial_segments": ProxyConfig.HLS_MAX_INITIAL_SEGMENTS,
+        "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
     }
     if SettingsPersistence.save_proxy_config(config_to_save):
         logger.info("Proxy configuration persisted to JSON file")
@@ -2231,6 +2576,16 @@ def update_proxy_config(
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "stream_mode": ProxyConfig.STREAM_MODE,
+        # HLS-specific settings
+        "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
+        "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
+        "hls_window_size": ProxyConfig.HLS_WINDOW_SIZE,
+        "hls_buffer_ready_timeout": ProxyConfig.HLS_BUFFER_READY_TIMEOUT,
+        "hls_first_segment_timeout": ProxyConfig.HLS_FIRST_SEGMENT_TIMEOUT,
+        "hls_initial_buffer_seconds": ProxyConfig.HLS_INITIAL_BUFFER_SECONDS,
+        "hls_max_initial_segments": ProxyConfig.HLS_MAX_INITIAL_SEGMENTS,
+        "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
     }
 
 
@@ -2420,6 +2775,7 @@ async def export_settings(api_key_param: str = Depends(require_api_key)):
                     "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
                     "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
                     "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+                    "stream_mode": ProxyConfig.STREAM_MODE,
                 }
                 proxy_json = json.dumps(proxy_settings, indent=2)
                 zip_file.writestr("proxy_settings.json", proxy_json)
@@ -2588,6 +2944,14 @@ async def import_settings_data(
                     ProxyConfig.CONNECTION_TIMEOUT = proxy_dict.get('connection_timeout', ProxyConfig.CONNECTION_TIMEOUT)
                     ProxyConfig.STREAM_TIMEOUT = proxy_dict.get('stream_timeout', ProxyConfig.STREAM_TIMEOUT)
                     ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_dict.get('channel_shutdown_delay', ProxyConfig.CHANNEL_SHUTDOWN_DELAY)
+                    
+                    # Validate and set stream_mode
+                    if 'stream_mode' in proxy_dict:
+                        mode = proxy_dict['stream_mode']
+                        if mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
+                            logger.warning(f"HLS mode not supported for variant {cfg.ENGINE_VARIANT}, reverting to TS mode")
+                            proxy_dict['stream_mode'] = 'TS'
+                        ProxyConfig.STREAM_MODE = proxy_dict['stream_mode']
                     
                     # Persist to file
                     if SettingsPersistence.save_proxy_config(proxy_dict):

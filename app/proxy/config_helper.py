@@ -56,6 +56,19 @@ class Config:
     INITIAL_DATA_WAIT_TIMEOUT = int(os.getenv('PROXY_INITIAL_DATA_WAIT_TIMEOUT', '10'))
     INITIAL_DATA_CHECK_INTERVAL = float(os.getenv('PROXY_INITIAL_DATA_CHECK_INTERVAL', '0.2'))
     
+    # Stream mode (TS or HLS)
+    STREAM_MODE = os.getenv('PROXY_STREAM_MODE', 'TS')  # Default to MPEG-TS for backwards compatibility
+    
+    # HLS-specific settings
+    HLS_MAX_SEGMENTS = int(os.getenv('HLS_MAX_SEGMENTS', '20'))  # Maximum segments to buffer
+    HLS_INITIAL_SEGMENTS = int(os.getenv('HLS_INITIAL_SEGMENTS', '3'))  # Minimum segments before playback
+    HLS_WINDOW_SIZE = int(os.getenv('HLS_WINDOW_SIZE', '6'))  # Number of segments in manifest window
+    HLS_BUFFER_READY_TIMEOUT = int(os.getenv('HLS_BUFFER_READY_TIMEOUT', '30'))  # Seconds to wait for initial buffer
+    HLS_FIRST_SEGMENT_TIMEOUT = int(os.getenv('HLS_FIRST_SEGMENT_TIMEOUT', '30'))  # Seconds to wait for first segment
+    HLS_INITIAL_BUFFER_SECONDS = int(os.getenv('HLS_INITIAL_BUFFER_SECONDS', '10'))  # Target duration for initial buffer
+    HLS_MAX_INITIAL_SEGMENTS = int(os.getenv('HLS_MAX_INITIAL_SEGMENTS', '10'))  # Maximum segments to fetch initially
+    HLS_SEGMENT_FETCH_INTERVAL = float(os.getenv('HLS_SEGMENT_FETCH_INTERVAL', '0.5'))  # Multiplier for target duration (0.5 = check twice per segment)
+    
     @staticmethod
     def get_channel_shutdown_delay():
         """Get channel shutdown delay in seconds."""
@@ -171,3 +184,49 @@ class ConfigHelper:
     def initial_data_check_interval():
         """Get seconds between buffer checks during initial data wait."""
         return Config.INITIAL_DATA_CHECK_INTERVAL
+    
+    @staticmethod
+    def stream_mode():
+        """Get stream mode (TS or HLS)."""
+        return Config.STREAM_MODE
+    
+    # HLS-specific configuration helpers
+    @staticmethod
+    def hls_max_segments():
+        """Get maximum number of HLS segments to buffer."""
+        return Config.HLS_MAX_SEGMENTS
+    
+    @staticmethod
+    def hls_initial_segments():
+        """Get minimum number of HLS segments before playback starts."""
+        return Config.HLS_INITIAL_SEGMENTS
+    
+    @staticmethod
+    def hls_window_size():
+        """Get number of segments in HLS manifest window."""
+        return Config.HLS_WINDOW_SIZE
+    
+    @staticmethod
+    def hls_buffer_ready_timeout():
+        """Get timeout in seconds for HLS initial buffer to be ready."""
+        return Config.HLS_BUFFER_READY_TIMEOUT
+    
+    @staticmethod
+    def hls_first_segment_timeout():
+        """Get timeout in seconds for first HLS segment to be available."""
+        return Config.HLS_FIRST_SEGMENT_TIMEOUT
+    
+    @staticmethod
+    def hls_initial_buffer_seconds():
+        """Get target duration in seconds for HLS initial buffer."""
+        return Config.HLS_INITIAL_BUFFER_SECONDS
+    
+    @staticmethod
+    def hls_max_initial_segments():
+        """Get maximum number of segments to fetch during HLS initial buffering."""
+        return Config.HLS_MAX_INITIAL_SEGMENTS
+    
+    @staticmethod
+    def hls_segment_fetch_interval():
+        """Get multiplier for manifest fetch interval (relative to target duration)."""
+        return Config.HLS_SEGMENT_FETCH_INTERVAL
