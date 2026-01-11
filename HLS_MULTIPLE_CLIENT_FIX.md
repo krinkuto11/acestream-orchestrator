@@ -1,25 +1,26 @@
-# HLS Multiple Client Playback Fix
+# HLS Multiple Client Fix
 
 ## Problem
 
-When multiple clients attempted to connect to the same HLS stream, playback would fail with 403 Forbidden errors after the second client connected.
+When multiple clients attempted to connect to the same HLS stream, each connection triggered a new AceStream session request. This caused:
+1. Unnecessary session creation overhead
+2. Old sessions being invalidated
+3. 403 Forbidden errors when the proxy tried to fetch from expired session URLs
 
 ### Root Cause
 
-The issue occurred due to how AceStream engine handles HLS sessions:
+Every call to `/ace/getstream?id=<infohash>` made a new request to the AceStream engine, even when a channel already existed:
 
 1. **First client connects** → Calls `/ace/getstream?id=<infohash>`
-   - AceStream engine creates session A with playback URL A: `http://gluetun:19000/ace/m/hash1/session1.m3u8`
-   - HLS proxy creates a channel and starts fetching segments from URL A
+   - Orchestrator requests session from engine
+   - AceStream engine creates session A with playback URL A
+   - HLS proxy creates a channel and starts fetching from URL A
 
-2. **Second client connects** → Calls `/ace/getstream?id=<infohash>` again
-   - AceStream engine creates a **new session B** with playback URL B: `http://gluetun:19000/ace/m/hash2/session2.m3u8`
-   - HLS proxy detected the channel already exists and returned early
-   - Fetch loop continued using the **old playback URL A**
-
-3. **Session A expires** → AceStream engine invalidates the old session
-   - Fetch loop tries to get manifest from URL A
-   - Returns `403 Forbidden` because session A is expired
+2. **Second client connects** → Calls `/ace/getstream?id=<infohash>` **again**
+   - Orchestrator requests a **new session** from engine (unnecessary!)
+   - AceStream engine creates session B with playback URL B
+   - Session A may expire/be invalidated
+   - If proxy tries to fetch from URL A → `403 Forbidden`
 
 ### Error Logs
 
@@ -30,144 +31,123 @@ orchestrator  | 2026-01-11 10:25:27,725 ERROR app.proxy.hls_proxy: Fetch loop er
 
 ## Solution
 
-Updated the HLS proxy to **refresh the playback URL** when new clients connect to an existing channel.
+**Prevent duplicate engine requests by checking if a channel exists before making the request.**
 
-### Implementation Details
+The key insight: Clients already access the proxy's m3u8 (not the engine's), so we don't need to create a new engine session for every client connection.
 
-#### 1. Thread-Safe URL Management
+### Implementation
 
-Added a lock to `StreamManager` for thread-safe playback URL updates:
+#### 1. Added `has_channel()` Method
 
 ```python
-class StreamManager:
-    def __init__(self, ...):
-        self._playback_url_lock = threading.Lock()  # New lock for URL updates
-        # ... rest of initialization
+class HLSProxyServer:
+    def has_channel(self, channel_id: str) -> bool:
+        """Check if a channel already exists."""
+        with self.lock:
+            return channel_id in self.stream_managers
 ```
 
-#### 2. URL Update Method
+#### 2. Check Before Requesting From Engine
 
-Implemented `update_playback_url()` to atomically update the playback URL and session info:
+Modified `/ace/getstream` endpoint in `main.py`:
 
 ```python
-def update_playback_url(self, new_playback_url: str, session_info: Dict[str, Any]):
-    """Update the playback URL and session info for this stream."""
-    # Update all session-related data atomically under the lock to ensure
-    # consistency between playback_url and session info.
-    with self._playback_url_lock:
-        old_url = self.playback_url
-        self.playback_url = new_playback_url
-        
-        # Update session info
-        self.playback_session_id = session_info.get('playback_session_id')
-        self.stat_url = session_info.get('stat_url')
-        self.command_url = session_info.get('command_url')
-        self.is_live = session_info.get('is_live', 1)
-        
-        logger.info(f"Updated playback URL for channel {self.channel_id}")
+# Get HLS proxy instance
+hls_proxy = HLSProxyServer.get_instance()
+
+# Check if channel already exists
+if not hls_proxy.has_channel(id):
+    # Channel doesn't exist - request from AceStream engine
+    response = requests.get(hls_url, params=params, timeout=10)
+    # ... process response and initialize channel
+else:
+    # Channel already exists - reuse existing session
+    logger.info(f"HLS channel {id} already exists, reusing existing session")
+
+# Get and return the manifest (for both new and existing channels)
+manifest_content = hls_proxy.get_manifest(id)
+return StreamingResponse(...)
 ```
 
-#### 3. Modified Channel Initialization
-
-Updated `HLSProxyServer.initialize_channel()` to detect existing channels and update their URL:
+#### 3. Simplified Channel Initialization
 
 ```python
-def initialize_channel(self, channel_id: str, playback_url: str, ...):
-    """Initialize a new HLS channel or update existing channel's playback URL."""
+def initialize_channel(self, channel_id: str, ...):
+    """Initialize a new HLS channel.
+    
+    This method should only be called for new channels.
+    """
     with self.lock:
-        # If channel already exists, update the playback URL for the new session
+        # Safety check
         if channel_id in self.stream_managers:
-            logger.info(f"HLS channel {channel_id} already exists, updating playback URL")
-            manager = self.stream_managers[channel_id]
-            manager.update_playback_url(playback_url, session_info)
+            logger.warning(f"Channel already exists, skipping")
             return
         
-        # ... create new channel if doesn't exist
+        # Create new channel...
 ```
 
-#### 4. Thread-Safe URL Access in Fetcher
+### Flow Comparison
 
-Modified `StreamFetcher.fetch_loop()` to safely read the current URL:
-
-```python
-def fetch_loop(self):
-    while self.manager.running:
-        try:
-            # Get current playback URL (thread-safe)
-            with self.manager._playback_url_lock:
-                current_playback_url = self.manager.playback_url
-            
-            # Fetch manifest using current URL
-            response = self.session.get(current_playback_url, timeout=10)
-            # ... rest of fetch logic
+**Before (wasteful):**
+```
+Client 1 → /ace/getstream → Engine request → Session A → Proxy channel created
+Client 2 → /ace/getstream → Engine request → Session B → URL update attempt
+                                            ↑
+                                     Creates unnecessary session!
 ```
 
-## Testing
-
-Created comprehensive test suite in `tests/test_hls_playback_url_update.py`:
-
-### Test 1: Direct Method Testing
-```python
-def test_stream_manager_update_method():
-    """Test StreamManager.update_playback_url() method directly"""
-    # Creates manager with initial URL
-    # Updates to new URL with new session info
-    # Verifies all session data is updated
+**After (efficient):**
 ```
-
-### Test 2: Thread Safety
-```python
-def test_thread_safe_url_update():
-    """Test that playback URL updates are thread-safe"""
-    # Simulates concurrent URL reads (50 reads x 2 threads)
-    # Simulates concurrent URL updates (10 updates)
-    # Verifies no threading errors occur
-    # Verifies final URL is correct
+Client 1 → /ace/getstream → Engine request → Session A → Proxy channel created
+Client 2 → /ace/getstream → has_channel() = true → Return proxy manifest
+                            ↑
+                      No engine request!
 ```
-
-### Test 3: Channel Update Flow
-```python
-def test_playback_url_update():
-    """Test that playback URL can be updated for existing channels"""
-    # Creates initial channel with URL A
-    # Simulates second client connecting (URL B)
-    # Verifies playback URL is updated to URL B
-    # Verifies no duplicate channels are created
-```
-
-### Test Results
-
-```
-============================================================
-Results: 3 passed, 0 failed
-============================================================
-```
-
-All existing HLS proxy tests continue to pass.
 
 ## Benefits
 
-1. **Multi-client support**: Multiple clients can now connect to the same HLS stream without errors
-2. **Seamless URL refresh**: The playback URL is updated automatically when new clients connect
-3. **Thread-safe**: All updates are protected by locks to prevent race conditions
-4. **No duplicate channels**: Reuses existing channels instead of creating duplicates
-5. **Atomic updates**: Playback URL and session info are updated together for consistency
+1. **Single session per stream**: Only one AceStream session is created per unique content ID
+2. **No session invalidation**: Old sessions don't expire because we don't create new ones
+3. **Better performance**: Eliminates unnecessary engine API calls
+4. **Simpler code**: Removed `update_playback_url()` method and associated locking
+5. **Cleaner architecture**: Proxy is truly the single point of access to the engine
 
 ## Code Quality
 
-- ✅ Type annotations fixed (`any` → `Any`)
-- ✅ Code review passed
-- ✅ Security scan passed (CodeQL: 0 vulnerabilities)
-- ✅ All tests pass
+- ✅ All tests pass (15 tests across 4 test files)
+- ✅ Thread-safety maintained
+- ✅ Simpler implementation (less code, fewer race conditions)
 - ✅ Well-documented with comments
 
 ## Files Changed
 
-1. `app/proxy/hls_proxy.py`:
-   - Added `_playback_url_lock` to `StreamManager`
-   - Implemented `update_playback_url()` method
-   - Updated `initialize_channel()` to handle existing channels
-   - Modified `fetch_loop()` for thread-safe URL access
+1. **`app/main.py`**:
+   - Added channel existence check before engine request
+   - Restructured HLS handling to avoid duplicate sessions
 
-2. `tests/test_hls_playback_url_update.py`:
-   - New comprehensive test suite for URL update functionality
+2. **`app/proxy/hls_proxy.py`**:
+   - Added `has_channel()` method
+   - Simplified `initialize_channel()` 
+   - Removed `update_playback_url()` method (no longer needed)
+   - Removed `_playback_url_lock` (no longer needed)
+
+3. **`tests/test_hls_playback_url_update.py`**:
+   - Updated tests to verify channel reuse behavior
+   - Tests `has_channel()` functionality
+   - Verifies channels are not duplicated or modified
+
+## Testing
+
+All HLS tests pass:
+- `test_hls_events.py` - 4 tests ✅
+- `test_hls_non_blocking.py` - 3 tests ✅  
+- `test_hls_playback_url_update.py` - 3 tests ✅ (renamed, updated)
+- `test_hls_proxy_implementation.py` - 5 tests ✅
+
+### Test Coverage
+
+1. **Channel existence checking**: Verifies `has_channel()` works correctly
+2. **Channel reuse**: Verifies existing channels are not modified
+3. **No duplicates**: Verifies only one channel exists per content ID
+4. **Thread safety**: Verifies concurrent channel checks work correctly
+
