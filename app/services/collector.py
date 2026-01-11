@@ -149,7 +149,19 @@ class Collector:
                 on_stream_stat_update(stream_id, snap.uploaded, snap.downloaded)
             except Exception:
                 logger.exception(f"Error updating cumulative metrics for stream {stream_id}")
-                    
+        
+        except httpx.ConnectTimeout:
+            # Connection timeout - engine may be slow or unavailable
+            logger.debug(f"Connection timeout collecting stats for {stream_id} from {stat_url}")
+            return
+        except httpx.TimeoutException:
+            # Other timeout exceptions (read timeout, pool timeout, etc.)
+            logger.debug(f"Timeout collecting stats for {stream_id} from {stat_url}")
+            return
+        except httpx.HTTPError as e:
+            # Other HTTP-related errors (connection errors, etc.)
+            logger.debug(f"HTTP error collecting stats for {stream_id} from {stat_url}: {e}")
+            return
         except Exception:
             logger.exception(f"Unhandled exception while collecting stats for {stream_id} from {stat_url}")
             return

@@ -1445,6 +1445,17 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
             # Clear state
             cleanup_on_shutdown()
             
+            # Switch HLS mode back to TS (MPEG-TS) if it was set to HLS
+            # This prevents issues when users change engine variants since HLS may not be supported on all variants
+            import os
+            current_stream_mode = os.getenv('PROXY_STREAM_MODE', 'TS')
+            if current_stream_mode == 'HLS':
+                logger.info("Switching stream mode from HLS to TS (MPEG-TS) for reprovisioning")
+                os.environ['PROXY_STREAM_MODE'] = 'TS'
+                # Reload the config to pick up the change
+                from .proxy.config_helper import Config
+                Config.STREAM_MODE = 'TS'
+            
             # Reload custom config to ensure we have latest settings
             reload_config()
             

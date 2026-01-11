@@ -312,32 +312,34 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     <>
       <TableRow>
         {showSpeedColumns && (
-          <TableCell className="w-[40px]">
-            <Checkbox
-              checked={isSelected}
-              onCheckedChange={onToggleSelect}
-              aria-label="Select stream"
-            />
+          <TableCell className="w-[40px] text-center">
+            <div className="flex items-center justify-center">
+              <Checkbox
+                checked={isSelected}
+                onCheckedChange={onToggleSelect}
+                aria-label="Select stream"
+              />
+            </div>
           </TableCell>
         )}
         <TableCell className="w-[40px]">
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0 border border-white/20 hover:bg-white/10"
+            className="h-8 w-8 p-0 border border-white/20 hover:bg-white/10 mx-auto"
             onClick={() => setIsExpanded(!isExpanded)}
           >
             {isExpanded ? <ChevronUp className="h-4 w-4 text-white" /> : <ChevronDown className="h-4 w-4 text-white" />}
           </Button>
         </TableCell>
-        <TableCell>
-          <Badge variant={isActive ? "success" : "secondary"} className="flex items-center gap-1 w-fit">
+        <TableCell className="text-center">
+          <Badge variant={isActive ? "success" : "secondary"} className="flex items-center gap-1 w-fit mx-auto">
             {isActive ? <PlayCircle className="h-3 w-3" /> : <Activity className="h-3 w-3" />}
             <span className="text-white">{isActive ? 'ACTIVE' : 'ENDED'}</span>
           </Badge>
         </TableCell>
-        <TableCell className="font-medium">
-          <div className="flex flex-col gap-1">
+        <TableCell className="font-medium text-center">
+          <div className="flex flex-col gap-1 items-center">
             <span className="text-sm text-white truncate max-w-[200px]" title={stream.id}>
               {stream.id.slice(0, TRUNCATED_STREAM_ID_LENGTH)}...
             </span>
@@ -348,46 +350,37 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
             )}
           </div>
         </TableCell>
-        <TableCell>
-          <span className="text-sm text-white truncate max-w-[150px] block" title={stream.container_name || stream.container_id}>
+        <TableCell className="text-center">
+          <span className="text-sm text-white truncate max-w-[150px] block mx-auto" title={stream.container_name || stream.container_id}>
             {stream.container_name || stream.container_id?.slice(0, TRUNCATED_CONTAINER_ID_LENGTH) || 'N/A'}
           </span>
         </TableCell>
-        <TableCell>
-          <div className="flex items-center gap-1">
-            <Clock className="h-3 w-3 text-muted-foreground" />
-            <span className="text-sm text-white">{formatTime(stream.started_at)}</span>
-          </div>
+        <TableCell className="text-center">
+          <span className="text-sm text-white">{formatTime(stream.started_at)}</span>
         </TableCell>
         {showSpeedColumns && (
           <>
-            <TableCell className="text-right">
+            <TableCell className="text-center">
               {isActive ? (
-                <div className="flex items-center justify-end gap-1">
-                  <Download className="h-3 w-3 text-success" />
-                  <span className="text-sm font-semibold text-success">
-                    {formatBytesPerSecond((stream.speed_down || 0) * 1024)}
-                  </span>
-                </div>
+                <span className="text-sm font-semibold text-success">
+                  {formatBytesPerSecond((stream.speed_down || 0) * 1024)}
+                </span>
               ) : (
                 <span className="text-sm text-muted-foreground">—</span>
               )}
             </TableCell>
-            <TableCell className="text-right">
+            <TableCell className="text-center">
               {isActive ? (
-                <div className="flex items-center justify-end gap-1">
-                  <Upload className="h-3 w-3 text-destructive" />
-                  <span className="text-sm font-semibold text-destructive">
-                    {formatBytesPerSecond((stream.speed_up || 0) * 1024)}
-                  </span>
-                </div>
+                <span className="text-sm font-semibold text-destructive">
+                  {formatBytesPerSecond((stream.speed_up || 0) * 1024)}
+                </span>
               ) : (
                 <span className="text-sm text-muted-foreground">—</span>
               )}
             </TableCell>
-            <TableCell className="text-right">
+            <TableCell className="text-center">
               {isActive ? (
-                <div className="flex items-center justify-end gap-1">
+                <div className="flex items-center justify-center gap-1">
                   <Users className="h-3 w-3 text-primary" />
                   <span className="text-sm font-semibold text-primary">
                     {stream.peers != null ? stream.peers : 'N/A'}
@@ -400,7 +393,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           </>
         )}
         {showSpeedColumns && (
-          <TableCell className="text-right">
+          <TableCell className="text-center">
             {isActive && stream.livepos && stream.livepos.live_last ? (
               <span className="text-sm text-white">
                 {formatLiveposTimestamp(stream.livepos.live_last)}
@@ -410,10 +403,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
             )}
           </TableCell>
         )}
-        <TableCell className="text-right">
+        <TableCell className="text-center">
           <span className="text-sm text-white">{formatBytes(stream.downloaded)}</span>
         </TableCell>
-        <TableCell className="text-right">
+        <TableCell className="text-center">
           <span className="text-sm text-white">{formatBytes(stream.uploaded)}</span>
         </TableCell>
       </TableRow>
@@ -827,69 +820,71 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[40px]">
-                    <Checkbox
-                      checked={someSelected ? "indeterminate" : allSelected}
-                      onCheckedChange={handleSelectAll}
-                      aria-label="Select all"
-                    />
+                  <TableHead className="w-[40px] text-center">
+                    <div className="flex items-center justify-center">
+                      <Checkbox
+                        checked={someSelected ? "indeterminate" : allSelected}
+                        onCheckedChange={handleSelectAll}
+                        aria-label="Select all"
+                      />
+                    </div>
                   </TableHead>
-                  <TableHead className="w-[40px]"></TableHead>
+                  <TableHead className="w-[40px] text-center"></TableHead>
                   <TableHead 
-                    className="cursor-pointer select-none"
+                    className="cursor-pointer select-none text-center"
                     onClick={() => handleSort('status')}
                   >
                     Status <SortIcon column="status" />
                   </TableHead>
                   <TableHead 
-                    className="cursor-pointer select-none"
+                    className="cursor-pointer select-none text-center"
                     onClick={() => handleSort('id')}
                   >
                     Stream ID <SortIcon column="id" />
                   </TableHead>
                   <TableHead 
-                    className="cursor-pointer select-none"
+                    className="cursor-pointer select-none text-center"
                     onClick={() => handleSort('container_name')}
                   >
                     Engine <SortIcon column="container_name" />
                   </TableHead>
                   <TableHead 
-                    className="cursor-pointer select-none"
+                    className="cursor-pointer select-none text-center"
                     onClick={() => handleSort('started_at')}
                   >
                     Started <SortIcon column="started_at" />
                   </TableHead>
                   <TableHead 
-                    className="text-right cursor-pointer select-none"
+                    className="text-center cursor-pointer select-none"
                     onClick={() => handleSort('speed_down')}
                   >
                     Download <SortIcon column="speed_down" />
                   </TableHead>
                   <TableHead 
-                    className="text-right cursor-pointer select-none"
+                    className="text-center cursor-pointer select-none"
                     onClick={() => handleSort('speed_up')}
                   >
                     Upload <SortIcon column="speed_up" />
                   </TableHead>
                   <TableHead 
-                    className="text-right cursor-pointer select-none"
+                    className="text-center cursor-pointer select-none"
                     onClick={() => handleSort('peers')}
                   >
                     Peers <SortIcon column="peers" />
                   </TableHead>
                   <TableHead 
-                    className="text-right"
+                    className="text-center"
                   >
                     Broadcast Position
                   </TableHead>
                   <TableHead 
-                    className="text-right cursor-pointer select-none"
+                    className="text-center cursor-pointer select-none"
                     onClick={() => handleSort('downloaded')}
                   >
                     Downloaded <SortIcon column="downloaded" />
                   </TableHead>
                   <TableHead 
-                    className="text-right cursor-pointer select-none"
+                    className="text-center cursor-pointer select-none"
                     onClick={() => handleSort('uploaded')}
                   >
                     Uploaded <SortIcon column="uploaded" />
@@ -939,39 +934,39 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[40px]"></TableHead>
+                    <TableHead className="w-[40px] text-center"></TableHead>
                     <TableHead 
-                      className="cursor-pointer select-none"
+                      className="cursor-pointer select-none text-center"
                       onClick={() => handleSort('status')}
                     >
                       Status <SortIcon column="status" />
                     </TableHead>
                     <TableHead 
-                      className="cursor-pointer select-none"
+                      className="cursor-pointer select-none text-center"
                       onClick={() => handleSort('id')}
                     >
                       Stream ID <SortIcon column="id" />
                     </TableHead>
                     <TableHead 
-                      className="cursor-pointer select-none"
+                      className="cursor-pointer select-none text-center"
                       onClick={() => handleSort('container_name')}
                     >
                       Engine <SortIcon column="container_name" />
                     </TableHead>
                     <TableHead 
-                      className="cursor-pointer select-none"
+                      className="cursor-pointer select-none text-center"
                       onClick={() => handleSort('started_at')}
                     >
                       Started <SortIcon column="started_at" />
                     </TableHead>
                     <TableHead 
-                      className="text-right cursor-pointer select-none"
+                      className="text-center cursor-pointer select-none"
                       onClick={() => handleSort('downloaded')}
                     >
                       Downloaded <SortIcon column="downloaded" />
                     </TableHead>
                     <TableHead 
-                      className="text-right cursor-pointer select-none"
+                      className="text-center cursor-pointer select-none"
                       onClick={() => handleSort('uploaded')}
                     >
                       Uploaded <SortIcon column="uploaded" />
