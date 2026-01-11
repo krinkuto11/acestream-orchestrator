@@ -390,7 +390,9 @@ class StreamFetcher:
                 retry_delay = 1
                 
             except Exception as e:
-                logger.error(f"Fetch loop error for channel {self.manager.channel_id}: {e}")
+                # Only log if manager is still running (expected errors when stopping)
+                if self.manager.running:
+                    logger.error(f"Fetch loop error for channel {self.manager.channel_id}: {e}")
                 time.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, max_retry_delay)
     
@@ -462,12 +464,19 @@ class StreamFetcher:
     
     def _download_segment(self, url: str) -> Optional[bytes]:
         """Download a single segment"""
+        # Check if manager is still running before downloading
+        if not self.manager.running:
+            logger.debug(f"Stream manager stopped, skipping segment download from {url}")
+            return None
+        
         try:
             response = self.session.get(url, timeout=10)
             response.raise_for_status()
             return response.content
         except Exception as e:
-            logger.error(f"Failed to download segment from {url}: {e}")
+            # Only log if manager is still running (expected errors when stopping)
+            if self.manager.running:
+                logger.error(f"Failed to download segment from {url}: {e}")
             return None
 
 
