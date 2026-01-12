@@ -145,7 +145,11 @@ class StreamManager:
             return False
     
     def _send_stream_started_event(self):
-        """Send stream started event to orchestrator using internal handler (no HTTP)"""
+        """Send stream started event to orchestrator using internal handler (no HTTP)
+        
+        Uses a timeout wrapper to prevent blocking if the internal handler takes too long.
+        This protects against potential blocking operations like Docker API calls.
+        """
         try:
             # Import here to avoid circular dependencies
             from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
@@ -174,15 +178,39 @@ class StreamManager:
                 }
             )
             
-            # Call internal handler directly (no HTTP request)
-            result = handle_stream_started(event)
-            self.stream_id = result.id
+            # Call internal handler with timeout protection
+            # Use threading to ensure we don't block stream initialization
+            result_container = {'result': None, 'error': None}
             
-            logger.info(f"Sent stream started event to orchestrator: stream_id={self.stream_id}")
+            def _call_handler():
+                try:
+                    result_container['result'] = handle_stream_started(event)
+                except Exception as e:
+                    result_container['error'] = e
+            
+            handler_thread = threading.Thread(target=_call_handler, daemon=True)
+            handler_thread.start()
+            handler_thread.join(timeout=2.0)  # 2 second timeout
+            
+            if handler_thread.is_alive():
+                # Handler is still running after timeout
+                logger.warning(f"Stream started event handler timed out after 2s, will complete in background")
+                # Generate a temporary stream_id so proxy can proceed
+                self.stream_id = f"temp-ts-{self.content_id[:16]}-{int(time.time())}"
+            elif result_container['error']:
+                raise result_container['error']
+            elif result_container['result']:
+                self.stream_id = result_container['result'].id
+                logger.info(f"Sent stream started event to orchestrator: stream_id={self.stream_id}")
+            else:
+                logger.warning(f"Stream started event handler returned no result")
+                self.stream_id = f"temp-ts-{self.content_id[:16]}-{int(time.time())}"
             
         except Exception as e:
             logger.warning(f"Failed to send stream started event to orchestrator: {e}")
             logger.debug(f"Exception details: {e}", exc_info=True)
+            # Generate a fallback stream_id
+            self.stream_id = f"fallback-ts-{self.content_id[:16]}-{int(time.time())}"
     
     def _send_stream_ended_event(self, reason="normal"):
         """Send stream ended event to orchestrator using internal handler (no HTTP)"""
