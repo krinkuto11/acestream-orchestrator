@@ -207,6 +207,9 @@ class StreamManager:
         
         Runs asynchronously in a background daemon thread to avoid blocking initialize_channel().
         This ensures the UI remains responsive during stream initialization.
+        
+        Note: stream_id is set to a temporary value immediately, then updated by the background
+        thread when the event handler completes. This is intentional for fire-and-forget async.
         """
         def _send_event():
             try:
