@@ -5,16 +5,16 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
 ## Available Variants
 
 ### 1. krinkuto11-amd64 (Default)
-- **Image**: `ghcr.io/krinkuto11/acestream-http-proxy:latest`
+- **Image**: `ghcr.io/krinkuto11/nano-ace:latest`
 - **Architecture**: AMD64
-- **Configuration Type**: Environment variables (CONF)
-- **Description**: The default variant with minimal configuration suitable for most use cases.
+- **Configuration Type**: Docker CMD
+- **Description**: The default variant using Nano-Ace distroless image. Significantly smaller (300MB vs 1.2GB) with minimal configuration suitable for most use cases.
 
 **Configuration Method**:
-- Uses `CONF` environment variable with newline-separated arguments
-- Port settings: `--http-port=<port>`, `--https-port=<port>`, `--bind-all`
-- Additional environment variables: `HTTP_PORT`, `HTTPS_PORT`, `BIND_ALL`, `INTERNAL_BUFFERING`, `CACHE_LIMIT`
-- When using Gluetun VPN: P2P port set via `P2P_PORT` environment variable
+- Base command: `/acestream/acestreamengine --client-console --bind-all`
+- Port settings appended to command: `--http-port <port> --https-port <port>`
+- When using Gluetun VPN: P2P port appended as `--port <port>`
+- **Image Size**: ~300MB (compared to 1.2GB for Jopsis variant)
 
 ### 2. jopsis-amd64
 - **Image**: `jopsis/acestream:x64`
@@ -113,12 +113,11 @@ Check [jopsis/acestream Docker Hub](https://hub.docker.com/r/jopsis/acestream/ta
 
 The orchestrator automatically configures each variant based on its type:
 
-### ENV-based Variants (krinkuto11-amd64, jopsis-amd64)
+### ENV-based Variants (jopsis-amd64)
 - Configuration passed via environment variables
-- Port settings injected into the appropriate environment variable
-- Compatible with the acestream-http-proxy image wrapper
+- Port settings injected into the ACESTREAM_ARGS environment variable
 
-### CMD-based Variants (jopsis-arm32, jopsis-arm64)
+### CMD-based Variants (krinkuto11-amd64, jopsis-arm32, jopsis-arm64)
 - Configuration passed via Docker CMD instruction
 - Base command includes default settings
 - Port settings appended to the command line
@@ -138,7 +137,7 @@ The orchestrator automatically:
 
 ### P2P Port Handling by Variant
 
-- **krinkuto11-amd64**: P2P port set via `P2P_PORT` environment variable
+- **krinkuto11-amd64**: P2P port appended to command as `--port <port>`
 - **jopsis-amd64**: P2P port appended to `ACESTREAM_ARGS` as `--port <port>`
 - **jopsis-arm32**: P2P port appended to command as `--port <port>`
 - **jopsis-arm64**: P2P port appended to command as `--port <port>`
@@ -150,6 +149,7 @@ When Gluetun is not configured, no P2P port is passed and engines use their defa
 ### Choose `krinkuto11-amd64` if:
 - You want the default, well-tested configuration
 - You're running on AMD64/x86_64 architecture
+- You prefer a smaller Docker image size (300MB vs 1.2GB)
 - You don't need specific optimizations
 
 ### Choose `jopsis-amd64` if:
@@ -221,8 +221,9 @@ The orchestrator now supports **Custom Engine Variants** that allow you to confi
 1. Navigate to the **Advanced Engine** section in the dashboard sidebar
 2. Toggle "Enable Custom Engine Variant" switch
 3. The system will automatically detect your platform (amd64, arm32, or arm64)
-4. For ARM platforms, select your preferred AceStream version (3.2.13 or 3.2.14)
-5. Configure individual parameters across 7 categories:
+4. **For AMD64 platform**: Select your preferred Nano-Ace version (3.2.11-py3.10, 3.2.11-py3.8, 3.1.75rc4-py3.7, or 3.1.74)
+5. **For ARM platforms**: Select your preferred AceStream version (3.2.13 or 3.2.14)
+6. Configure individual parameters across 7 categories:
    - **Basic Settings**: Console mode, bind options, access tokens
    - **Cache Configuration**: Memory/disk cache settings, cache sizes
    - **Buffer Settings**: Live and VOD buffer configuration
@@ -234,9 +235,15 @@ The orchestrator now supports **Custom Engine Variants** that allow you to confi
 #### Custom Variant Configuration
 
 **Base Images**:
-- **amd64**: `jopsis/acestream:x64`
+- **amd64**: `ghcr.io/krinkuto11/nano-ace:latest` (or specific version tags)
+  - `ghcr.io/krinkuto11/nano-ace:3.2.11-py3.10` (default/latest - Python 3.10)
+  - `ghcr.io/krinkuto11/nano-ace:3.2.11-py3.8` (Python 3.8)
+  - `ghcr.io/krinkuto11/nano-ace:3.1.75rc4-py3.7` (Python 3.7)
+  - `ghcr.io/krinkuto11/nano-ace:3.1.74` (Python 2.7)
 - **arm32**: `jopsis/acestream:arm32-v3.2.13` or `jopsis/acestream:arm32-v3.2.14`
 - **arm64**: `jopsis/acestream:arm64-v3.2.13` or `jopsis/acestream:arm64-v3.2.14`
+
+**Note**: The AMD64 custom variant now uses the Nano-Ace distroless image (300MB), significantly smaller than the previous Jopsis variant (1.2GB).
 
 **Parameter Configuration**:
 - Each parameter can be individually enabled/disabled

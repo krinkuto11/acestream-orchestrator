@@ -30,11 +30,15 @@ def test_variant_configs():
                 assert '--client-console' in config['base_args'], f"Missing required args for {variant}"
                 print(f"   ✓ Has base_args with required settings")
             else:
-                print(f"   ✓ ENV-based variant (uses CONF)")
+                print(f"   ✓ ENV-based variant")
         else:
             assert 'base_cmd' in config, f"Missing 'base_cmd' for {variant}"
             assert isinstance(config['base_cmd'], list), f"base_cmd should be a list for {variant}"
-            assert 'python' in config['base_cmd'], f"Missing python in base_cmd for {variant}"
+            # krinkuto11-amd64 uses /acestream/acestreamengine, ARM variants use python
+            if variant == 'krinkuto11-amd64':
+                assert '/acestream/acestreamengine' in config['base_cmd'], f"Missing /acestream/acestreamengine in base_cmd for {variant}"
+            else:
+                assert 'python' in config['base_cmd'], f"Missing python in base_cmd for {variant}"
             print(f"   ✓ CMD-based variant with {len(config['base_cmd'])} args")
     
     print(f"\n✅ All {len(variants)} variants configured correctly!")
@@ -52,19 +56,19 @@ def test_variant_environment_building():
     c_http = 6879
     c_https = 6880
     
-    # Test krinkuto11-amd64 (ENV with CONF)
-    print("\n📋 Testing krinkuto11-amd64 environment:")
+    # Test krinkuto11-amd64 (CMD-based)
+    print("\n📋 Testing krinkuto11-amd64 command:")
     config = _get_variant_config('krinkuto11-amd64')
-    env = {}
-    if config['config_type'] == 'env':
-        conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
-        env['CONF'] = "\n".join(conf_lines)
-        env['HTTP_PORT'] = str(c_http)
-        env['HTTPS_PORT'] = str(c_https)
-    print(f"   CONF: {repr(env.get('CONF'))}")
-    print(f"   HTTP_PORT: {env.get('HTTP_PORT')}")
-    assert '--http-port=6879' in env['CONF'], "Missing http-port in CONF"
-    print("   ✓ CONF built correctly")
+    cmd = None
+    if config['config_type'] == 'cmd':
+        base_cmd = config.get('base_cmd', [])
+        port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]
+        cmd = base_cmd + port_args
+    print(f"   Command: {' '.join(cmd[:5])}... (total {len(cmd)} args)")
+    assert '/acestream/acestreamengine' in cmd, "Missing /acestream/acestreamengine in cmd"
+    assert '--http-port' in cmd, "Missing http-port in cmd"
+    assert '6879' in cmd, "Missing port value in cmd"
+    print("   ✓ Command built correctly with base + ports")
     
     # Test jopsis-amd64 (ENV with ACESTREAM_ARGS)
     print("\n📋 Testing jopsis-amd64 environment:")

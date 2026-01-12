@@ -262,8 +262,9 @@ def get_variant_config(variant: str):
     
     configs = {
         "krinkuto11-amd64": {
-            "image": "ghcr.io/krinkuto11/acestream-http-proxy:latest",
-            "config_type": "env"
+            "image": "ghcr.io/krinkuto11/nano-ace:latest",
+            "config_type": "cmd",
+            "base_cmd": ["/acestream/acestreamengine", "--client-console", "--bind-all"]
         },
         "jopsis-amd64": {
             "image": "jopsis/acestream:x64",
@@ -472,9 +473,9 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     cmd = None
     
     if variant_config["config_type"] == "env":
-        # ENV-based variants (krinkuto11-amd64, jopsis-amd64, custom amd64)
-        # Determine if this variant uses ACESTREAM_ARGS (jopsis-style) or CONF (krinkuto11-style)
-        # Custom variants with base_args use ACESTREAM_ARGS; jopsis-amd64 also uses ACESTREAM_ARGS
+        # ENV-based variants (jopsis-amd64 only)
+        # Note: Custom amd64 variants now use CMD-based configuration with Nano-Ace
+        # Legacy custom variants with base_args would still use this path
         uses_acestream_args = (
             cfg.ENGINE_VARIANT == "jopsis-amd64" or 
             (variant_config.get("is_custom") and variant_config.get("base_args") is not None)
@@ -489,27 +490,8 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
             if p2p_port:
                 port_args += f" --port {p2p_port}"
             env["ACESTREAM_ARGS"] = base_args + port_args
-        else:
-            # krinkuto11-amd64: Use user-provided CONF if available, otherwise use default
-            if "CONF" in req.env:
-                # User explicitly provided CONF (even if empty), use it as-is
-                final_conf = req.env["CONF"]
-            else:
-                # No user CONF, use default orchestrator configuration
-                conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
-                final_conf = "\n".join(conf_lines)
-            
-            env["CONF"] = final_conf
-            env["HTTP_PORT"] = str(c_http)
-            env["HTTPS_PORT"] = str(c_https)
-            env["BIND_ALL"] = "true"
-            env["INTERNAL_BUFFERING"] = 60
-            env["CACHE_LIMIT"] = 1
-            # Add P2P_PORT as environment variable for krinkuto11-amd64
-            if p2p_port:
-                env["P2P_PORT"] = str(p2p_port)
     else:
-        # CMD-based variants (jopsis-arm32, jopsis-arm64)
+        # CMD-based variants (krinkuto11-amd64, jopsis-arm32, jopsis-arm64, custom variants with base_cmd)
         # Append port settings to base command
         base_cmd = variant_config.get("base_cmd", [])
         port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]

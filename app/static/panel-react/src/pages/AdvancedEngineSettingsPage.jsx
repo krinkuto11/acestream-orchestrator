@@ -741,6 +741,29 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             </div>
           )}
 
+          {config.enabled && platform.platform === 'amd64' && (
+            <div className="space-y-2">
+              <Label>AceStream Engine Version</Label>
+              <Select
+                value={config.amd64_version || '3.2.11-py3.10'}
+                onValueChange={(val) => setConfig(prev => ({ ...prev, amd64_version: val }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="3.2.11-py3.10">v3.2.11 (Python 3.10) - Latest</SelectItem>
+                  <SelectItem value="3.2.11-py3.8">v3.2.11 (Python 3.8)</SelectItem>
+                  <SelectItem value="3.1.75rc4-py3.7">v3.1.75rc4 (Python 3.7)</SelectItem>
+                  <SelectItem value="3.1.74">v3.1.74 (Python 2.7)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Choose the Nano-Ace engine version for AMD64 platform (Distroless, 300MB vs 1.2GB)
+              </p>
+            </div>
+          )}
+
           {/* Memory Limit Configuration */}
           <div className="space-y-2">
             <Label htmlFor="memory-limit">Engine Memory Limit (Optional)</Label>
@@ -826,7 +849,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
               className="flex items-center gap-2"
             >
               <Save className="h-4 w-4" />
-              {saving ? 'Saving...' : 'Save Platform Settings'}
+              {saving ? 'Saving...' : 'Save All Configuration'}
             </Button>
           </div>
         </CardContent>

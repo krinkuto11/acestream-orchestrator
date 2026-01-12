@@ -152,8 +152,11 @@ async def lifespan(app: FastAPI):
                 # Validate stream_mode before loading
                 mode = proxy_settings['stream_mode']
                 if mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
-                    logger.warning(f"HLS mode not supported for variant {cfg.ENGINE_VARIANT}, reverting to TS mode")
+                    logger.warning(f"HLS mode not supported for variant {cfg.ENGINE_VARIANT}, reverting to TS mode and persisting change")
                     ProxyConfig.STREAM_MODE = 'TS'
+                    # Persist the corrected mode back to storage
+                    proxy_settings['stream_mode'] = 'TS'
+                    SettingsPersistence.save_proxy_config(proxy_settings)
                 else:
                     ProxyConfig.STREAM_MODE = mode
             logger.info("Proxy settings loaded from persistent storage")
@@ -2158,10 +2161,37 @@ async def get_stream_clients(stream_key: str):
         List of client details or empty list if no clients
     """
     from .proxy.server import ProxyServer
+    from .proxy.hls_proxy import HLSProxyServer
     from .proxy.redis_keys import RedisKeys
     import redis
     
     try:
+        # First check if this is an HLS stream
+        hls_proxy = HLSProxyServer.get_instance()
+        if hls_proxy.has_channel(stream_key):
+            # This is an HLS stream - get client info from HLS proxy
+            client_manager = hls_proxy.client_managers.get(stream_key)
+            if not client_manager:
+                return {"clients": []}
+            
+            # HLS proxy tracks clients by IP address
+            with client_manager.lock:
+                clients = []
+                import time
+                current_time = time.time()
+                for client_ip, last_activity in client_manager.last_activity.items():
+                    clients.append({
+                        "client_id": client_ip,
+                        "ip_address": client_ip,
+                        "last_active": last_activity,
+                        "connected_at": last_activity,  # We don't track connection time separately
+                        "user_agent": "HLS Client",
+                        "worker_id": "hls_proxy",
+                        "inactive_seconds": current_time - last_activity
+                    })
+                return {"clients": clients}
+        
+        # Not an HLS stream, check TS proxy
         proxy_server = ProxyServer.get_instance()
         
         # Get client manager for this stream

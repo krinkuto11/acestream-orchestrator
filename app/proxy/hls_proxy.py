@@ -16,6 +16,10 @@ from .config_helper import ConfigHelper
 
 logger = logging.getLogger(__name__)
 
+# Timeout for stream event handlers (in seconds)
+# This prevents blocking if internal event handling is slow (e.g., Docker API calls)
+STREAM_EVENT_HANDLER_TIMEOUT = 2.0
+
 
 class HLSConfig:
     """Configuration for HLS proxy - uses ConfigHelper for environment-based settings"""
@@ -203,53 +207,72 @@ class StreamManager:
                 logger.warning(f"Failed to send stop command: {e}")
     
     def _send_stream_started_event(self):
-        """Send stream started event to orchestrator using internal handler (no HTTP)"""
-        def _send_event():
-            try:
-                # Import here to avoid circular dependencies
-                from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
-                from ..services.internal_events import handle_stream_started
-                
-                # Build event object
-                event = StreamStartedEvent(
-                    container_id=self.engine_container_id,
-                    engine=EngineAddress(
-                        host=self.engine_host,
-                        port=self.engine_port
-                    ),
-                    stream=StreamKey(
-                        key_type="infohash",
-                        key=self.channel_id
-                    ),
-                    session=SessionInfo(
-                        playback_session_id=self.playback_session_id,
-                        stat_url=self.stat_url,
-                        command_url=self.command_url,
-                        is_live=self.is_live
-                    ),
-                    labels={
-                        "source": "hls_proxy",
-                        "stream_mode": "HLS"
-                    }
-                )
-                
-                # Call internal handler directly (no HTTP request)
-                result = handle_stream_started(event)
-                self.stream_id = result.id
-                
-                logger.info(f"Sent HLS stream started event to orchestrator: stream_id={self.stream_id}")
-                
-            except Exception as e:
-                logger.warning(f"Failed to send HLS stream started event to orchestrator: {e}")
-                logger.debug(f"Exception details: {e}", exc_info=True)
+        """Send stream started event to orchestrator using internal handler (no HTTP)
         
-        # Send event in background thread to avoid blocking the request handler
-        event_thread = threading.Thread(
-            target=_send_event,
-            name=f"HLS-StartEvent-{self.channel_id[:8]}",
-            daemon=True
-        )
-        event_thread.start()
+        Uses a timeout wrapper to prevent blocking if the internal handler takes too long.
+        This protects against potential blocking operations like Docker API calls.
+        """
+        try:
+            # Import here to avoid circular dependencies
+            from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
+            from ..services.internal_events import handle_stream_started
+            
+            # Build event object
+            event = StreamStartedEvent(
+                container_id=self.engine_container_id,
+                engine=EngineAddress(
+                    host=self.engine_host,
+                    port=self.engine_port
+                ),
+                stream=StreamKey(
+                    key_type="infohash",
+                    key=self.channel_id
+                ),
+                session=SessionInfo(
+                    playback_session_id=self.playback_session_id,
+                    stat_url=self.stat_url,
+                    command_url=self.command_url,
+                    is_live=self.is_live
+                ),
+                labels={
+                    "source": "hls_proxy",
+                    "stream_mode": "HLS"
+                }
+            )
+            
+            # Call internal handler with timeout protection
+            # Use threading to ensure we don't block initialize_channel()
+            result_container = {'result': None, 'error': None}
+            
+            def _call_handler():
+                try:
+                    result_container['result'] = handle_stream_started(event)
+                except Exception as e:
+                    result_container['error'] = e
+            
+            handler_thread = threading.Thread(target=_call_handler, daemon=True)
+            handler_thread.start()
+            handler_thread.join(timeout=STREAM_EVENT_HANDLER_TIMEOUT)
+            
+            if handler_thread.is_alive():
+                # Handler is still running after timeout
+                logger.warning(f"HLS stream started event handler timed out after {STREAM_EVENT_HANDLER_TIMEOUT}s, will complete in background")
+                # Generate a temporary stream_id so HLS proxy can proceed
+                self.stream_id = f"temp-hls-{self.channel_id[:16]}-{int(time.time())}"
+            elif result_container['error']:
+                raise result_container['error']
+            elif result_container['result']:
+                self.stream_id = result_container['result'].id
+                logger.info(f"Sent HLS stream started event to orchestrator: stream_id={self.stream_id}")
+            else:
+                logger.warning(f"HLS stream started event handler returned no result")
+                self.stream_id = f"temp-hls-{self.channel_id[:16]}-{int(time.time())}"
+            
+        except Exception as e:
+            logger.warning(f"Failed to send HLS stream started event to orchestrator: {e}")
+            logger.debug(f"Exception details: {e}", exc_info=True)
+            # Generate a fallback stream_id
+            self.stream_id = f"fallback-hls-{self.channel_id[:16]}-{int(time.time())}"
     
     def _send_stream_ended_event(self, reason="normal"):
         """Send stream ended event to orchestrator using internal handler (no HTTP)"""
