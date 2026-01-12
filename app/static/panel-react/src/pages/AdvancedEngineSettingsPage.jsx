@@ -849,7 +849,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
               className="flex items-center gap-2"
             >
               <Save className="h-4 w-4" />
-              {saving ? 'Saving...' : 'Save Platform Settings'}
+              {saving ? 'Saving...' : 'Save All Configuration'}
             </Button>
           </div>
         </CardContent>
