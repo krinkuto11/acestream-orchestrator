@@ -473,8 +473,9 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     cmd = None
     
     if variant_config["config_type"] == "env":
-        # ENV-based variants (jopsis-amd64, custom amd64 with base_args)
-        # These variants use ACESTREAM_ARGS environment variable
+        # ENV-based variants (jopsis-amd64 only)
+        # Note: Custom amd64 variants now use CMD-based configuration with Nano-Ace
+        # Legacy custom variants with base_args would still use this path
         uses_acestream_args = (
             cfg.ENGINE_VARIANT == "jopsis-amd64" or 
             (variant_config.get("is_custom") and variant_config.get("base_args") is not None)

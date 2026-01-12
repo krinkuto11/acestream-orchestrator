@@ -411,7 +411,8 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
         image = f"jopsis/acestream:arm64-v{config.arm_version}"
         config_type = "cmd"
     else:
-        # Fallback
+        # Fallback for unknown platforms - use amd64 Nano-Ace
+        # All supported platforms (amd64, arm32, arm64) now use CMD-based configuration
         image = "ghcr.io/krinkuto11/nano-ace:latest"
         config_type = "cmd"
     
