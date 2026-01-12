@@ -103,6 +103,7 @@ class CustomVariantConfig(BaseModel):
     """Complete custom variant configuration"""
     enabled: bool = False
     platform: str  # "amd64", "arm32", "arm64"
+    amd64_version: str = "3.2.11-py3.10"  # For AMD64 platform: "3.2.11-py3.10", "3.2.11-py3.8", "3.1.75rc4-py3.7", "3.1.74"
     arm_version: str = "3.2.13"  # For ARM platforms: "3.2.13" or "3.2.14"
     memory_limit: Optional[str] = None  # Docker memory limit (e.g., "512m", "2g")
     parameters: List[CustomVariantParameter] = []
@@ -117,6 +118,13 @@ class CustomVariantConfig(BaseModel):
         valid_platforms = ['amd64', 'arm32', 'arm64']
         if v not in valid_platforms:
             raise ValueError(f'platform must be one of: {", ".join(valid_platforms)}')
+        return v
+    
+    @validator('amd64_version')
+    def validate_amd64_version(cls, v):
+        valid_versions = ['3.2.11-py3.10', '3.2.11-py3.8', '3.1.75rc4-py3.7', '3.1.74']
+        if v not in valid_versions:
+            raise ValueError(f'amd64_version must be one of: {", ".join(valid_versions)}')
         return v
     
     @validator('arm_version')
@@ -270,6 +278,7 @@ def create_default_config(config_path: Path = DEFAULT_CONFIG_PATH) -> CustomVari
     config = CustomVariantConfig(
         enabled=False,
         platform=detected_platform,
+        amd64_version="3.2.11-py3.10",
         arm_version="3.2.13",
         parameters=get_default_parameters(detected_platform)
     )
@@ -344,6 +353,11 @@ def validate_config(config: CustomVariantConfig) -> tuple[bool, Optional[str]]:
     if config.platform not in ['amd64', 'arm32', 'arm64']:
         return False, f"Invalid platform: {config.platform}"
     
+    # AMD64 version validation (only matters for AMD64 platform)
+    if config.platform == 'amd64':
+        if config.amd64_version not in ['3.2.11-py3.10', '3.2.11-py3.8', '3.1.75rc4-py3.7', '3.1.74']:
+            return False, f"Invalid AMD64 version: {config.amd64_version}"
+    
     # ARM version validation (only matters for ARM platforms)
     if config.platform in ['arm32', 'arm64']:
         if config.arm_version not in ['3.2.13', '3.2.14']:
@@ -383,8 +397,13 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
     """
     # Determine base image
     if config.platform == 'amd64':
-        image = "jopsis/acestream:x64"
-        config_type = "env"
+        # Use Nano-Ace image with version tag
+        # Map version to appropriate tag
+        if config.amd64_version == "3.2.11-py3.10":
+            image = "ghcr.io/krinkuto11/nano-ace:latest"  # or :3.2.11-py3.10
+        else:
+            image = f"ghcr.io/krinkuto11/nano-ace:{config.amd64_version}"
+        config_type = "cmd"
     elif config.platform == 'arm32':
         image = f"jopsis/acestream:arm32-v{config.arm_version}"
         config_type = "cmd"
@@ -392,9 +411,10 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
         image = f"jopsis/acestream:arm64-v{config.arm_version}"
         config_type = "cmd"
     else:
-        # Fallback
-        image = "jopsis/acestream:x64"
-        config_type = "env"
+        # Fallback for unknown platforms - use amd64 Nano-Ace
+        # All supported platforms (amd64, arm32, arm64) now use CMD-based configuration
+        image = "ghcr.io/krinkuto11/nano-ace:latest"
+        config_type = "cmd"
     
     result = {
         "image": image,
@@ -403,24 +423,15 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
     }
     
     # Build parameter string or command
-    if config_type == "env":
-        # For amd64, build ACESTREAM_ARGS string
-        args = []
-        for param in config.parameters:
-            if not param.enabled:
-                continue
-            
-            if param.type == 'flag':
-                if param.value:  # Only add if True
-                    args.append(param.name)
-            else:
-                # Add parameter with value
-                args.append(f"{param.name} {param.value}")
+    if config_type == "cmd":
+        # For all platforms (amd64, arm32, arm64), build command list
+        if config.platform == 'amd64':
+            # Nano-Ace uses /acestream/acestreamengine as the base command
+            cmd = ["/acestream/acestreamengine"]
+        else:
+            # ARM platforms use python main.py
+            cmd = ["python", "main.py"]
         
-        result["base_args"] = " ".join(args)
-    else:
-        # For ARM, build command list
-        cmd = ["python", "main.py"]
         for param in config.parameters:
             if not param.enabled:
                 continue

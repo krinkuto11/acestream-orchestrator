@@ -146,10 +146,11 @@ def test_build_variant_config():
         build_variant_config_from_custom
     )
     
-    # Test amd64 (ENV-based)
+    # Test amd64 (CMD-based with Nano-Ace)
     config = CustomVariantConfig(
         enabled=True,
         platform='amd64',
+        amd64_version='3.2.11-py3.10',
         arm_version='3.2.13',
         parameters=[
             CustomVariantParameter(name='--client-console', type='flag', value=True, enabled=True),
@@ -159,11 +160,14 @@ def test_build_variant_config():
     )
     
     variant = build_variant_config_from_custom(config)
-    assert variant['image'] == 'jopsis/acestream:x64', "Wrong image for amd64"
-    assert variant['config_type'] == 'env', "Wrong config_type for amd64"
-    assert 'base_args' in variant, "Missing base_args for amd64"
-    assert '--client-console' in variant['base_args'], "Missing flag in base_args"
-    assert '--live-cache-size 268435456' in variant['base_args'], "Missing parameter with value"
+    assert variant['image'] == 'ghcr.io/krinkuto11/nano-ace:latest', "Wrong image for amd64"
+    assert variant['config_type'] == 'cmd', "Wrong config_type for amd64"
+    assert 'base_cmd' in variant, "Missing base_cmd for amd64"
+    assert isinstance(variant['base_cmd'], list), "base_cmd should be a list"
+    assert '/acestream/acestreamengine' in variant['base_cmd'], "Missing /acestream/acestreamengine in base_cmd"
+    assert '--client-console' in variant['base_cmd'], "Missing flag in base_cmd"
+    assert '--live-cache-size' in variant['base_cmd'], "Missing parameter in base_cmd"
+    assert '268435456' in variant['base_cmd'], "Missing parameter value in base_cmd"
     print("✅ AMD64 variant config built correctly")
     
     # Test arm64 (CMD-based)
