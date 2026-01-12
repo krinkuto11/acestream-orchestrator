@@ -22,6 +22,10 @@ from .utils import get_logger
 
 logger = get_logger()
 
+# Timeout for stream event handlers (in seconds)
+# This prevents blocking if internal event handling is slow (e.g., Docker API calls)
+STREAM_EVENT_HANDLER_TIMEOUT = 2.0
+
 
 class StreamManager:
     """Manages connection to AceStream engine and stream health"""
@@ -190,11 +194,11 @@ class StreamManager:
             
             handler_thread = threading.Thread(target=_call_handler, daemon=True)
             handler_thread.start()
-            handler_thread.join(timeout=2.0)  # 2 second timeout
+            handler_thread.join(timeout=STREAM_EVENT_HANDLER_TIMEOUT)
             
             if handler_thread.is_alive():
                 # Handler is still running after timeout
-                logger.warning(f"Stream started event handler timed out after 2s, will complete in background")
+                logger.warning(f"Stream started event handler timed out after {STREAM_EVENT_HANDLER_TIMEOUT}s, will complete in background")
                 # Generate a temporary stream_id so proxy can proceed
                 self.stream_id = f"temp-ts-{self.content_id[:16]}-{int(time.time())}"
             elif result_container['error']:
