@@ -7,8 +7,8 @@ COPY app/static/panel-react/ ./
 # This will output to /build/panel (one level up, as configured in vite.config.js)
 RUN npm run build
 
-# Stage 2: Build Python dependencies
-FROM python:3.12-slim AS python-builder
+# Stage 2: Build Python dependencies (use 3.11 to match Distroless)
+FROM python:3.11-slim AS python-builder
 WORKDIR /build
 
 # Install build dependencies
@@ -23,8 +23,8 @@ RUN pip install --upgrade pip && \
     --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org \
     -r requirements.txt
 
-# Stage 3: Install Redis and collect all dependencies
-FROM python:3.12-slim AS redis-builder
+# Stage 3: Install Redis and collect all dependencies (use Debian 12 to match Distroless)
+FROM debian:12-slim AS redis-builder
 RUN apt-get update && \
     apt-get install -y --no-install-recommends redis-server redis-tools && \
     mkdir -p /redis-bundle/bin /redis-bundle/lib && \
@@ -38,6 +38,7 @@ RUN apt-get update && \
 FROM gcr.io/distroless/python3-debian12:latest
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/usr/local/lib/python3.11/site-packages
 
 # Copy Python dependencies from builder
 COPY --from=python-builder /install /usr/local
@@ -104,9 +105,10 @@ def main():
     # Start Redis
     start_redis()
     
-    # Start FastAPI application
-    os.execvp('uvicorn', [
-        'uvicorn',
+    # Start FastAPI application using Python module
+    os.execvp('python3', [
+        'python3',
+        '-m', 'uvicorn',
         'app.main:app',
         '--host', '0.0.0.0',
         '--port', '8000',
