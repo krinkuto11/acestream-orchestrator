@@ -2158,10 +2158,37 @@ async def get_stream_clients(stream_key: str):
         List of client details or empty list if no clients
     """
     from .proxy.server import ProxyServer
+    from .proxy.hls_proxy import HLSProxyServer
     from .proxy.redis_keys import RedisKeys
     import redis
     
     try:
+        # First check if this is an HLS stream
+        hls_proxy = HLSProxyServer.get_instance()
+        if hls_proxy.has_channel(stream_key):
+            # This is an HLS stream - get client info from HLS proxy
+            client_manager = hls_proxy.client_managers.get(stream_key)
+            if not client_manager:
+                return {"clients": []}
+            
+            # HLS proxy tracks clients by IP address
+            with client_manager.lock:
+                clients = []
+                import time
+                current_time = time.time()
+                for client_ip, last_activity in client_manager.last_activity.items():
+                    clients.append({
+                        "client_id": client_ip,
+                        "ip_address": client_ip,
+                        "last_active": last_activity,
+                        "connected_at": last_activity,  # We don't track connection time separately
+                        "user_agent": "HLS Client",
+                        "worker_id": "hls_proxy",
+                        "inactive_seconds": current_time - last_activity
+                    })
+                return {"clients": clients}
+        
+        # Not an HLS stream, check TS proxy
         proxy_server = ProxyServer.get_instance()
         
         # Get client manager for this stream

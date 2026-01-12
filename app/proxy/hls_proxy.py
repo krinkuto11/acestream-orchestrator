@@ -204,52 +204,44 @@ class StreamManager:
     
     def _send_stream_started_event(self):
         """Send stream started event to orchestrator using internal handler (no HTTP)"""
-        def _send_event():
-            try:
-                # Import here to avoid circular dependencies
-                from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
-                from ..services.internal_events import handle_stream_started
-                
-                # Build event object
-                event = StreamStartedEvent(
-                    container_id=self.engine_container_id,
-                    engine=EngineAddress(
-                        host=self.engine_host,
-                        port=self.engine_port
-                    ),
-                    stream=StreamKey(
-                        key_type="infohash",
-                        key=self.channel_id
-                    ),
-                    session=SessionInfo(
-                        playback_session_id=self.playback_session_id,
-                        stat_url=self.stat_url,
-                        command_url=self.command_url,
-                        is_live=self.is_live
-                    ),
-                    labels={
-                        "source": "hls_proxy",
-                        "stream_mode": "HLS"
-                    }
-                )
-                
-                # Call internal handler directly (no HTTP request)
-                result = handle_stream_started(event)
-                self.stream_id = result.id
-                
-                logger.info(f"Sent HLS stream started event to orchestrator: stream_id={self.stream_id}")
-                
-            except Exception as e:
-                logger.warning(f"Failed to send HLS stream started event to orchestrator: {e}")
-                logger.debug(f"Exception details: {e}", exc_info=True)
-        
-        # Send event in background thread to avoid blocking the request handler
-        event_thread = threading.Thread(
-            target=_send_event,
-            name=f"HLS-StartEvent-{self.channel_id[:8]}",
-            daemon=True
-        )
-        event_thread.start()
+        try:
+            # Import here to avoid circular dependencies
+            from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
+            from ..services.internal_events import handle_stream_started
+            
+            # Build event object
+            event = StreamStartedEvent(
+                container_id=self.engine_container_id,
+                engine=EngineAddress(
+                    host=self.engine_host,
+                    port=self.engine_port
+                ),
+                stream=StreamKey(
+                    key_type="infohash",
+                    key=self.channel_id
+                ),
+                session=SessionInfo(
+                    playback_session_id=self.playback_session_id,
+                    stat_url=self.stat_url,
+                    command_url=self.command_url,
+                    is_live=self.is_live
+                ),
+                labels={
+                    "source": "hls_proxy",
+                    "stream_mode": "HLS"
+                }
+            )
+            
+            # Call internal handler directly and synchronously for immediate UI update
+            # This is safe because it doesn't make HTTP requests (no deadlock risk)
+            result = handle_stream_started(event)
+            self.stream_id = result.id
+            
+            logger.info(f"Sent HLS stream started event to orchestrator: stream_id={self.stream_id}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to send HLS stream started event to orchestrator: {e}")
+            logger.debug(f"Exception details: {e}", exc_info=True)
     
     def _send_stream_ended_event(self, reason="normal"):
         """Send stream ended event to orchestrator using internal handler (no HTTP)"""
