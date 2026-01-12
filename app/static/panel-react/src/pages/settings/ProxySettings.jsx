@@ -6,13 +6,14 @@ import { Button } from '@/components/ui/button'
 import { AlertCircle, CheckCircle2, Info } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
+// Constants
+const DEFAULT_MAX_STREAMS_PER_ENGINE = 3
+const LIVE_CACHE_TYPE_PARAM = '--live-cache-type'
+
 export function ProxySettings({ apiKey, orchUrl }) {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState(null)
   const [error, setError] = useState(null)
-  
-  // Default values
-  const DEFAULT_MAX_STREAMS_PER_ENGINE = 3
   
   // Proxy config state
   const [initialDataWaitTimeout, setInitialDataWaitTimeout] = useState(10)
@@ -41,11 +42,19 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [chunkSize, setChunkSize] = useState(0)
   const [bufferChunkSize, setBufferChunkSize] = useState(0)
   
-  // Check if HLS is supported
-  const hlsSupported = engineVariant.startsWith('krinkuto11-amd64')
+  // Custom variant state
+  const [customVariantEnabled, setCustomVariantEnabled] = useState(false)
+  const [customVariantCacheType, setCustomVariantCacheType] = useState('')
+  const [variantDisplayName, setVariantDisplayName] = useState('')
+  
+  // Check if HLS is supported - double check both variant and cache type
+  const isKrinkutoVariant = engineVariant.startsWith('krinkuto11-amd64')
+  const hasCompatibleCache = !customVariantEnabled || (customVariantCacheType !== 'memory')
+  const hlsSupported = isKrinkutoVariant && hasCompatibleCache
   
   useEffect(() => {
     fetchProxyConfig()
+    fetchCustomVariantInfo()
   }, [orchUrl])
   
   const fetchProxyConfig = async () => {
@@ -78,6 +87,42 @@ export function ProxySettings({ apiKey, orchUrl }) {
       }
     } catch (err) {
       console.error('Failed to fetch proxy config:', err)
+    }
+  }
+  
+  const fetchCustomVariantInfo = async () => {
+    try {
+      const response = await fetch(`${orchUrl}/custom-variant/config`)
+      if (!response.ok) {
+        console.error('Failed to fetch custom variant config, status:', response.status)
+        setVariantDisplayName(engineVariant)
+        return
+      }
+      
+      const data = await response.json()
+      setCustomVariantEnabled(data.enabled || false)
+      
+      // Find live-cache-type parameter
+      const liveCacheParam = data.parameters?.find(p => p.name === LIVE_CACHE_TYPE_PARAM)
+      const cacheType = liveCacheParam?.enabled ? liveCacheParam.value : ''
+      setCustomVariantCacheType(cacheType)
+      
+      // Determine variant display name
+      if (data.enabled) {
+        setVariantDisplayName('custom variant')
+      } else {
+        setVariantDisplayName(engineVariant)
+      }
+      
+      // Auto-switch to TS if custom variant has memory-only cache and HLS is selected
+      if (data.enabled && cacheType === 'memory' && streamMode === 'HLS') {
+        setStreamMode('TS')
+        setMessage('Stream mode automatically switched to MPEG-TS because custom variant uses memory-only cache (HLS requires disk or hybrid cache)')
+      }
+    } catch (err) {
+      console.error('Failed to fetch custom variant info:', err)
+      // Fallback to using engineVariant
+      setVariantDisplayName(engineVariant)
     }
   }
   
@@ -148,7 +193,15 @@ export function ProxySettings({ apiKey, orchUrl }) {
             <Label htmlFor="stream-mode">Stream Mode</Label>
             <Select 
               value={streamMode} 
-              onValueChange={setStreamMode}
+              onValueChange={(value) => {
+                // Prevent switching to HLS if not supported
+                if (value === 'HLS' && !hlsSupported) {
+                  setError('HLS mode is not available with current engine configuration. Use krinkuto11-amd64 variant with disk or hybrid cache.')
+                  return
+                }
+                setStreamMode(value)
+                setError(null)
+              }}
               disabled={!hlsSupported && streamMode === 'TS'}
             >
               <SelectTrigger id="stream-mode">
@@ -157,7 +210,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
               <SelectContent>
                 <SelectItem value="TS">MPEG-TS (Transport Stream)</SelectItem>
                 <SelectItem value="HLS" disabled={!hlsSupported}>
-                  HLS (HTTP Live Streaming) {!hlsSupported && '- Requires krinkuto11-amd64 variant'}
+                  HLS (HTTP Live Streaming) {!hlsSupported && '- Not available'}
                 </SelectItem>
               </SelectContent>
             </Select>
@@ -166,17 +219,24 @@ export function ProxySettings({ apiKey, orchUrl }) {
               {!hlsSupported && (
                 <>
                   <br />
-                  <span className="text-amber-600 font-semibold">
-                    ⚠️ HLS mode is only available for krinkuto11-amd64 engine variant.
-                    Current variant: {engineVariant || 'Unknown'}
+                  <span className="text-amber-600 dark:text-amber-500 font-semibold">
+                    ⚠️ HLS mode is not available. Requirements:
+                    <br />
+                    • Engine variant must be krinkuto11-amd64 (current: {variantDisplayName || engineVariant || 'Unknown'})
+                    {customVariantEnabled && customVariantCacheType === 'memory' && (
+                      <>
+                        <br />
+                        • Live cache type must be disk or hybrid (current: memory)
+                      </>
+                    )}
                   </span>
                 </>
               )}
               {hlsSupported && (
                 <>
                   <br />
-                  <span className="text-green-600 font-semibold">
-                    ✓ HLS mode is supported for your current variant ({engineVariant})
+                  <span className="text-green-600 dark:text-green-500 font-semibold">
+                    ✓ HLS mode is supported (variant: {variantDisplayName || engineVariant}, cache: {customVariantCacheType || 'disk/hybrid'})
                   </span>
                 </>
               )}
