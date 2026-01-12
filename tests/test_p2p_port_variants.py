@@ -20,29 +20,26 @@ def test_p2p_port_handling():
     print(f"  HTTPS Port: {c_https}")
     print(f"  P2P Port (Gluetun): {p2p_port}")
     
-    # Test krinkuto11-amd64 (ENV with P2P_PORT environment variable)
+    # Test krinkuto11-amd64 (CMD with P2P port in command)
     print("\n" + "-" * 70)
     print("📋 Variant: krinkuto11-amd64")
     print("-" * 70)
     config = _get_variant_config('krinkuto11-amd64')
-    env = {}
-    if config['config_type'] == 'env':
-        conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
-        env['CONF'] = "\n".join(conf_lines)
-        env['HTTP_PORT'] = str(c_http)
-        env['HTTPS_PORT'] = str(c_https)
+    cmd = None
+    if config['config_type'] == 'cmd':
+        base_cmd = config.get('base_cmd', [])
+        port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]
         if p2p_port:
-            env['P2P_PORT'] = str(p2p_port)
+            port_args.extend(["--port", str(p2p_port)])
+        cmd = base_cmd + port_args
     
-    print(f"Environment Variables:")
-    print(f"  CONF: {repr(env.get('CONF'))}")
-    print(f"  HTTP_PORT: {env.get('HTTP_PORT')}")
-    print(f"  HTTPS_PORT: {env.get('HTTPS_PORT')}")
-    print(f"  P2P_PORT: {env.get('P2P_PORT')}")
+    print(f"Command: {' '.join(cmd)}")
     
-    assert 'P2P_PORT' in env, "P2P_PORT should be in environment for krinkuto11-amd64"
-    assert env['P2P_PORT'] == str(p2p_port), f"P2P_PORT should be {p2p_port}"
-    print("✓ P2P port correctly added as environment variable")
+    assert '--port' in cmd, "P2P port flag should be in command"
+    assert str(p2p_port) in cmd, f"P2P port {p2p_port} should be in command"
+    port_index = cmd.index('--port')
+    assert cmd[port_index + 1] == str(p2p_port), f"Port value should follow --port flag"
+    print("✓ P2P port correctly appended to command")
     
     # Test jopsis-amd64 (ENV with P2P port in ACESTREAM_ARGS)
     print("\n" + "-" * 70)
@@ -112,7 +109,7 @@ def test_p2p_port_handling():
     print("=" * 70)
     
     print("\nSummary:")
-    print("  - krinkuto11-amd64: P2P_PORT environment variable ✓")
+    print("  - krinkuto11-amd64: --port flag in command ✓")
     print("  - jopsis-amd64: --port flag in ACESTREAM_ARGS ✓")
     print("  - jopsis-arm32: --port flag in command ✓")
     print("  - jopsis-arm64: --port flag in command ✓")

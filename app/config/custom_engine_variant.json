@@ -1,5 +1,5 @@
 {
-  "enabled": true,
+  "enabled": false,
   "platform": "amd64",
   "arm_version": "3.2.13",
   "memory_limit": null,
@@ -217,5 +217,6 @@
   ],
   "torrent_folder_mount_enabled": false,
   "torrent_folder_host_path": null,
-  "torrent_folder_container_path": "/root/.ACEStream/collected_torrent_files"
+  "torrent_folder_container_path": "/root/.ACEStream/collected_torrent_files",
+  "amd64_version": "3.2.11-py3.10"
 }
