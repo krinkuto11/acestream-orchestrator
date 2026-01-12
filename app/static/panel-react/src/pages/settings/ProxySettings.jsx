@@ -6,13 +6,14 @@ import { Button } from '@/components/ui/button'
 import { AlertCircle, CheckCircle2, Info } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
+// Constants
+const DEFAULT_MAX_STREAMS_PER_ENGINE = 3
+const LIVE_CACHE_TYPE_PARAM = '--live-cache-type'
+
 export function ProxySettings({ apiKey, orchUrl }) {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState(null)
   const [error, setError] = useState(null)
-  
-  // Default values
-  const DEFAULT_MAX_STREAMS_PER_ENGINE = 3
   
   // Proxy config state
   const [initialDataWaitTimeout, setInitialDataWaitTimeout] = useState(10)
@@ -102,7 +103,6 @@ export function ProxySettings({ apiKey, orchUrl }) {
       setCustomVariantEnabled(data.enabled || false)
       
       // Find live-cache-type parameter
-      const LIVE_CACHE_TYPE_PARAM = '--live-cache-type'
       const liveCacheParam = data.parameters?.find(p => p.name === LIVE_CACHE_TYPE_PARAM)
       const cacheType = liveCacheParam?.enabled ? liveCacheParam.value : ''
       setCustomVariantCacheType(cacheType)
