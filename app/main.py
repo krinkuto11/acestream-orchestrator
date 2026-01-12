@@ -46,12 +46,12 @@ logger = logging.getLogger(__name__)
 setup()
 
 def _init_proxy_server():
-    """Initialize ProxyServer in background thread during startup.
+    """Initialize ProxyServer and HLSProxyServer in background thread during startup.
     
-    This prevents blocking when /proxy/streams/{stream_key}/clients is called
-    from the panel while an HLS stream is active. The endpoint triggers lazy
-    initialization of ProxyServer which connects to Redis and starts threads,
-    blocking the HTTP response in single-worker uvicorn mode.
+    This prevents blocking when /proxy/streams/{stream_key}/clients or /ace/getstream
+    endpoints are called from the panel while streams are active. Lazy initialization
+    of these singletons connects to Redis and sets up data structures, which can block
+    HTTP responses in single-worker uvicorn mode.
     """
     try:
         from .proxy.server import ProxyServer
@@ -59,6 +59,13 @@ def _init_proxy_server():
         logger.info("ProxyServer pre-initialized during startup")
     except Exception as e:
         logger.warning(f"Failed to pre-initialize ProxyServer: {e}")
+    
+    try:
+        from .proxy.hls_proxy import HLSProxyServer
+        HLSProxyServer.get_instance()
+        logger.info("HLSProxyServer pre-initialized during startup")
+    except Exception as e:
+        logger.warning(f"Failed to pre-initialize HLSProxyServer: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -326,7 +333,7 @@ async def lifespan(app: FastAPI):
     
     cleanup_on_shutdown()
 
-__version__ = "1.5.1"
+__version__ = "1.5.2.1"
 
 app = FastAPI(
     title="On-Demand Orchestrator",
