@@ -149,72 +149,70 @@ class StreamManager:
             return False
     
     def _send_stream_started_event(self):
-        """Send stream started event to orchestrator using internal handler (no HTTP)
+        """Send stream started event to orchestrator in background (non-blocking)
         
-        Uses a timeout wrapper to prevent blocking if the internal handler takes too long.
-        This protects against potential blocking operations like Docker API calls.
+        Runs in a background daemon thread to avoid blocking stream initialization.
+        The stream_id is set to a temporary value immediately so the proxy can proceed.
         """
-        try:
-            # Import here to avoid circular dependencies
-            from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
-            from ..services.internal_events import handle_stream_started
-            
-            # Build event object
-            event = StreamStartedEvent(
-                container_id=self.engine_container_id,
-                engine=EngineAddress(
-                    host=self.engine_host,
-                    port=self.engine_port
-                ),
-                stream=StreamKey(
-                    key_type="infohash",
-                    key=self.content_id
-                ),
-                session=SessionInfo(
-                    playback_session_id=self.playback_session_id,
-                    stat_url=self.stat_url,
-                    command_url=self.command_url,
-                    is_live=self.is_live
-                ),
-                labels={
-                    "source": "proxy",
-                    "worker_id": self.worker_id or "unknown"
-                }
-            )
-            
-            # Call internal handler with timeout protection
-            # Use threading to ensure we don't block stream initialization
-            result_container = {'result': None, 'error': None}
-            
-            def _call_handler():
+        def _send_event():
+            try:
+                # Import here to avoid circular dependencies
+                from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
+                from ..services.internal_events import handle_stream_started
+                
+                # Build event object
+                event = StreamStartedEvent(
+                    container_id=self.engine_container_id,
+                    engine=EngineAddress(
+                        host=self.engine_host,
+                        port=self.engine_port
+                    ),
+                    stream=StreamKey(
+                        key_type="infohash",
+                        key=self.content_id
+                    ),
+                    session=SessionInfo(
+                        playback_session_id=self.playback_session_id,
+                        stat_url=self.stat_url,
+                        command_url=self.command_url,
+                        is_live=self.is_live
+                    ),
+                    labels={
+                        "source": "proxy",
+                        "worker_id": self.worker_id or "unknown"
+                    }
+                )
+                
+                # Call internal handler directly (no HTTP request)
                 try:
-                    result_container['result'] = handle_stream_started(event)
+                    result = handle_stream_started(event)
+                    if result:
+                        self.stream_id = result.id
+                        logger.info(f"Sent stream started event to orchestrator: stream_id={self.stream_id}")
+                    else:
+                        logger.warning(f"Stream started event handler returned no result")
+                        self.stream_id = f"temp-ts-{self.content_id[:16]}-{int(time.time())}"
                 except Exception as e:
-                    result_container['error'] = e
-            
-            handler_thread = threading.Thread(target=_call_handler, daemon=True)
-            handler_thread.start()
-            handler_thread.join(timeout=STREAM_EVENT_HANDLER_TIMEOUT)
-            
-            if handler_thread.is_alive():
-                # Handler is still running after timeout
-                logger.warning(f"Stream started event handler timed out after {STREAM_EVENT_HANDLER_TIMEOUT}s, will complete in background")
-                # Generate a temporary stream_id so proxy can proceed
-                self.stream_id = f"temp-ts-{self.content_id[:16]}-{int(time.time())}"
-            elif result_container['error']:
-                raise result_container['error']
-            elif result_container['result']:
-                self.stream_id = result_container['result'].id
-                logger.info(f"Sent stream started event to orchestrator: stream_id={self.stream_id}")
-            else:
-                logger.warning(f"Stream started event handler returned no result")
-                self.stream_id = f"temp-ts-{self.content_id[:16]}-{int(time.time())}"
-            
-        except Exception as e:
-            logger.warning(f"Failed to send stream started event to orchestrator: {e}")
-            logger.debug(f"Exception details: {e}", exc_info=True)
-            # Generate a fallback stream_id
-            self.stream_id = f"fallback-ts-{self.content_id[:16]}-{int(time.time())}"
+                    logger.warning(f"Event handler error: {e}")
+                    self.stream_id = f"error-ts-{self.content_id[:16]}-{int(time.time())}"
+                
+            except Exception as e:
+                logger.warning(f"Failed to send stream started event to orchestrator: {e}")
+                logger.debug(f"Exception details: {e}", exc_info=True)
+                # Generate a fallback stream_id
+                self.stream_id = f"fallback-ts-{self.content_id[:16]}-{int(time.time())}"
+        
+        # Generate a temporary stream_id immediately so proxy can proceed
+        self.stream_id = f"temp-ts-{self.content_id[:16]}-{int(time.time())}"
+        
+        # Send event in background thread (non-blocking, no join)
+        handler_thread = threading.Thread(
+            target=_send_event,
+            name=f"TS-StartEvent-{self.content_id[:8]}",
+            daemon=True
+        )
+        handler_thread.start()
+        # No join() - fire and forget for non-blocking behavior
     
     def _send_stream_ended_event(self, reason="normal"):
         """Send stream ended event to orchestrator using internal handler (no HTTP)"""

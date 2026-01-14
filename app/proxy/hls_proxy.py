@@ -211,15 +211,15 @@ class StreamManager:
                 logger.warning(f"Failed to send stop command: {e}")
     
     def _send_stream_started_event(self):
-        """Send stream started event to orchestrator using internal handler (no HTTP)
+        """Send stream started event to orchestrator using async task (non-blocking)
         
-        Runs asynchronously in a background daemon thread to avoid blocking initialize_channel().
+        Runs asynchronously in a background task to avoid blocking initialize_channel().
         This ensures the UI remains responsive during stream initialization.
         
-        Note: stream_id is set to a temporary value immediately, then updated by the background
-        thread when the event handler completes. This is intentional for fire-and-forget async.
+        Note: stream_id is set to a temporary value immediately, then updated by the async
+        task when the event handler completes. This is intentional for fire-and-forget async.
         """
-        def _send_event():
+        async def _send_event():
             try:
                 # Import here to avoid circular dependencies
                 from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
@@ -249,7 +249,9 @@ class StreamManager:
                 )
                 
                 # Call internal handler directly (no HTTP request)
-                result = handle_stream_started(event)
+                # Run in thread pool since handle_stream_started is synchronous
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, handle_stream_started, event)
                 
                 # Update stream_id from result
                 if result:
@@ -266,19 +268,17 @@ class StreamManager:
                 self.stream_id = f"fallback-hls-{self.channel_id[:16]}-{int(time.time())}"
         
         # Generate a temporary stream_id immediately so HLS proxy can proceed
-        # This will be updated by the background thread once the event is processed
+        # This will be updated by the async task once the event is processed
         self.stream_id = f"temp-hls-{self.channel_id[:16]}-{int(time.time())}"
         
-        # Send event in background thread to avoid blocking
-        event_thread = threading.Thread(
-            target=_send_event,
-            name=f"HLS-StartEvent-{self.channel_id[:8]}",
-            daemon=True
+        # Send event in background async task (non-blocking, no thread creation)
+        asyncio.create_task(
+            _send_event(),
+            name=f"HLS-StartEvent-{self.channel_id[:8]}"
         )
-        event_thread.start()
     
     def _send_stream_ended_event(self, reason="normal"):
-        """Send stream ended event to orchestrator using internal handler (no HTTP)"""
+        """Send stream ended event to orchestrator using async task (non-blocking)"""
         # Check if we've already sent the ended event
         if self._ended_event_sent:
             logger.debug(f"HLS stream ended event already sent for stream_id={self.stream_id}, skipping")
@@ -289,7 +289,7 @@ class StreamManager:
             logger.warning(f"No stream_id available for channel_id={self.channel_id}, cannot send ended event")
             return
         
-        def _send_event():
+        async def _send_event():
             try:
                 # Import here to avoid circular dependencies
                 from ..models.schemas import StreamEndedEvent
@@ -303,7 +303,9 @@ class StreamManager:
                 )
                 
                 # Call internal handler directly (no HTTP request)
-                handle_stream_ended(event)
+                # Run in thread pool since handle_stream_ended is synchronous
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, handle_stream_ended, event)
                 
                 # Mark as sent
                 self._ended_event_sent = True
@@ -314,13 +316,11 @@ class StreamManager:
                 logger.warning(f"Failed to send HLS stream ended event to orchestrator: {e}")
                 logger.debug(f"Exception details: {e}", exc_info=True)
         
-        # Send event in background thread to avoid blocking
-        event_thread = threading.Thread(
-            target=_send_event,
-            name=f"HLS-EndEvent-{self.channel_id[:8]}",
-            daemon=True
+        # Send event in background async task (non-blocking, no thread creation)
+        asyncio.create_task(
+            _send_event(),
+            name=f"HLS-EndEvent-{self.channel_id[:8]}"
         )
-        event_thread.start()
     
     def start_cleanup_monitoring(self, proxy_server):
         """Start background thread for client inactivity monitoring (adapted from context/hls_proxy)"""
