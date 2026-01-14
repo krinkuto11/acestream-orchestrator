@@ -135,6 +135,7 @@ async def test_autoscaler_failure_does_not_break_port_change():
     # Mock the state module
     mock_state = Mock()
     mock_state.get_forwarded_engine.return_value = mock_engine
+    mock_state.get_forwarded_engine_for_vpn.return_value = mock_engine  # Add VPN mode support
     mock_state.remove_engine = Mock()
     
     # Mock the stop_container function

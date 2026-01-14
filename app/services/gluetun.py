@@ -558,8 +558,8 @@ class GluetunMonitor:
             logger.info(f"Forwarded engine replacement triggered - provisioning new engine immediately with port {new_port}")
             try:
                 from .autoscaler import ensure_minimum
-                # Run autoscaler in current event loop to provision replacement immediately
-                loop = asyncio.get_event_loop()
+                # Run autoscaler in current running loop to provision replacement immediately
+                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, ensure_minimum, False)
                 logger.info("Immediate autoscaling completed after port change")
             except Exception as autoscale_error:
