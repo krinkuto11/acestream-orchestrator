@@ -1,11 +1,13 @@
 """
 Stream generation and client-side handling for AceStream streams.
 Simplified adaptation from ts_proxy - handles per-client delivery and buffering.
+
+IMPORTANT: This module is used in a threading environment (uvicorn default mode),
+NOT gevent. All sleep operations must use time.sleep(), not gevent.sleep().
 """
 
 import time
 import logging
-import gevent
 
 from .config_helper import ConfigHelper
 from .utils import get_logger, create_ts_packet
@@ -100,7 +102,8 @@ class StreamGenerator:
                         break
                     
                     # Wait a bit before retrying
-                    gevent.sleep(no_data_check_interval)
+                    # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
+                    time.sleep(no_data_check_interval)
                 
                 # Refresh client TTL periodically
                 if time.time() - self.last_ttl_refresh >= self.ttl_refresh_interval:
@@ -125,7 +128,8 @@ class StreamGenerator:
         while time.time() - start_time < timeout:
             # Check if stream is ready (would check Redis metadata in full implementation)
             # For now, just wait a bit
-            gevent.sleep(1)
+            # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
+            time.sleep(1)
             
             # TODO: Check Redis for stream state
             # For now, assume ready after a short wait
@@ -156,7 +160,8 @@ class StreamGenerator:
                 return True
             
             # Wait before checking again
-            gevent.sleep(check_interval)
+            # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
+            time.sleep(check_interval)
         
         # Timeout - no data arrived
         logger.error(f"[{self.client_id}] Timeout waiting for initial data (buffer still empty after {timeout}s)")

@@ -452,6 +452,32 @@ def get_metrics():
     # Generate and return Prometheus metrics
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
+@app.get("/metrics/performance")
+def get_performance_metrics(
+    operation: Optional[str] = Query(None, description="Filter by operation name"),
+    window: Optional[int] = Query(None, description="Time window in seconds")
+):
+    """
+    Get performance metrics for system operations.
+    
+    Shows timing statistics (avg, p50, p95, p99) for key operations:
+    - hls_manifest_generation: HLS manifest creation time
+    - hls_segment_fetch: HLS segment download time
+    - docker_stats_collection: Docker stats batch collection time
+    - stream_event_handling: Event handler processing time
+    """
+    from .services.performance_metrics import performance_metrics
+    
+    if operation:
+        stats = {operation: performance_metrics.get_stats(operation, window)}
+    else:
+        stats = performance_metrics.get_all_stats(window)
+    
+    return {
+        "window_seconds": window or "all",
+        "operations": stats
+    }
+
 # Provisioning
 @app.post("/provision", dependencies=[Depends(require_api_key)])
 def provision(req: StartRequest):
@@ -1880,7 +1906,8 @@ async def ace_getstream(
                     # Track client activity for this request
                     hls_proxy.record_client_activity(id, client_ip)
                     
-                    manifest_content = hls_proxy.get_manifest(id)
+                    # Use async version to avoid blocking the event loop
+                    manifest_content = await hls_proxy.get_manifest_async(id)
                     
                     # Note: In HLS, clients make multiple requests (manifest + segments)
                     # Client activity is tracked on each request, not per connection
@@ -1963,8 +1990,9 @@ async def ace_getstream(
                 )
                 
                 # Track client activity and get manifest for the newly created channel
+                # Use async version to avoid blocking the event loop
                 hls_proxy.record_client_activity(id, client_ip)
-                manifest_content = hls_proxy.get_manifest(id)
+                manifest_content = await hls_proxy.get_manifest_async(id)
                 
                 return StreamingResponse(
                     iter([manifest_content.encode('utf-8')]),

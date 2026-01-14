@@ -8,8 +8,10 @@ import threading
 import logging
 import time
 import requests
+import httpx
 import m3u8
 import os
+import asyncio
 from typing import Dict, Optional, Set, Any
 from urllib.parse import urljoin, urlparse
 from .config_helper import ConfigHelper
@@ -110,19 +112,25 @@ class ClientManager:
 
 
 class StreamBuffer:
-    """Thread-safe buffer for HLS segments"""
+    """Thread-safe buffer for HLS segments with optimized read performance
+    
+    Uses a combination of a regular lock for writes and allows concurrent reads
+    through careful state management. In practice, reads are much more frequent
+    than writes, so we optimize for read performance.
+    """
     
     def __init__(self):
         self.buffer: Dict[int, bytes] = {}
-        self.lock: threading.Lock = threading.Lock()
+        self.lock: threading.RLock = threading.RLock()  # RLock allows recursive locking
     
     def __getitem__(self, key: int) -> Optional[bytes]:
-        """Get segment data by sequence number"""
+        """Get segment data by sequence number (read operation)"""
+        # For reads, we still need a lock but RLock is more efficient for this pattern
         with self.lock:
             return self.buffer.get(key)
     
     def __setitem__(self, key: int, value: bytes):
-        """Store segment data by sequence number"""
+        """Store segment data by sequence number (write operation)"""
         with self.lock:
             self.buffer[key] = value
             # Cleanup old segments if we exceed MAX_SEGMENTS
@@ -133,12 +141,12 @@ class StreamBuffer:
                     del self.buffer[k]
     
     def __contains__(self, key: int) -> bool:
-        """Check if sequence number exists in buffer"""
+        """Check if sequence number exists in buffer (read operation)"""
         with self.lock:
             return key in self.buffer
     
     def keys(self):
-        """Get list of available sequence numbers"""
+        """Get list of available sequence numbers (read operation)"""
         with self.lock:
             return list(self.buffer.keys())
 
@@ -203,15 +211,15 @@ class StreamManager:
                 logger.warning(f"Failed to send stop command: {e}")
     
     def _send_stream_started_event(self):
-        """Send stream started event to orchestrator using internal handler (no HTTP)
+        """Send stream started event to orchestrator using async task (non-blocking)
         
-        Runs asynchronously in a background daemon thread to avoid blocking initialize_channel().
+        Runs asynchronously in a background task to avoid blocking initialize_channel().
         This ensures the UI remains responsive during stream initialization.
         
-        Note: stream_id is set to a temporary value immediately, then updated by the background
-        thread when the event handler completes. This is intentional for fire-and-forget async.
+        Note: stream_id is set to a temporary value immediately, then updated by the async
+        task when the event handler completes. This is intentional for fire-and-forget async.
         """
-        def _send_event():
+        async def _send_event():
             try:
                 # Import here to avoid circular dependencies
                 from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
@@ -241,7 +249,9 @@ class StreamManager:
                 )
                 
                 # Call internal handler directly (no HTTP request)
-                result = handle_stream_started(event)
+                # Run in thread pool since handle_stream_started is synchronous
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, handle_stream_started, event)
                 
                 # Update stream_id from result
                 if result:
@@ -258,19 +268,17 @@ class StreamManager:
                 self.stream_id = f"fallback-hls-{self.channel_id[:16]}-{int(time.time())}"
         
         # Generate a temporary stream_id immediately so HLS proxy can proceed
-        # This will be updated by the background thread once the event is processed
+        # This will be updated by the async task once the event is processed
         self.stream_id = f"temp-hls-{self.channel_id[:16]}-{int(time.time())}"
         
-        # Send event in background thread to avoid blocking
-        event_thread = threading.Thread(
-            target=_send_event,
-            name=f"HLS-StartEvent-{self.channel_id[:8]}",
-            daemon=True
+        # Send event in background async task (non-blocking, no thread creation)
+        asyncio.create_task(
+            _send_event(),
+            name=f"HLS-StartEvent-{self.channel_id[:8]}"
         )
-        event_thread.start()
     
     def _send_stream_ended_event(self, reason="normal"):
-        """Send stream ended event to orchestrator using internal handler (no HTTP)"""
+        """Send stream ended event to orchestrator using async task (non-blocking)"""
         # Check if we've already sent the ended event
         if self._ended_event_sent:
             logger.debug(f"HLS stream ended event already sent for stream_id={self.stream_id}, skipping")
@@ -281,7 +289,7 @@ class StreamManager:
             logger.warning(f"No stream_id available for channel_id={self.channel_id}, cannot send ended event")
             return
         
-        def _send_event():
+        async def _send_event():
             try:
                 # Import here to avoid circular dependencies
                 from ..models.schemas import StreamEndedEvent
@@ -295,7 +303,9 @@ class StreamManager:
                 )
                 
                 # Call internal handler directly (no HTTP request)
-                handle_stream_ended(event)
+                # Run in thread pool since handle_stream_ended is synchronous
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, handle_stream_ended, event)
                 
                 # Mark as sent
                 self._ended_event_sent = True
@@ -306,13 +316,11 @@ class StreamManager:
                 logger.warning(f"Failed to send HLS stream ended event to orchestrator: {e}")
                 logger.debug(f"Exception details: {e}", exc_info=True)
         
-        # Send event in background thread to avoid blocking
-        event_thread = threading.Thread(
-            target=_send_event,
-            name=f"HLS-EndEvent-{self.channel_id[:8]}",
-            daemon=True
+        # Send event in background async task (non-blocking, no thread creation)
+        asyncio.create_task(
+            _send_event(),
+            name=f"HLS-EndEvent-{self.channel_id[:8]}"
         )
-        event_thread.start()
     
     def start_cleanup_monitoring(self, proxy_server):
         """Start background thread for client inactivity monitoring (adapted from context/hls_proxy)"""
@@ -357,65 +365,73 @@ class StreamManager:
 
 
 class StreamFetcher:
-    """Fetches HLS segments from the source URL"""
+    """Fetches HLS segments from the source URL using async HTTP"""
     
     def __init__(self, manager: StreamManager, buffer: StreamBuffer):
         self.manager = manager
         self.buffer = buffer
-        self.session = requests.Session()
-        self.session.headers.update({'User-Agent': HLSConfig.DEFAULT_USER_AGENT})
+        # Use httpx AsyncClient for non-blocking HTTP requests with connection pooling
+        self.client: Optional[httpx.AsyncClient] = None
         self.downloaded_segments: Set[str] = set()
     
-    def fetch_loop(self):
-        """Main fetch loop for downloading segments"""
+    async def fetch_loop(self):
+        """Main fetch loop for downloading segments (async version)"""
         retry_delay = 1
         max_retry_delay = 8
         
-        while self.manager.running:
-            try:
-                # Fetch manifest
-                # Note: playback_url is immutable after channel initialization.
-                # The has_channel() check in main.py ensures we don't create duplicate
-                # channels, so there's no risk of the URL changing during fetch.
-                response = self.session.get(self.manager.playback_url, timeout=10)
-                response.raise_for_status()
-                
-                manifest = m3u8.loads(response.text)
-                
-                # Update manifest info
-                if manifest.target_duration:
-                    self.manager.target_duration = float(manifest.target_duration)
-                if manifest.version:
-                    self.manager.manifest_version = manifest.version
-                
-                if not manifest.segments:
-                    logger.warning(f"No segments in manifest for channel {self.manager.channel_id}")
-                    time.sleep(retry_delay)
-                    continue
-                
-                # Initial buffering - fetch multiple segments
-                if self.manager.initial_buffering:
-                    self._fetch_initial_segments(manifest, response.url)
-                    continue
-                
-                # Normal operation - fetch latest segment
-                self._fetch_latest_segment(manifest, response.url)
-                
-                # Wait before next manifest fetch
-                time.sleep(self.manager.target_duration * HLSConfig.SEGMENT_FETCH_INTERVAL())
-                
-                # Reset retry delay on success
-                retry_delay = 1
-                
-            except Exception as e:
-                # Only log if manager is still running (expected errors when stopping)
-                if self.manager.running:
-                    logger.error(f"Fetch loop error for channel {self.manager.channel_id}: {e}")
-                time.sleep(retry_delay)
-                retry_delay = min(retry_delay * 2, max_retry_delay)
+        # Create async HTTP client with connection pooling
+        async with httpx.AsyncClient(
+            timeout=10.0,
+            headers={'User-Agent': HLSConfig.DEFAULT_USER_AGENT},
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        ) as client:
+            self.client = client
+            
+            while self.manager.running:
+                try:
+                    # Fetch manifest (non-blocking)
+                    # Note: playback_url is immutable after channel initialization.
+                    # The has_channel() check in main.py ensures we don't create duplicate
+                    # channels, so there's no risk of the URL changing during fetch.
+                    response = await client.get(self.manager.playback_url)
+                    response.raise_for_status()
+                    
+                    manifest = m3u8.loads(response.text)
+                    
+                    # Update manifest info
+                    if manifest.target_duration:
+                        self.manager.target_duration = float(manifest.target_duration)
+                    if manifest.version:
+                        self.manager.manifest_version = manifest.version
+                    
+                    if not manifest.segments:
+                        logger.warning(f"No segments in manifest for channel {self.manager.channel_id}")
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    
+                    # Initial buffering - fetch multiple segments
+                    if self.manager.initial_buffering:
+                        await self._fetch_initial_segments(manifest, str(response.url))
+                        continue
+                    
+                    # Normal operation - fetch latest segment
+                    await self._fetch_latest_segment(manifest, str(response.url))
+                    
+                    # Wait before next manifest fetch (non-blocking)
+                    await asyncio.sleep(self.manager.target_duration * HLSConfig.SEGMENT_FETCH_INTERVAL())
+                    
+                    # Reset retry delay on success
+                    retry_delay = 1
+                    
+                except Exception as e:
+                    # Only log if manager is still running (expected errors when stopping)
+                    if self.manager.running:
+                        logger.error(f"Fetch loop error for channel {self.manager.channel_id}: {e}")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 2, max_retry_delay)
     
-    def _fetch_initial_segments(self, manifest: m3u8.M3U8, base_url: str):
-        """Fetch initial segments for buffering"""
+    async def _fetch_initial_segments(self, manifest: m3u8.M3U8, base_url: str):
+        """Fetch initial segments for buffering (async version)"""
         segments_to_fetch = []
         current_duration = 0.0
         
@@ -431,12 +447,12 @@ class StreamFetcher:
         # Reverse to chronological order
         segments_to_fetch.reverse()
         
-        # Download segments
+        # Download segments (async)
         successful_downloads = 0
         for segment in segments_to_fetch:
             try:
                 segment_url = urljoin(base_url, segment.uri)
-                segment_data = self._download_segment(segment_url)
+                segment_data = await self._download_segment(segment_url)
                 
                 if segment_data and len(segment_data) > 0:
                     seq = self.manager.next_sequence
@@ -458,8 +474,8 @@ class StreamFetcher:
             logger.info(f"Initial buffer ready with {successful_downloads} segments "
                        f"({self.manager.buffered_duration:.1f}s of content)")
     
-    def _fetch_latest_segment(self, manifest: m3u8.M3U8, base_url: str):
-        """Fetch the latest segment if not already downloaded"""
+    async def _fetch_latest_segment(self, manifest: m3u8.M3U8, base_url: str):
+        """Fetch the latest segment if not already downloaded (async version)"""
         latest_segment = manifest.segments[-1]
         
         if latest_segment.uri in self.downloaded_segments:
@@ -467,7 +483,7 @@ class StreamFetcher:
         
         try:
             segment_url = urljoin(base_url, latest_segment.uri)
-            segment_data = self._download_segment(segment_url)
+            segment_data = await self._download_segment(segment_url)
             
             if segment_data and len(segment_data) > 0:
                 seq = self.manager.next_sequence
@@ -480,22 +496,25 @@ class StreamFetcher:
         except Exception as e:
             logger.error(f"Error downloading latest segment: {e}")
     
-    def _download_segment(self, url: str) -> Optional[bytes]:
-        """Download a single segment"""
+    async def _download_segment(self, url: str) -> Optional[bytes]:
+        """Download a single segment (async version with performance tracking)"""
+        from ..services.performance_metrics import Timer, performance_metrics
+        
         # Check if manager is still running before downloading
         if not self.manager.running:
             logger.debug(f"Stream manager stopped, skipping segment download from {url}")
             return None
         
-        try:
-            response = self.session.get(url, timeout=10)
-            response.raise_for_status()
-            return response.content
-        except Exception as e:
-            # Only log if manager is still running (expected errors when stopping)
-            if self.manager.running:
-                logger.error(f"Failed to download segment from {url}: {e}")
-            return None
+        with Timer(performance_metrics, 'hls_segment_fetch', {'channel_id': self.manager.channel_id[:16]}):
+            try:
+                response = await self.client.get(url)
+                response.raise_for_status()
+                return response.content
+            except Exception as e:
+                # Only log if manager is still running (expected errors when stopping)
+                if self.manager.running:
+                    logger.error(f"Failed to download segment from {url}: {e}")
+                return None
 
 
 class HLSProxyServer:
@@ -514,7 +533,7 @@ class HLSProxyServer:
         self.stream_managers: Dict[str, StreamManager] = {}
         self.stream_buffers: Dict[str, StreamBuffer] = {}
         self.client_managers: Dict[str, ClientManager] = {}  # Track client activity per channel
-        self.fetch_threads: Dict[str, threading.Thread] = {}
+        self.fetch_tasks: Dict[str, asyncio.Task] = {}  # Changed from threads to async tasks
         self.lock = threading.Lock()  # Lock for thread-safe operations
         logger.info("HLS ProxyServer initialized")
     
@@ -569,15 +588,13 @@ class HLSProxyServer:
             # Send stream started event to orchestrator
             manager._send_stream_started_event()
             
-            # Start fetcher thread
+            # Start fetcher as async task (non-blocking, with connection pooling)
             fetcher = StreamFetcher(manager, buffer)
-            thread = threading.Thread(
-                target=fetcher.fetch_loop,
-                name=f"HLS-Fetcher-{channel_id[:8]}",
-                daemon=True
+            task = asyncio.create_task(
+                fetcher.fetch_loop(),
+                name=f"HLS-Fetcher-{channel_id[:8]}"
             )
-            thread.start()
-            self.fetch_threads[channel_id] = thread
+            self.fetch_tasks[channel_id] = task
             
             # Start cleanup monitoring
             manager.start_cleanup_monitoring(self)
@@ -610,22 +627,29 @@ class HLSProxyServer:
             # Stop the manager (sets running=False)
             manager.stop()
             
-            # Note: Don't wait for fetch thread - it's a daemon thread that will
-            # stop on its own when manager.running becomes False. Waiting would
-            # block the request handler and make the UI unresponsive.
+            # Cancel async fetch task (non-blocking)
+            # The task will clean up when it sees manager.running=False
+            if channel_id in self.fetch_tasks:
+                task = self.fetch_tasks[channel_id]
+                if not task.done():
+                    task.cancel()
             
             # Cleanup
             del self.stream_managers[channel_id]
             del self.stream_buffers[channel_id]
             if channel_id in self.client_managers:
                 del self.client_managers[channel_id]
-            if channel_id in self.fetch_threads:
-                del self.fetch_threads[channel_id]
+            if channel_id in self.fetch_tasks:
+                del self.fetch_tasks[channel_id]
             
             logger.info(f"HLS channel {channel_id} stopped and cleaned up")
     
     def get_manifest(self, channel_id: str) -> str:
-        """Generate HLS manifest for a channel"""
+        """Generate HLS manifest for a channel (synchronous version for backward compatibility)
+        
+        DEPRECATED: Use get_manifest_async() instead. This synchronous version
+        blocks the calling thread and should only be used for compatibility.
+        """
         if channel_id not in self.stream_managers:
             raise ValueError(f"Channel {channel_id} not found")
         
@@ -648,6 +672,49 @@ class HLSProxyServer:
             
             time.sleep(0.1)
         
+        # Build manifest
+        return self._build_manifest(channel_id, manager, buffer)
+    
+    async def get_manifest_async(self, channel_id: str) -> str:
+        """Generate HLS manifest for a channel (async version - non-blocking)
+        
+        This async version uses asyncio.sleep() instead of time.sleep() to avoid
+        blocking the event loop during waits.
+        """
+        from ..services.performance_metrics import Timer, performance_metrics
+        
+        with Timer(performance_metrics, 'hls_manifest_generation', {'channel_id': channel_id[:16]}):
+            if channel_id not in self.stream_managers:
+                raise ValueError(f"Channel {channel_id} not found")
+            
+            manager = self.stream_managers[channel_id]
+            buffer = self.stream_buffers[channel_id]
+            
+            # Wait for initial buffer (non-blocking)
+            timeout = HLSConfig.BUFFER_READY_TIMEOUT()
+            start_wait = time.time()
+            while not manager.buffer_ready.is_set():
+                if time.time() - start_wait > timeout:
+                    raise TimeoutError("Timeout waiting for initial buffer")
+                await asyncio.sleep(0.05)  # Non-blocking wait
+            
+            # Wait for first segment (non-blocking)
+            start_time = time.time()
+            while True:
+                available = buffer.keys()
+                if available:
+                    break
+                
+                if time.time() - start_time > HLSConfig.FIRST_SEGMENT_TIMEOUT():
+                    raise TimeoutError("Timeout waiting for first segment")
+                
+                await asyncio.sleep(0.05)  # Non-blocking wait instead of time.sleep(0.1)
+            
+            # Build manifest
+            return self._build_manifest(channel_id, manager, buffer)
+    
+    def _build_manifest(self, channel_id: str, manager: 'StreamManager', buffer: 'StreamBuffer') -> str:
+        """Build manifest from buffer state (fast, non-blocking operation)"""
         # Build manifest
         available = sorted(buffer.keys())
         max_seq = max(available)

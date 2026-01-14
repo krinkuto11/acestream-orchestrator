@@ -26,9 +26,34 @@ class DockerStatsCollector:
         self._stats_cache: Dict[str, Dict] = {}  # container_id -> stats
         self._total_stats_cache: Optional[Dict] = None
         self._last_update: Optional[datetime] = None
-        # Collection interval - match or slightly faster than UI poll rate
-        # UI typically polls every 5s, we collect every 2s to ensure fresh data
-        self._collection_interval = 2.0
+        
+        # Dynamic collection interval based on engine count
+        # UI typically polls every 5s, so we adapt:
+        # - 0 engines: 10s (low priority when idle)
+        # - 1-5 engines: 3s (responsive for small deployments)
+        # - 6+ engines: 2s (keep up with high load)
+        self._min_collection_interval = 2.0
+        self._max_collection_interval = 10.0
+        self._default_collection_interval = 3.0
+    
+    def _get_dynamic_interval(self, engine_count: int) -> float:
+        """Calculate collection interval based on engine count
+        
+        Args:
+            engine_count: Number of engines currently running
+            
+        Returns:
+            Collection interval in seconds
+        """
+        if engine_count == 0:
+            # No engines - use max interval to reduce overhead
+            return self._max_collection_interval
+        elif engine_count <= 5:
+            # Few engines - use default interval
+            return self._default_collection_interval
+        else:
+            # Many engines - use min interval for responsiveness
+            return self._min_collection_interval
     
     async def start(self):
         """Start the background stats collection task."""
@@ -36,7 +61,7 @@ class DockerStatsCollector:
             return
         self._stop.clear()
         self._task = asyncio.create_task(self._run())
-        logger.info(f"Docker stats collector started with {self._collection_interval}s interval")
+        logger.info(f"Docker stats collector started with dynamic interval ({self._min_collection_interval}s-{self._max_collection_interval}s)")
     
     async def stop(self):
         """Stop the background stats collection task."""
@@ -46,18 +71,25 @@ class DockerStatsCollector:
         logger.info("Docker stats collector stopped")
     
     async def _run(self):
-        """Main collection loop."""
+        """Main collection loop with dynamic interval."""
         while not self._stop.is_set():
             try:
                 # Run stats collection in thread pool to avoid blocking
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._collect_stats)
+                
+                # Calculate next interval based on current engine count
+                engines = state.list_engines()
+                interval = self._get_dynamic_interval(len(engines))
+                
+                logger.debug(f"Next stats collection in {interval}s ({len(engines)} engines)")
             except Exception as e:
                 logger.error(f"Error collecting Docker stats: {e}")
+                interval = self._default_collection_interval
             
             # Wait for next collection interval
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self._collection_interval)
+                await asyncio.wait_for(self._stop.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 pass
     
@@ -66,13 +98,39 @@ class DockerStatsCollector:
         Collect stats for all engines and cache them.
         This runs in a thread pool to avoid blocking the event loop.
         """
-        try:
-            # Get all current engines
-            engines = state.list_engines()
-            if not engines:
-                # No engines, clear caches
-                self._stats_cache = {}
-                self._total_stats_cache = {
+        from .performance_metrics import Timer, performance_metrics
+        
+        with Timer(performance_metrics, 'docker_stats_collection'):
+            try:
+                # Get all current engines
+                engines = state.list_engines()
+                if not engines:
+                    # No engines, clear caches
+                    self._stats_cache = {}
+                    self._total_stats_cache = {
+                        'total_cpu_percent': 0.0,
+                        'total_memory_usage': 0,
+                        'total_network_rx_bytes': 0,
+                        'total_network_tx_bytes': 0,
+                        'total_block_read_bytes': 0,
+                        'total_block_write_bytes': 0,
+                        'container_count': 0
+                    }
+                    self._last_update = datetime.now(timezone.utc)
+                    logger.debug("No engines to collect stats for")
+                    return
+                
+                container_ids = [e.container_id for e in engines]
+                
+                # Collect stats for all containers in batch (efficient)
+                stats_dict = get_multiple_container_stats(container_ids)
+                
+                # Update cache with new stats
+                self._stats_cache = stats_dict
+                
+                # Calculate total stats from cached individual stats
+                # This is more efficient than calling get_total_stats separately
+                total = {
                     'total_cpu_percent': 0.0,
                     'total_memory_usage': 0,
                     'total_network_rx_bytes': 0,
@@ -81,49 +139,26 @@ class DockerStatsCollector:
                     'total_block_write_bytes': 0,
                     'container_count': 0
                 }
+                
+                for stats in stats_dict.values():
+                    total['total_cpu_percent'] += stats.get('cpu_percent', 0)
+                    total['total_memory_usage'] += stats.get('memory_usage', 0)
+                    total['total_network_rx_bytes'] += stats.get('network_rx_bytes', 0)
+                    total['total_network_tx_bytes'] += stats.get('network_tx_bytes', 0)
+                    total['total_block_read_bytes'] += stats.get('block_read_bytes', 0)
+                    total['total_block_write_bytes'] += stats.get('block_write_bytes', 0)
+                    total['container_count'] += 1
+                
+                # Round CPU percent
+                total['total_cpu_percent'] = round(total['total_cpu_percent'], 2)
+                
+                self._total_stats_cache = total
                 self._last_update = datetime.now(timezone.utc)
-                logger.debug("No engines to collect stats for")
-                return
-            
-            container_ids = [e.container_id for e in engines]
-            
-            # Collect stats for all containers in batch (efficient)
-            stats_dict = get_multiple_container_stats(container_ids)
-            
-            # Update cache with new stats
-            self._stats_cache = stats_dict
-            
-            # Calculate total stats from cached individual stats
-            # This is more efficient than calling get_total_stats separately
-            total = {
-                'total_cpu_percent': 0.0,
-                'total_memory_usage': 0,
-                'total_network_rx_bytes': 0,
-                'total_network_tx_bytes': 0,
-                'total_block_read_bytes': 0,
-                'total_block_write_bytes': 0,
-                'container_count': 0
-            }
-            
-            for stats in stats_dict.values():
-                total['total_cpu_percent'] += stats.get('cpu_percent', 0)
-                total['total_memory_usage'] += stats.get('memory_usage', 0)
-                total['total_network_rx_bytes'] += stats.get('network_rx_bytes', 0)
-                total['total_network_tx_bytes'] += stats.get('network_tx_bytes', 0)
-                total['total_block_read_bytes'] += stats.get('block_read_bytes', 0)
-                total['total_block_write_bytes'] += stats.get('block_write_bytes', 0)
-                total['container_count'] += 1
-            
-            # Round CPU percent
-            total['total_cpu_percent'] = round(total['total_cpu_percent'], 2)
-            
-            self._total_stats_cache = total
-            self._last_update = datetime.now(timezone.utc)
-            
-            logger.debug(f"Collected stats for {len(stats_dict)} engines")
-            
-        except Exception as e:
-            logger.error(f"Error in stats collection: {e}")
+                
+                logger.debug(f"Collected stats for {len(stats_dict)} engines")
+                
+            except Exception as e:
+                logger.error(f"Error in stats collection: {e}")
     
     def get_engine_stats(self, container_id: str) -> Optional[Dict]:
         """
