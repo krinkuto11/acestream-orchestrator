@@ -119,7 +119,9 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   }, [stream, orchUrl, apiKey, isExpanded])
 
   const fetchExtendedStats = useCallback(async () => {
-    if (!stream || !isExpanded) return
+    if (!stream) return
+    // Only fetch if expanded OR if active (to show title in collapsed state)
+    if (!isExpanded && !isActive) return
     
     // Only show loading if we don't have data yet
     if (!hasExtendedStatsDataRef.current) {
@@ -154,7 +156,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     } finally {
       setExtendedStatsLoading(false)
     }
-  }, [stream, orchUrl, apiKey, isExpanded])
+  }, [stream, orchUrl, apiKey, isExpanded, isActive])
 
   const fetchClients = useCallback(async () => {
     if (!stream || !isExpanded || !stream.key) return
