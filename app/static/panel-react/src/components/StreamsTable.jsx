@@ -368,7 +368,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
         </TableCell>
         <TableCell className="text-center">
           {isPrebuffering ? (
-            <Badge variant="warning" className="flex items-center gap-1 w-fit mx-auto !bg-orange-500 hover:!bg-orange-600">
+            <Badge className="flex items-center gap-1 w-fit mx-auto bg-orange-500 text-white hover:bg-orange-600 border-transparent">
               <Clock className="h-3 w-3" />
               <span className="text-white">PREBUF</span>
             </Badge>
