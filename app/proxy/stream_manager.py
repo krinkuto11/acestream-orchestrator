@@ -316,20 +316,37 @@ class StreamManager:
             self._cleanup()
     
     def _process_stream_data(self):
-        """Read from stream and feed to buffer"""
+        """Read from stream and feed to buffer with optimized non-blocking I/O"""
+        from ..services.performance_metrics import Timer, performance_metrics
+        
         chunk_count = 0
+        
+        # Set socket to non-blocking mode for better performance
+        # This allows us to check for data availability without long blocking waits
+        try:
+            import fcntl
+            import os as os_module
+            fd = self.socket.fileno()
+            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+            fcntl.fcntl(fd, fcntl.F_SETFL, flags | os_module.O_NONBLOCK)
+            logger.debug(f"Set socket to non-blocking mode for content_id={self.content_id}")
+        except Exception as e:
+            logger.warning(f"Could not set socket to non-blocking mode: {e}, using blocking mode with short timeout")
         
         while self.running and self.connected:
             try:
-                # Read chunk from socket (with timeout)
+                # Use select with short timeout for responsive shutdown and health checks
+                # Reduced from 5.0s to 0.5s for better responsiveness
                 import select
-                ready, _, _ = select.select([self.socket], [], [], 5.0)
+                ready, _, _ = select.select([self.socket], [], [], 0.5)
                 
                 if not ready:
-                    # Timeout - no data available
+                    # Timeout - no data available, loop continues quickly
                     continue
                 
-                chunk = self.socket.read(ConfigHelper.chunk_size())
+                # Socket is ready for reading - measure read performance
+                with Timer(performance_metrics, 'mpegts_chunk_read', {'content_id': self.content_id[:16]}):
+                    chunk = self.socket.read(ConfigHelper.chunk_size())
                 
                 if not chunk:
                     # EOF - stream ended
@@ -345,6 +362,9 @@ class StreamManager:
                     if chunk_count % 1000 == 0:
                         logger.debug(f"Processed {chunk_count} chunks for content_id={self.content_id}")
                 
+            except BlockingIOError:
+                # Non-blocking socket has no data, this is expected
+                continue
             except Exception as e:
                 logger.error(f"Error processing stream data: {e}")
                 break
