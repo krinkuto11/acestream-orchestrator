@@ -1,4 +1,4 @@
-from prometheus_client import Counter, Gauge, make_asgi_app, Enum
+from prometheus_client import Counter, Gauge, make_asgi_app, Enum, Histogram
 import threading
 from typing import Dict, Optional
 
@@ -20,6 +20,16 @@ orch_vpn2_health = Enum("orch_vpn2_health", "Health status of VPN2 container", s
 orch_vpn1_engines = Gauge("orch_vpn1_engines", "Number of engines assigned to VPN1")
 orch_vpn2_engines = Gauge("orch_vpn2_engines", "Number of engines assigned to VPN2")
 orch_extra_engines = Gauge("orch_extra_engines", "Number of engines beyond MIN_REPLICAS")
+
+# Performance metrics - operation timing statistics
+orch_performance_count = Gauge("orch_performance_operation_count", "Number of samples for operation", ["operation"])
+orch_performance_avg_ms = Gauge("orch_performance_operation_avg_ms", "Average duration in milliseconds", ["operation"])
+orch_performance_p50_ms = Gauge("orch_performance_operation_p50_ms", "50th percentile (median) duration in milliseconds", ["operation"])
+orch_performance_p95_ms = Gauge("orch_performance_operation_p95_ms", "95th percentile duration in milliseconds", ["operation"])
+orch_performance_p99_ms = Gauge("orch_performance_operation_p99_ms", "99th percentile duration in milliseconds", ["operation"])
+orch_performance_min_ms = Gauge("orch_performance_operation_min_ms", "Minimum duration in milliseconds", ["operation"])
+orch_performance_max_ms = Gauge("orch_performance_operation_max_ms", "Maximum duration in milliseconds", ["operation"])
+orch_performance_success_rate = Gauge("orch_performance_operation_success_rate", "Success rate percentage", ["operation"])
 
 metrics_app = make_asgi_app()
 
@@ -114,6 +124,12 @@ def update_custom_metrics():
     - orch_used_engines: Number of engines currently handling streams
     - orch_vpn_health: Current health status of VPN container
     - orch_extra_engines: Number of engines beyond MIN_REPLICAS
+    - orch_performance_operation_*: Performance metrics for key operations (last 5 minutes)
+      - count: Number of samples
+      - avg_ms: Average duration in milliseconds
+      - p50_ms, p95_ms, p99_ms: Percentile durations
+      - min_ms, max_ms: Min/max durations
+      - success_rate: Success rate percentage
     """
     from .state import state
     from .gluetun import get_vpn_status
@@ -211,3 +227,20 @@ def update_custom_metrics():
         orch_vpn2_engines.set(0)
     
     orch_extra_engines.set(extra_engines)
+    
+    # Update performance metrics
+    from .performance_metrics import performance_metrics
+    
+    # Get stats for all tracked operations (last 5 minutes)
+    perf_stats = performance_metrics.get_all_stats(window_seconds=300)
+    
+    # Update metrics for each operation
+    for operation, stats in perf_stats.items():
+        orch_performance_count.labels(operation=operation).set(stats['count'])
+        orch_performance_avg_ms.labels(operation=operation).set(stats['avg_ms'])
+        orch_performance_p50_ms.labels(operation=operation).set(stats['p50_ms'])
+        orch_performance_p95_ms.labels(operation=operation).set(stats['p95_ms'])
+        orch_performance_p99_ms.labels(operation=operation).set(stats['p99_ms'])
+        orch_performance_min_ms.labels(operation=operation).set(stats['min_ms'])
+        orch_performance_max_ms.labels(operation=operation).set(stats['max_ms'])
+        orch_performance_success_rate.labels(operation=operation).set(stats['success_rate'])
