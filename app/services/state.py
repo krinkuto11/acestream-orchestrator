@@ -443,14 +443,13 @@ class State:
                         return False
                 
                 # Use ThreadPoolExecutor for parallel stopping
-                # max_workers=None allows the executor to choose an appropriate number
-                # based on the system, but we'll limit it to a reasonable number
-                # to avoid overwhelming Docker daemon
+                # Limit workers to min(container_count, 10) to avoid overwhelming Docker daemon
+                # while still achieving significant speedup
                 max_workers = min(len(managed_containers), 10)
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     # Submit all stop tasks
-                    futures = {executor.submit(stop_single_container, container): container 
-                              for container in managed_containers}
+                    futures = [executor.submit(stop_single_container, container) 
+                              for container in managed_containers]
                     
                     # Wait for all tasks to complete and count successes
                     for future in as_completed(futures):
