@@ -1,4 +1,4 @@
-from prometheus_client import Counter, Gauge, make_asgi_app, Enum, Histogram
+from prometheus_client import Counter, Gauge, make_asgi_app, Enum
 import threading
 from typing import Dict, Optional
 
@@ -229,6 +229,7 @@ def update_custom_metrics():
     orch_extra_engines.set(extra_engines)
     
     # Update performance metrics
+    # Import here to avoid circular dependency (performance_metrics imports from other modules)
     from .performance_metrics import performance_metrics
     
     # Get stats for all tracked operations (last 5 minutes)
