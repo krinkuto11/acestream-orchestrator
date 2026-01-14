@@ -507,8 +507,10 @@ class GluetunMonitor:
         forwarded engine becomes invalid. This method:
         1. Identifies and stops the old forwarded engine
         2. Removes it from state so it's not exposed via /engines endpoint
-        3. Sets recovery stabilization period to prevent premature cleanup
-        4. Allows the autoscaler to provision a new forwarded engine with the new port
+        3. Triggers immediate autoscaling to provision a new forwarded engine with the new port
+        
+        Note: Port change indicates the VPN container restarted internally and is already
+        healthy and ready for operation. No stabilization period is needed.
         """
         now = datetime.now(timezone.utc)
         
@@ -541,15 +543,6 @@ class GluetunMonitor:
                 logger.info(f"Successfully stopped forwarded engine {forwarded_engine.container_id[:12]}")
             except Exception as e:
                 logger.error(f"Error stopping forwarded engine {forwarded_engine.container_id[:12]}: {e}")
-            
-            # Set recovery stabilization period to prevent premature cleanup during recovery
-            # This prevents the monitor from cleaning up engines that may be temporarily
-            # unhealthy during the port change and subsequent reprovisioning
-            monitor = self._vpn_monitors.get(container_name)
-            if monitor:
-                monitor._last_recovery_time = now
-                logger.info(f"Recovery stabilization period set for VPN '{container_name}' after port change "
-                           f"({monitor._recovery_stabilization_period_s}s)")
             
             logger.debug("VPN operation")
             
