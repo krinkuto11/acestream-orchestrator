@@ -388,11 +388,11 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
         <TableCell className="font-medium text-center">
           <div className="flex flex-col gap-1 items-center">
             {extendedStats?.title && (
-              <span className="text-xs text-muted-foreground truncate max-w-[200px]" title={extendedStats.title}>
+              <span className="text-xs text-muted-foreground truncate max-w-[12rem]" title={extendedStats.title}>
                 {extendedStats.title}
               </span>
             )}
-            <span className="text-sm text-white truncate max-w-[200px]" title={stream.id}>
+            <span className="text-sm text-white truncate max-w-[12rem]" title={stream.id}>
               {stream.id.slice(0, TRUNCATED_STREAM_ID_LENGTH)}...
             </span>
           </div>
