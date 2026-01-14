@@ -257,9 +257,40 @@ After VPN recovery, the system:
 
 1. **Detects Recovery** - VPN health check returns healthy
 2. **Exits Emergency Mode** - Clears emergency state
-3. **Waits for Stabilization** - 5 second grace period
+3. **Waits for Stabilization** - 120 second stabilization period per VPN
 4. **Provisions Engines** - Creates engines to restore MIN_REPLICAS
 5. **Resumes Normal Operations** - Full redundant mode restored
+
+### Per-VPN Stabilization Period
+
+When a VPN recovers from a failure, it enters a **120-second stabilization period** to allow:
+- VPN connection to fully establish
+- Port forwarding to be configured
+- Network routes to stabilize
+
+**Key behavior:**
+- **Per-VPN blocking**: Only blocks provisioning to the **specific VPN** that is stabilizing
+- **Other VPNs unaffected**: Engines can still be provisioned on other healthy, stable VPNs
+- **Improved uptime**: In redundant mode, if VPN1 is stabilizing, VPN2 can immediately receive new engines
+
+**Example scenario:**
+```
+Time 0:00 - VPN1 fails and recovers → enters 120s stabilization
+Time 0:30 - VPN2 fails and recovers → enters 120s stabilization
+Time 0:45 - System can provision engines:
+  ✗ VPN1: Still stabilizing (75s remaining)
+  ✗ VPN2: Still stabilizing (105s remaining)
+  Result: Health manager waits for target VPN to finish stabilizing
+
+Time 2:00 - VPN1 stabilization ends
+Time 2:15 - System can provision engines:
+  ✓ VPN1: Stable and ready
+  ✗ VPN2: Still stabilizing (15s remaining)
+  Result: If VPN1 is selected as target, provisioning proceeds
+          If VPN2 is selected, waits for stabilization to end
+```
+
+This per-VPN approach ensures maximum availability - engines can be provisioned on healthy VPNs even while other VPNs are stabilizing after recovery.
 
 Example recovery:
 ```

@@ -131,8 +131,9 @@ class DockerMonitor:
             
             for engine in empty_engines:
                 # Per-VPN stabilization: skip cleanup for engines on VPNs that are stabilizing
-                if engine.vpn_container and engine.vpn_container in vpns_in_stabilization:
-                    logger.debug(f"Skipping cleanup of engine {engine.container_id[:12]} - VPN '{engine.vpn_container}' in stabilization")
+                engine_vpn = getattr(engine, 'vpn_container', None)
+                if engine_vpn and engine_vpn in vpns_in_stabilization:
+                    logger.debug(f"Skipping cleanup of engine {engine.container_id[:12]} - VPN '{engine_vpn}' in stabilization")
                     continue
                 
                 if can_stop_engine(engine.container_id, bypass_grace_period=False):
