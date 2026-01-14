@@ -84,31 +84,35 @@ class DockerMonitor:
         
         Prioritizes non-forwarded engines for cleanup to ensure forwarded engines
         (which have P2P port forwarding) are preserved as long as possible.
+        
+        Per-VPN stabilization: Only skips cleanup for engines on VPNs that are
+        currently in stabilization, allowing cleanup on other healthy VPNs.
         """
         try:
-            # In redundant VPN mode, don't clean up engines if:
-            # 1. One VPN is unhealthy (system is in degraded mode)
-            # 2. A VPN recently recovered (system is stabilizing)
-            # This prevents premature cleanup during VPN recovery
+            # In redundant VPN mode, check VPN health and stabilization status
             if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
                 vpn1_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
                 vpn2_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
                 
-                # If one VPN is unhealthy, don't clean up engines
+                # If one VPN is unhealthy, don't clean up engines (system is in degraded mode)
                 if vpn1_healthy != vpn2_healthy:
                     logger.debug("Skipping empty engine cleanup - VPN in degraded mode")
                     return
                 
-                # Check if any VPN recently recovered
+                # Get VPN monitors for per-VPN stabilization checks
                 vpn1_monitor = gluetun_monitor.get_vpn_monitor(cfg.GLUETUN_CONTAINER_NAME)
                 vpn2_monitor = gluetun_monitor.get_vpn_monitor(cfg.GLUETUN_CONTAINER_NAME_2)
                 
+                # Build a set of VPNs that are in stabilization
+                vpns_in_stabilization = set()
                 if vpn1_monitor and vpn1_monitor.is_in_recovery_stabilization_period():
-                    logger.debug(f"Skipping empty engine cleanup - VPN '{cfg.GLUETUN_CONTAINER_NAME}' recently recovered")
-                    return
+                    vpns_in_stabilization.add(cfg.GLUETUN_CONTAINER_NAME)
+                    logger.debug(f"VPN '{cfg.GLUETUN_CONTAINER_NAME}' is in recovery stabilization - will skip cleanup for its engines")
                 if vpn2_monitor and vpn2_monitor.is_in_recovery_stabilization_period():
-                    logger.debug(f"Skipping empty engine cleanup - VPN '{cfg.GLUETUN_CONTAINER_NAME_2}' recently recovered")
-                    return
+                    vpns_in_stabilization.add(cfg.GLUETUN_CONTAINER_NAME_2)
+                    logger.debug(f"VPN '{cfg.GLUETUN_CONTAINER_NAME_2}' is in recovery stabilization - will skip cleanup for its engines")
+            else:
+                vpns_in_stabilization = set()
             
             from .autoscaler import can_stop_engine
             from .provisioner import stop_container
@@ -126,6 +130,11 @@ class DockerMonitor:
             empty_engines.sort(key=lambda e: (e.forwarded, e.container_id))
             
             for engine in empty_engines:
+                # Per-VPN stabilization: skip cleanup for engines on VPNs that are stabilizing
+                if engine.vpn_container and engine.vpn_container in vpns_in_stabilization:
+                    logger.debug(f"Skipping cleanup of engine {engine.container_id[:12]} - VPN '{engine.vpn_container}' in stabilization")
+                    continue
+                
                 if can_stop_engine(engine.container_id, bypass_grace_period=False):
                     try:
                         engine_type = "forwarded" if engine.forwarded else "non-forwarded"
