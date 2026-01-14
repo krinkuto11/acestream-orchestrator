@@ -616,6 +616,55 @@ def delete(container_id: str):
     
     return {"deleted": container_id}
 
+@app.post("/containers/batch-delete", dependencies=[Depends(require_api_key)])
+def batch_delete_containers(container_ids: List[str]):
+    """
+    Batch delete multiple engine containers.
+    
+    Request body: List of container IDs
+    Returns: List of results with success/failure status for each container
+    """
+    results = []
+    
+    for container_id in container_ids:
+        result = {
+            "container_id": container_id,
+            "success": False,
+            "message": ""
+        }
+        
+        try:
+            # Log engine deletion
+            event_logger.log_event(
+                event_type="engine",
+                category="deleted",
+                message=f"Engine deleted (batch): {container_id[:12]}",
+                container_id=container_id
+            )
+            stop_container(container_id)
+            
+            result["success"] = True
+            result["message"] = "Container deleted successfully"
+            
+        except Exception as e:
+            logger.error(f"Error deleting container {container_id}: {e}")
+            result["message"] = f"Error: {str(e)}"
+        
+        results.append(result)
+    
+    # Invalidate cache after batch operation
+    invalidate_cache("orchestrator:status")
+    
+    # Count successes
+    success_count = sum(1 for r in results if r["success"])
+    
+    return {
+        "total": len(container_ids),
+        "success_count": success_count,
+        "failure_count": len(container_ids) - success_count,
+        "results": results
+    }
+
 @app.get("/containers/{container_id}")
 def get_container(container_id: str):
     try:

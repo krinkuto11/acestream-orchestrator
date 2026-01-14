@@ -213,7 +213,34 @@ Response:
    - Returns cache hit/miss rates, entry counts, and memory usage
 
 ### Control
- - DELETE /containers/{container_id} (protected)
+ - DELETE /containers/{container_id} (protected) → Delete a single engine container
+ 
+ - POST /containers/batch-delete (protected) → Delete multiple engine containers in batch
+   - Body: Array of container IDs
+   ```json
+   [
+     "container_id_1",
+     "container_id_2",
+     "container_id_3"
+   ]
+   ```
+   - Returns: Summary with success/failure count and detailed results
+   ```json
+   {
+     "total": 3,
+     "success_count": 3,
+     "failure_count": 0,
+     "results": [
+       {
+         "container_id": "container_id_1",
+         "success": true,
+         "message": "Container deleted successfully"
+       },
+       ...
+     ]
+   }
+   ```
+ 
  - POST /gc (protected)
  - POST /scale/{demand:int} (protected)
  - POST /health/circuit-breaker/reset?operation_type= (protected) → Reset circuit breakers for manual intervention
