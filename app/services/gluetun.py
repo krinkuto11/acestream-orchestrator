@@ -553,9 +553,19 @@ class GluetunMonitor:
             
             logger.debug("VPN operation")
             
-            # The autoscaler will automatically provision a new forwarded engine
-            # to maintain MIN_REPLICAS, and it will use the new forwarded port
-            logger.info(f"Forwarded engine replacement triggered - autoscaler will provision new engine with port {new_port}")
+            # Trigger immediate autoscaling to provision replacement engine
+            # instead of waiting for next periodic autoscaler cycle (up to 30 seconds)
+            logger.info(f"Forwarded engine replacement triggered - provisioning new engine immediately with port {new_port}")
+            try:
+                from .autoscaler import ensure_minimum
+                # Run autoscaler in current event loop to provision replacement immediately
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, ensure_minimum, False)
+                logger.info("Immediate autoscaling completed after port change")
+            except Exception as autoscale_error:
+                logger.error(f"Error during immediate autoscaling after port change: {autoscale_error}")
+                # Don't fail the entire port change handling if autoscaling fails
+                # The periodic autoscaler will eventually provision the engine
             
         except Exception as e:
             logger.error(f"Error handling port change for VPN '{container_name}': {e}")
