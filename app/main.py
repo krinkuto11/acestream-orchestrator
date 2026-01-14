@@ -452,6 +452,32 @@ def get_metrics():
     # Generate and return Prometheus metrics
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
+@app.get("/metrics/performance")
+def get_performance_metrics(
+    operation: Optional[str] = Query(None, description="Filter by operation name"),
+    window: Optional[int] = Query(None, description="Time window in seconds")
+):
+    """
+    Get performance metrics for system operations.
+    
+    Shows timing statistics (avg, p50, p95, p99) for key operations:
+    - hls_manifest_generation: HLS manifest creation time
+    - hls_segment_fetch: HLS segment download time
+    - docker_stats_collection: Docker stats batch collection time
+    - stream_event_handling: Event handler processing time
+    """
+    from .services.performance_metrics import performance_metrics
+    
+    if operation:
+        stats = {operation: performance_metrics.get_stats(operation, window)}
+    else:
+        stats = performance_metrics.get_all_stats(window)
+    
+    return {
+        "window_seconds": window or "all",
+        "operations": stats
+    }
+
 # Provisioning
 @app.post("/provision", dependencies=[Depends(require_api_key)])
 def provision(req: StartRequest):

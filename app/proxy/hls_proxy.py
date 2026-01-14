@@ -662,34 +662,37 @@ class HLSProxyServer:
         This async version uses asyncio.sleep() instead of time.sleep() to avoid
         blocking the event loop during waits.
         """
-        if channel_id not in self.stream_managers:
-            raise ValueError(f"Channel {channel_id} not found")
+        from ..services.performance_metrics import Timer, performance_metrics
         
-        manager = self.stream_managers[channel_id]
-        buffer = self.stream_buffers[channel_id]
-        
-        # Wait for initial buffer (non-blocking)
-        timeout = HLSConfig.BUFFER_READY_TIMEOUT()
-        start_wait = time.time()
-        while not manager.buffer_ready.is_set():
-            if time.time() - start_wait > timeout:
-                raise TimeoutError("Timeout waiting for initial buffer")
-            await asyncio.sleep(0.05)  # Non-blocking wait
-        
-        # Wait for first segment (non-blocking)
-        start_time = time.time()
-        while True:
-            available = buffer.keys()
-            if available:
-                break
+        with Timer(performance_metrics, 'hls_manifest_generation', {'channel_id': channel_id[:16]}):
+            if channel_id not in self.stream_managers:
+                raise ValueError(f"Channel {channel_id} not found")
             
-            if time.time() - start_time > HLSConfig.FIRST_SEGMENT_TIMEOUT():
-                raise TimeoutError("Timeout waiting for first segment")
+            manager = self.stream_managers[channel_id]
+            buffer = self.stream_buffers[channel_id]
             
-            await asyncio.sleep(0.05)  # Non-blocking wait instead of time.sleep(0.1)
-        
-        # Build manifest
-        return self._build_manifest(channel_id, manager, buffer)
+            # Wait for initial buffer (non-blocking)
+            timeout = HLSConfig.BUFFER_READY_TIMEOUT()
+            start_wait = time.time()
+            while not manager.buffer_ready.is_set():
+                if time.time() - start_wait > timeout:
+                    raise TimeoutError("Timeout waiting for initial buffer")
+                await asyncio.sleep(0.05)  # Non-blocking wait
+            
+            # Wait for first segment (non-blocking)
+            start_time = time.time()
+            while True:
+                available = buffer.keys()
+                if available:
+                    break
+                
+                if time.time() - start_time > HLSConfig.FIRST_SEGMENT_TIMEOUT():
+                    raise TimeoutError("Timeout waiting for first segment")
+                
+                await asyncio.sleep(0.05)  # Non-blocking wait instead of time.sleep(0.1)
+            
+            # Build manifest
+            return self._build_manifest(channel_id, manager, buffer)
     
     def _build_manifest(self, channel_id: str, manager: 'StreamManager', buffer: 'StreamBuffer') -> str:
         """Build manifest from buffer state (fast, non-blocking operation)"""
