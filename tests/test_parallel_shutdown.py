@@ -9,6 +9,10 @@ import time
 from unittest.mock import Mock, patch, MagicMock
 from app.services.state import State
 
+# Docker container IDs are 64 characters long (hex string)
+# We use 52 'a's plus our prefix to create realistic-looking mock IDs
+CONTAINER_ID_PADDING_LENGTH = 52
+
 
 def test_cleanup_all_stops_containers_in_parallel():
     """Test that cleanup_all stops multiple containers in parallel."""
@@ -16,9 +20,9 @@ def test_cleanup_all_stops_containers_in_parallel():
     # Create a state instance
     state = State()
     
-    # Create mock containers
+    # Create mock containers with realistic Docker container ID lengths
     mock_containers = [
-        Mock(id=f"container_{i}_{'a' * 52}") for i in range(6)
+        Mock(id=f"container_{i}_{'a' * CONTAINER_ID_PADDING_LENGTH}") for i in range(6)
     ]
     
     # Track stop calls and their timing
@@ -66,9 +70,9 @@ def test_cleanup_all_handles_errors_gracefully():
     
     state = State()
     
-    # Create mock containers
+    # Create mock containers with realistic Docker container ID lengths
     mock_containers = [
-        Mock(id=f"container_{i}_{'a' * 52}") for i in range(4)
+        Mock(id=f"container_{i}_{'a' * CONTAINER_ID_PADDING_LENGTH}") for i in range(4)
     ]
     
     stop_calls = []
@@ -106,8 +110,9 @@ def test_cleanup_all_respects_max_workers_limit():
     state = State()
     
     # Create many mock containers (more than max_workers limit of 10)
+    # Use realistic Docker container ID lengths
     mock_containers = [
-        Mock(id=f"container_{i}_{'a' * 52}") for i in range(15)
+        Mock(id=f"container_{i}_{'a' * CONTAINER_ID_PADDING_LENGTH}") for i in range(15)
     ]
     
     stop_calls = []
