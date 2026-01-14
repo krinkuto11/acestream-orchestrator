@@ -3,6 +3,7 @@ import threading
 import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..models.schemas import EngineState, StreamState, StreamStartedEvent, StreamEndedEvent, StreamStatSnapshot
 from ..services.db import SessionLocal
 from ..models.db_models import EngineRow, StreamRow, StatRow
@@ -417,7 +418,7 @@ class State:
         """Full cleanup: stop containers, clear database and memory state."""
         logger.info("Starting full cleanup: stopping all managed containers")
         
-        # Stop all managed containers
+        # Stop all managed containers in parallel
         containers_stopped = 0
         try:
             from ..services.health import list_managed
@@ -426,15 +427,35 @@ class State:
             managed_containers = list_managed()
             logger.info(f"Found {len(managed_containers)} managed containers to stop")
             
-            for container in managed_containers:
-                try:
-                    logger.info(f"Stopping container {container.id[:12]}")
-                    stop_container(container.id)
-                    containers_stopped += 1
-                    logger.info(f"Successfully stopped container {container.id[:12]}")
-                except Exception as e:
-                    # Log error but continue cleanup
-                    logger.warning(f"Failed to stop container {container.id}: {e}")
+            if managed_containers:
+                # Stop containers in parallel using ThreadPoolExecutor
+                # This significantly improves shutdown performance
+                def stop_single_container(container):
+                    """Helper function to stop a single container."""
+                    try:
+                        logger.info(f"Stopping container {container.id[:12]}")
+                        stop_container(container.id)
+                        logger.info(f"Successfully stopped container {container.id[:12]}")
+                        return True
+                    except Exception as e:
+                        # Log error but continue cleanup
+                        logger.warning(f"Failed to stop container {container.id}: {e}")
+                        return False
+                
+                # Use ThreadPoolExecutor for parallel stopping
+                # max_workers=None allows the executor to choose an appropriate number
+                # based on the system, but we'll limit it to a reasonable number
+                # to avoid overwhelming Docker daemon
+                max_workers = min(len(managed_containers), 10)
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # Submit all stop tasks
+                    futures = {executor.submit(stop_single_container, container): container 
+                              for container in managed_containers}
+                    
+                    # Wait for all tasks to complete and count successes
+                    for future in as_completed(futures):
+                        if future.result():
+                            containers_stopped += 1
         except Exception as e:
             logger.warning(f"Failed to list or stop managed containers: {e}")
         
