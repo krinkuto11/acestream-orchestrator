@@ -26,9 +26,34 @@ class DockerStatsCollector:
         self._stats_cache: Dict[str, Dict] = {}  # container_id -> stats
         self._total_stats_cache: Optional[Dict] = None
         self._last_update: Optional[datetime] = None
-        # Collection interval - match or slightly faster than UI poll rate
-        # UI typically polls every 5s, we collect every 2s to ensure fresh data
-        self._collection_interval = 2.0
+        
+        # Dynamic collection interval based on engine count
+        # UI typically polls every 5s, so we adapt:
+        # - 0 engines: 10s (low priority when idle)
+        # - 1-5 engines: 3s (responsive for small deployments)
+        # - 6+ engines: 2s (keep up with high load)
+        self._min_collection_interval = 2.0
+        self._max_collection_interval = 10.0
+        self._default_collection_interval = 3.0
+    
+    def _get_dynamic_interval(self, engine_count: int) -> float:
+        """Calculate collection interval based on engine count
+        
+        Args:
+            engine_count: Number of engines currently running
+            
+        Returns:
+            Collection interval in seconds
+        """
+        if engine_count == 0:
+            # No engines - use max interval to reduce overhead
+            return self._max_collection_interval
+        elif engine_count <= 5:
+            # Few engines - use default interval
+            return self._default_collection_interval
+        else:
+            # Many engines - use min interval for responsiveness
+            return self._min_collection_interval
     
     async def start(self):
         """Start the background stats collection task."""
@@ -36,7 +61,7 @@ class DockerStatsCollector:
             return
         self._stop.clear()
         self._task = asyncio.create_task(self._run())
-        logger.info(f"Docker stats collector started with {self._collection_interval}s interval")
+        logger.info(f"Docker stats collector started with dynamic interval ({self._min_collection_interval}s-{self._max_collection_interval}s)")
     
     async def stop(self):
         """Stop the background stats collection task."""
@@ -46,18 +71,25 @@ class DockerStatsCollector:
         logger.info("Docker stats collector stopped")
     
     async def _run(self):
-        """Main collection loop."""
+        """Main collection loop with dynamic interval."""
         while not self._stop.is_set():
             try:
                 # Run stats collection in thread pool to avoid blocking
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._collect_stats)
+                
+                # Calculate next interval based on current engine count
+                engines = state.list_engines()
+                interval = self._get_dynamic_interval(len(engines))
+                
+                logger.debug(f"Next stats collection in {interval}s ({len(engines)} engines)")
             except Exception as e:
                 logger.error(f"Error collecting Docker stats: {e}")
+                interval = self._default_collection_interval
             
             # Wait for next collection interval
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self._collection_interval)
+                await asyncio.wait_for(self._stop.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 pass
     

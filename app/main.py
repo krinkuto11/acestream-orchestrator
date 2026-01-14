@@ -1880,7 +1880,8 @@ async def ace_getstream(
                     # Track client activity for this request
                     hls_proxy.record_client_activity(id, client_ip)
                     
-                    manifest_content = hls_proxy.get_manifest(id)
+                    # Use async version to avoid blocking the event loop
+                    manifest_content = await hls_proxy.get_manifest_async(id)
                     
                     # Note: In HLS, clients make multiple requests (manifest + segments)
                     # Client activity is tracked on each request, not per connection
@@ -1963,8 +1964,9 @@ async def ace_getstream(
                 )
                 
                 # Track client activity and get manifest for the newly created channel
+                # Use async version to avoid blocking the event loop
                 hls_proxy.record_client_activity(id, client_ip)
-                manifest_content = hls_proxy.get_manifest(id)
+                manifest_content = await hls_proxy.get_manifest_async(id)
                 
                 return StreamingResponse(
                     iter([manifest_content.encode('utf-8')]),
