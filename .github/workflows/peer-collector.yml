@@ -1,0 +1,167 @@
+name: Build and Push Peer Collector Docker Image to GHCR
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - 'peer_collector/**'
+      - '.github/workflows/peer-collector.yml'
+  release:
+    types: [published]
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'peer_collector/**'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+          - platform: linux/arm64
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Prepare platform name
+      id: platform
+      run: |
+        # Convert platform to valid name for cache keys and artifacts (replace / with -)
+        PLATFORM_NAME=$(echo "${{ matrix.platform }}" | sed 's/\//-/g')
+        echo "name=${PLATFORM_NAME}" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Cache Docker layers
+      uses: actions/cache@v4
+      with:
+        path: /tmp/.buildx-cache-peer-collector
+        key: ${{ runner.os }}-${{ steps.platform.outputs.name }}-peer-collector-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-${{ steps.platform.outputs.name }}-peer-collector-buildx-
+
+    - name: Log in to GitHub Container Registry
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Determine Docker image tag
+      id: vars
+      run: |
+        if [[ "${{ github.event_name }}" == "release" ]]; then
+          # For releases, use the tag name (e.g., v1.0.0)
+          echo "tag=${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
+        elif [[ "${GITHUB_REF##*/}" == "dev" ]]; then
+          echo "tag=dev" >> "$GITHUB_OUTPUT"
+        else
+          # Fallback for other branches
+          echo "tag=${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Build and push Docker image by digest
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: ./peer_collector
+        file: ./peer_collector/Dockerfile
+        platforms: ${{ matrix.platform }}
+        cache-from: type=local,src=/tmp/.buildx-cache-peer-collector
+        cache-to: type=local,dest=/tmp/.buildx-cache-peer-collector-new,mode=max
+        outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/acestream-peer-collector,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
+
+    - name: Export digest
+      if: github.event_name != 'pull_request'
+      run: |
+        mkdir -p /tmp/digests-peer-collector
+        digest="${{ steps.build.outputs.digest }}"
+        touch "/tmp/digests-peer-collector/${digest#sha256:}"
+
+    - name: Upload digest
+      if: github.event_name != 'pull_request'
+      uses: actions/upload-artifact@v4
+      with:
+        name: digests-peer-collector-${{ steps.platform.outputs.name }}
+        path: /tmp/digests-peer-collector/*
+        if-no-files-found: error
+        retention-days: 1
+
+    - name: Move cache
+      run: |
+        rm -rf /tmp/.buildx-cache-peer-collector
+        mv /tmp/.buildx-cache-peer-collector-new /tmp/.buildx-cache-peer-collector
+
+  merge:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    needs:
+      - build
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests-peer-collector
+          pattern: digests-peer-collector-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine Docker image tag
+        id: vars
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            # For releases, use the tag name (e.g., v1.0.0)
+            echo "tag=${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_REF##*/}" == "dev" ]]; then
+            echo "tag=dev" >> "$GITHUB_OUTPUT"
+          else
+            # Fallback for other branches
+            echo "tag=${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests-peer-collector
+        run: |
+          IMAGE_TAG="${{ steps.vars.outputs.tag }}"
+          # Create manifest with version tag
+          docker buildx imagetools create -t "ghcr.io/${{ github.repository_owner }}/acestream-peer-collector:${IMAGE_TAG}" \
+            $(printf 'ghcr.io/${{ github.repository_owner }}/acestream-peer-collector@sha256:%s ' *)
+          
+          # For releases, also tag as 'latest'
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            docker buildx imagetools create -t "ghcr.io/${{ github.repository_owner }}/acestream-peer-collector:latest" \
+              $(printf 'ghcr.io/${{ github.repository_owner }}/acestream-peer-collector@sha256:%s ' *)
+          fi
+
+      - name: Inspect image
+        run: |
+          IMAGE_TAG="${{ steps.vars.outputs.tag }}"
+          docker buildx imagetools inspect "ghcr.io/${{ github.repository_owner }}/acestream-peer-collector:${IMAGE_TAG}"
+          
+          # Also inspect latest tag for releases
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            docker buildx imagetools inspect "ghcr.io/${{ github.repository_owner }}/acestream-peer-collector:latest"
+          fi

@@ -82,9 +82,14 @@ services:
     # ... existing gluetun config ...
 
   peer-collector:
-    build:
-      context: ./peer_collector
-      dockerfile: Dockerfile
+    # Option 1: Use pre-built image from GHCR (recommended for production)
+    image: ghcr.io/krinkuto11/acestream-peer-collector:latest
+    
+    # Option 2: Build locally (recommended for development)
+    # build:
+    #   context: ./peer_collector
+    #   dockerfile: Dockerfile
+    
     container_name: peer-collector
     network_mode: "service:gluetun"  # Share network with Gluetun
     environment:
@@ -103,14 +108,44 @@ services:
       - PEER_COLLECTOR_URL=http://gluetun:8080  # Access via gluetun's network
 ```
 
+## Pre-built Docker Images
+
+Pre-built multi-architecture images are available on GitHub Container Registry:
+
+```bash
+# Pull the latest version
+docker pull ghcr.io/krinkuto11/acestream-peer-collector:latest
+
+# Pull a specific version (when releases are published)
+docker pull ghcr.io/krinkuto11/acestream-peer-collector:v1.0.0
+```
+
+Supported architectures:
+- `linux/amd64` (x86_64)
+- `linux/arm64` (ARM 64-bit)
+
 ## Building
+
+### Local Build
 
 ```bash
 cd peer_collector
 docker build -t acestream-peer-collector:latest .
 ```
 
+### Multi-Architecture Build
+
+The GitHub Actions workflow automatically builds for `linux/amd64` and `linux/arm64` on every push to `dev` branch and on releases.
+
 ## Running Standalone
+
+### Using Pre-built Image
+
+```bash
+docker run -p 8080:8080 ghcr.io/krinkuto11/acestream-peer-collector:latest
+```
+
+### Using Local Build
 
 ```bash
 docker run -p 8080:8080 acestream-peer-collector:latest

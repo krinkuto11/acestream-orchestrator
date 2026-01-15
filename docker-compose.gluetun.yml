@@ -43,9 +43,13 @@ services:
       - aceserver
 
   peer-collector:
+    # Option 1: Build locally (recommended for development)
     build:
       context: ./peer_collector
       dockerfile: Dockerfile
+    # Option 2: Use pre-built image from GHCR (recommended for production)
+    # Uncomment the line below and comment out the 'build' section above
+    # image: ghcr.io/krinkuto11/acestream-peer-collector:latest
     container_name: peer-collector
     network_mode: "service:gluetun"  # Share network with Gluetun for VPN access
     environment:
