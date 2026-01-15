@@ -367,10 +367,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0 border border-white/20 hover:bg-white/10 mx-auto"
+            className="h-8 w-8 p-0 border border-border bg-muted/30 hover:bg-muted/50 mx-auto"
             onClick={() => setIsExpanded(!isExpanded)}
           >
-            {isExpanded ? <ChevronUp className="h-4 w-4 text-white" /> : <ChevronDown className="h-4 w-4 text-white" />}
+            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </Button>
         </TableCell>
         <TableCell className="text-center">
