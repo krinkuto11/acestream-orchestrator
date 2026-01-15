@@ -833,6 +833,48 @@ def get_engines():
         engines.sort(key=lambda e: e.port)
         return engines
 
+@app.get("/engines/with-metrics")
+def get_engines_with_metrics():
+    """Get all engines with aggregated stream metrics (peers, download/upload speeds)."""
+    engines = state.list_engines()
+    all_active_streams = state.list_streams_with_stats(status="started")
+    
+    # Group streams by container_id and aggregate metrics
+    engine_metrics = {}
+    for stream in all_active_streams:
+        container_id = stream.container_id
+        if container_id not in engine_metrics:
+            engine_metrics[container_id] = {
+                'total_peers': 0,
+                'total_speed_down': 0,
+                'total_speed_up': 0,
+                'stream_count': 0
+            }
+        
+        # Aggregate metrics from active streams
+        engine_metrics[container_id]['stream_count'] += 1
+        if stream.peers is not None:
+            engine_metrics[container_id]['total_peers'] += stream.peers
+        if stream.speed_down is not None:
+            engine_metrics[container_id]['total_speed_down'] += stream.speed_down
+        if stream.speed_up is not None:
+            engine_metrics[container_id]['total_speed_up'] += stream.speed_up
+    
+    # Enrich engine data with metrics
+    result = []
+    for engine in engines:
+        engine_dict = engine.model_dump()
+        metrics = engine_metrics.get(engine.container_id, {
+            'total_peers': 0,
+            'total_speed_down': 0,
+            'total_speed_up': 0,
+            'stream_count': 0
+        })
+        engine_dict.update(metrics)
+        result.append(engine_dict)
+    
+    return result
+
 @app.get("/engines/{container_id}")
 def get_engine(container_id: str):
     eng = state.get_engine(container_id)

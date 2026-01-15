@@ -3,10 +3,12 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Trash2, AlertTriangle, Activity, ChevronDown, ChevronUp, Cpu, MemoryStick, Network, HardDrive } from 'lucide-react'
+import { Trash2, AlertTriangle, Activity, ChevronDown, ChevronUp, Cpu, MemoryStick, Network, HardDrive, LayoutGrid, Table2 } from 'lucide-react'
 import { timeAgo, formatTime, formatBytes } from '../utils/formatters'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Progress } from '@/components/ui/progress'
+import { useLocalStorage } from '../hooks/useLocalStorage'
+import EngineTableView from './EngineTableView'
 
 // Simple in-memory cache for engine stats to prevent flickering when switching tabs
 const statsCache = new Map()
@@ -303,6 +305,42 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
   const isRedundantMode = vpnStatus?.mode === 'redundant'
   const emergencyMode = vpnStatus?.emergency_mode
   
+  // Persist view mode in localStorage
+  const [viewMode, setViewMode] = useLocalStorage('engine_view_mode', 'cards')
+  
+  // State for engines with metrics (for table view)
+  const [enginesWithMetrics, setEnginesWithMetrics] = useState([])
+  
+  // Fetch engines with metrics when in table view
+  useEffect(() => {
+    if (viewMode !== 'table') return
+    
+    const fetchEnginesWithMetrics = async () => {
+      try {
+        const response = await fetch(`${orchUrl}/engines/with-metrics`)
+        if (response.ok) {
+          const data = await response.json()
+          setEnginesWithMetrics(data)
+        }
+      } catch (err) {
+        console.error('Failed to fetch engines with metrics:', err)
+        // Fallback to regular engines data
+        setEnginesWithMetrics(engines)
+      }
+    }
+    
+    // Fetch immediately
+    fetchEnginesWithMetrics()
+    
+    // Refresh every 5 seconds when in table view
+    const interval = setInterval(fetchEnginesWithMetrics, 5000)
+    
+    return () => clearInterval(interval)
+  }, [viewMode, orchUrl, engines])
+  
+  // Use enginesWithMetrics for table view, regular engines for card view
+  const displayEngines = viewMode === 'table' ? enginesWithMetrics : engines
+  
   // Group engines by VPN in redundant mode
   if (isRedundantMode) {
     const vpn1Name = vpnStatus?.vpn1?.container_name
@@ -314,7 +352,7 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
       [vpn2Name]: []
     }
     
-    engines.forEach(engine => {
+    displayEngines.forEach(engine => {
       if (engine.vpn_container === vpn1Name) {
         enginesByVpn[vpn1Name].push(engine)
       } else if (engine.vpn_container === vpn2Name) {
@@ -325,56 +363,126 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
     
     return (
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight mb-6">Engines ({engines.length})</h2>
-        
-        {/* Grid layout for side-by-side VPN groups in redundant mode */}
-        <div className="grid gap-6 md:grid-cols-2">
-          {/* VPN 1 Engines */}
-          {vpn1Name && (
-            <VPNEngineGroup
-              vpnName={vpn1Name}
-              engines={enginesByVpn[vpn1Name]}
-              onDeleteEngine={onDeleteEngine}
-              emergencyMode={emergencyMode}
-              orchUrl={orchUrl}
-            />
-          )}
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-semibold tracking-tight">Engines ({displayEngines.length})</h2>
           
-          {/* VPN 2 Engines */}
-          {vpn2Name && (
-            <VPNEngineGroup
-              vpnName={vpn2Name}
-              engines={enginesByVpn[vpn2Name]}
-              onDeleteEngine={onDeleteEngine}
-              emergencyMode={emergencyMode}
-              orchUrl={orchUrl}
-            />
-          )}
+          {/* View Toggle Button */}
+          <div className="flex gap-2">
+            <Button
+              variant={viewMode === 'cards' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('cards')}
+              className="flex items-center gap-2"
+            >
+              <LayoutGrid className="h-4 w-4" />
+              Cards
+            </Button>
+            <Button
+              variant={viewMode === 'table' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('table')}
+              className="flex items-center gap-2"
+            >
+              <Table2 className="h-4 w-4" />
+              Table
+            </Button>
+          </div>
         </div>
+        
+        {viewMode === 'table' ? (
+          // Table view - show all engines in a single table (no VPN grouping in table view)
+          <EngineTableView
+            engines={displayEngines}
+            onDeleteEngine={onDeleteEngine}
+            showVpnLabel={true}
+            orchUrl={orchUrl}
+          />
+        ) : (
+          // Card view - Grid layout for side-by-side VPN groups in redundant mode
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* VPN 1 Engines */}
+            {vpn1Name && (
+              <VPNEngineGroup
+                vpnName={vpn1Name}
+                engines={enginesByVpn[vpn1Name]}
+                onDeleteEngine={onDeleteEngine}
+                emergencyMode={emergencyMode}
+                orchUrl={orchUrl}
+              />
+            )}
+            
+            {/* VPN 2 Engines */}
+            {vpn2Name && (
+              <VPNEngineGroup
+                vpnName={vpn2Name}
+                engines={enginesByVpn[vpn2Name]}
+                onDeleteEngine={onDeleteEngine}
+                emergencyMode={emergencyMode}
+                orchUrl={orchUrl}
+              />
+            )}
+          </div>
+        )}
       </div>
     )
   }
   
-  // Single VPN mode or no VPN - show all engines in a simple list
+  // Single VPN mode or no VPN - show all engines in a simple list or table
   return (
     <div>
-      <h2 className="text-2xl font-semibold tracking-tight mb-6">Engines ({engines.length})</h2>
-      {engines.length === 0 ? (
-        <Card>
-          <CardContent className="pt-6 pb-6">
-            <p className="text-muted-foreground">No engines available</p>
-          </CardContent>
-        </Card>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-semibold tracking-tight">Engines ({displayEngines.length})</h2>
+        
+        {/* View Toggle Button */}
+        <div className="flex gap-2">
+          <Button
+            variant={viewMode === 'cards' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setViewMode('cards')}
+            className="flex items-center gap-2"
+          >
+            <LayoutGrid className="h-4 w-4" />
+            Cards
+          </Button>
+          <Button
+            variant={viewMode === 'table' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setViewMode('table')}
+            className="flex items-center gap-2"
+          >
+            <Table2 className="h-4 w-4" />
+            Table
+          </Button>
+        </div>
+      </div>
+      
+      {viewMode === 'table' ? (
+        <EngineTableView
+          engines={displayEngines}
+          onDeleteEngine={onDeleteEngine}
+          showVpnLabel={false}
+          orchUrl={orchUrl}
+        />
       ) : (
-        engines.map((engine) => (
-          <EngineCard
-            key={engine.container_id}
-            engine={engine}
-            onDelete={onDeleteEngine}
-            showVpnLabel={false}
-            orchUrl={orchUrl}
-          />
-        ))
+        <>
+          {displayEngines.length === 0 ? (
+            <Card>
+              <CardContent className="pt-6 pb-6">
+                <p className="text-muted-foreground">No engines available</p>
+              </CardContent>
+            </Card>
+          ) : (
+            displayEngines.map((engine) => (
+              <EngineCard
+                key={engine.container_id}
+                engine={engine}
+                onDelete={onDeleteEngine}
+                showVpnLabel={false}
+                orchUrl={orchUrl}
+              />
+            ))
+          )}
+        </>
       )}
     </div>
   )
