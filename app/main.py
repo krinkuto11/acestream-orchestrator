@@ -1000,6 +1000,33 @@ async def get_stream_livepos(stream_id: str):
         logger.error(f"Error processing livepos for stream {stream_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing livepos data: {str(e)}")
 
+@app.get("/streams/{stream_id}/peers")
+async def get_stream_peers(stream_id: str):
+    """
+    Get peer statistics for a stream, including geolocation data.
+    
+    This endpoint fetches the peer list from the stream's stat URL and enriches
+    each peer with geolocation data from ipwhois.io. Results are cached to prevent
+    excessive API calls.
+    """
+    from .services.peer_stats import get_stream_peer_stats
+    
+    # Get the stream from state
+    stream = state.get_stream(stream_id)
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+    
+    if not stream.stat_url:
+        raise HTTPException(status_code=400, detail="Stream has no stat URL")
+    
+    # Fetch peer stats (this will use cache if available)
+    peer_stats = await get_stream_peer_stats(stream_id, stream.stat_url)
+    
+    if peer_stats is None:
+        raise HTTPException(status_code=503, detail="Unable to fetch peer statistics")
+    
+    return peer_stats
+
 @app.delete("/streams/{stream_id}", dependencies=[Depends(require_api_key)])
 async def stop_stream(stream_id: str):
     """
