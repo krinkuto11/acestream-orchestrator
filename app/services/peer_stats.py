@@ -321,9 +321,67 @@ async def fetch_infohash_from_stat_url(stat_url: str) -> Optional[str]:
         return None
 
 
-async def get_stream_peer_stats(stream_id: str, stat_url: str) -> Optional[Dict[str, Any]]:
+async def get_stream_peer_stats_via_microservice(stream_id: str, stat_url: str, collector_url: str) -> Optional[Dict[str, Any]]:
     """
-    Get peer statistics for a stream using libtorrent, including geolocation data.
+    Get peer statistics from the peer collector microservice.
+    
+    This function calls the external peer collector microservice that runs inside
+    the Gluetun VPN container to collect peer statistics.
+    
+    Args:
+        stream_id: The unique ID of the stream
+        stat_url: The stat URL for the stream (used to fetch infohash)
+        collector_url: The URL of the peer collector microservice
+        
+    Returns:
+        A dictionary containing peer statistics, or None if it cannot be fetched
+    """
+    try:
+        # Fetch infohash from stat URL
+        infohash = await fetch_infohash_from_stat_url(stat_url)
+        
+        if not infohash:
+            logger.debug(f"Could not fetch infohash from stat URL for stream {stream_id}")
+            return {
+                "stream_id": stream_id,
+                "peers": [],
+                "peer_count": 0,
+                "cached_at": datetime.now(timezone.utc).timestamp(),
+                "error": "Could not fetch infohash from stream"
+            }
+        
+        # Call the peer collector microservice
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{collector_url}/peers/{infohash}")
+            response.raise_for_status()
+            data = response.json()
+            
+            # Add stream_id to the response
+            data["stream_id"] = stream_id
+            
+            logger.debug(f"Fetched peer stats from microservice for stream {stream_id}: {data.get('peer_count', 0)} peers")
+            return data
+            
+    except httpx.HTTPError as e:
+        logger.error(f"Failed to fetch peer stats from microservice for stream {stream_id}: {e}")
+        return {
+            "stream_id": stream_id,
+            "peers": [],
+            "peer_count": 0,
+            "cached_at": datetime.now(timezone.utc).timestamp(),
+            "error": f"Microservice unavailable: {str(e)}"
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error fetching peer stats from microservice for stream {stream_id}: {e}", exc_info=True)
+        return None
+
+
+async def get_stream_peer_stats_direct(stream_id: str, stat_url: str) -> Optional[Dict[str, Any]]:
+    """
+    Get peer statistics for a stream using libtorrent directly, including geolocation data.
+    
+    This is the original implementation that runs libtorrent in the orchestrator process.
+    Only works when orchestrator has VPN connectivity (not recommended).
     
     This function:
     1. Fetches the infohash from the stream's stat URL
@@ -439,6 +497,31 @@ async def get_stream_peer_stats(stream_id: str, stat_url: str) -> Optional[Dict[
     except Exception as e:
         logger.error(f"Failed to get peer stats for stream {stream_id}: {e}", exc_info=True)
         return None
+
+
+async def get_stream_peer_stats(stream_id: str, stat_url: str) -> Optional[Dict[str, Any]]:
+    """
+    Get peer statistics for a stream.
+    
+    This function automatically chooses between microservice-based collection (when enabled)
+    or direct collection (legacy mode).
+    
+    Args:
+        stream_id: The unique ID of the stream
+        stat_url: The stat URL for the stream
+        
+    Returns:
+        A dictionary containing peer statistics, or None if it cannot be fetched
+    """
+    from ..core.config import cfg
+    
+    # Check if peer collector microservice is enabled
+    if cfg.PEER_COLLECTOR_ENABLED and cfg.PEER_COLLECTOR_URL:
+        logger.debug(f"Using peer collector microservice for stream {stream_id}")
+        return await get_stream_peer_stats_via_microservice(stream_id, stat_url, cfg.PEER_COLLECTOR_URL)
+    else:
+        logger.debug(f"Using direct peer collection for stream {stream_id}")
+        return await get_stream_peer_stats_direct(stream_id, stat_url)
 
 
 def clear_peer_stats_cache(stream_id: Optional[str] = None):

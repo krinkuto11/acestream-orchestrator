@@ -83,6 +83,12 @@ class Cfg(BaseModel):
     # Retention time for looping stream IDs in the tracker (in minutes)
     # 0 or None = indefinite retention
     STREAM_LOOP_RETENTION_MINUTES: int = int(os.getenv("STREAM_LOOP_RETENTION_MINUTES", "0"))  # Default indefinite
+    
+    # Peer Collector Microservice Configuration
+    # Enable peer statistics collection via external microservice (runs inside Gluetun)
+    PEER_COLLECTOR_ENABLED: bool = os.getenv("PEER_COLLECTOR_ENABLED", "false").lower() == "true"
+    # URL of the peer collector microservice (e.g., http://gluetun:8080 when using network_mode: service:gluetun)
+    PEER_COLLECTOR_URL: str | None = os.getenv("PEER_COLLECTOR_URL")
 
     @model_validator(mode='after')
     def validate_replicas(self):
