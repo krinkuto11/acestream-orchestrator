@@ -124,12 +124,10 @@ def test_concurrent_provisioning_balances_vpns():
             print(f"VPN1 (gluetun): {vpn_counts['gluetun']} engines")
             print(f"VPN2 (gluetun_2): {vpn_counts['gluetun_2']} engines")
             
-            # ISSUE: Due to race condition, all engines might be assigned to the same VPN
-            # Expected: Balanced distribution (5/5 or close to it)
-            # Actual (before fix): Might be 10/0 or 9/1 due to race condition
-            
-            # For this test to pass after the fix, we expect roughly balanced distribution
-            # Allow for some imbalance (e.g., 6/4 or 7/3) but not extreme (10/0)
+            # Verify balanced distribution across VPNs
+            # With the fix, concurrent provisioning should distribute engines evenly
+            # We expect roughly balanced distribution (5/5 or close to it, like 6/4 or 7/3)
+            # but not extreme imbalance (like 10/0 which would indicate the race condition)
             max_imbalance = 3  # Maximum difference between VPN assignments
             difference = abs(vpn_counts['gluetun'] - vpn_counts['gluetun_2'])
             

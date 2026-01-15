@@ -333,8 +333,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
                     vpn2_engines = len(state.get_engines_by_vpn(vpn2_name))
                     
                     # Add pending engines currently being provisioned
-                    vpn1_engines += _vpn_pending_engines.get(vpn1_name, 0)
-                    vpn2_engines += _vpn_pending_engines.get(vpn2_name, 0)
+                    vpn1_pending = _vpn_pending_engines.get(vpn1_name, 0)
+                    vpn2_pending = _vpn_pending_engines.get(vpn2_name, 0)
+                    vpn1_engines += vpn1_pending
+                    vpn2_engines += vpn2_pending
                     
                     # Check health of both VPNs
                     vpn1_healthy = gluetun_monitor.is_healthy(vpn1_name)
