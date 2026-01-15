@@ -367,22 +367,22 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0 border border-white/20 hover:bg-white/10 mx-auto"
+            className="h-8 w-8 p-0 border border-input hover:bg-accent hover:text-accent-foreground mx-auto"
             onClick={() => setIsExpanded(!isExpanded)}
           >
-            {isExpanded ? <ChevronUp className="h-4 w-4 text-white" /> : <ChevronDown className="h-4 w-4 text-white" />}
+            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </Button>
         </TableCell>
         <TableCell className="text-center">
           {isPrebuffering ? (
-            <Badge className="flex items-center gap-1 w-fit mx-auto bg-orange-500 text-white hover:bg-orange-600 border-transparent">
+            <Badge className="flex items-center gap-1 w-fit mx-auto bg-orange-500 hover:bg-orange-600 border-transparent">
               <Clock className="h-3 w-3" />
-              <span className="text-white">PREBUF</span>
+              <span>PREBUF</span>
             </Badge>
           ) : (
             <Badge variant={isActive ? "success" : "secondary"} className="flex items-center gap-1 w-fit mx-auto">
               {isActive ? <PlayCircle className="h-3 w-3" /> : <Activity className="h-3 w-3" />}
-              <span className="text-white">{isActive ? 'ACTIVE' : 'ENDED'}</span>
+              <span>{isActive ? 'ACTIVE' : 'ENDED'}</span>
             </Badge>
           )}
         </TableCell>
@@ -393,14 +393,14 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                 {extendedStats.title}
               </span>
             )}
-            <span className="text-sm text-white truncate max-w-[12rem]" title={stream.id}>
+            <span className="text-sm text-foreground truncate max-w-[12rem]" title={stream.id}>
               {stream.id.slice(0, TRUNCATED_STREAM_ID_LENGTH)}...
             </span>
           </div>
         </TableCell>
         <TableCell className="text-center">
           {isActive && bufferDuration !== null ? (
-            <span className="text-sm text-white">
+            <span className="text-sm text-foreground">
               {bufferDuration}s
             </span>
           ) : (
@@ -408,12 +408,12 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           )}
         </TableCell>
         <TableCell className="text-center">
-          <span className="text-sm text-white truncate max-w-[150px] block mx-auto" title={stream.container_name || stream.container_id}>
+          <span className="text-sm text-foreground truncate max-w-[150px] block mx-auto" title={stream.container_name || stream.container_id}>
             {stream.container_name || stream.container_id?.slice(0, TRUNCATED_CONTAINER_ID_LENGTH) || 'N/A'}
           </span>
         </TableCell>
         <TableCell className="text-center">
-          <span className="text-sm text-white">{formatTime(stream.started_at)}</span>
+          <span className="text-sm text-foreground">{formatTime(stream.started_at)}</span>
         </TableCell>
         {showSpeedColumns && (
           <>
@@ -452,7 +452,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
         {showSpeedColumns && (
           <TableCell className="text-center">
             {isActive && stream.livepos && stream.livepos.live_last ? (
-              <span className="text-sm text-white">
+              <span className="text-sm text-foreground">
                 {formatLiveposTimestamp(stream.livepos.live_last)}
               </span>
             ) : (
@@ -461,10 +461,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           </TableCell>
         )}
         <TableCell className="text-center">
-          <span className="text-sm text-white">{formatBytes(stream.downloaded)}</span>
+          <span className="text-sm text-foreground">{formatBytes(stream.downloaded)}</span>
         </TableCell>
         <TableCell className="text-center">
-          <span className="text-sm text-white">{formatBytes(stream.uploaded)}</span>
+          <span className="text-sm text-foreground">{formatBytes(stream.uploaded)}</span>
         </TableCell>
       </TableRow>
       {isExpanded && (
@@ -486,17 +486,17 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead className="text-white">Client ID</TableHead>
-                            <TableHead className="text-white">IP Address</TableHead>
-                            <TableHead className="text-white">Connected At</TableHead>
-                            <TableHead className="text-right text-white">Bytes Sent</TableHead>
-                            <TableHead className="text-white">User Agent</TableHead>
+                            <TableHead>Client ID</TableHead>
+                            <TableHead>IP Address</TableHead>
+                            <TableHead>Connected At</TableHead>
+                            <TableHead className="text-right">Bytes Sent</TableHead>
+                            <TableHead>User Agent</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {clients.map((client, idx) => (
                             <TableRow key={client.client_id || idx}>
-                              <TableCell className="font-mono text-xs text-white">
+                              <TableCell className="font-mono text-xs text-foreground">
                                 <span className="truncate max-w-[200px] block" title={client.client_id}>
                                   {client.client_id && client.client_id.length > TRUNCATED_CLIENT_ID_LENGTH
                                     ? `${client.client_id.slice(0, TRUNCATED_CLIENT_ID_LENGTH)}...`
@@ -504,19 +504,19 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                                   }
                                 </span>
                               </TableCell>
-                              <TableCell className="text-sm text-white">
+                              <TableCell className="text-sm text-foreground">
                                 {client.ip_address || 'N/A'}
                               </TableCell>
-                              <TableCell className="text-sm text-white">
+                              <TableCell className="text-sm text-foreground">
                                 {client.connected_at 
                                   ? new Date(client.connected_at * 1000).toLocaleString()
                                   : 'N/A'
                                 }
                               </TableCell>
-                              <TableCell className="text-right text-sm text-white">
+                              <TableCell className="text-right text-sm text-foreground">
                                 {client.bytes_sent !== undefined ? formatBytes(client.bytes_sent) : 'N/A'}
                               </TableCell>
-                              <TableCell className="font-mono text-xs text-white">
+                              <TableCell className="font-mono text-xs text-foreground">
                                 <span className="truncate max-w-[300px] block" title={client.user_agent}>
                                   {client.user_agent || 'N/A'}
                                 </span>

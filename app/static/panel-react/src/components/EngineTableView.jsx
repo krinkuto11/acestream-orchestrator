@@ -109,24 +109,24 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0 border border-white/20 hover:bg-white/10 mx-auto"
+            className="h-8 w-8 p-0 border border-input hover:bg-accent hover:text-accent-foreground mx-auto"
             onClick={() => setIsExpanded(!isExpanded)}
           >
-            {isExpanded ? <ChevronUp className="h-4 w-4 text-white" /> : <ChevronDown className="h-4 w-4 text-white" />}
+            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </Button>
         </TableCell>
         <TableCell className="font-medium text-center">
-          <span className="text-sm text-white truncate max-w-[12rem] block" title={engine.container_name || engine.container_id}>
+          <span className="text-sm text-foreground truncate max-w-[12rem] block" title={engine.container_name || engine.container_id}>
             {engine.container_name || engine.container_id.slice(0, 12)}
           </span>
         </TableCell>
         <TableCell className="text-center">
-          <span className="text-sm text-white">{engine.host}:{engine.port}</span>
+          <span className="text-sm text-foreground">{engine.host}:{engine.port}</span>
         </TableCell>
         <TableCell className="text-center">
           <Badge variant={healthVariant} className="flex items-center gap-1 w-fit mx-auto">
             <Activity className="h-3 w-3" />
-            <span className="text-white">{healthStatus.toUpperCase()}</span>
+            <span>{healthStatus.toUpperCase()}</span>
           </Badge>
         </TableCell>
         <TableCell className="text-center">
@@ -138,20 +138,20 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
         </TableCell>
         {vpnMode && (
           <TableCell className="text-center">
-            <span className="text-sm text-white">{engine.vpn_container || '—'}</span>
+            <span className="text-sm text-foreground">{engine.vpn_container || '—'}</span>
           </TableCell>
         )}
         <TableCell className="text-center">
-          <span className="text-sm text-white">{variantName}</span>
+          <span className="text-sm text-foreground">{variantName}</span>
         </TableCell>
         <TableCell className="text-center">
-          <span className="text-sm text-white">{cpuText}</span>
+          <span className="text-sm text-foreground">{cpuText}</span>
         </TableCell>
         <TableCell className="text-center">
-          <span className="text-sm text-white">{ramText}</span>
+          <span className="text-sm text-foreground">{ramText}</span>
         </TableCell>
         <TableCell className="text-center">
-          <span className="text-sm text-white">{engine.stream_count || engine.streams?.length || 0}</span>
+          <span className="text-sm text-foreground">{engine.stream_count || engine.streams?.length || 0}</span>
         </TableCell>
         <TableCell className="text-center">
           {engine.total_peers !== undefined ? (
@@ -182,7 +182,7 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
           )}
         </TableCell>
         <TableCell className="text-center">
-          <span className="text-sm text-white">{timeAgo(engine.last_stream_usage)}</span>
+          <span className="text-sm text-foreground">{timeAgo(engine.last_stream_usage)}</span>
         </TableCell>
         <TableCell className="text-center">
           <Button
