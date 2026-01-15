@@ -876,7 +876,6 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                 </div>
               </div>
             )}
-            </div>
           </TableCell>
         </TableRow>
       )}
