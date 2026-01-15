@@ -1477,6 +1477,7 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
     def reprovision_task():
         global _reprovision_state
         import time
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         
         try:
             # Enter reprovisioning mode to coordinate with other services
@@ -1494,24 +1495,43 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
             _reprovision_state.update({
                 "total_engines": total_engines,
                 "current_phase": "stopping",
-                "message": f"Stopping {total_engines} engines..."
+                "message": f"Stopping {total_engines} engines concurrently..."
             })
             
-            # Delete all engines
-            for idx, engine_id in enumerate(engine_ids, 1):
+            # Delete all engines concurrently (similar to shutdown)
+            # Use ThreadPoolExecutor to stop containers concurrently without overwhelming Docker socket
+            max_workers = min(10, total_engines) if total_engines > 0 else 1  # Cap at 10 concurrent operations
+            stopped_count = 0
+            
+            def stop_engine_wrapper(engine_id, idx, total):
+                """Wrapper function to stop engine and update state"""
                 try:
-                    _reprovision_state.update({
-                        "current_engine_id": engine_id[:12],
-                        "message": f"Stopping engine {idx}/{total_engines}: {engine_id[:12]}"
-                    })
-                    
                     stop_container(engine_id)
-                    logger.info(f"Stopped engine {engine_id[:12]} ({idx}/{total_engines})")
-                    
-                    _reprovision_state["engines_stopped"] = idx
+                    logger.info(f"Stopped engine {engine_id[:12]} ({idx}/{total})")
+                    return (True, engine_id, None)
                 except Exception as e:
                     logger.error(f"Failed to stop engine {engine_id[:12]}: {e}")
-                    # Continue with remaining engines even if one fails
+                    return (False, engine_id, str(e))
+            
+            if engine_ids:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # Submit all stop tasks
+                    future_to_engine = {
+                        executor.submit(stop_engine_wrapper, engine_id, idx, total_engines): engine_id
+                        for idx, engine_id in enumerate(engine_ids, 1)
+                    }
+                    
+                    # Process results as they complete
+                    for future in as_completed(future_to_engine):
+                        success, engine_id, error = future.result()
+                        if success:
+                            stopped_count += 1
+                            _reprovision_state["engines_stopped"] = stopped_count
+                            _reprovision_state.update({
+                                "message": f"Stopped {stopped_count}/{total_engines} engines..."
+                            })
+            
+            logger.info(f"Stopped {stopped_count}/{total_engines} engines concurrently")
             
             # Update state: cleaning phase
             _reprovision_state.update({
@@ -1542,12 +1562,56 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
             # Update state: provisioning phase
             _reprovision_state.update({
                 "current_phase": "provisioning",
-                "message": f"Provisioning {cfg.MIN_REPLICAS} new engines..."
+                "message": f"Provisioning {cfg.MIN_REPLICAS} new engines concurrently..."
             })
             
-            # Reprovision minimum replicas
-            ensure_minimum(initial_startup=True)
-            logger.info(f"Successfully reprovisioned engines with new settings")
+            # Reprovision minimum replicas concurrently
+            # Use ThreadPoolExecutor to start containers concurrently
+            target_engines = cfg.MIN_REPLICAS
+            max_provision_workers = min(5, target_engines)  # Cap at 5 concurrent provisions to avoid overwhelming Docker
+            provisioned_count = 0
+            
+            def provision_engine_wrapper(idx, total):
+                """Wrapper function to provision engine and update state"""
+                try:
+                    response = start_acestream(AceProvisionRequest())
+                    if response and response.container_id:
+                        logger.info(f"Successfully provisioned engine {response.container_id[:12]} ({idx}/{total})")
+                        return (True, response.container_id, None)
+                    else:
+                        logger.error(f"Failed to provision engine {idx}/{total}: No response or container ID")
+                        return (False, None, "No response or container ID")
+                except Exception as e:
+                    logger.error(f"Failed to provision engine {idx}/{total}: {e}")
+                    return (False, None, str(e))
+            
+            if target_engines > 0:
+                with ThreadPoolExecutor(max_workers=max_provision_workers) as executor:
+                    # Submit all provision tasks
+                    future_to_idx = {
+                        executor.submit(provision_engine_wrapper, idx, target_engines): idx
+                        for idx in range(1, target_engines + 1)
+                    }
+                    
+                    # Process results as they complete
+                    for future in as_completed(future_to_idx):
+                        success, container_id, error = future.result()
+                        if success:
+                            provisioned_count += 1
+                            _reprovision_state["engines_provisioned"] = provisioned_count
+                            _reprovision_state.update({
+                                "message": f"Provisioned {provisioned_count}/{target_engines} new engines..."
+                            })
+            
+            logger.info(f"Successfully provisioned {provisioned_count}/{target_engines} engines concurrently")
+            
+            # Reindex after provisioning to ensure state consistency
+            logger.info("Reindexing after reprovisioning to pick up new containers")
+            try:
+                from .services.reindex import reindex_existing
+                reindex_existing()
+            except Exception as e:
+                logger.error(f"Failed to reindex after reprovisioning: {e}")
             
             # Exit reprovisioning mode
             state.exit_reprovisioning_mode()
@@ -1556,11 +1620,11 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
             _reprovision_state = {
                 "in_progress": False,
                 "status": "success",
-                "message": f"Successfully reprovisioned all engines ({total_engines} stopped, {cfg.MIN_REPLICAS} provisioned)",
+                "message": f"Successfully reprovisioned all engines ({stopped_count} stopped, {provisioned_count} provisioned)",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "total_engines": total_engines,
-                "engines_stopped": total_engines,
-                "engines_provisioned": cfg.MIN_REPLICAS,
+                "engines_stopped": stopped_count,
+                "engines_provisioned": provisioned_count,
                 "current_engine_id": None,
                 "current_phase": "complete"
             }
