@@ -11,9 +11,17 @@ RUN npm run build
 FROM python:3.11-slim AS python-builder
 WORKDIR /build
 
-# Install build dependencies
+# Install build dependencies including those needed for libtorrent
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc g++ && \
+    apt-get install -y --no-install-recommends \
+    gcc g++ \
+    libboost-python-dev \
+    libboost-system-dev \
+    libssl-dev \
+    pkg-config \
+    git \
+    cmake \
+    make && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -22,6 +30,10 @@ RUN pip install --upgrade pip && \
     pip install --no-cache-dir --prefix=/install \
     --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org \
     -r requirements.txt
+
+# Build and install libtorrent-python (python-libtorrent)
+# Use a specific version for stability
+RUN pip install --no-cache-dir --prefix=/install libtorrent==2.0.11
 
 # Stage 3: Install Redis and collect all dependencies (use Debian 12 to match Distroless)
 FROM debian:12-slim AS redis-builder
