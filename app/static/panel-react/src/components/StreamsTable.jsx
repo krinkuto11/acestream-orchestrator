@@ -28,7 +28,7 @@ import {
   ArrowDown,
   Globe
 } from 'lucide-react'
-import { formatTime, formatBytes, formatBytesPerSecond } from '../utils/formatters'
+import { formatTime, formatBytes, formatBytesPerSecond, countryCodeToFlag } from '../utils/formatters'
 import {
   Collapsible,
   CollapsibleContent,
@@ -717,9 +717,9 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                                 </TableCell>
                                 <TableCell className="text-sm text-foreground">
                                   <span title={peer.country}>
-                                    {peer.country_code && peer.country_code !== '??' ? (
-                                      <span className="mr-2">{String.fromCodePoint(...peer.country_code.split('').map(c => 127397 + c.charCodeAt()))}</span>
-                                    ) : null}
+                                    {peer.country_code && peer.country_code !== '??' && (
+                                      <span className="mr-2">{countryCodeToFlag(peer.country_code)}</span>
+                                    )}
                                     {peer.country || 'Unknown'}
                                   </span>
                                 </TableCell>

@@ -34,3 +34,20 @@ export function formatBytesPerSecond(bytesPerSecond) {
   const i = Math.floor(Math.log(bytesPerSecond) / Math.log(k))
   return Math.round((bytesPerSecond / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
 }
+
+/**
+ * Convert a country code to a flag emoji
+ * @param {string} countryCode - ISO 3166-1 alpha-2 country code (e.g., "US", "GB")
+ * @returns {string} Flag emoji or empty string if invalid
+ */
+export function countryCodeToFlag(countryCode) {
+  if (!countryCode || countryCode === '??' || countryCode.length !== 2) {
+    return ''
+  }
+  
+  // Convert country code to regional indicator symbols
+  // Each letter is offset by 127397 from its ASCII code to get the regional indicator
+  return String.fromCodePoint(
+    ...countryCode.toUpperCase().split('').map(c => 127397 + c.charCodeAt())
+  )
+}

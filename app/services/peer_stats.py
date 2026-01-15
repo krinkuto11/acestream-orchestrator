@@ -30,6 +30,9 @@ _cache_ttl_seconds = 30  # Cache for 30 seconds
 _ip_geo_cache: Dict[str, Dict[str, Any]] = {}
 _ip_geo_cache_ttl_seconds = 3600  # Cache IP geolocation for 1 hour
 
+# Configuration for peer discovery
+PEER_DISCOVERY_WAIT_SECONDS = 2  # Time to wait for peers to connect after adding torrent
+
 # Global libtorrent session (reused across requests)
 _lt_session = None
 _lt_session_lock = threading.Lock()
@@ -179,9 +182,20 @@ def get_peers_from_handle(handle: Any, max_peers: int = 100) -> List[Dict[str, A
                     client = 'Unknown'
                 
                 # Skip localhost and private IPs
-                if ip_address.startswith("127.") or ip_address.startswith("192.168.") or \
-                   ip_address.startswith("10.") or ip_address.startswith("172.16."):
+                # Private ranges: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+                if ip_address.startswith("127.") or ip_address.startswith("10.") or \
+                   ip_address.startswith("192.168."):
                     continue
+                # Check 172.16.0.0 - 172.31.255.255 range
+                if ip_address.startswith("172."):
+                    parts = ip_address.split(".")
+                    if len(parts) >= 2:
+                        try:
+                            second_octet = int(parts[1])
+                            if 16 <= second_octet <= 31:
+                                continue
+                        except ValueError:
+                            pass
                 
                 peer_data = {
                     "ip": ip_address,
@@ -225,7 +239,8 @@ async def enrich_peer_with_geolocation(peer_ip: str) -> Optional[Dict[str, Any]]
             return cached_data
     
     try:
-        url = f"http://ipwhois.app/json/{peer_ip}"
+        # Use HTTPS for secure communication
+        url = f"https://ipwhois.app/json/{peer_ip}"
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(url)
             response.raise_for_status()
@@ -376,9 +391,9 @@ async def get_stream_peer_stats(stream_id: str, stat_url: str) -> Optional[Dict[
             _peer_stats_cache[stream_id] = result
             return result
         
-        # Wait a bit for peers to connect (2 seconds)
+        # Wait for peers to connect (configurable delay)
         # This allows DHT and trackers to find peers
-        await asyncio.sleep(2)
+        await asyncio.sleep(PEER_DISCOVERY_WAIT_SECONDS)
         
         # Get peers from handle (run in thread)
         def get_peers_sync():
