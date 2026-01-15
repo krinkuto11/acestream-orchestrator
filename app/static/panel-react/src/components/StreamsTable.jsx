@@ -352,12 +352,13 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     <>
       <TableRow>
         {showSpeedColumns && (
-          <TableCell className="w-[40px] text-center align-middle">
+          <TableCell className="w-[40px] text-center align-middle px-2">
             <div className="flex items-center justify-center h-full">
               <Checkbox
                 checked={isSelected}
                 onCheckedChange={onToggleSelect}
                 aria-label="Select stream"
+                className="mx-auto"
               />
             </div>
           </TableCell>
@@ -876,12 +877,13 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[40px] text-center align-middle">
+                  <TableHead className="w-[40px] text-center align-middle px-2">
                     <div className="flex items-center justify-center h-full">
                       <Checkbox
                         checked={someSelected ? "indeterminate" : allSelected}
                         onCheckedChange={handleSelectAll}
                         aria-label="Select all"
+                        className="mx-auto"
                       />
                     </div>
                   </TableHead>

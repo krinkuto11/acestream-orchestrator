@@ -23,7 +23,9 @@ import {
   Upload,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Check,
+  X
 } from 'lucide-react'
 import { timeAgo, formatTime, formatBytes, formatBytesPerSecond } from '../utils/formatters'
 import {
@@ -36,7 +38,7 @@ import {
 const statsCache = new Map()
 const STATS_CACHE_TTL = 3000 // 3 seconds
 
-function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl }) {
+function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMode = null }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [stats, setStats] = useState(() => {
     // Initialize with cached stats if available
@@ -94,6 +96,11 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl }) {
   // Format CPU and RAM as text
   const cpuText = stats ? `${stats.cpu_percent.toFixed(1)}%` : 'N/A'
   const ramText = stats ? `${formatBytes(stats.memory_usage)} (${stats.memory_percent.toFixed(1)}%)` : 'N/A'
+  
+  // Get engine variant name
+  const variantName = engine.is_custom_variant 
+    ? (engine.template_name || 'Custom')
+    : (engine.engine_variant || 'Default')
 
   return (
     <>
@@ -109,25 +116,9 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl }) {
           </Button>
         </TableCell>
         <TableCell className="font-medium text-center">
-          <div className="flex flex-col gap-1 items-center">
-            <span className="text-sm text-white truncate max-w-[12rem]" title={engine.container_name || engine.container_id}>
-              {engine.container_name || engine.container_id.slice(0, 12)}
-            </span>
-            {engine.forwarded && (
-              <Badge variant="default" className="text-xs font-bold">FORWARDED</Badge>
-            )}
-            {showVpnLabel && engine.vpn_container && (
-              <Badge variant="outline" className="text-xs">{engine.vpn_container}</Badge>
-            )}
-            {engine.is_custom_variant && (
-              <Badge variant="secondary" className="text-xs">
-                {engine.template_name ? `Custom: ${engine.template_name}` : 'Custom'}
-              </Badge>
-            )}
-            {engine.engine_variant && !engine.is_custom_variant && (
-              <Badge variant="secondary" className="text-xs">{engine.engine_variant}</Badge>
-            )}
-          </div>
+          <span className="text-sm text-white truncate max-w-[12rem] block" title={engine.container_name || engine.container_id}>
+            {engine.container_name || engine.container_id.slice(0, 12)}
+          </span>
         </TableCell>
         <TableCell className="text-center">
           <span className="text-sm text-white">{engine.host}:{engine.port}</span>
@@ -137,6 +128,21 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl }) {
             <Activity className="h-3 w-3" />
             <span className="text-white">{healthStatus.toUpperCase()}</span>
           </Badge>
+        </TableCell>
+        <TableCell className="text-center">
+          {engine.forwarded ? (
+            <Check className="h-5 w-5 text-green-500 mx-auto" />
+          ) : (
+            <X className="h-5 w-5 text-red-500 mx-auto" />
+          )}
+        </TableCell>
+        {vpnMode && (
+          <TableCell className="text-center">
+            <span className="text-sm text-white">{engine.vpn_container || '—'}</span>
+          </TableCell>
+        )}
+        <TableCell className="text-center">
+          <span className="text-sm text-white">{variantName}</span>
         </TableCell>
         <TableCell className="text-center">
           <span className="text-sm text-white">{cpuText}</span>
@@ -191,7 +197,7 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl }) {
       </TableRow>
       {isExpanded && (
         <TableRow>
-          <TableCell colSpan={12} className="p-6 bg-muted/50">
+          <TableCell colSpan={vpnMode ? 15 : 14} className="p-6 bg-muted/50">
             <div className="space-y-6">
               {/* Engine Details */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -286,7 +292,7 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl }) {
   )
 }
 
-function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUrl }) {
+function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUrl, vpnMode = null }) {
   // State for sorting
   const [sortColumn, setSortColumn] = useState(null)
   const [sortDirection, setSortDirection] = useState('asc')
@@ -366,6 +372,20 @@ function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUr
               >
                 Health <SortIcon column="health_status" />
               </TableHead>
+              <TableHead 
+                className="cursor-pointer select-none text-center"
+                onClick={() => handleSort('forwarded')}
+              >
+                Forwarded <SortIcon column="forwarded" />
+              </TableHead>
+              {vpnMode && (
+                <TableHead className="text-center">
+                  VPN
+                </TableHead>
+              )}
+              <TableHead className="text-center">
+                Variant
+              </TableHead>
               <TableHead className="text-center">
                 CPU
               </TableHead>
@@ -410,7 +430,7 @@ function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUr
           <TableBody>
             {sortedEngines.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={vpnMode ? 15 : 14} className="text-center py-8 text-muted-foreground">
                   No engines available
                 </TableCell>
               </TableRow>
@@ -422,6 +442,7 @@ function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUr
                   onDelete={onDeleteEngine}
                   showVpnLabel={showVpnLabel}
                   orchUrl={orchUrl}
+                  vpnMode={vpnMode}
                 />
               ))
             )}
