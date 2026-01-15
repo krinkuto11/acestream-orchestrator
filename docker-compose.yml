@@ -9,7 +9,7 @@
 services:
   orchestrator:
     container_name: orchestrator
-    image: ghcr.io/krinkuto11/acestream-orchestrator:v1.0.0
+    image: ghcr.io/krinkuto11/acestream-orchestrator:latest
     env_file: .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
