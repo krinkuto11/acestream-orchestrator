@@ -33,7 +33,7 @@ RUN pip install --upgrade pip && \
 
 # Build and install libtorrent-python (python-libtorrent)
 # Use a specific version for stability
-RUN pip install --no-cache-dir --prefix=/install libtorrent==2.0.10
+RUN pip install --no-cache-dir --prefix=/install libtorrent==2.0.11
 
 # Stage 3: Install Redis and collect all dependencies (use Debian 12 to match Distroless)
 FROM debian:12-slim AS redis-builder
