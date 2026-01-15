@@ -15,6 +15,17 @@ _vpn_assignment_lock = threading.RLock()
 # Track engines being provisioned per VPN (not yet in state) to ensure balanced allocation
 _vpn_pending_engines: Dict[str, int] = {}
 
+
+def _decrement_vpn_pending_counter(vpn_container: Optional[str]):
+    """Safely decrement the pending engine counter for a VPN container."""
+    if not vpn_container or cfg.VPN_MODE != 'redundant':
+        return
+    
+    with _vpn_assignment_lock:
+        if vpn_container in _vpn_pending_engines and _vpn_pending_engines[vpn_container] > 0:
+            _vpn_pending_engines[vpn_container] -= 1
+            logger.debug(f"Decremented pending counter for VPN '{vpn_container}' (now: {_vpn_pending_engines[vpn_container]})")
+
 ACESTREAM_LABEL_HTTP = "acestream.http_port"
 ACESTREAM_LABEL_HTTPS = "acestream.https_port"
 HOST_LABEL_HTTP = "host.http_port"
@@ -356,10 +367,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
                         # Both unhealthy: fail provisioning
                         raise RuntimeError("Both VPN containers are unhealthy - cannot start AceStream engine")
                     
-                    # Atomically increment pending counter for selected VPN
-                    _vpn_pending_engines[vpn_container] = _vpn_pending_engines.get(vpn_container, 0) + 1
-                    
                     logger.info(f"Assigning new engine to VPN '{vpn_container}' (VPN1: {vpn1_engines} engines, VPN2: {vpn2_engines} engines)")
+                
+                # Atomically increment pending counter for selected VPN (applies to all modes)
+                _vpn_pending_engines[vpn_container] = _vpn_pending_engines.get(vpn_container, 0) + 1
             else:
                 # Single VPN mode
                 vpn_container = cfg.GLUETUN_CONTAINER_NAME
@@ -710,10 +721,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     state.engines[cont.id] = engine
     
     # Decrement pending counter now that engine is in state (in redundant VPN mode)
-    if cfg.VPN_MODE == 'redundant' and vpn_container:
-        with _vpn_assignment_lock:
-            if vpn_container in _vpn_pending_engines and _vpn_pending_engines[vpn_container] > 0:
-                _vpn_pending_engines[vpn_container] -= 1
+    _decrement_vpn_pending_counter(vpn_container)
     
     # Persist to database
     try:
