@@ -69,6 +69,12 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
     - HLS support for krinkuto11-amd64 variant
     - Dynamic mode switching via Proxy Settings
     - See [HLS Proxy Documentation](docs/HLS_PROXY.md)
+- **Peer Collector Microservice** (v1.7.0): Optional peer statistics collection
+  - Separate distroless microservice running inside Gluetun VPN
+  - Collects torrent peer data with geolocation enrichment
+  - Bundled Redis for high-speed caching
+  - Toggle on/off via Settings UI
+  - See [Peer Collector Documentation](peer_collector/README.md)
 - **Stream Loop Detection** (v1.6.0): Automatically detect and stop streams that are looping (no new data)
   - Configurable threshold via UI
   - Monitors broadcast position (live_last) against real time
@@ -106,6 +112,12 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
   - Production checklist
   - Monitoring and troubleshooting
 
+- **[Peer Collector Microservice](peer_collector/README.md)** - Peer statistics collection setup
+  - Microservice architecture
+  - Docker integration
+  - Configuration options
+  - API endpoints
+  
 - **[Configuration Reference](docs/CONFIG.md)** - All environment variables explained
 - **[.env.example](.env.example)** - Example configuration file with comments
 
