@@ -74,6 +74,21 @@ services:
     networks:
       - aceserver
 
+  peer-collector:
+    build:
+      context: ./peer_collector
+      dockerfile: Dockerfile
+    container_name: peer-collector
+    network_mode: "service:gluetun"  # Share network with Gluetun for VPN access
+    environment:
+      - CACHE_TTL_SECONDS=30
+      - MAX_PEERS_TO_ENRICH=50
+      # Redis is bundled and starts automatically
+    restart: unless-stopped
+    depends_on:
+      gluetun:
+        condition: service_healthy
+
   orchestrator:
     privileged: true
     container_name: orchestrator
@@ -91,6 +106,9 @@ services:
         condition: service_healthy
     networks:
       - aceserver
+    # To enable peer collection via microservice, add to .env:
+    # PEER_COLLECTOR_ENABLED=true
+    # PEER_COLLECTOR_URL=http://gluetun:8080
 
 networks:
   aceserver:

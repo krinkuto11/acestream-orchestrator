@@ -1027,6 +1027,68 @@ async def get_stream_peers(stream_id: str):
     
     return peer_stats
 
+@app.get("/config/runtime")
+def get_runtime_config():
+    """
+    Get current runtime configuration values.
+    
+    Returns configuration values that are relevant to the UI.
+    """
+    return {
+        "PEER_COLLECTOR_ENABLED": cfg.PEER_COLLECTOR_ENABLED,
+        "PEER_COLLECTOR_URL": cfg.PEER_COLLECTOR_URL
+    }
+
+@app.patch("/config/runtime", dependencies=[Depends(require_api_key)])
+def update_runtime_config(
+    PEER_COLLECTOR_ENABLED: Optional[bool] = None,
+    PEER_COLLECTOR_URL: Optional[str] = None
+):
+    """
+    Update runtime configuration values.
+    
+    Note: These changes are in-memory only and will be lost on restart.
+    To persist changes, update the .env file or environment variables.
+    """
+    if PEER_COLLECTOR_ENABLED is not None:
+        cfg.PEER_COLLECTOR_ENABLED = PEER_COLLECTOR_ENABLED
+        logger.info(f"Updated PEER_COLLECTOR_ENABLED to {PEER_COLLECTOR_ENABLED}")
+    
+    if PEER_COLLECTOR_URL is not None:
+        cfg.PEER_COLLECTOR_URL = PEER_COLLECTOR_URL
+        logger.info(f"Updated PEER_COLLECTOR_URL to {PEER_COLLECTOR_URL}")
+    
+    return {
+        "PEER_COLLECTOR_ENABLED": cfg.PEER_COLLECTOR_ENABLED,
+        "PEER_COLLECTOR_URL": cfg.PEER_COLLECTOR_URL
+    }
+
+@app.post("/peer-collector/health", dependencies=[Depends(require_api_key)])
+async def check_peer_collector_health(request: Request):
+    """
+    Check the health of the peer collector microservice.
+    
+    Expects JSON body with: { "collector_url": "http://gluetun:8080" }
+    """
+    body = await request.json()
+    collector_url = body.get("collector_url")
+    
+    if not collector_url:
+        raise HTTPException(status_code=400, detail="collector_url is required in request body")
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{collector_url}/health")
+            response.raise_for_status()
+            data = response.json()
+            return data
+    except httpx.HTTPError as e:
+        logger.error(f"Failed to check peer collector health at {collector_url}: {e}")
+        raise HTTPException(status_code=503, detail=f"Peer collector unavailable: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error checking peer collector health: {e}")
+        raise HTTPException(status_code=500, detail=f"Error checking health: {str(e)}")
+
 @app.delete("/streams/{stream_id}", dependencies=[Depends(require_api_key)])
 async def stop_stream(stream_id: str):
     """

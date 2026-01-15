@@ -65,7 +65,7 @@ ChartJS.register(
   Legend
 )
 
-function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode, showSpeedColumns = true, isSelected, onToggleSelect }) {
+function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode, showSpeedColumns = true, isSelected, onToggleSelect, peerCollectorEnabled = false }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [stats, setStats] = useState([])
   const [loading, setLoading] = useState(false)
@@ -197,7 +197,8 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   }, [stream, orchUrl, isExpanded])
 
   const fetchPeers = useCallback(async () => {
-    if (!stream || !isExpanded || !isActive) return
+    // Only fetch peers if peer collector is enabled
+    if (!stream || !isExpanded || !isActive || !peerCollectorEnabled) return
     
     // Only show loading indicator if we don't have any data yet
     if (!hasPeersDataRef.current) {
@@ -520,12 +521,14 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           <TableCell colSpan={showSpeedColumns ? 13 : 7} className="p-6 bg-muted/50">
             {isActive ? (
               <Tabs defaultValue="statistics" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className={`grid w-full ${peerCollectorEnabled ? 'grid-cols-3' : 'grid-cols-2'}`}>
                   <TabsTrigger value="statistics">Statistics</TabsTrigger>
-                  <TabsTrigger value="peers">
-                    <Globe className="h-4 w-4 mr-2" />
-                    Peers ({peers.length})
-                  </TabsTrigger>
+                  {peerCollectorEnabled && (
+                    <TabsTrigger value="peers">
+                      <Globe className="h-4 w-4 mr-2" />
+                      Peers ({peers.length})
+                    </TabsTrigger>
+                  )}
                   <TabsTrigger value="clients">
                     <Users className="h-4 w-4 mr-2" />
                     Clients ({clients.length})
@@ -685,8 +688,9 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                   </div>
                 </TabsContent>
 
-                {/* Peers Tab */}
-                <TabsContent value="peers" className="space-y-4 mt-4">
+                {/* Peers Tab - Only shown when peer collector is enabled */}
+                {peerCollectorEnabled && (
+                  <TabsContent value="peers" className="space-y-4 mt-4">
                   <div>
                     <p className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                       <Globe className="h-4 w-4" />
@@ -749,6 +753,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                     )}
                   </div>
                 </TabsContent>
+                )}
 
                 {/* Clients Tab */}
                 <TabsContent value="clients" className="space-y-4 mt-4">
@@ -887,6 +892,30 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
   // Separate active and ended streams
   const activeStreams = streams.filter(s => s.status === 'started')
   const endedStreams = streams.filter(s => s.status === 'ended')
+  
+  // State for peer collector configuration
+  const [peerCollectorEnabled, setPeerCollectorEnabled] = useState(false)
+  
+  // Fetch peer collector config on mount
+  useEffect(() => {
+    const fetchPeerCollectorConfig = async () => {
+      try {
+        const headers = {}
+        if (apiKey) {
+          headers['X-API-KEY'] = apiKey
+        }
+        const response = await fetch(`${orchUrl}/config/runtime`, { headers })
+        if (response.ok) {
+          const data = await response.json()
+          setPeerCollectorEnabled(data.PEER_COLLECTOR_ENABLED || false)
+        }
+      } catch (err) {
+        console.error('Failed to fetch peer collector config:', err)
+      }
+    }
+    
+    fetchPeerCollectorConfig()
+  }, [orchUrl, apiKey])
   
   // State for sorting
   const [sortColumn, setSortColumn] = useState(null)
@@ -1148,6 +1177,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                     debugMode={debugMode}
                     isSelected={selectedStreams.has(stream.id)}
                     onToggleSelect={() => handleToggleSelect(stream.id)}
+                    peerCollectorEnabled={peerCollectorEnabled}
                   />
                 ))}
               </TableBody>
@@ -1229,6 +1259,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                       onDeleteEngine={onDeleteEngine}
                       debugMode={debugMode}
                       showSpeedColumns={false}
+                      peerCollectorEnabled={peerCollectorEnabled}
                     />
                   ))}
                 </TableBody>

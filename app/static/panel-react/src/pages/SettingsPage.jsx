@@ -4,6 +4,7 @@ import { GeneralSettings } from './settings/GeneralSettings'
 import { ProxySettings } from './settings/ProxySettings'
 import { LoopDetectionSettings } from './settings/LoopDetectionSettings'
 import { BackupSettings } from './settings/BackupSettings'
+import { PeerCollectorSettings } from './settings/PeerCollectorSettings'
 
 export function SettingsPage({
   apiKey,
@@ -24,9 +25,10 @@ export function SettingsPage({
       </div>
 
       <Tabs defaultValue="general" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4 lg:w-[800px]">
+        <TabsList className="grid w-full grid-cols-5 lg:w-[1000px]">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="proxy">Proxy</TabsTrigger>
+          <TabsTrigger value="peers">Peer Collector</TabsTrigger>
           <TabsTrigger value="loop-detection">Loop Detection</TabsTrigger>
           <TabsTrigger value="backup">Backup & Restore</TabsTrigger>
         </TabsList>
@@ -44,6 +46,13 @@ export function SettingsPage({
 
         <TabsContent value="proxy" className="space-y-6">
           <ProxySettings
+            apiKey={apiKey}
+            orchUrl={orchUrl}
+          />
+        </TabsContent>
+
+        <TabsContent value="peers" className="space-y-6">
+          <PeerCollectorSettings
             apiKey={apiKey}
             orchUrl={orchUrl}
           />
