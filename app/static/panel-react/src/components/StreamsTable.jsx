@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
   TableBody,
@@ -24,7 +25,8 @@ import {
   Activity,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Globe
 } from 'lucide-react'
 import { formatTime, formatBytes, formatBytesPerSecond } from '../utils/formatters'
 import {
@@ -73,11 +75,15 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const [clients, setClients] = useState([])
   const [clientsLoading, setClientsLoading] = useState(false)
   const [streamStatus, setStreamStatus] = useState(null) // For tracking AceStream stat URL status
+  const [peers, setPeers] = useState([])
+  const [peersLoading, setPeersLoading] = useState(false)
+  const [peersError, setPeersError] = useState(null)
   
   // Track if we have fetched data at least once to prevent loading flicker on refreshes
   const hasClientsDataRef = useRef(false)
   const hasStatsDataRef = useRef(false)
   const hasExtendedStatsDataRef = useRef(false)
+  const hasPeersDataRef = useRef(false)
 
   const isActive = stream.status === 'started'
   const isEnded = stream.status === 'ended'
