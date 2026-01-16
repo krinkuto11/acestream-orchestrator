@@ -577,11 +577,12 @@ class HLSProxyServer:
         self.lock = threading.Lock()  # Lock for thread-safe operations
         
         # Store reference to the main event loop for thread-safe event scheduling
-        # This is used by cleanup threads to schedule async tasks safely
+        # This will be set when initialize_channel is first called from an async context (FastAPI endpoint).
+        # Cleanup threads use this reference to schedule async events via run_coroutine_threadsafe.
         try:
             self._main_loop = asyncio.get_running_loop()
         except RuntimeError:
-            # No loop is running yet - will be set later when first async operation runs
+            # No loop is running yet - will be set when initialize_channel is first called
             self._main_loop = None
         
         logger.info("HLS ProxyServer initialized")
@@ -615,13 +616,15 @@ class HLSProxyServer:
             logger.info(f"Initializing HLS channel {channel_id} with URL {playback_url}")
             
             # Ensure we have the main event loop reference
+            # In normal FastAPI operation, initialize_channel is always called from an async endpoint,
+            # so get_running_loop() will succeed. The _main_loop is stored for use by cleanup threads.
             if not self._main_loop:
                 try:
                     self._main_loop = asyncio.get_running_loop()
                 except RuntimeError:
-                    # If no loop is running, try to get the event loop for the current thread
-                    # This shouldn't happen in normal FastAPI operation
-                    logger.warning("No running event loop when initializing HLS channel")
+                    # No loop is running - this shouldn't happen in production with FastAPI
+                    # but may occur in tests. Event sending from threads will be skipped.
+                    logger.warning("No running event loop when initializing HLS channel - thread-safe event sending will be disabled")
             
             # Create manager, buffer, and client manager
             manager = StreamManager(
