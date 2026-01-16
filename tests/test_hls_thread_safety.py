@@ -35,7 +35,7 @@ class TestHLSThreadSafety(unittest.TestCase):
         # Give the loop time to start
         time.sleep(0.1)
         
-        # Create a stream manager instance
+        # Create a stream manager instance with event loop reference
         self.manager = StreamManager(
             playback_url="http://test:8000/test.m3u8",
             channel_id="test_channel",
@@ -47,7 +47,8 @@ class TestHLSThreadSafety(unittest.TestCase):
                 'stat_url': 'http://test/stat',
                 'command_url': 'http://test/command',
                 'is_live': 1
-            }
+            },
+            event_loop=self.loop  # Pass the event loop for thread-safe event sending
         )
         
         # Set a stream_id so events can be sent
@@ -127,8 +128,9 @@ class TestHLSThreadSafety(unittest.TestCase):
         # Reset singleton
         HLSProxyServer._instance = None
         
-        # Create proxy server
+        # Create proxy server and set its event loop reference
         proxy = HLSProxyServer.get_instance()
+        proxy._main_loop = self.loop  # Set the test loop as the main loop
         
         error_occurred = []
         
@@ -137,12 +139,12 @@ class TestHLSThreadSafety(unittest.TestCase):
             try:
                 # This simulates what happens in cleanup_loop
                 # when all clients disconnect
-                time.sleep(0.1)
+                time.sleep(0.3)
                 proxy.stop_channel("test_channel", reason="inactivity")
             except Exception as e:
                 error_occurred.append(str(e))
         
-        # Initialize a channel (this happens in async context)
+        # Initialize a channel - needs to run in async context
         session_info = {
             'playback_session_id': 'test_session',
             'stat_url': 'http://test/stat',
@@ -150,22 +152,28 @@ class TestHLSThreadSafety(unittest.TestCase):
             'is_live': 1
         }
         
-        proxy.initialize_channel(
-            channel_id="test_channel",
-            playback_url="http://test:8000/test.m3u8",
-            engine_host="test_engine",
-            engine_port=8000,
-            engine_container_id="test_container",
-            session_info=session_info
-        )
+        async def initialize():
+            """Initialize channel in async context"""
+            proxy.initialize_channel(
+                channel_id="test_channel",
+                playback_url="http://test:8000/test.m3u8",
+                engine_host="test_engine",
+                engine_port=8000,
+                engine_container_id="test_container",
+                session_info=session_info
+            )
         
-        # Give time for initialization
-        time.sleep(0.1)
+        # Schedule initialization on the event loop
+        future = asyncio.run_coroutine_threadsafe(initialize(), self.loop)
+        future.result(timeout=2)  # Wait for initialization to complete
+        
+        # Give time for initialization to settle
+        time.sleep(0.2)
         
         # Start cleanup thread
         cleanup_thread = threading.Thread(target=cleanup_thread_simulation)
         cleanup_thread.start()
-        cleanup_thread.join(timeout=2)
+        cleanup_thread.join(timeout=3)
         
         # Verify no "no running event loop" error occurred
         for error in error_occurred:
