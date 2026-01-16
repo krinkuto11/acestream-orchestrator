@@ -214,6 +214,34 @@ class StreamManager:
             except Exception as e:
                 logger.warning(f"Failed to send stop command: {e}")
     
+    def _schedule_async_task(self, coro, task_name: str, fallback_warning: str):
+        """Schedule an async task in a thread-safe manner.
+        
+        This helper handles both async and thread contexts by:
+        1. Using create_task if in an async context (has running loop)
+        2. Using run_coroutine_threadsafe if in a thread context (uses stored event loop)
+        
+        Args:
+            coro: The coroutine to schedule
+            task_name: Name for the async task (for debugging)
+            fallback_warning: Warning message if event loop is not available
+        """
+        try:
+            # Try to get the running loop (works in async context)
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an async context, use create_task
+                asyncio.create_task(coro, name=task_name)
+            except RuntimeError:
+                # No running loop in current thread - use stored event loop if available
+                if self._event_loop and self._event_loop.is_running():
+                    # Schedule on the main loop from this thread
+                    asyncio.run_coroutine_threadsafe(coro, self._event_loop)
+                else:
+                    logger.warning(fallback_warning)
+        except Exception as e:
+            logger.error(f"Failed to schedule async task {task_name}: {e}")
+    
     def _send_stream_started_event(self):
         """Send stream started event to orchestrator using async task (non-blocking)
         
@@ -277,25 +305,12 @@ class StreamManager:
         # This will be updated by the async task once the event is processed
         self.stream_id = f"temp-hls-{self.channel_id[:16]}-{int(time.time())}"
         
-        # Send event in background - handle both thread and async contexts
-        try:
-            # Try to get the running loop (works in async context)
-            try:
-                loop = asyncio.get_running_loop()
-                # We're in an async context, use create_task
-                asyncio.create_task(
-                    _send_event(),
-                    name=f"HLS-StartEvent-{self.channel_id[:8]}"
-                )
-            except RuntimeError:
-                # No running loop in current thread - use stored event loop if available
-                if self._event_loop and self._event_loop.is_running():
-                    # Schedule on the main loop from this thread
-                    asyncio.run_coroutine_threadsafe(_send_event(), self._event_loop)
-                else:
-                    logger.warning(f"Event loop not available, cannot send stream started event")
-        except Exception as e:
-            logger.error(f"Failed to send stream started event: {e}")
+        # Send event in background using thread-safe helper
+        self._schedule_async_task(
+            _send_event(),
+            task_name=f"HLS-StartEvent-{self.channel_id[:8]}",
+            fallback_warning="Event loop not available, cannot send stream started event"
+        )
     
     def _send_stream_ended_event(self, reason="normal"):
         """Send stream ended event to orchestrator using async task (non-blocking)
@@ -340,25 +355,12 @@ class StreamManager:
                 logger.warning(f"Failed to send HLS stream ended event to orchestrator: {e}")
                 logger.debug(f"Exception details: {e}", exc_info=True)
         
-        # Send event in background - handle both thread and async contexts
-        try:
-            # Try to get the running loop (works in async context)
-            try:
-                loop = asyncio.get_running_loop()
-                # We're in an async context, use create_task
-                asyncio.create_task(
-                    _send_event(),
-                    name=f"HLS-EndEvent-{self.channel_id[:8]}"
-                )
-            except RuntimeError:
-                # No running loop in current thread - use stored event loop if available
-                if self._event_loop and self._event_loop.is_running():
-                    # Schedule on the main loop from this thread
-                    asyncio.run_coroutine_threadsafe(_send_event(), self._event_loop)
-                else:
-                    logger.warning(f"Event loop not available, cannot send stream ended event for {self.stream_id}")
-        except Exception as e:
-            logger.error(f"Failed to send stream ended event: {e}")
+        # Send event in background using thread-safe helper
+        self._schedule_async_task(
+            _send_event(),
+            task_name=f"HLS-EndEvent-{self.channel_id[:8]}",
+            fallback_warning=f"Event loop not available, cannot send stream ended event for {self.stream_id}"
+        )
     
     def start_cleanup_monitoring(self, proxy_server):
         """Start background thread for client inactivity monitoring (adapted from context/hls_proxy)"""

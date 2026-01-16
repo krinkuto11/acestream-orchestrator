@@ -66,7 +66,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
     }, 5000) // Poll every 5 seconds
     
     return () => clearInterval(pollInterval)
-  }, [orchUrl, engineVariant])
+  }, [orchUrl]) // Only restart polling when orchUrl changes
   
   const fetchProxyConfig = async () => {
     try {
