@@ -57,6 +57,17 @@ export function ProxySettings({ apiKey, orchUrl }) {
     fetchCustomVariantInfo()
   }, [orchUrl])
   
+  // Poll for custom variant changes (e.g., after user changes settings in another tab/page)
+  useEffect(() => {
+    // Initial fetch is done in the first useEffect
+    // This effect sets up periodic polling to detect changes
+    const pollInterval = setInterval(() => {
+      fetchCustomVariantInfo()
+    }, 5000) // Poll every 5 seconds
+    
+    return () => clearInterval(pollInterval)
+  }, [orchUrl]) // Only restart polling when orchUrl changes
+  
   const fetchProxyConfig = async () => {
     try {
       const response = await fetch(`${orchUrl}/proxy/config`)

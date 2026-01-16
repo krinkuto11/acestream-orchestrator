@@ -155,7 +155,8 @@ class StreamManager:
     """Manages HLS stream state and fetching"""
     
     def __init__(self, playback_url: str, channel_id: str, engine_host: str, engine_port: int, 
-                 engine_container_id: str, session_info: Dict[str, Any], api_key: Optional[str] = None):
+                 engine_container_id: str, session_info: Dict[str, Any], api_key: Optional[str] = None,
+                 event_loop: Optional[asyncio.AbstractEventLoop] = None):
         self.playback_url = playback_url
         self.channel_id = channel_id
         self.engine_host = engine_host
@@ -171,6 +172,9 @@ class StreamManager:
         
         # API key for orchestrator events
         self.api_key = api_key
+        
+        # Reference to main event loop for thread-safe async task scheduling
+        self._event_loop = event_loop
         
         # Sequence tracking
         self.next_sequence = 0
@@ -210,6 +214,34 @@ class StreamManager:
             except Exception as e:
                 logger.warning(f"Failed to send stop command: {e}")
     
+    def _schedule_async_task(self, coro, task_name: str, fallback_warning: str):
+        """Schedule an async task in a thread-safe manner.
+        
+        This helper handles both async and thread contexts by:
+        1. Using create_task if in an async context (has running loop)
+        2. Using run_coroutine_threadsafe if in a thread context (uses stored event loop)
+        
+        Args:
+            coro: The coroutine to schedule
+            task_name: Name for the async task (for debugging)
+            fallback_warning: Warning message if event loop is not available
+        """
+        try:
+            # Try to get the running loop (works in async context)
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an async context, use create_task
+                asyncio.create_task(coro, name=task_name)
+            except RuntimeError:
+                # No running loop in current thread - use stored event loop if available
+                if self._event_loop and self._event_loop.is_running():
+                    # Schedule on the main loop from this thread
+                    asyncio.run_coroutine_threadsafe(coro, self._event_loop)
+                else:
+                    logger.warning(fallback_warning)
+        except Exception as e:
+            logger.error(f"Failed to schedule async task {task_name}: {e}")
+    
     def _send_stream_started_event(self):
         """Send stream started event to orchestrator using async task (non-blocking)
         
@@ -218,6 +250,8 @@ class StreamManager:
         
         Note: stream_id is set to a temporary value immediately, then updated by the async
         task when the event handler completes. This is intentional for fire-and-forget async.
+        
+        Thread-safe: Can be called from both async and thread contexts.
         """
         async def _send_event():
             try:
@@ -271,14 +305,19 @@ class StreamManager:
         # This will be updated by the async task once the event is processed
         self.stream_id = f"temp-hls-{self.channel_id[:16]}-{int(time.time())}"
         
-        # Send event in background async task (non-blocking, no thread creation)
-        asyncio.create_task(
+        # Send event in background using thread-safe helper
+        self._schedule_async_task(
             _send_event(),
-            name=f"HLS-StartEvent-{self.channel_id[:8]}"
+            task_name=f"HLS-StartEvent-{self.channel_id[:8]}",
+            fallback_warning="Event loop not available, cannot send stream started event"
         )
     
     def _send_stream_ended_event(self, reason="normal"):
-        """Send stream ended event to orchestrator using async task (non-blocking)"""
+        """Send stream ended event to orchestrator using async task (non-blocking)
+        
+        Thread-safe: Can be called from both async and thread contexts.
+        Uses run_coroutine_threadsafe when called from a thread.
+        """
         # Check if we've already sent the ended event
         if self._ended_event_sent:
             logger.debug(f"HLS stream ended event already sent for stream_id={self.stream_id}, skipping")
@@ -316,10 +355,11 @@ class StreamManager:
                 logger.warning(f"Failed to send HLS stream ended event to orchestrator: {e}")
                 logger.debug(f"Exception details: {e}", exc_info=True)
         
-        # Send event in background async task (non-blocking, no thread creation)
-        asyncio.create_task(
+        # Send event in background using thread-safe helper
+        self._schedule_async_task(
             _send_event(),
-            name=f"HLS-EndEvent-{self.channel_id[:8]}"
+            task_name=f"HLS-EndEvent-{self.channel_id[:8]}",
+            fallback_warning=f"Event loop not available, cannot send stream ended event for {self.stream_id}"
         )
     
     def start_cleanup_monitoring(self, proxy_server):
@@ -535,6 +575,16 @@ class HLSProxyServer:
         self.client_managers: Dict[str, ClientManager] = {}  # Track client activity per channel
         self.fetch_tasks: Dict[str, asyncio.Task] = {}  # Changed from threads to async tasks
         self.lock = threading.Lock()  # Lock for thread-safe operations
+        
+        # Store reference to the main event loop for thread-safe event scheduling
+        # This will be set when initialize_channel is first called from an async context (FastAPI endpoint).
+        # Cleanup threads use this reference to schedule async events via run_coroutine_threadsafe.
+        try:
+            self._main_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No loop is running yet - will be set when initialize_channel is first called
+            self._main_loop = None
+        
         logger.info("HLS ProxyServer initialized")
     
     def has_channel(self, channel_id: str) -> bool:
@@ -565,6 +615,17 @@ class HLSProxyServer:
             
             logger.info(f"Initializing HLS channel {channel_id} with URL {playback_url}")
             
+            # Ensure we have the main event loop reference
+            # In normal FastAPI operation, initialize_channel is always called from an async endpoint,
+            # so get_running_loop() will succeed. The _main_loop is stored for use by cleanup threads.
+            if not self._main_loop:
+                try:
+                    self._main_loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    # No loop is running - this shouldn't happen in production with FastAPI
+                    # but may occur in tests. Event sending from threads will be skipped.
+                    logger.warning("No running event loop when initializing HLS channel - thread-safe event sending will be disabled")
+            
             # Create manager, buffer, and client manager
             manager = StreamManager(
                 playback_url=playback_url,
@@ -573,7 +634,8 @@ class HLSProxyServer:
                 engine_port=engine_port,
                 engine_container_id=engine_container_id,
                 session_info=session_info,
-                api_key=api_key
+                api_key=api_key,
+                event_loop=self._main_loop  # Pass event loop reference for thread-safe event sending
             )
             buffer = StreamBuffer()
             client_manager = ClientManager()
