@@ -218,6 +218,8 @@ class StreamManager:
         
         Note: stream_id is set to a temporary value immediately, then updated by the async
         task when the event handler completes. This is intentional for fire-and-forget async.
+        
+        Thread-safe: Can be called from both async and thread contexts.
         """
         async def _send_event():
             try:
@@ -271,14 +273,37 @@ class StreamManager:
         # This will be updated by the async task once the event is processed
         self.stream_id = f"temp-hls-{self.channel_id[:16]}-{int(time.time())}"
         
-        # Send event in background async task (non-blocking, no thread creation)
-        asyncio.create_task(
-            _send_event(),
-            name=f"HLS-StartEvent-{self.channel_id[:8]}"
-        )
+        # Send event in background - handle both thread and async contexts
+        try:
+            # Try to get the running loop (works in async context)
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an async context, use create_task
+                asyncio.create_task(
+                    _send_event(),
+                    name=f"HLS-StartEvent-{self.channel_id[:8]}"
+                )
+            except RuntimeError:
+                # No running loop - we're in a thread context
+                # Get the main event loop and schedule the coroutine thread-safely
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Schedule on the running loop from this thread
+                        asyncio.run_coroutine_threadsafe(_send_event(), loop)
+                    else:
+                        logger.warning(f"Event loop not running, cannot send stream started event")
+                except Exception as e:
+                    logger.warning(f"Could not schedule stream started event: {e}")
+        except Exception as e:
+            logger.error(f"Failed to send stream started event: {e}")
     
     def _send_stream_ended_event(self, reason="normal"):
-        """Send stream ended event to orchestrator using async task (non-blocking)"""
+        """Send stream ended event to orchestrator using async task (non-blocking)
+        
+        Thread-safe: Can be called from both async and thread contexts.
+        Uses run_coroutine_threadsafe when called from a thread.
+        """
         # Check if we've already sent the ended event
         if self._ended_event_sent:
             logger.debug(f"HLS stream ended event already sent for stream_id={self.stream_id}, skipping")
@@ -316,11 +341,30 @@ class StreamManager:
                 logger.warning(f"Failed to send HLS stream ended event to orchestrator: {e}")
                 logger.debug(f"Exception details: {e}", exc_info=True)
         
-        # Send event in background async task (non-blocking, no thread creation)
-        asyncio.create_task(
-            _send_event(),
-            name=f"HLS-EndEvent-{self.channel_id[:8]}"
-        )
+        # Send event in background - handle both thread and async contexts
+        try:
+            # Try to get the running loop (works in async context)
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an async context, use create_task
+                asyncio.create_task(
+                    _send_event(),
+                    name=f"HLS-EndEvent-{self.channel_id[:8]}"
+                )
+            except RuntimeError:
+                # No running loop - we're in a thread context
+                # Get the main event loop and schedule the coroutine thread-safely
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Schedule on the running loop from this thread
+                        asyncio.run_coroutine_threadsafe(_send_event(), loop)
+                    else:
+                        logger.warning(f"Event loop not running, cannot send stream ended event for {self.stream_id}")
+                except Exception as e:
+                    logger.warning(f"Could not schedule stream ended event: {e}")
+        except Exception as e:
+            logger.error(f"Failed to send stream ended event: {e}")
     
     def start_cleanup_monitoring(self, proxy_server):
         """Start background thread for client inactivity monitoring (adapted from context/hls_proxy)"""
