@@ -341,7 +341,7 @@ async def lifespan(app: FastAPI):
     
     cleanup_on_shutdown()
 
-__version__ = "1.5.2.1"
+__version__ = "1.5.3"
 
 app = FastAPI(
     title="On-Demand Orchestrator",
