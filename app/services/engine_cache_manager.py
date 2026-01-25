@@ -202,17 +202,99 @@ class EngineCacheManager:
         except Exception as e:
             logger.error(f"Error checking for orphaned caches: {e}")
 
-    async def start_pruner(self, interval_s: int = 300):
-        """Start the background pruner task."""
+    async def prune_aged_files(self, max_age_minutes: int):
+        """
+        Prune files in the cache directory that are older than the specified age.
+        Includes safety checks to only delete files within known cache directories.
+        """
+        if not self.mount_path.exists():
+            return
+
+        logger.info(f"Starting cache pruning (max age: {max_age_minutes}m)")
+        
+        try:
+            cutoff_time = time.time() - (max_age_minutes * 60)
+            
+            # Identify active cache directories to be safe
+            # We will scan ALL directories in the mount path, assuming they are cache dirs
+            # But we double check they look like cache dirs (12 chars hex)
+            
+            entries = list(self.mount_path.iterdir())
+            count = 0
+            size_freed = 0
+            
+            for buffer_dir in entries:
+                if not buffer_dir.is_dir():
+                    continue
+                    
+                # Safety check: only process directories that look like container IDs
+                if not (len(buffer_dir.name) == 12 and all(c in '0123456789abcdef' for c in buffer_dir.name)):
+                    continue
+
+                # Walk through the directory
+                for root, _, files in os.walk(buffer_dir):
+                    for file in files:
+                        file_path = Path(root) / file
+                        try:
+                            stat = file_path.stat()
+                            if stat.st_mtime < cutoff_time:
+                                size = stat.st_size
+                                file_path.unlink()
+                                count += 1
+                                size_freed += size
+                        except Exception as e:
+                            logger.debug(f"Failed to prune file {file_path}: {e}")
+                            
+            if count > 0:
+                logger.info(f"Pruned {count} aged files, freed {size_freed / 1024 / 1024:.2f} MB")
+                
+        except Exception as e:
+            logger.error(f"Error during aged file pruning: {e}")
+
+    async def start_pruner(self):
+        """
+        Start the background pruner task.
+        """
+        logger.info("Starting EngineCacheManager background pruner")
         while True:
+            # Default sleep interval (will be updated from config)
+            sleep_seconds = 300 
+            
             try:
-                await asyncio.sleep(interval_s)
+                # 1. Prune orphaned caches (always safe)
                 await self.prune_orphaned_caches()
+                
+                # 2. Prune aged files
+                # Import here to avoid circular dependency
+                try:
+                    from .template_manager import get_active_template_id, get_template
+                    
+                    active_id = get_active_template_id()
+                    if active_id:
+                        template = get_template(active_id)
+                        if template and template.config.disk_cache_prune_enabled:
+                            # Run the pruner
+                            max_age = template.config.disk_cache_file_max_age
+                            await self.prune_aged_files(max_age_minutes=max_age)
+                            
+                            # Update sleep interval
+                            interval_mins = template.config.disk_cache_prune_interval
+                            if interval_mins > 0:
+                                sleep_seconds = interval_mins * 60
+                            else:
+                                sleep_seconds = 60 # Minimum 1 minute safety
+                except ImportError:
+                    logger.warning("Could not import template_manager, skipping aged file pruning")
+                except Exception as e:
+                    logger.error(f"Error reading active config for pruning: {e}")
+
             except asyncio.CancelledError:
+                logger.info("Cache pruner task cancelled.")
                 break
             except Exception as e:
-                logger.error(f"Pruner task error: {e}")
-                await asyncio.sleep(60) # Wait a bit on error before retrying
+                logger.error(f"Error in cache pruner loop: {e}")
+            
+            await asyncio.sleep(sleep_seconds)
 
 # Global instance
 engine_cache_manager = EngineCacheManager()

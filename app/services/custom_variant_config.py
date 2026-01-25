@@ -113,8 +113,11 @@ class CustomVariantConfig(BaseModel):
     torrent_folder_host_path: Optional[str] = None  # Host path to mount (e.g., "/mnt/torrents")
     torrent_folder_container_path: str = DEFAULT_TORRENT_FOLDER_PATH  # Default container path
     
-    # Disk cache host mount configuration
+    # Disk cache configuration
     disk_cache_mount_enabled: bool = False
+    disk_cache_prune_enabled: bool = False
+    disk_cache_prune_interval: int = 60  # Minutes
+    disk_cache_file_max_age: int = 1440  # Minutes (24 hours)
     
     @validator('platform')
     def validate_platform(cls, v):

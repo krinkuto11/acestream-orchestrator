@@ -1002,6 +1002,49 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             </div>
           )}
 
+          {/* Scheduled Cache Pruning */}
+          <div className="flex items-center justify-between border-t pt-4">
+            <div>
+              <Label htmlFor="cache-prune-enabled">Scheduled Cache Pruning</Label>
+              <p className="text-sm text-muted-foreground mt-1">
+                Automatically prune aged files from cache.
+              </p>
+            </div>
+            <Switch
+              id="cache-prune-enabled"
+              checked={config.disk_cache_prune_enabled || false}
+              onCheckedChange={(checked) => setConfig(prev => ({ ...prev, disk_cache_prune_enabled: checked }))}
+            />
+          </div>
+
+          {config.disk_cache_prune_enabled && (
+            <div className="grid grid-cols-2 gap-4 pl-4 border-l-2 border-muted">
+              <div className="space-y-1">
+                <Label htmlFor="prune-interval" className="text-xs">Check Interval (minutes)</Label>
+                <Input
+                  id="prune-interval"
+                  type="number"
+                  min="1"
+                  value={config.disk_cache_prune_interval || 60}
+                  onChange={(e) => setConfig(prev => ({ ...prev, disk_cache_prune_interval: parseInt(e.target.value) || 60 }))}
+                  className="h-8"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="max-age" className="text-xs">Max File Age (minutes)</Label>
+                <Input
+                  id="max-age"
+                  type="number"
+                  min="60"
+                  value={config.disk_cache_file_max_age || 1440}
+                  onChange={(e) => setConfig(prev => ({ ...prev, disk_cache_file_max_age: parseInt(e.target.value) || 1440 }))}
+                  className="h-8"
+                />
+                <p className="text-[10px] text-muted-foreground">{(config.disk_cache_file_max_age || 1440) / 60} hours</p>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between border-t pt-4">
             <div>
               <Label htmlFor="torrent-mount-enabled">Mount Torrent Folder to Host</Label>
