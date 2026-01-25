@@ -232,7 +232,12 @@ class EngineCacheManager:
                     continue
 
                 # Walk through the directory
-                for root, _, files in os.walk(buffer_dir):
+                # Target .acestream_cache specifically as per requirement
+                target_dir = buffer_dir / ".acestream_cache"
+                if not target_dir.exists():
+                    continue
+
+                for root, _, files in os.walk(target_dir):
                     for file in files:
                         file_path = Path(root) / file
                         try:
