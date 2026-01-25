@@ -247,7 +247,7 @@ def get_default_parameters(platform: str) -> List[CustomVariantParameter]:
         CustomVariantParameter(name="--live-cache-size", type="bytes", value=268435456, enabled=True),  # 256MB
         CustomVariantParameter(name="--live-mem-cache-size", type="bytes", value=268435456, enabled=False),
         CustomVariantParameter(name="--live-disk-cache-size", type="bytes", value=1073741824, enabled=False),
-        CustomVariantParameter(name="--live-buffer", type="int", value=10, enabled=True), # live-buffer-time is the underlying flag but keeping this for compat if mapped
+        # Removed redundant --live-buffer (Basic)
         CustomVariantParameter(name="--live-buffer-time", type="int", value=10, enabled=False),
         CustomVariantParameter(name="--live-max-buffer-time", type="int", value=60, enabled=False),
         CustomVariantParameter(name="--live-adjust-buffer-time", type="int", value=1, enabled=False), # 0/1

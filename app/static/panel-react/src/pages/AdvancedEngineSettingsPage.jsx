@@ -62,11 +62,10 @@ const parameterCategories = {
     title: "Live Streaming",
     description: "Live broadcast tuning",
     params: [
-      { name: "--live-cache-type", label: "Cache Type", description: "Storage backend", unit: null, options: ["memory", "disk", "hybrid"] },
+      { name: "--live-cache-type", label: "Cache Type", description: "Storage backend", unit: null, options: ["memory", "disk"] },
       { name: "--live-cache-size", label: "Cache Size", description: "Total cache size", unit: "MB", divisor: 1048576 },
       { name: "--live-mem-cache-size", label: "RAM Cache", description: "Max RAM usage", unit: "MB", divisor: 1048576 },
       { name: "--live-disk-cache-size", label: "Disk Cache", description: "Max Disk usage", unit: "MB", divisor: 1048576 },
-      { name: "--live-buffer", label: "Buffer (Basic)", description: "Target buffer duration", unit: "s" },
       { name: "--live-buffer-time", label: "Buffer Time", description: "Target buffer time", unit: "s" },
       { name: "--live-max-buffer-time", label: "Max Buffer", description: "Max accumulated buffer", unit: "s" },
       { name: "--live-adjust-buffer-time", label: "Adjust Buffer", description: "Dynamic buffer adjustment", unit: null, boolAsInt: true },
@@ -578,6 +577,82 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     const isInt = param.type === 'int' || param.type === 'bytes'
     const isString = param.type === 'string' || param.type === 'path'
 
+    // Determine visibility for Live Cache params
+    if ((name === '--live-mem-cache-size' || name === '--live-disk-cache-size') && config) {
+      const cacheTypeParam = config.parameters.find(p => p.name === '--live-cache-type')
+      const cacheType = cacheTypeParam ? cacheTypeParam.value : 'memory'
+
+      if (name === '--live-disk-cache-size' && cacheType === 'memory') return null
+      if (name === '--live-mem-cache-size' && cacheType === 'disk') return null
+    }
+
+    // Special handling for merged Cache Limit control
+    if (name === '--cache-limit' || name === '--cache-max-bytes') {
+      // Only render one control that manages both
+      if (name === '--cache-max-bytes') return null // Skip rendering this, handled by --cache-limit renderer
+
+      // Determine current mode based on which param is enabled/set
+      const cacheMaxBytesParam = config.parameters.find(p => p.name === '--cache-max-bytes')
+      const cacheLimitParam = config.parameters.find(p => p.name === '--cache-limit')
+
+      // Default to GB if cache-limit is enabled, else MB if max-bytes enabled, else GB default
+      const isGB = cacheLimitParam?.enabled
+      const currentUnit = isGB ? 'GB' : 'MB'
+
+      // Helper to update the merged control
+      const handleCacheLimitChange = (val, unit) => {
+        if (unit === 'GB') {
+          // Update --cache-limit
+          updateParameter('--cache-limit', 'value', val)
+          updateParameter('--cache-limit', 'enabled', val !== '' && val !== 0)
+          // Disable --cache-max-bytes
+          updateParameter('--cache-max-bytes', 'enabled', false)
+        } else {
+          // MB mode - update --cache-max-bytes
+          // val is in MB, convert to bytes
+          const bytesVal = val === '' ? 0 : Math.round(parseFloat(val) * 1024 * 1024)
+          updateParameter('--cache-max-bytes', 'value', bytesVal)
+          updateParameter('--cache-max-bytes', 'enabled', val !== '' && val !== 0)
+          // Disable --cache-limit
+          updateParameter('--cache-limit', 'enabled', false)
+        }
+      }
+
+      const displayValue = isGB
+        ? cacheLimitParam?.value
+        : (cacheMaxBytesParam?.value ? Math.round(cacheMaxBytesParam.value / 1024 / 1024) : '')
+
+      return (
+        <div key="merged-cache-limit" className="space-y-2 p-3 border rounded-lg h-full flex flex-col">
+          <div className="flex items-center gap-2">
+            <Label className="font-medium">Total Cache Limit</Label>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">Global maximum cache size</p>
+          <div className="mt-2 flex gap-2">
+            <Input
+              type="number"
+              value={displayValue || ''}
+              onChange={(e) => handleCacheLimitChange(e.target.value, currentUnit)}
+              placeholder={currentUnit === 'GB' ? "e.g. 10" : "e.g. 10240"}
+              className="flex-1"
+            />
+            <Select
+              value={currentUnit}
+              onValueChange={(unit) => handleCacheLimitChange(displayValue, unit)}
+            >
+              <SelectTrigger className="w-[80px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="GB">GB</SelectItem>
+                <SelectItem value="MB">MB</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )
+    }
+
     // Show VPN warning for P2P port
     const showVpnWarning = vpnAware && vpnEnabled
 
@@ -597,78 +672,105 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
               </p>
             )}
           </div>
-          <Switch
-            checked={param.enabled}
-            onCheckedChange={(checked) => updateParameter(name, 'enabled', checked)}
-          />
+          {/* Simple Flag Toggle */}
+          {isFlag && (
+            <Switch
+              checked={param.enabled}
+              onCheckedChange={(checked) => {
+                updateParameter(name, 'enabled', checked)
+                updateParameter(name, 'value', checked) // Ensure value matches enabled state for flags
+              }}
+            />
+          )}
         </div>
 
-        {param.enabled && (
-          <div className="mt-2">
-            {isFlag && (
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id={name}
-                  checked={param.value}
-                  onCheckedChange={(checked) => updateParameter(name, 'value', checked)}
-                />
-                <Label htmlFor={name} className="text-sm">
-                  {param.value ? 'Enabled' : 'Disabled'}
-                </Label>
-              </div>
-            )}
+        <div className="mt-2">
 
-            {boolAsInt && (
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id={name}
-                  checked={param.value === 1}
-                  onCheckedChange={(checked) => updateParameter(name, 'value', checked ? 1 : 0)}
-                />
-                <Label htmlFor={name} className="text-sm">
-                  {param.value === 1 ? 'Enabled' : 'Disabled'}
-                </Label>
-              </div>
-            )}
+          {/* Tri-state for 0/1 Integers (BoolAsInt) */}
+          {boolAsInt && (
+            <Select
+              value={param.enabled ? String(param.value) : "default"}
+              onValueChange={(val) => {
+                if (val === "default") {
+                  updateParameter(name, 'enabled', false)
+                } else {
+                  updateParameter(name, 'enabled', true)
+                  updateParameter(name, 'value', parseInt(val))
+                }
+              }}
+            >
+              <SelectTrigger id={name}>
+                <SelectValue placeholder="Default" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Default (Unset)</SelectItem>
+                <SelectItem value="1">Enabled</SelectItem>
+                <SelectItem value="0">Disabled</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
 
-            {options && !boolAsInt && (
-              <Select
-                value={String(param.value)}
-                onValueChange={(val) => {
-                  // Convert back to number if it was originally a number
-                  const newVal = isInt ? parseInt(val) : val
-                  updateParameter(name, 'value', newVal)
-                }}
-              >
-                <SelectTrigger id={name}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {options.map(opt => (
-                    <SelectItem key={opt} value={String(opt)}>{String(opt)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
+          {options && !boolAsInt && (
+            <Select
+              value={String(param.value)}
+              onValueChange={(val) => {
+                // Options always implicitly enabled if selected? Or should we have a "Default"?
+                // Requirement didn't specify for string options, assuming standard behavior but ensuring enabled
+                const newVal = isInt ? parseInt(val) : val
+                updateParameter(name, 'value', newVal)
+                updateParameter(name, 'enabled', true)
+              }}
+            >
+              <SelectTrigger id={name}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {options.map(opt => (
+                  <SelectItem key={opt} value={String(opt)}>{String(opt)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
 
-            {!isFlag && !boolAsInt && !options && (
-              <Input
-                id={name}
-                type={isInt ? 'number' : 'text'}
-                value={divisor ? Math.round(param.value / divisor) : param.value}
-                onChange={(e) => {
-                  let val = isInt ? parseInt(e.target.value) || 0 : e.target.value
-                  if (divisor) val = val * divisor
-                  updateParameter(name, 'value', val)
-                }}
-                placeholder={placeholder}
-              />
-            )}
-          </div>
-        )}
+          {!isFlag && !boolAsInt && !options && (
+            <Input
+              id={name}
+              type={isInt ? 'number' : 'text'}
+              // Show empty string if disabled (conceptually) or 0 if it's a number we want to show?
+              // Request: "empty field shouldn't pass the flag and a filled one should pass it"
+              // So if enabled is false, we should probably show empty? Or show value but it's grayed out?
+              // Better: Value drives enabled state. 
+              value={(!param.enabled && (param.value === 0 || param.value === "")) ? '' : (divisor ? Math.round(param.value / divisor) : param.value)}
+              onChange={(e) => {
+                let rawVal = e.target.value
+                let val = rawVal
+
+                if (rawVal === '') {
+                  updateParameter(name, 'enabled', false)
+                  // Keep value as 0 or empty string internally just in case?
+                  // Or just ignore value update if disabled?
+                  // Let's set value to 0/empty to reflect UI
+                  updateParameter(name, 'value', isInt ? 0 : "")
+                  return
+                }
+
+                if (isInt) {
+                  val = parseInt(rawVal)
+                  if (isNaN(val)) val = 0
+                }
+
+                if (divisor) val = val * divisor
+
+                updateParameter(name, 'value', val)
+                updateParameter(name, 'enabled', true)
+              }}
+              placeholder={placeholder || (isInt ? "Default (Unset)" : "Default")}
+            />
+          )}
+        </div>
       </div>
     )
-  }, [updateParameter, vpnEnabled])
+  }, [updateParameter, vpnEnabled, config])
 
   if (loading || !config || !platform) {
     return (
