@@ -227,9 +227,15 @@ class EngineCacheManager:
                 if not buffer_dir.is_dir():
                     continue
                     
-                # Safety check: only process directories that look like container IDs
-                if not (len(buffer_dir.name) == 12 and all(c in '0123456789abcdef' for c in buffer_dir.name)):
-                    continue
+                # Safety check: instead of strict name check, we ensure the expected cache structure exists
+                # This supports container names like 'acestream-1' as well as standard IDs
+                target_dir = buffer_dir / ".acestream_cache"
+                
+                # If the subdirectory doesn't exist, we skip it (it's not a valid cache dir or empty)
+                if not target_dir.exists():
+                     # Fallback: if strictly 12-char hex, might be an empty cache dir we just skip
+                     # But for pruning files, we only care if target_dir exists.
+                     continue
 
                 # Walk through the directory
                 # Target .acestream_cache specifically as per requirement
