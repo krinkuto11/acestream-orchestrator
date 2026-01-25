@@ -148,9 +148,6 @@ def stop_container(container_id: str):
     try:
         _release_ports_from_labels(labels)
     finally:
-    try:
-        _release_ports_from_labels(labels)
-    finally:
         # Cleanup disk cache if using host mount
         # We use container ID or Name?
         # If we used Name for creation, we must use Name for cleanup.
