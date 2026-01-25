@@ -201,11 +201,9 @@ async def lifespan(app: FastAPI):
             if 'engine_variant' in engine_settings:
                 # Update engine variant preference
                 cfg.ENGINE_VARIANT = engine_settings['engine_variant']
-            if 'use_custom_variant' in engine_settings:
-                # Update custom variant enabled state if needed
-                if custom_config and custom_config.enabled != engine_settings['use_custom_variant']:
-                    custom_config.enabled = engine_settings['use_custom_variant']
-                    save_custom_config(custom_config)
+                # Do NOT override custom_config.enabled from engine_settings
+                # custom_engine_variant.json should be the source of truth for its own enabled state
+                pass
             logger.info(f"Engine settings loaded from persistent storage: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}, ENGINE_VARIANT={cfg.ENGINE_VARIANT}")
         else:
             # No persisted settings found - create default settings from current config

@@ -9,13 +9,14 @@
 services:
   orchestrator:
     container_name: orchestrator
-    image: ghcr.io/krinkuto11/acestream-orchestrator:v1.0.0
+    image: ghcr.io/krinkuto11/acestream-orchestrator:latest
     env_file: .env
     environment:
       - ACESTREAM_CACHE_ROOT=${ACESTREAM_CACHE_ROOT}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${ACESTREAM_CACHE_ROOT}:/app/data/engine_cache
+      - ./config:/app/app/config
     restart: on-failure
     networks:
       - aceserver
