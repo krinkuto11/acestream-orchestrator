@@ -148,6 +148,24 @@ def stop_container(container_id: str):
     try:
         _release_ports_from_labels(labels)
     finally:
+    try:
+        _release_ports_from_labels(labels)
+    finally:
+        # Cleanup disk cache if using host mount
+        # We use container ID or Name?
+        # If we used Name for creation, we must use Name for cleanup.
+        # `cont` object has name.
+        try:
+             # Try to get name from container attributes
+             # name starts with / usually
+             c_name = cont.attrs.get("Name", "").lstrip("/")
+             # Also try ID just in case we switch strategies or fallback
+             from .engine_cache_manager import engine_cache_manager
+             engine_cache_manager.cleanup_cache(c_name)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup cache for {container_id}: {e}")
+            pass
+            
         cont.remove()
 
 def _parse_conf_port(conf_string, port_type="http"):
@@ -631,6 +649,54 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Add volumes if configured
     if volumes:
         container_args["volumes"] = volumes
+
+    # Add disk cache mount if enabled
+    # This mounts a host directory to the container for persistent/cleanable cache
+    from .engine_cache_manager import engine_cache_manager
+    if engine_cache_manager.is_enabled():
+        # Clean any stale cache first
+        # We rely on the container ID (not available yet) but we can use the name or just create
+        # Use the cache manager to getting mount config will require an ID, 
+        # but here we are creating a new container. We need to create the cache dir AFTER getting ID?
+        # Docker run volumes must be specified at creation.
+        # So we need to determine the ID or use a deterministic name-based folder?
+        # EngineCacheManager uses ID. We don't have ID yet. 
+        # However, we can use the deterministic way we handle "volumes" above. 
+        # Wait, the plan said "setup_cache(container_id)". This is circular if we need to bind BEFORE run.
+        # Solution: We can't use Container ID for binding before creation if the ID is random.
+        # BUT `start_container` in `provisioner.py` runs `cli.containers.run(detach=True...)` 
+        # which returns the container object with ID.
+        # If we want to mount a volume, we must pass it to `run`.
+        # Strategy: We can't use container ID for the folder name if we need to mount it at creation.
+        # We should use the container NAME, which we generate deterministically (or at least before run).
+        # `container_name` is generated before `run`.
+        # Let's update `EngineCacheManager` to accept a unique identifier (name or ID).
+        # We will use `container_name` here.
+        pass
+
+    # RE-EVALUATION: The original plan said "setup_cache(container_id)". I missed the circular dependency.
+    # I will modify provisionser to use `container_name` for the cache directory if possible, OR
+    # I accept that I cannot change the EngineCacheManager interface in this tool call (it's already written).
+    # `EngineCacheManager` uses `container_id[:12]`.
+    # Container name is unique. I will use `container_name` for the cache manager.
+    # I need to update `EngineCacheManager` to support this or just pass `container_name` instead of `id`.
+    # `setup_cache` takes `container_id` but treats it as a string to make a dir. 
+    # Passing `container_name` (e.g. `acestream-svc-abc`) is safe.
+    
+    # Update: `start_container` (for generic containers) generates name. `start_acestream` also generates name.
+    # I am modifying `start_acestream` flow (implied, as `volumes` logic is there).
+    # Let's see where I am editing... line 640 is in `start_acestream`. Ok.
+    
+    from .engine_cache_manager import engine_cache_manager
+    if engine_cache_manager.is_enabled():
+        # Setup cache directory using the container name (since ID isn't known yet)
+        if engine_cache_manager.setup_cache(container_name):
+            cache_mount = engine_cache_manager.get_mount_config(container_name)
+            if cache_mount:
+                if "volumes" not in container_args:
+                    container_args["volumes"] = {}
+                container_args["volumes"].update(cache_mount)
+                logger.info(f"Mounted disk cache for {container_name}")
     
     # Add command for CMD-based variants
     if cmd is not None:

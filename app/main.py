@@ -306,7 +306,15 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
     asyncio.create_task(acexy_sync_service.start())  # Start Acexy sync service
     asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
+    asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
     asyncio.create_task(looping_streams_tracker.start())  # Start looping streams tracker
+    
+    # Start engine cache manager background pruner
+    from .services.engine_cache_manager import engine_cache_manager
+    if engine_cache_manager.is_enabled():
+        asyncio.create_task(engine_cache_manager.start_pruner())
+        logger.info("Engine cache pruner started")
+    
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
     # Start cache cleanup task

@@ -6,7 +6,7 @@ import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Save, RefreshCw, AlertCircle, Info, Cpu, Upload, Download, Trash2, Plus, Edit, Pencil } from 'lucide-react'
+import { Save, RefreshCw, AlertCircle, Info, Cpu, Upload, Download, Trash2, Plus, Edit, Pencil, HardDrive } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { useNotifications } from '@/context/NotificationContext'
@@ -177,7 +177,8 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       const [configData, platformData, vpnStatus] = await Promise.all([
         fetchJSON(`${orchUrl}/custom-variant/config`),
         fetchJSON(`${orchUrl}/custom-variant/platform`),
-        fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false }))
+        fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false })),
+        fetchJSON(`${orchUrl}/version`).catch(() => ({}))
       ])
 
       setConfig(configData)
@@ -941,56 +942,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             </p>
           </div>
 
-          {/* Torrent Folder Mount Configuration */}
-          <div className="space-y-4 p-4 border rounded-lg">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="torrent-mount-enabled">Mount Torrent Folder to Host</Label>
-                <Switch
-                  id="torrent-mount-enabled"
-                  checked={config.torrent_folder_mount_enabled || false}
-                  onCheckedChange={(checked) => setConfig(prev => ({ ...prev, torrent_folder_mount_enabled: checked }))}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Mount engine's torrent folder to the host filesystem. Only applies to custom engine variants.
-              </p>
-            </div>
-
-            {config.torrent_folder_mount_enabled && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="torrent-host-path">Host Path (Required)</Label>
-                  <Input
-                    id="torrent-host-path"
-                    type="text"
-                    value={config.torrent_folder_host_path || ''}
-                    onChange={(e) => setConfig(prev => ({ ...prev, torrent_folder_host_path: e.target.value }))}
-                    placeholder="/mnt/torrents"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Absolute path on the host where torrent files will be stored. Must start with '/'.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="torrent-container-path">Container Path</Label>
-                  <Input
-                    id="torrent-container-path"
-                    type="text"
-                    // Default matches DEFAULT_TORRENT_FOLDER_PATH in custom_variant_config.py
-                    value={config.torrent_folder_container_path || '/root/.ACEStream/collected_torrent_files'}
-                    onChange={(e) => setConfig(prev => ({ ...prev, torrent_folder_container_path: e.target.value }))}
-                    placeholder="/root/.ACEStream/collected_torrent_files"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Path inside the container where torrents are stored. Default is /root/.ACEStream/collected_torrent_files.
-                    If you set a custom --cache-dir parameter, this will be automatically adjusted.
-                  </p>
-                </div>
-              </>
-            )}
-          </div>
+          {/* Removed Torrent Folder Mount from here as it moved to new card */}
 
           {!config.enabled && (
             <Alert>
@@ -1010,6 +962,85 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             >
               <Save className="h-4 w-4" />
               {saving ? 'Saving...' : 'Save All Configuration'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Storage & Caching Info */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <HardDrive className="h-5 w-5" />
+            Storage & Caching
+          </CardTitle>
+          <CardDescription>
+            Host integration for persistent storage and cache management
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="cache-mount-enabled">Host Disk Cache Mounting</Label>
+              <p className="text-sm text-muted-foreground mt-1">
+                Isolate cache per engine on host and auto-clean on shutdown.
+                <br />
+                <span className="text-xs text-amber-600 dark:text-amber-500">Requires ACESTREAM_CACHE_ROOT env var</span>
+              </p>
+            </div>
+            <Switch
+              id="cache-mount-enabled"
+              checked={config.disk_cache_mount_enabled || false}
+              onCheckedChange={(checked) => setConfig(prev => ({ ...prev, disk_cache_mount_enabled: checked }))}
+            />
+          </div>
+
+          {config.disk_cache_mount_enabled && (
+            <div className="p-3 bg-muted rounded-md text-sm font-mono flex items-center gap-2">
+              <Info className="h-4 w-4" />
+              Host Path: <span className="opacity-70">Defined by ACESTREAM_CACHE_ROOT</span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between border-t pt-4">
+            <div>
+              <Label htmlFor="torrent-mount-enabled">Mount Torrent Folder to Host</Label>
+              <p className="text-sm text-muted-foreground mt-1">
+                Persist collected torrent files to host storage
+              </p>
+            </div>
+            <Switch
+              id="torrent-mount-enabled"
+              checked={config.torrent_folder_mount_enabled || false}
+              onCheckedChange={(checked) => setConfig(prev => ({ ...prev, torrent_folder_mount_enabled: checked }))}
+            />
+          </div>
+
+          {config.torrent_folder_mount_enabled && (
+            <div className="space-y-2 pl-4 border-l-2 border-muted">
+              <div className="space-y-1">
+                <Label htmlFor="torrent-host-path" className="text-xs">Host Path</Label>
+                <Input
+                  id="torrent-host-path"
+                  value={config.torrent_folder_host_path || ''}
+                  onChange={(e) => setConfig(prev => ({ ...prev, torrent_folder_host_path: e.target.value }))}
+                  placeholder="/mnt/torrents"
+                  className="h-8"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end pt-2">
+            <Button
+              onClick={handleSavePlatformConfig}
+              disabled={saving}
+              className="flex items-center gap-2"
+              variant="outline"
+              size="sm"
+            >
+              <Save className="h-3 w-3" />
+              Save Storage Settings
             </Button>
           </div>
         </CardContent>

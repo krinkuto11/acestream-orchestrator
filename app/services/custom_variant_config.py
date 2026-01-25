@@ -113,6 +113,9 @@ class CustomVariantConfig(BaseModel):
     torrent_folder_host_path: Optional[str] = None  # Host path to mount (e.g., "/mnt/torrents")
     torrent_folder_container_path: str = DEFAULT_TORRENT_FOLDER_PATH  # Default container path
     
+    # Disk cache host mount configuration
+    disk_cache_mount_enabled: bool = False
+    
     @validator('platform')
     def validate_platform(cls, v):
         valid_platforms = ['amd64', 'arm32', 'arm64']
