@@ -13,81 +13,125 @@ import { useNotifications } from '@/context/NotificationContext'
 
 // Parameter metadata for UI rendering
 const parameterCategories = {
-  basic: {
-    title: "Basic Settings",
-    description: "Essential engine configuration",
+  network: {
+    title: "Core Connection & Network",
+    description: "Basic network configuration",
     params: [
-      { name: "--client-console", label: "Client Console Mode", description: "Run engine in console mode", unit: null },
-      { name: "--bind-all", label: "Bind All Interfaces", description: "Listen on all network interfaces (0.0.0.0)", unit: null },
-      { name: "--service-remote-access", label: "Service Remote Access", description: "Enable remote access to service", unit: null },
-      { name: "--access-token", label: "Public Access Token", description: "Public access token for API", unit: null, placeholder: "acestream" },
-      { name: "--service-access-token", label: "Service Access Token", description: "Administrative access token for service", unit: null, placeholder: "root" },
-      { name: "--allow-user-config", label: "Allow User Config", description: "Allow per-user custom configuration", unit: null },
+      { name: "--client-console", label: "Client Console Mode", description: "Run in console mode", unit: null },
+      { name: "--bind-all", label: "Bind All Interfaces", description: "Listen on 0.0.0.0", unit: null },
+      { name: "--port", label: "P2P Port", description: "P2P listening port", unit: null, vpnAware: true },
+      { name: "--random-port", label: "Random P2P Port", description: "Use random port", unit: null },
+      { name: "--upnp-nat-access", label: "UPnP NAT", description: "Attempt UPnP mapping", unit: null },
+      { name: "--nat-detect", label: "NAT Detect", description: "Auto-detect NAT", unit: null },
+      { name: "--ipv6-enabled", label: "Enable IPv6", description: "IPv6 support (Exp)", unit: null },
+      { name: "--ipv6-binds-v4", label: "IPv6 Binds v4", description: "IPv6 handles v4", unit: null },
+      { name: "--max-socket-connects", label: "Max Connects", description: "Max outgoing attempts", unit: null },
+      { name: "--timeout-check-interval", label: "Timeout Check", description: "Timeout check interval", unit: "s" },
+      { name: "--keepalive-interval", label: "Keepalive", description: "Keepalive interval", unit: "s" },
+    ]
+  },
+  bandwidth: {
+    title: "Bandwidth & Limits",
+    description: "Upload/Download rates and peering",
+    params: [
+      { name: "--download-limit", label: "Download Limit", description: "Max DL speed (0=unlimited)", unit: "KB/s" },
+      { name: "--upload-limit", label: "Upload Limit", description: "Max UL speed (0=unlimited)", unit: "KB/s" },
+      { name: "--max-connections", label: "Max Connections", description: "Global max connections", unit: null },
+      { name: "--max-peers", label: "Max Peers", description: "Max peers per stream", unit: null },
+      { name: "--max-peers-limit", label: "Hard Max Peers", description: "Absolute max peers limit", unit: null },
+      { name: "--min-peers", label: "Min Peers", description: "Min desired peers", unit: null },
+      { name: "--max-upload-slots", label: "Max Upload Slots", description: "Simultaneous upload slots", unit: null },
+      { name: "--auto-slots", label: "Auto Slots", description: "Auto-adjust slots", unit: null, boolAsInt: true },
     ]
   },
   cache: {
-    title: "Cache Configuration",
-    description: "Configure memory and disk caching behavior",
+    title: "Cache & Storage",
+    description: "Buffer and storage management",
     params: [
-      { name: "--cache-dir", label: "Cache Directory", description: "Directory for storing cache", unit: null, placeholder: "~/.ACEStream" },
-      { name: "--live-cache-type", label: "Live Cache Type", description: "Cache type for live streams", unit: null, options: ["memory", "disk", "hybrid"] },
-      { name: "--live-cache-size", label: "Live Cache Size", description: "Live cache size", unit: "MB", divisor: 1048576 },
-      { name: "--vod-cache-type", label: "VOD Cache Type", description: "Cache type for VOD", unit: null, options: ["memory", "disk", "hybrid"] },
-      { name: "--vod-cache-size", label: "VOD Cache Size", description: "VOD cache size", unit: "MB", divisor: 1048576 },
-      { name: "--vod-drop-max-age", label: "VOD Drop Max Age", description: "Maximum age before dropping VOD cache", unit: "seconds" },
-      { name: "--max-file-size", label: "Max File Size", description: "Maximum file size to cache", unit: "GB", divisor: 1073741824 },
+      { name: "--cache-dir", label: "Cache Dir", description: "Cache storage path", unit: null, placeholder: "~/.ACEStream" },
+      { name: "--cache-limit", label: "Cache Limit (GB)", description: "Max cache size in GB", unit: "GB" },
+      { name: "--cache-max-bytes", label: "Max Cache Bytes", description: "Max cache size in bytes", unit: "MB", divisor: 1048576 },
+      { name: "--disk-cache-limit", label: "Disk Cache Limit", description: "Max disk cache", unit: "MB", divisor: 1048576 },
+      { name: "--memory-cache-limit", label: "Mem Cache Limit", description: "Max RAM cache", unit: "MB", divisor: 1048576 },
+      { name: "--max-file-size", label: "Max File Size", description: "Max supported file size", unit: "GB", divisor: 1073741824 },
+      { name: "--buffer-reads", label: "Buffer Reads", description: "Enable read buffering", unit: null },
+      { name: "--reserve-space", label: "Reserve Space", description: "Pre-allocate disk space", unit: null },
     ]
   },
-  buffer: {
-    title: "Buffer Settings",
-    description: "Configure streaming buffer behavior",
+  live: {
+    title: "Live Streaming",
+    description: "Live broadcast tuning",
     params: [
-      { name: "--live-buffer", label: "Live Buffer", description: "Live stream buffer", unit: "seconds" },
-      { name: "--vod-buffer", label: "VOD Buffer", description: "VOD buffer", unit: "seconds" },
-      { name: "--refill-buffer-interval", label: "Refill Buffer Interval", description: "Buffer refill interval", unit: "seconds" },
+      { name: "--live-cache-type", label: "Cache Type", description: "Storage backend", unit: null, options: ["memory", "disk", "hybrid"] },
+      { name: "--live-cache-size", label: "Cache Size", description: "Total cache size", unit: "MB", divisor: 1048576 },
+      { name: "--live-mem-cache-size", label: "RAM Cache", description: "Max RAM usage", unit: "MB", divisor: 1048576 },
+      { name: "--live-disk-cache-size", label: "Disk Cache", description: "Max Disk usage", unit: "MB", divisor: 1048576 },
+      { name: "--live-buffer", label: "Buffer (Basic)", description: "Target buffer duration", unit: "s" },
+      { name: "--live-buffer-time", label: "Buffer Time", description: "Target buffer time", unit: "s" },
+      { name: "--live-max-buffer-time", label: "Max Buffer", description: "Max accumulated buffer", unit: "s" },
+      { name: "--live-adjust-buffer-time", label: "Adjust Buffer", description: "Dynamic buffer adjustment", unit: null, boolAsInt: true },
+      { name: "--live-disable-multiple-read-threads", label: "Single Thread", description: "Force single-threaded read", unit: null, boolAsInt: true },
+      { name: "--live-stop-main-read-thread", label: "Stop Main Thread", description: "Optimization flag", unit: null, boolAsInt: true },
+      { name: "--live-cache-auto-size", label: "Auto Size", description: "Auto-scale cache", unit: null, boolAsInt: true },
+      { name: "--live-cache-auto-size-reserve", label: "Auto Reserve", description: "RAM to keep free", unit: "MB", divisor: 1048576 },
+      { name: "--live-cache-max-memory-percent", label: "Max RAM %", description: "Max RAM % for cache", unit: "%" },
+      { name: "--live-aux-seeders", label: "Aux Seeders", description: "Enable aux seeders", unit: null },
+      { name: "--check-live-pos-interval", label: "Pos Check", description: "Position check interval", unit: "s" },
     ]
   },
-  connections: {
-    title: "Connection Settings",
-    description: "Configure P2P connections and bandwidth",
+  vod: {
+    title: "Video on Demand",
+    description: "File playback settings",
     params: [
-      { name: "--max-connections", label: "Max Connections", description: "Maximum simultaneous connections", unit: "connections" },
-      { name: "--max-peers", label: "Max Peers", description: "Maximum peers per torrent", unit: "peers" },
-      { name: "--max-upload-slots", label: "Max Upload Slots", description: "Number of simultaneous upload slots", unit: "slots" },
-      { name: "--auto-slots", label: "Auto Slots", description: "Automatic slot adjustment", unit: null, boolAsInt: true },
-      { name: "--download-limit", label: "Download Limit", description: "Download speed limit (0=unlimited)", unit: "KB/s" },
-      { name: "--upload-limit", label: "Upload Limit", description: "Upload speed limit (0=unlimited)", unit: "KB/s" },
-      { name: "--port", label: "P2P Port", description: "Port for P2P connections", unit: null, vpnAware: true },
-    ]
-  },
-  webrtc: {
-    title: "WebRTC Settings",
-    description: "Configure WebRTC connections",
-    params: [
-      { name: "--webrtc-allow-outgoing-connections", label: "Allow Outgoing WebRTC", description: "Allow outgoing WebRTC connections", unit: null, boolAsInt: true },
-      { name: "--webrtc-allow-incoming-connections", label: "Allow Incoming WebRTC", description: "Allow incoming WebRTC connections", unit: null, boolAsInt: true },
-    ]
-  },
-  advanced: {
-    title: "Advanced Settings",
-    description: "Advanced engine configuration options",
-    params: [
-      { name: "--stats-report-interval", label: "Stats Report Interval", description: "Interval for statistics reports", unit: "seconds" },
-      { name: "--stats-report-peers", label: "Stats Report Peers", description: "Include peer info in statistics", unit: null },
-      { name: "--slots-manager-use-cpu-limit", label: "CPU Limit for Slots", description: "Use CPU limit for slot management", unit: null, boolAsInt: true },
-      { name: "--core-skip-have-before-playback-pos", label: "Skip Before Playback", description: "Skip downloaded pieces before playback position", unit: null, boolAsInt: true },
-      { name: "--core-dlr-periodic-check-interval", label: "DLR Check Interval", description: "Periodic DLR check interval", unit: "seconds" },
-      { name: "--check-live-pos-interval", label: "Live Position Check", description: "Interval for checking live position", unit: "seconds" },
+      { name: "--vod-cache-type", label: "Cache Type", description: "Storage backend", unit: null, options: ["memory", "disk", "hybrid"] },
+      { name: "--vod-cache-size", label: "Cache Size", description: "Max VOD cache", unit: "MB", divisor: 1048576 },
+      { name: "--vod-buffer", label: "Buffer", description: "VOD buffer duration", unit: "s" },
+      { name: "--vod-drop-max-age", label: "Drop Max Age", description: "Age to drop old data", unit: "s" },
+      { name: "--preload-vod", label: "Preload", description: "Pre-buffer content", unit: null },
     ]
   },
   logging: {
-    title: "Logging Settings",
-    description: "Configure logging behavior",
+    title: "Logging & Debug",
+    description: "Troubleshooting options",
     params: [
-      { name: "--log-debug", label: "Debug Level", description: "Debug level (0=normal, 1=verbose, 2=very verbose)", unit: null, options: [0, 1, 2] },
-      { name: "--log-file", label: "Log File", description: "File for saving logs", unit: null, placeholder: "/var/log/acestream.log" },
-      { name: "--log-max-size", label: "Max Log Size", description: "Max log size", unit: "MB", divisor: 1048576 },
-      { name: "--log-backup-count", label: "Log Backup Count", description: "Number of backup log files", unit: "files" },
+      { name: "--log-file", label: "Log File", description: "Log file path", unit: null, placeholder: "/var/log/acestream.log" },
+      { name: "--log-debug", label: "Debug Level", description: "0=Norm, 1=Verb, 2=VVerb", unit: null, options: [0, 1, 2] },
+      { name: "--log-stdout", label: "Log to Stdout", description: "Output to console", unit: null },
+      { name: "--log-stderr", label: "Log to Stderr", description: "Output to error stream", unit: null },
+      { name: "--log-max-size", label: "Max Log Size", description: "Rotation size", unit: "MB", divisor: 1048576 },
+      { name: "--log-backup-count", label: "Backup Count", description: "Keep N files", unit: null },
+      { name: "--debug-sentry", label: "Debug Sentry", description: "Error reporting", unit: null },
+      { name: "--enable-profiler", label: "Profiler", description: "Enable internal profiler", unit: null, boolAsInt: true },
+      { name: "--stats-report-interval", label: "Stats Interval", description: "P2P stats interval", unit: "s" },
+      { name: "--stats-report-peers", label: "Report Peers", description: "Include peer info", unit: null },
+    ]
+  },
+  security: {
+    title: "Security & API",
+    description: "Access control",
+    params: [
+      { name: "--service-remote-access", label: "Remote Access", description: "Enable remote API", unit: null },
+      { name: "--allow-user-config", label: "User Config", description: "Allow user configs", unit: null },
+      { name: "--access-token", label: "Access Token", description: "Public API token", unit: null },
+      { name: "--service-access-token", label: "Service Token", description: "Admin API token", unit: null },
+    ]
+  },
+  webrtc: {
+    title: "WebRTC",
+    description: "WebRTC configuration",
+    params: [
+      { name: "--webrtc-allow-outgoing-connections", label: "Allow Outgoing", description: "Outgoing connections", unit: null, boolAsInt: true },
+      { name: "--webrtc-allow-incoming-connections", label: "Allow Incoming", description: "Incoming connections", unit: null, boolAsInt: true },
+    ]
+  },
+  advanced: {
+    title: "Advanced",
+    description: "Internal tuning",
+    params: [
+      { name: "--slots-manager-use-cpu-limit", label: "CPU Limit Slots", description: "Use CPU limit", unit: null, boolAsInt: true },
+      { name: "--core-skip-have-before-playback-pos", label: "Skip Have", description: "Skip before playback", unit: null, boolAsInt: true },
+      { name: "--core-dlr-periodic-check-interval", label: "DLR Check", description: "DLR check interval", unit: "s" },
+      { name: "--refill-buffer-interval", label: "Refill Interval", description: "Buffer refill (s)", unit: "s" },
     ]
   }
 }
@@ -101,7 +145,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   const [config, setConfig] = useState(null)
   const [platform, setPlatform] = useState(null)
   const [vpnEnabled, setVpnEnabled] = useState(false)
-  
+
   // Template management state
   const [templates, setTemplates] = useState([])
   const [activeTemplateId, setActiveTemplateId] = useState(null)
@@ -136,7 +180,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         fetchJSON(`${orchUrl}/custom-variant/platform`),
         fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false }))
       ])
-      
+
       setConfig(configData)
       setPlatform(platformData)
       setVpnEnabled(vpnStatus.enabled || false)
@@ -152,13 +196,13 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     try {
       const status = await fetchJSON(`${orchUrl}/custom-variant/reprovision/status`)
       setReprovisionStatus(status)
-      
+
       // Update reprovisioning state based on status
       if (status.in_progress) {
         setReprovisioning(true)
       } else {
         setReprovisioning(false)
-        
+
         // Show success or error toast based on final status
         if (status.status === 'success' && status.message) {
           // Only show toast if status changed recently (within last 5 seconds)
@@ -176,7 +220,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           }
         }
       }
-      
+
       return status.in_progress
     } catch (err) {
       // Ignore errors when checking status
@@ -194,10 +238,10 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     const interval = setInterval(async () => {
       await checkReprovisionStatus()
     }, 2000)
-    
+
     // Initial check
     checkReprovisionStatus()
-    
+
     return () => clearInterval(interval)
   }, [checkReprovisionStatus])
 
@@ -215,7 +259,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   const handleSavePlatformConfig = useCallback(async () => {
     try {
       setSaving(true)
-      
+
       await fetchJSON(`${orchUrl}/custom-variant/config`, {
         method: 'POST',
         headers: {
@@ -224,7 +268,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         },
         body: JSON.stringify(config)
       })
-      
+
       addNotification('Platform configuration saved successfully', 'success')
     } catch (err) {
       addNotification(`Failed to save platform configuration: ${err.message}`, 'error')
@@ -242,7 +286,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
 
     try {
       setSaving(true)
-      
+
       await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}`, {
         method: 'POST',
         headers: {
@@ -254,21 +298,21 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           config: config
         })
       })
-      
+
       addNotification(`Template ${editingTemplateSlot} saved successfully`, 'success')
-      
+
       // If we're editing the active template, show reprovision warning
       if (editingTemplateSlot === activeTemplateId) {
         setShowReprovisionWarning(true)
       }
-      
+
       // Refresh templates to get updated state
       const updatedTemplates = await fetchTemplates()
-      
+
       // If no other template exists (this is the first one), auto-activate it
       if (updatedTemplates) {
         const otherTemplates = updatedTemplates.templates.filter(t => t.exists && t.slot_id !== editingTemplateSlot)
-        
+
         if (otherTemplates.length === 0 && !updatedTemplates.active_template_id) {
           try {
             await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}/activate`, {
@@ -285,7 +329,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           }
         }
       }
-      
+
       setEditingTemplateSlot(null)
       setTemplateName('')
     } catch (err) {
@@ -305,7 +349,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     if (!editingTemplateSlot || !templateName) {
       return
     }
-    
+
     await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}`, {
       method: 'POST',
       headers: {
@@ -331,7 +375,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     try {
       setReprovisioning(true)
       setShowReprovisionWarning(false)  // Clear warning when reprovisioning
-      
+
       // First, save the current config before reprovisioning
       await fetchJSON(`${orchUrl}/custom-variant/config`, {
         method: 'POST',
@@ -341,22 +385,22 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         },
         body: JSON.stringify(config)
       })
-      
+
       // If editing a template, save it as well
       if (editingTemplateSlot) {
         await saveCurrentTemplate()
         addNotification(`Template ${editingTemplateSlot} saved before reprovisioning`, 'success')
       }
-      
+
       await fetchJSON(`${orchUrl}/custom-variant/reprovision`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`
         }
       })
-      
+
       addNotification('Settings saved. Reprovisioning started. Engines will be recreated shortly.', 'success')
-      
+
       // Start polling for status
       await checkReprovisionStatus()
     } catch (err) {
@@ -383,7 +427,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           config: config
         })
       })
-      
+
       addNotification(`Template saved to slot ${slotId}`, 'success')
       await fetchTemplates()
       setShowTemplateDialog(false)
@@ -409,11 +453,11 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           'Authorization': `Bearer ${apiKey}`
         }
       })
-      
+
       addNotification(response.message, 'success')
       await fetchConfig()
       await fetchTemplates()
-      
+
       // If custom variant is disabled, automatically enable it after loading template
       if (config && !config.enabled) {
         setConfig(prev => ({ ...prev, enabled: true }))
@@ -435,7 +479,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           'Authorization': `Bearer ${apiKey}`
         }
       })
-      
+
       addNotification(`Template ${slotId} deleted`, 'success')
       await fetchTemplates()
     } catch (err) {
@@ -455,7 +499,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       a.click()
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
-      
+
       addNotification(`Template ${slotId} exported`, 'success')
     } catch (err) {
       addNotification(`Failed to export template: ${err.message}`, 'error')
@@ -474,7 +518,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           json_data: fileContent
         })
       })
-      
+
       addNotification(`Template imported to slot ${slotId}`, 'success')
       await fetchTemplates()
     } catch (err) {
@@ -494,7 +538,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           name: newName
         })
       })
-      
+
       addNotification(`Template renamed successfully`, 'success')
       await fetchTemplates()
       setShowRenameDialog(false)
@@ -507,18 +551,18 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     try {
       // Load the template configuration
       const template = await fetchJSON(`${orchUrl}/custom-variant/templates/${slotId}`)
-      
+
       // Update the current config with the template's config
       // Preserve the current platform's enabled state
       setConfig(prevConfig => ({
         ...template.config,
         enabled: prevConfig.enabled
       }))
-      
+
       // Set editing mode with the template name
       setEditingTemplateSlot(slotId)
       setTemplateName(template.name)
-      
+
       addNotification(`Loaded template ${slotId} for editing. Make your changes and save below.`)
     } catch (err) {
       addNotification(`Failed to load template for editing: ${err.message}`)
@@ -538,7 +582,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     const showVpnWarning = vpnAware && vpnEnabled
 
     return (
-      <div key={name} className="space-y-2 p-4 border rounded-lg">
+      <div key={name} className="space-y-2 p-3 border rounded-lg h-full flex flex-col">
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center gap-2">
@@ -695,7 +739,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
               checked={config.enabled}
               onCheckedChange={async (checked) => {
                 setConfig(prev => ({ ...prev, enabled: checked }))
-                
+
                 // If enabling and no active template, auto-load first available template
                 if (checked && !activeTemplateId) {
                   const firstTemplate = templates.find(t => t.exists)
@@ -857,13 +901,13 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
 
       {/* Template Management */}
       <Card>
-          <CardHeader>
-            <CardTitle>Template Management</CardTitle>
-            <CardDescription>
-              Save and load custom variant configurations as templates (10 slots available)
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <CardHeader>
+          <CardTitle>Template Management</CardTitle>
+          <CardDescription>
+            Save and load custom variant configurations as templates (10 slots available)
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
           {/* Reprovision Warning */}
           {showReprovisionWarning && (
             <Alert variant="destructive">
@@ -874,15 +918,14 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
               </AlertDescription>
             </Alert>
           )}
-          
+
           {/* Template grid */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {templates.map((template) => (
               <div
                 key={template.slot_id}
-                className={`p-3 border rounded-lg ${
-                  activeTemplateId === template.slot_id ? 'border-primary bg-primary/5' : ''
-                } ${!template.exists ? 'border-dashed' : ''}`}
+                className={`p-3 border rounded-lg ${activeTemplateId === template.slot_id ? 'border-primary bg-primary/5' : ''
+                  } ${!template.exists ? 'border-dashed' : ''}`}
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-medium">Slot {template.slot_id}</span>
@@ -1088,8 +1131,8 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
               />
             </div>
 
-            <Tabs defaultValue="basic" className="w-full">
-              <TabsList className="grid w-full grid-cols-7">
+            <Tabs defaultValue="network" className="w-full">
+              <TabsList className="flex flex-wrap h-auto gap-1 justify-start bg-muted p-1 rounded-md mb-4">
                 {Object.keys(parameterCategories).map(key => (
                   <TabsTrigger key={key} value={key}>
                     {parameterCategories[key].title.split(' ')[0]}
@@ -1103,7 +1146,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                     <h3 className="font-semibold">{category.title}</h3>
                     <p className="text-sm text-muted-foreground">{category.description}</p>
                   </div>
-                  <div className="space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                     {category.params.map(paramMeta => {
                       const param = config.parameters.find(p => p.name === paramMeta.name)
                       return renderParameter(paramMeta, param)
