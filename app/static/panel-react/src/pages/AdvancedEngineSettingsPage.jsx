@@ -555,7 +555,8 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       // Preserve the current platform's enabled state
       setConfig(prevConfig => ({
         ...template.config,
-        enabled: prevConfig.enabled
+        enabled: prevConfig.enabled,
+        memory_limit: template.config.memory_limit ?? null
       }))
 
       // Set editing mode with the template name
@@ -674,13 +675,26 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           </div>
           {/* Simple Flag Toggle */}
           {isFlag && (
-            <Switch
-              checked={param.enabled}
-              onCheckedChange={(checked) => {
-                updateParameter(name, 'enabled', checked)
-                updateParameter(name, 'value', checked) // Ensure value matches enabled state for flags
+            <Select
+              value={!param.enabled ? "default" : (param.value ? "on" : "off")}
+              onValueChange={(val) => {
+                if (val === "default") {
+                  updateParameter(name, 'enabled', false)
+                } else {
+                  updateParameter(name, 'enabled', true)
+                  updateParameter(name, 'value', val === "on")
+                }
               }}
-            />
+            >
+              <SelectTrigger id={name} className="w-[140px]">
+                <SelectValue placeholder="Default" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Default (Unset)</SelectItem>
+                <SelectItem value="on">On (Enabled)</SelectItem>
+                <SelectItem value="off">Off (Disabled)</SelectItem>
+              </SelectContent>
+            </Select>
           )}
         </div>
 

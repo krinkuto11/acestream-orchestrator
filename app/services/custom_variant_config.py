@@ -243,7 +243,7 @@ def get_default_parameters(platform: str) -> List[CustomVariantParameter]:
         CustomVariantParameter(name="--reserve-space", type="flag", value=False, enabled=False),
 
         # --- 4. Live Streaming ---
-        CustomVariantParameter(name="--live-cache-type", type="string", value="memory", enabled=True),
+        CustomVariantParameter(name="--live-cache-type", type="string", value="disk", enabled=True),
         CustomVariantParameter(name="--live-cache-size", type="bytes", value=268435456, enabled=True),  # 256MB
         CustomVariantParameter(name="--live-mem-cache-size", type="bytes", value=268435456, enabled=False),
         CustomVariantParameter(name="--live-disk-cache-size", type="bytes", value=1073741824, enabled=False),
@@ -276,7 +276,7 @@ def get_default_parameters(platform: str) -> List[CustomVariantParameter]:
         CustomVariantParameter(name="--log-stderr", type="flag", value=False, enabled=False),
         CustomVariantParameter(name="--debug-sentry", type="flag", value=False, enabled=False),
         CustomVariantParameter(name="--enable-profiler", type="int", value=0, enabled=False), # 0/1
-        CustomVariantParameter(name="--stats-report-interval", type="int", value=60, enabled=True),
+        CustomVariantParameter(name="--stats-report-interval", type="int", value=1, enabled=True),
         CustomVariantParameter(name="--stats-report-peers", type="flag", value=False, enabled=False),
 
         # --- 7. Security & API ---
