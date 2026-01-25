@@ -1431,6 +1431,20 @@ def update_custom_variant_config(config: CustomVariantConfig):
     if not success:
         raise HTTPException(status_code=500, detail="Failed to save configuration")
     
+    # Sync configuration changes to active template if one exists
+    # This prevents the issue where app restart overwrites custom config with active template data
+    try:
+        from .services.template_manager import get_active_template_id, get_template, save_template
+        active_id = get_active_template_id()
+        if active_id is not None:
+            template = get_template(active_id)
+            if template:
+                # Update the template with the new configuration
+                save_template(active_id, template.name, config)
+                logger.info(f"Synced configuration changes to active template '{template.name}' (slot {active_id})")
+    except Exception as e:
+        logger.warning(f"Failed to sync configuration to active template: {e}")
+    
     # Reload the configuration to ensure it's active
     reload_config()
     
