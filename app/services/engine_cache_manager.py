@@ -256,24 +256,20 @@ class EngineCacheManager:
                 # 2. Prune aged files
                 # Import here to avoid circular dependency
                 try:
-                    from .template_manager import get_active_template_id, get_template
+                    from .custom_variant_config import get_config
+                    config = get_config()
                     
-                    active_id = get_active_template_id()
-                    if active_id:
-                        template = get_template(active_id)
-                        if template and template.config.disk_cache_prune_enabled:
-                            # Run the pruner
-                            max_age = template.config.disk_cache_file_max_age
-                            await self.prune_aged_files(max_age_minutes=max_age)
-                            
-                            # Update sleep interval
-                            interval_mins = template.config.disk_cache_prune_interval
-                            if interval_mins > 0:
-                                sleep_seconds = interval_mins * 60
-                            else:
-                                sleep_seconds = 60 # Minimum 1 minute safety
-                except ImportError:
-                    logger.warning("Could not import template_manager, skipping aged file pruning")
+                    if config and config.disk_cache_prune_enabled:
+                        # Run the pruner
+                        max_age = config.disk_cache_file_max_age
+                        await self.prune_aged_files(max_age_minutes=max_age)
+                        
+                        # Update sleep interval
+                        interval_mins = config.disk_cache_prune_interval
+                        if interval_mins > 0:
+                            sleep_seconds = interval_mins * 60
+                        else:
+                            sleep_seconds = 60 # Minimum 1 minute safety
                 except Exception as e:
                     logger.error(f"Error reading active config for pruning: {e}")
 

@@ -369,6 +369,10 @@ def save_config(config: CustomVariantConfig, config_path: Path = DEFAULT_CONFIG_
         
         with open(config_path, 'w') as f:
             json.dump(config.dict(), f, indent=2)
+            
+        # Update global instance to reflect changes immediately
+        global _config_instance
+        _config_instance = config
         
         logger.info(f"Saved custom variant config to {config_path}")
         return True

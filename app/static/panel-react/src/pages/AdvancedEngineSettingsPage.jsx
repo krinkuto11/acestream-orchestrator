@@ -301,6 +301,9 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
 
       addNotification(`Template ${editingTemplateSlot} saved successfully`, 'success')
 
+      // Reload global config to revert UI to show current system state instead of the template just saved
+      await fetchConfig()
+
       // If we're editing the active template, show reprovision warning
       if (editingTemplateSlot === activeTemplateId) {
         setShowReprovisionWarning(true)
