@@ -201,7 +201,13 @@ class EngineCacheManager:
     async def prune_aged_files(self, max_age_minutes: int):
         """
         Prune all files in the cache directory regardless of age.
-        Note: max_age_minutes parameter is kept for compatibility but not used.
+        
+        Note: As of the latest update, this method deletes ALL cache files on every pass,
+        regardless of their age. The max_age_minutes parameter is retained for backward
+        compatibility but is no longer used in the logic.
+        
+        Args:
+            max_age_minutes: (DEPRECATED - not used) Previously controlled age threshold
         """
         if not self.mount_path.exists():
             return
