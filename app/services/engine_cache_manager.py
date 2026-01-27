@@ -10,6 +10,7 @@ import os
 import shutil
 import logging
 import asyncio
+import time
 from typing import Optional, Dict, List
 from pathlib import Path
 
@@ -199,16 +200,15 @@ class EngineCacheManager:
 
     async def prune_aged_files(self, max_age_minutes: int):
         """
-        Prune files in the cache directory that are older than the specified age.
+        Prune all files in the cache directory regardless of age.
+        Note: max_age_minutes parameter is kept for compatibility but not used.
         """
         if not self.mount_path.exists():
             return
 
-        logger.info(f"Starting cache pruning (max age: {max_age_minutes}m)")
+        logger.info(f"Starting cache pruning (deleting all cache files)")
         
         try:
-            cutoff_time = time.time() - (max_age_minutes * 60)
-            
             entries = list(self.mount_path.iterdir())
             count = 0
             size_freed = 0
@@ -217,28 +217,25 @@ class EngineCacheManager:
                 if not buffer_dir.is_dir():
                     continue
                     
-                # User requested to "remove checks"
-                # We simply iterate every directory in the cache mount
-                
+                # Delete all files in the cache directory regardless of age
                 # Walk through the directory
                 for root, _, files in os.walk(buffer_dir):
                     for file in files:
                         file_path = Path(root) / file
                         try:
                             stat = file_path.stat()
-                            if stat.st_mtime < cutoff_time:
-                                size = stat.st_size
-                                file_path.unlink()
-                                count += 1
-                                size_freed += size
+                            size = stat.st_size
+                            file_path.unlink()
+                            count += 1
+                            size_freed += size
                         except Exception as e:
                             logger.debug(f"Failed to prune file {file_path}: {e}")
                             
             if count > 0:
-                logger.info(f"Pruned {count} aged files, freed {size_freed / 1024 / 1024:.2f} MB")
+                logger.info(f"Pruned {count} cache files, freed {size_freed / 1024 / 1024:.2f} MB")
                 
         except Exception as e:
-            logger.error(f"Error during aged file pruning: {e}")
+            logger.error(f"Error during cache file pruning: {e}")
 
     async def start_pruner(self):
         """
