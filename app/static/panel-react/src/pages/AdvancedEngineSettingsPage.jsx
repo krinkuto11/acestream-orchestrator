@@ -6,88 +6,131 @@ import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Save, RefreshCw, AlertCircle, Info, Cpu, Upload, Download, Trash2, Plus, Edit, Pencil } from 'lucide-react'
+import { Save, RefreshCw, AlertCircle, Info, Cpu, Upload, Download, Trash2, Plus, Edit, Pencil, HardDrive } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { useNotifications } from '@/context/NotificationContext'
 
 // Parameter metadata for UI rendering
 const parameterCategories = {
-  basic: {
-    title: "Basic Settings",
-    description: "Essential engine configuration",
+  network: {
+    title: "Core Connection & Network",
+    description: "Basic network configuration",
     params: [
-      { name: "--client-console", label: "Client Console Mode", description: "Run engine in console mode", unit: null },
-      { name: "--bind-all", label: "Bind All Interfaces", description: "Listen on all network interfaces (0.0.0.0)", unit: null },
-      { name: "--service-remote-access", label: "Service Remote Access", description: "Enable remote access to service", unit: null },
-      { name: "--access-token", label: "Public Access Token", description: "Public access token for API", unit: null, placeholder: "acestream" },
-      { name: "--service-access-token", label: "Service Access Token", description: "Administrative access token for service", unit: null, placeholder: "root" },
-      { name: "--allow-user-config", label: "Allow User Config", description: "Allow per-user custom configuration", unit: null },
+      { name: "--client-console", label: "Client Console Mode", description: "Run in console mode", unit: null },
+      { name: "--bind-all", label: "Bind All Interfaces", description: "Listen on 0.0.0.0", unit: null },
+      { name: "--port", label: "P2P Port", description: "P2P listening port", unit: null, vpnAware: true },
+      { name: "--random-port", label: "Random P2P Port", description: "Use random port", unit: null },
+      { name: "--upnp-nat-access", label: "UPnP NAT", description: "Attempt UPnP mapping", unit: null },
+      { name: "--nat-detect", label: "NAT Detect", description: "Auto-detect NAT", unit: null },
+      { name: "--ipv6-enabled", label: "Enable IPv6", description: "IPv6 support (Exp)", unit: null },
+      { name: "--ipv6-binds-v4", label: "IPv6 Binds v4", description: "IPv6 handles v4", unit: null },
+      { name: "--max-socket-connects", label: "Max Connects", description: "Max outgoing attempts", unit: null },
+      { name: "--timeout-check-interval", label: "Timeout Check", description: "Timeout check interval", unit: "s" },
+      { name: "--keepalive-interval", label: "Keepalive", description: "Keepalive interval", unit: "s" },
+    ]
+  },
+  bandwidth: {
+    title: "Bandwidth & Limits",
+    description: "Upload/Download rates and peering",
+    params: [
+      { name: "--download-limit", label: "Download Limit", description: "Max DL speed (0=unlimited)", unit: "KB/s" },
+      { name: "--upload-limit", label: "Upload Limit", description: "Max UL speed (0=unlimited)", unit: "KB/s" },
+      { name: "--max-connections", label: "Max Connections", description: "Global max connections", unit: null },
+      { name: "--max-peers", label: "Max Peers", description: "Max peers per stream", unit: null },
+      { name: "--max-peers-limit", label: "Hard Max Peers", description: "Absolute max peers limit", unit: null },
+      { name: "--min-peers", label: "Min Peers", description: "Min desired peers", unit: null },
+      { name: "--max-upload-slots", label: "Max Upload Slots", description: "Simultaneous upload slots", unit: null },
+      { name: "--auto-slots", label: "Auto Slots", description: "Auto-adjust slots", unit: null, boolAsInt: true },
     ]
   },
   cache: {
-    title: "Cache Configuration",
-    description: "Configure memory and disk caching behavior",
+    title: "Cache & Storage",
+    description: "Buffer and storage management",
     params: [
-      { name: "--cache-dir", label: "Cache Directory", description: "Directory for storing cache", unit: null, placeholder: "~/.ACEStream" },
-      { name: "--live-cache-type", label: "Live Cache Type", description: "Cache type for live streams", unit: null, options: ["memory", "disk", "hybrid"] },
-      { name: "--live-cache-size", label: "Live Cache Size", description: "Live cache size", unit: "MB", divisor: 1048576 },
-      { name: "--vod-cache-type", label: "VOD Cache Type", description: "Cache type for VOD", unit: null, options: ["memory", "disk", "hybrid"] },
-      { name: "--vod-cache-size", label: "VOD Cache Size", description: "VOD cache size", unit: "MB", divisor: 1048576 },
-      { name: "--vod-drop-max-age", label: "VOD Drop Max Age", description: "Maximum age before dropping VOD cache", unit: "seconds" },
-      { name: "--max-file-size", label: "Max File Size", description: "Maximum file size to cache", unit: "GB", divisor: 1073741824 },
+      { name: "--cache-dir", label: "Cache Dir", description: "Cache storage path", unit: null, placeholder: "~/.ACEStream" },
+      { name: "--cache-limit", label: "Cache Limit (GB)", description: "Max cache size in GB", unit: "GB" },
+      { name: "--cache-max-bytes", label: "Max Cache Bytes", description: "Max cache size in bytes", unit: "MB", divisor: 1048576 },
+      { name: "--disk-cache-limit", label: "Disk Cache Limit", description: "Max disk cache", unit: "MB", divisor: 1048576 },
+      { name: "--memory-cache-limit", label: "Mem Cache Limit", description: "Max RAM cache", unit: "MB", divisor: 1048576 },
+      { name: "--max-file-size", label: "Max File Size", description: "Max supported file size", unit: "GB", divisor: 1073741824 },
+      { name: "--buffer-reads", label: "Buffer Reads", description: "Enable read buffering", unit: null },
+      { name: "--reserve-space", label: "Reserve Space", description: "Pre-allocate disk space", unit: null },
     ]
   },
-  buffer: {
-    title: "Buffer Settings",
-    description: "Configure streaming buffer behavior",
+  live: {
+    title: "Live Streaming",
+    description: "Live broadcast tuning",
     params: [
-      { name: "--live-buffer", label: "Live Buffer", description: "Live stream buffer", unit: "seconds" },
-      { name: "--vod-buffer", label: "VOD Buffer", description: "VOD buffer", unit: "seconds" },
-      { name: "--refill-buffer-interval", label: "Refill Buffer Interval", description: "Buffer refill interval", unit: "seconds" },
+      { name: "--live-cache-type", label: "Cache Type", description: "Storage backend", unit: null, options: ["memory", "disk"] },
+      { name: "--live-cache-size", label: "Cache Size", description: "Total cache size", unit: "MB", divisor: 1048576 },
+      { name: "--live-mem-cache-size", label: "RAM Cache", description: "Max RAM usage", unit: "MB", divisor: 1048576 },
+      { name: "--live-disk-cache-size", label: "Disk Cache", description: "Max Disk usage", unit: "MB", divisor: 1048576 },
+      { name: "--live-buffer-time", label: "Buffer Time", description: "Target buffer time", unit: "s" },
+      { name: "--live-max-buffer-time", label: "Max Buffer", description: "Max accumulated buffer", unit: "s" },
+      { name: "--live-adjust-buffer-time", label: "Adjust Buffer", description: "Dynamic buffer adjustment", unit: null, boolAsInt: true },
+      { name: "--live-disable-multiple-read-threads", label: "Single Thread", description: "Force single-threaded read", unit: null, boolAsInt: true },
+      { name: "--live-stop-main-read-thread", label: "Stop Main Thread", description: "Optimization flag", unit: null, boolAsInt: true },
+      { name: "--live-cache-auto-size", label: "Auto Size", description: "Auto-scale cache", unit: null, boolAsInt: true },
+      { name: "--live-cache-auto-size-reserve", label: "Auto Reserve", description: "RAM to keep free", unit: "MB", divisor: 1048576 },
+      { name: "--live-cache-max-memory-percent", label: "Max RAM %", description: "Max RAM % for cache", unit: "%" },
+      { name: "--live-aux-seeders", label: "Aux Seeders", description: "Enable aux seeders", unit: null },
+      { name: "--check-live-pos-interval", label: "Pos Check", description: "Position check interval", unit: "s" },
     ]
   },
-  connections: {
-    title: "Connection Settings",
-    description: "Configure P2P connections and bandwidth",
+  vod: {
+    title: "Video on Demand",
+    description: "File playback settings",
     params: [
-      { name: "--max-connections", label: "Max Connections", description: "Maximum simultaneous connections", unit: "connections" },
-      { name: "--max-peers", label: "Max Peers", description: "Maximum peers per torrent", unit: "peers" },
-      { name: "--max-upload-slots", label: "Max Upload Slots", description: "Number of simultaneous upload slots", unit: "slots" },
-      { name: "--auto-slots", label: "Auto Slots", description: "Automatic slot adjustment", unit: null, boolAsInt: true },
-      { name: "--download-limit", label: "Download Limit", description: "Download speed limit (0=unlimited)", unit: "KB/s" },
-      { name: "--upload-limit", label: "Upload Limit", description: "Upload speed limit (0=unlimited)", unit: "KB/s" },
-      { name: "--port", label: "P2P Port", description: "Port for P2P connections", unit: null, vpnAware: true },
-    ]
-  },
-  webrtc: {
-    title: "WebRTC Settings",
-    description: "Configure WebRTC connections",
-    params: [
-      { name: "--webrtc-allow-outgoing-connections", label: "Allow Outgoing WebRTC", description: "Allow outgoing WebRTC connections", unit: null, boolAsInt: true },
-      { name: "--webrtc-allow-incoming-connections", label: "Allow Incoming WebRTC", description: "Allow incoming WebRTC connections", unit: null, boolAsInt: true },
-    ]
-  },
-  advanced: {
-    title: "Advanced Settings",
-    description: "Advanced engine configuration options",
-    params: [
-      { name: "--stats-report-interval", label: "Stats Report Interval", description: "Interval for statistics reports", unit: "seconds" },
-      { name: "--stats-report-peers", label: "Stats Report Peers", description: "Include peer info in statistics", unit: null },
-      { name: "--slots-manager-use-cpu-limit", label: "CPU Limit for Slots", description: "Use CPU limit for slot management", unit: null, boolAsInt: true },
-      { name: "--core-skip-have-before-playback-pos", label: "Skip Before Playback", description: "Skip downloaded pieces before playback position", unit: null, boolAsInt: true },
-      { name: "--core-dlr-periodic-check-interval", label: "DLR Check Interval", description: "Periodic DLR check interval", unit: "seconds" },
-      { name: "--check-live-pos-interval", label: "Live Position Check", description: "Interval for checking live position", unit: "seconds" },
+      { name: "--vod-cache-type", label: "Cache Type", description: "Storage backend", unit: null, options: ["memory", "disk", "hybrid"] },
+      { name: "--vod-cache-size", label: "Cache Size", description: "Max VOD cache", unit: "MB", divisor: 1048576 },
+      { name: "--vod-buffer", label: "Buffer", description: "VOD buffer duration", unit: "s" },
+      { name: "--vod-drop-max-age", label: "Drop Max Age", description: "Age to drop old data", unit: "s" },
+      { name: "--preload-vod", label: "Preload", description: "Pre-buffer content", unit: null },
     ]
   },
   logging: {
-    title: "Logging Settings",
-    description: "Configure logging behavior",
+    title: "Logging & Debug",
+    description: "Troubleshooting options",
     params: [
-      { name: "--log-debug", label: "Debug Level", description: "Debug level (0=normal, 1=verbose, 2=very verbose)", unit: null, options: [0, 1, 2] },
-      { name: "--log-file", label: "Log File", description: "File for saving logs", unit: null, placeholder: "/var/log/acestream.log" },
-      { name: "--log-max-size", label: "Max Log Size", description: "Max log size", unit: "MB", divisor: 1048576 },
-      { name: "--log-backup-count", label: "Log Backup Count", description: "Number of backup log files", unit: "files" },
+      { name: "--log-file", label: "Log File", description: "Log file path", unit: null, placeholder: "/var/log/acestream.log" },
+      { name: "--log-debug", label: "Debug Level", description: "0=Norm, 1=Verb, 2=VVerb", unit: null, options: [0, 1, 2] },
+      { name: "--log-stdout", label: "Log to Stdout", description: "Output to console", unit: null },
+      { name: "--log-stderr", label: "Log to Stderr", description: "Output to error stream", unit: null },
+      { name: "--log-max-size", label: "Max Log Size", description: "Rotation size", unit: "MB", divisor: 1048576 },
+      { name: "--log-backup-count", label: "Backup Count", description: "Keep N files", unit: null },
+      { name: "--debug-sentry", label: "Debug Sentry", description: "Error reporting", unit: null },
+      { name: "--enable-profiler", label: "Profiler", description: "Enable internal profiler", unit: null, boolAsInt: true },
+      { name: "--stats-report-interval", label: "Stats Interval", description: "P2P stats interval", unit: "s" },
+      { name: "--stats-report-peers", label: "Report Peers", description: "Include peer info", unit: null },
+    ]
+  },
+  security: {
+    title: "Security & API",
+    description: "Access control",
+    params: [
+      { name: "--service-remote-access", label: "Remote Access", description: "Enable remote API", unit: null },
+      { name: "--allow-user-config", label: "User Config", description: "Allow user configs", unit: null },
+      { name: "--access-token", label: "Access Token", description: "Public API token", unit: null },
+      { name: "--service-access-token", label: "Service Token", description: "Admin API token", unit: null },
+    ]
+  },
+  webrtc: {
+    title: "WebRTC",
+    description: "WebRTC configuration",
+    params: [
+      { name: "--webrtc-allow-outgoing-connections", label: "Allow Outgoing", description: "Outgoing connections", unit: null, boolAsInt: true },
+      { name: "--webrtc-allow-incoming-connections", label: "Allow Incoming", description: "Incoming connections", unit: null, boolAsInt: true },
+    ]
+  },
+  advanced: {
+    title: "Advanced",
+    description: "Internal tuning",
+    params: [
+      { name: "--slots-manager-use-cpu-limit", label: "CPU Limit Slots", description: "Use CPU limit", unit: null, boolAsInt: true },
+      { name: "--core-skip-have-before-playback-pos", label: "Skip Have", description: "Skip before playback", unit: null, boolAsInt: true },
+      { name: "--core-dlr-periodic-check-interval", label: "DLR Check", description: "DLR check interval", unit: "s" },
+      { name: "--refill-buffer-interval", label: "Refill Interval", description: "Buffer refill (s)", unit: "s" },
     ]
   }
 }
@@ -101,7 +144,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   const [config, setConfig] = useState(null)
   const [platform, setPlatform] = useState(null)
   const [vpnEnabled, setVpnEnabled] = useState(false)
-  
+
   // Template management state
   const [templates, setTemplates] = useState([])
   const [activeTemplateId, setActiveTemplateId] = useState(null)
@@ -134,9 +177,10 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       const [configData, platformData, vpnStatus] = await Promise.all([
         fetchJSON(`${orchUrl}/custom-variant/config`),
         fetchJSON(`${orchUrl}/custom-variant/platform`),
-        fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false }))
+        fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false })),
+        fetchJSON(`${orchUrl}/version`).catch(() => ({}))
       ])
-      
+
       setConfig(configData)
       setPlatform(platformData)
       setVpnEnabled(vpnStatus.enabled || false)
@@ -152,13 +196,13 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     try {
       const status = await fetchJSON(`${orchUrl}/custom-variant/reprovision/status`)
       setReprovisionStatus(status)
-      
+
       // Update reprovisioning state based on status
       if (status.in_progress) {
         setReprovisioning(true)
       } else {
         setReprovisioning(false)
-        
+
         // Show success or error toast based on final status
         if (status.status === 'success' && status.message) {
           // Only show toast if status changed recently (within last 5 seconds)
@@ -176,7 +220,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           }
         }
       }
-      
+
       return status.in_progress
     } catch (err) {
       // Ignore errors when checking status
@@ -194,10 +238,10 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     const interval = setInterval(async () => {
       await checkReprovisionStatus()
     }, 2000)
-    
+
     // Initial check
     checkReprovisionStatus()
-    
+
     return () => clearInterval(interval)
   }, [checkReprovisionStatus])
 
@@ -215,7 +259,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   const handleSavePlatformConfig = useCallback(async () => {
     try {
       setSaving(true)
-      
+
       await fetchJSON(`${orchUrl}/custom-variant/config`, {
         method: 'POST',
         headers: {
@@ -224,7 +268,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         },
         body: JSON.stringify(config)
       })
-      
+
       addNotification('Platform configuration saved successfully', 'success')
     } catch (err) {
       addNotification(`Failed to save platform configuration: ${err.message}`, 'error')
@@ -242,7 +286,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
 
     try {
       setSaving(true)
-      
+
       await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}`, {
         method: 'POST',
         headers: {
@@ -254,21 +298,24 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           config: config
         })
       })
-      
+
       addNotification(`Template ${editingTemplateSlot} saved successfully`, 'success')
-      
+
+      // Reload global config to revert UI to show current system state instead of the template just saved
+      await fetchConfig()
+
       // If we're editing the active template, show reprovision warning
       if (editingTemplateSlot === activeTemplateId) {
         setShowReprovisionWarning(true)
       }
-      
+
       // Refresh templates to get updated state
       const updatedTemplates = await fetchTemplates()
-      
+
       // If no other template exists (this is the first one), auto-activate it
       if (updatedTemplates) {
         const otherTemplates = updatedTemplates.templates.filter(t => t.exists && t.slot_id !== editingTemplateSlot)
-        
+
         if (otherTemplates.length === 0 && !updatedTemplates.active_template_id) {
           try {
             await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}/activate`, {
@@ -285,7 +332,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           }
         }
       }
-      
+
       setEditingTemplateSlot(null)
       setTemplateName('')
     } catch (err) {
@@ -305,7 +352,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     if (!editingTemplateSlot || !templateName) {
       return
     }
-    
+
     await fetchJSON(`${orchUrl}/custom-variant/templates/${editingTemplateSlot}`, {
       method: 'POST',
       headers: {
@@ -331,7 +378,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     try {
       setReprovisioning(true)
       setShowReprovisionWarning(false)  // Clear warning when reprovisioning
-      
+
       // First, save the current config before reprovisioning
       await fetchJSON(`${orchUrl}/custom-variant/config`, {
         method: 'POST',
@@ -341,22 +388,22 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         },
         body: JSON.stringify(config)
       })
-      
+
       // If editing a template, save it as well
       if (editingTemplateSlot) {
         await saveCurrentTemplate()
         addNotification(`Template ${editingTemplateSlot} saved before reprovisioning`, 'success')
       }
-      
+
       await fetchJSON(`${orchUrl}/custom-variant/reprovision`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`
         }
       })
-      
+
       addNotification('Settings saved. Reprovisioning started. Engines will be recreated shortly.', 'success')
-      
+
       // Start polling for status
       await checkReprovisionStatus()
     } catch (err) {
@@ -383,7 +430,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           config: config
         })
       })
-      
+
       addNotification(`Template saved to slot ${slotId}`, 'success')
       await fetchTemplates()
       setShowTemplateDialog(false)
@@ -409,11 +456,11 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           'Authorization': `Bearer ${apiKey}`
         }
       })
-      
+
       addNotification(response.message, 'success')
       await fetchConfig()
       await fetchTemplates()
-      
+
       // If custom variant is disabled, automatically enable it after loading template
       if (config && !config.enabled) {
         setConfig(prev => ({ ...prev, enabled: true }))
@@ -435,7 +482,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           'Authorization': `Bearer ${apiKey}`
         }
       })
-      
+
       addNotification(`Template ${slotId} deleted`, 'success')
       await fetchTemplates()
     } catch (err) {
@@ -455,7 +502,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
       a.click()
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
-      
+
       addNotification(`Template ${slotId} exported`, 'success')
     } catch (err) {
       addNotification(`Failed to export template: ${err.message}`, 'error')
@@ -474,7 +521,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           json_data: fileContent
         })
       })
-      
+
       addNotification(`Template imported to slot ${slotId}`, 'success')
       await fetchTemplates()
     } catch (err) {
@@ -494,7 +541,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           name: newName
         })
       })
-      
+
       addNotification(`Template renamed successfully`, 'success')
       await fetchTemplates()
       setShowRenameDialog(false)
@@ -507,18 +554,19 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     try {
       // Load the template configuration
       const template = await fetchJSON(`${orchUrl}/custom-variant/templates/${slotId}`)
-      
+
       // Update the current config with the template's config
       // Preserve the current platform's enabled state
       setConfig(prevConfig => ({
         ...template.config,
-        enabled: prevConfig.enabled
+        enabled: prevConfig.enabled,
+        memory_limit: template.config.memory_limit ?? null
       }))
-      
+
       // Set editing mode with the template name
       setEditingTemplateSlot(slotId)
       setTemplateName(template.name)
-      
+
       addNotification(`Loaded template ${slotId} for editing. Make your changes and save below.`)
     } catch (err) {
       addNotification(`Failed to load template for editing: ${err.message}`)
@@ -534,11 +582,87 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     const isInt = param.type === 'int' || param.type === 'bytes'
     const isString = param.type === 'string' || param.type === 'path'
 
+    // Determine visibility for Live Cache params
+    if ((name === '--live-mem-cache-size' || name === '--live-disk-cache-size') && config) {
+      const cacheTypeParam = config.parameters.find(p => p.name === '--live-cache-type')
+      const cacheType = cacheTypeParam ? cacheTypeParam.value : 'memory'
+
+      if (name === '--live-disk-cache-size' && cacheType === 'memory') return null
+      if (name === '--live-mem-cache-size' && cacheType === 'disk') return null
+    }
+
+    // Special handling for merged Cache Limit control
+    if (name === '--cache-limit' || name === '--cache-max-bytes') {
+      // Only render one control that manages both
+      if (name === '--cache-max-bytes') return null // Skip rendering this, handled by --cache-limit renderer
+
+      // Determine current mode based on which param is enabled/set
+      const cacheMaxBytesParam = config.parameters.find(p => p.name === '--cache-max-bytes')
+      const cacheLimitParam = config.parameters.find(p => p.name === '--cache-limit')
+
+      // Default to GB if cache-limit is enabled, else MB if max-bytes enabled, else GB default
+      const isGB = cacheLimitParam?.enabled
+      const currentUnit = isGB ? 'GB' : 'MB'
+
+      // Helper to update the merged control
+      const handleCacheLimitChange = (val, unit) => {
+        if (unit === 'GB') {
+          // Update --cache-limit
+          updateParameter('--cache-limit', 'value', val)
+          updateParameter('--cache-limit', 'enabled', val !== '' && val !== 0)
+          // Disable --cache-max-bytes
+          updateParameter('--cache-max-bytes', 'enabled', false)
+        } else {
+          // MB mode - update --cache-max-bytes
+          // val is in MB, convert to bytes
+          const bytesVal = val === '' ? 0 : Math.round(parseFloat(val) * 1024 * 1024)
+          updateParameter('--cache-max-bytes', 'value', bytesVal)
+          updateParameter('--cache-max-bytes', 'enabled', val !== '' && val !== 0)
+          // Disable --cache-limit
+          updateParameter('--cache-limit', 'enabled', false)
+        }
+      }
+
+      const displayValue = isGB
+        ? cacheLimitParam?.value
+        : (cacheMaxBytesParam?.value ? Math.round(cacheMaxBytesParam.value / 1024 / 1024) : '')
+
+      return (
+        <div key="merged-cache-limit" className="space-y-2 p-3 border rounded-lg h-full flex flex-col">
+          <div className="flex items-center gap-2">
+            <Label className="font-medium">Total Cache Limit</Label>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">Global maximum cache size</p>
+          <div className="mt-2 flex gap-2">
+            <Input
+              type="number"
+              value={displayValue || ''}
+              onChange={(e) => handleCacheLimitChange(e.target.value, currentUnit)}
+              placeholder={currentUnit === 'GB' ? "e.g. 10" : "e.g. 10240"}
+              className="flex-1"
+            />
+            <Select
+              value={currentUnit}
+              onValueChange={(unit) => handleCacheLimitChange(displayValue, unit)}
+            >
+              <SelectTrigger className="w-[80px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="GB">GB</SelectItem>
+                <SelectItem value="MB">MB</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )
+    }
+
     // Show VPN warning for P2P port
     const showVpnWarning = vpnAware && vpnEnabled
 
     return (
-      <div key={name} className="space-y-2 p-4 border rounded-lg">
+      <div key={name} className="space-y-2 p-3 border rounded-lg h-full flex flex-col">
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center gap-2">
@@ -553,78 +677,118 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
               </p>
             )}
           </div>
-          <Switch
-            checked={param.enabled}
-            onCheckedChange={(checked) => updateParameter(name, 'enabled', checked)}
-          />
+          {/* Simple Flag Toggle */}
+          {isFlag && (
+            <Select
+              value={!param.enabled ? "default" : (param.value ? "on" : "off")}
+              onValueChange={(val) => {
+                if (val === "default") {
+                  updateParameter(name, 'enabled', false)
+                } else {
+                  updateParameter(name, 'enabled', true)
+                  updateParameter(name, 'value', val === "on")
+                }
+              }}
+            >
+              <SelectTrigger id={name} className="w-[140px]">
+                <SelectValue placeholder="Default" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Default (Unset)</SelectItem>
+                <SelectItem value="on">On (Enabled)</SelectItem>
+                <SelectItem value="off">Off (Disabled)</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
         </div>
 
-        {param.enabled && (
-          <div className="mt-2">
-            {isFlag && (
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id={name}
-                  checked={param.value}
-                  onCheckedChange={(checked) => updateParameter(name, 'value', checked)}
-                />
-                <Label htmlFor={name} className="text-sm">
-                  {param.value ? 'Enabled' : 'Disabled'}
-                </Label>
-              </div>
-            )}
+        <div className="mt-2">
 
-            {boolAsInt && (
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id={name}
-                  checked={param.value === 1}
-                  onCheckedChange={(checked) => updateParameter(name, 'value', checked ? 1 : 0)}
-                />
-                <Label htmlFor={name} className="text-sm">
-                  {param.value === 1 ? 'Enabled' : 'Disabled'}
-                </Label>
-              </div>
-            )}
+          {/* Tri-state for 0/1 Integers (BoolAsInt) */}
+          {boolAsInt && (
+            <Select
+              value={param.enabled ? String(param.value) : "default"}
+              onValueChange={(val) => {
+                if (val === "default") {
+                  updateParameter(name, 'enabled', false)
+                } else {
+                  updateParameter(name, 'enabled', true)
+                  updateParameter(name, 'value', parseInt(val))
+                }
+              }}
+            >
+              <SelectTrigger id={name}>
+                <SelectValue placeholder="Default" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Default (Unset)</SelectItem>
+                <SelectItem value="1">Enabled</SelectItem>
+                <SelectItem value="0">Disabled</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
 
-            {options && !boolAsInt && (
-              <Select
-                value={String(param.value)}
-                onValueChange={(val) => {
-                  // Convert back to number if it was originally a number
-                  const newVal = isInt ? parseInt(val) : val
-                  updateParameter(name, 'value', newVal)
-                }}
-              >
-                <SelectTrigger id={name}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {options.map(opt => (
-                    <SelectItem key={opt} value={String(opt)}>{String(opt)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
+          {options && !boolAsInt && (
+            <Select
+              value={String(param.value)}
+              onValueChange={(val) => {
+                // Options always implicitly enabled if selected? Or should we have a "Default"?
+                // Requirement didn't specify for string options, assuming standard behavior but ensuring enabled
+                const newVal = isInt ? parseInt(val) : val
+                updateParameter(name, 'value', newVal)
+                updateParameter(name, 'enabled', true)
+              }}
+            >
+              <SelectTrigger id={name}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {options.map(opt => (
+                  <SelectItem key={opt} value={String(opt)}>{String(opt)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
 
-            {!isFlag && !boolAsInt && !options && (
-              <Input
-                id={name}
-                type={isInt ? 'number' : 'text'}
-                value={divisor ? Math.round(param.value / divisor) : param.value}
-                onChange={(e) => {
-                  let val = isInt ? parseInt(e.target.value) || 0 : e.target.value
-                  if (divisor) val = val * divisor
-                  updateParameter(name, 'value', val)
-                }}
-                placeholder={placeholder}
-              />
-            )}
-          </div>
-        )}
+          {!isFlag && !boolAsInt && !options && (
+            <Input
+              id={name}
+              type={isInt ? 'number' : 'text'}
+              // Show empty string if disabled (conceptually) or 0 if it's a number we want to show?
+              // Request: "empty field shouldn't pass the flag and a filled one should pass it"
+              // So if enabled is false, we should probably show empty? Or show value but it's grayed out?
+              // Better: Value drives enabled state. 
+              value={(!param.enabled && (param.value === 0 || param.value === "")) ? '' : (divisor ? Math.round(param.value / divisor) : param.value)}
+              onChange={(e) => {
+                let rawVal = e.target.value
+                let val = rawVal
+
+                if (rawVal === '') {
+                  updateParameter(name, 'enabled', false)
+                  // Keep value as 0 or empty string internally just in case?
+                  // Or just ignore value update if disabled?
+                  // Let's set value to 0/empty to reflect UI
+                  updateParameter(name, 'value', isInt ? 0 : "")
+                  return
+                }
+
+                if (isInt) {
+                  val = parseInt(rawVal)
+                  if (isNaN(val)) val = 0
+                }
+
+                if (divisor) val = val * divisor
+
+                updateParameter(name, 'value', val)
+                updateParameter(name, 'enabled', true)
+              }}
+              placeholder={placeholder || (isInt ? "Default (Unset)" : "Default")}
+            />
+          )}
+        </div>
       </div>
     )
-  }, [updateParameter, vpnEnabled])
+  }, [updateParameter, vpnEnabled, config])
 
   if (loading || !config || !platform) {
     return (
@@ -695,7 +859,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
               checked={config.enabled}
               onCheckedChange={async (checked) => {
                 setConfig(prev => ({ ...prev, enabled: checked }))
-                
+
                 // If enabling and no active template, auto-load first available template
                 if (checked && !activeTemplateId) {
                   const firstTemplate = templates.find(t => t.exists)
@@ -781,56 +945,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
             </p>
           </div>
 
-          {/* Torrent Folder Mount Configuration */}
-          <div className="space-y-4 p-4 border rounded-lg">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="torrent-mount-enabled">Mount Torrent Folder to Host</Label>
-                <Switch
-                  id="torrent-mount-enabled"
-                  checked={config.torrent_folder_mount_enabled || false}
-                  onCheckedChange={(checked) => setConfig(prev => ({ ...prev, torrent_folder_mount_enabled: checked }))}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Mount engine's torrent folder to the host filesystem. Only applies to custom engine variants.
-              </p>
-            </div>
-
-            {config.torrent_folder_mount_enabled && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="torrent-host-path">Host Path (Required)</Label>
-                  <Input
-                    id="torrent-host-path"
-                    type="text"
-                    value={config.torrent_folder_host_path || ''}
-                    onChange={(e) => setConfig(prev => ({ ...prev, torrent_folder_host_path: e.target.value }))}
-                    placeholder="/mnt/torrents"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Absolute path on the host where torrent files will be stored. Must start with '/'.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="torrent-container-path">Container Path</Label>
-                  <Input
-                    id="torrent-container-path"
-                    type="text"
-                    // Default matches DEFAULT_TORRENT_FOLDER_PATH in custom_variant_config.py
-                    value={config.torrent_folder_container_path || '/root/.ACEStream/collected_torrent_files'}
-                    onChange={(e) => setConfig(prev => ({ ...prev, torrent_folder_container_path: e.target.value }))}
-                    placeholder="/root/.ACEStream/collected_torrent_files"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Path inside the container where torrents are stored. Default is /root/.ACEStream/collected_torrent_files.
-                    If you set a custom --cache-dir parameter, this will be automatically adjusted.
-                  </p>
-                </div>
-              </>
-            )}
-          </div>
+          {/* Removed Torrent Folder Mount from here as it moved to new card */}
 
           {!config.enabled && (
             <Alert>
@@ -855,15 +970,137 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         </CardContent>
       </Card>
 
+      {/* Storage & Caching Info */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <HardDrive className="h-5 w-5" />
+            Storage & Caching
+          </CardTitle>
+          <CardDescription>
+            Host integration for persistent storage and cache management
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="cache-mount-enabled">Host Disk Cache Mounting</Label>
+              <p className="text-sm text-muted-foreground mt-1">
+                Isolate cache per engine on host and auto-clean on shutdown.
+                <br />
+                <span className="text-xs text-amber-600 dark:text-amber-500">Requires ACESTREAM_CACHE_ROOT env var</span>
+              </p>
+            </div>
+            <Switch
+              id="cache-mount-enabled"
+              checked={config.disk_cache_mount_enabled || false}
+              onCheckedChange={(checked) => setConfig(prev => ({ ...prev, disk_cache_mount_enabled: checked }))}
+            />
+          </div>
+
+          {config.disk_cache_mount_enabled && (
+            <div className="p-3 bg-muted rounded-md text-sm font-mono flex items-center gap-2">
+              <Info className="h-4 w-4" />
+              Host Path: <span className="opacity-70">Defined by ACESTREAM_CACHE_ROOT</span>
+            </div>
+          )}
+
+          {/* Scheduled Cache Pruning */}
+          <div className="flex items-center justify-between border-t pt-4">
+            <div>
+              <Label htmlFor="cache-prune-enabled">Scheduled Cache Pruning</Label>
+              <p className="text-sm text-muted-foreground mt-1">
+                Automatically prune aged files from cache.
+              </p>
+            </div>
+            <Switch
+              id="cache-prune-enabled"
+              checked={config.disk_cache_prune_enabled || false}
+              onCheckedChange={(checked) => setConfig(prev => ({ ...prev, disk_cache_prune_enabled: checked }))}
+            />
+          </div>
+
+          {config.disk_cache_prune_enabled && (
+            <div className="grid grid-cols-2 gap-4 pl-4 border-l-2 border-muted">
+              <div className="space-y-1">
+                <Label htmlFor="prune-interval" className="text-xs">Check Interval (minutes)</Label>
+                <Input
+                  id="prune-interval"
+                  type="number"
+                  min="1"
+                  value={config.disk_cache_prune_interval || 60}
+                  onChange={(e) => setConfig(prev => ({ ...prev, disk_cache_prune_interval: parseInt(e.target.value) || 60 }))}
+                  className="h-8"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="max-age" className="text-xs">Max File Age (minutes)</Label>
+                <Input
+                  id="max-age"
+                  type="number"
+                  min="60"
+                  value={config.disk_cache_file_max_age || 1440}
+                  onChange={(e) => setConfig(prev => ({ ...prev, disk_cache_file_max_age: parseInt(e.target.value) || 1440 }))}
+                  className="h-8"
+                />
+                <p className="text-[10px] text-muted-foreground">{(config.disk_cache_file_max_age || 1440) / 60} hours</p>
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between border-t pt-4">
+            <div>
+              <Label htmlFor="torrent-mount-enabled">Mount Torrent Folder to Host</Label>
+              <p className="text-sm text-muted-foreground mt-1">
+                Persist collected torrent files to host storage
+              </p>
+            </div>
+            <Switch
+              id="torrent-mount-enabled"
+              checked={config.torrent_folder_mount_enabled || false}
+              onCheckedChange={(checked) => setConfig(prev => ({ ...prev, torrent_folder_mount_enabled: checked }))}
+            />
+          </div>
+
+          {config.torrent_folder_mount_enabled && (
+            <div className="space-y-2 pl-4 border-l-2 border-muted">
+              <div className="space-y-1">
+                <Label htmlFor="torrent-host-path" className="text-xs">Host Path</Label>
+                <Input
+                  id="torrent-host-path"
+                  value={config.torrent_folder_host_path || ''}
+                  onChange={(e) => setConfig(prev => ({ ...prev, torrent_folder_host_path: e.target.value }))}
+                  placeholder="/mnt/torrents"
+                  className="h-8"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end pt-2">
+            <Button
+              onClick={handleSavePlatformConfig}
+              disabled={saving}
+              className="flex items-center gap-2"
+              variant="outline"
+              size="sm"
+            >
+              <Save className="h-3 w-3" />
+              Save Storage Settings
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Template Management */}
       <Card>
-          <CardHeader>
-            <CardTitle>Template Management</CardTitle>
-            <CardDescription>
-              Save and load custom variant configurations as templates (10 slots available)
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <CardHeader>
+          <CardTitle>Template Management</CardTitle>
+          <CardDescription>
+            Save and load custom variant configurations as templates (10 slots available)
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
           {/* Reprovision Warning */}
           {showReprovisionWarning && (
             <Alert variant="destructive">
@@ -874,15 +1111,14 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
               </AlertDescription>
             </Alert>
           )}
-          
+
           {/* Template grid */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {templates.map((template) => (
               <div
                 key={template.slot_id}
-                className={`p-3 border rounded-lg ${
-                  activeTemplateId === template.slot_id ? 'border-primary bg-primary/5' : ''
-                } ${!template.exists ? 'border-dashed' : ''}`}
+                className={`p-3 border rounded-lg ${activeTemplateId === template.slot_id ? 'border-primary bg-primary/5' : ''
+                  } ${!template.exists ? 'border-dashed' : ''}`}
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-medium">Slot {template.slot_id}</span>
@@ -1088,8 +1324,8 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
               />
             </div>
 
-            <Tabs defaultValue="basic" className="w-full">
-              <TabsList className="grid w-full grid-cols-7">
+            <Tabs defaultValue="network" className="w-full">
+              <TabsList className="flex flex-wrap h-auto gap-1 justify-start bg-muted p-1 rounded-md mb-4">
                 {Object.keys(parameterCategories).map(key => (
                   <TabsTrigger key={key} value={key}>
                     {parameterCategories[key].title.split(' ')[0]}
@@ -1103,7 +1339,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
                     <h3 className="font-semibold">{category.title}</h3>
                     <p className="text-sm text-muted-foreground">{category.description}</p>
                   </div>
-                  <div className="space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                     {category.params.map(paramMeta => {
                       const param = config.parameters.find(p => p.name === paramMeta.name)
                       return renderParameter(paramMeta, param)

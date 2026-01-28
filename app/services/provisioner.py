@@ -1,13 +1,30 @@
 import time
 import logging
 import docker
-from typing import Optional
+import threading
+from typing import Optional, Dict
 from pydantic import BaseModel
 from .docker_client import get_client, safe
 from ..core.config import cfg
 from .ports import alloc
 
 logger = logging.getLogger(__name__)
+
+# Lock and counters for VPN assignment to prevent race conditions during concurrent provisioning
+_vpn_assignment_lock = threading.RLock()
+# Track engines being provisioned per VPN (not yet in state) to ensure balanced allocation
+_vpn_pending_engines: Dict[str, int] = {}
+
+
+def _decrement_vpn_pending_counter(vpn_container: Optional[str]):
+    """Safely decrement the pending engine counter for a VPN container."""
+    if not vpn_container or cfg.VPN_MODE != 'redundant':
+        return
+    
+    with _vpn_assignment_lock:
+        if vpn_container in _vpn_pending_engines and _vpn_pending_engines[vpn_container] > 0:
+            _vpn_pending_engines[vpn_container] -= 1
+            logger.debug(f"Decremented pending counter for VPN '{vpn_container}' (now: {_vpn_pending_engines[vpn_container]})")
 
 ACESTREAM_LABEL_HTTP = "acestream.http_port"
 ACESTREAM_LABEL_HTTPS = "acestream.https_port"
@@ -131,6 +148,21 @@ def stop_container(container_id: str):
     try:
         _release_ports_from_labels(labels)
     finally:
+        # Cleanup disk cache if using host mount
+        # We use container ID or Name?
+        # If we used Name for creation, we must use Name for cleanup.
+        # `cont` object has name.
+        try:
+             # Try to get name from container attributes
+             # name starts with / usually
+             c_name = cont.attrs.get("Name", "").lstrip("/")
+             # Also try ID just in case we switch strategies or fallback
+             from .engine_cache_manager import engine_cache_manager
+             engine_cache_manager.cleanup_cache(c_name)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup cache for {container_id}: {e}")
+            pass
+            
         cont.remove()
 
 def _parse_conf_port(conf_string, port_type="http"):
@@ -297,50 +329,66 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     logger.debug(f"Starting AceStream engine: labels={req.labels}, custom_env={bool(req.env)}")
     
     # Determine VPN assignment and check health
+    # Use lock to prevent race conditions during concurrent provisioning in redundant mode
     vpn_container = None
     if cfg.GLUETUN_CONTAINER_NAME:
         from .gluetun import gluetun_monitor
         from .state import state
         
         # In redundant mode, assign engine to VPN with round-robin load balancing
-        if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
-            # Check if in VPN recovery mode - force assign to recovery target
-            recovery_target = state.get_vpn_recovery_target()
-            if recovery_target:
-                vpn_container = recovery_target
-                logger.info(f"VPN recovery mode active: assigning engine to recovery target VPN '{vpn_container}'")
-            # Check if in emergency mode - only assign to healthy VPN
-            elif state.is_emergency_mode():
-                emergency_info = state.get_emergency_mode_info()
-                vpn_container = emergency_info['healthy_vpn']
-                logger.info(f"Emergency mode active: assigning engine to healthy VPN '{vpn_container}'")
-            else:
-                # Normal redundant mode: Count engines per VPN
-                vpn1_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
-                vpn2_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
-                
-                # Check health of both VPNs
-                vpn1_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
-                vpn2_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
-                
-                # Determine VPN assignment based on health and load
-                if vpn1_healthy and vpn2_healthy:
-                    # Both healthy: use round-robin to balance load
-                    vpn_container = cfg.GLUETUN_CONTAINER_NAME if vpn1_engines <= vpn2_engines else cfg.GLUETUN_CONTAINER_NAME_2
-                elif vpn1_healthy and not vpn2_healthy:
-                    # Only VPN1 healthy: use it
-                    vpn_container = cfg.GLUETUN_CONTAINER_NAME
-                elif vpn2_healthy and not vpn1_healthy:
-                    # Only VPN2 healthy: use it
-                    vpn_container = cfg.GLUETUN_CONTAINER_NAME_2
+        # Lock ensures VPN selection and pending counter update are atomic
+        with _vpn_assignment_lock:
+            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+                # Check if in VPN recovery mode - force assign to recovery target
+                recovery_target = state.get_vpn_recovery_target()
+                if recovery_target:
+                    vpn_container = recovery_target
+                    logger.info(f"VPN recovery mode active: assigning engine to recovery target VPN '{vpn_container}'")
+                # Check if in emergency mode - only assign to healthy VPN
+                elif state.is_emergency_mode():
+                    emergency_info = state.get_emergency_mode_info()
+                    vpn_container = emergency_info['healthy_vpn']
+                    logger.info(f"Emergency mode active: assigning engine to healthy VPN '{vpn_container}'")
                 else:
-                    # Both unhealthy: fail provisioning
-                    raise RuntimeError("Both VPN containers are unhealthy - cannot start AceStream engine")
+                    # Normal redundant mode: Count engines per VPN (including pending ones being provisioned)
+                    vpn1_name = cfg.GLUETUN_CONTAINER_NAME
+                    vpn2_name = cfg.GLUETUN_CONTAINER_NAME_2
+                    
+                    # Count engines already in state
+                    vpn1_engines = len(state.get_engines_by_vpn(vpn1_name))
+                    vpn2_engines = len(state.get_engines_by_vpn(vpn2_name))
+                    
+                    # Add pending engines currently being provisioned
+                    vpn1_pending = _vpn_pending_engines.get(vpn1_name, 0)
+                    vpn2_pending = _vpn_pending_engines.get(vpn2_name, 0)
+                    vpn1_engines += vpn1_pending
+                    vpn2_engines += vpn2_pending
+                    
+                    # Check health of both VPNs
+                    vpn1_healthy = gluetun_monitor.is_healthy(vpn1_name)
+                    vpn2_healthy = gluetun_monitor.is_healthy(vpn2_name)
+                    
+                    # Determine VPN assignment based on health and load
+                    if vpn1_healthy and vpn2_healthy:
+                        # Both healthy: use round-robin to balance load
+                        vpn_container = vpn1_name if vpn1_engines <= vpn2_engines else vpn2_name
+                    elif vpn1_healthy and not vpn2_healthy:
+                        # Only VPN1 healthy: use it
+                        vpn_container = vpn1_name
+                    elif vpn2_healthy and not vpn1_healthy:
+                        # Only VPN2 healthy: use it
+                        vpn_container = vpn2_name
+                    else:
+                        # Both unhealthy: fail provisioning
+                        raise RuntimeError("Both VPN containers are unhealthy - cannot start AceStream engine")
+                    
+                    logger.info(f"Assigning new engine to VPN '{vpn_container}' (VPN1: {vpn1_engines} engines, VPN2: {vpn2_engines} engines)")
                 
-                logger.info(f"Assigning new engine to VPN '{vpn_container}' (VPN1: {vpn1_engines} engines, VPN2: {vpn2_engines} engines)")
-        else:
-            # Single VPN mode
-            vpn_container = cfg.GLUETUN_CONTAINER_NAME
+                # Atomically increment pending counter for selected VPN (applies to all modes)
+                _vpn_pending_engines[vpn_container] = _vpn_pending_engines.get(vpn_container, 0) + 1
+            else:
+                # Single VPN mode
+                vpn_container = cfg.GLUETUN_CONTAINER_NAME
         
         # Check if assigned VPN is healthy
         try:
@@ -598,7 +646,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Add volumes if configured
     if volumes:
         container_args["volumes"] = volumes
-    
+
     # Add command for CMD-based variants
     if cmd is not None:
         container_args["command"] = cmd
@@ -607,9 +655,30 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     if ports is not None:
         container_args["ports"] = ports
     
+    # Capture base volumes (e.g. torrent folders) before adding retry-specific cache mounts
+    base_volumes = container_args.get("volumes", {}).copy()
+    
     # Retry container creation with different names if there are conflicts
     max_retries = 5
     for attempt in range(max_retries):
+        # Reset volumes to base for this attempt
+        current_volumes = base_volumes.copy()
+        
+        # Setup and mount disk cache for the current container name
+        from .engine_cache_manager import engine_cache_manager
+        if engine_cache_manager.is_enabled():
+            if engine_cache_manager.setup_cache(container_name):
+                cache_mount = engine_cache_manager.get_mount_config(container_name)
+                if cache_mount:
+                    current_volumes.update(cache_mount)
+                    logger.info(f"Mounted disk cache for {container_name}")
+        
+        # Apply volumes to container args
+        if current_volumes:
+            container_args["volumes"] = current_volumes
+        elif "volumes" in container_args:
+            del container_args["volumes"]
+
         try:
             cont = safe(cli.containers.run, **container_args)
             break
@@ -686,6 +755,9 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     
     # Add to in-memory state
     state.engines[cont.id] = engine
+    
+    # Decrement pending counter now that engine is in state (in redundant VPN mode)
+    _decrement_vpn_pending_counter(vpn_container)
     
     # Persist to database
     try:

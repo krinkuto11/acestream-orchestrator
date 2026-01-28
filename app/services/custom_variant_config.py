@@ -113,6 +113,12 @@ class CustomVariantConfig(BaseModel):
     torrent_folder_host_path: Optional[str] = None  # Host path to mount (e.g., "/mnt/torrents")
     torrent_folder_container_path: str = DEFAULT_TORRENT_FOLDER_PATH  # Default container path
     
+    # Disk cache configuration
+    disk_cache_mount_enabled: bool = False
+    disk_cache_prune_enabled: bool = False
+    disk_cache_prune_interval: int = 60  # Minutes
+    disk_cache_file_max_age: int = 1440  # Minutes (24 hours)
+    
     @validator('platform')
     def validate_platform(cls, v):
         valid_platforms = ['amd64', 'arm32', 'arm64']
@@ -205,60 +211,92 @@ def get_default_parameters(platform: str) -> List[CustomVariantParameter]:
     """
     # Common parameters across all platforms
     common_params = [
-        # Flags - default enabled
+        # --- 1. Core Connection & Network ---
         CustomVariantParameter(name="--client-console", type="flag", value=True, enabled=True),
         CustomVariantParameter(name="--bind-all", type="flag", value=True, enabled=True),
         CustomVariantParameter(name="--service-remote-access", type="flag", value=False, enabled=False),
         CustomVariantParameter(name="--allow-user-config", type="flag", value=False, enabled=False),
-        CustomVariantParameter(name="--stats-report-peers", type="flag", value=False, enabled=False),
-        
-        # String parameters
-        CustomVariantParameter(name="--access-token", type="string", value="", enabled=False),
-        CustomVariantParameter(name="--service-access-token", type="string", value="", enabled=False),
-        CustomVariantParameter(name="--cache-dir", type="path", value="~/.ACEStream", enabled=False),
-        CustomVariantParameter(name="--log-file", type="path", value="", enabled=False),
-        
-        # Cache configuration
-        CustomVariantParameter(name="--live-cache-type", type="string", value="memory", enabled=True),
-        CustomVariantParameter(name="--live-cache-size", type="bytes", value=268435456, enabled=True),  # 256MB
-        CustomVariantParameter(name="--vod-cache-type", type="string", value="disk", enabled=True),
-        CustomVariantParameter(name="--vod-cache-size", type="bytes", value=536870912, enabled=True),  # 512MB
-        CustomVariantParameter(name="--vod-drop-max-age", type="int", value=0, enabled=False),
-        CustomVariantParameter(name="--max-file-size", type="bytes", value=2147483648, enabled=True),  # 2GB
-        
-        # Buffer settings
-        CustomVariantParameter(name="--live-buffer", type="int", value=10, enabled=True),
-        CustomVariantParameter(name="--vod-buffer", type="int", value=5, enabled=True),
-        CustomVariantParameter(name="--refill-buffer-interval", type="int", value=5, enabled=True),
-        
-        # Connection settings
-        CustomVariantParameter(name="--max-connections", type="int", value=200, enabled=True),
-        CustomVariantParameter(name="--max-peers", type="int", value=40, enabled=True),
-        CustomVariantParameter(name="--max-upload-slots", type="int", value=4, enabled=True),
-        CustomVariantParameter(name="--auto-slots", type="int", value=1, enabled=True),  # Boolean as int
-        CustomVariantParameter(name="--download-limit", type="int", value=0, enabled=False),  # 0 = unlimited
-        CustomVariantParameter(name="--upload-limit", type="int", value=0, enabled=False),  # 0 = unlimited
+        CustomVariantParameter(name="--random-port", type="flag", value=False, enabled=False),
+        CustomVariantParameter(name="--upnp-nat-access", type="flag", value=False, enabled=False),
+        CustomVariantParameter(name="--nat-detect", type="flag", value=True, enabled=True),
+        CustomVariantParameter(name="--ipv6-enabled", type="flag", value=False, enabled=False),
+        CustomVariantParameter(name="--ipv6-binds-v4", type="flag", value=False, enabled=False),
+        CustomVariantParameter(name="--max-socket-connects", type="int", value=1000, enabled=False),
+        CustomVariantParameter(name="--timeout-check-interval", type="int", value=30, enabled=False),
+        CustomVariantParameter(name="--keepalive-interval", type="int", value=15, enabled=False),
         
         # P2P port - special handling (VPN-aware)
         CustomVariantParameter(name="--port", type="int", value=8621, enabled=False),
-        
-        # WebRTC settings - boolean as int
-        CustomVariantParameter(name="--webrtc-allow-outgoing-connections", type="int", value=0, enabled=False),
-        CustomVariantParameter(name="--webrtc-allow-incoming-connections", type="int", value=0, enabled=False),
-        
-        # Stats settings
-        CustomVariantParameter(name="--stats-report-interval", type="int", value=60, enabled=True),
-        
-        # Advanced settings
-        CustomVariantParameter(name="--slots-manager-use-cpu-limit", type="int", value=0, enabled=False),
-        CustomVariantParameter(name="--core-skip-have-before-playback-pos", type="int", value=0, enabled=False),
-        CustomVariantParameter(name="--core-dlr-periodic-check-interval", type="int", value=10, enabled=True),
+
+        # --- 2. Bandwidth & Limits ---
+        CustomVariantParameter(name="--download-limit", type="int", value=0, enabled=False),  # 0 = unlimited
+        CustomVariantParameter(name="--upload-limit", type="int", value=0, enabled=False),  # 0 = unlimited
+        CustomVariantParameter(name="--max-upload-slots", type="int", value=4, enabled=True),
+        CustomVariantParameter(name="--max-connections", type="int", value=200, enabled=True),
+        CustomVariantParameter(name="--max-peers", type="int", value=40, enabled=True),
+        CustomVariantParameter(name="--max-peers-limit", type="int", value=100, enabled=False),
+        CustomVariantParameter(name="--min-peers", type="int", value=0, enabled=False),
+        CustomVariantParameter(name="--auto-slots", type="int", value=1, enabled=True),  # Boolean as int
+
+        # --- 3. Cache & Storage ---
+        CustomVariantParameter(name="--cache-dir", type="path", value="~/.ACEStream", enabled=False),
+        CustomVariantParameter(name="--cache-limit", type="int", value=10, enabled=False), # GB
+        CustomVariantParameter(name="--cache-max-bytes", type="bytes", value=10737418240, enabled=False), # 10GB
+        CustomVariantParameter(name="--disk-cache-limit", type="bytes", value=10737418240, enabled=False),
+        CustomVariantParameter(name="--memory-cache-limit", type="bytes", value=268435456, enabled=False),
+        CustomVariantParameter(name="--max-file-size", type="bytes", value=2147483648, enabled=True),  # 2GB
+        CustomVariantParameter(name="--buffer-reads", type="flag", value=False, enabled=False),
+        CustomVariantParameter(name="--reserve-space", type="flag", value=False, enabled=False),
+
+        # --- 4. Live Streaming ---
+        CustomVariantParameter(name="--live-cache-type", type="string", value="disk", enabled=True),
+        CustomVariantParameter(name="--live-cache-size", type="bytes", value=268435456, enabled=True),  # 256MB
+        CustomVariantParameter(name="--live-mem-cache-size", type="bytes", value=268435456, enabled=False),
+        CustomVariantParameter(name="--live-disk-cache-size", type="bytes", value=1073741824, enabled=False),
+        # Removed redundant --live-buffer (Basic)
+        CustomVariantParameter(name="--live-buffer-time", type="int", value=10, enabled=False),
+        CustomVariantParameter(name="--live-max-buffer-time", type="int", value=60, enabled=False),
+        CustomVariantParameter(name="--live-adjust-buffer-time", type="int", value=1, enabled=False), # 0/1
+        CustomVariantParameter(name="--live-disable-multiple-read-threads", type="int", value=0, enabled=False), # 0/1
+        CustomVariantParameter(name="--live-stop-main-read-thread", type="int", value=0, enabled=False), # 0/1
+        CustomVariantParameter(name="--live-cache-auto-size", type="int", value=0, enabled=False), # 0/1
+        CustomVariantParameter(name="--live-cache-auto-size-reserve", type="bytes", value=104857600, enabled=False), # 100MB
+        CustomVariantParameter(name="--live-cache-max-memory-percent", type="int", value=50, enabled=False),
+        CustomVariantParameter(name="--live-aux-seeders", type="flag", value=False, enabled=False),
         CustomVariantParameter(name="--check-live-pos-interval", type="int", value=10, enabled=True),
-        
-        # Logging
+
+        # --- 5. VOD ---
+        CustomVariantParameter(name="--vod-cache-type", type="string", value="disk", enabled=True),
+        CustomVariantParameter(name="--vod-cache-size", type="bytes", value=536870912, enabled=True),  # 512MB
+        CustomVariantParameter(name="--vod-buffer", type="int", value=5, enabled=True),
+        CustomVariantParameter(name="--vod-drop-max-age", type="int", value=0, enabled=False),
+        CustomVariantParameter(name="--preload-vod", type="flag", value=False, enabled=False),
+        CustomVariantParameter(name="--refill-buffer-interval", type="int", value=5, enabled=True),
+
+        # --- 6. Logging & Debugging ---
+        CustomVariantParameter(name="--log-file", type="path", value="", enabled=False),
         CustomVariantParameter(name="--log-debug", type="int", value=0, enabled=False),
         CustomVariantParameter(name="--log-max-size", type="bytes", value=10485760, enabled=True),  # 10MB
         CustomVariantParameter(name="--log-backup-count", type="int", value=3, enabled=True),
+        CustomVariantParameter(name="--log-stdout", type="flag", value=False, enabled=False),
+        CustomVariantParameter(name="--log-stderr", type="flag", value=False, enabled=False),
+        CustomVariantParameter(name="--debug-sentry", type="flag", value=False, enabled=False),
+        CustomVariantParameter(name="--enable-profiler", type="int", value=0, enabled=False), # 0/1
+        CustomVariantParameter(name="--stats-report-interval", type="int", value=1, enabled=True),
+        CustomVariantParameter(name="--stats-report-peers", type="flag", value=False, enabled=False),
+
+        # --- 7. Security & API ---
+        CustomVariantParameter(name="--access-token", type="string", value="", enabled=False),
+        CustomVariantParameter(name="--service-access-token", type="string", value="", enabled=False),
+
+        # --- 8. WebRTC ---
+        CustomVariantParameter(name="--webrtc-allow-outgoing-connections", type="int", value=0, enabled=False),
+        CustomVariantParameter(name="--webrtc-allow-incoming-connections", type="int", value=0, enabled=False),
+
+        # --- 9. Advanced/Internal ---
+        CustomVariantParameter(name="--slots-manager-use-cpu-limit", type="int", value=0, enabled=False),
+        CustomVariantParameter(name="--core-skip-have-before-playback-pos", type="int", value=0, enabled=False),
+        CustomVariantParameter(name="--core-dlr-periodic-check-interval", type="int", value=10, enabled=True),
     ]
     
     return common_params
@@ -331,6 +369,10 @@ def save_config(config: CustomVariantConfig, config_path: Path = DEFAULT_CONFIG_
         
         with open(config_path, 'w') as f:
             json.dump(config.dict(), f, indent=2)
+            
+        # Update global instance to reflect changes immediately
+        global _config_instance
+        _config_instance = config
         
         logger.info(f"Saved custom variant config to {config_path}")
         return True

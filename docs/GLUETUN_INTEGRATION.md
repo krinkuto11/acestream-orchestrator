@@ -392,6 +392,27 @@ Only **one engine per VPN** can actually use the VPN's forwarded P2P port. This 
 - **Clear Identification**: Easy to identify which engine has the P2P port
 - **Automatic Management**: System automatically selects and maintains forwarded engine
 
+#### Port Change Handling
+
+When the VPN restarts internally (e.g., due to reconnection or network changes), the forwarded port may change. The orchestrator handles this automatically:
+
+1. **Detection**: Monitors forwarded port every 30 seconds
+2. **Port Change Detected**: When port changes (e.g., from 43437 to 57611):
+   - Old forwarded engine is stopped immediately
+   - Removed from state to hide from `/engines` endpoint
+   - **Immediate Autoscaling**: Triggers autoscaler immediately (not waiting for next cycle)
+3. **Rapid Replacement**: New forwarded engine provisioned within ~4 seconds
+4. **Recovery Stabilization**: 2-minute grace period prevents premature cleanup during recovery
+
+**Timeline Example**:
+```
+16:30:02 - Port change detected (43437 → 57611)
+16:30:12 - Old forwarded engine stopped
+16:30:16 - New forwarded engine provisioned (gap: ~4 seconds)
+```
+
+This ensures minimal downtime when VPN ports change, reducing the gap from ~1-2 minutes (waiting for periodic autoscaler) to just a few seconds.
+
 #### Double-Check Connectivity
 
 When Gluetun's Docker health check reports unhealthy, the orchestrator performs a double-check:

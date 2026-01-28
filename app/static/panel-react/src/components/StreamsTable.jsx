@@ -72,6 +72,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const [extendedStatsError, setExtendedStatsError] = useState(null)
   const [clients, setClients] = useState([])
   const [clientsLoading, setClientsLoading] = useState(false)
+  const [streamStatus, setStreamStatus] = useState(null) // For tracking AceStream stat URL status
   
   // Track if we have fetched data at least once to prevent loading flicker on refreshes
   const hasClientsDataRef = useRef(false)
@@ -80,6 +81,9 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
 
   const isActive = stream.status === 'started'
   const isEnded = stream.status === 'ended'
+  
+  // Determine if stream is prebuffering based on stat URL response
+  const isPrebuffering = streamStatus === 'prebuf'
 
   const fetchStats = useCallback(async () => {
     if (!stream || !isExpanded) return
@@ -115,7 +119,9 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   }, [stream, orchUrl, apiKey, isExpanded])
 
   const fetchExtendedStats = useCallback(async () => {
-    if (!stream || !isExpanded) return
+    if (!stream) return
+    // Only fetch if expanded OR if active (to show title in collapsed state)
+    if (!isExpanded && !isActive) return
     
     // Only show loading if we don't have data yet
     if (!hasExtendedStatsDataRef.current) {
@@ -150,7 +156,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     } finally {
       setExtendedStatsLoading(false)
     }
-  }, [stream, orchUrl, apiKey, isExpanded])
+  }, [stream, orchUrl, apiKey, isExpanded, isActive])
 
   const fetchClients = useCallback(async () => {
     if (!stream || !isExpanded || !stream.key) return
@@ -184,20 +190,54 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     }
   }, [stream, orchUrl, isExpanded])
 
+  const fetchStreamStatus = useCallback(async () => {
+    if (!stream || !stream.stat_url || !isActive) return
+    
+    try {
+      const response = await fetch(stream.stat_url)
+      
+      if (response.ok) {
+        const data = await response.json()
+        // AceStream stat response can have status in various places
+        // Check common paths: status, response.status, etc.
+        const status = data.status || data.response?.status || null
+        setStreamStatus(status)
+      }
+    } catch (err) {
+      console.error('Failed to fetch stream status from stat URL:', err)
+      // Keep existing status on error
+    }
+  }, [stream, isActive])
+
   const refreshData = useCallback(() => {
     fetchStats()
     fetchClients()
-  }, [fetchStats, fetchClients])
+    fetchStreamStatus()
+  }, [fetchStats, fetchClients, fetchStreamStatus])
 
   useEffect(() => {
     if (isExpanded && isActive) {
       fetchStats()
       fetchExtendedStats()
       fetchClients()
+      fetchStreamStatus()
       const interval = setInterval(refreshData, 10000)
       return () => clearInterval(interval)
     }
-  }, [refreshData, fetchStats, fetchExtendedStats, fetchClients, isExpanded, isActive])
+  }, [refreshData, fetchStats, fetchExtendedStats, fetchClients, fetchStreamStatus, isExpanded, isActive])
+
+  // Also fetch stream status periodically even when not expanded, for active streams
+  useEffect(() => {
+    if (isActive) {
+      fetchStreamStatus()
+      fetchExtendedStats() // Fetch extended stats for active streams to show title
+      const interval = setInterval(() => {
+        fetchStreamStatus()
+        fetchExtendedStats()
+      }, 10000) // Check every 10 seconds
+      return () => clearInterval(interval)
+    }
+  }, [fetchStreamStatus, fetchExtendedStats, isActive])
 
   const chartData = {
     labels: stats.map(s => new Date(s.ts).toLocaleTimeString()),
@@ -312,12 +352,13 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     <>
       <TableRow>
         {showSpeedColumns && (
-          <TableCell className="w-[40px] text-center">
-            <div className="flex items-center justify-center">
+          <TableCell className="w-[40px] text-center align-middle px-2">
+            <div className="flex items-center justify-center h-full">
               <Checkbox
                 checked={isSelected}
                 onCheckedChange={onToggleSelect}
                 aria-label="Select stream"
+                className="mx-auto"
               />
             </div>
           </TableCell>
@@ -333,22 +374,38 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           </Button>
         </TableCell>
         <TableCell className="text-center">
-          <Badge variant={isActive ? "success" : "secondary"} className="flex items-center gap-1 w-fit mx-auto">
-            {isActive ? <PlayCircle className="h-3 w-3" /> : <Activity className="h-3 w-3" />}
-            <span className="text-white">{isActive ? 'ACTIVE' : 'ENDED'}</span>
-          </Badge>
+          {isPrebuffering ? (
+            <Badge className="flex items-center gap-1 w-fit mx-auto bg-orange-500 text-white hover:bg-orange-600 border-transparent">
+              <Clock className="h-3 w-3" />
+              <span className="text-white">PREBUF</span>
+            </Badge>
+          ) : (
+            <Badge variant={isActive ? "success" : "secondary"} className="flex items-center gap-1 w-fit mx-auto">
+              {isActive ? <PlayCircle className="h-3 w-3" /> : <Activity className="h-3 w-3" />}
+              <span className="text-white">{isActive ? 'ACTIVE' : 'ENDED'}</span>
+            </Badge>
+          )}
         </TableCell>
         <TableCell className="font-medium text-center">
           <div className="flex flex-col gap-1 items-center">
-            <span className="text-sm text-white truncate max-w-[200px]" title={stream.id}>
-              {stream.id.slice(0, TRUNCATED_STREAM_ID_LENGTH)}...
-            </span>
-            {isActive && bufferDuration !== null && (
-              <span className="text-xs text-muted-foreground">
-                {bufferDuration}s behind live
+            {extendedStats?.title && (
+              <span className="text-xs text-muted-foreground truncate max-w-[12rem]" title={extendedStats.title}>
+                {extendedStats.title}
               </span>
             )}
+            <span className="text-sm text-white truncate max-w-[12rem]" title={stream.id}>
+              {stream.id.slice(0, TRUNCATED_STREAM_ID_LENGTH)}...
+            </span>
           </div>
+        </TableCell>
+        <TableCell className="text-center">
+          {isActive && bufferDuration !== null ? (
+            <span className="text-sm text-white">
+              {bufferDuration}s
+            </span>
+          ) : (
+            <span className="text-sm text-muted-foreground">—</span>
+          )}
         </TableCell>
         <TableCell className="text-center">
           <span className="text-sm text-white truncate max-w-[150px] block mx-auto" title={stream.container_name || stream.container_id}>
@@ -412,8 +469,8 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       </TableRow>
       {isExpanded && (
         <TableRow>
-          {/* colspan: active streams have 12 cols (checkbox + expand + 10 data), ended streams have 7 cols (expand + 6 data) */}
-          <TableCell colSpan={showSpeedColumns ? 12 : 7} className="p-6 bg-muted/50">
+          {/* colspan: active streams have 13 cols (checkbox + expand + 11 data), ended streams have 7 cols (expand + 6 data) */}
+          <TableCell colSpan={showSpeedColumns ? 13 : 7} className="p-6 bg-muted/50">
             <div className="space-y-6">
               {/* Connected Clients - Moved to top */}
               {isActive && (
@@ -816,16 +873,17 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
             No active streams
           </div>
         ) : (
-          <div className="rounded-md border">
+          <div className="rounded-md border overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[40px] text-center">
-                    <div className="flex items-center justify-center">
+                  <TableHead className="w-[40px] text-center align-middle px-2">
+                    <div className="flex items-center justify-center h-full">
                       <Checkbox
                         checked={someSelected ? "indeterminate" : allSelected}
                         onCheckedChange={handleSelectAll}
                         aria-label="Select all"
+                        className="mx-auto"
                       />
                     </div>
                   </TableHead>
@@ -840,7 +898,10 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                     className="cursor-pointer select-none text-center"
                     onClick={() => handleSort('id')}
                   >
-                    Stream ID <SortIcon column="id" />
+                    Stream <SortIcon column="id" />
+                  </TableHead>
+                  <TableHead className="text-center">
+                    Buffer
                   </TableHead>
                   <TableHead 
                     className="cursor-pointer select-none text-center"
@@ -930,7 +991,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
             </CollapsibleTrigger>
           </div>
           <CollapsibleContent className="mt-4">
-            <div className="rounded-md border">
+            <div className="rounded-md border overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -945,7 +1006,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                       className="cursor-pointer select-none text-center"
                       onClick={() => handleSort('id')}
                     >
-                      Stream ID <SortIcon column="id" />
+                      Stream <SortIcon column="id" />
                     </TableHead>
                     <TableHead 
                       className="cursor-pointer select-none text-center"

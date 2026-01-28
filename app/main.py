@@ -201,11 +201,9 @@ async def lifespan(app: FastAPI):
             if 'engine_variant' in engine_settings:
                 # Update engine variant preference
                 cfg.ENGINE_VARIANT = engine_settings['engine_variant']
-            if 'use_custom_variant' in engine_settings:
-                # Update custom variant enabled state if needed
-                if custom_config and custom_config.enabled != engine_settings['use_custom_variant']:
-                    custom_config.enabled = engine_settings['use_custom_variant']
-                    save_custom_config(custom_config)
+                # Do NOT override custom_config.enabled from engine_settings
+                # custom_engine_variant.json should be the source of truth for its own enabled state
+                pass
             logger.info(f"Engine settings loaded from persistent storage: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}, ENGINE_VARIANT={cfg.ENGINE_VARIANT}")
         else:
             # No persisted settings found - create default settings from current config
@@ -306,7 +304,15 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
     asyncio.create_task(acexy_sync_service.start())  # Start Acexy sync service
     asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
+    asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
     asyncio.create_task(looping_streams_tracker.start())  # Start looping streams tracker
+    
+    # Start engine cache manager background pruner
+    from .services.engine_cache_manager import engine_cache_manager
+    if engine_cache_manager.is_enabled():
+        asyncio.create_task(engine_cache_manager.start_pruner())
+        logger.info("Engine cache pruner started")
+    
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
     # Start cache cleanup task
@@ -333,7 +339,7 @@ async def lifespan(app: FastAPI):
     
     cleanup_on_shutdown()
 
-__version__ = "1.5.2.1"
+__version__ = "1.5.3"
 
 app = FastAPI(
     title="On-Demand Orchestrator",
@@ -451,6 +457,32 @@ def get_metrics():
     
     # Generate and return Prometheus metrics
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+@app.get("/metrics/performance")
+def get_performance_metrics(
+    operation: Optional[str] = Query(None, description="Filter by operation name"),
+    window: Optional[int] = Query(None, description="Time window in seconds")
+):
+    """
+    Get performance metrics for system operations.
+    
+    Shows timing statistics (avg, p50, p95, p99) for key operations:
+    - hls_manifest_generation: HLS manifest creation time
+    - hls_segment_fetch: HLS segment download time
+    - docker_stats_collection: Docker stats batch collection time
+    - stream_event_handling: Event handler processing time
+    """
+    from .services.performance_metrics import performance_metrics
+    
+    if operation:
+        stats = {operation: performance_metrics.get_stats(operation, window)}
+    else:
+        stats = performance_metrics.get_all_stats(window)
+    
+    return {
+        "window_seconds": window or "all",
+        "operations": stats
+    }
 
 # Provisioning
 @app.post("/provision", dependencies=[Depends(require_api_key)])
@@ -806,6 +838,48 @@ def get_engines():
         logger.debug(f"Engine verification failed for /engines endpoint: {e}")
         engines.sort(key=lambda e: e.port)
         return engines
+
+@app.get("/engines/with-metrics")
+def get_engines_with_metrics():
+    """Get all engines with aggregated stream metrics (peers, download/upload speeds)."""
+    engines = state.list_engines()
+    all_active_streams = state.list_streams_with_stats(status="started")
+    
+    # Group streams by container_id and aggregate metrics
+    engine_metrics = {}
+    for stream in all_active_streams:
+        container_id = stream.container_id
+        if container_id not in engine_metrics:
+            engine_metrics[container_id] = {
+                'total_peers': 0,
+                'total_speed_down': 0,
+                'total_speed_up': 0,
+                'stream_count': 0
+            }
+        
+        # Aggregate metrics from active streams
+        engine_metrics[container_id]['stream_count'] += 1
+        if stream.peers is not None:
+            engine_metrics[container_id]['total_peers'] += stream.peers
+        if stream.speed_down is not None:
+            engine_metrics[container_id]['total_speed_down'] += stream.speed_down
+        if stream.speed_up is not None:
+            engine_metrics[container_id]['total_speed_up'] += stream.speed_up
+    
+    # Enrich engine data with metrics
+    result = []
+    for engine in engines:
+        engine_dict = engine.model_dump()
+        metrics = engine_metrics.get(engine.container_id, {
+            'total_peers': 0,
+            'total_speed_down': 0,
+            'total_speed_up': 0,
+            'stream_count': 0
+        })
+        engine_dict.update(metrics)
+        result.append(engine_dict)
+    
+    return result
 
 @app.get("/engines/{container_id}")
 def get_engine(container_id: str):
@@ -1357,6 +1431,20 @@ def update_custom_variant_config(config: CustomVariantConfig):
     if not success:
         raise HTTPException(status_code=500, detail="Failed to save configuration")
     
+    # Sync configuration changes to active template if one exists
+    # This prevents the issue where app restart overwrites custom config with active template data
+    try:
+        from .services.template_manager import get_active_template_id, get_template, save_template
+        active_id = get_active_template_id()
+        if active_id is not None:
+            template = get_template(active_id)
+            if template:
+                # Update the template with the new configuration
+                save_template(active_id, template.name, config)
+                logger.info(f"Synced configuration changes to active template '{template.name}' (slot {active_id})")
+    except Exception as e:
+        logger.warning(f"Failed to sync configuration to active template: {e}")
+    
     # Reload the configuration to ensure it's active
     reload_config()
     
@@ -1409,6 +1497,7 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
     def reprovision_task():
         global _reprovision_state
         import time
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         
         try:
             # Enter reprovisioning mode to coordinate with other services
@@ -1426,24 +1515,43 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
             _reprovision_state.update({
                 "total_engines": total_engines,
                 "current_phase": "stopping",
-                "message": f"Stopping {total_engines} engines..."
+                "message": f"Stopping {total_engines} engines concurrently..."
             })
             
-            # Delete all engines
-            for idx, engine_id in enumerate(engine_ids, 1):
+            # Delete all engines concurrently (similar to shutdown)
+            # Use ThreadPoolExecutor to stop containers concurrently without overwhelming Docker socket
+            max_workers = min(10, total_engines) if total_engines > 0 else 1  # Cap at 10 concurrent operations
+            stopped_count = 0
+            
+            def stop_engine_wrapper(engine_id, idx, total):
+                """Wrapper function to stop engine and update state"""
                 try:
-                    _reprovision_state.update({
-                        "current_engine_id": engine_id[:12],
-                        "message": f"Stopping engine {idx}/{total_engines}: {engine_id[:12]}"
-                    })
-                    
                     stop_container(engine_id)
-                    logger.info(f"Stopped engine {engine_id[:12]} ({idx}/{total_engines})")
-                    
-                    _reprovision_state["engines_stopped"] = idx
+                    logger.info(f"Stopped engine {engine_id[:12]} ({idx}/{total})")
+                    return (True, engine_id, None)
                 except Exception as e:
                     logger.error(f"Failed to stop engine {engine_id[:12]}: {e}")
-                    # Continue with remaining engines even if one fails
+                    return (False, engine_id, str(e))
+            
+            if engine_ids:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # Submit all stop tasks
+                    future_to_engine = {
+                        executor.submit(stop_engine_wrapper, engine_id, idx, total_engines): engine_id
+                        for idx, engine_id in enumerate(engine_ids, 1)
+                    }
+                    
+                    # Process results as they complete
+                    for future in as_completed(future_to_engine):
+                        success, engine_id, error = future.result()
+                        if success:
+                            stopped_count += 1
+                            _reprovision_state["engines_stopped"] = stopped_count
+                            _reprovision_state.update({
+                                "message": f"Stopped {stopped_count}/{total_engines} engines..."
+                            })
+            
+            logger.info(f"Stopped {stopped_count}/{total_engines} engines concurrently")
             
             # Update state: cleaning phase
             _reprovision_state.update({
@@ -1474,12 +1582,56 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
             # Update state: provisioning phase
             _reprovision_state.update({
                 "current_phase": "provisioning",
-                "message": f"Provisioning {cfg.MIN_REPLICAS} new engines..."
+                "message": f"Provisioning {cfg.MIN_REPLICAS} new engines concurrently..."
             })
             
-            # Reprovision minimum replicas
-            ensure_minimum(initial_startup=True)
-            logger.info(f"Successfully reprovisioned engines with new settings")
+            # Reprovision minimum replicas concurrently
+            # Use ThreadPoolExecutor to start containers concurrently
+            target_engines = cfg.MIN_REPLICAS
+            max_provision_workers = min(5, target_engines)  # Cap at 5 concurrent provisions to avoid overwhelming Docker
+            provisioned_count = 0
+            
+            def provision_engine_wrapper(idx, total):
+                """Wrapper function to provision engine and update state"""
+                try:
+                    response = start_acestream(AceProvisionRequest())
+                    if response and response.container_id:
+                        logger.info(f"Successfully provisioned engine {response.container_id[:12]} ({idx}/{total})")
+                        return (True, response.container_id, None)
+                    else:
+                        logger.error(f"Failed to provision engine {idx}/{total}: No response or container ID")
+                        return (False, None, "No response or container ID")
+                except Exception as e:
+                    logger.error(f"Failed to provision engine {idx}/{total}: {e}")
+                    return (False, None, str(e))
+            
+            if target_engines > 0:
+                with ThreadPoolExecutor(max_workers=max_provision_workers) as executor:
+                    # Submit all provision tasks
+                    future_to_idx = {
+                        executor.submit(provision_engine_wrapper, idx, target_engines): idx
+                        for idx in range(1, target_engines + 1)
+                    }
+                    
+                    # Process results as they complete
+                    for future in as_completed(future_to_idx):
+                        success, container_id, error = future.result()
+                        if success:
+                            provisioned_count += 1
+                            _reprovision_state["engines_provisioned"] = provisioned_count
+                            _reprovision_state.update({
+                                "message": f"Provisioned {provisioned_count}/{target_engines} new engines..."
+                            })
+            
+            logger.info(f"Successfully provisioned {provisioned_count}/{target_engines} engines concurrently")
+            
+            # Reindex after provisioning to ensure state consistency
+            logger.info("Reindexing after reprovisioning to pick up new containers")
+            try:
+                from .services.reindex import reindex_existing
+                reindex_existing()
+            except Exception as e:
+                logger.error(f"Failed to reindex after reprovisioning: {e}")
             
             # Exit reprovisioning mode
             state.exit_reprovisioning_mode()
@@ -1488,11 +1640,11 @@ async def reprovision_all_engines(background_tasks: BackgroundTasks):
             _reprovision_state = {
                 "in_progress": False,
                 "status": "success",
-                "message": f"Successfully reprovisioned all engines ({total_engines} stopped, {cfg.MIN_REPLICAS} provisioned)",
+                "message": f"Successfully reprovisioned all engines ({stopped_count} stopped, {provisioned_count} provisioned)",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "total_engines": total_engines,
-                "engines_stopped": total_engines,
-                "engines_provisioned": cfg.MIN_REPLICAS,
+                "engines_stopped": stopped_count,
+                "engines_provisioned": provisioned_count,
                 "current_engine_id": None,
                 "current_phase": "complete"
             }
@@ -1880,7 +2032,8 @@ async def ace_getstream(
                     # Track client activity for this request
                     hls_proxy.record_client_activity(id, client_ip)
                     
-                    manifest_content = hls_proxy.get_manifest(id)
+                    # Use async version to avoid blocking the event loop
+                    manifest_content = await hls_proxy.get_manifest_async(id)
                     
                     # Note: In HLS, clients make multiple requests (manifest + segments)
                     # Client activity is tracked on each request, not per connection
@@ -1963,8 +2116,9 @@ async def ace_getstream(
                 )
                 
                 # Track client activity and get manifest for the newly created channel
+                # Use async version to avoid blocking the event loop
                 hls_proxy.record_client_activity(id, client_ip)
-                manifest_content = hls_proxy.get_manifest(id)
+                manifest_content = await hls_proxy.get_manifest_async(id)
                 
                 return StreamingResponse(
                     iter([manifest_content.encode('utf-8')]),

@@ -507,8 +507,10 @@ class GluetunMonitor:
         forwarded engine becomes invalid. This method:
         1. Identifies and stops the old forwarded engine
         2. Removes it from state so it's not exposed via /engines endpoint
-        3. Sets recovery stabilization period to prevent premature cleanup
-        4. Allows the autoscaler to provision a new forwarded engine with the new port
+        3. Triggers immediate autoscaling to provision a new forwarded engine with the new port
+        
+        Note: Port change indicates the VPN container restarted internally and is already
+        healthy and ready for operation. No stabilization period is needed.
         """
         now = datetime.now(timezone.utc)
         
@@ -542,20 +544,21 @@ class GluetunMonitor:
             except Exception as e:
                 logger.error(f"Error stopping forwarded engine {forwarded_engine.container_id[:12]}: {e}")
             
-            # Set recovery stabilization period to prevent premature cleanup during recovery
-            # This prevents the monitor from cleaning up engines that may be temporarily
-            # unhealthy during the port change and subsequent reprovisioning
-            monitor = self._vpn_monitors.get(container_name)
-            if monitor:
-                monitor._last_recovery_time = now
-                logger.info(f"Recovery stabilization period set for VPN '{container_name}' after port change "
-                           f"({monitor._recovery_stabilization_period_s}s)")
-            
             logger.debug("VPN operation")
             
-            # The autoscaler will automatically provision a new forwarded engine
-            # to maintain MIN_REPLICAS, and it will use the new forwarded port
-            logger.info(f"Forwarded engine replacement triggered - autoscaler will provision new engine with port {new_port}")
+            # Trigger immediate autoscaling to provision replacement engine
+            # instead of waiting for next periodic autoscaler cycle (up to 30 seconds)
+            logger.info(f"Forwarded engine replacement triggered - provisioning new engine immediately with port {new_port}")
+            try:
+                from .autoscaler import ensure_minimum
+                # Run autoscaler in current running loop to provision replacement immediately
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, ensure_minimum, False)
+                logger.info("Immediate autoscaling completed after port change")
+            except Exception as autoscale_error:
+                logger.error(f"Error during immediate autoscaling after port change: {autoscale_error}")
+                # Don't fail the entire port change handling if autoscaling fails
+                # The periodic autoscaler will eventually provision the engine
             
         except Exception as e:
             logger.error(f"Error handling port change for VPN '{container_name}': {e}")

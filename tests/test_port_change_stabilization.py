@@ -1,13 +1,18 @@
 """
-Test that VPN port change triggers recovery stabilization period.
+Test that VPN port change does NOT trigger recovery stabilization period.
 
-This test validates the fix for the issue where engines were prematurely
-cleaned up after a VPN port change, leading to engine distribution imbalance.
+This test validates the fix for the issue where port changes incorrectly
+triggered recovery stabilization periods. Port changes indicate the VPN
+container restarted internally and is already healthy and ready.
 
-The fix ensures that when a VPN's forwarded port changes:
+The stabilization period should ONLY be set during actual VPN health
+recovery (when transitioning from unhealthy to healthy state), which is
+needed for emergency mode scenarios.
+
+The test ensures that when a VPN's forwarded port changes:
 1. The old forwarded engine is replaced
-2. A recovery stabilization period is set (default 120 seconds)
-3. The monitor respects this period and doesn't clean up engines prematurely
+2. NO recovery stabilization period is set
+3. The VPN is immediately ready for provisioning new engines
 """
 
 import asyncio
@@ -20,8 +25,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def test_port_change_sets_recovery_stabilization():
-    """Test that port change sets recovery stabilization period on the VPN monitor."""
+async def test_port_change_does_not_set_recovery_stabilization():
+    """Test that port change does NOT set recovery stabilization period on the VPN monitor."""
     from app.services.gluetun import GluetunMonitor
     from app.models.schemas import EngineState
     from app.core.config import cfg
@@ -82,14 +87,14 @@ async def test_port_change_sets_recovery_stabilization():
             # Simulate port change
             await gluetun_monitor._handle_port_change("gluetun", 65290, 40648)
             
-            # Verify recovery time was set
-            assert vpn_monitor._last_recovery_time is not None, "Recovery time should be set after port change"
-            logger.info(f"✓ Recovery time set after port change: {vpn_monitor._last_recovery_time}")
+            # Verify recovery time was NOT set (port change should not trigger stabilization)
+            assert vpn_monitor._last_recovery_time is None, "Recovery time should NOT be set after port change"
+            logger.info(f"✓ Recovery time NOT set after port change (correct behavior)")
             
-            # Verify the recovery time is recent (within last 5 seconds)
-            time_since_recovery = (datetime.now(timezone.utc) - vpn_monitor._last_recovery_time).total_seconds()
-            assert time_since_recovery < 5, f"Recovery time should be recent, but was {time_since_recovery}s ago"
-            logger.info(f"✓ Recovery time is recent ({time_since_recovery:.2f}s ago)")
+            # Verify the VPN is NOT in recovery stabilization period
+            in_stabilization = vpn_monitor.is_in_recovery_stabilization_period()
+            assert in_stabilization is False, "VPN should NOT be in stabilization period after port change"
+            logger.info("✓ VPN is NOT in recovery stabilization period after port change")
         
     finally:
         # Restore original modules
@@ -129,8 +134,8 @@ async def test_monitor_respects_recovery_stabilization():
     logger.info("✓ Monitor is not in recovery stabilization period after 130s")
 
 
-async def test_redundant_mode_port_change_stabilization():
-    """Test that port change sets stabilization period in redundant VPN mode."""
+async def test_redundant_mode_port_change_no_stabilization():
+    """Test that port change does NOT set stabilization period in redundant VPN mode."""
     from app.services.gluetun import GluetunMonitor
     from app.models.schemas import EngineState
     from app.core.config import cfg
@@ -193,14 +198,14 @@ async def test_redundant_mode_port_change_stabilization():
                 # Simulate port change on VPN2
                 await gluetun_monitor._handle_port_change("gluetun_2", 36783, 61697)
                 
-                # Verify recovery time was set for VPN2
-                assert vpn_monitor._last_recovery_time is not None, "Recovery time should be set for VPN2 after port change"
-                logger.info(f"✓ Recovery time set for VPN2 after port change")
+                # Verify recovery time was NOT set for VPN2 (port change should not trigger stabilization)
+                assert vpn_monitor._last_recovery_time is None, "Recovery time should NOT be set for VPN2 after port change"
+                logger.info(f"✓ Recovery time NOT set for VPN2 after port change (correct behavior)")
                 
-                # Verify VPN2 is in recovery stabilization period
+                # Verify VPN2 is NOT in recovery stabilization period
                 in_stabilization = vpn_monitor.is_in_recovery_stabilization_period()
-                assert in_stabilization is True, "VPN2 should be in recovery stabilization period"
-                logger.info("✓ VPN2 is in recovery stabilization period")
+                assert in_stabilization is False, "VPN2 should NOT be in recovery stabilization period after port change"
+                logger.info("✓ VPN2 is NOT in recovery stabilization period after port change")
     
     finally:
         # Restore original modules
@@ -221,12 +226,12 @@ def run_async_test(coro):
 
 if __name__ == "__main__":
     print("\n" + "="*70)
-    print("Testing VPN Port Change Recovery Stabilization Period")
+    print("Testing VPN Port Change Does NOT Trigger Stabilization Period")
     print("="*70 + "\n")
     
-    print("Test 1: Port change sets recovery stabilization period")
+    print("Test 1: Port change does NOT set recovery stabilization period")
     print("-" * 70)
-    run_async_test(test_port_change_sets_recovery_stabilization())
+    run_async_test(test_port_change_does_not_set_recovery_stabilization())
     print()
     
     print("Test 2: Monitor respects recovery stabilization period")
@@ -234,9 +239,9 @@ if __name__ == "__main__":
     run_async_test(test_monitor_respects_recovery_stabilization())
     print()
     
-    print("Test 3: Redundant mode port change stabilization")
+    print("Test 3: Redundant mode port change does NOT set stabilization")
     print("-" * 70)
-    run_async_test(test_redundant_mode_port_change_stabilization())
+    run_async_test(test_redundant_mode_port_change_no_stabilization())
     print()
     
     print("="*70)
