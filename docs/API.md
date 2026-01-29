@@ -120,7 +120,7 @@ Response:
    - By default, returns all streams currently in memory (active streams only)
    - **IMPORTANT**: Ended streams are immediately removed from memory when they end
    - Use `status=started` to explicitly get active streams (same as default)
-   - Use `status=ended` to get ended streams (will return empty list since ended streams are removed immediately)
+   - Use `status=ended` to get ended streams (will typically return empty list since ended streams are immediately removed from memory)
    - Can filter by `container_id` to get streams for a specific engine
    - **Note**: A backup cleanup routine runs every 5 minutes to catch any streams that failed immediate removal
 

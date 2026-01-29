@@ -188,13 +188,30 @@ class State:
         with self._lock:
             removed_engine = self.engines.pop(container_id, None)
             if removed_engine:
-                # Also remove any associated streams that are still active
+                # Remove any associated streams from memory (consistent with immediate removal behavior)
+                # First, mark them as ended in the database for historical tracking
                 streams_to_remove = [s_id for s_id, stream in self.streams.items() 
-                                   if stream.container_id == container_id and stream.status != "ended"]
+                                   if stream.container_id == container_id]
                 for s_id in streams_to_remove:
-                    if s_id in self.streams:
-                        self.streams[s_id].status = "ended"
-                        self.streams[s_id].ended_at = self.now()
+                    stream = self.streams[s_id]
+                    stream.status = "ended"
+                    stream.ended_at = self.now()
+                    
+                    # Update database
+                    try:
+                        with SessionLocal() as s:
+                            row = s.get(StreamRow, s_id)
+                            if row:
+                                row.ended_at = stream.ended_at
+                                row.status = stream.status
+                                s.commit()
+                    except Exception:
+                        pass  # Database operation failed, continue
+                    
+                    # Now remove from memory (consistent with on_stream_ended behavior)
+                    del self.streams[s_id]
+                    if s_id in self.stream_stats:
+                        del self.stream_stats[s_id]
         
         # Remove from database as well (if database is available)
         if removed_engine:

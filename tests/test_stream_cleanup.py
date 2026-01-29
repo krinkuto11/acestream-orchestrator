@@ -219,8 +219,6 @@ def test_list_streams_defaults_to_started():
     
     print("✅ List streams filtering test passed!")
 
-    print("✅ List streams filtering test passed!")
-
 
 if __name__ == "__main__":
     print("🧪 Running stream cleanup tests...\n")
