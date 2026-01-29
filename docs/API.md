@@ -117,11 +117,12 @@ Response:
  - GET /engines/{container_id} → {engine, streams[]}
 
  - GET /streams?status=started|ended&container_id= → StreamState[]
-   - By default, returns only `started` streams (active streams)
-   - Use `status=started` to explicitly get active streams
-   - Use `status=ended` to get ended streams
+   - By default, returns all streams currently in memory (active streams only)
+   - **IMPORTANT**: Ended streams are immediately removed from memory when they end
+   - Use `status=started` to explicitly get active streams (same as default)
+   - Use `status=ended` to get ended streams (will typically return empty list since ended streams are immediately removed from memory)
    - Can filter by `container_id` to get streams for a specific engine
-   - **Note**: Ended streams older than 1 hour are automatically cleaned up from the system
+   - **Note**: A backup cleanup routine runs every 5 minutes to catch any streams that failed immediate removal
 
  - GET /streams/{stream_id}/stats?since=<ISO8601> → StreamStatSnapshot[]
 
