@@ -1,8 +1,12 @@
 """
-Background service for cleaning up old ended streams.
+Background service for cleaning up stale ended streams.
 
-This service periodically removes ended streams from memory and database
-to prevent unbounded growth.
+This service serves as a backup mechanism to catch any ended streams that 
+failed immediate removal when they ended. Normally, streams are removed 
+immediately when on_stream_ended() is called, so this cleanup should find 
+very few (if any) streams to remove during normal operation.
+
+This also removes old stream records from the database to prevent unbounded growth.
 """
 
 import asyncio
@@ -26,7 +30,7 @@ class StreamCleanup:
             return
         self._stop.clear()
         self._task = asyncio.create_task(self._run())
-        logger.info(f"Stream cleanup service started (will remove ended streams older than {self._max_age_seconds}s)")
+        logger.info(f"Stream cleanup service started (backup mechanism for failed immediate removals, check interval: {self._max_age_seconds}s)")
 
     async def stop(self):
         self._stop.set()
@@ -46,7 +50,7 @@ class StreamCleanup:
                 try:
                     removed_count = state.cleanup_ended_streams(max_age_seconds=self._max_age_seconds)
                     if removed_count > 0:
-                        logger.info(f"Stream cleanup: removed {removed_count} old ended streams")
+                        logger.warning(f"Stream cleanup: removed {removed_count} stale ended streams (these should have been removed immediately - investigate why immediate removal failed)")
                 except Exception:
                     logger.exception("Error during stream cleanup")
 
