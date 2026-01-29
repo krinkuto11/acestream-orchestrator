@@ -32,7 +32,7 @@ def test_read_timeout_handling():
     def iter_content_with_timeout(chunk_size):
         # Yield a few chunks successfully
         for i in range(3):
-            yield b'chunk data %d' % i
+            yield b'chunk data'
         # Then raise a ConnectionError with ReadTimeoutError message
         raise requests.exceptions.ConnectionError(
             "HTTPConnectionPool(host='gluetun', port=19003): Read timed out."
@@ -69,7 +69,7 @@ def test_read_timeout_handling():
         # Clean up pipe
         try:
             os.close(pipe_read)
-        except:
+        except OSError:
             pass
     
     print("✓ ReadTimeoutError handled gracefully")
@@ -95,7 +95,7 @@ def test_connection_error_handling():
     def iter_content_with_error(chunk_size):
         # Yield a few chunks successfully
         for i in range(2):
-            yield b'chunk data %d' % i
+            yield b'chunk data'
         # Then raise a generic ConnectionError
         raise requests.exceptions.ConnectionError(
             "Connection reset by peer"
@@ -127,7 +127,7 @@ def test_connection_error_handling():
         # Clean up pipe
         try:
             os.close(pipe_read)
-        except:
+        except OSError:
             pass
     
     print("✓ Generic ConnectionError handled gracefully")
