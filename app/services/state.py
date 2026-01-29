@@ -142,6 +142,14 @@ class State:
                 if len(eng.streams) == 0:
                     engine_became_idle = True
                     container_id_for_cleanup = st.container_id
+            
+            # Immediately remove the stream from memory (from both streams dict and stats dict)
+            # This ensures ended streams don't appear in the /streams endpoint
+            # The database record is preserved below for historical tracking
+            if st.id in self.streams:
+                del self.streams[st.id]
+            if st.id in self.stream_stats:
+                del self.stream_stats[st.id]
                 
         try:
             with SessionLocal() as s:
@@ -834,13 +842,17 @@ class State:
     
     def cleanup_ended_streams(self, max_age_seconds: int = 3600) -> int:
         """
-        Remove ended streams that are older than max_age_seconds.
+        Backup cleanup for ended streams that are older than max_age_seconds.
+        
+        This is a safety net that removes any ended streams still in memory 
+        (in case immediate removal in on_stream_ended() failed) and also 
+        removes old stream records from the database for cleanup.
         
         Args:
             max_age_seconds: Maximum age in seconds for ended streams to keep (default: 1 hour)
             
         Returns:
-            Number of streams removed
+            Number of streams removed from memory (should normally be 0)
         """
         from datetime import timedelta
         

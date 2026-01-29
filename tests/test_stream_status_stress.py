@@ -67,8 +67,7 @@ def test_engine_doesnt_show_ended_streams():
             reason="test_ended"
         )
         
-        with patch('app.services.provisioner.clear_acestream_cache'):
-            ended_stream = state.on_stream_ended(evt_ended)
+        ended_stream = state.on_stream_ended(evt_ended)
         
         assert ended_stream is not None, "Stream should have ended"
         assert ended_stream.status == "ended", "Stream status should be 'ended'"
@@ -79,22 +78,23 @@ def test_engine_doesnt_show_ended_streams():
         assert len(engine.streams) == 0, "Engine.streams should be empty after stream ends"
         print(f"✅ Engine.streams list now has {len(engine.streams)} stream ID(s)")
         
-        # BUG: list_streams without status filter STILL shows the ended stream
+        # FIXED: list_streams without status filter should NOT show the ended stream
+        # (because ended streams are immediately removed from memory)
         all_streams = state.list_streams(container_id="test_container_1")
-        print(f"⚠️  list_streams(container_id) returns {len(all_streams)} stream(s) - includes ended streams!")
-        assert len(all_streams) == 1, "list_streams without status filter includes ended streams"
+        print(f"✅ list_streams(container_id) returns {len(all_streams)} stream(s) - ended streams removed!")
+        assert len(all_streams) == 0, "list_streams should not include ended streams (they're removed from memory)"
         
         # CORRECT: list_streams with status="started" should NOT show the ended stream
         started_streams = state.list_streams(status="started", container_id="test_container_1")
         assert len(started_streams) == 0, "Should have 0 started streams after ending"
         print(f"✅ list_streams(status='started', container_id) correctly returns {len(started_streams)} stream(s)")
         
-        # PROBLEM: The get_engine endpoint calls list_streams without status filter
-        # This means it returns ended streams, which is the bug!
-        print(f"❌ BUG CONFIRMED: /engines/{{container_id}} endpoint calls list_streams without status filter")
-        print(f"   This causes engines to show ended streams as if they were still active!")
+        # FIXED: Ended streams are now immediately removed from memory
+        # So the /engines/{container_id} endpoint will not show them
+        print(f"✅ FIX VERIFIED: Ended streams are immediately removed from memory")
+        print(f"   The /engines/{{container_id}} endpoint will not show ended streams!")
     
-    print("\n✅ Bug demonstration test passed!")
+    print("\n✅ Fix verification test passed!")
     return True
 
 
@@ -108,53 +108,52 @@ def test_rapid_stream_cycling():
     state = State()
     
     with patch('app.services.state.SessionLocal'):
-        with patch('app.services.provisioner.clear_acestream_cache'):
-            # Rapidly start and end 50 streams
-            for i in range(50):
-                evt_started = StreamStartedEvent(
-                    container_id="stress_container",
-                    engine=EngineAddress(host="127.0.0.1", port=8080),
-                    stream=StreamKey(key_type="content_id", key=f"stress_content_{i}"),
-                    session=SessionInfo(
-                        playback_session_id=f"stress_session_{i}",
-                        stat_url=f"http://127.0.0.1:8080/stat_{i}",
-                        command_url=f"http://127.0.0.1:8080/command_{i}",
-                        is_live=1
-                    ),
-                    labels={"stream_id": f"stress_stream_{i}"}
-                )
-                
-                stream_state = state.on_stream_started(evt_started)
-                
-                # Immediately end the stream
-                evt_ended = StreamEndedEvent(
-                    container_id="stress_container",
-                    stream_id=f"stress_stream_{i}",
-                    reason="stress_test"
-                )
-                
-                state.on_stream_ended(evt_ended)
+        # Rapidly start and end 50 streams
+        for i in range(50):
+            evt_started = StreamStartedEvent(
+                container_id="stress_container",
+                engine=EngineAddress(host="127.0.0.1", port=8080),
+                stream=StreamKey(key_type="content_id", key=f"stress_content_{i}"),
+                session=SessionInfo(
+                    playback_session_id=f"stress_session_{i}",
+                    stat_url=f"http://127.0.0.1:8080/stat_{i}",
+                    command_url=f"http://127.0.0.1:8080/command_{i}",
+                    is_live=1
+                ),
+                labels={"stream_id": f"stress_stream_{i}"}
+            )
             
-            # Verify engine.streams is empty
-            engine = state.get_engine("stress_container")
-            assert engine is not None, "Engine should exist"
-            assert len(engine.streams) == 0, f"Engine.streams should be empty, but has {len(engine.streams)} items"
-            print(f"✅ After 50 rapid cycles, engine.streams has {len(engine.streams)} items")
+            stream_state = state.on_stream_started(evt_started)
             
-            # Verify we have 50 ended streams in state
-            all_streams = state.list_streams(container_id="stress_container")
-            assert len(all_streams) == 50, f"Should have 50 total streams, but have {len(all_streams)}"
-            print(f"✅ Total streams in state: {len(all_streams)}")
+            # Immediately end the stream
+            evt_ended = StreamEndedEvent(
+                container_id="stress_container",
+                stream_id=f"stress_stream_{i}",
+                reason="stress_test"
+            )
             
-            # Verify no started streams
-            started_streams = state.list_streams(status="started", container_id="stress_container")
-            assert len(started_streams) == 0, f"Should have 0 started streams, but have {len(started_streams)}"
-            print(f"✅ Started streams: {len(started_streams)}")
-            
-            # Verify all are ended
-            ended_streams = state.list_streams(status="ended", container_id="stress_container")
-            assert len(ended_streams) == 50, f"Should have 50 ended streams, but have {len(ended_streams)}"
-            print(f"✅ Ended streams: {len(ended_streams)}")
+            state.on_stream_ended(evt_ended)
+        
+        # Verify engine.streams is empty
+        engine = state.get_engine("stress_container")
+        assert engine is not None, "Engine should exist"
+        assert len(engine.streams) == 0, f"Engine.streams should be empty, but has {len(engine.streams)} items"
+        print(f"✅ After 50 rapid cycles, engine.streams has {len(engine.streams)} items")
+        
+        # Verify we have 0 streams in state (all were immediately removed when ended)
+        all_streams = state.list_streams(container_id="stress_container")
+        assert len(all_streams) == 0, f"Should have 0 total streams (all removed), but have {len(all_streams)}"
+        print(f"✅ Total streams in state: {len(all_streams)} (all removed immediately)")
+        
+        # Verify no started streams
+        started_streams = state.list_streams(status="started", container_id="stress_container")
+        assert len(started_streams) == 0, f"Should have 0 started streams, but have {len(started_streams)}"
+        print(f"✅ Started streams: {len(started_streams)}")
+        
+        # Verify no ended streams (they're all removed from memory)
+        ended_streams = state.list_streams(status="ended", container_id="stress_container")
+        assert len(ended_streams) == 0, f"Should have 0 ended streams (removed), but have {len(ended_streams)}"
+        print(f"✅ Ended streams: {len(ended_streams)} (all removed immediately)")
     
     print("\n✅ Rapid cycling stress test passed!")
     return True
@@ -174,37 +173,36 @@ def test_concurrent_stream_operations():
         """Start and end multiple streams from a thread."""
         try:
             with patch('app.services.state.SessionLocal'):
-                with patch('app.services.provisioner.clear_acestream_cache'):
-                    for i in range(num_streams):
-                        stream_id = f"thread_{thread_id}_stream_{i}"
-                        
-                        # Start stream
-                        evt_started = StreamStartedEvent(
-                            container_id=f"concurrent_container_{thread_id}",
-                            engine=EngineAddress(host="127.0.0.1", port=8080 + thread_id),
-                            stream=StreamKey(key_type="content_id", key=f"concurrent_content_{thread_id}_{i}"),
-                            session=SessionInfo(
-                                playback_session_id=f"concurrent_session_{thread_id}_{i}",
-                                stat_url=f"http://127.0.0.1:{8080+thread_id}/stat_{i}",
-                                command_url=f"http://127.0.0.1:{8080+thread_id}/command_{i}",
-                                is_live=1
-                            ),
-                            labels={"stream_id": stream_id}
-                        )
-                        
-                        state.on_stream_started(evt_started)
-                        
-                        # Small delay to simulate real usage
-                        time.sleep(0.001)
-                        
-                        # End stream
-                        evt_ended = StreamEndedEvent(
-                            container_id=f"concurrent_container_{thread_id}",
-                            stream_id=stream_id,
-                            reason="concurrent_test"
-                        )
-                        
-                        state.on_stream_ended(evt_ended)
+                for i in range(num_streams):
+                    stream_id = f"thread_{thread_id}_stream_{i}"
+                    
+                    # Start stream
+                    evt_started = StreamStartedEvent(
+                        container_id=f"concurrent_container_{thread_id}",
+                        engine=EngineAddress(host="127.0.0.1", port=8080 + thread_id),
+                        stream=StreamKey(key_type="content_id", key=f"concurrent_content_{thread_id}_{i}"),
+                        session=SessionInfo(
+                            playback_session_id=f"concurrent_session_{thread_id}_{i}",
+                            stat_url=f"http://127.0.0.1:{8080+thread_id}/stat_{i}",
+                            command_url=f"http://127.0.0.1:{8080+thread_id}/command_{i}",
+                            is_live=1
+                        ),
+                        labels={"stream_id": stream_id}
+                    )
+                    
+                    state.on_stream_started(evt_started)
+                    
+                    # Small delay to simulate real usage
+                    time.sleep(0.001)
+                    
+                    # End stream
+                    evt_ended = StreamEndedEvent(
+                        container_id=f"concurrent_container_{thread_id}",
+                        stream_id=stream_id,
+                        reason="concurrent_test"
+                    )
+                    
+                    state.on_stream_ended(evt_ended)
         except Exception as e:
             errors.append(f"Thread {thread_id}: {e}")
     
@@ -243,11 +241,11 @@ def test_concurrent_stream_operations():
     
     print(f"✅ All {total_engines} engines have empty streams lists")
     
-    # Verify total streams
+    # Verify total streams (should be 0 since all were immediately removed)
     all_streams = state.list_streams()
-    expected_total = num_threads * streams_per_thread
-    assert len(all_streams) == expected_total, f"Expected {expected_total} streams, got {len(all_streams)}"
-    print(f"✅ Total streams: {len(all_streams)}")
+    expected_total = 0  # All streams ended and removed
+    assert len(all_streams) == expected_total, f"Expected {expected_total} streams (all removed), got {len(all_streams)}"
+    print(f"✅ Total streams: {len(all_streams)} (all removed immediately)")
     
     # Verify no started streams
     started_streams = state.list_streams(status="started")
@@ -268,61 +266,60 @@ def test_mixed_active_and_ended_streams():
     state = State()
     
     with patch('app.services.state.SessionLocal'):
-        with patch('app.services.provisioner.clear_acestream_cache'):
-            # Start 5 streams
-            for i in range(5):
-                evt_started = StreamStartedEvent(
-                    container_id="mixed_container",
-                    engine=EngineAddress(host="127.0.0.1", port=8080),
-                    stream=StreamKey(key_type="content_id", key=f"mixed_content_{i}"),
-                    session=SessionInfo(
-                        playback_session_id=f"mixed_session_{i}",
-                        stat_url=f"http://127.0.0.1:8080/stat_{i}",
-                        command_url=f"http://127.0.0.1:8080/command_{i}",
-                        is_live=1
-                    ),
-                    labels={"stream_id": f"mixed_stream_{i}"}
-                )
-                state.on_stream_started(evt_started)
-            
-            # Verify 5 active streams
-            engine = state.get_engine("mixed_container")
-            assert len(engine.streams) == 5, f"Expected 5 streams, got {len(engine.streams)}"
-            print(f"✅ Started 5 streams, engine.streams has {len(engine.streams)} items")
-            
-            # End 3 streams
-            for i in [0, 2, 4]:
-                evt_ended = StreamEndedEvent(
-                    container_id="mixed_container",
-                    stream_id=f"mixed_stream_{i}",
-                    reason="mixed_test"
-                )
-                state.on_stream_ended(evt_ended)
-            
-            # Verify only 2 active streams remain
-            engine = state.get_engine("mixed_container")
-            assert len(engine.streams) == 2, f"Expected 2 active streams, got {len(engine.streams)}"
-            print(f"✅ After ending 3 streams, engine.streams has {len(engine.streams)} items")
-            
-            # Verify the correct streams are still active
-            assert "mixed_stream_1" in engine.streams, "Stream 1 should still be active"
-            assert "mixed_stream_3" in engine.streams, "Stream 3 should still be active"
-            print(f"✅ Correct streams are still active: {engine.streams}")
-            
-            # Now test the API behavior
-            # Without status filter - returns ALL streams (the bug)
-            all_streams = state.list_streams(container_id="mixed_container")
-            assert len(all_streams) == 5, f"Expected 5 total streams, got {len(all_streams)}"
-            print(f"⚠️  list_streams(container_id) returns {len(all_streams)} streams (includes ended)")
-            
-            # With status filter - returns only active streams (correct)
-            started_streams = state.list_streams(status="started", container_id="mixed_container")
-            assert len(started_streams) == 2, f"Expected 2 started streams, got {len(started_streams)}"
-            print(f"✅ list_streams(status='started', container_id) returns {len(started_streams)} streams (correct)")
-            
-            # Verify the count matches engine.streams
-            assert len(started_streams) == len(engine.streams), "Started streams count should match engine.streams"
-            print(f"✅ Started streams count matches engine.streams count")
+        # Start 5 streams
+        for i in range(5):
+            evt_started = StreamStartedEvent(
+                container_id="mixed_container",
+                engine=EngineAddress(host="127.0.0.1", port=8080),
+                stream=StreamKey(key_type="content_id", key=f"mixed_content_{i}"),
+                session=SessionInfo(
+                    playback_session_id=f"mixed_session_{i}",
+                    stat_url=f"http://127.0.0.1:8080/stat_{i}",
+                    command_url=f"http://127.0.0.1:8080/command_{i}",
+                    is_live=1
+                ),
+                labels={"stream_id": f"mixed_stream_{i}"}
+            )
+            state.on_stream_started(evt_started)
+        
+        # Verify 5 active streams
+        engine = state.get_engine("mixed_container")
+        assert len(engine.streams) == 5, f"Expected 5 streams, got {len(engine.streams)}"
+        print(f"✅ Started 5 streams, engine.streams has {len(engine.streams)} items")
+        
+        # End 3 streams
+        for i in [0, 2, 4]:
+            evt_ended = StreamEndedEvent(
+                container_id="mixed_container",
+                stream_id=f"mixed_stream_{i}",
+                reason="mixed_test"
+            )
+            state.on_stream_ended(evt_ended)
+        
+        # Verify only 2 active streams remain
+        engine = state.get_engine("mixed_container")
+        assert len(engine.streams) == 2, f"Expected 2 active streams, got {len(engine.streams)}"
+        print(f"✅ After ending 3 streams, engine.streams has {len(engine.streams)} items")
+        
+        # Verify the correct streams are still active
+        assert "mixed_stream_1" in engine.streams, "Stream 1 should still be active"
+        assert "mixed_stream_3" in engine.streams, "Stream 3 should still be active"
+        print(f"✅ Correct streams are still active: {engine.streams}")
+        
+        # Now test the API behavior
+        # Without status filter - returns only active streams (the fix!)
+        all_streams = state.list_streams(container_id="mixed_container")
+        assert len(all_streams) == 2, f"Expected 2 total streams (ended removed), got {len(all_streams)}"
+        print(f"✅ list_streams(container_id) returns {len(all_streams)} streams (ended streams removed)")
+        
+        # With status filter - returns only active streams (correct)
+        started_streams = state.list_streams(status="started", container_id="mixed_container")
+        assert len(started_streams) == 2, f"Expected 2 started streams, got {len(started_streams)}"
+        print(f"✅ list_streams(status='started', container_id) returns {len(started_streams)} streams (correct)")
+        
+        # Verify the count matches engine.streams
+        assert len(started_streams) == len(engine.streams), "Started streams count should match engine.streams"
+        print(f"✅ Started streams count matches engine.streams count")
     
     print("\n✅ Mixed active/ended streams test passed!")
     return True
