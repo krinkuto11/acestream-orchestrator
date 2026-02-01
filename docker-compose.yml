@@ -5,6 +5,10 @@
 # 1. Copy .env.example to .env and configure
 # 2. Run: docker-compose up -d
 # 3. Access dashboard at http://localhost:8000/panel
+#
+# Note: ACESTREAM_CACHE_ROOT volume mount is optional
+# If ACESTREAM_CACHE_ROOT is not set in .env, Docker named volumes will be used instead
+# (which provide better automatic cleanup on engine deletion)
 
 services:
   orchestrator:
@@ -12,10 +16,12 @@ services:
     image: ghcr.io/krinkuto11/acestream-orchestrator:latest
     env_file: .env
     environment:
-      - ACESTREAM_CACHE_ROOT=${ACESTREAM_CACHE_ROOT}
+      - ACESTREAM_CACHE_ROOT=${ACESTREAM_CACHE_ROOT:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${ACESTREAM_CACHE_ROOT}:/app/data/engine_cache
+      # Conditional mount: only used if ACESTREAM_CACHE_ROOT is set in .env
+      # Otherwise, Docker named volumes are created automatically per engine
+      ${ACESTREAM_CACHE_ROOT:+- ${ACESTREAM_CACHE_ROOT}:/app/data/engine_cache}
       - ./config:/app/app/config
     restart: on-failure
     networks:
