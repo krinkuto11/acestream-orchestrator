@@ -243,8 +243,9 @@ class EngineCacheManager:
                 # Prune orphaned Docker volumes
                 cli = get_client()
                 
-                # Get all acestream cache volumes
-                all_volumes = cli.volumes.list(filters={'name': 'acestream-cache-'})
+                # Get all volumes and filter in Python (Docker API doesn't support prefix matching)
+                all_volumes = cli.volumes.list()
+                acestream_volumes = [v for v in all_volumes if v.name.startswith('acestream-cache-')]
                 
                 # Get active container IDs
                 from .state import state
@@ -252,20 +253,19 @@ class EngineCacheManager:
                 active_container_ids = {engine.container_id for engine in active_engines}
                 
                 # Remove volumes for non-active containers
-                for volume in all_volumes:
+                for volume in acestream_volumes:
                     volume_name = volume.name
                     # Extract container ID from volume name (format: acestream-cache-{container_id})
-                    if volume_name.startswith('acestream-cache-'):
-                        short_id = volume_name.replace('acestream-cache-', '')
-                        # Check if any active container matches this short ID
-                        is_active = any(cid.startswith(short_id) for cid in active_container_ids)
-                        
-                        if not is_active:
-                            try:
-                                volume.remove(force=True)
-                                logger.info(f"Removed orphaned volume: {volume_name}")
-                            except Exception as e:
-                                logger.warning(f"Failed to remove orphaned volume {volume_name}: {e}")
+                    short_id = volume_name.replace('acestream-cache-', '')
+                    # Check if any active container matches this short ID
+                    is_active = any(cid.startswith(short_id) for cid in active_container_ids)
+                    
+                    if not is_active:
+                        try:
+                            volume.remove(force=True)
+                            logger.info(f"Removed orphaned volume: {volume_name}")
+                        except Exception as e:
+                            logger.warning(f"Failed to remove orphaned volume {volume_name}: {e}")
             else:
                 # Prune orphaned host directories (legacy approach)
                 if not self.mount_path.exists():
