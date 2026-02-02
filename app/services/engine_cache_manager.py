@@ -57,10 +57,13 @@ class EngineCacheManager:
         # This is the new default behavior for better cleanup
         return not self.host_root
 
+    # Maximum length for container name suffix used in volume/directory names
+    _CONTAINER_NAME_TRUNCATE_LENGTH = 12
+
     def _get_volume_name(self, container_id: str) -> str:
         """Generate a volume name for the container."""
-        # Use first 12 chars for consistency with previous implementation
-        short_id = container_id[:12]
+        # Use first N chars for consistency with previous implementation
+        short_id = container_id[:self._CONTAINER_NAME_TRUNCATE_LENGTH]
         return f"acestream-cache-{short_id}"
 
     def setup_cache(self, container_id: str) -> bool:
@@ -101,9 +104,8 @@ class EngineCacheManager:
         else:
             # Use host mounts (legacy approach for backwards compatibility)
             try:
-                # Create a subdirectory using the first 12 chars of ID (standard docker short ID)
-                # or full name if it's cleaner
-                dir_name = container_id[:12]
+                # Create a subdirectory using the truncated container name
+                dir_name = container_id[:self._CONTAINER_NAME_TRUNCATE_LENGTH]
                 engine_cache_dir = self.mount_path / dir_name
                 
                 if engine_cache_dir.exists():
@@ -151,7 +153,7 @@ class EngineCacheManager:
         else:
             # Use host mounts (legacy approach)
             try:
-                dir_name = container_id[:12]
+                dir_name = container_id[:self._CONTAINER_NAME_TRUNCATE_LENGTH]
                 engine_cache_dir = self.mount_path / dir_name
                 
                 if engine_cache_dir.exists():
@@ -254,7 +256,6 @@ class EngineCacheManager:
                 active_volume_names = set()
                 for engine in active_engines:
                     if engine.container_name:
-                        # Volume names use the first 12 chars of container_name
                         active_volume_names.add(self._get_volume_name(engine.container_name))
                 
                 # Remove volumes for non-active containers
@@ -283,8 +284,12 @@ class EngineCacheManager:
                 # Get active container names (directories are keyed by container name, not container ID)
                 from .state import state
                 active_engines = state.list_engines()
-                # Use first 12 chars of container_name to match directory names
-                active_dir_names = {engine.container_name[:12] for engine in active_engines if engine.container_name}
+                # Use truncated container_name to match directory names
+                active_dir_names = {
+                    engine.container_name[:self._CONTAINER_NAME_TRUNCATE_LENGTH] 
+                    for engine in active_engines 
+                    if engine.container_name
+                }
                 
                 # Remove directories for non-active containers
                 for dir_name in cache_dirs:
