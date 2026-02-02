@@ -247,18 +247,21 @@ class EngineCacheManager:
                 all_volumes = cli.volumes.list()
                 acestream_volumes = [v for v in all_volumes if v.name.startswith('acestream-cache-')]
                 
-                # Get active container IDs
+                # Get active container names (volumes are keyed by container name, not container ID)
                 from .state import state
                 active_engines = state.list_engines()
-                active_container_ids = {engine.container_id for engine in active_engines}
+                # Build set of volume names that should exist for active engines
+                active_volume_names = set()
+                for engine in active_engines:
+                    if engine.container_name:
+                        # Volume names use the first 12 chars of container_name
+                        active_volume_names.add(self._get_volume_name(engine.container_name))
                 
                 # Remove volumes for non-active containers
                 for volume in acestream_volumes:
                     volume_name = volume.name
-                    # Extract container ID from volume name (format: acestream-cache-{container_id})
-                    short_id = volume_name.replace('acestream-cache-', '')
-                    # Check if any active container matches this short ID
-                    is_active = any(cid.startswith(short_id) for cid in active_container_ids)
+                    # Check if this volume belongs to an active engine
+                    is_active = volume_name in active_volume_names
                     
                     if not is_active:
                         try:
@@ -277,14 +280,15 @@ class EngineCacheManager:
                 if not cache_dirs:
                     return
 
-                # Get active container IDs
+                # Get active container names (directories are keyed by container name, not container ID)
                 from .state import state
                 active_engines = state.list_engines()
-                active_container_ids = {engine.container_id[:12] for engine in active_engines}
+                # Use first 12 chars of container_name to match directory names
+                active_dir_names = {engine.container_name[:12] for engine in active_engines if engine.container_name}
                 
                 # Remove directories for non-active containers
                 for dir_name in cache_dirs:
-                    if dir_name not in active_container_ids:
+                    if dir_name not in active_dir_names:
                         try:
                             dir_path = self.mount_path / dir_name
                             shutil.rmtree(dir_path)
