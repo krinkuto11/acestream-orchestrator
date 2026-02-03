@@ -299,17 +299,17 @@ def get_variant_config(variant: str):
             "base_cmd": ["/acestream/acestreamengine", "--client-console", "--bind-all"]
         },
         "jopsis-amd64": {
-            "image": "jopsis/acestream:x64",
+            "image": "jopsis/aceserve:latest-amd64",
             "config_type": "env",
             "base_args": "--client-console --bind-all --service-remote-access --access-token acestream --service-access-token root --stats-report-peers --live-cache-type memory --live-cache-size 209715200 --vod-cache-type memory --cache-dir /acestream/.ACEStream --vod-drop-max-age 120 --max-file-size 2147483648 --live-buffer 25 --vod-buffer 10 --max-connections 500 --max-peers 50 --max-upload-slots 50 --auto-slots 0 --download-limit 0 --upload-limit 0 --stats-report-interval 2 --stats-report-peers --slots-manager-use-cpu-limit 1 --core-skip-have-before-playback-pos 1 --core-dlr-periodic-check-interval 5 --check-live-pos-interval 5 --refill-buffer-interval 1 --webrtc-allow-outgoing-connections 1 --allow-user-config --log-debug 0 --log-max-size 15000000 --log-backup-count 1"
         },
         "jopsis-arm32": {
-            "image": f"jopsis/acestream:{cfg.ENGINE_ARM32_VERSION}",
+            "image": f"jopsis/aceserve:latest-arm32",
             "config_type": "cmd",
             "base_cmd": ["python", "main.py", "--bind-all", "--client-console", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout"]
         },
         "jopsis-arm64": {
-            "image": f"jopsis/acestream:{cfg.ENGINE_ARM64_VERSION}",
+            "image": f"jopsis/aceserve:latest-arm64",
             "config_type": "cmd",
             "base_cmd": ["python", "main.py", "--bind-all", "--client-console", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout"]
         }
