@@ -52,9 +52,9 @@ def test_proxy_aware_stream_removal():
     content_id = "test_stream_key_abc123"
     
     # Verify stream is present
-    streams = test_state.list_streams_with_stats(status="started")
-    assert len(streams) == 1, "Stream should be visible"
-    assert streams[0].stream_key == content_id
+    streams_before = test_state.list_streams_with_stats(status="started")
+    assert len(streams_before) == 1
+    assert streams_before[0].key == content_id
     
     # End the stream
     test_state.on_stream_ended(StreamEndedEvent(
@@ -100,7 +100,7 @@ def test_stream_visibility_matches_proxy_state():
     
     # Get streams from state
     state_streams = test_state.list_streams_with_stats(status="started")
-    state_stream_keys = [s.stream_key for s in state_streams]
+    state_stream_keys = [s.key for s in state_streams]
     
     # In a real implementation, we would:
     # 1. Get active proxy sessions from ProxyServer
@@ -184,15 +184,15 @@ def test_stream_key_to_stream_id_mapping():
     stream_state = test_state.on_stream_started(evt)
     stream_id = stream_state.id
     
-    # Verify we can find stream by stream_key
+    # Verify we can find stream by stream key (using 'key' attribute)
     streams = test_state.list_streams_with_stats(status="started")
     found_stream = None
     for s in streams:
-        if s.stream_key == content_id:
+        if s.key == content_id:
             found_stream = s
             break
     
-    assert found_stream is not None, "Should find stream by stream_key"
+    assert found_stream is not None, "Should find stream by key"
     assert found_stream.id == stream_id, "Stream ID should match"
     
     # End the stream
@@ -206,11 +206,11 @@ def test_stream_key_to_stream_id_mapping():
     streams_after = test_state.list_streams_with_stats(status="started")
     found_after = None
     for s in streams_after:
-        if s.stream_key == content_id:
+        if s.key == content_id:
             found_after = s
             break
     
-    assert found_after is None, "Should not find stream by stream_key after removal"
+    assert found_after is None, "Should not find stream by key after removal"
     
     print("✅ Stream key mapping verified!")
 

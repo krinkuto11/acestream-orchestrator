@@ -2409,15 +2409,6 @@ async def get_stream_clients(stream_key: str):
         return {"clients": []}
 
 
-@app.get("/stream-loop-detection/config")
-def get_stream_loop_detection_config():
-    """Get current stream loop detection configuration."""
-    return {
-        "enabled": cfg.STREAM_LOOP_DETECTION_ENABLED,
-        "threshold_seconds": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S,
-        "threshold_minutes": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S / 60,
-
-
 @app.get("/debug/sync-check")
 async def sync_check():
     """
@@ -2476,6 +2467,13 @@ async def sync_check():
 
 # WebSocket endpoint removed - using simple polling approach
 
+@app.get("/stream-loop-detection/config")
+def get_stream_loop_detection_config():
+    """Get current stream loop detection configuration."""
+    return {
+        "enabled": cfg.STREAM_LOOP_DETECTION_ENABLED,
+        "threshold_seconds": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S,
+        "threshold_minutes": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S / 60,
         "threshold_hours": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S / 3600,
         "check_interval_seconds": cfg.STREAM_LOOP_CHECK_INTERVAL_S,
         "retention_minutes": cfg.STREAM_LOOP_RETENTION_MINUTES,
