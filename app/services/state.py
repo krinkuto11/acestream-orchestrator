@@ -168,6 +168,31 @@ class State:
             except Exception as e:
                 logger.warning(f"Failed to clean up metrics for stream {stream_id_for_metrics}: {e}")
         
+        # CRITICAL: Synchronize proxy cleanup when stream ends
+        # This ensures proxy sessions are stopped when streams are removed from state
+        # Prevents desynchronization where streams disappear from UI but proxy still serves them
+        if st and st.key:
+            try:
+                # Clean up TS proxy session
+                from ..proxy.server import ProxyServer
+                proxy_server = ProxyServer.get_instance()
+                proxy_server.stop_stream_by_key(st.key)
+                logger.debug(f"Synchronized TS proxy cleanup for stream key={st.key}")
+            except Exception as e:
+                # Don't fail stream ending if proxy cleanup fails
+                # Proxy has its own idle cleanup as fallback
+                logger.warning(f"Failed to synchronize TS proxy cleanup for stream {st.key}: {e}")
+            
+            try:
+                # Clean up HLS proxy session
+                from ..proxy.hls_proxy import HLSProxyServer
+                hls_proxy = HLSProxyServer.get_instance()
+                hls_proxy.stop_stream_by_key(st.key)
+                logger.debug(f"Synchronized HLS proxy cleanup for stream key={st.key}")
+            except Exception as e:
+                # Don't fail stream ending if HLS proxy cleanup fails
+                logger.warning(f"Failed to synchronize HLS proxy cleanup for stream {st.key}: {e}")
+        
         return st
 
     def list_engines(self) -> List[EngineState]:

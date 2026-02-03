@@ -668,6 +668,22 @@ class HLSProxyServer:
         if channel_id in self.client_managers:
             self.client_managers[channel_id].record_activity(client_ip)
     
+    def stop_stream_by_key(self, channel_id: str):
+        """
+        Public method to stop an HLS stream by its channel ID (stream key).
+        This is called when a stream ends in the orchestrator state to ensure
+        HLS proxy sessions are cleaned up synchronously.
+        
+        Args:
+            channel_id: The AceStream content ID (infohash or content key)
+        """
+        if channel_id not in self.stream_managers:
+            logger.debug(f"No active HLS channel for channel_id={channel_id}, nothing to clean up")
+            return
+        
+        logger.info(f"Stopping HLS channel {channel_id} (called from state synchronization)")
+        self.stop_channel(channel_id, reason="stream_ended_in_state")
+    
     def stop_channel(self, channel_id: str, reason: str = "normal"):
         """Stop and cleanup a channel"""
         with self.lock:

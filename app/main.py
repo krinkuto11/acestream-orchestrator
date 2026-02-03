@@ -2409,8 +2409,6 @@ async def get_stream_clients(stream_key: str):
         return {"clients": []}
 
 
-# WebSocket endpoint removed - using simple polling approach
-
 @app.get("/stream-loop-detection/config")
 def get_stream_loop_detection_config():
     """Get current stream loop detection configuration."""
@@ -2418,6 +2416,66 @@ def get_stream_loop_detection_config():
         "enabled": cfg.STREAM_LOOP_DETECTION_ENABLED,
         "threshold_seconds": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S,
         "threshold_minutes": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S / 60,
+
+
+@app.get("/debug/sync-check")
+async def sync_check():
+    """
+    Debug endpoint to check synchronization between state and proxy.
+    
+    Returns information about:
+    - Streams in state.streams
+    - Active TS proxy sessions
+    - Active HLS proxy sessions
+    - Orphaned proxy sessions (in proxy but not in state)
+    - Missing proxy sessions (in state but not in proxy)
+    """
+    from .proxy.server import ProxyServer
+    from .proxy.hls_proxy import HLSProxyServer
+    
+    # Get state streams
+    state_streams = state.list_streams_with_stats(status="started")
+    state_keys = {s.key for s in state_streams}
+    
+    # Get TS proxy sessions
+    ts_proxy = ProxyServer.get_instance()
+    ts_sessions = set(ts_proxy.stream_managers.keys())
+    
+    # Get HLS proxy sessions
+    hls_proxy = HLSProxyServer.get_instance()
+    hls_sessions = set(hls_proxy.stream_managers.keys())
+    
+    # Find discrepancies
+    orphaned_ts = ts_sessions - state_keys
+    orphaned_hls = hls_sessions - state_keys
+    missing_ts = state_keys - ts_sessions
+    missing_hls = state_keys - hls_sessions
+    
+    return {
+        "state": {
+            "stream_count": len(state_streams),
+            "stream_keys": list(state_keys)
+        },
+        "ts_proxy": {
+            "session_count": len(ts_sessions),
+            "session_keys": list(ts_sessions)
+        },
+        "hls_proxy": {
+            "session_count": len(hls_sessions),
+            "session_keys": list(hls_sessions)
+        },
+        "discrepancies": {
+            "orphaned_ts_sessions": list(orphaned_ts),  # In TS proxy but not in state
+            "orphaned_hls_sessions": list(orphaned_hls),  # In HLS proxy but not in state
+            "missing_ts_sessions": list(missing_ts),  # In state but not in TS proxy
+            "missing_hls_sessions": list(missing_hls),  # In state but not in HLS proxy
+            "has_issues": len(orphaned_ts) > 0 or len(orphaned_hls) > 0 or len(missing_ts) > 0 or len(missing_hls) > 0
+        }
+    }
+
+
+# WebSocket endpoint removed - using simple polling approach
+
         "threshold_hours": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S / 3600,
         "check_interval_seconds": cfg.STREAM_LOOP_CHECK_INTERVAL_S,
         "retention_minutes": cfg.STREAM_LOOP_RETENTION_MINUTES,
