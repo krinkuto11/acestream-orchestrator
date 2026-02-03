@@ -109,6 +109,14 @@ class HTTPStreamReader:
                         except OSError as e:
                             logger.error(f"Pipe write error: {e}")
                             break
+            except requests.exceptions.ConnectionError as e:
+                # Handle read timeouts and connection errors during streaming
+                # This is common when the upstream source stops sending data or times out
+                error_msg = str(e)
+                if 'Read timed out' in error_msg or 'ReadTimeoutError' in error_msg:
+                    logger.info(f"HTTP stream read timeout after {chunk_count} chunks - stream likely ended")
+                else:
+                    logger.warning(f"HTTP stream connection error: {error_msg}")
             except AttributeError as e:
                 # This can happen if response is closed during iteration
                 # Check if it's the specific 'read' error we expect during shutdown

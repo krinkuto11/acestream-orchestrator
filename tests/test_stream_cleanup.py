@@ -30,8 +30,8 @@ Base.metadata.create_all(bind=db_engine)
 
 
 def test_cleanup_ended_streams():
-    """Test that old ended streams are cleaned up."""
-    print("Testing cleanup of old ended streams...")
+    """Test that cleanup serves as a backup for ended streams that failed immediate removal."""
+    print("Testing cleanup of old ended streams (backup mechanism)...")
     
     # Create a fresh state
     test_state = State()
@@ -52,22 +52,24 @@ def test_cleanup_ended_streams():
     
     stream_state = test_state.on_stream_started(evt)
     assert stream_state.status == "started"
+    stream_id = stream_state.id
     
-    # End the stream
+    # End the stream (this should immediately remove it from memory)
     test_state.on_stream_ended(StreamEndedEvent(
         container_id="test_container_1",
-        stream_id="test_stream_old",
+        stream_id=stream_id,
         reason="test"
     ))
     
-    # Verify stream is ended
-    stream = test_state.get_stream("test_stream_old")
-    assert stream is not None
-    assert stream.status == "ended"
-    assert stream.ended_at is not None
+    # Verify stream was immediately removed from memory
+    stream = test_state.get_stream(stream_id)
+    assert stream is None, "Stream should be immediately removed from memory when it ends"
     
-    # Manually set the ended_at to be 2 hours ago (older than cleanup threshold)
-    stream.ended_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    # Simulate a failure scenario where stream wasn't removed by manually re-adding it
+    # This simulates what cleanup_ended_streams is meant to catch
+    stream_state.status = "ended"
+    stream_state.ended_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    test_state.streams[stream_id] = stream_state
     
     # Run cleanup (should remove streams older than 1 hour)
     removed_count = test_state.cleanup_ended_streams(max_age_seconds=3600)
@@ -75,15 +77,15 @@ def test_cleanup_ended_streams():
     assert removed_count == 1, f"Expected 1 stream to be removed, but got {removed_count}"
     
     # Verify stream is removed
-    stream_after = test_state.get_stream("test_stream_old")
+    stream_after = test_state.get_stream(stream_id)
     assert stream_after is None, "Stream should have been removed"
     
     print("✅ Old ended streams cleanup test passed!")
 
 
 def test_cleanup_keeps_recent_ended_streams():
-    """Test that recent ended streams are NOT cleaned up."""
-    print("Testing that recent ended streams are kept...")
+    """Test that cleanup doesn't remove recent ended streams (even though they should already be removed)."""
+    print("Testing that cleanup doesn't affect recent ended streams...")
     
     # Create a fresh state
     test_state = State()
@@ -102,24 +104,30 @@ def test_cleanup_keeps_recent_ended_streams():
         labels={"stream_id": "test_stream_recent"}
     )
     
-    test_state.on_stream_started(evt)
+    stream_state = test_state.on_stream_started(evt)
+    stream_id = stream_state.id
+    
     test_state.on_stream_ended(StreamEndedEvent(
         container_id="test_container_2",
-        stream_id="test_stream_recent",
+        stream_id=stream_id,
         reason="test"
     ))
     
-    # Run cleanup (should NOT remove recent streams)
+    # Stream should already be removed from memory
+    stream = test_state.get_stream(stream_id)
+    assert stream is None, "Stream should be immediately removed from memory"
+    
+    # Run cleanup (should NOT find anything to remove since stream was already removed)
     removed_count = test_state.cleanup_ended_streams(max_age_seconds=3600)
     
-    assert removed_count == 0, f"Expected 0 streams to be removed, but got {removed_count}"
+    assert removed_count == 0, f"Expected 0 streams to be removed (already removed), but got {removed_count}"
     
-    # Verify stream still exists
-    stream = test_state.get_stream("test_stream_recent")
-    assert stream is not None, "Recent ended stream should still exist"
-    assert stream.status == "ended"
+    # Verify stream is still not in memory
+    stream_after = test_state.get_stream(stream_id)
+    assert stream_after is None, "Stream should still not be in memory"
     
-    print("✅ Recent ended streams kept test passed!")
+    print("✅ Cleanup correctly finds nothing to remove when immediate removal worked!")
+
 
 
 def test_cleanup_keeps_started_streams():
@@ -162,13 +170,14 @@ def test_cleanup_keeps_started_streams():
 
 
 def test_list_streams_defaults_to_started():
-    """Test that list_streams_with_stats defaults to showing only started streams."""
-    print("Testing that list_streams_with_stats defaults to started streams...")
+    """Test that list_streams_with_stats shows only active streams (ended streams are removed)."""
+    print("Testing that ended streams are removed from list_streams...")
     
     # Create a fresh state
     test_state = State()
     
     # Start two streams
+    stream_ids = []
     for i in range(2):
         evt = StreamStartedEvent(
             container_id=f"test_container_{i}",
@@ -182,28 +191,31 @@ def test_list_streams_defaults_to_started():
             ),
             labels={"stream_id": f"test_stream_{i}"}
         )
-        test_state.on_stream_started(evt)
+        stream_state = test_state.on_stream_started(evt)
+        stream_ids.append(stream_state.id)
     
     # End the first stream
     test_state.on_stream_ended(StreamEndedEvent(
         container_id="test_container_0",
-        stream_id="test_stream_0",
+        stream_id=stream_ids[0],
         reason="test"
     ))
     
-    # Get all streams without status filter (should include both started and ended)
+    # Get all streams without status filter - should only show the active stream
+    # (ended streams are immediately removed from memory)
     all_streams = test_state.list_streams_with_stats(status=None)
-    assert len(all_streams) == 2, f"Expected 2 total streams, got {len(all_streams)}"
+    assert len(all_streams) == 1, f"Expected 1 total stream (ended stream removed), got {len(all_streams)}"
+    assert all_streams[0].id == stream_ids[1], "Only the second stream should remain"
     
     # Get only started streams
     started_streams = test_state.list_streams_with_stats(status="started")
     assert len(started_streams) == 1, f"Expected 1 started stream, got {len(started_streams)}"
     assert started_streams[0].status == "started"
+    assert started_streams[0].id == stream_ids[1]
     
-    # Get only ended streams
+    # Get only ended streams (should be 0 since ended streams are immediately removed)
     ended_streams = test_state.list_streams_with_stats(status="ended")
-    assert len(ended_streams) == 1, f"Expected 1 ended stream, got {len(ended_streams)}"
-    assert ended_streams[0].status == "ended"
+    assert len(ended_streams) == 0, f"Expected 0 ended streams (removed from memory), got {len(ended_streams)}"
     
     print("✅ List streams filtering test passed!")
 

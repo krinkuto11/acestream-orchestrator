@@ -26,7 +26,7 @@ def test_can_stop_engine_uses_correct_status_filter():
     _empty_engine_timestamps.clear()
     
     with patch('app.services.state.SessionLocal'):
-        with patch('app.services.provisioner.clear_acestream_cache'):
+        
             # Start a stream
             evt_started = StreamStartedEvent(
                 container_id="cleanup_test_engine",
@@ -58,11 +58,10 @@ def test_can_stop_engine_uses_correct_status_filter():
             global_state.on_stream_ended(evt_ended)
             print(f"✅ Ended stream")
             
-            # Verify stream is ended in state
+            # Verify stream is removed from state (new behavior: immediate removal)
             all_streams = global_state.list_streams(container_id="cleanup_test_engine")
-            assert len(all_streams) == 1, "Should have 1 stream in state"
-            assert all_streams[0].status == "ended", "Stream should be ended"
-            print(f"✅ Stream status is 'ended' in state")
+            assert len(all_streams) == 0, "Should have 0 streams in state (ended stream removed)"
+            print(f"✅ Stream removed from state (new behavior)")
             
             # Verify no active streams
             active_streams = global_state.list_streams(status="started", container_id="cleanup_test_engine")
@@ -90,7 +89,7 @@ def test_cleanup_empty_engines_consistency():
     global_state.clear_state()
     
     with patch('app.services.state.SessionLocal'):
-        with patch('app.services.provisioner.clear_acestream_cache'):
+        
             # Create 3 engines with different states
             # Engine 1: Has active stream
             evt1 = StreamStartedEvent(
@@ -192,7 +191,7 @@ def test_endpoint_and_cleanup_consistency():
     client = TestClient(app)
     
     with patch('app.services.state.SessionLocal'):
-        with patch('app.services.provisioner.clear_acestream_cache'):
+        
             # Start and end a stream
             evt_start = StreamStartedEvent(
                 container_id="consistency_engine",
