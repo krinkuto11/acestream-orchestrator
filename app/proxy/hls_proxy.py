@@ -674,8 +674,8 @@ class HLSProxyServer:
         This is called when a stream ends in the orchestrator state to ensure
         HLS proxy sessions are cleaned up synchronously.
         
-        Args:
-            channel_id: The AceStream content ID (infohash or content key)
+        :param channel_id: The AceStream content ID (infohash or content key)
+        :type channel_id: str
         """
         if channel_id not in self.stream_managers:
             logger.debug(f"No active HLS channel for channel_id={channel_id}, nothing to clean up")

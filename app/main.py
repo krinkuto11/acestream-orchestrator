@@ -2460,7 +2460,7 @@ async def sync_check():
             "orphaned_hls_sessions": list(orphaned_hls),  # In HLS proxy but not in state
             "missing_ts_sessions": list(missing_ts),  # In state but not in TS proxy
             "missing_hls_sessions": list(missing_hls),  # In state but not in HLS proxy
-            "has_issues": len(orphaned_ts) > 0 or len(orphaned_hls) > 0 or len(missing_ts) > 0 or len(missing_hls) > 0
+            "has_issues": any([orphaned_ts, orphaned_hls, missing_ts, missing_hls])
         }
     }
 

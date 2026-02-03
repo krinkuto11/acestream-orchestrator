@@ -189,14 +189,14 @@ class ProxyServer:
             logger.error(f"Failed to start stream: {e}")
             return False
     
-    def stop_stream_by_key(self, content_id):
+    def stop_stream_by_key(self, content_id: str):
         """
         Public method to stop a stream by its content ID (stream key).
         This is called when a stream ends in the orchestrator state to ensure
         proxy sessions are cleaned up synchronously.
         
-        Args:
-            content_id: The AceStream content ID (infohash or content key)
+        :param content_id: The AceStream content ID (infohash or content key)
+        :type content_id: str
         """
         if content_id not in self.stream_managers:
             logger.debug(f"No active proxy session for content_id={content_id}, nothing to clean up")
