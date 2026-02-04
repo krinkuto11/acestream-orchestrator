@@ -1,5 +1,10 @@
 # AceStream Orchestrator
 
+> [!WARNING]
+> **LEGAL DISCLAIMER: EDUCATIONAL USE ONLY**
+>
+> This software is a proof-of-concept designed strictly for **educational and research purposes**. The primary intent of this project is to demonstrate the feasability of a high availability scenario for the AceStream protocol and should not be used for illegal acts.
+
 **Version 1.5.3**
 
 <img src="app/icons/favicon-96x96-dark.png" alt="AceStream Orchestrator Logo" width="96" height="96" />
