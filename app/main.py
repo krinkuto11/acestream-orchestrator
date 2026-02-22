@@ -931,6 +931,14 @@ async def get_stream_extended_stats(stream_id: str):
     This returns additional metadata like content_type, title, is_live, mime, categories, etc.
     """
     from .utils.acestream_api import get_stream_extended_stats
+    from .services.cache import get_cache
+    
+    # Check cache first to avoid hammering the AceStream engine
+    cache = get_cache()
+    cache_key = f"stream_extended_stats:{stream_id}"
+    cached_stats = cache.get(cache_key)
+    if cached_stats is not None:
+        return cached_stats
     
     # Get the stream from state
     stream = state.get_stream(stream_id)
@@ -945,6 +953,9 @@ async def get_stream_extended_stats(stream_id: str):
     
     if extended_stats is None:
         raise HTTPException(status_code=503, detail="Unable to fetch extended stats from AceStream engine")
+    
+    # Cache the result for 1 hour (3600 seconds) since stream title/infohash rarely change
+    cache.set(cache_key, extended_stats, ttl=3600.0)
     
     return extended_stats
 
