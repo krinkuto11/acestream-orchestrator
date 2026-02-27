@@ -27,10 +27,11 @@ RUN pip install --upgrade pip && \
 FROM debian:12-slim AS redis-builder
 RUN apt-get update && \
     apt-get install -y --no-install-recommends redis-server redis-tools && \
-    mkdir -p /redis-bundle/bin /redis-bundle/lib && \
-    cp /usr/bin/redis-server /redis-bundle/bin/ && \
-    cp /usr/bin/redis-cli /redis-bundle/bin/ && \
-    ldd /usr/bin/redis-server | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp -v '{}' /redis-bundle/lib/ && \
+    mkdir -p /redis-bundle && \
+    # Preserve original paths for binaries and their shared libraries
+    cp --parents /usr/bin/redis-server /redis-bundle/ && \
+    cp --parents /usr/bin/redis-cli /redis-bundle/ && \
+    ldd /usr/bin/redis-server | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp --parents '{}' /redis-bundle/ && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -49,10 +50,8 @@ COPY app ./app
 # Copy built React panel from panel-builder (output is in /build/panel)
 COPY --from=panel-builder /build/panel ./app/static/panel
 
-# Copy Redis binaries and libraries
-COPY --from=redis-builder /redis-bundle/bin/redis-server /usr/bin/redis-server
-COPY --from=redis-builder /redis-bundle/bin/redis-cli /usr/bin/redis-cli
-COPY --from=redis-builder /redis-bundle/lib/* /usr/lib/x86_64-linux-gnu/
+# Copy Redis binaries and libraries (preserves original architecture-specific paths)
+COPY --from=redis-builder /redis-bundle/ /
 
 # Create a startup script for handling Redis + app
 COPY --chmod=755 <<'EOF' /app/start.py
