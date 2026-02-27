@@ -3,10 +3,20 @@ from pydantic import BaseModel, validator, field_validator, model_validator
 from dotenv import load_dotenv
 load_dotenv()
 
+import platform as _platform
+_machine = _platform.machine().lower()
+
+# Determine a sensible default variant based on the platform to avoid 404 errors on first run
+_default_variant = "krinkuto11-amd64"
+if "aarch64" in _machine or "arm64" in _machine:
+    _default_variant = "jopsis-arm64"
+elif "arm" in _machine:
+    _default_variant = "jopsis-arm32"
+
 class Cfg(BaseModel):
     APP_PORT: int = int(os.getenv("APP_PORT", 8000))
     DOCKER_NETWORK: str | None = os.getenv("DOCKER_NETWORK")
-    ENGINE_VARIANT: str = os.getenv("ENGINE_VARIANT", "krinkuto11-amd64")
+    ENGINE_VARIANT: str = os.getenv("ENGINE_VARIANT", _default_variant)
     ENGINE_ARM32_VERSION: str = os.getenv("ENGINE_ARM32_VERSION", "arm32-v3.2.13")
     ENGINE_ARM64_VERSION: str = os.getenv("ENGINE_ARM64_VERSION", "arm64-v3.2.13")
     MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 2))

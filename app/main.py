@@ -2878,6 +2878,15 @@ def get_engine_settings():
         # Update platform in the response to match real-time detection
         # This ensures the UI always shows the correct architecture
         persisted["platform"] = current_platform
+        
+        # Ensure variants are compatible with the platform for the UI
+        variant = persisted.get("engine_variant")
+        if current_platform in ["arm64", "arm32"] and (not variant or "amd64" in variant):
+            # Force correction for ARM platforms if they have an amd64 variant configured
+            new_variant = "jopsis-arm64" if current_platform == "arm64" else "jopsis-arm32"
+            persisted["engine_variant"] = new_variant
+            logger.info(f"Corrected incompatible engine variant '{variant}' to '{new_variant}' for platform '{current_platform}'")
+            
         return persisted
     
     # Build default response from current runtime config

@@ -36,15 +36,15 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const [isReprovisioning, setIsReprovisioning] = useState(false)
   const [showSuccessMessage, setShowSuccessMessage] = useState(false)
   const [showErrorMessage, setShowErrorMessage] = useState(false)
-  
+
   // Engine settings state
   const [engineSettings, setEngineSettings] = useState({
     min_replicas: 2,
-    max_replicas: 6,
+    max_replicas: 10,
     auto_delete: true,
-    engine_variant: 'krinkuto11-amd64',
+    engine_variant: '',
     use_custom_variant: false,
-    platform: 'amd64',
+    platform: ''
   })
   const [loadingSettings, setLoadingSettings] = useState(true)
   const [savingSettings, setSavingSettings] = useState(false)
@@ -75,10 +75,10 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
       try {
         const status = await fetchJSON(`${orchUrl}/custom-variant/reprovision/status`)
         const wasReprovisioning = isReprovisioning
-        
+
         setReprovisionStatus(status)
         setIsReprovisioning(status.in_progress)
-        
+
         // When reprovisioning completes, show success/error message briefly
         if (wasReprovisioning && !status.in_progress) {
           if (status.status === 'success') {
@@ -125,7 +125,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const handleSaveSettings = useCallback(async () => {
     try {
       setSavingSettings(true)
-      
+
       await fetchJSON(`${orchUrl}/settings/engine`, {
         method: 'POST',
         headers: {
@@ -134,7 +134,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
         },
         body: JSON.stringify(engineSettings)
       })
-      
+
       addNotification('Engine settings saved successfully', 'success')
       setSettingsChanged(false)
     } catch (err) {
@@ -186,7 +186,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                     let progress = 0
                     if (reprovisionStatus) {
                       const { current_phase, engines_stopped = 0, total_engines = 0 } = reprovisionStatus
-                      
+
                       if (current_phase === 'stopping' && total_engines > 0) {
                         // Stopping phase: 0-40% of progress
                         progress = Math.round((engines_stopped / total_engines) * 40)

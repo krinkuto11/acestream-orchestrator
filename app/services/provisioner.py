@@ -281,13 +281,18 @@ def get_variant_config(variant: str):
             - is_custom: True if this is a custom variant
     """
     # Check if custom variant is enabled and should override
-    from .custom_variant_config import is_custom_variant_enabled, get_config, build_variant_config_from_custom
+    from .custom_variant_config import (
+        is_custom_variant_enabled, 
+        get_config, 
+        build_variant_config_from_custom,
+        detect_platform
+    )
     
     if is_custom_variant_enabled():
         try:
             custom_config = get_config()
             if custom_config:
-                logger.info("Using custom engine variant configuration")
+                logger.debug("Using custom engine variant configuration")
                 return build_variant_config_from_custom(custom_config)
         except Exception as e:
             logger.error(f"Failed to load custom variant config, falling back to standard variants: {e}")
@@ -314,7 +319,34 @@ def get_variant_config(variant: str):
             "base_cmd": ["python", "main.py", "--bind-all", "--client-console", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout"]
         }
     }
-    return configs.get(variant, configs["krinkuto11-amd64"])
+    
+    # Determine current platform to ensure compatibility
+    current_platform = detect_platform()
+    
+    # Validation and Fallback Logic:
+    # 1. If variant is "krinkuto11-amd64" or contains "amd64" but we are on ARM, we MUST fallback
+    # 2. If variant is not in configs at all, we MUST fallback
+    
+    needs_fallback = False
+    if variant not in configs:
+        needs_fallback = True
+        logger.warning(f"Engine variant '{variant}' not found")
+    elif current_platform in ["arm64", "arm32"] and ("amd64" in variant or variant == "krinkuto11-amd64"):
+        needs_fallback = True
+        logger.warning(f"Engine variant '{variant}' is incompatible with platform '{current_platform}'")
+        
+    if needs_fallback:
+        if current_platform == "arm64":
+            fallback = "jopsis-arm64"
+        elif current_platform == "arm32":
+            fallback = "jopsis-arm32"
+        else:
+            fallback = "krinkuto11-amd64"
+        
+        logger.info(f"Falling back to engine variant '{fallback}' (platform: {current_platform})")
+        return configs[fallback]
+        
+    return configs[variant]
 
 # Alias for backward compatibility with existing tests that import _get_variant_config
 # (test_engine_variants.py, demo_engine_variants.py, test_p2p_port_variants.py)
