@@ -159,7 +159,7 @@ async def lifespan(app: FastAPI):
             if 'stream_mode' in proxy_settings:
                 # Validate stream_mode before loading
                 mode = proxy_settings['stream_mode']
-                if mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
+                if mode == 'HLS' and not (cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64') or cfg.ENGINE_VARIANT.startswith('jopsis')):
                     logger.warning(f"HLS mode not supported for variant {cfg.ENGINE_VARIANT}, reverting to TS mode and persisting change")
                     ProxyConfig.STREAM_MODE = 'TS'
                     # Persist the corrected mode back to storage

@@ -14,7 +14,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState(null)
   const [error, setError] = useState(null)
-  
+
   // Proxy config state
   const [initialDataWaitTimeout, setInitialDataWaitTimeout] = useState(10)
   const [initialDataCheckInterval, setInitialDataCheckInterval] = useState(0.2)
@@ -26,7 +26,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(DEFAULT_MAX_STREAMS_PER_ENGINE)
   const [streamMode, setStreamMode] = useState('TS')
   const [engineVariant, setEngineVariant] = useState('')
-  
+
   // HLS-specific state
   const [hlsMaxSegments, setHlsMaxSegments] = useState(20)
   const [hlsInitialSegments, setHlsInitialSegments] = useState(3)
@@ -36,27 +36,27 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [hlsInitialBufferSeconds, setHlsInitialBufferSeconds] = useState(10)
   const [hlsMaxInitialSegments, setHlsMaxInitialSegments] = useState(10)
   const [hlsSegmentFetchInterval, setHlsSegmentFetchInterval] = useState(0.5)
-  
+
   // Read-only config for display
   const [vlcUserAgent, setVlcUserAgent] = useState('')
   const [chunkSize, setChunkSize] = useState(0)
   const [bufferChunkSize, setBufferChunkSize] = useState(0)
-  
+
   // Custom variant state
   const [customVariantEnabled, setCustomVariantEnabled] = useState(false)
   const [customVariantCacheType, setCustomVariantCacheType] = useState('')
   const [variantDisplayName, setVariantDisplayName] = useState('')
-  
+
   // Check if HLS is supported - double check both variant and cache type
-  const isKrinkutoVariant = engineVariant.startsWith('krinkuto11-amd64')
+  const isKrinkutoOrJopsisVariant = engineVariant.startsWith('krinkuto11-amd64') || engineVariant.startsWith('jopsis')
   const hasCompatibleCache = !customVariantEnabled || (customVariantCacheType !== 'memory')
-  const hlsSupported = isKrinkutoVariant && hasCompatibleCache
-  
+  const hlsSupported = isKrinkutoOrJopsisVariant && hasCompatibleCache
+
   useEffect(() => {
     fetchProxyConfig()
     fetchCustomVariantInfo()
   }, [orchUrl])
-  
+
   // Poll for custom variant changes (e.g., after user changes settings in another tab/page)
   useEffect(() => {
     // Initial fetch is done in the first useEffect
@@ -64,10 +64,10 @@ export function ProxySettings({ apiKey, orchUrl }) {
     const pollInterval = setInterval(() => {
       fetchCustomVariantInfo()
     }, 5000) // Poll every 5 seconds
-    
+
     return () => clearInterval(pollInterval)
   }, [orchUrl]) // Only restart polling when orchUrl changes
-  
+
   const fetchProxyConfig = async () => {
     try {
       const response = await fetch(`${orchUrl}/proxy/config`)
@@ -100,7 +100,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
       console.error('Failed to fetch proxy config:', err)
     }
   }
-  
+
   const fetchCustomVariantInfo = async () => {
     try {
       const response = await fetch(`${orchUrl}/custom-variant/config`)
@@ -109,22 +109,22 @@ export function ProxySettings({ apiKey, orchUrl }) {
         setVariantDisplayName(engineVariant)
         return
       }
-      
+
       const data = await response.json()
       setCustomVariantEnabled(data.enabled || false)
-      
+
       // Find live-cache-type parameter
       const liveCacheParam = data.parameters?.find(p => p.name === LIVE_CACHE_TYPE_PARAM)
       const cacheType = liveCacheParam?.enabled ? liveCacheParam.value : ''
       setCustomVariantCacheType(cacheType)
-      
+
       // Determine variant display name
       if (data.enabled) {
         setVariantDisplayName('custom variant')
       } else {
         setVariantDisplayName(engineVariant)
       }
-      
+
       // Auto-switch to TS if custom variant has memory-only cache and HLS is selected
       if (data.enabled && cacheType === 'memory' && streamMode === 'HLS') {
         setStreamMode('TS')
@@ -136,17 +136,17 @@ export function ProxySettings({ apiKey, orchUrl }) {
       setVariantDisplayName(engineVariant)
     }
   }
-  
+
   const saveProxyConfig = async () => {
     if (!apiKey) {
       setError('API Key is required to update settings')
       return
     }
-    
+
     setLoading(true)
     setMessage(null)
     setError(null)
-    
+
     try {
       const params = new URLSearchParams()
       params.append('initial_data_wait_timeout', initialDataWaitTimeout)
@@ -167,14 +167,14 @@ export function ProxySettings({ apiKey, orchUrl }) {
       params.append('hls_initial_buffer_seconds', hlsInitialBufferSeconds)
       params.append('hls_max_initial_segments', hlsMaxInitialSegments)
       params.append('hls_segment_fetch_interval', hlsSegmentFetchInterval)
-      
+
       const response = await fetch(`${orchUrl}/proxy/config?${params}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`
         }
       })
-      
+
       if (response.ok) {
         const data = await response.json()
         setMessage(data.message)
@@ -189,7 +189,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
       setLoading(false)
     }
   }
-  
+
   return (
     <div className="space-y-6">
       <Card>
@@ -202,12 +202,12 @@ export function ProxySettings({ apiKey, orchUrl }) {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="stream-mode">Stream Mode</Label>
-            <Select 
-              value={streamMode} 
+            <Select
+              value={streamMode}
               onValueChange={(value) => {
                 // Prevent switching to HLS if not supported
                 if (value === 'HLS' && !hlsSupported) {
-                  setError('HLS mode is not available with current engine configuration. Use krinkuto11-amd64 variant with disk or hybrid cache.')
+                  setError('HLS mode is not available with current engine configuration. Use krinkuto11-amd64 or jopsis variant with disk or hybrid cache.')
                   return
                 }
                 setStreamMode(value)
@@ -233,7 +233,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   <span className="text-amber-600 dark:text-amber-500 font-semibold">
                     ⚠️ HLS mode is not available. Requirements:
                     <br />
-                    • Engine variant must be krinkuto11-amd64 (current: {variantDisplayName || engineVariant || 'Unknown'})
+                    • Engine variant must be krinkuto11-amd64 or jopsis (current: {variantDisplayName || engineVariant || 'Unknown'})
                     {customVariantEnabled && customVariantCacheType === 'memory' && (
                       <>
                         <br />
@@ -255,7 +255,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
           </div>
         </CardContent>
       </Card>
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Stream Buffer Settings</CardTitle>
@@ -275,12 +275,12 @@ export function ProxySettings({ apiKey, orchUrl }) {
               onChange={(e) => setInitialDataWaitTimeout(parseInt(e.target.value) || 10)}
             />
             <p className="text-xs text-muted-foreground">
-              Maximum time to wait for initial data before starting client streaming. 
+              Maximum time to wait for initial data before starting client streaming.
               This prevents "no data" errors when clients connect before the HTTP streamer has fetched data.
               <br /><strong>Range:</strong> 1-60 seconds. <strong>Default:</strong> 10 seconds.
             </p>
           </div>
-          
+
           <div className="space-y-2">
             <Label htmlFor="initial-data-check-interval">Initial Data Check Interval (seconds)</Label>
             <Input
@@ -297,7 +297,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
               <br /><strong>Range:</strong> 0.1-2.0 seconds. <strong>Default:</strong> 0.2 seconds.
             </p>
           </div>
-          
+
           <div className="space-y-2">
             <Label htmlFor="no-data-timeout-checks">No Data Timeout Checks</Label>
             <Input
@@ -314,7 +314,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
               <br /><strong>Range:</strong> 5-600 checks. <strong>Default:</strong> 60 checks.
             </p>
           </div>
-          
+
           <div className="space-y-2">
             <Label htmlFor="no-data-check-interval">No Data Check Interval (seconds)</Label>
             <Input
@@ -334,7 +334,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
           </div>
         </CardContent>
       </Card>
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Connection & Timeout Settings</CardTitle>
@@ -358,7 +358,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
               <br /><strong>Range:</strong> 5-60 seconds. <strong>Default:</strong> 10 seconds.
             </p>
           </div>
-          
+
           <div className="space-y-2">
             <Label htmlFor="stream-timeout">Stream Timeout (seconds)</Label>
             <Input
@@ -374,7 +374,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
               <br /><strong>Range:</strong> 10-300 seconds. <strong>Default:</strong> 60 seconds.
             </p>
           </div>
-          
+
           <div className="space-y-2">
             <Label htmlFor="channel-shutdown-delay">Idle Stream Shutdown Delay (seconds)</Label>
             <Input
@@ -392,7 +392,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
           </div>
         </CardContent>
       </Card>
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Engine Provisioning Settings</CardTitle>
@@ -413,14 +413,14 @@ export function ProxySettings({ apiKey, orchUrl }) {
             />
             <p className="text-xs text-muted-foreground">
               Maximum number of streams per engine before provisioning a new engine.
-              When all engines reach this threshold minus one (e.g., 2 streams for max of 3), 
+              When all engines reach this threshold minus one (e.g., 2 streams for max of 3),
               the orchestrator will automatically provision a new engine.
               <br /><strong>Range:</strong> 1-20 streams. <strong>Default:</strong> 3 streams.
             </p>
           </div>
         </CardContent>
       </Card>
-      
+
       {streamMode === 'HLS' && (
         <Card>
           <CardHeader>
@@ -446,7 +446,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   <br /><strong>Range:</strong> 5-100. <strong>Default:</strong> 20.
                 </p>
               </div>
-              
+
               <div className="space-y-2">
                 <Label htmlFor="hls-initial-segments">Initial Segments</Label>
                 <Input
@@ -463,7 +463,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
                 </p>
               </div>
             </div>
-            
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="hls-window-size">Manifest Window Size</Label>
@@ -480,7 +480,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   <br /><strong>Range:</strong> 3-20. <strong>Default:</strong> 6.
                 </p>
               </div>
-              
+
               <div className="space-y-2">
                 <Label htmlFor="hls-initial-buffer-seconds">Initial Buffer Duration (sec)</Label>
                 <Input
@@ -497,7 +497,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
                 </p>
               </div>
             </div>
-            
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="hls-buffer-ready-timeout">Buffer Ready Timeout (sec)</Label>
@@ -514,7 +514,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   <br /><strong>Range:</strong> 5-120s. <strong>Default:</strong> 30s.
                 </p>
               </div>
-              
+
               <div className="space-y-2">
                 <Label htmlFor="hls-first-segment-timeout">First Segment Timeout (sec)</Label>
                 <Input
@@ -531,7 +531,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
                 </p>
               </div>
             </div>
-            
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="hls-max-initial-segments">Max Initial Segments</Label>
@@ -548,7 +548,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   <br /><strong>Range:</strong> 1-20. <strong>Default:</strong> 10.
                 </p>
               </div>
-              
+
               <div className="space-y-2">
                 <Label htmlFor="hls-segment-fetch-interval">Fetch Interval Multiplier</Label>
                 <Input
@@ -569,7 +569,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
           </CardContent>
         </Card>
       )}
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Read-Only Configuration</CardTitle>
@@ -587,7 +587,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
               User agent used when fetching streams from AceStream engines
             </p>
           </div>
-          
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Chunk Size</Label>
@@ -595,7 +595,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
                 {chunkSize} bytes
               </div>
             </div>
-            
+
             <div className="space-y-2">
               <Label>Buffer Chunk Size</Label>
               <div className="px-3 py-2 bg-muted rounded-md font-mono text-sm">
@@ -605,9 +605,9 @@ export function ProxySettings({ apiKey, orchUrl }) {
           </div>
         </CardContent>
       </Card>
-      
+
       <div className="pt-4">
-        <Button 
+        <Button
           onClick={saveProxyConfig}
           disabled={loading || !apiKey}
         >
@@ -619,26 +619,26 @@ export function ProxySettings({ apiKey, orchUrl }) {
           </p>
         )}
       </div>
-      
+
       {message && (
         <div className="flex items-center gap-2 p-3 bg-success/10 border border-success rounded-md">
           <CheckCircle2 className="h-4 w-4 text-success" />
           <span className="text-sm text-success">{message}</span>
         </div>
       )}
-      
+
       {error && (
         <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive rounded-md">
           <AlertCircle className="h-4 w-4 text-destructive" />
           <span className="text-sm text-destructive">{error}</span>
         </div>
       )}
-      
+
       <div className="flex items-start gap-2 p-3 bg-blue-500/10 border border-blue-500/20 rounded-md">
         <Info className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
         <div className="text-xs text-blue-500">
-          <strong>Note:</strong> Changes to proxy settings affect new streams only. 
-          Existing active streams will continue using their original settings. 
+          <strong>Note:</strong> Changes to proxy settings affect new streams only.
+          Existing active streams will continue using their original settings.
           Settings are persisted to a JSON file and will be restored on restart.
           <br />
           <strong>Stream Mode:</strong> The /ace/getstream endpoint will return streams in {streamMode} format.
