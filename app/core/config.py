@@ -78,10 +78,9 @@ class Cfg(BaseModel):
     # Engine resource limits
     ENGINE_MEMORY_LIMIT: str | None = os.getenv("ENGINE_MEMORY_LIMIT")
     
-    # Engine Cache Management (Host Mount)
-    ACESTREAM_CACHE_ROOT: str | None = os.getenv("ACESTREAM_CACHE_ROOT")  # Host path for cache root
-    ACESTREAM_CACHE_MOUNT: str = os.getenv("ACESTREAM_CACHE_MOUNT", "/app/data/engine_cache")  # Internal mount path
-
+    # Engine resource limits
+    ENGINE_MEMORY_LIMIT: str | None = os.getenv("ENGINE_MEMORY_LIMIT")
+    
     API_KEY: str | None = os.getenv("API_KEY")
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
     AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "true").lower() == "true"

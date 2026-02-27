@@ -37,6 +37,13 @@ class State:
         # This prevents repeated lookahead triggers until all engines reach this layer
         self._lookahead_layer: Optional[int] = None
 
+        # Cache statistics
+        self.cache_stats = {
+            "total_bytes": 0,
+            "volume_count": 0,
+            "last_updated": None
+        }
+
     @staticmethod
     def now():
         return datetime.now(timezone.utc)
@@ -355,8 +362,16 @@ class State:
             return {
                 "engines": list(self.engines.values()),
                 "streams": list(self.streams.values()),
-                "stream_stats": dict(self.stream_stats)
+                "stream_stats": dict(self.stream_stats),
+                "cache_stats": dict(self.cache_stats)
             }
+
+    def update_cache_stats(self, total_bytes: int, volume_count: int):
+        """Update cache statistics in state."""
+        with self._lock:
+            self.cache_stats["total_bytes"] = total_bytes
+            self.cache_stats["volume_count"] = volume_count
+            self.cache_stats["last_updated"] = self.now().isoformat()
 
     def append_stat(self, stream_id: str, snap: StreamStatSnapshot):
         with self._lock:

@@ -50,6 +50,9 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const [savingSettings, setSavingSettings] = useState(false)
   const [settingsChanged, setSettingsChanged] = useState(false)
 
+  // Cache stats state
+  const [cacheStats, setCacheStats] = useState({ total_bytes: 0, volume_count: 0 })
+
   // Load engine settings
   const loadEngineSettings = useCallback(async () => {
     try {
@@ -65,9 +68,32 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     }
   }, [orchUrl, fetchJSON])
 
+  // Load cache statistics
+  const loadCacheStats = useCallback(async () => {
+    try {
+      const stats = await fetchJSON(`${orchUrl}/cache/stats`)
+      setCacheStats(stats)
+    } catch (err) {
+      console.error('Failed to load cache stats:', err)
+    }
+  }, [orchUrl, fetchJSON])
+
   useEffect(() => {
     loadEngineSettings()
-  }, [loadEngineSettings])
+    loadCacheStats()
+
+    // Refresh stats every 30s
+    const interval = setInterval(loadCacheStats, 30000)
+    return () => clearInterval(interval)
+  }, [loadEngineSettings, loadCacheStats])
+
+  const formatBytes = (bytes) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
 
   // Poll for reprovision status
   useEffect(() => {
@@ -167,6 +193,15 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
           <h1 className="text-3xl font-bold tracking-tight">Engines</h1>
           <p className="text-muted-foreground mt-1">Manage and monitor AceStream engine containers</p>
         </div>
+        {cacheStats.volume_count > 0 && (
+          <div className="text-right">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground justify-end">
+              <span>Engine Cache Size:</span>
+              <span className="font-semibold text-foreground">{formatBytes(cacheStats.total_bytes)}</span>
+            </div>
+            <p className="text-[10px] opacity-60">across {cacheStats.volume_count} volumes</p>
+          </div>
+        )}
       </div>
 
       {/* Reprovisioning Progress */}

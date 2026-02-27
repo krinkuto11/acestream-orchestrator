@@ -157,6 +157,10 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   const [editingTemplateSlot, setEditingTemplateSlot] = useState(null)  // Track which template is being edited
   const [showReprovisionWarning, setShowReprovisionWarning] = useState(false)  // Show warning after editing active template
 
+  // Cache monitoring state
+  const [cacheStats, setCacheStats] = useState({ total_bytes: 0, volume_count: 0, last_updated: null })
+  const [purging, setPurging] = useState(false)
+
   // Fetch templates
   const fetchTemplates = useCallback(async () => {
     try {
@@ -167,6 +171,16 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     } catch (err) {
       console.error('Failed to load templates:', err)
       return null
+    }
+  }, [orchUrl, fetchJSON])
+
+  // Fetch cache statistics
+  const fetchCacheStats = useCallback(async () => {
+    try {
+      const data = await fetchJSON(`${orchUrl}/cache/stats`)
+      setCacheStats(data)
+    } catch (err) {
+      console.error('Failed to load cache stats:', err)
     }
   }, [orchUrl, fetchJSON])
 
@@ -231,19 +245,21 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   useEffect(() => {
     fetchConfig()
     fetchTemplates()
-  }, [fetchConfig, fetchTemplates])
+    fetchCacheStats()
+  }, [fetchConfig, fetchTemplates, fetchCacheStats])
 
   // Poll reprovision status every 2 seconds
   useEffect(() => {
     const interval = setInterval(async () => {
       await checkReprovisionStatus()
+      await fetchCacheStats()
     }, 2000)
 
     // Initial check
     checkReprovisionStatus()
 
     return () => clearInterval(interval)
-  }, [checkReprovisionStatus])
+  }, [checkReprovisionStatus, fetchCacheStats])
 
   // Update a parameter value
   const updateParameter = useCallback((paramName, field, value) => {
@@ -801,6 +817,32 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
     )
   }
 
+  const handlePurgeCache = async () => {
+    if (!window.confirm("Are you sure you want to purge ALL engine cache volumes? This will clear temporary data for all running engines, which might cause brief buffering.")) {
+      return
+    }
+
+    try {
+      setPurging(true)
+      await fetchJSON(`${orchUrl}/cache/purge`, { method: 'POST' })
+      addNotification('Cache purge initiated successfully', 'success')
+      // Small delay before refreshing stats to allow deletion to complete
+      setTimeout(fetchCacheStats, 1500)
+    } catch (err) {
+      addNotification(`Failed to purge cache: ${err.message}`, 'error')
+    } finally {
+      setPurging(false)
+    }
+  }
+
+  const formatBytes = (bytes) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -984,11 +1026,11 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <Label htmlFor="cache-mount-enabled">Host Disk Cache Mounting</Label>
+              <Label htmlFor="cache-mount-enabled">Engine Disk Cache (Docker Volumes)</Label>
               <p className="text-sm text-muted-foreground mt-1">
-                Isolate cache per engine on host and auto-clean on shutdown.
+                Use dedicated Docker volumes for engine cache to improve performance and isolate IO.
                 <br />
-                <span className="text-xs text-amber-600 dark:text-amber-500">Requires ACESTREAM_CACHE_ROOT env var</span>
+                <span className="text-xs text-blue-600 dark:text-blue-400">Strictly uses Docker volumes (bind mounts disabled)</span>
               </p>
             </div>
             <Switch
@@ -999,9 +1041,34 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
           </div>
 
           {config.disk_cache_mount_enabled && (
-            <div className="p-3 bg-muted rounded-md text-sm font-mono flex items-center gap-2">
-              <Info className="h-4 w-4" />
-              Host Path: <span className="opacity-70">Defined by ACESTREAM_CACHE_ROOT</span>
+            <div className="p-4 bg-muted/50 rounded-lg space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-blue-500/10 text-blue-600 rounded-full">
+                    <HardDrive className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium">Global Cache Status</h4>
+                    <p className="text-xs text-muted-foreground">Monitoring {cacheStats.volume_count} active volumes</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-lg font-bold">{formatBytes(cacheStats.total_bytes)}</span>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-1">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="h-8 flex items-center gap-2"
+                  onClick={handlePurgeCache}
+                  disabled={purging || !cacheStats.volume_count}
+                >
+                  <Trash2 className={purging ? "h-3 w-3 animate-spin" : "h-3 w-3"} />
+                  {purging ? 'Purging...' : 'Purge All Caches'}
+                </Button>
+              </div>
             </div>
           )}
 

@@ -39,6 +39,7 @@ from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_ca
 from .services.acexy import acexy_sync_service
 from .services.stream_loop_detector import stream_loop_detector
 from .services.looping_streams import looping_streams_tracker
+from .services.cache_monitoring_service import start_cache_monitoring
 from .proxy.manager import ProxyManager
 
 logger = logging.getLogger(__name__)
@@ -307,11 +308,12 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
     asyncio.create_task(looping_streams_tracker.start())  # Start looping streams tracker
     
-    # Start engine cache manager background pruner
+    # Start engine cache manager background tasks
     from .services.engine_cache_manager import engine_cache_manager
     if engine_cache_manager.is_enabled():
         asyncio.create_task(engine_cache_manager.start_pruner())
-        logger.info("Engine cache pruner started")
+        asyncio.create_task(start_cache_monitoring())
+        logger.info("Engine cache pruner and monitoring started")
     
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
@@ -3307,4 +3309,16 @@ async def import_settings_data(
         logger.error(f"Failed to import settings: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to import settings: {str(e)}")
 
+# --- Cache Management ---
 
+@app.get("/cache/stats", tags=["Cache"])
+async def get_cache_stats(api_key: str = Depends(require_api_key)):
+    """Get current cache usage statistics."""
+    return state.cache_stats
+
+@app.post("/cache/purge", tags=["Cache"])
+async def purge_cache(api_key: str = Depends(require_api_key)):
+    """Manually purge all cache volume contents."""
+    from .services.engine_cache_manager import engine_cache_manager
+    await engine_cache_manager.purge_all_contents()
+    return {"status": "success", "message": "All cache volume contents purged"}
