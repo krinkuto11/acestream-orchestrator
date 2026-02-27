@@ -304,7 +304,7 @@ def get_variant_config(variant: str):
             "base_cmd": ["/acestream/acestreamengine", "--client-console", "--bind-all"]
         },
         "jopsis-amd64": {
-            "image": "krinkuto11/aceserve:latest",
+            "image": "krinkuto11/acestream:latest-amd64",
             "config_type": "cmd",
             "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp"]
         },
