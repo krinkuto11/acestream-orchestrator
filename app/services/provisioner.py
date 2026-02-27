@@ -311,12 +311,12 @@ def get_variant_config(variant: str):
         "jopsis-arm32": {
             "image": f"jopsis/aceserve:latest-arm32",
             "config_type": "cmd",
-            "base_cmd": ["python", "main.py", "--bind-all", "--client-console", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout"]
+            "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp"]
         },
         "jopsis-arm64": {
             "image": f"jopsis/aceserve:latest-arm64",
             "config_type": "cmd",
-            "base_cmd": ["python", "main.py", "--bind-all", "--client-console", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout"]
+            "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp"]
         }
     }
     
@@ -553,31 +553,35 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     cmd = None
     
     if variant_config["config_type"] == "env":
-        # ENV-based variants (jopsis-amd64 only)
-        # Note: Custom amd64 variants now use CMD-based configuration with Nano-Ace
-        # Legacy custom variants with base_args would still use this path
-        uses_acestream_args = (
-            cfg.ENGINE_VARIANT == "jopsis-amd64" or 
-            (variant_config.get("is_custom") and variant_config.get("base_args") is not None)
-        )
-        
-        if uses_acestream_args:
-            # Use ACESTREAM_ARGS environment variable with base args + port settings
-            # This applies to jopsis-amd64 and custom variants with base_args
-            base_args = variant_config.get("base_args", "")
-            port_args = f" --http-port {c_http} --https-port {c_https}"
-            # Add P2P port if available
-            if p2p_port:
-                port_args += f" --port {p2p_port}"
-            env["ACESTREAM_ARGS"] = base_args + port_args
+        # Legacy ENV-based configuration (mainly for custom variants with base_args)
+        base_args = variant_config.get("base_args", "")
+        port_args = f" --http-port {c_http} --https-port {c_https}"
+        # Add P2P port if available
+        if p2p_port:
+            port_args += f" --port {p2p_port}"
+        env["ACESTREAM_ARGS"] = base_args + port_args
     else:
-        # CMD-based variants (krinkuto11-amd64, jopsis-arm32, jopsis-arm64, custom variants with base_cmd)
-        # Append port settings to base command
+        # CMD-based variants (krinkuto11, jopsis, and all custom variants with base_cmd)
         base_cmd = variant_config.get("base_cmd", [])
-        port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]
+        
+        # Determine which port arguments to add
+        # User requested that Jopsis variants in default mode only receive --http-port and --port (P2P)
+        # We check the image name to identify Jopsis variants even after platform fallbacks
+        image_name = variant_config.get("image", "").lower()
+        is_jopsis_default = not variant_config.get("is_custom") and ("jopsis" in image_name or "aceserve" in image_name)
+        
+        if is_jopsis_default:
+            # Minimal ports for Jopsis as per user requirement. Jopsis docker images already 
+            # have --bind-all etc. in their default parameters.
+            port_args = ["--http-port", str(c_http)]
+        else:
+            # Standard ports for other variants (including krinkuto11 and custom)
+            port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]
+            
         # Add P2P port if available
         if p2p_port:
             port_args.extend(["--port", str(p2p_port)])
+            
         cmd = base_cmd + port_args
 
     key, val = cfg.CONTAINER_LABEL.split("=")

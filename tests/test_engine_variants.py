@@ -25,20 +25,18 @@ def test_variant_configs():
         
         # Validate type-specific fields
         if config['config_type'] == 'env':
-            if variant == 'jopsis-amd64':
-                assert 'base_args' in config, f"Missing 'base_args' for {variant}"
-                assert '--client-console' in config['base_args'], f"Missing required args for {variant}"
-                print(f"   ✓ Has base_args with required settings")
-            else:
-                print(f"   ✓ ENV-based variant")
+            # Custom variants or legacy paths
+            print(f"   ✓ ENV-based variant")
         else:
             assert 'base_cmd' in config, f"Missing 'base_cmd' for {variant}"
             assert isinstance(config['base_cmd'], list), f"base_cmd should be a list for {variant}"
-            # krinkuto11-amd64 uses /acestream/acestreamengine, ARM variants use python
+            # krinkuto11-amd64 uses /acestream/acestreamengine, Jopsis variants use python
             if variant == 'krinkuto11-amd64':
                 assert '/acestream/acestreamengine' in config['base_cmd'], f"Missing /acestream/acestreamengine in base_cmd for {variant}"
             else:
                 assert 'python' in config['base_cmd'], f"Missing python in base_cmd for {variant}"
+                assert '--bind-all' in config['base_cmd'], f"Missing --bind-all in base_cmd for {variant}"
+                assert '--disable-upnp' in config['base_cmd'], f"Missing --disable-upnp in base_cmd for {variant}"
             print(f"   ✓ CMD-based variant with {len(config['base_cmd'])} args")
     
     print(f"\n✅ All {len(variants)} variants configured correctly!")
@@ -70,18 +68,22 @@ def test_variant_environment_building():
     assert '6879' in cmd, "Missing port value in cmd"
     print("   ✓ Command built correctly with base + ports")
     
-    # Test jopsis-amd64 (ENV with ACESTREAM_ARGS)
-    print("\n📋 Testing jopsis-amd64 environment:")
+    # Test jopsis-amd64 (Now CMD-based)
+    print("\n📋 Testing jopsis-amd64 command:")
     config = _get_variant_config('jopsis-amd64')
-    env = {}
-    if config['config_type'] == 'env':
-        base_args = config.get('base_args', '')
-        port_args = f" --http-port {c_http} --https-port {c_https}"
-        env['ACESTREAM_ARGS'] = base_args + port_args
-    print(f"   ACESTREAM_ARGS length: {len(env['ACESTREAM_ARGS'])} chars")
-    assert '--http-port 6879' in env['ACESTREAM_ARGS'], "Missing http-port in ACESTREAM_ARGS"
-    assert '--client-console' in env['ACESTREAM_ARGS'], "Missing base args in ACESTREAM_ARGS"
-    print("   ✓ ACESTREAM_ARGS built correctly with base settings + ports")
+    cmd = None
+    if config['config_type'] == 'cmd':
+        base_cmd = config.get('base_cmd', [])
+        # In default mode, Jopsis only gets --http-port
+        port_args = ["--http-port", str(c_http)]
+        cmd = base_cmd + port_args
+    print(f"   Command: {' '.join(cmd[:5])}... (total {len(cmd)} args)")
+    assert 'python' in cmd, "Missing python in cmd"
+    assert '--http-port' in cmd, "Missing http-port in cmd"
+    assert '6879' in cmd, "Missing port value in cmd"
+    assert '--disable-upnp' in cmd, "Missing base args in cmd"
+    assert '--https-port' not in cmd, "Jopsis default should NOT have https-port"
+    print("   ✓ Command built correctly with base settings + minimal ports")
     
     # Test jopsis-arm32 (CMD-based)
     print("\n📋 Testing jopsis-arm32 command:")

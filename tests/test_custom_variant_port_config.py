@@ -84,15 +84,15 @@ def test_port_allocation_logic_for_custom_variant():
 
 def test_standard_jopsis_variant_still_works():
     """
-    Test that the standard jopsis-amd64 variant still uses ACESTREAM_ARGS correctly.
+    Test that the standard jopsis-amd64 variant correctly uses CMD-based config.
     """
     from app.services.provisioner import get_variant_config
     
     # Get the standard jopsis-amd64 variant config
     variant_config = get_variant_config("jopsis-amd64")
     
-    assert variant_config.get("config_type") == "env", "jopsis-amd64 should have config_type=env"
-    assert variant_config.get("base_args") is not None, "jopsis-amd64 should have base_args"
+    assert variant_config.get("config_type") == "cmd", "jopsis-amd64 should have config_type=cmd"
+    assert variant_config.get("base_cmd") is not None, "jopsis-amd64 should have base_cmd"
     assert variant_config.get("is_custom") is not True, "jopsis-amd64 should not be custom"
     
     print("✅ Standard jopsis-amd64 variant still works correctly")
@@ -196,7 +196,7 @@ if __name__ == '__main__':
     
     success = True
     try:
-        test_custom_variant_uses_acestream_args_with_allocated_port()
+        test_custom_amd64_variant_uses_acestream_args_for_port_allocation()
         test_port_allocation_logic_for_custom_variant()
         test_standard_jopsis_variant_still_works()
         test_standard_krinkuto_variant_still_works()
