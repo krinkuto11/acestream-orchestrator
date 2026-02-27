@@ -304,17 +304,17 @@ def get_variant_config(variant: str):
             "base_cmd": ["/acestream/acestreamengine", "--client-console", "--bind-all"]
         },
         "jopsis-amd64": {
-            "image": "krinkuto11/aceserve:latest-amd64",
+            "image": "krinkuto11/aceserve:latest",
             "config_type": "cmd",
             "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp"]
         },
         "jopsis-arm32": {
-            "image": f"krinkuto11/aceserve:latest-arm32",
+            "image": f"krinkuto11/acestream:latest-arm32",
             "config_type": "cmd",
             "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp"]
         },
         "jopsis-arm64": {
-            "image": f"krinkuto11/aceserve:latest-arm64",
+            "image": f"krinkuto11/acestream:latest-arm64",
             "config_type": "cmd",
             "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp"]
         }
