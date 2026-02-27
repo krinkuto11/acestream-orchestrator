@@ -3,7 +3,11 @@
 Test AceStream engine variants configuration.
 """
 
-def test_variant_configs():
+import unittest.mock
+
+@unittest.mock.patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+@unittest.mock.patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
+def test_variant_configs(mock_is_custom, mock_detect):
     """Test that all variants have proper configuration."""
     print("🧪 Testing Engine Variant Configurations")
     print("=" * 60)
@@ -43,7 +47,9 @@ def test_variant_configs():
     return True
 
 
-def test_variant_environment_building():
+@unittest.mock.patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+@unittest.mock.patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
+def test_variant_environment_building(mock_is_custom, mock_detect):
     """Test that environment variables are built correctly for each variant."""
     print("\n🧪 Testing Environment Variable Building")
     print("=" * 60)
@@ -116,7 +122,9 @@ def test_variant_environment_building():
     return True
 
 
-def test_config_loading():
+@unittest.mock.patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+@unittest.mock.patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
+def test_config_loading(mock_is_custom, mock_detect):
     """Test that ENGINE_VARIANT config loads correctly."""
     print("\n🧪 Testing Configuration Loading")
     print("=" * 60)
@@ -128,8 +136,9 @@ def test_config_loading():
     if 'app.core.config' in sys.modules:
         del sys.modules['app.core.config']
     os.environ.pop('ENGINE_VARIANT', None)
-    from app.core.config import Cfg
-    cfg = Cfg()
+    with unittest.mock.patch('platform.machine', return_value='x86_64'):
+        from app.core.config import Cfg
+        cfg = Cfg()
     print(f"\n📋 Default ENGINE_VARIANT: {cfg.ENGINE_VARIANT}")
     assert cfg.ENGINE_VARIANT == 'krinkuto11-amd64', "Default should be krinkuto11-amd64"
     print("   ✓ Default value correct")

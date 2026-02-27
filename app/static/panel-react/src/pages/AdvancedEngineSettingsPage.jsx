@@ -177,7 +177,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
   // Fetch cache statistics
   const fetchCacheStats = useCallback(async () => {
     try {
-      const data = await fetchJSON(`${orchUrl}/cache/stats`)
+      const data = await fetchJSON(`${orchUrl}/engine-cache/stats`)
       setCacheStats(data)
     } catch (err) {
       console.error('Failed to load cache stats:', err)
@@ -824,7 +824,7 @@ export function AdvancedEngineSettingsPage({ orchUrl, apiKey, fetchJSON }) {
 
     try {
       setPurging(true)
-      await fetchJSON(`${orchUrl}/cache/purge`, { method: 'POST' })
+      await fetchJSON(`${orchUrl}/engine-cache/purge`, { method: 'POST' })
       addNotification('Cache purge initiated successfully', 'success')
       // Small delay before refreshing stats to allow deletion to complete
       setTimeout(fetchCacheStats, 1500)

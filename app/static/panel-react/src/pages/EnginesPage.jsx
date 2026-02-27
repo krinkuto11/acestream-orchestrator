@@ -71,7 +71,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   // Load cache statistics
   const loadCacheStats = useCallback(async () => {
     try {
-      const stats = await fetchJSON(`${orchUrl}/cache/stats`)
+      const stats = await fetchJSON(`${orchUrl}/engine-cache/stats`)
       setCacheStats(stats)
     } catch (err) {
       console.error('Failed to load cache stats:', err)

@@ -3311,13 +3311,13 @@ async def import_settings_data(
 
 # --- Cache Management ---
 
-@app.get("/cache/stats", tags=["Cache"])
-async def get_cache_stats(api_key: str = Depends(require_api_key)):
+@app.get("/engine-cache/stats", tags=["Cache"])
+async def engine_cache_stats(api_key: str = Depends(require_api_key)):
     """Get current cache usage statistics."""
     return state.cache_stats
 
-@app.post("/cache/purge", tags=["Cache"])
-async def purge_cache(api_key: str = Depends(require_api_key)):
+@app.post("/engine-cache/purge", tags=["Cache"])
+async def purge_engine_cache(api_key: str = Depends(require_api_key)):
     """Manually purge all cache volume contents."""
     from .services.engine_cache_manager import engine_cache_manager
     await engine_cache_manager.purge_all_contents()

@@ -3,7 +3,11 @@
 Test P2P port handling for all engine variants.
 """
 
-def test_p2p_port_handling():
+import unittest.mock
+
+@unittest.mock.patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+@unittest.mock.patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
+def test_p2p_port_handling(mock_is_custom, mock_detect):
     """Test that P2P port is correctly added for each variant type."""
     print("🧪 Testing P2P Port Handling for All Variants")
     print("=" * 70)
@@ -41,26 +45,26 @@ def test_p2p_port_handling():
     assert cmd[port_index + 1] == str(p2p_port), f"Port value should follow --port flag"
     print("✓ P2P port correctly appended to command")
     
-    # Test jopsis-amd64 (ENV with P2P port in ACESTREAM_ARGS)
+    # Test jopsis-amd64 (CMD with P2P port in command)
     print("\n" + "-" * 70)
     print("📋 Variant: jopsis-amd64")
     print("-" * 70)
     config = _get_variant_config('jopsis-amd64')
-    env = {}
-    if config['config_type'] == 'env':
-        base_args = config.get('base_args', '')
-        port_args = f" --http-port {c_http} --https-port {c_https}"
+    cmd = None
+    if config['config_type'] == 'cmd':
+        base_cmd = config.get('base_cmd', [])
+        port_args = ["--http-port", str(c_http)]
         if p2p_port:
-            port_args += f" --port {p2p_port}"
-        env['ACESTREAM_ARGS'] = base_args + port_args
+            port_args.extend(["--port", str(p2p_port)])
+        cmd = base_cmd + port_args
     
-    print(f"Environment Variables:")
-    print(f"  ACESTREAM_ARGS (last 150 chars): ...{env['ACESTREAM_ARGS'][-150:]}")
+    print(f"Command (last 8 args): {cmd[-8:]}")
     
-    assert '--port' in env['ACESTREAM_ARGS'], "P2P port flag should be in ACESTREAM_ARGS"
-    assert str(p2p_port) in env['ACESTREAM_ARGS'], f"P2P port {p2p_port} should be in ACESTREAM_ARGS"
-    assert f'--port {p2p_port}' in env['ACESTREAM_ARGS'], f"--port {p2p_port} should be in ACESTREAM_ARGS"
-    print("✓ P2P port correctly appended to ACESTREAM_ARGS")
+    assert '--port' in cmd, "P2P port flag should be in command"
+    assert str(p2p_port) in cmd, f"P2P port {p2p_port} should be in command"
+    port_index = cmd.index('--port')
+    assert cmd[port_index + 1] == str(p2p_port), f"Port value should follow --port flag"
+    print("✓ P2P port correctly appended to config")
     
     # Test jopsis-arm32 (CMD with P2P port in command)
     print("\n" + "-" * 70)
@@ -110,14 +114,16 @@ def test_p2p_port_handling():
     
     print("\nSummary:")
     print("  - krinkuto11-amd64: --port flag in command ✓")
-    print("  - jopsis-amd64: --port flag in ACESTREAM_ARGS ✓")
+    print("  - jopsis-amd64: --port flag in command ✓")
     print("  - jopsis-arm32: --port flag in command ✓")
     print("  - jopsis-arm64: --port flag in command ✓")
     
     return True
 
 
-def test_p2p_port_without_gluetun():
+@unittest.mock.patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+@unittest.mock.patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
+def test_p2p_port_without_gluetun(mock_is_custom, mock_detect):
     """Test that variants work correctly when Gluetun is not configured."""
     print("\n\n🧪 Testing Without Gluetun (No P2P Port)")
     print("=" * 70)
@@ -133,16 +139,16 @@ def test_p2p_port_without_gluetun():
     # Test jopsis-amd64 without P2P port
     print("\n📋 Variant: jopsis-amd64 (without Gluetun)")
     config = _get_variant_config('jopsis-amd64')
-    env = {}
-    if config['config_type'] == 'env':
-        base_args = config.get('base_args', '')
-        port_args = f" --http-port {c_http} --https-port {c_https}"
+    cmd = None
+    if config['config_type'] == 'cmd':
+        base_cmd = config.get('base_cmd', [])
+        port_args = ["--http-port", str(c_http)]
         if p2p_port:
-            port_args += f" --port {p2p_port}"
-        env['ACESTREAM_ARGS'] = base_args + port_args
+            port_args.extend(["--port", str(p2p_port)])
+        cmd = base_cmd + port_args
     
-    print(f"  ACESTREAM_ARGS (last 80 chars): ...{env['ACESTREAM_ARGS'][-80:]}")
-    assert '--port' not in env['ACESTREAM_ARGS'], "P2P port flag should NOT be in ACESTREAM_ARGS when Gluetun disabled"
+    print(f"  Command (last 6 args): {cmd[-6:]}")
+    assert '--port' not in cmd, "P2P port flag should NOT be in command when Gluetun disabled"
     print("  ✓ No P2P port added (as expected)")
     
     # Test jopsis-arm32 without P2P port
