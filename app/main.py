@@ -1944,13 +1944,13 @@ async def ace_getstream(
     stream_mode = ProxyConfig.STREAM_MODE
     
     # Check if HLS mode is configured but not supported
-    if stream_mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
+    if stream_mode == 'HLS' and not (cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64') or cfg.ENGINE_VARIANT.startswith('jopsis')):
         logger.error(f"HLS mode configured but not supported for variant {cfg.ENGINE_VARIANT}")
         raise HTTPException(
             status_code=501,
             detail={
                 "error": "hls_not_supported",
-                "message": f"HLS streaming is only supported for krinkuto11-amd64 variant. Current variant: {cfg.ENGINE_VARIANT}. Please change stream mode to TS in Proxy Settings.",
+                "message": f"HLS streaming is only supported for krinkuto11-amd64 and jopsis variants. Current variant: {cfg.ENGINE_VARIANT}. Please change stream mode to TS in Proxy Settings.",
                 "current_variant": cfg.ENGINE_VARIANT,
                 "current_mode": stream_mode
             }
@@ -2739,10 +2739,10 @@ def update_proxy_config(
             raise HTTPException(status_code=400, detail="stream_mode must be either 'TS' or 'HLS'")
         
         # Check if HLS is supported for the current engine variant
-        if stream_mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
+        if stream_mode == 'HLS' and not (cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64') or cfg.ENGINE_VARIANT.startswith('jopsis')):
             raise HTTPException(
                 status_code=400, 
-                detail=f"HLS streaming is only supported for krinkuto11-amd64 variant. Current variant: {cfg.ENGINE_VARIANT}"
+                detail=f"HLS streaming is only supported for krinkuto11-amd64 and jopsis variants. Current variant: {cfg.ENGINE_VARIANT}"
             )
         
         ProxyConfig.STREAM_MODE = stream_mode
