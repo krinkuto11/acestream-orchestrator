@@ -181,22 +181,30 @@ def detect_platform() -> str:
         str: "amd64", "arm32", or "arm64"
     """
     machine = platform.machine().lower()
+    processor = platform.processor().lower() if hasattr(platform, 'processor') else ""
+    
+    logger.debug(f"Detecting platform: machine='{machine}', processor='{processor}'")
     
     # Map common architecture names
-    if machine in ['x86_64', 'amd64']:
+    # AMD64 / x86_64
+    if machine in ['x86_64', 'amd64', 'x64'] or 'x86_64' in machine:
         return 'amd64'
-    elif machine in ['aarch64', 'arm64']:
+    
+    # ARM64 / aarch64
+    if machine in ['aarch64', 'arm64', 'armv8', 'armv8l'] or 'aarch64' in machine or 'arm64' in machine:
         return 'arm64'
-    elif machine.startswith('arm'):
+    
+    # ARM32 / armhf / armv7
+    if machine.startswith('arm') or 'arm' in machine:
         # Try to distinguish between arm32 and arm64
-        if '64' in machine:
+        if '64' in machine or 'v8' in machine:
             return 'arm64'
         else:
             return 'arm32'
-    else:
-        # Default to amd64 if unknown
-        logger.warning(f"Unknown architecture '{machine}', defaulting to amd64")
-        return 'amd64'
+    
+    # Default to amd64 if unknown, but log as warning
+    logger.warning(f"Unknown architecture: machine='{machine}', defaulting to amd64")
+    return 'amd64'
 
 
 def get_default_parameters(platform: str) -> List[CustomVariantParameter]:

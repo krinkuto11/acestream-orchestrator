@@ -2870,8 +2870,14 @@ def get_engine_settings():
     from .services.settings_persistence import SettingsPersistence
     persisted = SettingsPersistence.load_engine_settings()
     
-    # If persisted settings exist, use them
+    # Detected platform is always real-time
+    current_platform = detect_platform()
+    
+    # If persisted settings exist, use them but override platform field
     if persisted:
+        # Update platform in the response to match real-time detection
+        # This ensures the UI always shows the correct architecture
+        persisted["platform"] = current_platform
         return persisted
     
     # Build default response from current runtime config
@@ -2883,7 +2889,7 @@ def get_engine_settings():
         "auto_delete": cfg.AUTO_DELETE,
         "engine_variant": cfg.ENGINE_VARIANT,
         "use_custom_variant": custom_config.enabled if custom_config else False,
-        "platform": detect_platform(),
+        "platform": current_platform,
     }
     
     # Save defaults for future use
@@ -2910,14 +2916,18 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
     from .services.custom_variant_config import detect_platform
     
     # Load current persisted settings or use runtime config as base
+    current_platform = detect_platform()
     current_settings = SettingsPersistence.load_engine_settings() or {
         "min_replicas": cfg.MIN_REPLICAS,
         "max_replicas": cfg.MAX_REPLICAS,
         "auto_delete": cfg.AUTO_DELETE,
         "engine_variant": cfg.ENGINE_VARIANT,
         "use_custom_variant": False,
-        "platform": detect_platform(),
+        "platform": current_platform,
     }
+    
+    # Always ensure the platform field in persisted settings is corrected to real-time
+    current_settings["platform"] = current_platform
     
     # Validation and updates
     if settings.min_replicas is not None:
