@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Req
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from pydantic import BaseModel
 import asyncio
