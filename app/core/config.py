@@ -7,7 +7,7 @@ import platform as _platform
 _machine = _platform.machine().lower()
 
 # Determine a sensible default variant based on the platform to avoid 404 errors on first run
-_default_variant = "krinkuto11-amd64"
+_default_variant = "jopsis-amd64"
 if "aarch64" in _machine or "arm64" in _machine:
     _default_variant = "jopsis-arm64"
 elif "arm" in _machine:
@@ -120,7 +120,7 @@ class Cfg(BaseModel):
 
     @validator('ENGINE_VARIANT')
     def validate_engine_variant(cls, v):
-        valid_variants = ['krinkuto11-amd64', 'jopsis-amd64', 'jopsis-arm32', 'jopsis-arm64']
+        valid_variants = ['jopsis-amd64', 'jopsis-arm32', 'jopsis-arm64']
         if v not in valid_variants:
             raise ValueError(f'ENGINE_VARIANT must be one of: {", ".join(valid_variants)}')
         return v
@@ -181,15 +181,4 @@ class Cfg(BaseModel):
                 raise ValueError('GLUETUN_CONTAINER_NAME and GLUETUN_CONTAINER_NAME_2 must be different')
         return self
     
-    @validator('ENGINE_MEMORY_LIMIT')
-    def validate_engine_memory_limit(cls, v):
-        if v is None or v == "":
-            return None
-        # Import validation function
-        from ..services.custom_variant_config import validate_memory_limit
-        is_valid, error_msg = validate_memory_limit(v)
-        if not is_valid:
-            raise ValueError(f'ENGINE_MEMORY_LIMIT: {error_msg}')
-        return v
-
 cfg = Cfg()

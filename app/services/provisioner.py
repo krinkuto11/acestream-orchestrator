@@ -257,17 +257,12 @@ def _check_gluetun_health_sync(container_name: Optional[str] = None) -> bool:
     except Exception:
         return False
 
-def get_variant_config(variant: str):
+def get_variant_config(variant: str) -> dict:
     """
-    Get the configuration for a specific engine variant.
+    Get the Docker image and base command/arguments for a specific variant.
     
-    This is a public API for retrieving variant configuration.
-    Supports custom variants when enabled via custom_variant_config.
-    
-    Args:
-        variant: The engine variant name. Valid values are:
-                 - 'krinkuto11-amd64' (default)
-                 - 'jopsis-amd64'
+    Supported standard variants:
+                 - 'jopsis-amd64' (default)
                  - 'jopsis-arm32'
                  - 'jopsis-arm64'
                  - 'custom' (when custom variant is enabled)
@@ -298,11 +293,6 @@ def get_variant_config(variant: str):
             logger.error(f"Failed to load custom variant config, falling back to standard variants: {e}")
     
     configs = {
-        "krinkuto11-amd64": {
-            "image": "ghcr.io/krinkuto11/nano-ace:latest",
-            "config_type": "cmd",
-            "base_cmd": ["/acestream/acestreamengine", "--client-console", "--bind-all"]
-        },
         "jopsis-amd64": {
             "image": "ghcr.io/krinkuto11/acestream:latest-amd64",
             "config_type": "cmd",
@@ -324,14 +314,14 @@ def get_variant_config(variant: str):
     current_platform = detect_platform()
     
     # Validation and Fallback Logic:
-    # 1. If variant is "krinkuto11-amd64" or contains "amd64" but we are on ARM, we MUST fallback
-    # 2. If variant is not in configs at all, we MUST fallback
+    # 1. If variant is not in configs at all, we MUST fallback
+    # 2. If variant is "amd64" but we are on ARM, we MUST fallback
     
     needs_fallback = False
     if variant not in configs:
         needs_fallback = True
         logger.warning(f"Engine variant '{variant}' not found")
-    elif current_platform in ["arm64", "arm32"] and ("amd64" in variant or variant == "krinkuto11-amd64"):
+    elif current_platform in ["arm64", "arm32"] and "amd64" in variant:
         needs_fallback = True
         logger.warning(f"Engine variant '{variant}' is incompatible with platform '{current_platform}'")
         
@@ -341,7 +331,7 @@ def get_variant_config(variant: str):
         elif current_platform == "arm32":
             fallback = "jopsis-arm32"
         else:
-            fallback = "krinkuto11-amd64"
+            fallback = "jopsis-amd64"
         
         logger.info(f"Falling back to engine variant '{fallback}' (platform: {current_platform})")
         return configs[fallback]

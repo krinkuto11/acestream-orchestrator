@@ -159,14 +159,7 @@ async def lifespan(app: FastAPI):
             if 'stream_mode' in proxy_settings:
                 # Validate stream_mode before loading
                 mode = proxy_settings['stream_mode']
-                if mode == 'HLS' and not (cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64') or cfg.ENGINE_VARIANT.startswith('jopsis')):
-                    logger.warning(f"HLS mode not supported for variant {cfg.ENGINE_VARIANT}, reverting to TS mode and persisting change")
-                    ProxyConfig.STREAM_MODE = 'TS'
-                    # Persist the corrected mode back to storage
-                    proxy_settings['stream_mode'] = 'TS'
-                    SettingsPersistence.save_proxy_config(proxy_settings)
-                else:
-                    ProxyConfig.STREAM_MODE = mode
+                ProxyConfig.STREAM_MODE = mode
             logger.info("Proxy settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
@@ -1380,7 +1373,6 @@ from .services.custom_variant_config import (
     get_config as get_custom_config, 
     save_config as save_custom_config,
     reload_config,
-    validate_config,
     CustomVariantConfig
 )
 
@@ -1432,12 +1424,7 @@ def get_custom_variant_config():
 def update_custom_variant_config(config: CustomVariantConfig):
     """
     Update custom variant configuration.
-    Validates the configuration before saving.
     """
-    # Validate the configuration
-    is_valid, error_msg = validate_config(config)
-    if not is_valid:
-        raise HTTPException(status_code=400, detail=f"Invalid configuration: {error_msg}")
     
     # Save the configuration
     success = save_custom_config(config)
@@ -1942,19 +1929,6 @@ async def ace_getstream(
     
     # Get current stream mode
     stream_mode = ProxyConfig.STREAM_MODE
-    
-    # Check if HLS mode is configured but not supported
-    if stream_mode == 'HLS' and not (cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64') or cfg.ENGINE_VARIANT.startswith('jopsis')):
-        logger.error(f"HLS mode configured but not supported for variant {cfg.ENGINE_VARIANT}")
-        raise HTTPException(
-            status_code=501,
-            detail={
-                "error": "hls_not_supported",
-                "message": f"HLS streaming is only supported for krinkuto11-amd64 and jopsis variants. Current variant: {cfg.ENGINE_VARIANT}. Please change stream mode to TS in Proxy Settings.",
-                "current_variant": cfg.ENGINE_VARIANT,
-                "current_mode": stream_mode
-            }
-        )
     
     # Check if stream is on the looping blacklist
     if looping_streams_tracker.is_looping(id):
@@ -2738,13 +2712,6 @@ def update_proxy_config(
         if stream_mode not in ['TS', 'HLS']:
             raise HTTPException(status_code=400, detail="stream_mode must be either 'TS' or 'HLS'")
         
-        # Check if HLS is supported for the current engine variant
-        if stream_mode == 'HLS' and not (cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64') or cfg.ENGINE_VARIANT.startswith('jopsis')):
-            raise HTTPException(
-                status_code=400, 
-                detail=f"HLS streaming is only supported for krinkuto11-amd64 and jopsis variants. Current variant: {cfg.ENGINE_VARIANT}"
-            )
-        
         ProxyConfig.STREAM_MODE = stream_mode
     
     # HLS-specific settings validation and updates
@@ -3226,10 +3193,6 @@ async def import_settings_data(
                     
                     # Validate and set stream_mode
                     if 'stream_mode' in proxy_dict:
-                        mode = proxy_dict['stream_mode']
-                        if mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
-                            logger.warning(f"HLS mode not supported for variant {cfg.ENGINE_VARIANT}, reverting to TS mode")
-                            proxy_dict['stream_mode'] = 'TS'
                         ProxyConfig.STREAM_MODE = proxy_dict['stream_mode']
                     
                     # Persist to file

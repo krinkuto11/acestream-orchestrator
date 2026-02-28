@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { RefreshCw, AlertCircle, CheckCircle, Save, Settings2 } from 'lucide-react'
 import { useNotifications } from '@/context/NotificationContext'
-import { AdvancedEngineSettingsPage } from './AdvancedEngineSettingsPage'
+import { CustomEngineBlocks } from '@/components/CustomEngineBlocks'
 
 // Platform-specific variants mapping
 const VARIANT_OPTIONS = {
@@ -170,21 +170,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     }
   }, [orchUrl, fetchJSON, engineSettings, apiKey])
 
-  // Get available variants for current platform
-  const availableVariants = VARIANT_OPTIONS[engineSettings.platform] || VARIANT_OPTIONS.amd64
 
-  // Determine which variant is selected (custom or specific variant)
-  const selectedVariant = engineSettings.use_custom_variant ? 'custom' : engineSettings.engine_variant
-
-  // Handle variant change
-  const handleVariantChange = (value) => {
-    if (value === 'custom') {
-      handleSettingChange('use_custom_variant', true)
-    } else {
-      handleSettingChange('use_custom_variant', false)
-      handleSettingChange('engine_variant', value)
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -302,30 +288,14 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* Engine Variant Selector */}
-              <div className="space-y-2">
-                <Label htmlFor="engine-variant">Engine Variant</Label>
-                <Select
-                  value={selectedVariant}
-                  onValueChange={handleVariantChange}
-                  disabled={loadingSettings}
-                >
-                  <SelectTrigger id="engine-variant">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableVariants.map(variant => (
-                      <SelectItem key={variant.value} value={variant.value}>
-                        {variant.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Select the AceStream engine variant to use. Custom variant allows full parameter configuration.
-                  Detected platform: <strong>{engineSettings.platform}</strong>
-                </p>
-              </div>
+              {/* Engine Blocks Selection */}
+              <CustomEngineBlocks
+                orchUrl={orchUrl}
+                apiKey={apiKey}
+                fetchJSON={fetchJSON}
+                engineSettings={engineSettings}
+                onSettingChange={handleSettingChange}
+              />
 
               {/* MIN_REPLICAS */}
               <div className="space-y-2">
@@ -429,16 +399,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
             </CardContent>
           </Card>
 
-          {/* Advanced Engine Settings - Only show when custom variant is selected */}
-          {engineSettings.use_custom_variant && (
-            <div className="mt-6">
-              <AdvancedEngineSettingsPage
-                orchUrl={orchUrl}
-                apiKey={apiKey}
-                fetchJSON={fetchJSON}
-              />
-            </div>
-          )}
+
         </TabsContent>
       </Tabs>
     </div>
