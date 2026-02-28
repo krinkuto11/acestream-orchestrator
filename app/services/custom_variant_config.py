@@ -17,11 +17,19 @@ logger = logging.getLogger(__name__)
 # Default config file path - use relative path from this file
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config" / "custom_engine_variant.json"
 
+class CustomVariantParameter(BaseModel):
+    """Configuration parameter for AceStream engine"""
+    name: str
+    type: str  # "flag", "int", "str", "bytes", "float"
+    value: Any
+    enabled: bool = True
+
 class CustomVariantConfig(BaseModel):
-    """Simplified Custom Engine Configuration"""
+    """Detailed Custom Engine Configuration"""
     enabled: bool = False
     name: str = "Custom Engine"
     icon: str = "server"
+    platform: str = "amd64"
     
     # User facing parameters
     p2p_port: Optional[int] = None
@@ -31,11 +39,48 @@ class CustomVariantConfig(BaseModel):
     buffer_time: int = 10
     stats_interval: int = 1
     
+    # Advanced parameters
+    memory_limit: Optional[str] = None
+    parameters: List[CustomVariantParameter] = []
+    
+    # Torrent folder mounting
+    torrent_folder_mount_enabled: bool = False
+    torrent_folder_host_path: Optional[str] = None
+    torrent_folder_container_path: Optional[str] = None
+    
     @validator('live_cache_type')
     def validate_cache_type(cls, v):
         if v not in ['memory', 'disk']:
             raise ValueError('live_cache_type must be memory or disk')
         return v
+
+
+def get_default_parameters(platform_arch: str = "amd64") -> List[CustomVariantParameter]:
+    """Get default parameters for a given platform"""
+    params = [
+        CustomVariantParameter(name="--client-console", type="flag", value=True, enabled=True),
+        CustomVariantParameter(name="--bind-all", type="flag", value=True, enabled=True),
+    ]
+    
+    if platform_arch == "amd64":
+        params.extend([
+            CustomVariantParameter(name="--live-cache-type", type="str", value="memory", enabled=True),
+            CustomVariantParameter(name="--live-mem-cache-size", type="bytes", value=104857600, enabled=True),
+            CustomVariantParameter(name="--disable-sentry", type="flag", value=True, enabled=True),
+            CustomVariantParameter(name="--log-stdout", type="flag", value=True, enabled=True),
+            CustomVariantParameter(name="--disable-upnp", type="flag", value=True, enabled=True),
+        ])
+    
+    return params
+
+
+def validate_config(config: CustomVariantConfig) -> tuple[bool, Optional[str]]:
+    """Validate the configuration structure"""
+    try:
+        # Pydantic already does most validation on instantiation
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
 def detect_platform() -> str:
