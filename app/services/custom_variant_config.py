@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Default config file path - use relative path from this file
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config" / "custom_engine_variant.json"
+DEFAULT_TORRENT_FOLDER_PATH = "/dev/shm/.ACEStream/collected_torrent_files"
 
 class CustomVariantParameter(BaseModel):
     """Configuration parameter for AceStream engine"""
@@ -30,6 +31,8 @@ class CustomVariantConfig(BaseModel):
     name: str = "Custom Engine"
     icon: str = "server"
     platform: str = "amd64"
+    arm_version: Optional[str] = None
+    amd64_version: Optional[str] = None
     
     # User facing parameters
     p2p_port: Optional[int] = None
@@ -47,6 +50,11 @@ class CustomVariantConfig(BaseModel):
     torrent_folder_mount_enabled: bool = False
     torrent_folder_host_path: Optional[str] = None
     torrent_folder_container_path: Optional[str] = None
+    
+    # Disk cache manager settings
+    disk_cache_mount_enabled: bool = False
+    disk_cache_prune_enabled: bool = False
+    disk_cache_prune_interval: int = 1440 # 24 hours
     
     @validator('live_cache_type')
     def validate_cache_type(cls, v):
@@ -177,7 +185,7 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
     if config.live_cache_type == "disk":
         cmd.extend(["--live-cache-type", "disk"])
         # Disk specific optimizations the user wants in default AceServe
-        cmd.extend(["--cache-dir", "/root/.ACEStream"])
+        cmd.extend(["--cache-dir", "/dev/shm/.ACEStream"])
     else:
         cmd.extend(["--live-cache-type", "memory"])
         

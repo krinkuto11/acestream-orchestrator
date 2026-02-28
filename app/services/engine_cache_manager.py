@@ -36,7 +36,8 @@ class EngineCacheManager:
         if not custom_config or not custom_config.enabled:
             return False
             
-        return getattr(custom_config, 'disk_cache_mount_enabled', False)
+        return getattr(custom_config, 'disk_cache_mount_enabled', False) or \
+               getattr(custom_config, 'torrent_folder_mount_enabled', False)
 
     # Maximum length for container name suffix used in volume names
     _CONTAINER_NAME_TRUNCATE_LENGTH = 12
@@ -113,25 +114,25 @@ class EngineCacheManager:
         from .custom_variant_config import get_config
         custom_config = get_config()
         
-        parent_cache_dir = "/root/.ACEStream" # Default parent
+        parent_cache_dir = "/dev/shm/.ACEStream" # Default parent
         
         if custom_config:
             for param in custom_config.parameters:
                 if param.name == "--cache-dir" and param.enabled and param.value:
                     val = str(param.value)
                     if val.startswith("~"):
-                         parent_cache_dir = val.replace("~", "/root", 1)
+                         parent_cache_dir = val.replace("~", "/dev/shm", 1)
                     else:
                         parent_cache_dir = val
                     break
         
-        # The actual cache folder is inside the parent dir
-        container_cache_dir = f"{parent_cache_dir.rstrip('/')}/.acestream_cache"
-        
+        # The user wants "internal" mounting that maps the whole .ACEStream folder
+        # this ensures both .acestream_cache and collected_torrent_files are persisted 
+        # in the same Docker volume if no host bind mount is specified.
         volume_name = self._get_volume_name(container_name)
         return {
             volume_name: {
-                'bind': container_cache_dir,
+                'bind': parent_cache_dir,
                 'mode': 'rw'
             }
         }
