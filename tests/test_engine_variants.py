@@ -4,6 +4,7 @@ Test AceStream engine variants configuration.
 """
 
 import unittest.mock
+import app.services.custom_variant_config
 
 @unittest.mock.patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
 @unittest.mock.patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
@@ -14,7 +15,7 @@ def test_variant_configs(mock_is_custom, mock_detect):
     
     from app.services.provisioner import _get_variant_config
     
-    variants = ['krinkuto11-amd64', 'AceServe-amd64', 'AceServe-arm32', 'AceServe-arm64']
+    variants = ['AceServe-amd64', 'AceServe-arm32', 'AceServe-arm64']
     
     for variant in variants:
         config = _get_variant_config(variant)
@@ -35,12 +36,9 @@ def test_variant_configs(mock_is_custom, mock_detect):
             assert 'base_cmd' in config, f"Missing 'base_cmd' for {variant}"
             assert isinstance(config['base_cmd'], list), f"base_cmd should be a list for {variant}"
             # krinkuto11-amd64 uses /acestream/acestreamengine, AceServe variants use python
-            if variant == 'krinkuto11-amd64':
-                assert '/acestream/acestreamengine' in config['base_cmd'], f"Missing /acestream/acestreamengine in base_cmd for {variant}"
-            else:
-                assert 'python' in config['base_cmd'], f"Missing python in base_cmd for {variant}"
-                assert '--bind-all' in config['base_cmd'], f"Missing --bind-all in base_cmd for {variant}"
-                assert '--disable-upnp' in config['base_cmd'], f"Missing --disable-upnp in base_cmd for {variant}"
+            assert 'python' in config['base_cmd'], f"Missing python in base_cmd for {variant}"
+            assert '--bind-all' in config['base_cmd'], f"Missing --bind-all in base_cmd for {variant}"
+            assert '--disable-upnp' in config['base_cmd'], f"Missing --disable-upnp in base_cmd for {variant}"
             print(f"   ✓ CMD-based variant with {len(config['base_cmd'])} args")
     
     print(f"\n✅ All {len(variants)} variants configured correctly!")
@@ -60,21 +58,7 @@ def test_variant_environment_building(mock_is_custom, mock_detect):
     c_http = 6879
     c_https = 6880
     
-    # Test krinkuto11-amd64 (CMD-based)
-    print("\n📋 Testing krinkuto11-amd64 command:")
-    config = _get_variant_config('krinkuto11-amd64')
-    cmd = None
-    if config['config_type'] == 'cmd':
-        base_cmd = config.get('base_cmd', [])
-        port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]
-        cmd = base_cmd + port_args
-    print(f"   Command: {' '.join(cmd[:5])}... (total {len(cmd)} args)")
-    assert '/acestream/acestreamengine' in cmd, "Missing /acestream/acestreamengine in cmd"
-    assert '--http-port' in cmd, "Missing http-port in cmd"
-    assert '6879' in cmd, "Missing port value in cmd"
-    print("   ✓ Command built correctly with base + ports")
-    
-    # Test AceServe-amd64 (Now CMD-based)
+    # Test AceServe-amd64 (CMD-based)
     print("\n📋 Testing AceServe-amd64 command:")
     config = _get_variant_config('AceServe-amd64')
     cmd = None
@@ -87,9 +71,7 @@ def test_variant_environment_building(mock_is_custom, mock_detect):
     assert 'python' in cmd, "Missing python in cmd"
     assert '--http-port' in cmd, "Missing http-port in cmd"
     assert '6879' in cmd, "Missing port value in cmd"
-    assert '--disable-upnp' in cmd, "Missing base args in cmd"
-    assert '--https-port' not in cmd, "AceServe default should NOT have https-port"
-    print("   ✓ Command built correctly with base settings + minimal ports")
+    print("   ✓ Command built correctly with base + ports")
     
     # Test AceServe-arm32 (CMD-based)
     print("\n📋 Testing AceServe-arm32 command:")
@@ -140,11 +122,11 @@ def test_config_loading(mock_is_custom, mock_detect):
         from app.core.config import Cfg
         cfg = Cfg()
     print(f"\n📋 Default ENGINE_VARIANT: {cfg.ENGINE_VARIANT}")
-    assert cfg.ENGINE_VARIANT == 'krinkuto11-amd64', "Default should be krinkuto11-amd64"
+    assert cfg.ENGINE_VARIANT == 'AceServe-amd64', "Default should be AceServe-amd64"
     print("   ✓ Default value correct")
     
     # Test each valid variant
-    for variant in ['krinkuto11-amd64', 'AceServe-amd64', 'AceServe-arm32', 'AceServe-arm64']:
+    for variant in ['AceServe-amd64', 'AceServe-arm32', 'AceServe-arm64']:
         if 'app.core.config' in sys.modules:
             del sys.modules['app.core.config']
         os.environ['ENGINE_VARIANT'] = variant

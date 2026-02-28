@@ -7,9 +7,8 @@ import platform as _platform
 _machine = _platform.machine().lower()
 
 # Determine a sensible default variant based on the platform to avoid 404 errors on first run
-_default_variant = "jopsis-amd64"
+_default_variant = "AceServe-amd64"
 if "aarch64" in _machine or "arm64" in _machine:
-    _default_variant = "jopsis-arm64"
     _default_variant = "AceServe-arm64"
 elif "arm" in _machine:
     _default_variant = "AceServe-arm32"
