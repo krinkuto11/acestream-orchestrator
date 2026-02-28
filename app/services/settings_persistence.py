@@ -44,7 +44,7 @@ class SettingsPersistence:
             with open(PROXY_CONFIG_FILE, 'w') as f:
                 json.dump(config, f, indent=2)
             
-            logger.info(f"Proxy configuration saved to {PROXY_CONFIG_FILE}")
+            logger.debug(f"Proxy configuration saved to {PROXY_CONFIG_FILE}")
             return True
         except Exception as e:
             logger.error(f"Failed to save proxy configuration: {e}")
@@ -66,7 +66,7 @@ class SettingsPersistence:
             with open(PROXY_CONFIG_FILE, 'r') as f:
                 config = json.load(f)
             
-            logger.info(f"Proxy configuration loaded from {PROXY_CONFIG_FILE}")
+            logger.debug(f"Proxy configuration loaded from {PROXY_CONFIG_FILE}")
             return config
         except Exception as e:
             logger.error(f"Failed to load proxy configuration: {e}")
@@ -89,7 +89,7 @@ class SettingsPersistence:
             with open(LOOP_DETECTION_CONFIG_FILE, 'w') as f:
                 json.dump(config, f, indent=2)
             
-            logger.info(f"Loop detection configuration saved to {LOOP_DETECTION_CONFIG_FILE}")
+            logger.debug(f"Loop detection configuration saved to {LOOP_DETECTION_CONFIG_FILE}")
             return True
         except Exception as e:
             logger.error(f"Failed to save loop detection configuration: {e}")
@@ -111,7 +111,7 @@ class SettingsPersistence:
             with open(LOOP_DETECTION_CONFIG_FILE, 'r') as f:
                 config = json.load(f)
             
-            logger.info(f"Loop detection configuration loaded from {LOOP_DETECTION_CONFIG_FILE}")
+            logger.debug(f"Loop detection configuration loaded from {LOOP_DETECTION_CONFIG_FILE}")
             return config
         except Exception as e:
             logger.error(f"Failed to load loop detection configuration: {e}")
@@ -134,7 +134,7 @@ class SettingsPersistence:
             with open(ENGINE_SETTINGS_FILE, 'w') as f:
                 json.dump(config, f, indent=2)
             
-            logger.info(f"Engine settings configuration saved to {ENGINE_SETTINGS_FILE}")
+            logger.debug(f"Engine settings configuration saved to {ENGINE_SETTINGS_FILE}")
             return True
         except Exception as e:
             logger.error(f"Failed to save engine settings configuration: {e}")
@@ -156,7 +156,7 @@ class SettingsPersistence:
             with open(ENGINE_SETTINGS_FILE, 'r') as f:
                 config = json.load(f)
             
-            logger.info(f"Engine settings configuration loaded from {ENGINE_SETTINGS_FILE}")
+            logger.debug(f"Engine settings configuration loaded from {ENGINE_SETTINGS_FILE}")
             return config
         except Exception as e:
             logger.error(f"Failed to load engine settings configuration: {e}")
