@@ -273,7 +273,7 @@ curl http://localhost:8000/engines | jq 'length'
 API_KEY=your-secure-random-api-key
 
 # Engine Configuration
-ENGINE_VARIANT=krinkuto11-amd64  # or jopsis-amd64, jopsis-arm32, jopsis-arm64
+ENGINE_VARIANT=krinkuto11-amd64  # or AceServe-amd64, AceServe-arm32, AceServe-arm64
 MIN_REPLICAS=3                   # Initial engine pool size
 MAX_REPLICAS=20                  # Maximum concurrent engines
 

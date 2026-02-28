@@ -10,8 +10,9 @@ _machine = _platform.machine().lower()
 _default_variant = "jopsis-amd64"
 if "aarch64" in _machine or "arm64" in _machine:
     _default_variant = "jopsis-arm64"
+    _default_variant = "AceServe-arm64"
 elif "arm" in _machine:
-    _default_variant = "jopsis-arm32"
+    _default_variant = "AceServe-arm32"
 
 class Cfg(BaseModel):
     APP_PORT: int = int(os.getenv("APP_PORT", 8000))
@@ -78,14 +79,10 @@ class Cfg(BaseModel):
     # Engine resource limits
     ENGINE_MEMORY_LIMIT: str | None = os.getenv("ENGINE_MEMORY_LIMIT")
     
-    # Engine resource limits
-    ENGINE_MEMORY_LIMIT: str | None = os.getenv("ENGINE_MEMORY_LIMIT")
-    
     API_KEY: str | None = os.getenv("API_KEY")
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
     AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "true").lower() == "true"
     DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
-    
     # Stream loop detection configuration
     # Threshold for detecting stale streams (in seconds)
     # If live_last is behind current time by this amount, stream will be stopped
@@ -120,7 +117,7 @@ class Cfg(BaseModel):
 
     @validator('ENGINE_VARIANT')
     def validate_engine_variant(cls, v):
-        valid_variants = ['jopsis-amd64', 'jopsis-arm32', 'jopsis-arm64']
+        valid_variants = ["AceServe-amd64", "AceServe-arm64", "AceServe-arm32"]
         if v not in valid_variants:
             raise ValueError(f'ENGINE_VARIANT must be one of: {", ".join(valid_variants)}')
         return v

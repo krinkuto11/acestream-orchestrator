@@ -25,8 +25,7 @@ def test_config_instantiation():
     config = CustomVariantConfig()
     
     assert config.enabled is False
-    assert config.p2p_port == 8621
-    assert config.http_port == 6878
+    assert config.p2p_port is None
     assert config.live_cache_type == "disk"
     print("✅ Valid configuration passed validation")
     
@@ -54,8 +53,7 @@ def test_config_save_load():
         config = CustomVariantConfig(
             enabled=True,
             name="Test Engine",
-            p2p_port=9000,
-            http_port=7000
+            p2p_port=9000
         )
         
         # Save
@@ -69,7 +67,6 @@ def test_config_save_load():
         assert loaded is not None, "Failed to load config"
         assert loaded.enabled == config.enabled, "enabled mismatch"
         assert loaded.p2p_port == config.p2p_port, "p2p_port mismatch"
-        assert loaded.http_port == config.http_port, "http_port mismatch"
         print("✅ Configuration loaded successfully")
         
         # Verify JSON structure
@@ -98,7 +95,6 @@ def test_build_variant_config():
         config = CustomVariantConfig(
             enabled=True,
             p2p_port=1234,
-            http_port=5678,
             download_limit=1000,
             upload_limit=500,
             live_cache_type="disk",
@@ -112,8 +108,6 @@ def test_build_variant_config():
         assert 'python' in variant['base_cmd']
         assert '--port' in variant['base_cmd']
         assert '1234' in variant['base_cmd']
-        assert '--http-port' in variant['base_cmd']
-        assert '5678' in variant['base_cmd']
         assert '--download-limit' in variant['base_cmd']
         assert '1000' in variant['base_cmd']
         assert '--upload-limit' in variant['base_cmd']

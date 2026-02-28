@@ -16,18 +16,17 @@ import { CustomEngineBlocks } from '@/components/CustomEngineBlocks'
 // Platform-specific variants mapping
 const VARIANT_OPTIONS = {
   amd64: [
-    { value: 'krinkuto11-amd64', label: 'Krinkuto11 AMD64' },
-    { value: 'jopsis-amd64', label: 'Jopsis AMD64' },
-    { value: 'custom', label: 'Custom Variant' },
-  ],
-  arm32: [
-    { value: 'jopsis-arm32', label: 'Jopsis ARM32' },
-    { value: 'custom', label: 'Custom Variant' },
+    { value: 'AceServe-amd64', label: 'AceServe Default (AMD64)' },
+    { value: 'custom', label: 'Custom Engine' }
   ],
   arm64: [
-    { value: 'jopsis-arm64', label: 'Jopsis ARM64' },
-    { value: 'custom', label: 'Custom Variant' },
+    { value: 'AceServe-arm64', label: 'AceServe Default (ARM64)' },
+    { value: 'custom', label: 'Custom Engine' }
   ],
+  arm32: [
+    { value: 'AceServe-arm32', label: 'AceServe Default (ARM32)' },
+    { value: 'custom', label: 'Custom Engine' }
+  ]
 }
 
 export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKey, fetchJSON }) {

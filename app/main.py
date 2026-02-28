@@ -2852,7 +2852,7 @@ def get_engine_settings():
         variant = persisted.get("engine_variant")
         if current_platform in ["arm64", "arm32"] and (not variant or "amd64" in variant):
             # Force correction for ARM platforms if they have an amd64 variant configured
-            new_variant = "jopsis-arm64" if current_platform == "arm64" else "jopsis-arm32"
+            new_variant = "AceServe-arm64" if current_platform == "arm64" else "AceServe-arm32"
             persisted["engine_variant"] = new_variant
             logger.info(f"Corrected incompatible engine variant '{variant}' to '{new_variant}' for platform '{current_platform}'")
             

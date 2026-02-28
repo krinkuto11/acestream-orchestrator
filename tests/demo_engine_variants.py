@@ -15,9 +15,9 @@ def demo_all_variants():
     
     variants = {
         "krinkuto11-amd64": "Default variant - CMD-based with /acestream/acestreamengine",
-        "jopsis-amd64": "Jopsis AMD64 variant - CMD-based",
-        "jopsis-arm32": "Jopsis ARM32 variant - CMD-based",
-        "jopsis-arm64": "Jopsis ARM64 variant - CMD-based"
+        "AceServe-amd64": "AceServe AMD64 variant - CMD-based",
+        "AceServe-arm32": "AceServe ARM32 variant - CMD-based",
+        "AceServe-arm64": "AceServe ARM64 variant - CMD-based"
     }
     
     # Simulated port allocation
@@ -64,7 +64,7 @@ def demo_all_variants():
     print("\n" + "=" * 80)
     print("\n💡 USAGE:")
     print("   Set ENGINE_VARIANT in your .env file:")
-    print("   ENGINE_VARIANT=jopsis-amd64")
+    print("   ENGINE_VARIANT=AceServe-amd64")
     print("\n   The orchestrator will automatically use the correct configuration")
     print("   when provisioning new AceStream engine containers.")
     print("\n" + "=" * 80)
@@ -82,7 +82,7 @@ def demo_switching_variants():
     print("\nThe ENGINE_VARIANT can be changed by setting the environment variable:")
     print()
     
-    for variant in ['krinkuto11-amd64', 'jopsis-amd64', 'jopsis-arm32', 'jopsis-arm64']:
+    for variant in ['krinkuto11-amd64', 'AceServe-amd64', 'AceServe-arm32', 'AceServe-arm64']:
         # Clear cached config module
         if 'app.core.config' in sys.modules:
             del sys.modules['app.core.config']

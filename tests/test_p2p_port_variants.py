@@ -45,11 +45,11 @@ def test_p2p_port_handling(mock_is_custom, mock_detect):
     assert cmd[port_index + 1] == str(p2p_port), f"Port value should follow --port flag"
     print("✓ P2P port correctly appended to command")
     
-    # Test jopsis-amd64 (CMD with P2P port in command)
+    # Test AceServe-amd64 (CMD with P2P port in command)
     print("\n" + "-" * 70)
-    print("📋 Variant: jopsis-amd64")
+    print("📋 Variant: AceServe-amd64")
     print("-" * 70)
-    config = _get_variant_config('jopsis-amd64')
+    config = _get_variant_config('AceServe-amd64')
     cmd = None
     if config['config_type'] == 'cmd':
         base_cmd = config.get('base_cmd', [])
@@ -66,11 +66,11 @@ def test_p2p_port_handling(mock_is_custom, mock_detect):
     assert cmd[port_index + 1] == str(p2p_port), f"Port value should follow --port flag"
     print("✓ P2P port correctly appended to config")
     
-    # Test jopsis-arm32 (CMD with P2P port in command)
+    # Test AceServe-arm32 (CMD with P2P port in command)
     print("\n" + "-" * 70)
-    print("📋 Variant: jopsis-arm32")
+    print("📋 Variant: AceServe-arm32")
     print("-" * 70)
-    config = _get_variant_config('jopsis-arm32')
+    config = _get_variant_config('AceServe-arm32')
     cmd = None
     if config['config_type'] == 'cmd':
         base_cmd = config.get('base_cmd', [])
@@ -87,11 +87,11 @@ def test_p2p_port_handling(mock_is_custom, mock_detect):
     assert cmd[port_index + 1] == str(p2p_port), f"Port value should follow --port flag"
     print("✓ P2P port correctly appended to command")
     
-    # Test jopsis-arm64 (CMD with P2P port in command)
+    # Test AceServe-arm64 (CMD with P2P port in command)
     print("\n" + "-" * 70)
-    print("📋 Variant: jopsis-arm64")
+    print("📋 Variant: AceServe-arm64")
     print("-" * 70)
-    config = _get_variant_config('jopsis-arm64')
+    config = _get_variant_config('AceServe-arm64')
     cmd = None
     if config['config_type'] == 'cmd':
         base_cmd = config.get('base_cmd', [])
@@ -114,9 +114,9 @@ def test_p2p_port_handling(mock_is_custom, mock_detect):
     
     print("\nSummary:")
     print("  - krinkuto11-amd64: --port flag in command ✓")
-    print("  - jopsis-amd64: --port flag in command ✓")
-    print("  - jopsis-arm32: --port flag in command ✓")
-    print("  - jopsis-arm64: --port flag in command ✓")
+    print("  - AceServe-amd64: --port flag in command ✓")
+    print("  - AceServe-arm32: --port flag in command ✓")
+    print("  - AceServe-arm64: --port flag in command ✓")
     
     return True
 
@@ -136,9 +136,9 @@ def test_p2p_port_without_gluetun(mock_is_custom, mock_detect):
     
     print(f"\nTest Configuration: Gluetun disabled (p2p_port=None)")
     
-    # Test jopsis-amd64 without P2P port
-    print("\n📋 Variant: jopsis-amd64 (without Gluetun)")
-    config = _get_variant_config('jopsis-amd64')
+    # Test AceServe-amd64 without P2P port
+    print("\n📋 Variant: AceServe-amd64 (without Gluetun)")
+    config = _get_variant_config('AceServe-amd64')
     cmd = None
     if config['config_type'] == 'cmd':
         base_cmd = config.get('base_cmd', [])
@@ -151,9 +151,9 @@ def test_p2p_port_without_gluetun(mock_is_custom, mock_detect):
     assert '--port' not in cmd, "P2P port flag should NOT be in command when Gluetun disabled"
     print("  ✓ No P2P port added (as expected)")
     
-    # Test jopsis-arm32 without P2P port
-    print("\n📋 Variant: jopsis-arm32 (without Gluetun)")
-    config = _get_variant_config('jopsis-arm32')
+    # Test AceServe-arm32 without P2P port
+    print("\n📋 Variant: AceServe-arm32 (without Gluetun)")
+    config = _get_variant_config('AceServe-arm32')
     cmd = None
     if config['config_type'] == 'cmd':
         base_cmd = config.get('base_cmd', [])

@@ -262,16 +262,16 @@ def get_variant_config(variant: str) -> dict:
     Get the Docker image and base command/arguments for a specific variant.
     
     Supported standard variants:
-                 - 'jopsis-amd64' (default)
-                 - 'jopsis-arm32'
-                 - 'jopsis-arm64'
+                 - 'AceServe-amd64' (default)
+                 - 'AceServe-arm32'
+                 - 'AceServe-arm64'
                  - 'custom' (when custom variant is enabled)
     
     Returns:
         dict with keys:
             - image: Docker image name (always present)
             - config_type: "env" or "cmd" (always present)
-            - base_args: Base arguments string (for ENV-based jopsis-amd64 variant)
+            - base_args: Base arguments string (for ENV-based AceServe-amd64 variant)
             - base_cmd: Base command list (for CMD-based arm32/arm64 variants)
             - is_custom: True if this is a custom variant
     """
@@ -291,22 +291,18 @@ def get_variant_config(variant: str) -> dict:
                 return build_variant_config_from_custom(custom_config)
         except Exception as e:
             logger.error(f"Failed to load custom variant config, falling back to standard variants: {e}")
-    
     configs = {
-        "jopsis-amd64": {
+        "AceServe-amd64": {
             "image": "ghcr.io/krinkuto11/acestream:latest-amd64",
-            "config_type": "cmd",
-            "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp"]
+            "cmd": ["/acestream/acestreamengine", "--live-cache-type", "disk", "--cache-dir", "/root/.ACEStream"],
         },
-        "jopsis-arm32": {
-            "image": f"ghcr.io/krinkuto11/acestream:latest-arm32",
-            "config_type": "cmd",
-            "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp"]
+        "AceServe-arm32": {
+            "image": "ghcr.io/krinkuto11/acestream:base-arm32",
+            "cmd": ["python", "main.py", "--live-cache-type", "disk", "--cache-dir", "/root/.ACEStream"],
         },
-        "jopsis-arm64": {
-            "image": f"ghcr.io/krinkuto11/acestream:latest-arm64",
-            "config_type": "cmd",
-            "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp"]
+        "AceServe-arm64": {
+            "image": "ghcr.io/krinkuto11/acestream:base-arm64",
+            "cmd": ["python", "main.py", "--live-cache-type", "disk", "--cache-dir", "/root/.ACEStream"],
         }
     }
     
@@ -327,11 +323,11 @@ def get_variant_config(variant: str) -> dict:
         
     if needs_fallback:
         if current_platform == "arm64":
-            fallback = "jopsis-arm64"
+            fallback = "AceServe-arm64"
         elif current_platform == "arm32":
-            fallback = "jopsis-arm32"
+            fallback = "AceServe-arm32"
         else:
-            fallback = "jopsis-amd64"
+            fallback = "AceServe-amd64"
         
         logger.info(f"Falling back to engine variant '{fallback}' (platform: {current_platform})")
         return configs[fallback]
@@ -551,17 +547,16 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
             port_args += f" --port {p2p_port}"
         env["ACESTREAM_ARGS"] = base_args + port_args
     else:
-        # CMD-based variants (krinkuto11, jopsis, and all custom variants with base_cmd)
-        base_cmd = variant_config.get("base_cmd", [])
+        # CMD-based variants (krinkuto11, AceServe, and all custom variants with base_cmd)
         
-        # Determine which port arguments to add
-        # User requested that Jopsis variants in default mode only receive --http-port and --port (P2P)
-        # We check the image name to identify Jopsis variants even after platform fallbacks
+        # We need to map CMD configuration differently for distinct containers
+        # User requested that AceServe variants in default mode only receive --http-port and --port (P2P)
+        # We check the image name to identify AceServe variants even after platform fallbacks
         image_name = variant_config.get("image", "").lower()
-        is_jopsis_default = not variant_config.get("is_custom") and ("jopsis" in image_name or "aceserve" in image_name)
+        is_aceserve_default = not variant_config.get("is_custom") and ("aceserve" in image_name or "krinkuto11" in image_name)
         
-        if is_jopsis_default:
-            # Minimal ports for Jopsis as per user requirement. Jopsis docker images already 
+        if is_aceserve_default:
+            # Minimal ports for AceServe as per user requirement. AceServe docker images already 
             # have --bind-all etc. in their default parameters.
             port_args = ["--http-port", str(c_http)]
         else:

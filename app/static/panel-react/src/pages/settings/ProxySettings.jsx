@@ -48,9 +48,9 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [variantDisplayName, setVariantDisplayName] = useState('')
 
   // Check if HLS is supported - double check both variant and cache type
-  const isKrinkutoOrJopsisVariant = engineVariant.startsWith('krinkuto11-amd64') || engineVariant.startsWith('jopsis')
+  const isAceServeVariant = engineVariant.startsWith('AceServe')
   const hasCompatibleCache = !customVariantEnabled || (customVariantCacheType !== 'memory')
-  const hlsSupported = isKrinkutoOrJopsisVariant && hasCompatibleCache
+  const hlsSupported = isAceServeVariant && hasCompatibleCache
 
   useEffect(() => {
     fetchProxyConfig()
@@ -207,7 +207,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
               onValueChange={(value) => {
                 // Prevent switching to HLS if not supported
                 if (value === 'HLS' && !hlsSupported) {
-                  setError('HLS mode is not available with current engine configuration. Use krinkuto11-amd64 or jopsis variant with disk or hybrid cache.')
+                  setError('HLS mode is not available with current engine configuration. Use an AceServe variant with disk or hybrid cache.')
                   return
                 }
                 setStreamMode(value)
@@ -233,7 +233,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   <span className="text-amber-600 dark:text-amber-500 font-semibold">
                     ⚠️ HLS mode is not available. Requirements:
                     <br />
-                    • Engine variant must be krinkuto11-amd64 or jopsis (current: {variantDisplayName || engineVariant || 'Unknown'})
+                    • Engine variant must be AceServe (current: {variantDisplayName || engineVariant || 'Unknown'})
                     {customVariantEnabled && customVariantCacheType === 'memory' && (
                       <>
                         <br />

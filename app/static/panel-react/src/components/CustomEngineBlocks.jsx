@@ -1,17 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog'
 import { Plus, Settings2, Server, Globe, Zap, Cpu, MemoryStick, Trash2, CheckCircle2 } from 'lucide-react'
 import { useNotifications } from '@/context/NotificationContext'
 
@@ -19,12 +11,11 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
     const { addNotification } = useNotifications()
     const [customConfig, setCustomConfig] = useState(null)
     const [loading, setLoading] = useState(true)
-    const [dialogOpen, setDialogOpen] = useState(false)
+    const [expanded, setExpanded] = useState(false)
 
     // Form state
     const [formData, setFormData] = useState({
-        p2p_port: 8621,
-        http_port: 6878,
+        p2p_port: '',
         download_limit: 0,
         upload_limit: 0,
         live_cache_type: 'disk',
@@ -51,16 +42,24 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
     const handleEdit = () => {
         if (customConfig) {
             setFormData({
-                p2p_port: customConfig.p2p_port ?? 8621,
-                http_port: customConfig.http_port ?? 6878,
+                p2p_port: customConfig.p2p_port ?? '',
                 download_limit: customConfig.download_limit ?? 0,
                 upload_limit: customConfig.upload_limit ?? 0,
                 live_cache_type: customConfig.live_cache_type ?? 'disk',
                 buffer_time: customConfig.buffer_time ?? 10,
                 stats_interval: customConfig.stats_interval ?? 1
             })
+        } else {
+            setFormData({
+                p2p_port: '',
+                download_limit: 0,
+                upload_limit: 0,
+                live_cache_type: 'disk',
+                buffer_time: 10,
+                stats_interval: 1
+            })
         }
-        setDialogOpen(true)
+        setExpanded(true)
     }
 
     const handleSave = async () => {
@@ -71,7 +70,8 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
                 enabled: true,
                 name: "Custom Engine",
                 icon: "server",
-                ...formData
+                ...formData,
+                p2p_port: formData.p2p_port === '' ? null : parseInt(formData.p2p_port)
             }
 
             await fetchJSON(`${orchUrl}/custom-variant/config`, {
@@ -88,7 +88,7 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
 
             // Auto-select the custom variant
             onSettingChange('use_custom_variant', true)
-            setDialogOpen(false)
+            setExpanded(false)
         } catch (err) {
             addNotification(`Failed to save custom config: ${err.message}`, 'error')
         }
@@ -112,13 +112,18 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
             if (engineSettings.use_custom_variant) {
                 onSettingChange('use_custom_variant', false)
             }
+            setExpanded(false)
             addNotification('Custom engine deleted.', 'success')
         } catch (err) {
             addNotification(`Failed to delete config: ${err.message}`, 'error')
         }
     }
 
-    const activateDefault = () => onSettingChange('use_custom_variant', false)
+    const activateDefault = () => {
+        onSettingChange('use_custom_variant', false)
+        setExpanded(false)
+    }
+
     const activateCustom = () => {
         if (customConfig?.enabled) {
             onSettingChange('use_custom_variant', true)
@@ -132,8 +137,8 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
     }
 
     return (
-        <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* AceServe Default Block */}
                 <Card
                     className={`relative overflow-hidden cursor-pointer transition-all border-2 ${!engineSettings.use_custom_variant ? 'border-primary shadow-md bg-primary/5' : 'border-border hover:border-primary/50'}`}
@@ -198,10 +203,7 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
                             </div>
                             <div className="mt-4 flex flex-wrap gap-2">
                                 <span className="text-xs border border-border px-2 py-1 rounded-md text-muted-foreground font-medium flex items-center gap-1">
-                                    P2P: {customConfig.p2p_port}
-                                </span>
-                                <span className="text-xs border border-border px-2 py-1 rounded-md text-muted-foreground font-medium flex items-center gap-1">
-                                    HTTP: {customConfig.http_port}
+                                    P2P: {customConfig.p2p_port || 'Auto'}
                                 </span>
                                 <span className="text-xs border border-border px-2 py-1 rounded-md text-muted-foreground font-medium flex items-center gap-1">
                                     <MemoryStick className="h-3 w-3" /> {customConfig.live_cache_type}
@@ -211,7 +213,7 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
                     </Card>
                 ) : (
                     <Card
-                        className="border-2 border-dashed border-border hover:border-primary/50 cursor-pointer transition-colors bg-transparent flex flex-col items-center justify-center p-6 min-h-[140px]"
+                        className={`border-2 border-dashed ${expanded ? 'border-primary' : 'border-border hover:border-primary/50'} cursor-pointer transition-colors bg-transparent flex flex-col items-center justify-center p-6 min-h-[140px]`}
                         onClick={handleEdit}
                     >
                         <div className="h-10 w-10 rounded-full bg-secondary flex items-center justify-center mb-3 text-muted-foreground">
@@ -223,70 +225,72 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
                 )}
             </div>
 
-            {/* Editor Modal */}
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="sm:max-w-[500px]">
-                    <DialogHeader>
-                        <DialogTitle>Configure Custom Engine</DialogTitle>
-                        <DialogDescription>
-                            Set explicit AceServe parameters. Leave limits at 0 to uncap.
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="grid gap-4 py-4">
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label>P2P Port</Label>
-                                <Input type="number" value={formData.p2p_port} onChange={e => setFormData({ ...formData, p2p_port: parseInt(e.target.value) || 0 })} />
+            {/* Inline Editor Form */}
+            {expanded && (
+                <Card className="border-primary/20 bg-primary/5">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-lg">Configure Custom Engine</CardTitle>
+                        <CardDescription>Set explicit AceServe parameters. Leave limits at 0 to uncap.</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="grid gap-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-2 flex flex-col justify-end">
+                                    <div className="flex justify-between items-center">
+                                        <Label>P2P Port</Label>
+                                    </div>
+                                    <Input
+                                        type="number"
+                                        placeholder="Leave open for VPN Auto-assignment"
+                                        value={formData.p2p_port}
+                                        onChange={e => setFormData({ ...formData, p2p_port: e.target.value })}
+                                    />
+                                    <p className="text-xs text-muted-foreground mt-1">Leave empty to permit your VPN provider to manage the port translation.</p>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Live Cache Type</Label>
+                                    <Select value={formData.live_cache_type} onValueChange={v => setFormData({ ...formData, live_cache_type: v })}>
+                                        <SelectTrigger>
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="disk">Disk (Recommended)</SelectItem>
+                                            <SelectItem value="memory">Memory</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
                             </div>
-                            <div className="space-y-2">
-                                <Label>HTTP Port</Label>
-                                <Input type="number" value={formData.http_port} onChange={e => setFormData({ ...formData, http_port: parseInt(e.target.value) || 0 })} />
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label>Download Limit (KB/s)</Label>
+                                    <Input type="number" value={formData.download_limit} onChange={e => setFormData({ ...formData, download_limit: parseInt(e.target.value) || 0 })} />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Upload Limit (KB/s)</Label>
+                                    <Input type="number" value={formData.upload_limit} onChange={e => setFormData({ ...formData, upload_limit: parseInt(e.target.value) || 0 })} />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label>Buffer Time (s)</Label>
+                                    <Input type="number" value={formData.buffer_time} onChange={e => setFormData({ ...formData, buffer_time: parseInt(e.target.value) || 0 })} />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Stats Interval (s)</Label>
+                                    <Input type="number" value={formData.stats_interval} onChange={e => setFormData({ ...formData, stats_interval: parseInt(e.target.value) || 0 })} />
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end gap-2 pt-2 border-t">
+                                <Button variant="outline" onClick={() => setExpanded(false)}>Cancel</Button>
+                                <Button onClick={handleSave}>Save Engine Configuration</Button>
                             </div>
                         </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label>Download Limit (KB/s)</Label>
-                                <Input type="number" value={formData.download_limit} onChange={e => setFormData({ ...formData, download_limit: parseInt(e.target.value) || 0 })} />
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Upload Limit (KB/s)</Label>
-                                <Input type="number" value={formData.upload_limit} onChange={e => setFormData({ ...formData, upload_limit: parseInt(e.target.value) || 0 })} />
-                            </div>
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Live Cache Type</Label>
-                            <Select value={formData.live_cache_type} onValueChange={v => setFormData({ ...formData, live_cache_type: v })}>
-                                <SelectTrigger>
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="disk">Disk (Recommended)</SelectItem>
-                                    <SelectItem value="memory">Memory</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label>Buffer Time (s)</Label>
-                                <Input type="number" value={formData.buffer_time} onChange={e => setFormData({ ...formData, buffer_time: parseInt(e.target.value) || 0 })} />
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Stats Interval (s)</Label>
-                                <Input type="number" value={formData.stats_interval} onChange={e => setFormData({ ...formData, stats_interval: parseInt(e.target.value) || 0 })} />
-                            </div>
-                        </div>
-                    </div>
-
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-                        <Button onClick={handleSave}>Save Engine</Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-        </>
+                    </CardContent>
+                </Card>
+            )}
+        </div>
     )
 }

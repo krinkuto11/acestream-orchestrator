@@ -24,8 +24,7 @@ class CustomVariantConfig(BaseModel):
     icon: str = "server"
     
     # User facing parameters
-    p2p_port: Optional[int] = 8621
-    http_port: Optional[int] = 6878
+    p2p_port: Optional[int] = None
     download_limit: int = 0
     upload_limit: int = 0
     live_cache_type: str = "disk"  # "memory" or "disk"
@@ -104,9 +103,9 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
     if platform_arch == 'amd64':
         image = "ghcr.io/krinkuto11/acestream:latest-amd64"
     elif platform_arch == 'arm32':
-        image = "jopsis/acestream:arm32-v3.2.14"
+        image = "ghcr.io/krinkuto11/acestream:AceServe-arm32"
     elif platform_arch == 'arm64':
-        image = "jopsis/acestream:arm64-v3.2.14"
+        image = "ghcr.io/krinkuto11/acestream:AceServe-arm64"
     else:
         image = "ghcr.io/krinkuto11/acestream:latest-amd64"
         
@@ -125,16 +124,14 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
     # Append requested parameters
     if config.p2p_port:
         cmd.extend(["--port", str(config.p2p_port)])
-    if config.http_port:
-        cmd.extend(["--http-port", str(config.http_port)])
-        cmd.extend(["--https-port", str(config.http_port + 1)])  # Ensure https pairs nicely if used
+
         
     cmd.extend(["--download-limit", str(config.download_limit)])
     cmd.extend(["--upload-limit", str(config.upload_limit)])
     
     if config.live_cache_type == "disk":
         cmd.extend(["--live-cache-type", "disk"])
-        # Disk specific optimizations the user wants in default jopsis
+        # Disk specific optimizations the user wants in default AceServe
         cmd.extend(["--cache-dir", "/root/.ACEStream"])
     else:
         cmd.extend(["--live-cache-type", "memory"])

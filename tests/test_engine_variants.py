@@ -14,7 +14,7 @@ def test_variant_configs(mock_is_custom, mock_detect):
     
     from app.services.provisioner import _get_variant_config
     
-    variants = ['krinkuto11-amd64', 'jopsis-amd64', 'jopsis-arm32', 'jopsis-arm64']
+    variants = ['krinkuto11-amd64', 'AceServe-amd64', 'AceServe-arm32', 'AceServe-arm64']
     
     for variant in variants:
         config = _get_variant_config(variant)
@@ -34,7 +34,7 @@ def test_variant_configs(mock_is_custom, mock_detect):
         else:
             assert 'base_cmd' in config, f"Missing 'base_cmd' for {variant}"
             assert isinstance(config['base_cmd'], list), f"base_cmd should be a list for {variant}"
-            # krinkuto11-amd64 uses /acestream/acestreamengine, Jopsis variants use python
+            # krinkuto11-amd64 uses /acestream/acestreamengine, AceServe variants use python
             if variant == 'krinkuto11-amd64':
                 assert '/acestream/acestreamengine' in config['base_cmd'], f"Missing /acestream/acestreamengine in base_cmd for {variant}"
             else:
@@ -74,13 +74,13 @@ def test_variant_environment_building(mock_is_custom, mock_detect):
     assert '6879' in cmd, "Missing port value in cmd"
     print("   ✓ Command built correctly with base + ports")
     
-    # Test jopsis-amd64 (Now CMD-based)
-    print("\n📋 Testing jopsis-amd64 command:")
-    config = _get_variant_config('jopsis-amd64')
+    # Test AceServe-amd64 (Now CMD-based)
+    print("\n📋 Testing AceServe-amd64 command:")
+    config = _get_variant_config('AceServe-amd64')
     cmd = None
     if config['config_type'] == 'cmd':
         base_cmd = config.get('base_cmd', [])
-        # In default mode, Jopsis only gets --http-port
+        # In default mode, AceServe only gets --http-port
         port_args = ["--http-port", str(c_http)]
         cmd = base_cmd + port_args
     print(f"   Command: {' '.join(cmd[:5])}... (total {len(cmd)} args)")
@@ -88,12 +88,12 @@ def test_variant_environment_building(mock_is_custom, mock_detect):
     assert '--http-port' in cmd, "Missing http-port in cmd"
     assert '6879' in cmd, "Missing port value in cmd"
     assert '--disable-upnp' in cmd, "Missing base args in cmd"
-    assert '--https-port' not in cmd, "Jopsis default should NOT have https-port"
+    assert '--https-port' not in cmd, "AceServe default should NOT have https-port"
     print("   ✓ Command built correctly with base settings + minimal ports")
     
-    # Test jopsis-arm32 (CMD-based)
-    print("\n📋 Testing jopsis-arm32 command:")
-    config = _get_variant_config('jopsis-arm32')
+    # Test AceServe-arm32 (CMD-based)
+    print("\n📋 Testing AceServe-arm32 command:")
+    config = _get_variant_config('AceServe-arm32')
     cmd = None
     if config['config_type'] == 'cmd':
         base_cmd = config.get('base_cmd', [])
@@ -105,9 +105,9 @@ def test_variant_environment_building(mock_is_custom, mock_detect):
     assert '6879' in cmd, "Missing port value in cmd"
     print("   ✓ Command built correctly with base + ports")
     
-    # Test jopsis-arm64 (CMD-based)
-    print("\n📋 Testing jopsis-arm64 command:")
-    config = _get_variant_config('jopsis-arm64')
+    # Test AceServe-arm64 (CMD-based)
+    print("\n📋 Testing AceServe-arm64 command:")
+    config = _get_variant_config('AceServe-arm64')
     cmd = None
     if config['config_type'] == 'cmd':
         base_cmd = config.get('base_cmd', [])
@@ -144,7 +144,7 @@ def test_config_loading(mock_is_custom, mock_detect):
     print("   ✓ Default value correct")
     
     # Test each valid variant
-    for variant in ['krinkuto11-amd64', 'jopsis-amd64', 'jopsis-arm32', 'jopsis-arm64']:
+    for variant in ['krinkuto11-amd64', 'AceServe-amd64', 'AceServe-arm32', 'AceServe-arm64']:
         if 'app.core.config' in sys.modules:
             del sys.modules['app.core.config']
         os.environ['ENGINE_VARIANT'] = variant

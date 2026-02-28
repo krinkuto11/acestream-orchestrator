@@ -4,9 +4,9 @@ Variables and default values:
 
 - `APP_PORT=8000`
 - `DOCKER_NETWORK=` Docker network name. Empty → default network.
-- `ENGINE_VARIANT=krinkuto11-amd64` AceStream engine variant. Options: `krinkuto11-amd64`, `jopsis-amd64`, `jopsis-arm32`, `jopsis-arm64`. Each variant uses its predefined Docker image.
-- `ENGINE_ARM32_VERSION=arm32-v3.2.13` Docker image version tag for ARM32 variant. Used when `ENGINE_VARIANT=jopsis-arm32`.
-- `ENGINE_ARM64_VERSION=arm64-v3.2.13` Docker image version tag for ARM64 variant. Used when `ENGINE_VARIANT=jopsis-arm64`.
+- `ENGINE_VARIANT=krinkuto11-amd64` AceStream engine variant. Options: `krinkuto11-amd64`, `AceServe-amd64`, `AceServe-arm32`, `AceServe-arm64`. Each variant uses its predefined Docker image.
+- `ENGINE_ARM32_VERSION=arm32-v3.2.13` Docker image version tag for ARM32 variant. Used when `ENGINE_VARIANT=AceServe-arm32`.
+- `ENGINE_ARM64_VERSION=arm64-v3.2.13` Docker image version tag for ARM64 variant. Used when `ENGINE_VARIANT=AceServe-arm64`.
 - `MIN_REPLICAS=1` · `MAX_REPLICAS=20` (MIN_REPLICAS must be >= 1 to ensure at least 1 free replica)
 - `CONTAINER_LABEL=ondemand.app=myservice` management label.
 - `STARTUP_TIMEOUT_S=25` max container startup time.

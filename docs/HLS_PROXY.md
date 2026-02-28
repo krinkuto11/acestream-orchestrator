@@ -50,10 +50,10 @@ curl "http://localhost:8000/proxy/config"
 | Variant | TS Support | HLS Support |
 |---------|-----------|-------------|
 | krinkuto11-amd64 | ✅ Yes | ✅ Yes |
-| jopsis-* | ✅ Yes | ❌ No |
+| AceServe-* | ✅ Yes | ❌ No |
 | custom variants | ✅ Yes | ❌ No |
 
-**Note**: HLS streaming is only available with the `krinkuto11-amd64` variant. Other variants (jopsis, custom) only support MPEG-TS mode.
+**Note**: HLS streaming is only available with the `krinkuto11-amd64` variant. Other variants (AceServe, custom) only support MPEG-TS mode.
 
 ## Usage
 
