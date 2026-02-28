@@ -295,17 +295,17 @@ def get_variant_config(variant: str) -> dict:
         "AceServe-amd64": {
             "image": "ghcr.io/krinkuto11/acestream:latest-amd64",
             "config_type": "cmd",
-            "base_cmd": ["/acestream/acestreamengine", "--live-cache-type", "disk", "--cache-dir", "/root/.ACEStream"],
+            "base_cmd": ["python", "main.py", "--bind-all",  "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp" ],
         },
         "AceServe-arm32": {
             "image": "ghcr.io/krinkuto11/acestream:base-arm32",
             "config_type": "cmd",
-            "base_cmd": ["python", "main.py", "--live-cache-type", "disk", "--cache-dir", "/root/.ACEStream"],
+            "base_cmd": ["python", "main.py", "--bind-all",  "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp" ],
         },
         "AceServe-arm64": {
             "image": "ghcr.io/krinkuto11/acestream:base-arm64",
             "config_type": "cmd",
-            "base_cmd": ["python", "main.py", "--live-cache-type", "disk", "--cache-dir", "/root/.ACEStream"],
+            "base_cmd": ["python", "main.py", "--bind-all",  "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp" ],
         }
     }
     

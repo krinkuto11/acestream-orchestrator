@@ -115,11 +115,8 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
         "is_custom": True
     }
     
-    # Base command depending on architecture
-    if platform_arch == 'amd64':
-        cmd = ["/acestream/acestreamengine"]
-    else:
-        cmd = ["python", "main.py"]
+    # Base command for Jopsis-based AceServe engines
+    cmd = ["python", "main.py", "--bind-all","--disable-sentry", "--log-stdout", "--disable-upnp"]
         
     # Append requested parameters
     if config.p2p_port:
