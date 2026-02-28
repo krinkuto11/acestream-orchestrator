@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { RefreshCw, AlertCircle, CheckCircle, Save, Settings2 } from 'lucide-react'
 import { useNotifications } from '@/context/NotificationContext'
 import { CustomEngineBlocks } from '@/components/CustomEngineBlocks'
+import { ManualEngineList } from '@/components/ManualEngineList'
 
 // Platform-specific variants mapping
 const VARIANT_OPTIONS = {
@@ -43,7 +44,9 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     auto_delete: true,
     engine_variant: '',
     use_custom_variant: false,
-    platform: ''
+    platform: '',
+    manual_mode: false,
+    manual_engines: []
   })
   const [loadingSettings, setLoadingSettings] = useState(true)
   const [savingSettings, setSavingSettings] = useState(false)
@@ -287,64 +290,107 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* Engine Blocks Selection */}
-              <CustomEngineBlocks
-                orchUrl={orchUrl}
-                apiKey={apiKey}
-                fetchJSON={fetchJSON}
-                engineSettings={engineSettings}
-                onSettingChange={handleSettingChange}
-              />
-
-              {/* MIN_REPLICAS */}
-              <div className="space-y-2">
-                <Label htmlFor="min-replicas">Minimum Replicas</Label>
-                <Input
-                  id="min-replicas"
-                  type="number"
-                  min="0"
-                  max="50"
-                  value={engineSettings.min_replicas}
-                  onChange={(e) => handleSettingChange('min_replicas', parseInt(e.target.value) || 0)}
-                  disabled={loadingSettings}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Minimum number of engine replicas to maintain (0-50, default: 2)
-                </p>
-              </div>
-
-              {/* MAX_REPLICAS */}
-              <div className="space-y-2">
-                <Label htmlFor="max-replicas">Maximum Replicas</Label>
-                <Input
-                  id="max-replicas"
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={engineSettings.max_replicas}
-                  onChange={(e) => handleSettingChange('max_replicas', parseInt(e.target.value) || 1)}
-                  disabled={loadingSettings}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Maximum number of engine replicas allowed (1-100, default: 6)
-                </p>
-              </div>
-
-              {/* AUTO_DELETE */}
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <Label htmlFor="auto-delete">Automatic Engine Cleanup</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Automatically delete engines when they are stopped (default: true)
+              {/* Manual Mode Toggle */}
+              <div className="flex items-center justify-between pb-4 border-b">
+                <div className="space-y-0.5">
+                  <Label className="text-base">Engine Pool Management</Label>
+                  <p className="text-sm text-muted-foreground">
+                    {engineSettings.manual_mode
+                      ? "Manual Mode: Directly specify external AceStream engines"
+                      : "Auto-Provisioned: Automatically manage Docker engine lifecycle"}
                   </p>
                 </div>
-                <Switch
-                  id="auto-delete"
-                  checked={engineSettings.auto_delete}
-                  onCheckedChange={(checked) => handleSettingChange('auto_delete', checked)}
-                  disabled={loadingSettings}
-                />
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-medium ${!engineSettings.manual_mode ? 'text-primary' : 'text-muted-foreground'}`}>Auto</span>
+                  <Switch
+                    checked={engineSettings.manual_mode}
+                    onCheckedChange={(checked) => handleSettingChange('manual_mode', checked)}
+                    disabled={loadingSettings}
+                  />
+                  <span className={`text-xs font-medium ${engineSettings.manual_mode ? 'text-primary' : 'text-muted-foreground'}`}>Manual</span>
+                </div>
               </div>
+
+              {!engineSettings.manual_mode ? (
+                <>
+                  {/* Engine Blocks Selection */}
+                  <CustomEngineBlocks
+                    orchUrl={orchUrl}
+                    apiKey={apiKey}
+                    fetchJSON={fetchJSON}
+                    engineSettings={engineSettings}
+                    onSettingChange={handleSettingChange}
+                  />
+
+                  {/* MIN_REPLICAS */}
+                  <div className="space-y-2">
+                    <Label htmlFor="min-replicas">Minimum Replicas</Label>
+                    <Input
+                      id="min-replicas"
+                      type="number"
+                      min="0"
+                      max="50"
+                      value={engineSettings.min_replicas}
+                      onChange={(e) => handleSettingChange('min_replicas', parseInt(e.target.value) || 0)}
+                      disabled={loadingSettings}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Minimum number of engine replicas to maintain (0-50, default: 2)
+                    </p>
+                  </div>
+
+                  {/* MAX_REPLICAS */}
+                  <div className="space-y-2">
+                    <Label htmlFor="max-replicas">Maximum Replicas</Label>
+                    <Input
+                      id="max-replicas"
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={engineSettings.max_replicas}
+                      onChange={(e) => handleSettingChange('max_replicas', parseInt(e.target.value) || 1)}
+                      disabled={loadingSettings}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum number of engine replicas allowed (1-100, default: 6)
+                    </p>
+                  </div>
+
+                  {/* AUTO_DELETE */}
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <Label htmlFor="auto-delete">Automatic Engine Cleanup</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Automatically delete engines when they are stopped (default: true)
+                      </p>
+                    </div>
+                    <Switch
+                      id="auto-delete"
+                      checked={engineSettings.auto_delete}
+                      onCheckedChange={(checked) => handleSettingChange('auto_delete', checked)}
+                      disabled={loadingSettings}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:bg-blue-950/30 dark:border-blue-900">
+                    <div className="flex items-start gap-3 text-blue-800 dark:text-blue-300">
+                      <AlertCircle className="h-5 w-5 mt-0.5" />
+                      <div>
+                        <p className="font-semibold text-sm italic">Manual Mode Active</p>
+                        <p className="text-xs mt-1">Docker provisioning is disabled. The orchestrator will only use the engines specified below. High availability and automated scaling are disabled.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <ManualEngineList
+                    engines={engineSettings.manual_engines || []}
+                    onChange={(newList) => handleSettingChange('manual_engines', newList)}
+                    disabled={loadingSettings}
+                  />
+                </div>
+              )}
 
               {/* Save Settings Button */}
               <div className="flex justify-end gap-2 pt-4 border-t">

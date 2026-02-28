@@ -49,6 +49,13 @@ def ensure_minimum(initial_startup: bool = False):
             emergency_info = state.get_emergency_mode_info()
             logger.debug(f"Autoscaler paused: in emergency mode (failed VPN: {emergency_info['failed_vpn']})")
             return
+            
+        # Skip autoscaling if manual mode is enabled
+        from .settings_persistence import SettingsPersistence
+        engine_settings = SettingsPersistence.load_engine_settings() or {}
+        if engine_settings.get('manual_mode'):
+            logger.debug("Autoscaler paused: manual mode is enabled")
+            return
         
         # Skip autoscaling if in reprovisioning mode (unless initial startup)
         if not initial_startup and state.is_reprovisioning_mode():
@@ -388,6 +395,13 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
 def scale_to(demand: int):
     from .replica_validator import replica_validator
     
+    # Skip autoscaling if manual mode is enabled
+    from .settings_persistence import SettingsPersistence
+    engine_settings = SettingsPersistence.load_engine_settings() or {}
+    if engine_settings.get('manual_mode'):
+        logger.debug("Manual mode is enabled, skipping scale_to")
+        return
+        
     desired = min(max(cfg.MIN_REPLICAS, demand), cfg.MAX_REPLICAS)
     
     # When using Gluetun, MAX_REPLICAS already serves as the hard limit

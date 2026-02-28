@@ -154,9 +154,11 @@ class ReplicaValidator:
             free_count = total_running - used_engines
             
             # Check for state/Docker discrepancies
-            state_engine_count = len(all_engines)
+            # Filter out manual engines from validation - they don't have backing Docker containers
+            managed_engines = [e for e in all_engines if not e.labels.get("manual")]
+            state_engine_count = len(managed_engines)
             running_container_ids = docker_status['running_container_ids']
-            state_container_ids = {engine.container_id for engine in all_engines}
+            state_container_ids = {engine.container_id for engine in managed_engines}
             
             sync_needed = False
             
@@ -249,7 +251,7 @@ class ReplicaValidator:
             
             used_container_ids = {stream.container_id for stream in active_streams}
             
-            state_container_ids = {engine.container_id for engine in all_engines}
+            state_container_ids = {engine.container_id for engine in all_engines if not engine.labels.get("manual")}
             running_container_ids = docker_status['running_container_ids']
             
             orphaned_engines = state_container_ids - running_container_ids
@@ -261,9 +263,9 @@ class ReplicaValidator:
             
             return {
                 'timestamp': datetime.now(timezone.utc).isoformat(),
-                'state_consistent': len(all_engines) == total_running,
+                'state_consistent': len([e for e in all_engines if not e.labels.get("manual")]) == total_running,
                 'counts': {
-                    'state_engines': len(all_engines),
+                    'state_engines': len([e for e in all_engines if not e.labels.get("manual")]),
                     'docker_running': total_running,
                     'docker_total': docker_status['total_managed'],
                     'used_engines': used_engines,
@@ -299,7 +301,7 @@ class ReplicaValidator:
             all_engines = state.list_engines()
             docker_status = self.get_docker_container_status()
             
-            state_count = len(all_engines)
+            state_count = len([e for e in all_engines if not e.labels.get("manual")])
             docker_count = docker_status['total_running']
             
             return state_count == docker_count

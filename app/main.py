@@ -198,7 +198,31 @@ async def lifespan(app: FastAPI):
                 # Do NOT override custom_config.enabled from engine_settings
                 # custom_engine_variant.json should be the source of truth for its own enabled state
                 pass
-            logger.info(f"Engine settings loaded from persistent storage: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}, ENGINE_VARIANT={cfg.ENGINE_VARIANT}")
+            
+            # Load manual engines into state if manual mode is enabled
+            if engine_settings.get('manual_mode'):
+                logger.info("Manual mode is enabled. Injecting manual engines into state on startup.")
+                from .services.state import state
+                from .models.schemas import EngineState
+                
+                for engine in engine_settings.get("manual_engines", []):
+                    host = engine.get("host")
+                    port = engine.get("port")
+                    if host and port:
+                        container_id = f"manual-{host}-{port}"
+                        state.engines[container_id] = EngineState(
+                            container_id=container_id,
+                            container_name=f"manual-{host}-{port}",
+                            host=host,
+                            port=port,
+                            labels={"manual": "true"},
+                            first_seen=state.now(),
+                            last_seen=state.now(),
+                            streams=[],
+                            health_status="unknown"
+                        )
+                        
+            logger.info(f"Engine settings loaded from persistent storage: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}, ENGINE_VARIANT={cfg.ENGINE_VARIANT}, MANUAL_MODE={engine_settings.get('manual_mode', False)}")
         else:
             # No persisted settings found - create default settings from current config
             logger.info("No persisted engine settings found, creating defaults")
@@ -210,6 +234,8 @@ async def lifespan(app: FastAPI):
                 "engine_variant": cfg.ENGINE_VARIANT,
                 "use_custom_variant": custom_config.enabled if custom_config else False,
                 "platform": detect_platform(),
+                "manual_mode": False,
+                "manual_engines": [],
             }
             if SettingsPersistence.save_engine_settings(default_settings):
                 logger.info(f"Default engine settings created and saved: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}")
@@ -2829,6 +2855,8 @@ class EngineSettingsUpdate(BaseModel):
     engine_variant: Optional[str] = None
     use_custom_variant: Optional[bool] = None
     platform: Optional[str] = None  # Read-only, just for compatibility
+    manual_mode: Optional[bool] = None
+    manual_engines: Optional[List[Dict[str, Any]]] = None  # list of {"host": "ip", "port": port}
 
 @app.get("/settings/engine")
 def get_engine_settings():
@@ -2868,6 +2896,8 @@ def get_engine_settings():
         "engine_variant": cfg.ENGINE_VARIANT,
         "use_custom_variant": custom_config.enabled if custom_config else False,
         "platform": current_platform,
+        "manual_mode": False,
+        "manual_engines": [],
     }
     
     # Save defaults for future use
@@ -2902,6 +2932,8 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
         "engine_variant": cfg.ENGINE_VARIANT,
         "use_custom_variant": False,
         "platform": current_platform,
+        "manual_mode": False,
+        "manual_engines": [],
     }
     
     # Always ensure the platform field in persisted settings is corrected to real-time
@@ -2941,6 +2973,45 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
         if custom_config:
             custom_config.enabled = settings.use_custom_variant
             save_custom_config(custom_config)
+            
+    if settings.manual_mode is not None:
+        current_settings["manual_mode"] = settings.manual_mode
+        
+    if settings.manual_engines is not None:
+        current_settings["manual_engines"] = settings.manual_engines
+        
+    # Inject manual engines into state if manual mode is enabled
+    if current_settings.get("manual_mode"):
+        from .services.state import state
+        from .models.schemas import EngineState
+        
+        # Clear existing manual engines first
+        manual_keys = [k for k in state.engines.keys() if k.startswith("manual-")]
+        for k in manual_keys:
+            state.remove_engine(k)
+            
+        for engine in current_settings.get("manual_engines", []):
+            host = engine.get("host")
+            port = engine.get("port")
+            if host and port:
+                container_id = f"manual-{host}-{port}"
+                
+                # Check if it already exists to preserve some state like last_seen
+                existing = state.get_engine(container_id)
+                if not existing:
+                    state.engines[container_id] = EngineState(
+                        container_id=container_id,
+                        container_name=f"manual-{host}-{port}",
+                        host=host,
+                        port=port,
+                        labels={"manual": "true"},
+                        first_seen=state.now(),
+                        last_seen=state.now(),
+                        streams=[],
+                        health_status="unknown"
+                    )
+                else:
+                    existing.last_seen = state.now()
     
     # Persist settings to JSON file
     if SettingsPersistence.save_engine_settings(current_settings):

@@ -110,6 +110,11 @@ class HealthManager:
         if state.is_reprovisioning_mode():
             logger.debug("Health manager paused: in reprovisioning mode")
             return
+            
+        # Skip health management if manual mode is enabled
+        from .settings_persistence import SettingsPersistence
+        engine_settings = SettingsPersistence.load_engine_settings() or {}
+        is_manual_mode = engine_settings.get('manual_mode', False)
         
         # Get current engines from state
         engines = state.list_engines()
@@ -146,7 +151,12 @@ class HealthManager:
                 if engine_health.first_failure_time is None:
                     engine_health.first_failure_time = datetime.now(timezone.utc)
                 
-                if engine_health.is_considered_unhealthy():
+                # In manual mode, we track health but do NOT mark engines as unhealthy
+                # for replacement logic (because we cannot replace them automatically).
+                if is_manual_mode:
+                    # Still consider them "healthy" for the sake of the lists so they don't trigger replacement
+                    healthy_engines.append(engine)
+                elif engine_health.is_considered_unhealthy():
                     unhealthy_engines.append(engine)
                 else:
                     # Still in grace period, consider as potentially healthy
@@ -158,11 +168,12 @@ class HealthManager:
         if self._should_wait_for_vpn_recovery(healthy_engines):
             return
         
-        # Ensure we have minimum healthy engines
-        await self._ensure_healthy_engines(healthy_engines, unhealthy_engines)
-        
-        # Replace unhealthy engines if we have enough healthy ones
-        await self._replace_unhealthy_engines(healthy_engines, unhealthy_engines)
+        # Ensure we have minimum healthy engines (skip in manual mode)
+        if not is_manual_mode:
+            await self._ensure_healthy_engines(healthy_engines, unhealthy_engines)
+            
+            # Replace unhealthy engines if we have enough healthy ones
+            await self._replace_unhealthy_engines(healthy_engines, unhealthy_engines)
     
     def _get_target_vpn_for_provisioning(self) -> Optional[str]:
         """

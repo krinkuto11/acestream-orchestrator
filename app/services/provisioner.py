@@ -294,15 +294,18 @@ def get_variant_config(variant: str) -> dict:
     configs = {
         "AceServe-amd64": {
             "image": "ghcr.io/krinkuto11/acestream:latest-amd64",
-            "cmd": ["/acestream/acestreamengine", "--live-cache-type", "disk", "--cache-dir", "/root/.ACEStream"],
+            "config_type": "cmd",
+            "base_cmd": ["/acestream/acestreamengine", "--live-cache-type", "disk", "--cache-dir", "/root/.ACEStream"],
         },
         "AceServe-arm32": {
             "image": "ghcr.io/krinkuto11/acestream:base-arm32",
-            "cmd": ["python", "main.py", "--live-cache-type", "disk", "--cache-dir", "/root/.ACEStream"],
+            "config_type": "cmd",
+            "base_cmd": ["python", "main.py", "--live-cache-type", "disk", "--cache-dir", "/root/.ACEStream"],
         },
         "AceServe-arm64": {
             "image": "ghcr.io/krinkuto11/acestream:base-arm64",
-            "cmd": ["python", "main.py", "--live-cache-type", "disk", "--cache-dir", "/root/.ACEStream"],
+            "config_type": "cmd",
+            "base_cmd": ["python", "main.py", "--live-cache-type", "disk", "--cache-dir", "/root/.ACEStream"],
         }
     }
     
@@ -537,6 +540,8 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Prepare environment variables and command based on variant type
     env = {**req.env}
     cmd = None
+    base_cmd = variant_config.get("base_cmd", [])
+    base_args = variant_config.get("base_args", "")
     
     if variant_config["config_type"] == "env":
         # Legacy ENV-based configuration (mainly for custom variants with base_args)
