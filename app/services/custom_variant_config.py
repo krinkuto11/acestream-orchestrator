@@ -170,7 +170,7 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
     
     # Base command depending on architecture
     if platform_arch == 'amd64':
-        cmd = ["/acestream/acestreamengine"]
+        cmd = ["python", "main.py"]
     else:
         cmd = ["python", "main.py"]
         
