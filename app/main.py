@@ -205,9 +205,9 @@ async def lifespan(app: FastAPI):
                 from .services.state import state
                 from .models.schemas import EngineState
                 
-                for engine in engine_settings.get("manual_engines", []):
-                    host = engine.get("host")
-                    port = engine.get("port")
+                for man_eng in engine_settings.get("manual_engines", []):
+                    host = man_eng.get("host")
+                    port = man_eng.get("port")
                     if host and port:
                         container_id = f"manual-{host}-{port}"
                         state.engines[container_id] = EngineState(
