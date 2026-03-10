@@ -257,64 +257,85 @@ def _check_gluetun_health_sync(container_name: Optional[str] = None) -> bool:
     except Exception:
         return False
 
-def get_variant_config(variant: str):
+def get_variant_config(variant: str) -> dict:
     """
-    Get the configuration for a specific engine variant.
+    Get the Docker image and base command/arguments for a specific variant.
     
-    This is a public API for retrieving variant configuration.
-    Supports custom variants when enabled via custom_variant_config.
-    
-    Args:
-        variant: The engine variant name. Valid values are:
-                 - 'krinkuto11-amd64' (default)
-                 - 'jopsis-amd64'
-                 - 'jopsis-arm32'
-                 - 'jopsis-arm64'
+    Supported standard variants:
+                 - 'AceServe-amd64' (default)
+                 - 'AceServe-arm32'
+                 - 'AceServe-arm64'
                  - 'custom' (when custom variant is enabled)
     
     Returns:
         dict with keys:
             - image: Docker image name (always present)
             - config_type: "env" or "cmd" (always present)
-            - base_args: Base arguments string (for ENV-based jopsis-amd64 variant)
+            - base_args: Base arguments string (for ENV-based AceServe-amd64 variant)
             - base_cmd: Base command list (for CMD-based arm32/arm64 variants)
             - is_custom: True if this is a custom variant
     """
     # Check if custom variant is enabled and should override
-    from .custom_variant_config import is_custom_variant_enabled, get_config, build_variant_config_from_custom
+    from .custom_variant_config import (
+        is_custom_variant_enabled, 
+        get_config, 
+        build_variant_config_from_custom,
+        detect_platform
+    )
     
     if is_custom_variant_enabled():
         try:
             custom_config = get_config()
             if custom_config:
-                logger.info("Using custom engine variant configuration")
+                logger.debug("Using custom engine variant configuration")
                 return build_variant_config_from_custom(custom_config)
         except Exception as e:
             logger.error(f"Failed to load custom variant config, falling back to standard variants: {e}")
-    
     configs = {
-        "krinkuto11-amd64": {
-            "image": "ghcr.io/krinkuto11/nano-ace:latest",
+        "AceServe-amd64": {
+            "image": "ghcr.io/krinkuto11/acestream:latest-amd64",
             "config_type": "cmd",
-            "base_cmd": ["/acestream/acestreamengine", "--client-console", "--bind-all"]
+            "base_cmd": ["python", "main.py", "--bind-all",  "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp" ],
         },
-        "jopsis-amd64": {
-            "image": "jopsis/acestream:x64",
-            "config_type": "env",
-            "base_args": "--client-console --bind-all --service-remote-access --access-token acestream --service-access-token root --stats-report-peers --live-cache-type memory --live-cache-size 209715200 --vod-cache-type memory --cache-dir /acestream/.ACEStream --vod-drop-max-age 120 --max-file-size 2147483648 --live-buffer 25 --vod-buffer 10 --max-connections 500 --max-peers 50 --max-upload-slots 50 --auto-slots 0 --download-limit 0 --upload-limit 0 --stats-report-interval 2 --stats-report-peers --slots-manager-use-cpu-limit 1 --core-skip-have-before-playback-pos 1 --core-dlr-periodic-check-interval 5 --check-live-pos-interval 5 --refill-buffer-interval 1 --webrtc-allow-outgoing-connections 1 --allow-user-config --log-debug 0 --log-max-size 15000000 --log-backup-count 1"
-        },
-        "jopsis-arm32": {
-            "image": f"jopsis/acestream:{cfg.ENGINE_ARM32_VERSION}",
+        "AceServe-arm32": {
+            "image": "ghcr.io/krinkuto11/acestream:base-arm32",
             "config_type": "cmd",
-            "base_cmd": ["python", "main.py", "--bind-all", "--client-console", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout"]
+            "base_cmd": ["python", "main.py", "--bind-all",  "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp" ],
         },
-        "jopsis-arm64": {
-            "image": f"jopsis/acestream:{cfg.ENGINE_ARM64_VERSION}",
+        "AceServe-arm64": {
+            "image": "ghcr.io/krinkuto11/acestream:base-arm64",
             "config_type": "cmd",
-            "base_cmd": ["python", "main.py", "--bind-all", "--client-console", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout"]
+            "base_cmd": ["python", "main.py", "--bind-all",  "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--disable-sentry", "--log-stdout", "--disable-upnp" ],
         }
     }
-    return configs.get(variant, configs["krinkuto11-amd64"])
+    
+    # Determine current platform to ensure compatibility
+    current_platform = detect_platform()
+    
+    # Validation and Fallback Logic:
+    # 1. If variant is not in configs at all, we MUST fallback
+    # 2. If variant is "amd64" but we are on ARM, we MUST fallback
+    
+    needs_fallback = False
+    if variant not in configs:
+        needs_fallback = True
+        logger.warning(f"Engine variant '{variant}' not found")
+    elif current_platform in ["arm64", "arm32"] and "amd64" in variant:
+        needs_fallback = True
+        logger.warning(f"Engine variant '{variant}' is incompatible with platform '{current_platform}'")
+        
+    if needs_fallback:
+        if current_platform == "arm64":
+            fallback = "AceServe-arm64"
+        elif current_platform == "arm32":
+            fallback = "AceServe-arm32"
+        else:
+            fallback = "AceServe-amd64"
+        
+        logger.info(f"Falling back to engine variant '{fallback}' (platform: {current_platform})")
+        return configs[fallback]
+        
+    return configs[variant]
 
 # Alias for backward compatibility with existing tests that import _get_variant_config
 # (test_engine_variants.py, demo_engine_variants.py, test_p2p_port_variants.py)
@@ -519,33 +540,38 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     # Prepare environment variables and command based on variant type
     env = {**req.env}
     cmd = None
+    base_cmd = variant_config.get("base_cmd", [])
+    base_args = variant_config.get("base_args", "")
     
     if variant_config["config_type"] == "env":
-        # ENV-based variants (jopsis-amd64 only)
-        # Note: Custom amd64 variants now use CMD-based configuration with Nano-Ace
-        # Legacy custom variants with base_args would still use this path
-        uses_acestream_args = (
-            cfg.ENGINE_VARIANT == "jopsis-amd64" or 
-            (variant_config.get("is_custom") and variant_config.get("base_args") is not None)
-        )
-        
-        if uses_acestream_args:
-            # Use ACESTREAM_ARGS environment variable with base args + port settings
-            # This applies to jopsis-amd64 and custom variants with base_args
-            base_args = variant_config.get("base_args", "")
-            port_args = f" --http-port {c_http} --https-port {c_https}"
-            # Add P2P port if available
-            if p2p_port:
-                port_args += f" --port {p2p_port}"
-            env["ACESTREAM_ARGS"] = base_args + port_args
+        # Legacy ENV-based configuration (mainly for custom variants with base_args)
+        base_args = variant_config.get("base_args", "")
+        port_args = f" --http-port {c_http} --https-port {c_https}"
+        # Add P2P port if available
+        if p2p_port:
+            port_args += f" --port {p2p_port}"
+        env["ACESTREAM_ARGS"] = base_args + port_args
     else:
-        # CMD-based variants (krinkuto11-amd64, jopsis-arm32, jopsis-arm64, custom variants with base_cmd)
-        # Append port settings to base command
-        base_cmd = variant_config.get("base_cmd", [])
-        port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]
+        # CMD-based variants (krinkuto11, AceServe, and all custom variants with base_cmd)
+        
+        # We need to map CMD configuration differently for distinct containers
+        # User requested that AceServe variants in default mode only receive --http-port and --port (P2P)
+        # We check the image name to identify AceServe variants even after platform fallbacks
+        image_name = variant_config.get("image", "").lower()
+        is_aceserve_default = not variant_config.get("is_custom") and ("aceserve" in image_name or "krinkuto11" in image_name)
+        
+        if is_aceserve_default:
+            # Minimal ports for AceServe as per user requirement. AceServe docker images already 
+            # have --bind-all etc. in their default parameters.
+            port_args = ["--http-port", str(c_http)]
+        else:
+            # Standard ports for other variants (including krinkuto11 and custom)
+            port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]
+            
         # Add P2P port if available
         if p2p_port:
             port_args.extend(["--port", str(p2p_port)])
+            
         cmd = base_cmd + port_args
 
     key, val = cfg.CONTAINER_LABEL.split("=")
@@ -611,10 +637,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
                 
                 # Check if user has overridden the cache-dir parameter
                 # If they have, we should use that path + /collected_torrent_files
-                # Note: ~ is expanded to /root because AceStream runs as root in the container
+                # Note: ~ is expanded to /dev/shm because AceStream is configured with that base
                 for param in custom_config.parameters:
                     if param.name == "--cache-dir" and param.enabled and param.value:
-                        cache_dir = param.value.replace("~", "/root")  # AceStream runs as root
+                        cache_dir = param.value.replace("~", "/dev/shm")
                         container_path = f"{cache_dir}/collected_torrent_files"
                         break
                 

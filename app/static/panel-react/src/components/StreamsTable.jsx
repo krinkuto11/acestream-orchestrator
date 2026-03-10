@@ -10,15 +10,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { 
-  PlayCircle, 
-  Download, 
-  Upload, 
-  Users, 
-  ChevronDown, 
-  ChevronUp, 
-  StopCircle, 
-  Trash2, 
+import {
+  PlayCircle,
+  Download,
+  Upload,
+  Users,
+  ChevronDown,
+  ChevronUp,
+  StopCircle,
+  Trash2,
   ExternalLink,
   Clock,
   Activity,
@@ -73,7 +73,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const [clients, setClients] = useState([])
   const [clientsLoading, setClientsLoading] = useState(false)
   const [streamStatus, setStreamStatus] = useState(null) // For tracking AceStream stat URL status
-  
+
   // Track if we have fetched data at least once to prevent loading flicker on refreshes
   const hasClientsDataRef = useRef(false)
   const hasStatsDataRef = useRef(false)
@@ -81,30 +81,30 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
 
   const isActive = stream.status === 'started'
   const isEnded = stream.status === 'ended'
-  
+
   // Determine if stream is prebuffering based on stat URL response
   const isPrebuffering = streamStatus === 'prebuf'
 
   const fetchStats = useCallback(async () => {
     if (!stream || !isExpanded) return
-    
+
     // Only show loading if we don't have data yet
     if (!hasStatsDataRef.current) {
       setLoading(true)
     }
-    
+
     try {
       const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
       const headers = {}
       if (apiKey) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
-      
+
       const response = await fetch(
         `${orchUrl}/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`,
         { headers }
       )
-      
+
       if (response.ok) {
         const data = await response.json()
         setStats(data)
@@ -122,24 +122,24 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     if (!stream) return
     // Only fetch if expanded OR if active (to show title in collapsed state)
     if (!isExpanded && !isActive) return
-    
+
     // Only show loading if we don't have data yet
     if (!hasExtendedStatsDataRef.current) {
       setExtendedStatsLoading(true)
     }
     setExtendedStatsError(null)
-    
+
     try {
       const headers = {}
       if (apiKey) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
-      
+
       const response = await fetch(
         `${orchUrl}/streams/${encodeURIComponent(stream.id)}/extended-stats`,
         { headers }
       )
-      
+
       if (response.ok) {
         const data = await response.json()
         setExtendedStats(data)
@@ -160,17 +160,17 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
 
   const fetchClients = useCallback(async () => {
     if (!stream || !isExpanded || !stream.key) return
-    
+
     // Only show loading indicator if we don't have any data yet
     if (!hasClientsDataRef.current) {
       setClientsLoading(true)
     }
-    
+
     try {
       const response = await fetch(
         `${orchUrl}/proxy/streams/${encodeURIComponent(stream.key)}/clients`
       )
-      
+
       if (response.ok) {
         const data = await response.json()
         setClients(data.clients || [])
@@ -192,10 +192,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
 
   const fetchStreamStatus = useCallback(async () => {
     if (!stream || !stream.stat_url || !isActive) return
-    
+
     try {
       const response = await fetch(stream.stat_url)
-      
+
       if (response.ok) {
         const data = await response.json()
         // AceStream stat response can have status in various places
@@ -218,7 +218,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   useEffect(() => {
     if (isExpanded && isActive) {
       fetchStats()
-      fetchExtendedStats()
+      fetchExtendedStats() // Initial fetch
       fetchClients()
       fetchStreamStatus()
       const interval = setInterval(refreshData, 10000)
@@ -230,10 +230,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   useEffect(() => {
     if (isActive) {
       fetchStreamStatus()
-      fetchExtendedStats() // Fetch extended stats for active streams to show title
+      fetchExtendedStats() // Initial fetch for active streams to show title
       const interval = setInterval(() => {
         fetchStreamStatus()
-        fetchExtendedStats()
+        // Removed fetchExtendedStats() from polling interval
       }, 10000) // Check every 10 seconds
       return () => clearInterval(interval)
     }
@@ -311,24 +311,24 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   // AceStream API returns Unix timestamps (seconds since epoch)
   const formatLiveposTimestamp = (timestamp) => {
     if (!timestamp) return 'N/A'
-    
+
     try {
       const numTimestamp = parseInt(timestamp)
-      
+
       // Validate timestamp is reasonable (between 2020 and 2050)
       if (isNaN(numTimestamp) || numTimestamp < MIN_VALID_TIMESTAMP || numTimestamp > MAX_VALID_TIMESTAMP) {
         console.warn('Invalid livepos timestamp:', timestamp)
         return 'Invalid'
       }
-      
+
       // AceStream uses Unix timestamps in seconds, convert to milliseconds
       const date = new Date(numTimestamp * 1000)
-      
+
       // Additional validation: check if date is valid
       if (isNaN(date.getTime())) {
         return 'Invalid'
       }
-      
+
       return date.toLocaleString()
     } catch (err) {
       console.error('Error formatting livepos timestamp:', err)
@@ -508,7 +508,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                                 {client.ip_address || 'N/A'}
                               </TableCell>
                               <TableCell className="text-sm text-white">
-                                {client.connected_at 
+                                {client.connected_at
                                   ? new Date(client.connected_at * 1000).toLocaleString()
                                   : 'N/A'
                                 }
@@ -554,7 +554,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                     <p className="text-sm font-medium text-foreground">{formatTime(stream.ended_at)}</p>
                   </div>
                 )}
-                
+
                 {/* LivePos Information */}
                 {stream.livepos && (
                   <>
@@ -587,7 +587,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                     )}
                   </>
                 )}
-                
+
                 {/* Extended Stats */}
                 {extendedStats && (
                   <>
@@ -629,17 +629,17 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
 
               {/* Links */}
               <div className="flex gap-4">
-                <a 
-                  href={stream.stat_url} 
-                  target="_blank" 
+                <a
+                  href={stream.stat_url}
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm text-primary hover:underline flex items-center gap-1"
                 >
                   Statistics URL <ExternalLink className="h-3 w-3" />
                 </a>
-                <a 
-                  href={stream.command_url} 
-                  target="_blank" 
+                <a
+                  href={stream.command_url}
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm text-primary hover:underline flex items-center gap-1"
                 >
@@ -703,20 +703,20 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
   // Separate active and ended streams
   const activeStreams = streams.filter(s => s.status === 'started')
   const endedStreams = streams.filter(s => s.status === 'ended')
-  
+
   // State for sorting
   const [sortColumn, setSortColumn] = useState(null)
   const [sortDirection, setSortDirection] = useState('asc')
-  
+
   // State for selection (only for active streams)
   const [selectedStreams, setSelectedStreams] = useState(new Set())
-  
+
   // State for ended streams collapsible
   const [endedStreamsOpen, setEndedStreamsOpen] = useState(false)
-  
+
   // State for batch operation
   const [batchStopping, setBatchStopping] = useState(false)
-  
+
   // Handle column header click for sorting
   const handleSort = (column) => {
     if (sortColumn === column) {
@@ -727,45 +727,45 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
       setSortDirection('asc')
     }
   }
-  
+
   // Sort streams based on current sort settings
   const sortStreams = (streamsList) => {
     if (!sortColumn) return streamsList
-    
+
     return [...streamsList].sort((a, b) => {
       let aVal = a[sortColumn]
       let bVal = b[sortColumn]
-      
+
       // Handle special cases
       if (sortColumn === 'started_at') {
         aVal = new Date(aVal).getTime()
         bVal = new Date(bVal).getTime()
-      } else if (sortColumn === 'downloaded' || sortColumn === 'uploaded' || 
-                 sortColumn === 'speed_down' || sortColumn === 'speed_up' || 
-                 sortColumn === 'peers') {
+      } else if (sortColumn === 'downloaded' || sortColumn === 'uploaded' ||
+        sortColumn === 'speed_down' || sortColumn === 'speed_up' ||
+        sortColumn === 'peers') {
         aVal = aVal || 0
         bVal = bVal || 0
       } else if (typeof aVal === 'string' && typeof bVal === 'string') {
         aVal = aVal.toLowerCase()
         bVal = bVal.toLowerCase()
       }
-      
+
       if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1
       if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1
       return 0
     })
   }
-  
+
   // Render sort icon
   const SortIcon = ({ column }) => {
     if (sortColumn !== column) {
       return <ArrowUpDown className="ml-2 h-4 w-4 inline-block" />
     }
-    return sortDirection === 'asc' 
+    return sortDirection === 'asc'
       ? <ArrowUp className="ml-2 h-4 w-4 inline-block" />
       : <ArrowDown className="ml-2 h-4 w-4 inline-block" />
   }
-  
+
   // Handle select all
   const handleSelectAll = (checked) => {
     if (checked) {
@@ -774,7 +774,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
       setSelectedStreams(new Set())
     }
   }
-  
+
   // Handle individual selection
   const handleToggleSelect = (streamId) => {
     const newSelected = new Set(selectedStreams)
@@ -785,30 +785,30 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
     }
     setSelectedStreams(newSelected)
   }
-  
+
   // Check if all are selected
   const allSelected = activeStreams.length > 0 && selectedStreams.size === activeStreams.length
   const someSelected = selectedStreams.size > 0 && selectedStreams.size < activeStreams.length
-  
+
   // Handle batch stop
   const handleBatchStop = async () => {
     if (selectedStreams.size === 0) return
-    
+
     setBatchStopping(true)
-    
+
     try {
       // Get command URLs for selected streams
       const commandUrls = activeStreams
         .filter(s => selectedStreams.has(s.id))
         .map(s => s.command_url)
         .filter(url => url) // Filter out any null/undefined URLs
-      
+
       if (commandUrls.length === 0) {
         console.error('No valid command URLs found for selected streams')
         setBatchStopping(false)
         return
       }
-      
+
       // Call batch stop API
       const headers = {
         'Content-Type': 'application/json'
@@ -816,23 +816,23 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
       if (apiKey) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
-      
+
       const response = await fetch(`${orchUrl}/streams/batch-stop`, {
         method: 'POST',
         headers,
         body: JSON.stringify(commandUrls)
       })
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
-      
+
       const result = await response.json()
       console.log('Batch stop result:', result)
-      
+
       // Clear selection
       setSelectedStreams(new Set())
-      
+
       // Optionally show a toast notification
       if (result.success_count > 0) {
         console.log(`Successfully stopped ${result.success_count} stream(s)`)
@@ -846,7 +846,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
       setBatchStopping(false)
     }
   }
-  
+
   const sortedActiveStreams = sortStreams(activeStreams)
   const sortedEndedStreams = sortStreams(endedStreams)
 
@@ -888,13 +888,13 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                     </div>
                   </TableHead>
                   <TableHead className="w-[40px] text-center"></TableHead>
-                  <TableHead 
+                  <TableHead
                     className="cursor-pointer select-none text-center"
                     onClick={() => handleSort('status')}
                   >
                     Status <SortIcon column="status" />
                   </TableHead>
-                  <TableHead 
+                  <TableHead
                     className="cursor-pointer select-none text-center"
                     onClick={() => handleSort('id')}
                   >
@@ -903,48 +903,48 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                   <TableHead className="text-center">
                     Buffer
                   </TableHead>
-                  <TableHead 
+                  <TableHead
                     className="cursor-pointer select-none text-center"
                     onClick={() => handleSort('container_name')}
                   >
                     Engine <SortIcon column="container_name" />
                   </TableHead>
-                  <TableHead 
+                  <TableHead
                     className="cursor-pointer select-none text-center"
                     onClick={() => handleSort('started_at')}
                   >
                     Started <SortIcon column="started_at" />
                   </TableHead>
-                  <TableHead 
+                  <TableHead
                     className="text-center cursor-pointer select-none"
                     onClick={() => handleSort('speed_down')}
                   >
                     Download <SortIcon column="speed_down" />
                   </TableHead>
-                  <TableHead 
+                  <TableHead
                     className="text-center cursor-pointer select-none"
                     onClick={() => handleSort('speed_up')}
                   >
                     Upload <SortIcon column="speed_up" />
                   </TableHead>
-                  <TableHead 
+                  <TableHead
                     className="text-center cursor-pointer select-none"
                     onClick={() => handleSort('peers')}
                   >
                     Peers <SortIcon column="peers" />
                   </TableHead>
-                  <TableHead 
+                  <TableHead
                     className="text-center"
                   >
                     Broadcast Position
                   </TableHead>
-                  <TableHead 
+                  <TableHead
                     className="text-center cursor-pointer select-none"
                     onClick={() => handleSort('downloaded')}
                   >
                     Downloaded <SortIcon column="downloaded" />
                   </TableHead>
-                  <TableHead 
+                  <TableHead
                     className="text-center cursor-pointer select-none"
                     onClick={() => handleSort('uploaded')}
                   >
@@ -996,37 +996,37 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-[40px] text-center"></TableHead>
-                    <TableHead 
+                    <TableHead
                       className="cursor-pointer select-none text-center"
                       onClick={() => handleSort('status')}
                     >
                       Status <SortIcon column="status" />
                     </TableHead>
-                    <TableHead 
+                    <TableHead
                       className="cursor-pointer select-none text-center"
                       onClick={() => handleSort('id')}
                     >
                       Stream <SortIcon column="id" />
                     </TableHead>
-                    <TableHead 
+                    <TableHead
                       className="cursor-pointer select-none text-center"
                       onClick={() => handleSort('container_name')}
                     >
                       Engine <SortIcon column="container_name" />
                     </TableHead>
-                    <TableHead 
+                    <TableHead
                       className="cursor-pointer select-none text-center"
                       onClick={() => handleSort('started_at')}
                     >
                       Started <SortIcon column="started_at" />
                     </TableHead>
-                    <TableHead 
+                    <TableHead
                       className="text-center cursor-pointer select-none"
                       onClick={() => handleSort('downloaded')}
                     >
                       Downloaded <SortIcon column="downloaded" />
                     </TableHead>
-                    <TableHead 
+                    <TableHead
                       className="text-center cursor-pointer select-none"
                       onClick={() => handleSort('uploaded')}
                     >

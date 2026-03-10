@@ -14,10 +14,10 @@ def demo_all_variants():
     from app.services.provisioner import _get_variant_config
     
     variants = {
-        "krinkuto11-amd64": "Default variant - ENV-based with CONF",
-        "jopsis-amd64": "Jopsis AMD64 variant - ENV-based with ACESTREAM_ARGS",
-        "jopsis-arm32": "Jopsis ARM32 variant - CMD-based",
-        "jopsis-arm64": "Jopsis ARM64 variant - CMD-based"
+        "krinkuto11-amd64": "Default variant - CMD-based with /acestream/acestreamengine",
+        "AceServe-amd64": "AceServe AMD64 variant - CMD-based",
+        "AceServe-arm32": "AceServe ARM32 variant - CMD-based",
+        "AceServe-arm64": "AceServe ARM64 variant - CMD-based"
     }
     
     # Simulated port allocation
@@ -36,42 +36,8 @@ def demo_all_variants():
         
         if config['config_type'] == 'env':
             print("\n📦 Environment Variables:")
-            if variant_name == 'jopsis-amd64':
-                # Build ACESTREAM_ARGS
-                base_args = config.get('base_args', '')
-                port_args = f" --http-port {c_http} --https-port {c_https}"
-                acestream_args = base_args + port_args
-                
-                print(f"  ACESTREAM_ARGS:")
-                # Show first 200 chars and last 100 chars to keep output readable
-                if len(acestream_args) > 300:
-                    print(f"    {acestream_args[:200]}...")
-                    print(f"    ...{acestream_args[-100:]}")
-                else:
-                    print(f"    {acestream_args}")
-                
-                print(f"\n  ℹ️  This variant uses optimized default settings including:")
-                print(f"     - Memory cache: 200MB (live), variable (VOD)")
-                print(f"     - Live buffer: 25s, VOD buffer: 10s")
-                print(f"     - Max connections: 500, Max peers: 50")
-                print(f"     - Access token: 'acestream', Service token: 'root'")
-                print(f"     - Plus port settings: --http-port {c_http} --https-port {c_https}")
-            else:
-                # krinkuto11-amd64: Build CONF
-                conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
-                conf = "\n".join(conf_lines)
-                
-                print(f"  CONF:")
-                for line in conf.split('\n'):
-                    print(f"    {line}")
-                print(f"  HTTP_PORT: {c_http}")
-                print(f"  HTTPS_PORT: {c_https}")
-                print(f"  BIND_ALL: true")
-                print(f"  INTERNAL_BUFFERING: 60")
-                print(f"  CACHE_LIMIT: 1")
-                
-                print(f"\n  ℹ️  This is the default variant with minimal configuration.")
-                print(f"     Port settings are passed via CONF environment variable.")
+            # Legacy ENV-based variants would go here
+            print(f"  ℹ️  This variant uses ENV-based configuration.")
         
         else:  # CMD-based
             print("\n🔧 Docker Command:")
@@ -98,7 +64,7 @@ def demo_all_variants():
     print("\n" + "=" * 80)
     print("\n💡 USAGE:")
     print("   Set ENGINE_VARIANT in your .env file:")
-    print("   ENGINE_VARIANT=jopsis-amd64")
+    print("   ENGINE_VARIANT=AceServe-amd64")
     print("\n   The orchestrator will automatically use the correct configuration")
     print("   when provisioning new AceStream engine containers.")
     print("\n" + "=" * 80)
@@ -116,7 +82,7 @@ def demo_switching_variants():
     print("\nThe ENGINE_VARIANT can be changed by setting the environment variable:")
     print()
     
-    for variant in ['krinkuto11-amd64', 'jopsis-amd64', 'jopsis-arm32', 'jopsis-arm64']:
+    for variant in ['krinkuto11-amd64', 'AceServe-amd64', 'AceServe-arm32', 'AceServe-arm64']:
         # Clear cached config module
         if 'app.core.config' in sys.modules:
             del sys.modules['app.core.config']

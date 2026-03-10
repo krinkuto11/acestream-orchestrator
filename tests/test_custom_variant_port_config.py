@@ -11,13 +11,14 @@ from unittest.mock import patch, MagicMock
 import os
 
 
-def test_custom_amd64_variant_uses_acestream_args_for_port_allocation():
+@patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+def test_custom_amd64_variant_uses_cmd_based_port_allocation(mock_detect):
     """
-    Test that custom amd64 variants with base_args correctly use ACESTREAM_ARGS
-    for port configuration instead of CONF.
+    Test that custom amd64 variants correctly use CMD-based
+    port configuration instead of CONF.
     
     This verifies that the variant config includes the necessary fields
-    (is_custom=True, base_args) that trigger the ACESTREAM_ARGS port allocation
+    (is_custom=True, base_cmd) that trigger the accurate port allocation
     path in the provisioner, ensuring engines use the orchestrator's port range
     instead of defaulting to port 6878.
     """
@@ -42,18 +43,19 @@ def test_custom_amd64_variant_uses_acestream_args_for_port_allocation():
     # Build the variant config
     variant_config = build_variant_config_from_custom(config)
     
-    # Verify the variant config has is_custom=True and base_args
+    # Verify the variant config has is_custom=True and base_cmd
     assert variant_config.get("is_custom") is True, "Custom variant should have is_custom=True"
-    assert variant_config.get("config_type") == "env", "AMD64 custom variant should have config_type=env"
-    assert variant_config.get("base_args") is not None, "AMD64 custom variant should have base_args"
+    assert variant_config.get("config_type") == "cmd", "AMD64 custom variant should have config_type=cmd"
+    assert variant_config.get("base_cmd") is not None, "AMD64 custom variant should have base_cmd"
     
-    print("✅ Custom variant config correctly has is_custom=True and base_args")
+    print("✅ Custom variant config correctly has is_custom=True and base_cmd")
 
 
-def test_port_allocation_logic_for_custom_variant():
+@patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+def test_port_allocation_logic_for_custom_variant(mock_detect):
     """
     Test the port allocation logic correctly identifies custom variants
-    that should use ACESTREAM_ARGS.
+    that should use cmd based execution.
     """
     from app.services.custom_variant_config import (
         CustomVariantConfig,
@@ -72,33 +74,35 @@ def test_port_allocation_logic_for_custom_variant():
     )
     variant_config = build_variant_config_from_custom(config)
     
-    # Test the logic used in provisioner.py to determine if ACESTREAM_ARGS should be used
-    # This mirrors the condition in start_acestream()
-    uses_acestream_args = (
-        variant_config.get("is_custom") and variant_config.get("base_args") is not None
+    uses_cmd_args = (
+        variant_config.get("is_custom") and variant_config.get("base_cmd") is not None
     )
     
-    assert uses_acestream_args is True, "Custom variant should use ACESTREAM_ARGS"
-    print("✅ Port allocation logic correctly identifies custom variant for ACESTREAM_ARGS")
+    assert uses_cmd_args is True, "Custom variant should use base_cmd"
+    print("✅ Port allocation logic correctly identifies custom variant for base_cmd")
 
 
-def test_standard_jopsis_variant_still_works():
+@patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+@patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
+def test_standard_AceServe_variant_still_works(mock_is_custom, mock_detect):
     """
-    Test that the standard jopsis-amd64 variant still uses ACESTREAM_ARGS correctly.
+    Test that the standard AceServe-amd64 variant correctly uses CMD-based config.
     """
     from app.services.provisioner import get_variant_config
     
-    # Get the standard jopsis-amd64 variant config
-    variant_config = get_variant_config("jopsis-amd64")
+    # Get the standard AceServe-amd64 variant config
+    variant_config = get_variant_config("AceServe-amd64")
     
-    assert variant_config.get("config_type") == "env", "jopsis-amd64 should have config_type=env"
-    assert variant_config.get("base_args") is not None, "jopsis-amd64 should have base_args"
-    assert variant_config.get("is_custom") is not True, "jopsis-amd64 should not be custom"
+    assert variant_config.get("config_type") == "cmd", "AceServe-amd64 should have config_type=cmd"
+    assert variant_config.get("base_cmd") is not None, "AceServe-amd64 should have base_cmd"
+    assert variant_config.get("is_custom") is not True, "AceServe-amd64 should not be custom"
     
-    print("✅ Standard jopsis-amd64 variant still works correctly")
+    print("✅ Standard AceServe-amd64 variant still works correctly")
 
 
-def test_standard_krinkuto_variant_still_works():
+@patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+@patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
+def test_standard_krinkuto_variant_still_works(mock_is_custom, mock_detect):
     """
     Test that the standard krinkuto11-amd64 variant still uses CONF correctly.
     """
@@ -107,15 +111,15 @@ def test_standard_krinkuto_variant_still_works():
     # Get the standard krinkuto11-amd64 variant config
     variant_config = get_variant_config("krinkuto11-amd64")
     
-    assert variant_config.get("config_type") == "env", "krinkuto11-amd64 should have config_type=env"
-    # krinkuto11-amd64 does NOT have base_args, it uses CONF
-    assert variant_config.get("base_args") is None, "krinkuto11-amd64 should not have base_args"
+    assert variant_config.get("config_type") == "cmd", "krinkuto11-amd64 should have config_type=cmd"
+    assert variant_config.get("base_cmd") is not None, "krinkuto11-amd64 should have base_cmd"
     assert variant_config.get("is_custom") is not True, "krinkuto11-amd64 should not be custom"
     
     print("✅ Standard krinkuto11-amd64 variant still works correctly")
 
 
-def test_arm_custom_variant_uses_cmd_with_port_args():
+@patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+def test_arm_custom_variant_uses_cmd_with_port_args(mock_detect):
     """
     Test that custom ARM variants correctly use cmd with port arguments.
     """
@@ -146,7 +150,8 @@ def test_arm_custom_variant_uses_cmd_with_port_args():
     print("✅ ARM custom variant correctly uses cmd configuration")
 
 
-def test_uses_acestream_args_condition_comprehensive():
+@patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+def test_uses_acestream_args_condition_comprehensive(mock_detect):
     """
     Comprehensive test for the uses_acestream_args condition in provisioner.
     Tests all combinations of is_custom and base_args.
@@ -157,7 +162,7 @@ def test_uses_acestream_args_condition_comprehensive():
         (True, "--some-args", True, "Custom variant with base_args should use ACESTREAM_ARGS"),
         (True, "", True, "Custom variant with empty base_args should use ACESTREAM_ARGS"),
         (True, None, False, "Custom variant without base_args should NOT use ACESTREAM_ARGS"),
-        (False, "--some-args", False, "Non-custom variant with base_args: condition doesn't apply (jopsis uses separate check)"),
+        (False, "--some-args", False, "Non-custom variant with base_args: condition doesn't apply (AceServe uses separate check)"),
         (None, "--some-args", False, "Variant without is_custom flag: should NOT use ACESTREAM_ARGS"),
     ]
     
@@ -173,10 +178,10 @@ def test_uses_acestream_args_condition_comprehensive():
         
         # Mirror the condition from provisioner.py:
         # uses_acestream_args = (
-        #     cfg.ENGINE_VARIANT == "jopsis-amd64" or 
+        #     cfg.ENGINE_VARIANT == "AceServe-amd64" or 
         #     (variant_config.get("is_custom") and variant_config.get("base_args") is not None)
         # )
-        # For this test, we only check the custom variant part (not jopsis-amd64 case)
+        # For this test, we only check the custom variant part (not AceServe-amd64 case)
         uses_acestream_args = (
             variant_config.get("is_custom") and variant_config.get("base_args") is not None
         )
@@ -196,9 +201,9 @@ if __name__ == '__main__':
     
     success = True
     try:
-        test_custom_variant_uses_acestream_args_with_allocated_port()
+        test_custom_amd64_variant_uses_cmd_based_port_allocation()
         test_port_allocation_logic_for_custom_variant()
-        test_standard_jopsis_variant_still_works()
+        test_standard_AceServe_variant_still_works()
         test_standard_krinkuto_variant_still_works()
         test_arm_custom_variant_uses_cmd_with_port_args()
         test_uses_acestream_args_condition_comprehensive()

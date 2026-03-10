@@ -11,23 +11,23 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { RefreshCw, AlertCircle, CheckCircle, Save, Settings2 } from 'lucide-react'
 import { useNotifications } from '@/context/NotificationContext'
-import { AdvancedEngineSettingsPage } from './AdvancedEngineSettingsPage'
+import { CustomEngineBlocks } from '@/components/CustomEngineBlocks'
+import { ManualEngineList } from '@/components/ManualEngineList'
 
 // Platform-specific variants mapping
 const VARIANT_OPTIONS = {
   amd64: [
-    { value: 'krinkuto11-amd64', label: 'Krinkuto11 AMD64' },
-    { value: 'jopsis-amd64', label: 'Jopsis AMD64' },
-    { value: 'custom', label: 'Custom Variant' },
-  ],
-  arm32: [
-    { value: 'jopsis-arm32', label: 'Jopsis ARM32' },
-    { value: 'custom', label: 'Custom Variant' },
+    { value: 'AceServe-amd64', label: 'AceServe Default (AMD64)' },
+    { value: 'custom', label: 'Custom Engine' }
   ],
   arm64: [
-    { value: 'jopsis-arm64', label: 'Jopsis ARM64' },
-    { value: 'custom', label: 'Custom Variant' },
+    { value: 'AceServe-arm64', label: 'AceServe Default (ARM64)' },
+    { value: 'custom', label: 'Custom Engine' }
   ],
+  arm32: [
+    { value: 'AceServe-arm32', label: 'AceServe Default (ARM32)' },
+    { value: 'custom', label: 'Custom Engine' }
+  ]
 }
 
 export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKey, fetchJSON }) {
@@ -36,19 +36,24 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const [isReprovisioning, setIsReprovisioning] = useState(false)
   const [showSuccessMessage, setShowSuccessMessage] = useState(false)
   const [showErrorMessage, setShowErrorMessage] = useState(false)
-  
+
   // Engine settings state
   const [engineSettings, setEngineSettings] = useState({
     min_replicas: 2,
-    max_replicas: 6,
+    max_replicas: 10,
     auto_delete: true,
-    engine_variant: 'krinkuto11-amd64',
+    engine_variant: '',
     use_custom_variant: false,
-    platform: 'amd64',
+    platform: '',
+    manual_mode: false,
+    manual_engines: []
   })
   const [loadingSettings, setLoadingSettings] = useState(true)
   const [savingSettings, setSavingSettings] = useState(false)
   const [settingsChanged, setSettingsChanged] = useState(false)
+
+  // Cache stats state
+  const [cacheStats, setCacheStats] = useState({ total_bytes: 0, volume_count: 0 })
 
   // Load engine settings
   const loadEngineSettings = useCallback(async () => {
@@ -65,9 +70,32 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     }
   }, [orchUrl, fetchJSON])
 
+  // Load cache statistics
+  const loadCacheStats = useCallback(async () => {
+    try {
+      const stats = await fetchJSON(`${orchUrl}/engine-cache/stats`)
+      setCacheStats(stats)
+    } catch (err) {
+      console.error('Failed to load cache stats:', err)
+    }
+  }, [orchUrl, fetchJSON])
+
   useEffect(() => {
     loadEngineSettings()
-  }, [loadEngineSettings])
+    loadCacheStats()
+
+    // Refresh stats every 30s
+    const interval = setInterval(loadCacheStats, 30000)
+    return () => clearInterval(interval)
+  }, [loadEngineSettings, loadCacheStats])
+
+  const formatBytes = (bytes) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
 
   // Poll for reprovision status
   useEffect(() => {
@@ -75,10 +103,10 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
       try {
         const status = await fetchJSON(`${orchUrl}/custom-variant/reprovision/status`)
         const wasReprovisioning = isReprovisioning
-        
+
         setReprovisionStatus(status)
         setIsReprovisioning(status.in_progress)
-        
+
         // When reprovisioning completes, show success/error message briefly
         if (wasReprovisioning && !status.in_progress) {
           if (status.status === 'success') {
@@ -125,7 +153,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const handleSaveSettings = useCallback(async () => {
     try {
       setSavingSettings(true)
-      
+
       await fetchJSON(`${orchUrl}/settings/engine`, {
         method: 'POST',
         headers: {
@@ -134,7 +162,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
         },
         body: JSON.stringify(engineSettings)
       })
-      
+
       addNotification('Engine settings saved successfully', 'success')
       setSettingsChanged(false)
     } catch (err) {
@@ -144,21 +172,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     }
   }, [orchUrl, fetchJSON, engineSettings, apiKey])
 
-  // Get available variants for current platform
-  const availableVariants = VARIANT_OPTIONS[engineSettings.platform] || VARIANT_OPTIONS.amd64
 
-  // Determine which variant is selected (custom or specific variant)
-  const selectedVariant = engineSettings.use_custom_variant ? 'custom' : engineSettings.engine_variant
-
-  // Handle variant change
-  const handleVariantChange = (value) => {
-    if (value === 'custom') {
-      handleSettingChange('use_custom_variant', true)
-    } else {
-      handleSettingChange('use_custom_variant', false)
-      handleSettingChange('engine_variant', value)
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -167,6 +181,15 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
           <h1 className="text-3xl font-bold tracking-tight">Engines</h1>
           <p className="text-muted-foreground mt-1">Manage and monitor AceStream engine containers</p>
         </div>
+        {cacheStats.volume_count > 0 && (
+          <div className="text-right">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground justify-end">
+              <span>Engine Cache Size:</span>
+              <span className="font-semibold text-foreground">{formatBytes(cacheStats.total_bytes)}</span>
+            </div>
+            <p className="text-[10px] opacity-60">across {cacheStats.volume_count} volumes</p>
+          </div>
+        )}
       </div>
 
       {/* Reprovisioning Progress */}
@@ -186,7 +209,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                     let progress = 0
                     if (reprovisionStatus) {
                       const { current_phase, engines_stopped = 0, total_engines = 0 } = reprovisionStatus
-                      
+
                       if (current_phase === 'stopping' && total_engines > 0) {
                         // Stopping phase: 0-40% of progress
                         progress = Math.round((engines_stopped / total_engines) * 40)
@@ -267,80 +290,107 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* Engine Variant Selector */}
-              <div className="space-y-2">
-                <Label htmlFor="engine-variant">Engine Variant</Label>
-                <Select
-                  value={selectedVariant}
-                  onValueChange={handleVariantChange}
-                  disabled={loadingSettings}
-                >
-                  <SelectTrigger id="engine-variant">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableVariants.map(variant => (
-                      <SelectItem key={variant.value} value={variant.value}>
-                        {variant.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Select the AceStream engine variant to use. Custom variant allows full parameter configuration.
-                  Detected platform: <strong>{engineSettings.platform}</strong>
-                </p>
-              </div>
-
-              {/* MIN_REPLICAS */}
-              <div className="space-y-2">
-                <Label htmlFor="min-replicas">Minimum Replicas</Label>
-                <Input
-                  id="min-replicas"
-                  type="number"
-                  min="0"
-                  max="50"
-                  value={engineSettings.min_replicas}
-                  onChange={(e) => handleSettingChange('min_replicas', parseInt(e.target.value) || 0)}
-                  disabled={loadingSettings}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Minimum number of engine replicas to maintain (0-50, default: 2)
-                </p>
-              </div>
-
-              {/* MAX_REPLICAS */}
-              <div className="space-y-2">
-                <Label htmlFor="max-replicas">Maximum Replicas</Label>
-                <Input
-                  id="max-replicas"
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={engineSettings.max_replicas}
-                  onChange={(e) => handleSettingChange('max_replicas', parseInt(e.target.value) || 1)}
-                  disabled={loadingSettings}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Maximum number of engine replicas allowed (1-100, default: 6)
-                </p>
-              </div>
-
-              {/* AUTO_DELETE */}
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <Label htmlFor="auto-delete">Automatic Engine Cleanup</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Automatically delete engines when they are stopped (default: true)
+              {/* Manual Mode Toggle */}
+              <div className="flex items-center justify-between pb-4 border-b">
+                <div className="space-y-0.5">
+                  <Label className="text-base">Engine Pool Management</Label>
+                  <p className="text-sm text-muted-foreground">
+                    {engineSettings.manual_mode
+                      ? "Manual Mode: Directly specify external AceStream engines"
+                      : "Auto-Provisioned: Automatically manage Docker engine lifecycle"}
                   </p>
                 </div>
-                <Switch
-                  id="auto-delete"
-                  checked={engineSettings.auto_delete}
-                  onCheckedChange={(checked) => handleSettingChange('auto_delete', checked)}
-                  disabled={loadingSettings}
-                />
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-medium ${!engineSettings.manual_mode ? 'text-primary' : 'text-muted-foreground'}`}>Auto</span>
+                  <Switch
+                    checked={engineSettings.manual_mode}
+                    onCheckedChange={(checked) => handleSettingChange('manual_mode', checked)}
+                    disabled={loadingSettings}
+                  />
+                  <span className={`text-xs font-medium ${engineSettings.manual_mode ? 'text-primary' : 'text-muted-foreground'}`}>Manual</span>
+                </div>
               </div>
+
+              {!engineSettings.manual_mode ? (
+                <>
+                  {/* Engine Blocks Selection */}
+                  <CustomEngineBlocks
+                    orchUrl={orchUrl}
+                    apiKey={apiKey}
+                    fetchJSON={fetchJSON}
+                    engineSettings={engineSettings}
+                    onSettingChange={handleSettingChange}
+                  />
+
+                  {/* MIN_REPLICAS */}
+                  <div className="space-y-2">
+                    <Label htmlFor="min-replicas">Minimum Replicas</Label>
+                    <Input
+                      id="min-replicas"
+                      type="number"
+                      min="0"
+                      max="50"
+                      value={engineSettings.min_replicas}
+                      onChange={(e) => handleSettingChange('min_replicas', parseInt(e.target.value) || 0)}
+                      disabled={loadingSettings}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Minimum number of engine replicas to maintain (0-50, default: 2)
+                    </p>
+                  </div>
+
+                  {/* MAX_REPLICAS */}
+                  <div className="space-y-2">
+                    <Label htmlFor="max-replicas">Maximum Replicas</Label>
+                    <Input
+                      id="max-replicas"
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={engineSettings.max_replicas}
+                      onChange={(e) => handleSettingChange('max_replicas', parseInt(e.target.value) || 1)}
+                      disabled={loadingSettings}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum number of engine replicas allowed (1-100, default: 6)
+                    </p>
+                  </div>
+
+                  {/* AUTO_DELETE */}
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <Label htmlFor="auto-delete">Automatic Engine Cleanup</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Automatically delete engines when they are stopped (default: true)
+                      </p>
+                    </div>
+                    <Switch
+                      id="auto-delete"
+                      checked={engineSettings.auto_delete}
+                      onCheckedChange={(checked) => handleSettingChange('auto_delete', checked)}
+                      disabled={loadingSettings}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:bg-blue-950/30 dark:border-blue-900">
+                    <div className="flex items-start gap-3 text-blue-800 dark:text-blue-300">
+                      <AlertCircle className="h-5 w-5 mt-0.5" />
+                      <div>
+                        <p className="font-semibold text-sm italic">Manual Mode Active</p>
+                        <p className="text-xs mt-1">Docker provisioning is disabled. The orchestrator will only use the engines specified below. High availability and automated scaling are disabled.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <ManualEngineList
+                    engines={engineSettings.manual_engines || []}
+                    onChange={(newList) => handleSettingChange('manual_engines', newList)}
+                    disabled={loadingSettings}
+                  />
+                </div>
+              )}
 
               {/* Save Settings Button */}
               <div className="flex justify-end gap-2 pt-4 border-t">
@@ -394,16 +444,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
             </CardContent>
           </Card>
 
-          {/* Advanced Engine Settings - Only show when custom variant is selected */}
-          {engineSettings.use_custom_variant && (
-            <div className="mt-6">
-              <AdvancedEngineSettingsPage
-                orchUrl={orchUrl}
-                apiKey={apiKey}
-                fetchJSON={fetchJSON}
-              />
-            </div>
-          )}
+
         </TabsContent>
       </Tabs>
     </div>

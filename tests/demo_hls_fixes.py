@@ -33,7 +33,7 @@ def demonstrate_startup_validation():
     print()
     
     print("3. Checks ENGINE_VARIANT from environment")
-    print("   ENGINE_VARIANT=jopsis-amd64 (doesn't support HLS)")
+    print("   ENGINE_VARIANT=AceServe-amd64 (doesn't support HLS)")
     print()
     
     print("4. Validation logic in app/main.py (lines 151-161):")

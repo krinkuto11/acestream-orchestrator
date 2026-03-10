@@ -3,14 +3,19 @@
 Test AceStream engine variants configuration.
 """
 
-def test_variant_configs():
+import unittest.mock
+import app.services.custom_variant_config
+
+@unittest.mock.patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+@unittest.mock.patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
+def test_variant_configs(mock_is_custom, mock_detect):
     """Test that all variants have proper configuration."""
     print("🧪 Testing Engine Variant Configurations")
     print("=" * 60)
     
     from app.services.provisioner import _get_variant_config
     
-    variants = ['krinkuto11-amd64', 'jopsis-amd64', 'jopsis-arm32', 'jopsis-arm64']
+    variants = ['AceServe-amd64', 'AceServe-arm32', 'AceServe-arm64']
     
     for variant in variants:
         config = _get_variant_config(variant)
@@ -25,27 +30,24 @@ def test_variant_configs():
         
         # Validate type-specific fields
         if config['config_type'] == 'env':
-            if variant == 'jopsis-amd64':
-                assert 'base_args' in config, f"Missing 'base_args' for {variant}"
-                assert '--client-console' in config['base_args'], f"Missing required args for {variant}"
-                print(f"   ✓ Has base_args with required settings")
-            else:
-                print(f"   ✓ ENV-based variant")
+            # Custom variants or legacy paths
+            print(f"   ✓ ENV-based variant")
         else:
             assert 'base_cmd' in config, f"Missing 'base_cmd' for {variant}"
             assert isinstance(config['base_cmd'], list), f"base_cmd should be a list for {variant}"
-            # krinkuto11-amd64 uses /acestream/acestreamengine, ARM variants use python
-            if variant == 'krinkuto11-amd64':
-                assert '/acestream/acestreamengine' in config['base_cmd'], f"Missing /acestream/acestreamengine in base_cmd for {variant}"
-            else:
-                assert 'python' in config['base_cmd'], f"Missing python in base_cmd for {variant}"
+            # krinkuto11-amd64 uses /acestream/acestreamengine, AceServe variants use python
+            assert 'python' in config['base_cmd'], f"Missing python in base_cmd for {variant}"
+            assert '--bind-all' in config['base_cmd'], f"Missing --bind-all in base_cmd for {variant}"
+            assert '--disable-upnp' in config['base_cmd'], f"Missing --disable-upnp in base_cmd for {variant}"
             print(f"   ✓ CMD-based variant with {len(config['base_cmd'])} args")
     
     print(f"\n✅ All {len(variants)} variants configured correctly!")
     return True
 
 
-def test_variant_environment_building():
+@unittest.mock.patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+@unittest.mock.patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
+def test_variant_environment_building(mock_is_custom, mock_detect):
     """Test that environment variables are built correctly for each variant."""
     print("\n🧪 Testing Environment Variable Building")
     print("=" * 60)
@@ -56,36 +58,24 @@ def test_variant_environment_building():
     c_http = 6879
     c_https = 6880
     
-    # Test krinkuto11-amd64 (CMD-based)
-    print("\n📋 Testing krinkuto11-amd64 command:")
-    config = _get_variant_config('krinkuto11-amd64')
+    # Test AceServe-amd64 (CMD-based)
+    print("\n📋 Testing AceServe-amd64 command:")
+    config = _get_variant_config('AceServe-amd64')
     cmd = None
     if config['config_type'] == 'cmd':
         base_cmd = config.get('base_cmd', [])
-        port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]
+        # In default mode, AceServe only gets --http-port
+        port_args = ["--http-port", str(c_http)]
         cmd = base_cmd + port_args
     print(f"   Command: {' '.join(cmd[:5])}... (total {len(cmd)} args)")
-    assert '/acestream/acestreamengine' in cmd, "Missing /acestream/acestreamengine in cmd"
+    assert 'python' in cmd, "Missing python in cmd"
     assert '--http-port' in cmd, "Missing http-port in cmd"
     assert '6879' in cmd, "Missing port value in cmd"
     print("   ✓ Command built correctly with base + ports")
     
-    # Test jopsis-amd64 (ENV with ACESTREAM_ARGS)
-    print("\n📋 Testing jopsis-amd64 environment:")
-    config = _get_variant_config('jopsis-amd64')
-    env = {}
-    if config['config_type'] == 'env':
-        base_args = config.get('base_args', '')
-        port_args = f" --http-port {c_http} --https-port {c_https}"
-        env['ACESTREAM_ARGS'] = base_args + port_args
-    print(f"   ACESTREAM_ARGS length: {len(env['ACESTREAM_ARGS'])} chars")
-    assert '--http-port 6879' in env['ACESTREAM_ARGS'], "Missing http-port in ACESTREAM_ARGS"
-    assert '--client-console' in env['ACESTREAM_ARGS'], "Missing base args in ACESTREAM_ARGS"
-    print("   ✓ ACESTREAM_ARGS built correctly with base settings + ports")
-    
-    # Test jopsis-arm32 (CMD-based)
-    print("\n📋 Testing jopsis-arm32 command:")
-    config = _get_variant_config('jopsis-arm32')
+    # Test AceServe-arm32 (CMD-based)
+    print("\n📋 Testing AceServe-arm32 command:")
+    config = _get_variant_config('AceServe-arm32')
     cmd = None
     if config['config_type'] == 'cmd':
         base_cmd = config.get('base_cmd', [])
@@ -97,9 +87,9 @@ def test_variant_environment_building():
     assert '6879' in cmd, "Missing port value in cmd"
     print("   ✓ Command built correctly with base + ports")
     
-    # Test jopsis-arm64 (CMD-based)
-    print("\n📋 Testing jopsis-arm64 command:")
-    config = _get_variant_config('jopsis-arm64')
+    # Test AceServe-arm64 (CMD-based)
+    print("\n📋 Testing AceServe-arm64 command:")
+    config = _get_variant_config('AceServe-arm64')
     cmd = None
     if config['config_type'] == 'cmd':
         base_cmd = config.get('base_cmd', [])
@@ -114,7 +104,9 @@ def test_variant_environment_building():
     return True
 
 
-def test_config_loading():
+@unittest.mock.patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
+@unittest.mock.patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
+def test_config_loading(mock_is_custom, mock_detect):
     """Test that ENGINE_VARIANT config loads correctly."""
     print("\n🧪 Testing Configuration Loading")
     print("=" * 60)
@@ -126,14 +118,15 @@ def test_config_loading():
     if 'app.core.config' in sys.modules:
         del sys.modules['app.core.config']
     os.environ.pop('ENGINE_VARIANT', None)
-    from app.core.config import Cfg
-    cfg = Cfg()
+    with unittest.mock.patch('platform.machine', return_value='x86_64'):
+        from app.core.config import Cfg
+        cfg = Cfg()
     print(f"\n📋 Default ENGINE_VARIANT: {cfg.ENGINE_VARIANT}")
-    assert cfg.ENGINE_VARIANT == 'krinkuto11-amd64', "Default should be krinkuto11-amd64"
+    assert cfg.ENGINE_VARIANT == 'AceServe-amd64', "Default should be AceServe-amd64"
     print("   ✓ Default value correct")
     
     # Test each valid variant
-    for variant in ['krinkuto11-amd64', 'jopsis-amd64', 'jopsis-arm32', 'jopsis-arm64']:
+    for variant in ['AceServe-amd64', 'AceServe-arm32', 'AceServe-arm64']:
         if 'app.core.config' in sys.modules:
             del sys.modules['app.core.config']
         os.environ['ENGINE_VARIANT'] = variant

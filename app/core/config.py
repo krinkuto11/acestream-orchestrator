@@ -3,10 +3,20 @@ from pydantic import BaseModel, validator, field_validator, model_validator
 from dotenv import load_dotenv
 load_dotenv()
 
+import platform as _platform
+_machine = _platform.machine().lower()
+
+# Determine a sensible default variant based on the platform to avoid 404 errors on first run
+_default_variant = "AceServe-amd64"
+if "aarch64" in _machine or "arm64" in _machine:
+    _default_variant = "AceServe-arm64"
+elif "arm" in _machine:
+    _default_variant = "AceServe-arm32"
+
 class Cfg(BaseModel):
     APP_PORT: int = int(os.getenv("APP_PORT", 8000))
     DOCKER_NETWORK: str | None = os.getenv("DOCKER_NETWORK")
-    ENGINE_VARIANT: str = os.getenv("ENGINE_VARIANT", "krinkuto11-amd64")
+    ENGINE_VARIANT: str = os.getenv("ENGINE_VARIANT", _default_variant)
     ENGINE_ARM32_VERSION: str = os.getenv("ENGINE_ARM32_VERSION", "arm32-v3.2.13")
     ENGINE_ARM64_VERSION: str = os.getenv("ENGINE_ARM64_VERSION", "arm64-v3.2.13")
     MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 2))
@@ -68,15 +78,10 @@ class Cfg(BaseModel):
     # Engine resource limits
     ENGINE_MEMORY_LIMIT: str | None = os.getenv("ENGINE_MEMORY_LIMIT")
     
-    # Engine Cache Management (Host Mount)
-    ACESTREAM_CACHE_ROOT: str | None = os.getenv("ACESTREAM_CACHE_ROOT")  # Host path for cache root
-    ACESTREAM_CACHE_MOUNT: str = os.getenv("ACESTREAM_CACHE_MOUNT", "/app/data/engine_cache")  # Internal mount path
-
     API_KEY: str | None = os.getenv("API_KEY")
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
     AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "true").lower() == "true"
     DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
-    
     # Stream loop detection configuration
     # Threshold for detecting stale streams (in seconds)
     # If live_last is behind current time by this amount, stream will be stopped
@@ -111,7 +116,7 @@ class Cfg(BaseModel):
 
     @validator('ENGINE_VARIANT')
     def validate_engine_variant(cls, v):
-        valid_variants = ['krinkuto11-amd64', 'jopsis-amd64', 'jopsis-arm32', 'jopsis-arm64']
+        valid_variants = ["AceServe-amd64", "AceServe-arm64", "AceServe-arm32"]
         if v not in valid_variants:
             raise ValueError(f'ENGINE_VARIANT must be one of: {", ".join(valid_variants)}')
         return v
@@ -172,15 +177,4 @@ class Cfg(BaseModel):
                 raise ValueError('GLUETUN_CONTAINER_NAME and GLUETUN_CONTAINER_NAME_2 must be different')
         return self
     
-    @validator('ENGINE_MEMORY_LIMIT')
-    def validate_engine_memory_limit(cls, v):
-        if v is None or v == "":
-            return None
-        # Import validation function
-        from ..services.custom_variant_config import validate_memory_limit
-        is_valid, error_msg = validate_memory_limit(v)
-        if not is_valid:
-            raise ValueError(f'ENGINE_MEMORY_LIMIT: {error_msg}')
-        return v
-
 cfg = Cfg()

@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Req
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from pydantic import BaseModel
 import asyncio
@@ -39,6 +39,7 @@ from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_ca
 from .services.acexy import acexy_sync_service
 from .services.stream_loop_detector import stream_loop_detector
 from .services.looping_streams import looping_streams_tracker
+from .services.cache_monitoring_service import start_cache_monitoring
 from .proxy.manager import ProxyManager
 
 logger = logging.getLogger(__name__)
@@ -158,14 +159,7 @@ async def lifespan(app: FastAPI):
             if 'stream_mode' in proxy_settings:
                 # Validate stream_mode before loading
                 mode = proxy_settings['stream_mode']
-                if mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
-                    logger.warning(f"HLS mode not supported for variant {cfg.ENGINE_VARIANT}, reverting to TS mode and persisting change")
-                    ProxyConfig.STREAM_MODE = 'TS'
-                    # Persist the corrected mode back to storage
-                    proxy_settings['stream_mode'] = 'TS'
-                    SettingsPersistence.save_proxy_config(proxy_settings)
-                else:
-                    ProxyConfig.STREAM_MODE = mode
+                ProxyConfig.STREAM_MODE = mode
             logger.info("Proxy settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
@@ -204,7 +198,31 @@ async def lifespan(app: FastAPI):
                 # Do NOT override custom_config.enabled from engine_settings
                 # custom_engine_variant.json should be the source of truth for its own enabled state
                 pass
-            logger.info(f"Engine settings loaded from persistent storage: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}, ENGINE_VARIANT={cfg.ENGINE_VARIANT}")
+            
+            # Load manual engines into state if manual mode is enabled
+            if engine_settings.get('manual_mode'):
+                logger.info("Manual mode is enabled. Injecting manual engines into state on startup.")
+                from .services.state import state
+                from .models.schemas import EngineState
+                
+                for man_eng in engine_settings.get("manual_engines", []):
+                    host = man_eng.get("host")
+                    port = man_eng.get("port")
+                    if host and port:
+                        container_id = f"manual-{host}-{port}"
+                        state.engines[container_id] = EngineState(
+                            container_id=container_id,
+                            container_name=f"manual-{host}-{port}",
+                            host=host,
+                            port=port,
+                            labels={"manual": "true"},
+                            first_seen=state.now(),
+                            last_seen=state.now(),
+                            streams=[],
+                            health_status="unknown"
+                        )
+                        
+            logger.info(f"Engine settings loaded from persistent storage: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}, ENGINE_VARIANT={cfg.ENGINE_VARIANT}, MANUAL_MODE={engine_settings.get('manual_mode', False)}")
         else:
             # No persisted settings found - create default settings from current config
             logger.info("No persisted engine settings found, creating defaults")
@@ -216,6 +234,8 @@ async def lifespan(app: FastAPI):
                 "engine_variant": cfg.ENGINE_VARIANT,
                 "use_custom_variant": custom_config.enabled if custom_config else False,
                 "platform": detect_platform(),
+                "manual_mode": False,
+                "manual_engines": [],
             }
             if SettingsPersistence.save_engine_settings(default_settings):
                 logger.info(f"Default engine settings created and saved: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}")
@@ -307,11 +327,12 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
     asyncio.create_task(looping_streams_tracker.start())  # Start looping streams tracker
     
-    # Start engine cache manager background pruner
+    # Start engine cache manager background tasks
     from .services.engine_cache_manager import engine_cache_manager
     if engine_cache_manager.is_enabled():
         asyncio.create_task(engine_cache_manager.start_pruner())
-        logger.info("Engine cache pruner started")
+        asyncio.create_task(start_cache_monitoring())
+        logger.info("Engine cache pruner and monitoring started")
     
     reindex_existing()  # Final reindex to ensure all containers are properly tracked
     
@@ -931,6 +952,14 @@ async def get_stream_extended_stats(stream_id: str):
     This returns additional metadata like content_type, title, is_live, mime, categories, etc.
     """
     from .utils.acestream_api import get_stream_extended_stats
+    from .services.cache import get_cache
+    
+    # Check cache first to avoid hammering the AceStream engine
+    cache = get_cache()
+    cache_key = f"stream_extended_stats:{stream_id}"
+    cached_stats = cache.get(cache_key)
+    if cached_stats is not None:
+        return cached_stats
     
     # Get the stream from state
     stream = state.get_stream(stream_id)
@@ -945,6 +974,9 @@ async def get_stream_extended_stats(stream_id: str):
     
     if extended_stats is None:
         raise HTTPException(status_code=503, detail="Unable to fetch extended stats from AceStream engine")
+    
+    # Cache the result for 1 hour (3600 seconds) since stream title/infohash rarely change
+    cache.set(cache_key, extended_stats, ttl=3600.0)
     
     return extended_stats
 
@@ -1367,7 +1399,6 @@ from .services.custom_variant_config import (
     get_config as get_custom_config, 
     save_config as save_custom_config,
     reload_config,
-    validate_config,
     CustomVariantConfig
 )
 
@@ -1419,12 +1450,7 @@ def get_custom_variant_config():
 def update_custom_variant_config(config: CustomVariantConfig):
     """
     Update custom variant configuration.
-    Validates the configuration before saving.
     """
-    # Validate the configuration
-    is_valid, error_msg = validate_config(config)
-    if not is_valid:
-        raise HTTPException(status_code=400, detail=f"Invalid configuration: {error_msg}")
     
     # Save the configuration
     success = save_custom_config(config)
@@ -1930,19 +1956,6 @@ async def ace_getstream(
     # Get current stream mode
     stream_mode = ProxyConfig.STREAM_MODE
     
-    # Check if HLS mode is configured but not supported
-    if stream_mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
-        logger.error(f"HLS mode configured but not supported for variant {cfg.ENGINE_VARIANT}")
-        raise HTTPException(
-            status_code=501,
-            detail={
-                "error": "hls_not_supported",
-                "message": f"HLS streaming is only supported for krinkuto11-amd64 variant. Current variant: {cfg.ENGINE_VARIANT}. Please change stream mode to TS in Proxy Settings.",
-                "current_variant": cfg.ENGINE_VARIANT,
-                "current_mode": stream_mode
-            }
-        )
-    
     # Check if stream is on the looping blacklist
     if looping_streams_tracker.is_looping(id):
         logger.warning(f"Stream request denied: {id} is on looping blacklist")
@@ -2409,6 +2422,62 @@ async def get_stream_clients(stream_key: str):
         return {"clients": []}
 
 
+@app.get("/debug/sync-check")
+async def sync_check():
+    """
+    Debug endpoint to check synchronization between state and proxy.
+    
+    Returns information about:
+    - Streams in state.streams
+    - Active TS proxy sessions
+    - Active HLS proxy sessions
+    - Orphaned proxy sessions (in proxy but not in state)
+    - Missing proxy sessions (in state but not in proxy)
+    """
+    from .proxy.server import ProxyServer
+    from .proxy.hls_proxy import HLSProxyServer
+    
+    # Get state streams
+    state_streams = state.list_streams_with_stats(status="started")
+    state_keys = {s.key for s in state_streams}
+    
+    # Get TS proxy sessions
+    ts_proxy = ProxyServer.get_instance()
+    ts_sessions = set(ts_proxy.stream_managers.keys())
+    
+    # Get HLS proxy sessions
+    hls_proxy = HLSProxyServer.get_instance()
+    hls_sessions = set(hls_proxy.stream_managers.keys())
+    
+    # Find discrepancies
+    orphaned_ts = ts_sessions - state_keys
+    orphaned_hls = hls_sessions - state_keys
+    missing_ts = state_keys - ts_sessions
+    missing_hls = state_keys - hls_sessions
+    
+    return {
+        "state": {
+            "stream_count": len(state_streams),
+            "stream_keys": list(state_keys)
+        },
+        "ts_proxy": {
+            "session_count": len(ts_sessions),
+            "session_keys": list(ts_sessions)
+        },
+        "hls_proxy": {
+            "session_count": len(hls_sessions),
+            "session_keys": list(hls_sessions)
+        },
+        "discrepancies": {
+            "orphaned_ts_sessions": list(orphaned_ts),  # In TS proxy but not in state
+            "orphaned_hls_sessions": list(orphaned_hls),  # In HLS proxy but not in state
+            "missing_ts_sessions": list(missing_ts),  # In state but not in TS proxy
+            "missing_hls_sessions": list(missing_hls),  # In state but not in HLS proxy
+            "has_issues": any([orphaned_ts, orphaned_hls, missing_ts, missing_hls])
+        }
+    }
+
+
 # WebSocket endpoint removed - using simple polling approach
 
 @app.get("/stream-loop-detection/config")
@@ -2669,13 +2738,6 @@ def update_proxy_config(
         if stream_mode not in ['TS', 'HLS']:
             raise HTTPException(status_code=400, detail="stream_mode must be either 'TS' or 'HLS'")
         
-        # Check if HLS is supported for the current engine variant
-        if stream_mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
-            raise HTTPException(
-                status_code=400, 
-                detail=f"HLS streaming is only supported for krinkuto11-amd64 variant. Current variant: {cfg.ENGINE_VARIANT}"
-            )
-        
         ProxyConfig.STREAM_MODE = stream_mode
     
     # HLS-specific settings validation and updates
@@ -2793,6 +2855,8 @@ class EngineSettingsUpdate(BaseModel):
     engine_variant: Optional[str] = None
     use_custom_variant: Optional[bool] = None
     platform: Optional[str] = None  # Read-only, just for compatibility
+    manual_mode: Optional[bool] = None
+    manual_engines: Optional[List[Dict[str, Any]]] = None  # list of {"host": "ip", "port": port}
 
 @app.get("/settings/engine")
 def get_engine_settings():
@@ -2803,8 +2867,23 @@ def get_engine_settings():
     from .services.settings_persistence import SettingsPersistence
     persisted = SettingsPersistence.load_engine_settings()
     
-    # If persisted settings exist, use them
+    # Detected platform is always real-time
+    current_platform = detect_platform()
+    
+    # If persisted settings exist, use them but override platform field
     if persisted:
+        # Update platform in the response to match real-time detection
+        # This ensures the UI always shows the correct architecture
+        persisted["platform"] = current_platform
+        
+        # Ensure variants are compatible with the platform for the UI
+        variant = persisted.get("engine_variant")
+        if current_platform in ["arm64", "arm32"] and (not variant or "amd64" in variant):
+            # Force correction for ARM platforms if they have an amd64 variant configured
+            new_variant = "AceServe-arm64" if current_platform == "arm64" else "AceServe-arm32"
+            persisted["engine_variant"] = new_variant
+            logger.info(f"Corrected incompatible engine variant '{variant}' to '{new_variant}' for platform '{current_platform}'")
+            
         return persisted
     
     # Build default response from current runtime config
@@ -2816,7 +2895,9 @@ def get_engine_settings():
         "auto_delete": cfg.AUTO_DELETE,
         "engine_variant": cfg.ENGINE_VARIANT,
         "use_custom_variant": custom_config.enabled if custom_config else False,
-        "platform": detect_platform(),
+        "platform": current_platform,
+        "manual_mode": False,
+        "manual_engines": [],
     }
     
     # Save defaults for future use
@@ -2843,14 +2924,20 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
     from .services.custom_variant_config import detect_platform
     
     # Load current persisted settings or use runtime config as base
+    current_platform = detect_platform()
     current_settings = SettingsPersistence.load_engine_settings() or {
         "min_replicas": cfg.MIN_REPLICAS,
         "max_replicas": cfg.MAX_REPLICAS,
         "auto_delete": cfg.AUTO_DELETE,
         "engine_variant": cfg.ENGINE_VARIANT,
         "use_custom_variant": False,
-        "platform": detect_platform(),
+        "platform": current_platform,
+        "manual_mode": False,
+        "manual_engines": [],
     }
+    
+    # Always ensure the platform field in persisted settings is corrected to real-time
+    current_settings["platform"] = current_platform
     
     # Validation and updates
     if settings.min_replicas is not None:
@@ -2886,6 +2973,45 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
         if custom_config:
             custom_config.enabled = settings.use_custom_variant
             save_custom_config(custom_config)
+            
+    if settings.manual_mode is not None:
+        current_settings["manual_mode"] = settings.manual_mode
+        
+    if settings.manual_engines is not None:
+        current_settings["manual_engines"] = settings.manual_engines
+        
+    # Inject manual engines into state if manual mode is enabled
+    if current_settings.get("manual_mode"):
+        from .services.state import state
+        from .models.schemas import EngineState
+        
+        # Clear existing manual engines first
+        manual_keys = [k for k in state.engines.keys() if k.startswith("manual-")]
+        for k in manual_keys:
+            state.remove_engine(k)
+            
+        for engine in current_settings.get("manual_engines", []):
+            host = engine.get("host")
+            port = engine.get("port")
+            if host and port:
+                container_id = f"manual-{host}-{port}"
+                
+                # Check if it already exists to preserve some state like last_seen
+                existing = state.get_engine(container_id)
+                if not existing:
+                    state.engines[container_id] = EngineState(
+                        container_id=container_id,
+                        container_name=f"manual-{host}-{port}",
+                        host=host,
+                        port=port,
+                        labels={"manual": "true"},
+                        first_seen=state.now(),
+                        last_seen=state.now(),
+                        streams=[],
+                        health_status="unknown"
+                    )
+                else:
+                    existing.last_seen = state.now()
     
     # Persist settings to JSON file
     if SettingsPersistence.save_engine_settings(current_settings):
@@ -3138,10 +3264,6 @@ async def import_settings_data(
                     
                     # Validate and set stream_mode
                     if 'stream_mode' in proxy_dict:
-                        mode = proxy_dict['stream_mode']
-                        if mode == 'HLS' and not cfg.ENGINE_VARIANT.startswith('krinkuto11-amd64'):
-                            logger.warning(f"HLS mode not supported for variant {cfg.ENGINE_VARIANT}, reverting to TS mode")
-                            proxy_dict['stream_mode'] = 'TS'
                         ProxyConfig.STREAM_MODE = proxy_dict['stream_mode']
                     
                     # Persist to file
@@ -3221,4 +3343,16 @@ async def import_settings_data(
         logger.error(f"Failed to import settings: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to import settings: {str(e)}")
 
+# --- Cache Management ---
 
+@app.get("/engine-cache/stats", tags=["Cache"])
+async def engine_cache_stats(api_key: str = Depends(require_api_key)):
+    """Get current cache usage statistics."""
+    return state.cache_stats
+
+@app.post("/engine-cache/purge", tags=["Cache"])
+async def purge_engine_cache(api_key: str = Depends(require_api_key)):
+    """Manually purge all cache volume contents."""
+    from .services.engine_cache_manager import engine_cache_manager
+    await engine_cache_manager.purge_all_contents()
+    return {"status": "success", "message": "All cache volume contents purged"}

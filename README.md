@@ -128,7 +128,7 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 ### Engine Configuration
 
 - **[Engine Variants](docs/ENGINE_VARIANTS.md)** - Engine variants for different architectures
-  - AMD64 variants (krinkuto11, jopsis)
+  - AMD64 variants (krinkuto11, AceServe)
   - ARM32 and ARM64 variants
   - Configuration methods
   - P2P port handling

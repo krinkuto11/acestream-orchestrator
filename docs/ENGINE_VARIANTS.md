@@ -14,10 +14,10 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
 - Base command: `/acestream/acestreamengine --client-console --bind-all`
 - Port settings appended to command: `--http-port <port> --https-port <port>`
 - When using Gluetun VPN: P2P port appended as `--port <port>`
-- **Image Size**: ~300MB (compared to 1.2GB for Jopsis variant)
+- **Image Size**: ~300MB (compared to 1.2GB for AceServe variant)
 
-### 2. jopsis-amd64
-- **Image**: `jopsis/acestream:x64`
+### 2. AceServe-amd64
+- **Image**: `AceServe/acestream:x64`
 - **Architecture**: AMD64
 - **Configuration Type**: Environment variables (ACESTREAM_ARGS)
 - **Description**: Optimized variant with pre-configured performance settings.
@@ -33,8 +33,8 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
 - Port settings appended: `--http-port <port> --https-port <port>`
 - When using Gluetun VPN: P2P port appended as `--port <port>`
 
-### 3. jopsis-arm32
-- **Image**: `jopsis/acestream:${ENGINE_ARM32_VERSION}` (default: `arm32-v3.2.13`)
+### 3. AceServe-arm32
+- **Image**: `AceServe/acestream:${ENGINE_ARM32_VERSION}` (default: `arm32-v3.2.13`)
 - **Architecture**: ARM32
 - **Configuration Type**: Docker CMD
 - **Description**: Variant for ARM32 devices (e.g., Raspberry Pi 2/3).
@@ -45,8 +45,8 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
 - When using Gluetun VPN: P2P port appended as `--port <port>`
 - Image version can be customized via `ENGINE_ARM32_VERSION` environment variable
 
-### 4. jopsis-arm64
-- **Image**: `jopsis/acestream:${ENGINE_ARM64_VERSION}` (default: `arm64-v3.2.13`)
+### 4. AceServe-arm64
+- **Image**: `AceServe/acestream:${ENGINE_ARM64_VERSION}` (default: `arm64-v3.2.13`)
 - **Architecture**: ARM64
 - **Configuration Type**: Docker CMD
 - **Description**: Variant for ARM64 devices (e.g., Raspberry Pi 4, Raspberry Pi 5).
@@ -64,10 +64,10 @@ The orchestrator supports multiple AceStream engine variants to accommodate diff
 Add the following to your `.env` file:
 
 ```bash
-ENGINE_VARIANT=jopsis-amd64
+ENGINE_VARIANT=AceServe-amd64
 ```
 
-Valid values: `krinkuto11-amd64`, `jopsis-amd64`, `jopsis-arm32`, `jopsis-arm64`
+Valid values: `krinkuto11-amd64`, `AceServe-amd64`, `AceServe-arm32`, `AceServe-arm64`
 
 ### Example Configurations
 
@@ -78,16 +78,16 @@ ENGINE_VARIANT=krinkuto11-amd64
 
 #### Using the optimized AMD64 variant
 ```bash
-ENGINE_VARIANT=jopsis-amd64
+ENGINE_VARIANT=AceServe-amd64
 ```
 
 #### Using ARM variants
 ```bash
 # For ARM32 devices
-ENGINE_VARIANT=jopsis-arm32
+ENGINE_VARIANT=AceServe-arm32
 
 # For ARM64 devices
-ENGINE_VARIANT=jopsis-arm64
+ENGINE_VARIANT=AceServe-arm64
 ```
 
 #### Customizing ARM image versions
@@ -95,11 +95,11 @@ The ARM variants support configurable image versions to ensure compatibility wit
 
 ```bash
 # Using a specific ARM32 version
-ENGINE_VARIANT=jopsis-arm32
+ENGINE_VARIANT=AceServe-arm32
 ENGINE_ARM32_VERSION=arm32-v3.2.14
 
 # Using a specific ARM64 version
-ENGINE_VARIANT=jopsis-arm64
+ENGINE_VARIANT=AceServe-arm64
 ENGINE_ARM64_VERSION=arm64-v3.2.14
 ```
 
@@ -107,17 +107,17 @@ Available versions (as of documentation):
 - ARM32: `arm32-v3.2.13`, `arm32-v3.2.14`
 - ARM64: `arm64-v3.2.13`, `arm64-v3.2.14`
 
-Check [jopsis/acestream Docker Hub](https://hub.docker.com/r/jopsis/acestream/tags) for the latest available versions.
+Check [AceServe/acestream Docker Hub](https://hub.docker.com/r/AceServe/acestream/tags) for the latest available versions.
 
 ## How It Works
 
 The orchestrator automatically configures each variant based on its type:
 
-### ENV-based Variants (jopsis-amd64)
+### ENV-based Variants (AceServe-amd64)
 - Configuration passed via environment variables
 - Port settings injected into the ACESTREAM_ARGS environment variable
 
-### CMD-based Variants (krinkuto11-amd64, jopsis-arm32, jopsis-arm64)
+### CMD-based Variants (krinkuto11-amd64, AceServe-arm32, AceServe-arm64)
 - Configuration passed via Docker CMD instruction
 - Base command includes default settings
 - Port settings appended to the command line
@@ -138,9 +138,9 @@ The orchestrator automatically:
 ### P2P Port Handling by Variant
 
 - **krinkuto11-amd64**: P2P port appended to command as `--port <port>`
-- **jopsis-amd64**: P2P port appended to `ACESTREAM_ARGS` as `--port <port>`
-- **jopsis-arm32**: P2P port appended to command as `--port <port>`
-- **jopsis-arm64**: P2P port appended to command as `--port <port>`
+- **AceServe-amd64**: P2P port appended to `ACESTREAM_ARGS` as `--port <port>`
+- **AceServe-arm32**: P2P port appended to command as `--port <port>`
+- **AceServe-arm64**: P2P port appended to command as `--port <port>`
 
 When Gluetun is not configured, no P2P port is passed and engines use their default P2P behavior.
 
@@ -152,16 +152,16 @@ When Gluetun is not configured, no P2P port is passed and engines use their defa
 - You prefer a smaller Docker image size (300MB vs 1.2GB)
 - You don't need specific optimizations
 
-### Choose `jopsis-amd64` if:
+### Choose `AceServe-amd64` if:
 - You want optimized performance settings
 - You're running on AMD64/x86_64 architecture
 - You need pre-configured connection limits and cache settings
 
-### Choose `jopsis-arm32` if:
+### Choose `AceServe-arm32` if:
 - You're running on ARM32 architecture (32-bit ARM)
 - Examples: Raspberry Pi 2, Raspberry Pi 3
 
-### Choose `jopsis-arm64` if:
+### Choose `AceServe-arm64` if:
 - You're running on ARM64 architecture (64-bit ARM)
 - Examples: Raspberry Pi 4, Raspberry Pi 5
 
@@ -199,7 +199,7 @@ python tests/test_p2p_port_variants.py
 
 ### Image pull failures
 - Ensure the Docker host can pull from the specified registry
-- For jopsis images: verify images exist and are accessible
+- For AceServe images: verify images exist and are accessible
 - For krinkuto11 image: verify GHCR access if using private registry
 
 ## Migration from Single Variant
@@ -240,10 +240,10 @@ The orchestrator now supports **Custom Engine Variants** that allow you to confi
   - `ghcr.io/krinkuto11/nano-ace:3.2.11-py3.8` (Python 3.8)
   - `ghcr.io/krinkuto11/nano-ace:3.1.75rc4-py3.7` (Python 3.7)
   - `ghcr.io/krinkuto11/nano-ace:3.1.74` (Python 2.7)
-- **arm32**: `jopsis/acestream:arm32-v3.2.13` or `jopsis/acestream:arm32-v3.2.14`
-- **arm64**: `jopsis/acestream:arm64-v3.2.13` or `jopsis/acestream:arm64-v3.2.14`
+- **arm32**: `AceServe/acestream:arm32-v3.2.13` or `AceServe/acestream:arm32-v3.2.14`
+- **arm64**: `AceServe/acestream:arm64-v3.2.13` or `AceServe/acestream:arm64-v3.2.14`
 
-**Note**: The AMD64 custom variant now uses the Nano-Ace distroless image (300MB), significantly smaller than the previous Jopsis variant (1.2GB).
+**Note**: The AMD64 custom variant now uses the Nano-Ace distroless image (300MB), significantly smaller than the previous AceServe variant (1.2GB).
 
 **Parameter Configuration**:
 - Each parameter can be individually enabled/disabled
@@ -326,9 +326,9 @@ To see how a variant is configured:
 ```python
 from app.services.provisioner import get_variant_config
 
-config = get_variant_config('jopsis-amd64')
+config = get_variant_config('AceServe-amd64')
 print(config)
-# Example output: {'image': 'jopsis/acestream:x64', 'config_type': 'env', ...}
+# Example output: {'image': 'AceServe/acestream:x64', 'config_type': 'env', ...}
 ```
 
 ## See Also

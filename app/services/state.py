@@ -37,6 +37,13 @@ class State:
         # This prevents repeated lookahead triggers until all engines reach this layer
         self._lookahead_layer: Optional[int] = None
 
+        # Cache statistics
+        self.cache_stats = {
+            "total_bytes": 0,
+            "volume_count": 0,
+            "last_updated": None
+        }
+
     @staticmethod
     def now():
         return datetime.now(timezone.utc)
@@ -167,6 +174,31 @@ class State:
                 metrics_stream_ended(stream_id_for_metrics)
             except Exception as e:
                 logger.warning(f"Failed to clean up metrics for stream {stream_id_for_metrics}: {e}")
+        
+        # CRITICAL: Synchronize proxy cleanup when stream ends
+        # This ensures proxy sessions are stopped when streams are removed from state
+        # Prevents desynchronization where streams disappear from UI but proxy still serves them
+        if st and st.key:
+            try:
+                # Clean up TS proxy session
+                from ..proxy.server import ProxyServer
+                proxy_server = ProxyServer.get_instance()
+                proxy_server.stop_stream_by_key(st.key)
+                logger.debug(f"Synchronized TS proxy cleanup for stream key={st.key}")
+            except Exception as e:
+                # Don't fail stream ending if proxy cleanup fails
+                # Proxy has its own idle cleanup as fallback
+                logger.warning(f"Failed to synchronize TS proxy cleanup for stream {st.key}: {e}")
+            
+            try:
+                # Clean up HLS proxy session
+                from ..proxy.hls_proxy import HLSProxyServer
+                hls_proxy = HLSProxyServer.get_instance()
+                hls_proxy.stop_stream_by_key(st.key)
+                logger.debug(f"Synchronized HLS proxy cleanup for stream key={st.key}")
+            except Exception as e:
+                # Don't fail stream ending if HLS proxy cleanup fails
+                logger.warning(f"Failed to synchronize HLS proxy cleanup for stream {st.key}: {e}")
         
         return st
 
@@ -330,8 +362,16 @@ class State:
             return {
                 "engines": list(self.engines.values()),
                 "streams": list(self.streams.values()),
-                "stream_stats": dict(self.stream_stats)
+                "stream_stats": dict(self.stream_stats),
+                "cache_stats": dict(self.cache_stats)
             }
+
+    def update_cache_stats(self, total_bytes: int, volume_count: int):
+        """Update cache statistics in state."""
+        with self._lock:
+            self.cache_stats["total_bytes"] = total_bytes
+            self.cache_stats["volume_count"] = volume_count
+            self.cache_stats["last_updated"] = self.now().isoformat()
 
     def append_stat(self, stream_id: str, snap: StreamStatSnapshot):
         with self._lock:
