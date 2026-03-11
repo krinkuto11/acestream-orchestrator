@@ -78,6 +78,8 @@ class Cfg(BaseModel):
     # Engine resource limits
     ENGINE_MEMORY_LIMIT: str | None = os.getenv("ENGINE_MEMORY_LIMIT")
     
+    M3U_TIMEOUT: float = float(os.getenv("M3U_TIMEOUT", "15"))
+
     API_KEY: str | None = os.getenv("API_KEY")
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
     AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "true").lower() == "true"
