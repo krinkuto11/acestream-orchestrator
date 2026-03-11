@@ -2,11 +2,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from pydantic import BaseModel
 import asyncio
+import io
 import os
 import json
 import logging
@@ -3356,3 +3357,60 @@ async def purge_engine_cache(api_key: str = Depends(require_api_key)):
     from .services.engine_cache_manager import engine_cache_manager
     await engine_cache_manager.purge_all_contents()
     return {"status": "success", "message": "All cache volume contents purged"}
+
+
+# --- M3U Proxy ---
+
+@app.get("/modify_m3u", tags=["M3U"])
+async def modify_m3u(
+    m3u_url: str = Query(..., description="URL of the source M3U playlist"),
+    host: str = Query(..., description="Replacement hostname or IP address"),
+    port: str = Query(..., description="Replacement port (1-65535)"),
+    timeout: Optional[float] = Query(None, description="HTTP request timeout in seconds (overrides M3U_TIMEOUT env var)"),
+    mode: str = Query("default", description="Rewrite mode: 'default' or 'proxy'"),
+):
+    """Download an M3U playlist from *m3u_url* and rewrite its internal URLs.
+
+    **default mode** – replaces ``http://127.0.0.1:<port>/`` and
+    ``http://localhost:<port>/`` origins with ``http://host:port/``, and
+    converts ``acestream://<id>`` links to
+    ``http://host:port/ace/getstream?id=<id>``.
+
+    **proxy mode** – rewrites every ``http``/``https`` URL as
+    ``http://host:port/proxy?url=<percent-encoded-original>`` and similarly
+    wraps ``acestream://`` links.
+    """
+    from .services.m3u import get_m3u_content, validate_host_port, modify_m3u_content
+
+    # Validate mode
+    if mode not in ("default", "proxy"):
+        raise HTTPException(status_code=400, detail="Parameter 'mode' must be 'default' or 'proxy'.")
+
+    # Validate timeout
+    effective_timeout: float
+    if timeout is not None:
+        if timeout <= 0:
+            raise HTTPException(status_code=400, detail="Parameter 'timeout' must be a positive number.")
+        effective_timeout = timeout
+    else:
+        effective_timeout = cfg.M3U_TIMEOUT
+
+    # Validate host and port
+    ok, port_or_msg = validate_host_port(host.strip(), port.strip())
+    if not ok:
+        raise HTTPException(status_code=400, detail=port_or_msg)
+    validated_port: int = port_or_msg  # type: ignore[assignment]
+
+    # Download playlist
+    content = get_m3u_content(m3u_url.strip(), effective_timeout)
+    if content is None:
+        raise HTTPException(status_code=400, detail="Failed to download the M3U file.")
+
+    # Rewrite URLs
+    modified = modify_m3u_content(content, host.strip(), validated_port, mode)
+
+    return StreamingResponse(
+        io.BytesIO(modified.encode("utf-8")),
+        media_type="application/x-mpegURL",
+        headers={"Content-Disposition": "attachment; filename=\"modified_playlist.m3u\""},
+    )
