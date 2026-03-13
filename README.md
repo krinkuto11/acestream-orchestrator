@@ -1,6 +1,6 @@
 # AceStream Orchestrator
 
-**Version 1.5.2.1**
+**Version 1.6.0**
 
 <img src="app/icons/favicon-96x96-dark.png" alt="AceStream Orchestrator Logo" width="96" height="96" />
 
@@ -21,19 +21,17 @@ In VLC or other player that supports playing a network stream:
 
 ## Quick Start
 
+The AceStream Orchestrator is **Zero-Config** out of the box. All settings are managed through the web dashboard.
+
 ### Standalone (No VPN)
 
 ```bash
-cp .env.example .env
-# Edit .env: Set API_KEY and configure port ranges
 docker-compose up -d
 ```
 
 ### With VPN (Single)
 
 ```bash
-cp .env.example .env
-# Edit .env: Set API_KEY and VPN settings
 # Edit docker-compose.gluetun.yml: Configure VPN credentials
 docker-compose -f docker-compose.gluetun.yml up -d
 ```
@@ -41,22 +39,25 @@ docker-compose -f docker-compose.gluetun.yml up -d
 ### With Redundant VPN (High Availability)
 
 ```bash
-cp .env.example .env
-# Edit .env: Set API_KEY and redundant VPN settings
 # Edit docker-compose.gluetun-redundant.yml: Configure VPN credentials
 docker-compose -f docker-compose.gluetun-redundant.yml up -d
 ```
 
 **Dashboard**: Access at `http://localhost:8000/panel`
 
+Go to **Settings** to configure your API key, engine scaling, VPN integration, and more.
+
 ## Requirements
 
 - Docker 24+ with access to Docker socket or docker:dind
-- Free ports within the ranges defined in `.env`
 - For VPN mode: Valid VPN credentials (ProtonVPN, NordVPN, etc.)
 
 ## Core Features
 
+- **UI-Driven Configuration** (v1.6.0): Configure every aspect of the orchestrator from the web dashboard.
+  - Zero-Config clean install support
+  - Progressively disclosed Basic/Expert settings
+  - JSON-backed persistent storage
 - **Stream Multiplexing Proxy**: Native proxy supporting multiple clients per stream
   - Automatic stream sharing across concurrent clients
   - Redis-backed ring buffer for efficient data distribution
@@ -100,122 +101,17 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 ## Documentation
 
 - **[Deployment Guide](docs/DEPLOY.md)** - Complete deployment instructions for all modes
-  - Standalone deployment
-  - Single VPN mode setup
-  - Redundant VPN mode (high availability)
-  - Production checklist
-  - Monitoring and troubleshooting
-
-- **[Configuration Reference](docs/CONFIG.md)** - All environment variables explained
-- **[.env.example](.env.example)** - Example configuration file with comments
-
-### Architecture & Operations
-
 - **[Architecture & Operations](docs/ARCHITECTURE.md)** - System design and internal operations
-  - System overview and components
-  - Typical workflows
-  - Database schema
-  - State management
-
 - **[API Documentation](docs/API.md)** - Complete API endpoint reference
 - **[Events](docs/EVENTS.md)** - Event contracts and stream lifecycle
 
-### Engine Configuration
-
+### Engine & VPN
 - **[Engine Variants](docs/ENGINE_VARIANTS.md)** - Engine variants for different architectures
-  - AMD64 variants (krinkuto11, AceServe)
-  - ARM32 and ARM64 variants
-  - Configuration methods
-  - P2P port handling
-  - **Custom Engine Variants** (v1.2.0)
-    - Configure 35+ AceStream parameters via UI
-    - Template management with 10 slots
-    - Auto-load on enable
-    - Active template persistence
-    - Import/export capabilities
-    - Platform auto-detection
-    - ARM version selection
-    - Per-parameter enable/disable
-    - VPN-aware configuration
-
-### VPN Integration
-
 - **[Gluetun Integration](docs/GLUETUN_INTEGRATION.md)** - Complete VPN integration guide
-  - Overview and benefits
-  - Single VPN mode setup
-  - Redundant VPN mode (high availability)
-  - Port configuration
-  - Forwarded engines explained
-  - Docker Compose examples
-
 - **[Gluetun Failure & Recovery](docs/GLUETUN_FAILURE_RECOVERY.md)** - VPN failure scenarios with diagrams
-  - VPN connection loss
-  - Container restart scenarios
-  - Redundant VPN failover
-  - Port forwarding loss
-  - Monitoring and alerts
-
 - **[Emergency Mode](docs/EMERGENCY_MODE.md)** - Automatic emergency mode for VPN failures
-  - Immediate failover when one VPN fails
-  - Automatic cleanup of failed VPN's engines
-  - Single-VPN operation with reduced capacity
-  - Automatic recovery and capacity restoration
-  - API and monitoring integration
 
-### Monitoring & Health
-
-- **[Health Monitoring](docs/HEALTH_MONITORING.md)** - Health check system
-  - Engine health monitoring
-  - Usage tracking
-  - Stale stream detection
-  - Cache cleanup process
-
-- **[Stats Caching](docs/STATS_CACHING.md)** - Performance optimization via caching
-  - Cached endpoints and TTLs
-  - Cache invalidation strategy
-  - Performance impact and monitoring
-  - Configuration and troubleshooting
-
-- **[Dashboard Guide](docs/PANEL.md)** - Web dashboard features and usage
-  - Modern React interface
-  - Real-time monitoring
-  - Engine management
-  - VPN status display
-
-### Security
-
-- **[Security Considerations](docs/SECURITY.md)** - Security best practices
-  - API key protection
-  - Network security
-  - VPN credential management
-
-## Quick Reference
-
-### Essential Environment Variables
-
-```bash
-# Security (REQUIRED)
-API_KEY=your-secure-api-key
-
-# Engine Configuration
-ENGINE_VARIANT=krinkuto11-amd64
-MIN_REPLICAS=3
-MAX_REPLICAS=20
-
-# Port Ranges
-PORT_RANGE_HOST=19000-19999
-ACE_HTTP_RANGE=40000-44999
-ACE_HTTPS_RANGE=45000-49999
-
-# VPN (Optional - for VPN modes)
-VPN_MODE=single                    # or 'redundant'
-GLUETUN_CONTAINER_NAME=gluetun
-GLUETUN_API_PORT=8001
-```
-
-See [Configuration Reference](docs/CONFIG.md) for all options.
-
-### Core API Endpoints
+## Management Endpoints
 
 ```bash
 # Provisioning
@@ -225,14 +121,12 @@ POST /provision/acestream             # Start new engine
 POST /events/stream_started         # Register stream
 POST /events/stream_ended           # Unregister stream
 
-# Status
+# Status & Config
 GET /engines                        # List engines with health status
 GET /streams?status=started         # List active streams
 GET /vpn/status                     # VPN status (if configured)
-
-# Stream Loop Detection (v1.6.0)
-GET /stream-loop-detection/config   # Get loop detection settings
-POST /stream-loop-detection/config  # Update loop detection settings
+GET /settings/orchestrator          # Current core settings
+GET /settings/vpn                   # Current VPN settings
 
 # Monitoring
 GET /health                         # Service health
@@ -241,26 +135,6 @@ GET /metrics                        # Prometheus metrics
 
 See [API Documentation](docs/API.md) for complete details.
 
-## Docker Compose Files
-
-- **[docker-compose.yml](docker-compose.yml)** - Standalone mode (no VPN)
-- **[docker-compose.gluetun.yml](docker-compose.gluetun.yml)** - Single VPN mode
-- **[docker-compose.gluetun-redundant.yml](docker-compose.gluetun-redundant.yml)** - Redundant VPN mode
-
-## Testing
-
-Run the comprehensive test suite:
-
-```bash
-# Unit tests
-python -m pytest tests/
-
-# Manual testing guide
-python tests/manual_test_forwarded.py
-```
-
-See [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) for more details.
-
 ## Support & Contributing
 
 For issues, feature requests, or contributions, please visit the [GitHub repository](https://github.com/krinkuto11/acestream-orchestrator).
@@ -268,5 +142,3 @@ For issues, feature requests, or contributions, please visit the [GitHub reposit
 ## License
 
 See LICENSE file for details.
-
-

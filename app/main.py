@@ -245,6 +245,74 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to load persisted engine settings: {e}")
     
+
+    # Load orchestrator settings
+    try:
+        orchestrator_settings = SettingsPersistence.load_orchestrator_config()
+        if orchestrator_settings:
+            logger.info("Loading persisted orchestrator settings")
+            _orch_field_map = {
+                'monitor_interval_s': 'MONITOR_INTERVAL_S',
+                'engine_grace_period_s': 'ENGINE_GRACE_PERIOD_S',
+                'autoscale_interval_s': 'AUTOSCALE_INTERVAL_S',
+                'startup_timeout_s': 'STARTUP_TIMEOUT_S',
+                'idle_ttl_s': 'IDLE_TTL_S',
+                'collect_interval_s': 'COLLECT_INTERVAL_S',
+                'stats_history_max': 'STATS_HISTORY_MAX',
+                'health_check_interval_s': 'HEALTH_CHECK_INTERVAL_S',
+                'health_failure_threshold': 'HEALTH_FAILURE_THRESHOLD',
+                'health_unhealthy_grace_period_s': 'HEALTH_UNHEALTHY_GRACE_PERIOD_S',
+                'health_replacement_cooldown_s': 'HEALTH_REPLACEMENT_COOLDOWN_S',
+                'circuit_breaker_failure_threshold': 'CIRCUIT_BREAKER_FAILURE_THRESHOLD',
+                'circuit_breaker_recovery_timeout_s': 'CIRCUIT_BREAKER_RECOVERY_TIMEOUT_S',
+                'circuit_breaker_replacement_threshold': 'CIRCUIT_BREAKER_REPLACEMENT_THRESHOLD',
+                'circuit_breaker_replacement_timeout_s': 'CIRCUIT_BREAKER_REPLACEMENT_TIMEOUT_S',
+                'max_concurrent_provisions': 'MAX_CONCURRENT_PROVISIONS',
+                'min_provision_interval_s': 'MIN_PROVISION_INTERVAL_S',
+                'port_range_host': 'PORT_RANGE_HOST',
+                'ace_http_range': 'ACE_HTTP_RANGE',
+                'ace_https_range': 'ACE_HTTPS_RANGE',
+                'debug_mode': 'DEBUG_MODE',
+            }
+            for _json_key, _cfg_attr in _orch_field_map.items():
+                if _json_key in orchestrator_settings:
+                    setattr(cfg, _cfg_attr, orchestrator_settings[_json_key])
+            logger.info("Orchestrator settings loaded from persistent storage")
+    except Exception as e:
+        logger.warning(f"Failed to load persisted orchestrator settings: {e}")
+
+    # Load VPN settings
+    try:
+        vpn_settings = SettingsPersistence.load_vpn_config()
+        if vpn_settings:
+            logger.info("Loading persisted VPN settings")
+            vpn_enabled = vpn_settings.get('enabled', False)
+            if 'vpn_mode' in vpn_settings:
+                cfg.VPN_MODE = vpn_settings['vpn_mode']
+            if vpn_enabled:
+                cfg.GLUETUN_CONTAINER_NAME = vpn_settings.get('container_name') or None
+                cfg.GLUETUN_CONTAINER_NAME_2 = vpn_settings.get('container_name_2') or None
+            else:
+                cfg.GLUETUN_CONTAINER_NAME = None
+                cfg.GLUETUN_CONTAINER_NAME_2 = None
+            if 'api_port' in vpn_settings:
+                cfg.GLUETUN_API_PORT = vpn_settings['api_port']
+            if 'port_range_1' in vpn_settings:
+                cfg.GLUETUN_PORT_RANGE_1 = vpn_settings['port_range_1'] or None
+            if 'port_range_2' in vpn_settings:
+                cfg.GLUETUN_PORT_RANGE_2 = vpn_settings['port_range_2'] or None
+            if 'health_check_interval_s' in vpn_settings:
+                cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S = vpn_settings['health_check_interval_s']
+            if 'port_cache_ttl_s' in vpn_settings:
+                cfg.GLUETUN_PORT_CACHE_TTL_S = vpn_settings['port_cache_ttl_s']
+            if 'restart_engines_on_reconnect' in vpn_settings:
+                cfg.VPN_RESTART_ENGINES_ON_RECONNECT = vpn_settings['restart_engines_on_reconnect']
+            if 'unhealthy_restart_timeout_s' in vpn_settings:
+                cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S = vpn_settings['unhealthy_restart_timeout_s']
+            logger.info(f"VPN settings loaded from persistent storage: enabled={vpn_enabled}, mode={cfg.VPN_MODE}, container={cfg.GLUETUN_CONTAINER_NAME}")
+    except Exception as e:
+        logger.warning(f"Failed to load persisted VPN settings: {e}")
+
     # Load state from database first
     load_state_from_db()
     
@@ -2842,6 +2910,385 @@ def update_proxy_config(
         "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
     }
 
+
+
+# ============================================================================
+# Orchestrator & VPN Settings Endpoints
+# ============================================================================
+
+class OrchestratorSettingsUpdate(BaseModel):
+    """Model for updating orchestrator core settings."""
+    monitor_interval_s: Optional[int] = None
+    engine_grace_period_s: Optional[int] = None
+    autoscale_interval_s: Optional[int] = None
+    startup_timeout_s: Optional[int] = None
+    idle_ttl_s: Optional[int] = None
+    collect_interval_s: Optional[int] = None
+    stats_history_max: Optional[int] = None
+    health_check_interval_s: Optional[int] = None
+    health_failure_threshold: Optional[int] = None
+    health_unhealthy_grace_period_s: Optional[int] = None
+    health_replacement_cooldown_s: Optional[int] = None
+    circuit_breaker_failure_threshold: Optional[int] = None
+    circuit_breaker_recovery_timeout_s: Optional[int] = None
+    circuit_breaker_replacement_threshold: Optional[int] = None
+    circuit_breaker_replacement_timeout_s: Optional[int] = None
+    max_concurrent_provisions: Optional[int] = None
+    min_provision_interval_s: Optional[float] = None
+    port_range_host: Optional[str] = None
+    ace_http_range: Optional[str] = None
+    ace_https_range: Optional[str] = None
+    debug_mode: Optional[bool] = None
+
+
+class VPNSettingsUpdate(BaseModel):
+    """Model for updating VPN (Gluetun) settings."""
+    enabled: Optional[bool] = None
+    vpn_mode: Optional[str] = None           # 'single' or 'redundant'
+    container_name: Optional[str] = None
+    container_name_2: Optional[str] = None
+    api_port: Optional[int] = None
+    port_range_1: Optional[str] = None       # redundant mode
+    port_range_2: Optional[str] = None       # redundant mode
+    health_check_interval_s: Optional[int] = None
+    port_cache_ttl_s: Optional[int] = None
+    restart_engines_on_reconnect: Optional[bool] = None
+    unhealthy_restart_timeout_s: Optional[int] = None
+
+
+@app.get("/settings/orchestrator")
+def get_orchestrator_settings():
+    """Get current orchestrator core configuration settings."""
+    from .services.settings_persistence import SettingsPersistence
+
+    persisted = SettingsPersistence.load_orchestrator_config()
+    if persisted:
+        return persisted
+
+    # Return defaults from runtime cfg
+    defaults = {
+        "monitor_interval_s": cfg.MONITOR_INTERVAL_S,
+        "engine_grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
+        "autoscale_interval_s": cfg.AUTOSCALE_INTERVAL_S,
+        "startup_timeout_s": cfg.STARTUP_TIMEOUT_S,
+        "idle_ttl_s": cfg.IDLE_TTL_S,
+        "collect_interval_s": cfg.COLLECT_INTERVAL_S,
+        "stats_history_max": cfg.STATS_HISTORY_MAX,
+        "health_check_interval_s": cfg.HEALTH_CHECK_INTERVAL_S,
+        "health_failure_threshold": cfg.HEALTH_FAILURE_THRESHOLD,
+        "health_unhealthy_grace_period_s": cfg.HEALTH_UNHEALTHY_GRACE_PERIOD_S,
+        "health_replacement_cooldown_s": cfg.HEALTH_REPLACEMENT_COOLDOWN_S,
+        "circuit_breaker_failure_threshold": cfg.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        "circuit_breaker_recovery_timeout_s": cfg.CIRCUIT_BREAKER_RECOVERY_TIMEOUT_S,
+        "circuit_breaker_replacement_threshold": cfg.CIRCUIT_BREAKER_REPLACEMENT_THRESHOLD,
+        "circuit_breaker_replacement_timeout_s": cfg.CIRCUIT_BREAKER_REPLACEMENT_TIMEOUT_S,
+        "max_concurrent_provisions": cfg.MAX_CONCURRENT_PROVISIONS,
+        "min_provision_interval_s": cfg.MIN_PROVISION_INTERVAL_S,
+        "port_range_host": cfg.PORT_RANGE_HOST,
+        "ace_http_range": cfg.ACE_HTTP_RANGE,
+        "ace_https_range": cfg.ACE_HTTPS_RANGE,
+        "debug_mode": cfg.DEBUG_MODE,
+    }
+    # Persist defaults so they appear on next load
+    try:
+        SettingsPersistence.save_orchestrator_config(defaults)
+    except Exception:
+        pass
+    return defaults
+
+
+@app.post("/settings/orchestrator", dependencies=[Depends(require_api_key)])
+async def update_orchestrator_settings(settings: OrchestratorSettingsUpdate):
+    """Update orchestrator core configuration settings at runtime and persist."""
+    from .services.settings_persistence import SettingsPersistence
+
+    current = SettingsPersistence.load_orchestrator_config() or {
+        "monitor_interval_s": cfg.MONITOR_INTERVAL_S,
+        "engine_grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
+        "autoscale_interval_s": cfg.AUTOSCALE_INTERVAL_S,
+        "startup_timeout_s": cfg.STARTUP_TIMEOUT_S,
+        "idle_ttl_s": cfg.IDLE_TTL_S,
+        "collect_interval_s": cfg.COLLECT_INTERVAL_S,
+        "stats_history_max": cfg.STATS_HISTORY_MAX,
+        "health_check_interval_s": cfg.HEALTH_CHECK_INTERVAL_S,
+        "health_failure_threshold": cfg.HEALTH_FAILURE_THRESHOLD,
+        "health_unhealthy_grace_period_s": cfg.HEALTH_UNHEALTHY_GRACE_PERIOD_S,
+        "health_replacement_cooldown_s": cfg.HEALTH_REPLACEMENT_COOLDOWN_S,
+        "circuit_breaker_failure_threshold": cfg.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        "circuit_breaker_recovery_timeout_s": cfg.CIRCUIT_BREAKER_RECOVERY_TIMEOUT_S,
+        "circuit_breaker_replacement_threshold": cfg.CIRCUIT_BREAKER_REPLACEMENT_THRESHOLD,
+        "circuit_breaker_replacement_timeout_s": cfg.CIRCUIT_BREAKER_REPLACEMENT_TIMEOUT_S,
+        "max_concurrent_provisions": cfg.MAX_CONCURRENT_PROVISIONS,
+        "min_provision_interval_s": cfg.MIN_PROVISION_INTERVAL_S,
+        "port_range_host": cfg.PORT_RANGE_HOST,
+        "ace_http_range": cfg.ACE_HTTP_RANGE,
+        "ace_https_range": cfg.ACE_HTTPS_RANGE,
+        "debug_mode": cfg.DEBUG_MODE,
+    }
+
+    def _validate_port_range(v: str, field: str):
+        try:
+            start, end = v.split('-')
+            s, e = int(start), int(end)
+            if not (1 <= s <= 65535 and 1 <= e <= 65535):
+                raise HTTPException(status_code=400, detail=f"{field}: ports must be 1-65535")
+            if s > e:
+                raise HTTPException(status_code=400, detail=f"{field}: start must be <= end")
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"{field}: expected 'start-end' format")
+
+    if settings.monitor_interval_s is not None:
+        if settings.monitor_interval_s < 1:
+            raise HTTPException(status_code=400, detail="monitor_interval_s must be >= 1")
+        current["monitor_interval_s"] = settings.monitor_interval_s
+        cfg.MONITOR_INTERVAL_S = settings.monitor_interval_s
+
+    if settings.engine_grace_period_s is not None:
+        if settings.engine_grace_period_s < 1:
+            raise HTTPException(status_code=400, detail="engine_grace_period_s must be >= 1")
+        current["engine_grace_period_s"] = settings.engine_grace_period_s
+        cfg.ENGINE_GRACE_PERIOD_S = settings.engine_grace_period_s
+
+    if settings.autoscale_interval_s is not None:
+        if settings.autoscale_interval_s < 1:
+            raise HTTPException(status_code=400, detail="autoscale_interval_s must be >= 1")
+        current["autoscale_interval_s"] = settings.autoscale_interval_s
+        cfg.AUTOSCALE_INTERVAL_S = settings.autoscale_interval_s
+
+    if settings.startup_timeout_s is not None:
+        if settings.startup_timeout_s < 1:
+            raise HTTPException(status_code=400, detail="startup_timeout_s must be >= 1")
+        current["startup_timeout_s"] = settings.startup_timeout_s
+        cfg.STARTUP_TIMEOUT_S = settings.startup_timeout_s
+
+    if settings.idle_ttl_s is not None:
+        if settings.idle_ttl_s < 1:
+            raise HTTPException(status_code=400, detail="idle_ttl_s must be >= 1")
+        current["idle_ttl_s"] = settings.idle_ttl_s
+        cfg.IDLE_TTL_S = settings.idle_ttl_s
+
+    if settings.collect_interval_s is not None:
+        if settings.collect_interval_s < 1:
+            raise HTTPException(status_code=400, detail="collect_interval_s must be >= 1")
+        current["collect_interval_s"] = settings.collect_interval_s
+        cfg.COLLECT_INTERVAL_S = settings.collect_interval_s
+
+    if settings.stats_history_max is not None:
+        if settings.stats_history_max < 1:
+            raise HTTPException(status_code=400, detail="stats_history_max must be >= 1")
+        current["stats_history_max"] = settings.stats_history_max
+        cfg.STATS_HISTORY_MAX = settings.stats_history_max
+
+    if settings.health_check_interval_s is not None:
+        if settings.health_check_interval_s < 1:
+            raise HTTPException(status_code=400, detail="health_check_interval_s must be >= 1")
+        current["health_check_interval_s"] = settings.health_check_interval_s
+        cfg.HEALTH_CHECK_INTERVAL_S = settings.health_check_interval_s
+
+    if settings.health_failure_threshold is not None:
+        if settings.health_failure_threshold < 1:
+            raise HTTPException(status_code=400, detail="health_failure_threshold must be >= 1")
+        current["health_failure_threshold"] = settings.health_failure_threshold
+        cfg.HEALTH_FAILURE_THRESHOLD = settings.health_failure_threshold
+
+    if settings.health_unhealthy_grace_period_s is not None:
+        if settings.health_unhealthy_grace_period_s < 1:
+            raise HTTPException(status_code=400, detail="health_unhealthy_grace_period_s must be >= 1")
+        current["health_unhealthy_grace_period_s"] = settings.health_unhealthy_grace_period_s
+        cfg.HEALTH_UNHEALTHY_GRACE_PERIOD_S = settings.health_unhealthy_grace_period_s
+
+    if settings.health_replacement_cooldown_s is not None:
+        if settings.health_replacement_cooldown_s < 1:
+            raise HTTPException(status_code=400, detail="health_replacement_cooldown_s must be >= 1")
+        current["health_replacement_cooldown_s"] = settings.health_replacement_cooldown_s
+        cfg.HEALTH_REPLACEMENT_COOLDOWN_S = settings.health_replacement_cooldown_s
+
+    if settings.circuit_breaker_failure_threshold is not None:
+        if settings.circuit_breaker_failure_threshold < 1:
+            raise HTTPException(status_code=400, detail="circuit_breaker_failure_threshold must be >= 1")
+        current["circuit_breaker_failure_threshold"] = settings.circuit_breaker_failure_threshold
+        cfg.CIRCUIT_BREAKER_FAILURE_THRESHOLD = settings.circuit_breaker_failure_threshold
+
+    if settings.circuit_breaker_recovery_timeout_s is not None:
+        if settings.circuit_breaker_recovery_timeout_s < 1:
+            raise HTTPException(status_code=400, detail="circuit_breaker_recovery_timeout_s must be >= 1")
+        current["circuit_breaker_recovery_timeout_s"] = settings.circuit_breaker_recovery_timeout_s
+        cfg.CIRCUIT_BREAKER_RECOVERY_TIMEOUT_S = settings.circuit_breaker_recovery_timeout_s
+
+    if settings.circuit_breaker_replacement_threshold is not None:
+        if settings.circuit_breaker_replacement_threshold < 1:
+            raise HTTPException(status_code=400, detail="circuit_breaker_replacement_threshold must be >= 1")
+        current["circuit_breaker_replacement_threshold"] = settings.circuit_breaker_replacement_threshold
+        cfg.CIRCUIT_BREAKER_REPLACEMENT_THRESHOLD = settings.circuit_breaker_replacement_threshold
+
+    if settings.circuit_breaker_replacement_timeout_s is not None:
+        if settings.circuit_breaker_replacement_timeout_s < 1:
+            raise HTTPException(status_code=400, detail="circuit_breaker_replacement_timeout_s must be >= 1")
+        current["circuit_breaker_replacement_timeout_s"] = settings.circuit_breaker_replacement_timeout_s
+        cfg.CIRCUIT_BREAKER_REPLACEMENT_TIMEOUT_S = settings.circuit_breaker_replacement_timeout_s
+
+    if settings.max_concurrent_provisions is not None:
+        if settings.max_concurrent_provisions < 1:
+            raise HTTPException(status_code=400, detail="max_concurrent_provisions must be >= 1")
+        current["max_concurrent_provisions"] = settings.max_concurrent_provisions
+        cfg.MAX_CONCURRENT_PROVISIONS = settings.max_concurrent_provisions
+
+    if settings.min_provision_interval_s is not None:
+        if settings.min_provision_interval_s < 0:
+            raise HTTPException(status_code=400, detail="min_provision_interval_s must be >= 0")
+        current["min_provision_interval_s"] = settings.min_provision_interval_s
+        cfg.MIN_PROVISION_INTERVAL_S = settings.min_provision_interval_s
+
+    if settings.port_range_host is not None:
+        _validate_port_range(settings.port_range_host, "port_range_host")
+        current["port_range_host"] = settings.port_range_host
+        cfg.PORT_RANGE_HOST = settings.port_range_host
+
+    if settings.ace_http_range is not None:
+        _validate_port_range(settings.ace_http_range, "ace_http_range")
+        current["ace_http_range"] = settings.ace_http_range
+        cfg.ACE_HTTP_RANGE = settings.ace_http_range
+
+    if settings.ace_https_range is not None:
+        _validate_port_range(settings.ace_https_range, "ace_https_range")
+        current["ace_https_range"] = settings.ace_https_range
+        cfg.ACE_HTTPS_RANGE = settings.ace_https_range
+
+    if settings.debug_mode is not None:
+        current["debug_mode"] = settings.debug_mode
+        cfg.DEBUG_MODE = settings.debug_mode
+
+    if SettingsPersistence.save_orchestrator_config(current):
+        logger.info(f"Orchestrator settings persisted")
+    else:
+        logger.warning("Failed to persist orchestrator settings")
+
+    return {"message": "Orchestrator settings updated and persisted", **current}
+
+
+@app.get("/settings/vpn")
+def get_vpn_settings():
+    """Get current VPN (Gluetun) configuration settings."""
+    from .services.settings_persistence import SettingsPersistence
+
+    persisted = SettingsPersistence.load_vpn_config()
+    if persisted:
+        return persisted
+
+    defaults = {
+        "enabled": bool(cfg.GLUETUN_CONTAINER_NAME),
+        "vpn_mode": cfg.VPN_MODE,
+        "container_name": cfg.GLUETUN_CONTAINER_NAME or "",
+        "container_name_2": cfg.GLUETUN_CONTAINER_NAME_2 or "",
+        "api_port": cfg.GLUETUN_API_PORT,
+        "port_range_1": cfg.GLUETUN_PORT_RANGE_1 or "",
+        "port_range_2": cfg.GLUETUN_PORT_RANGE_2 or "",
+        "health_check_interval_s": cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S,
+        "port_cache_ttl_s": cfg.GLUETUN_PORT_CACHE_TTL_S,
+        "restart_engines_on_reconnect": cfg.VPN_RESTART_ENGINES_ON_RECONNECT,
+        "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
+    }
+    try:
+        SettingsPersistence.save_vpn_config(defaults)
+    except Exception:
+        pass
+    return defaults
+
+
+@app.post("/settings/vpn", dependencies=[Depends(require_api_key)])
+async def update_vpn_settings(settings: VPNSettingsUpdate):
+    """Update VPN (Gluetun) configuration settings at runtime and persist."""
+    from .services.settings_persistence import SettingsPersistence
+
+    current = SettingsPersistence.load_vpn_config() or {
+        "enabled": bool(cfg.GLUETUN_CONTAINER_NAME),
+        "vpn_mode": cfg.VPN_MODE,
+        "container_name": cfg.GLUETUN_CONTAINER_NAME or "",
+        "container_name_2": cfg.GLUETUN_CONTAINER_NAME_2 or "",
+        "api_port": cfg.GLUETUN_API_PORT,
+        "port_range_1": cfg.GLUETUN_PORT_RANGE_1 or "",
+        "port_range_2": cfg.GLUETUN_PORT_RANGE_2 or "",
+        "health_check_interval_s": cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S,
+        "port_cache_ttl_s": cfg.GLUETUN_PORT_CACHE_TTL_S,
+        "restart_engines_on_reconnect": cfg.VPN_RESTART_ENGINES_ON_RECONNECT,
+        "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
+    }
+
+    if settings.enabled is not None:
+        current["enabled"] = settings.enabled
+
+    if settings.vpn_mode is not None:
+        if settings.vpn_mode not in ('single', 'redundant'):
+            raise HTTPException(status_code=400, detail="vpn_mode must be 'single' or 'redundant'")
+        current["vpn_mode"] = settings.vpn_mode
+        cfg.VPN_MODE = settings.vpn_mode
+
+    if settings.container_name is not None:
+        current["container_name"] = settings.container_name
+        cfg.GLUETUN_CONTAINER_NAME = settings.container_name or None
+
+    if settings.container_name_2 is not None:
+        current["container_name_2"] = settings.container_name_2
+        cfg.GLUETUN_CONTAINER_NAME_2 = settings.container_name_2 or None
+
+    if settings.api_port is not None:
+        if not (1 <= settings.api_port <= 65535):
+            raise HTTPException(status_code=400, detail="api_port must be 1-65535")
+        current["api_port"] = settings.api_port
+        cfg.GLUETUN_API_PORT = settings.api_port
+
+    if settings.port_range_1 is not None:
+        current["port_range_1"] = settings.port_range_1
+        cfg.GLUETUN_PORT_RANGE_1 = settings.port_range_1 or None
+
+    if settings.port_range_2 is not None:
+        current["port_range_2"] = settings.port_range_2
+        cfg.GLUETUN_PORT_RANGE_2 = settings.port_range_2 or None
+
+    if settings.health_check_interval_s is not None:
+        if settings.health_check_interval_s < 1:
+            raise HTTPException(status_code=400, detail="health_check_interval_s must be >= 1")
+        current["health_check_interval_s"] = settings.health_check_interval_s
+        cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S = settings.health_check_interval_s
+
+    if settings.port_cache_ttl_s is not None:
+        if settings.port_cache_ttl_s < 1:
+            raise HTTPException(status_code=400, detail="port_cache_ttl_s must be >= 1")
+        current["port_cache_ttl_s"] = settings.port_cache_ttl_s
+        cfg.GLUETUN_PORT_CACHE_TTL_S = settings.port_cache_ttl_s
+
+    if settings.restart_engines_on_reconnect is not None:
+        current["restart_engines_on_reconnect"] = settings.restart_engines_on_reconnect
+        cfg.VPN_RESTART_ENGINES_ON_RECONNECT = settings.restart_engines_on_reconnect
+
+    if settings.unhealthy_restart_timeout_s is not None:
+        if settings.unhealthy_restart_timeout_s < 1:
+            raise HTTPException(status_code=400, detail="unhealthy_restart_timeout_s must be >= 1")
+        current["unhealthy_restart_timeout_s"] = settings.unhealthy_restart_timeout_s
+        cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S = settings.unhealthy_restart_timeout_s
+
+    # Apply enabled flag: clear container name if VPN is disabled
+    if not current.get("enabled"):
+        cfg.GLUETUN_CONTAINER_NAME = None
+        cfg.GLUETUN_CONTAINER_NAME_2 = None
+    else:
+        cfg.GLUETUN_CONTAINER_NAME = current.get("container_name") or None
+        cfg.GLUETUN_CONTAINER_NAME_2 = current.get("container_name_2") or None
+
+    # Restart gluetun monitor to pick up new config
+    try:
+        await gluetun_monitor.stop()
+        await gluetun_monitor.start()
+        logger.info("Gluetun monitor restarted with new VPN config")
+    except Exception as e:
+        logger.warning(f"Failed to restart gluetun monitor: {e}")
+
+    if SettingsPersistence.save_vpn_config(current):
+        logger.info("VPN settings persisted")
+    else:
+        logger.warning("Failed to persist VPN settings")
+
+    return {"message": "VPN settings updated and persisted", **current}
 
 
 # ============================================================================

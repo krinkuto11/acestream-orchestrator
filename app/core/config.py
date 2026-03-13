@@ -50,7 +50,7 @@ class Cfg(BaseModel):
     GLUETUN_CONTAINER_NAME: str | None = os.getenv("GLUETUN_CONTAINER_NAME")
     GLUETUN_CONTAINER_NAME_2: str | None = os.getenv("GLUETUN_CONTAINER_NAME_2")
     VPN_MODE: str = os.getenv("VPN_MODE", "single")  # Options: single, redundant
-    GLUETUN_API_PORT: int = int(os.getenv("GLUETUN_API_PORT", 8000))
+    GLUETUN_API_PORT: int = int(os.getenv("GLUETUN_API_PORT", 8001))
     GLUETUN_HEALTH_CHECK_INTERVAL_S: int = int(os.getenv("GLUETUN_HEALTH_CHECK_INTERVAL_S", 5))
     GLUETUN_PORT_CACHE_TTL_S: int = int(os.getenv("GLUETUN_PORT_CACHE_TTL_S", 60))
     VPN_RESTART_ENGINES_ON_RECONNECT: bool = os.getenv("VPN_RESTART_ENGINES_ON_RECONNECT", "true").lower() == "true"
@@ -118,9 +118,10 @@ class Cfg(BaseModel):
 
     @validator('ENGINE_VARIANT')
     def validate_engine_variant(cls, v):
-        valid_variants = ["AceServe-amd64", "AceServe-arm64", "AceServe-arm32"]
-        if v not in valid_variants:
-            raise ValueError(f'ENGINE_VARIANT must be one of: {", ".join(valid_variants)}')
+        # We allow any variant name now because custom variants can be added through the UI
+        # and persisted to JSON, which might not match the initial hardcoded list.
+        if not v:
+            raise ValueError('ENGINE_VARIANT cannot be empty')
         return v
 
     @validator('CONTAINER_LABEL')
