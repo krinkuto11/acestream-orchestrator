@@ -319,62 +319,63 @@ async def lifespan(app: FastAPI):
     # Initialize looping streams tracker with configured retention
     looping_streams_tracker.set_retention_minutes(cfg.STREAM_LOOP_RETENTION_MINUTES)
     
+    async def _provision_worker():
+        """Provision engines in background after VPN is healthy."""
+        if cfg.GLUETUN_CONTAINER_NAME:
+            logger.info("Waiting for Gluetun to become healthy before provisioning engines...")
+            max_wait_time = 60  # Maximum 60 seconds to wait for Gluetun
+            wait_start = asyncio.get_event_loop().time()
+            
+            while (asyncio.get_event_loop().time() - wait_start) < max_wait_time:
+                if gluetun_monitor.is_healthy() is True:
+                    logger.info("Gluetun is healthy - proceeding with engine provisioning")
+                    
+                    # Log VPN location information for all healthy VPN containers
+                    from .services.gluetun import get_vpn_status
+                    try:
+                        vpn_status = get_vpn_status()
+                        
+                        # Check VPN1 location
+                        if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
+                            logger.info(f"VPN1 ({vpn_status['vpn1']['container_name']}) status: "
+                                      f"IP={vpn_status['vpn1']['public_ip']}, "
+                                      f"Provider={vpn_status['vpn1'].get('provider', 'Unknown')}, "
+                                      f"Country={vpn_status['vpn1'].get('country', 'Unknown')}, "
+                                      f"City={vpn_status['vpn1'].get('city', 'Unknown')}")
+                        
+                        # Check VPN2 location (redundant mode)
+                        if vpn_status.get("vpn2") and vpn_status["vpn2"].get("public_ip"):
+                            logger.info(f"VPN2 ({vpn_status['vpn2']['container_name']}) status: "
+                                      f"IP={vpn_status['vpn2']['public_ip']}, "
+                                      f"Provider={vpn_status['vpn2'].get('provider', 'Unknown')}, "
+                                      f"Country={vpn_status['vpn2'].get('country', 'Unknown')}, "
+                                      f"City={vpn_status['vpn2'].get('city', 'Unknown')}")
+                        
+                        # For single VPN mode
+                        if vpn_status.get("mode") == "single" and vpn_status.get("public_ip"):
+                            if not vpn_status.get("vpn1"):  # Already logged above if vpn1 exists
+                                logger.info(f"VPN ({vpn_status['container_name']}) status: "
+                                          f"IP={vpn_status['public_ip']}, "
+                                          f"Provider={vpn_status.get('provider', 'Unknown')}, "
+                                          f"Country={vpn_status.get('country', 'Unknown')}, "
+                                          f"City={vpn_status.get('city', 'Unknown')}")
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to get VPN status: {e}")
+                    
+                    break
+                await asyncio.sleep(1)
+            else:
+                logger.warning(f"Gluetun did not become healthy within {max_wait_time}s - proceeding anyway")
+        
+        # Now provision engines with Gluetun health checks working
+        # On startup, provision MIN_REPLICAS total containers
+        ensure_minimum(initial_startup=True)
+
     # Start Gluetun monitoring BEFORE provisioning to avoid race condition
     # This ensures health checks work when ensure_minimum() tries to start engines
     await gluetun_monitor.start()
-    
-    # Wait for Gluetun to become healthy before provisioning engines
-    # This prevents the slow startup issue where each engine creation waits 30s
-    if cfg.GLUETUN_CONTAINER_NAME:
-        logger.info("Waiting for Gluetun to become healthy before provisioning engines...")
-        max_wait_time = 60  # Maximum 60 seconds to wait for Gluetun
-        wait_start = asyncio.get_event_loop().time()
-        
-        while (asyncio.get_event_loop().time() - wait_start) < max_wait_time:
-            if gluetun_monitor.is_healthy() is True:
-                logger.info("Gluetun is healthy - proceeding with engine provisioning")
-                
-                # Log VPN location information for all healthy VPN containers
-                from .services.gluetun import get_vpn_status
-                try:
-                    vpn_status = get_vpn_status()
-                    
-                    # Check VPN1 location
-                    if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
-                        logger.info(f"VPN1 ({vpn_status['vpn1']['container_name']}) status: "
-                                  f"IP={vpn_status['vpn1']['public_ip']}, "
-                                  f"Provider={vpn_status['vpn1'].get('provider', 'Unknown')}, "
-                                  f"Country={vpn_status['vpn1'].get('country', 'Unknown')}, "
-                                  f"City={vpn_status['vpn1'].get('city', 'Unknown')}")
-                    
-                    # Check VPN2 location (redundant mode)
-                    if vpn_status.get("vpn2") and vpn_status["vpn2"].get("public_ip"):
-                        logger.info(f"VPN2 ({vpn_status['vpn2']['container_name']}) status: "
-                                  f"IP={vpn_status['vpn2']['public_ip']}, "
-                                  f"Provider={vpn_status['vpn2'].get('provider', 'Unknown')}, "
-                                  f"Country={vpn_status['vpn2'].get('country', 'Unknown')}, "
-                                  f"City={vpn_status['vpn2'].get('city', 'Unknown')}")
-                    
-                    # For single VPN mode
-                    if vpn_status.get("mode") == "single" and vpn_status.get("public_ip"):
-                        if not vpn_status.get("vpn1"):  # Already logged above if vpn1 exists
-                            logger.info(f"VPN ({vpn_status['container_name']}) status: "
-                                      f"IP={vpn_status['public_ip']}, "
-                                      f"Provider={vpn_status.get('provider', 'Unknown')}, "
-                                      f"Country={vpn_status.get('country', 'Unknown')}, "
-                                      f"City={vpn_status.get('city', 'Unknown')}")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to get VPN status: {e}")
-                
-                break
-            await asyncio.sleep(1)
-        else:
-            logger.warning(f"Gluetun did not become healthy within {max_wait_time}s - proceeding anyway")
-    
-    # Now provision engines with Gluetun health checks working
-    # On startup, provision MIN_REPLICAS total containers
-    ensure_minimum(initial_startup=True)
+    asyncio.create_task(_provision_worker())
     
     # Initialize ProxyServer in background to avoid blocking later API calls
     init_thread = threading.Thread(target=_init_proxy_server, daemon=True, name="ProxyServer-Init")

@@ -373,6 +373,15 @@ class GluetunMonitor:
         
     async def start(self):
         """Start the Gluetun monitoring task."""
+        # Re-initialize monitors based on current configuration
+        # This handles cases where settings were loaded from storage after import
+        self._vpn_monitors = {}
+        if cfg.GLUETUN_CONTAINER_NAME:
+            self._vpn_monitors[cfg.GLUETUN_CONTAINER_NAME] = VpnContainerMonitor(cfg.GLUETUN_CONTAINER_NAME)
+        
+        if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+            self._vpn_monitors[cfg.GLUETUN_CONTAINER_NAME_2] = VpnContainerMonitor(cfg.GLUETUN_CONTAINER_NAME_2)
+
         if not self._vpn_monitors:
             logger.info("VPN monitoring disabled - no VPN containers configured")
             return
