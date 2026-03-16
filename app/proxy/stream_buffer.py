@@ -1,6 +1,6 @@
 """
 Buffer management for AceStream streams.
-Adapted from ts_proxy - removed Django dependencies, kept Redis/gevent logic.
+Adapted from ts_proxy - removed Django dependencies, kept Redis/standard threading logic.
 """
 
 import threading
@@ -9,8 +9,6 @@ import time
 from collections import deque
 from typing import Optional, Deque
 import random
-import gevent.event
-import gevent
 
 from .redis_keys import RedisKeys
 from .config_helper import ConfigHelper, Config
@@ -21,7 +19,7 @@ logger = get_logger()
 
 
 class StreamBuffer:
-    """Manages stream data buffering with optimized chunk storage"""
+    """Manages stream data buffering with optimized Redis storage and TS packet alignment"""
     
     def __init__(self, content_id=None, redis_client=None):
         self.content_id = content_id
@@ -52,7 +50,10 @@ class StreamBuffer:
         # Track timers for proper cleanup
         self.stopping = False
         self.fill_timers = []
-        self.chunk_available = gevent.event.Event()
+        
+        # REPLACED: gevent.event.Event with threading.Condition
+        # Condition supports Wait/Notify semantics ideal for producer/consumer buffering
+        self.chunk_available = threading.Condition()
     
     def add_chunk(self, chunk):
         """Add data with optimized Redis storage and TS packet alignment"""
@@ -60,31 +61,32 @@ class StreamBuffer:
             return False
         
         try:
-            # Accumulate partial packets between chunks
-            if not hasattr(self, '_partial_packet'):
-                self._partial_packet = bytearray()
-            
-            # Combine with any previous partial packet
-            combined_data = bytearray(self._partial_packet) + bytearray(chunk)
-            
-            # Calculate complete packets
-            complete_packets_size = (len(combined_data) // self.TS_PACKET_SIZE) * self.TS_PACKET_SIZE
-            
-            if complete_packets_size == 0:
-                # Not enough data for a complete packet
-                self._partial_packet = combined_data
-                return True
-            
-            # Split into complete packets and remainder
-            complete_packets = combined_data[:complete_packets_size]
-            self._partial_packet = combined_data[complete_packets_size:]
-            
-            # Add completed packets to write buffer
-            self._write_buffer.extend(complete_packets)
-            
-            # Only write to Redis when we have enough data for an optimized chunk
-            writes_done = 0
+            # LOCK PROTECTED: Prevent race conditions when appending to static buffers concurrently
             with self.lock:
+                # Accumulate partial packets between chunks
+                if not hasattr(self, '_partial_packet'):
+                    self._partial_packet = bytearray()
+                
+                # Combine with any previous partial packet
+                combined_data = bytearray(self._partial_packet) + bytearray(chunk)
+                
+                # Calculate complete packets
+                complete_packets_size = (len(combined_data) // self.TS_PACKET_SIZE) * self.TS_PACKET_SIZE
+                
+                if complete_packets_size == 0:
+                    # Not enough data for a complete packet
+                    self._partial_packet = combined_data
+                    return True
+                
+                # Split into complete packets and remainder
+                complete_packets = combined_data[:complete_packets_size]
+                self._partial_packet = combined_data[complete_packets_size:]
+                
+                # Add completed packets to write buffer
+                self._write_buffer.extend(complete_packets)
+                
+                # Only write to Redis when we have enough data for an optimized chunk
+                writes_done = 0
                 while len(self._write_buffer) >= self.target_chunk_size:
                     # Extract a full chunk
                     chunk_data = self._write_buffer[:self.target_chunk_size]
@@ -103,8 +105,9 @@ class StreamBuffer:
             if writes_done > 0:
                 logger.debug(f"Added {writes_done} chunks ({self.target_chunk_size} bytes each) to Redis for stream {self.content_id} at index {self.index}")
             
-            self.chunk_available.set()  # Signal that new data is available
-            self.chunk_available.clear()  # Reset for next notification
+            # NOTIFICATION: Signal any sleeping waiters on Condition that buffer has advanced
+            with self.chunk_available:
+                self.chunk_available.notify_all()
             
             return True
             
@@ -241,8 +244,9 @@ class StreamBuffer:
         timers_cancelled = 0
         for timer in list(self.fill_timers):
             try:
-                if timer and not timer.dead:
-                    timer.kill()
+                # REPLACED: timer.dead / timer.kill with standard Timer cancellation
+                if timer and timer.is_alive():
+                    timer.cancel()
                     timers_cancelled += 1
             except Exception as e:
                 logger.error(f"Error canceling timer: {e}")
@@ -276,8 +280,9 @@ class StreamBuffer:
                 
                 # Clear buffers
                 self._write_buffer = bytearray()
-                if hasattr(self, '_partial_packet'):
-                    self._partial_packet = bytearray()
+                with self.lock:
+                    if hasattr(self, '_partial_packet'):
+                        self._partial_packet = bytearray()
                     
         except Exception as e:
             logger.error(f"Error during buffer stop: {e}")
@@ -329,6 +334,9 @@ class StreamBuffer:
         if self.stopping:
             return None
         
-        timer = gevent.spawn_later(delay, callback, *args, **kwargs)
+        # REPLACED: gevent.spawn_later with threading.Timer (daemonized)
+        timer = threading.Timer(delay, callback, args=args, kwargs=kwargs)
+        timer.daemon = True # Prevent blocking application teardown on exit
         self.fill_timers.append(timer)
+        timer.start()
         return timer

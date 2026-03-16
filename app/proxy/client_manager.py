@@ -100,7 +100,10 @@ class ClientManager:
                             logger.info(f"Removed {len(clients_to_remove)} ghost clients from stream {self.content_id}")
                         
                         # Now send heartbeats only for remaining clients
-                        pipe = self.redis_client.pipeline()
+                        # BACKPRESSURE: Chunks pipeline executions to prevent large memory creations
+                        BATCH_SIZE = getattr(Config, 'REDIS_PIPELINE_BATCH_SIZE', 50)
+                        pipe = self.redis_client.pipeline(transaction=False)
+                        commands_in_pipe = 0
                         current_time = time.time()
                         
                         for client_id in self.clients:
@@ -125,9 +128,16 @@ class ClientManager:
                             
                             # Track last heartbeat locally
                             self.last_heartbeat_time[client_id] = current_time
+                            commands_in_pipe += 4
+                            
+                            # Draining buffer to prevent RAM buildup
+                            if commands_in_pipe >= BATCH_SIZE:
+                                pipe.execute()
+                                commands_in_pipe = 0
                         
-                        # Execute all commands atomically
-                        pipe.execute()
+                        # Flush remaining
+                        if commands_in_pipe > 0:
+                            pipe.execute()
                         
                         # Only notify if we have real clients
                         if self.clients and not all(c in clients_to_remove for c in self.clients):
@@ -185,7 +195,16 @@ class ClientManager:
             logger.error(f"Error notifying owner of client activity: {e}")
     
     def add_client(self, client_id, client_ip, user_agent=None):
-        """Add a client with duplicate prevention"""
+        """Add a client with duplicate prevention and backpressure limits"""
+        
+        # BACKPRESSURE: Throttling client count to prevent connection and CPU exhaustion
+        max_clients = getattr(Config, 'MAX_CLIENTS_PER_STREAM', 100)
+        total_clients = self.get_total_client_count()
+        
+        if total_clients >= max_clients:
+            logger.warning(f"Rejecting client {client_id} for stream {self.content_id} - exceeding max limits ({total_clients}/{max_clients})")
+            return False
+
         if client_id in self._registered_clients:
             logger.debug(f"Client {client_id} already registered, skipping")
             return False
@@ -266,6 +285,9 @@ class ClientManager:
         with self.lock:
             if client_id in self.clients:
                 self.clients.remove(client_id)
+                
+            if hasattr(self, '_registered_clients') and client_id in self._registered_clients:
+                self._registered_clients.remove(client_id)
             
             if client_id in self.last_heartbeat_time:
                 del self.last_heartbeat_time[client_id]
