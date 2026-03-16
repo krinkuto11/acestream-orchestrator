@@ -325,45 +325,54 @@ async def lifespan(app: FastAPI):
             max_wait_time = 60  # Maximum 60 seconds to wait for Gluetun
             wait_start = asyncio.get_event_loop().time()
             
-            while (asyncio.get_event_loop().time() - wait_start) < max_wait_time:
-                if gluetun_monitor.is_healthy() is True:
+            is_healthy = False
+            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+                logger.info(f"Waiting for both Gluetun containers ({cfg.GLUETUN_CONTAINER_NAME}, {cfg.GLUETUN_CONTAINER_NAME_2}) to become healthy...")
+                v1_task = gluetun_monitor.wait_for_healthy(timeout=max_wait_time, container_name=cfg.GLUETUN_CONTAINER_NAME)
+                v2_task = gluetun_monitor.wait_for_healthy(timeout=max_wait_time, container_name=cfg.GLUETUN_CONTAINER_NAME_2)
+                v1, v2 = await asyncio.gather(v1_task, v2_task)
+                is_healthy = v1 and v2
+                if is_healthy:
+                    logger.info("Both Gluetun containers are healthy - proceeding with engine provisioning")
+            else:
+                logger.info(f"Waiting for Gluetun ({cfg.GLUETUN_CONTAINER_NAME}) to become healthy...")
+                is_healthy = await gluetun_monitor.wait_for_healthy(timeout=max_wait_time)
+                if is_healthy:
                     logger.info("Gluetun is healthy - proceeding with engine provisioning")
+
+            if is_healthy:
+                # Log VPN location information for all healthy VPN containers
+                from .services.gluetun import get_vpn_status
+                try:
+                    vpn_status = get_vpn_status()
                     
-                    # Log VPN location information for all healthy VPN containers
-                    from .services.gluetun import get_vpn_status
-                    try:
-                        vpn_status = get_vpn_status()
-                        
-                        # Check VPN1 location
-                        if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
-                            logger.info(f"VPN1 ({vpn_status['vpn1']['container_name']}) status: "
-                                      f"IP={vpn_status['vpn1']['public_ip']}, "
-                                      f"Provider={vpn_status['vpn1'].get('provider', 'Unknown')}, "
-                                      f"Country={vpn_status['vpn1'].get('country', 'Unknown')}, "
-                                      f"City={vpn_status['vpn1'].get('city', 'Unknown')}")
-                        
-                        # Check VPN2 location (redundant mode)
-                        if vpn_status.get("vpn2") and vpn_status["vpn2"].get("public_ip"):
-                            logger.info(f"VPN2 ({vpn_status['vpn2']['container_name']}) status: "
-                                      f"IP={vpn_status['vpn2']['public_ip']}, "
-                                      f"Provider={vpn_status['vpn2'].get('provider', 'Unknown')}, "
-                                      f"Country={vpn_status['vpn2'].get('country', 'Unknown')}, "
-                                      f"City={vpn_status['vpn2'].get('city', 'Unknown')}")
-                        
-                        # For single VPN mode
-                        if vpn_status.get("mode") == "single" and vpn_status.get("public_ip"):
-                            if not vpn_status.get("vpn1"):  # Already logged above if vpn1 exists
-                                logger.info(f"VPN ({vpn_status['container_name']}) status: "
-                                          f"IP={vpn_status['public_ip']}, "
-                                          f"Provider={vpn_status.get('provider', 'Unknown')}, "
-                                          f"Country={vpn_status.get('country', 'Unknown')}, "
-                                          f"City={vpn_status.get('city', 'Unknown')}")
-                        
-                    except Exception as e:
-                        logger.error(f"Failed to get VPN status: {e}")
+                    # Check VPN1 location
+                    if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
+                        logger.info(f"VPN1 ({vpn_status['vpn1']['container_name']}) status: "
+                                  f"IP={vpn_status['vpn1']['public_ip']}, "
+                                  f"Provider={vpn_status['vpn1'].get('provider', 'Unknown')}, "
+                                  f"Country={vpn_status['vpn1'].get('country', 'Unknown')}, "
+                                  f"City={vpn_status['vpn1'].get('city', 'Unknown')}")
                     
-                    break
-                await asyncio.sleep(1)
+                    # Check VPN2 location (redundant mode)
+                    if vpn_status.get("vpn2") and vpn_status["vpn2"].get("public_ip"):
+                        logger.info(f"VPN2 ({vpn_status['vpn2']['container_name']}) status: "
+                                  f"IP={vpn_status['vpn2']['public_ip']}, "
+                                  f"Provider={vpn_status['vpn2'].get('provider', 'Unknown')}, "
+                                  f"Country={vpn_status['vpn2'].get('country', 'Unknown')}, "
+                                  f"City={vpn_status['vpn2'].get('city', 'Unknown')}")
+                    
+                    # For single VPN mode
+                    if vpn_status.get("mode") == "single" and vpn_status.get("public_ip"):
+                        if not vpn_status.get("vpn1"):  # Already logged above if vpn1 exists
+                            logger.info(f"VPN ({vpn_status['container_name']}) status: "
+                                      f"IP={vpn_status['public_ip']}, "
+                                      f"Provider={vpn_status.get('provider', 'Unknown')}, "
+                                      f"Country={vpn_status.get('country', 'Unknown')}, "
+                                      f"City={vpn_status.get('city', 'Unknown')}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to get VPN status: {e}")
             else:
                 logger.warning(f"Gluetun did not become healthy within {max_wait_time}s - proceeding anyway")
         
