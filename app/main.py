@@ -2029,29 +2029,58 @@ async def ace_getstream(
     client_ip = get_client_ip(request) if request else "unknown"
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
     
+    reservation_engine_id = None
+    
+    def rollback_reservation():
+        if reservation_engine_id:
+            try:
+                from app.proxy.manager import ProxyManager
+                redis = ProxyManager.get_instance().redis_client
+                if redis:
+                    pending_key = f"ace_proxy:engine:{reservation_engine_id}:pending"
+                    decr_script = """
+                    local current = redis.call('GET', KEYS[1])
+                    if current and tonumber(current) > 0 then
+                        return redis.call('DECR', KEYS[1])
+                    else
+                        return 0
+                    end
+                    """
+                    redis.eval(decr_script, 1, pending_key)
+                    logger.debug(f"Rolled back pending reservation for engine {reservation_engine_id[:12]}")
+            except Exception as e:
+                logger.warning(f"Failed to rollback reservation for engine {reservation_engine_id[:12]}: {e}")
+    
     def select_best_engine():
         """Select the best available engine using layer-based load balancing.
         
         Returns tuple of (selected_engine, current_load)
         Raises HTTPException if no engines available or all at capacity.
         """
+        from app.proxy.manager import ProxyManager
+        
         engines = state.list_engines()
         if not engines:
             raise HTTPException(
                 status_code=503,
                 detail="No engines available"
             )
+            
+        redis = ProxyManager.get_instance().redis_client
         
         # Engine selection: fill engines in layers (round-robin across all engines)
-        # Layer 1: All engines get 1 stream before any gets 2
-        # Layer 2: All engines get 2 streams before any gets 3
-        # Continue until layer (MAX_STREAMS - 1) is filled, then provision new engine
-        # Priority: 1. Engine with LEAST streams (not at max), 2. Forwarded engine
         active_streams = state.list_streams(status="started")
         engine_loads = {}
         for stream in active_streams:
             cid = stream.container_id
             engine_loads[cid] = engine_loads.get(cid, 0) + 1
+            
+        # Add pending load from Redis for concurrent balancing
+        for e in engines:
+            cid = e.container_id
+            pending_key = f"ace_proxy:engine:{cid}:pending"
+            pending_count = int(redis.get(pending_key) or 0) if redis else 0
+            engine_loads[cid] = engine_loads.get(cid, 0) + pending_count
         
         # Filter out engines at max capacity
         max_streams = cfg.MAX_STREAMS_PER_ENGINE
@@ -2067,13 +2096,24 @@ async def ace_getstream(
             )
         
         # Sort: (load, not forwarded) - prefer LEAST load first (layer filling), then forwarded
-        # This ensures all engines reach same level before any engine gets another stream
         engines_sorted = sorted(available_engines, key=lambda e: (
             engine_loads.get(e.container_id, 0),  # Ascending order (least streams first)
             not e.forwarded  # Forwarded engines preferred when load is equal
         ))
         selected_engine = engines_sorted[0]
         current_load = engine_loads.get(selected_engine.container_id, 0)
+        
+        # Atomic Reservation
+        if redis:
+            try:
+                pending_key = f"ace_proxy:engine:{selected_engine.container_id}:pending"
+                pipe = redis.pipeline()
+                pipe.incr(pending_key)
+                pipe.expire(pending_key, 15)  # 15s failsafe
+                pipe.execute()
+                logger.debug(f"Atomically reserved engine {selected_engine.container_id[:12]} pending count")
+            except Exception as e:
+                logger.warning(f"Failed to set Redis pending reservation for engine {selected_engine.container_id[:12]}: {e}")
         
         return selected_engine, current_load
     
@@ -2120,6 +2160,7 @@ async def ace_getstream(
             
             # Channel doesn't exist - need to select engine and create new session
             selected_engine, current_load = select_best_engine()
+            reservation_engine_id = selected_engine.container_id
             
             logger.info(
                 f"Selected engine {selected_engine.container_id[:12]} for new {stream_mode} stream {id} "
@@ -2205,6 +2246,7 @@ async def ace_getstream(
         else:
             # TS mode - use existing ts_proxy architecture
             selected_engine, current_load = select_best_engine()
+            reservation_engine_id = selected_engine.container_id
             
             logger.info(
                 f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {id} "
@@ -2252,9 +2294,11 @@ async def ace_getstream(
             )
         
     except HTTPException:
+        rollback_reservation()
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
+        rollback_reservation()
         logger.error(f"Unexpected error in ace_getstream: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 

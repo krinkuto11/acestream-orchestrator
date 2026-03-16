@@ -32,6 +32,25 @@ def handle_stream_started(evt: StreamStartedEvent) -> StreamState:
         StreamState object with stream ID
     """
     try:
+        # Commit pending reservation
+        try:
+            from app.proxy.manager import ProxyManager
+            redis = ProxyManager.get_instance().redis_client
+            if redis and evt.container_id:
+                pending_key = f"ace_proxy:engine:{evt.container_id}:pending"
+                decr_script = """
+                local current = redis.call('GET', KEYS[1])
+                if current and tonumber(current) > 0 then
+                    return redis.call('DECR', KEYS[1])
+                else
+                    return 0
+                end
+                """
+                redis.eval(decr_script, 1, pending_key)
+                logger.debug(f"Committed pending reservation for engine {evt.container_id[:12]}")
+        except Exception as e:
+            logger.warning(f"Failed to commit pending reservation for engine {evt.container_id[:12]}: {e}")
+
         result = state.on_stream_started(evt)
         
         # Log stream start event
