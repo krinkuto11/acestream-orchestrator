@@ -213,19 +213,19 @@ class ProxyServer:
         stream_manager = self.stream_managers.get(content_id)
         if stream_manager:
             stream_manager.stop()
-            del self.stream_managers[content_id]
+            self.stream_managers.pop(content_id, None)
         
         # Stop client manager
         client_manager = self.client_managers.get(content_id)
         if client_manager:
             client_manager.stop()
-            del self.client_managers[content_id]
+            self.client_managers.pop(content_id, None)
         
         # Stop buffer
         buffer = self.stream_buffers.get(content_id)
         if buffer:
             buffer.stop()
-            del self.stream_buffers[content_id]
+            self.stream_buffers.pop(content_id, None)
         
         # Remove owner from Redis
         owner_key = RedisKeys.stream_owner(content_id)
