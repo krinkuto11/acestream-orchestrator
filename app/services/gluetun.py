@@ -798,6 +798,8 @@ class GluetunMonitor:
             start_time = asyncio.get_event_loop().time()
             while (asyncio.get_event_loop().time() - start_time) < timeout:
                 if await monitor.check_health():
+                    from datetime import datetime, timezone
+                    monitor.update_health_status(True, datetime.now(timezone.utc))
                     return True
                 await asyncio.sleep(1)
             return False
@@ -809,6 +811,8 @@ class GluetunMonitor:
                 start_time = asyncio.get_event_loop().time()
                 while (asyncio.get_event_loop().time() - start_time) < timeout:
                     if await monitor.check_health():
+                        from datetime import datetime, timezone
+                        monitor.update_health_status(True, datetime.now(timezone.utc))
                         return True
                     await asyncio.sleep(1)
         return False

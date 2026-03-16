@@ -320,6 +320,8 @@ async def lifespan(app: FastAPI):
     
     async def _provision_worker():
         """Provision engines in background after VPN is healthy."""
+        state.enter_reprovisioning_mode()
+        
         if cfg.GLUETUN_CONTAINER_NAME:
             logger.info("Waiting for Gluetun to become healthy before provisioning engines...")
             max_wait_time = 60  # Maximum 60 seconds to wait for Gluetun
@@ -406,7 +408,8 @@ async def lifespan(app: FastAPI):
         logger.info(f"Initial provisioning complete: {provisioned}/{target_count} engines started ({failed} failed)")
         
         # Trigger state re-index to ensure visibility across APIs
-        state.reindex()
+        reindex_existing()
+        state.exit_reprovisioning_mode()
 
     # Start Gluetun monitoring BEFORE provisioning to avoid race condition
     # This ensures health checks work when ensure_minimum() tries to start engines

@@ -63,6 +63,7 @@ class StreamState(BaseModel):
     key_type: Literal["content_id", "infohash", "url", "magnet"]
     key: str
     container_id: str
+    container_name: Optional[str] = None
     playback_session_id: str
     stat_url: str
     command_url: str
