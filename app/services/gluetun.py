@@ -562,7 +562,7 @@ class GluetunMonitor:
                 from .autoscaler import ensure_minimum
                 # Run autoscaler in current running loop to provision replacement immediately
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, ensure_minimum, False)
+                await loop.run_in_executor(None, ensure_minimum)
                 logger.info("Immediate autoscaling completed after port change")
             except Exception as autoscale_error:
                 logger.error(f"Error during immediate autoscaling after port change: {autoscale_error}")

@@ -378,7 +378,35 @@ async def lifespan(app: FastAPI):
         
         # Now provision engines with Gluetun health checks working
         # On startup, provision MIN_REPLICAS total containers
-        ensure_minimum(initial_startup=True)
+        # We invoke start_acestream directly here instead of autoscaler to isolate
+        # initial provisioning from periodic maintenance logic like circuit breakers
+        from app.services.provisioner import start_acestream, AceProvisionRequest
+        from app.services.state import state
+        
+        target_count = cfg.MIN_REPLICAS
+        logger.info(f"Starting {target_count} AceStream containers for initial startup")
+        
+        provisioned = 0
+        failed = 0
+        for i in range(target_count):
+            try:
+                logger.debug(f"Provisioning initial engine {i+1}/{target_count}")
+                req = AceProvisionRequest(labels={}, env={})
+                response = start_acestream(req)
+                if response and response.container_id:
+                    logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({i+1}/{target_count})")
+                    provisioned += 1
+                else:
+                    logger.error(f"Failed to start AceStream container {i+1}/{target_count}: No response")
+                    failed += 1
+            except Exception as e:
+                logger.error(f"Failed to provision engine {i+1}/{target_count}: {e}")
+                failed += 1
+                
+        logger.info(f"Initial provisioning complete: {provisioned}/{target_count} engines started ({failed} failed)")
+        
+        # Trigger state re-index to ensure visibility across APIs
+        state.reindex()
 
     # Start Gluetun monitoring BEFORE provisioning to avoid race condition
     # This ensures health checks work when ensure_minimum() tries to start engines
