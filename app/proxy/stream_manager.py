@@ -290,8 +290,6 @@ class StreamManager:
             health_thread = threading.Thread(target=self._monitor_health, daemon=True)
             health_thread.start()
             
-            # Send stream started event to orchestrator (Once)
-            self._send_stream_started_event()
             
             while self.running and self.retry_count < self.max_retries:
                 try:
@@ -303,6 +301,9 @@ class StreamManager:
                         if not self.request_stream_from_engine():
                             logger.error("Failed to request stream from engine")
                             raise RuntimeError("Engine request failed")
+                        
+                        # Send stream started event to orchestrator
+                        self._send_stream_started_event()
                     
                     # Start streaming
                     if not self.start_stream():
