@@ -135,7 +135,7 @@ class StreamLoopDetector:
                 )
                 
                 # Add stream key to looping streams tracker
-                # This allows Acexy to check if a stream is looping before selecting an engine
+                # This allows the stream proxy to check if a stream is looping before selecting an engine
                 looping_streams_tracker.add_looping_stream(stream.key)
                 
                 # Stop the stream via command URL

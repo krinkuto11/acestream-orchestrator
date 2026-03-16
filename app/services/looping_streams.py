@@ -3,7 +3,7 @@ Looping streams tracker service.
 
 This service tracks AceStream IDs that have been detected as looping.
 When a stream is detected as looping (no new data being fed into the network),
-its ID is added to this tracker. Acexy proxy can then check this list before
+its ID is added to this tracker. The stream proxy can then check this list before
 selecting an engine and return an error to prevent users from trying to play
 looping streams.
 

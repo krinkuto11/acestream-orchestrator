@@ -31,11 +31,11 @@ def test_engine_selection_layer_filling():
     state.streams.clear()
     
     # Save original MAX_STREAMS value
-    original_max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
+    original_max_streams = cfg.MAX_STREAMS_PER_ENGINE
     
     try:
         # Set MAX_STREAMS to 5 for testing
-        cfg.ACEXY_MAX_STREAMS_PER_ENGINE = 5
+        cfg.MAX_STREAMS_PER_ENGINE = 5
         
         # Create 3 engines
         now = datetime.now()
@@ -73,7 +73,7 @@ def test_engine_selection_layer_filling():
                 engine_loads[cid] = engine_loads.get(cid, 0) + 1
             
             # Filter out engines at max capacity
-            max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
+            max_streams = cfg.MAX_STREAMS_PER_ENGINE
             available_engines = [
                 e for e in engines 
                 if engine_loads.get(e.container_id, 0) < max_streams
@@ -215,7 +215,7 @@ def test_engine_selection_layer_filling():
         
     finally:
         # Restore original value
-        cfg.ACEXY_MAX_STREAMS_PER_ENGINE = original_max_streams
+        cfg.MAX_STREAMS_PER_ENGINE = original_max_streams
         # Clear state
         state.engines.clear()
         state.streams.clear()
@@ -236,7 +236,7 @@ def test_forwarded_priority_at_equal_load():
     state.streams.clear()
     
     try:
-        cfg.ACEXY_MAX_STREAMS_PER_ENGINE = 5
+        cfg.MAX_STREAMS_PER_ENGINE = 5
         now = datetime.now()
         
         # Create 2 engines with equal load (both have 2 streams)
@@ -284,7 +284,7 @@ def test_forwarded_priority_at_equal_load():
             cid = stream.container_id
             engine_loads[cid] = engine_loads.get(cid, 0) + 1
         
-        max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
+        max_streams = cfg.MAX_STREAMS_PER_ENGINE
         available_engines = [
             e for e in engines 
             if engine_loads.get(e.container_id, 0) < max_streams

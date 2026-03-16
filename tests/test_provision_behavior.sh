@@ -1,10 +1,10 @@
 #!/bin/bash
-# Test script to verify orchestrator provisioning behavior with acexy proxy
+# Test script to verify orchestrator provisioning behavior with proxy proxy
 # This script can be run on the actual server to test the integration
 
 set -e
 
-echo "🧪 Testing Orchestrator Provisioning Behavior with Acexy Integration"
+echo "🧪 Testing Orchestrator Provisioning Behavior with Proxy Integration"
 echo "====================================================================="
 echo ""
 
@@ -84,7 +84,7 @@ echo ""
 
 # Test 4: Provision a new engine
 echo "📋 Test 4: Provisioning a new engine..."
-provision_data='{"labels": {"test": "acexy-integration"}, "env": {}}'
+provision_data='{"labels": {"test": "proxy-integration"}, "env": {}}'
 if provision_response=$(call_api POST "/provision/acestream" "$provision_data" 2>&1); then
     container_id=$(echo "$provision_response" | jq -r '.container_id' 2>/dev/null || echo "")
     container_name=$(echo "$provision_response" | jq -r '.container_name' 2>/dev/null || echo "")
@@ -115,7 +115,7 @@ if provision_response=$(call_api POST "/provision/acestream" "$provision_data" 2
                 fi
             else
                 echo -e "${RED}❌ CRITICAL: Engine NOT in state after provisioning!${NC}"
-                echo "   This would cause acexy proxy to fail"
+                echo "   This would cause proxy proxy to fail"
                 echo "   Expected count > $initial_count, got $new_count"
             fi
         else
@@ -172,7 +172,7 @@ echo "====================================================================="
 echo "🏁 Test Complete"
 echo ""
 echo "Summary:"
-echo "  - If all tests passed, orchestrator is ready for acexy integration"
+echo "  - If all tests passed, orchestrator is ready for proxy integration"
 echo "  - If Test 5 failed, update orchestrator to include reindex after provision"
 echo "  - If VPN tests show issues, check Gluetun configuration"
 echo ""

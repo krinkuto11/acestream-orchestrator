@@ -37,7 +37,6 @@ from .services.gluetun import gluetun_monitor
 from .services.docker_stats import get_container_stats, get_multiple_container_stats, get_total_stats
 from .services.docker_stats_collector import docker_stats_collector
 from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_cache, get_cache
-from .services.acexy import acexy_sync_service
 from .services.stream_loop_detector import stream_loop_detector
 from .services.looping_streams import looping_streams_tracker
 from .services.cache_monitoring_service import start_cache_monitoring
@@ -156,7 +155,7 @@ async def lifespan(app: FastAPI):
             if 'channel_shutdown_delay' in proxy_settings:
                 ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_settings['channel_shutdown_delay']
             if 'max_streams_per_engine' in proxy_settings:
-                cfg.ACEXY_MAX_STREAMS_PER_ENGINE = proxy_settings['max_streams_per_engine']
+                cfg.MAX_STREAMS_PER_ENGINE = proxy_settings['max_streams_per_engine']
             if 'stream_mode' in proxy_settings:
                 # Validate stream_mode before loading
                 mode = proxy_settings['stream_mode']
@@ -419,7 +418,6 @@ async def lifespan(app: FastAPI):
     await health_manager.stop()  # Stop health management
     await docker_stats_collector.stop()  # Stop Docker stats collector
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
-    await acexy_sync_service.stop()  # Stop Acexy sync service
     await stream_loop_detector.stop()  # Stop stream loop detector
     await looping_streams_tracker.stop()  # Stop looping streams tracker
     await stop_cleanup_task()  # Stop cache cleanup
@@ -1283,18 +1281,6 @@ def get_health_status_endpoint():
     """Get detailed health status and management information."""
     return health_manager.get_health_summary()
 
-@app.get("/acexy/status")
-def get_acexy_status_endpoint():
-    """
-    Get Acexy proxy integration status.
-    
-    Returns information about the Acexy sync service including:
-    - Whether Acexy integration is enabled
-    - Acexy URL being used
-    - Health status of Acexy connection
-    - Sync interval configuration
-    """
-    return acexy_sync_service.get_status()
 
 @app.post("/health/circuit-breaker/reset", dependencies=[Depends(require_api_key)])
 def reset_circuit_breaker(operation_type: Optional[str] = None):
@@ -1447,7 +1433,6 @@ def get_orchestrator_status():
             "blocked_reason": blocked_reason,
             "blocked_reason_details": blocked_reason_details
         },
-        "acexy": acexy_sync_service.get_status(),
         "config": {
             "auto_delete": cfg.AUTO_DELETE,
             "grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
@@ -2069,7 +2054,7 @@ async def ace_getstream(
             engine_loads[cid] = engine_loads.get(cid, 0) + 1
         
         # Filter out engines at max capacity
-        max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
+        max_streams = cfg.MAX_STREAMS_PER_ENGINE
         available_engines = [
             e for e in engines 
             if engine_loads.get(e.container_id, 0) < max_streams
@@ -2634,8 +2619,8 @@ def get_looping_streams():
     """
     Get list of AceStream IDs that have been detected as looping.
     
-    This endpoint is used by Acexy proxy to check if a stream is looping
-    before selecting an engine. If a stream ID is in this list, Acexy
+    This endpoint is used by the stream proxy to check if a stream is looping
+    before selecting an engine. If a stream ID is in this list, the proxy
     should return an error response to prevent playback attempts.
     
     Returns:
@@ -2699,7 +2684,7 @@ def get_proxy_config():
         "buffer_chunk_size": ProxyConfig.BUFFER_CHUNK_SIZE,
         "redis_chunk_ttl": ProxyConfig.REDIS_CHUNK_TTL,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "engine_variant": cfg.ENGINE_VARIANT,
         # HLS-specific settings
@@ -2801,7 +2786,7 @@ def update_proxy_config(
     if max_streams_per_engine is not None:
         if max_streams_per_engine < 1 or max_streams_per_engine > 20:
             raise HTTPException(status_code=400, detail="max_streams_per_engine must be between 1 and 20")
-        cfg.ACEXY_MAX_STREAMS_PER_ENGINE = max_streams_per_engine
+        cfg.MAX_STREAMS_PER_ENGINE = max_streams_per_engine
     
     if stream_mode is not None:
         if stream_mode not in ['TS', 'HLS']:
@@ -2859,7 +2844,7 @@ def update_proxy_config(
         f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
         f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
-        f"max_streams_per_engine={cfg.ACEXY_MAX_STREAMS_PER_ENGINE}, "
+        f"max_streams_per_engine={cfg.MAX_STREAMS_PER_ENGINE}, "
         f"stream_mode={ProxyConfig.STREAM_MODE}"
     )
     
@@ -2873,7 +2858,7 @@ def update_proxy_config(
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
@@ -2897,7 +2882,7 @@ def update_proxy_config(
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,

@@ -39,7 +39,7 @@ def ensure_minimum(initial_startup: bool = False):
     Args:
         initial_startup: If True, provisions MIN_REPLICAS total containers on startup.
                         If False, uses layer-based lookahead provisioning - provisions new engine
-                        when ANY engine reaches (ACEXY_MAX_STREAMS_PER_ENGINE - 1) streams.
+                        when ANY engine reaches (MAX_STREAMS_PER_ENGINE - 1) streams.
     """
     try:
         from .replica_validator import replica_validator
@@ -77,7 +77,7 @@ def ensure_minimum(initial_startup: bool = False):
             deficit = target - total_running
             target_description = f"MIN_REPLICAS={cfg.MIN_REPLICAS} total containers"
         else:
-            # During runtime: check if we need to provision based on ACEXY_MAX_STREAMS_PER_ENGINE
+            # During runtime: check if we need to provision based on MAX_STREAMS_PER_ENGINE
             # LOOKAHEAD PROVISIONING: Start provisioning when FIRST engine reaches (MAX-1)
             # This gives time for the new engine to spin up before capacity is exhausted
             all_engines = state.list_engines()
@@ -95,7 +95,7 @@ def ensure_minimum(initial_startup: bool = False):
                 
                 # LOOKAHEAD TRIGGER: Check if ANY engine has reached (MAX_STREAMS - 1)
                 # This provides early warning and provisioning buffer
-                max_streams_threshold = cfg.ACEXY_MAX_STREAMS_PER_ENGINE - 1
+                max_streams_threshold = cfg.MAX_STREAMS_PER_ENGINE - 1
                 any_engine_near_capacity = any(count >= max_streams_threshold for _, count in engines_with_stream_counts)
                 
                 # Check if all engines have at least (MAX_STREAMS - 1) streams

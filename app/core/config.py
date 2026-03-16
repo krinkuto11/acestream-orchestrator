@@ -67,8 +67,8 @@ class Cfg(BaseModel):
     MAX_CONCURRENT_PROVISIONS: int = int(os.getenv("MAX_CONCURRENT_PROVISIONS", "5"))
     MIN_PROVISION_INTERVAL_S: float = float(os.getenv("MIN_PROVISION_INTERVAL_S", "0.5"))
     
-    # Acexy integration settings
-    ACEXY_MAX_STREAMS_PER_ENGINE: int = int(os.getenv("ACEXY_MAX_STREAMS_PER_ENGINE", "3"))
+    # Engine load balancing settings
+    MAX_STREAMS_PER_ENGINE: int = int(os.getenv("MAX_STREAMS_PER_ENGINE", "3"))
 
     PORT_RANGE_HOST: str = os.getenv("PORT_RANGE_HOST", "19000-19999")
     ACE_HTTP_RANGE: str = os.getenv("ACE_HTTP_RANGE", "40000-44999")
@@ -103,8 +103,8 @@ class Cfg(BaseModel):
             raise ValueError('MIN_FREE_REPLICAS must be >= 0')
         if self.MIN_FREE_REPLICAS > self.MAX_REPLICAS:
             raise ValueError('MIN_FREE_REPLICAS must be <= MAX_REPLICAS')
-        if self.ACEXY_MAX_STREAMS_PER_ENGINE <= 0:
-            raise ValueError('ACEXY_MAX_STREAMS_PER_ENGINE must be > 0')
+        if self.MAX_STREAMS_PER_ENGINE <= 0:
+            raise ValueError('MAX_STREAMS_PER_ENGINE must be > 0')
         return self
 
     @validator('MAX_REPLICAS')

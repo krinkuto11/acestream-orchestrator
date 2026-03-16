@@ -82,7 +82,6 @@ class StreamManager:
             url = f"http://{self.engine_host}:{self.engine_port}/ace/getstream"
         
         # Generate unique PID to prevent errors when multiple streams access the same engine
-        # This matches the implementation in context/acexy.go lines 328-339
         pid = str(uuid.uuid4())
         
         params = {
