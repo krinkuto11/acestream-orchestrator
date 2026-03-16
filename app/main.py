@@ -392,7 +392,6 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(health_monitor.start())  # Start health monitoring  
     asyncio.create_task(health_manager.start())  # Start proactive health management
     asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
-    asyncio.create_task(acexy_sync_service.start())  # Start Acexy sync service
     asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
     asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
     asyncio.create_task(looping_streams_tracker.start())  # Start looping streams tracker
