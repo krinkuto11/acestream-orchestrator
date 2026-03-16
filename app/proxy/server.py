@@ -209,25 +209,23 @@ class ProxyServer:
         """Stop a stream session (internal method)"""
         logger.info(f"Stopping stream for content_id={content_id}")
         
-        # Stop stream manager
-        stream_manager = self.stream_managers.get(content_id)
+        # Stop stream manager atomically
+        stream_manager = self.stream_managers.pop(content_id, None)
         if stream_manager:
             stream_manager.stop()
-            self.stream_managers.pop(content_id, None)
         
-        # Stop client manager
-        client_manager = self.client_managers.get(content_id)
+        # Stop client manager atomically
+        client_manager = self.client_managers.pop(content_id, None)
         if client_manager:
             client_manager.stop()
-            self.client_managers.pop(content_id, None)
         
-        # Stop buffer
-        buffer = self.stream_buffers.get(content_id)
+        # Stop buffer atomically
+        buffer = self.stream_buffers.pop(content_id, None)
         if buffer:
             buffer.stop()
-            self.stream_buffers.pop(content_id, None)
         
         # Remove owner from Redis
+
         owner_key = RedisKeys.stream_owner(content_id)
         self.redis_client.delete(owner_key)
         
