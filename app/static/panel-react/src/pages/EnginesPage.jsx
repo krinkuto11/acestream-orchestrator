@@ -40,7 +40,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   // Engine settings state
   const [engineSettings, setEngineSettings] = useState({
     min_replicas: 2,
-    max_replicas: 10,
+    max_replicas: 6,
     auto_delete: true,
     engine_variant: '',
     use_custom_variant: false,
@@ -348,7 +348,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                       min="1"
                       max="100"
                       value={engineSettings.max_replicas}
-                      onChange={(e) => handleSettingChange('max_replicas', parseInt(e.target.value) || 1)}
+                      onChange={(e) => handleSettingChange('max_replicas', parseInt(e.target.value) || 6)}
                       disabled={loadingSettings}
                     />
                     <p className="text-xs text-muted-foreground">

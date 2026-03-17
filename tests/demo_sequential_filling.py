@@ -23,7 +23,7 @@ def simulate_stream_assignment():
     print("\n" + "="*80)
     print("LAYER-BASED ENGINE FILLING DEMONSTRATION")
     print("="*80)
-    print(f"Configuration: MAX_STREAMS_PER_ENGINE = {cfg.ACEXY_MAX_STREAMS_PER_ENGINE}")
+    print(f"Configuration: MAX_STREAMS_PER_ENGINE = {cfg.MAX_STREAMS_PER_ENGINE}")
     print("Engines: 3 (engine_0 is forwarded)")
     print("Streams to assign: 15")
     print("\nStrategy: Fill in layers (round-robin)")
@@ -37,11 +37,11 @@ def simulate_stream_assignment():
     state.streams.clear()
     
     # Save original value
-    original_max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
+    original_max_streams = cfg.MAX_STREAMS_PER_ENGINE
     
     try:
         # Set MAX_STREAMS to 5
-        cfg.ACEXY_MAX_STREAMS_PER_ENGINE = 5
+        cfg.MAX_STREAMS_PER_ENGINE = 5
         
         # Create 3 engines
         now = datetime.now()
@@ -81,7 +81,7 @@ def simulate_stream_assignment():
                 engine_loads[cid] = engine_loads.get(cid, 0) + 1
             
             # Filter out engines at max capacity
-            max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
+            max_streams = cfg.MAX_STREAMS_PER_ENGINE
             available_engines = [
                 e for e in engines 
                 if engine_loads.get(e.container_id, 0) < max_streams
@@ -139,8 +139,8 @@ def simulate_stream_assignment():
             engine_streams = [s for s in state.list_streams(status="started") 
                             if s.container_id == f"engine_{i}"]
             load = len(engine_streams)
-            bar = "█" * load + "░" * (cfg.ACEXY_MAX_STREAMS_PER_ENGINE - load)
-            status = "FULL" if load >= cfg.ACEXY_MAX_STREAMS_PER_ENGINE else f"{load}/{cfg.ACEXY_MAX_STREAMS_PER_ENGINE}"
+            bar = "█" * load + "░" * (cfg.MAX_STREAMS_PER_ENGINE - load)
+            status = "FULL" if load >= cfg.MAX_STREAMS_PER_ENGINE else f"{load}/{cfg.MAX_STREAMS_PER_ENGINE}"
             forwarded_label = " [FORWARDED]" if i == 0 else ""
             print(f"  engine_{i}: [{bar}] {status}{forwarded_label}")
         
@@ -157,7 +157,7 @@ def simulate_stream_assignment():
         
     finally:
         # Restore original value
-        cfg.ACEXY_MAX_STREAMS_PER_ENGINE = original_max_streams
+        cfg.MAX_STREAMS_PER_ENGINE = original_max_streams
         state.engines.clear()
         state.streams.clear()
 

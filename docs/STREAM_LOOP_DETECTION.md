@@ -4,7 +4,7 @@ This document describes the stream loop detection feature and the looping stream
 
 ## Overview
 
-The orchestrator includes a stream loop detection system that automatically identifies and stops streams that are looping (not receiving new data from the broadcast). When a looping stream is detected, its AceStream ID is added to a tracker that can be queried by the Acexy proxy to prevent playback attempts.
+The orchestrator includes a stream loop detection system that automatically identifies and stops streams that are looping (not receiving new data from the broadcast). When a looping stream is detected, its AceStream ID is added to a tracker that can be queried by the Proxy proxy to prevent playback attempts.
 
 ## Components
 
@@ -26,9 +26,9 @@ Maintains a list of AceStream content IDs that have been detected as looping. Su
   - `0` or unset: Indefinite retention (manual removal required)
   - `> 0`: Automatic removal after specified minutes
 
-### 3. Acexy Proxy Integration (`context/acexy/acexy/`)
+### 3. Proxy Proxy Integration (`context/proxy/proxy/`)
 
-The Acexy proxy checks the looping streams list before selecting an engine. If a stream ID is marked as looping, Acexy returns a "stream not available" error to the player.
+The Proxy proxy checks the looping streams list before selecting an engine. If a stream ID is marked as looping, Proxy returns a "stream not available" error to the player.
 
 **Changes:**
 - `SelectBestEngine()` now accepts `aceID` parameter
@@ -157,10 +157,10 @@ curl -X DELETE "http://orchestrator:8000/looping-streams/STREAM_ID" \
    - Stream's content ID is added to looping streams tracker
    - Event is logged to orchestrator event log
 
-### Acexy Proxy Behavior
+### Proxy Proxy Behavior
 
 1. When a client requests a stream via `/ace/getstream?id=CONTENT_ID`
-2. Acexy calls orchestrator's `/looping-streams` endpoint
+2. Proxy calls orchestrator's `/looping-streams` endpoint
 3. If the content ID is in the list:
    - Returns 503 Service Unavailable
    - Error code: `stream_looping`
@@ -208,11 +208,11 @@ curl -X DELETE "http://orchestrator:8000/looping-streams/STREAM_ID" \
 - Ensure stat URLs are accessible
 - Review orchestrator logs for errors
 
-### Acexy not blocking looping streams
+### Proxy not blocking looping streams
 
-- Verify Acexy can reach orchestrator's `/looping-streams` endpoint
+- Verify Proxy can reach orchestrator's `/looping-streams` endpoint
 - Check network connectivity and firewall rules
-- Review Acexy logs for looping stream checks
+- Review Proxy logs for looping stream checks
 - Ensure stream ID format matches (content_id vs infohash)
 
 ## Migration Notes
@@ -224,4 +224,4 @@ This feature is backwards compatible. Existing installations will have loop dete
 3. Restart orchestrator
 4. Configure retention time via UI or API
 
-No Acexy changes are required - the proxy gracefully handles missing `/looping-streams` endpoint (fails open).
+No Proxy changes are required - the proxy gracefully handles missing `/looping-streams` endpoint (fails open).

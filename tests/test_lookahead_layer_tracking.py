@@ -32,19 +32,19 @@ def test_lookahead_layer_tracking():
     state.reset_lookahead_layer()
     
     # Save original values
-    original_max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
+    original_max_streams = cfg.MAX_STREAMS_PER_ENGINE
     original_max_replicas = cfg.MAX_REPLICAS
     original_min_free = cfg.MIN_FREE_REPLICAS
     
     try:
         # Set test configuration
-        cfg.ACEXY_MAX_STREAMS_PER_ENGINE = 5
+        cfg.MAX_STREAMS_PER_ENGINE = 5
         cfg.MAX_REPLICAS = 10  # High enough to not block provisioning
         cfg.MIN_FREE_REPLICAS = 0  # Disable free replica requirement for this test
         
         now = datetime.now()
         
-        print(f"\n📋 Configuration: MAX_STREAMS={cfg.ACEXY_MAX_STREAMS_PER_ENGINE}, MAX_REPLICAS={cfg.MAX_REPLICAS}")
+        print(f"\n📋 Configuration: MAX_STREAMS={cfg.MAX_STREAMS_PER_ENGINE}, MAX_REPLICAS={cfg.MAX_REPLICAS}")
         
         # Helper to create engines
         def create_engine(index):
@@ -110,7 +110,7 @@ def test_lookahead_layer_tracking():
             min_streams = min(stream_counts)
             
             # Check threshold
-            max_streams_threshold = cfg.ACEXY_MAX_STREAMS_PER_ENGINE - 1
+            max_streams_threshold = cfg.MAX_STREAMS_PER_ENGINE - 1
             any_engine_near_capacity = any(count >= max_streams_threshold for _, count in engines_with_stream_counts)
             
             if not any_engine_near_capacity:
@@ -138,7 +138,7 @@ def test_lookahead_layer_tracking():
         
         # Check if lookahead should trigger (it shouldn't yet - threshold is 4)
         should_trigger = should_trigger_lookahead()
-        print(f"  Lookahead should trigger: {should_trigger} (threshold is {cfg.ACEXY_MAX_STREAMS_PER_ENGINE - 1})")
+        print(f"  Lookahead should trigger: {should_trigger} (threshold is {cfg.MAX_STREAMS_PER_ENGINE - 1})")
         assert not should_trigger, "Lookahead should NOT trigger at layer 3"
         
         # ========== SCENARIO 2: One engine reaches layer 4 - should trigger lookahead ==========
@@ -212,7 +212,7 @@ def test_lookahead_layer_tracking():
         
     finally:
         # Restore original values
-        cfg.ACEXY_MAX_STREAMS_PER_ENGINE = original_max_streams
+        cfg.MAX_STREAMS_PER_ENGINE = original_max_streams
         cfg.MAX_REPLICAS = original_max_replicas
         cfg.MIN_FREE_REPLICAS = original_min_free
         state.engines.clear()

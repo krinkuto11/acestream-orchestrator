@@ -5,7 +5,7 @@ Test that the collector no longer performs stale stream detection.
 This test verifies that:
 1. The collector skips stats collection when errors are returned
 2. The collector does NOT automatically stop/end streams
-3. Stream lifecycle is managed by Acexy
+3. Stream lifecycle is managed by Proxy
 """
 
 import sys
@@ -205,4 +205,4 @@ if __name__ == "__main__":
     print("  • Collector does NOT automatically stop/end streams on errors")
     print("  • Collector skips stats collection when errors occur")
     print("  • Collector still collects stats for normal responses")
-    print("  • Stream lifecycle is now managed by Acexy")
+    print("  • Stream lifecycle is now managed by Proxy")

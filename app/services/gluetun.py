@@ -373,6 +373,15 @@ class GluetunMonitor:
         
     async def start(self):
         """Start the Gluetun monitoring task."""
+        # Re-initialize monitors based on current configuration
+        # This handles cases where settings were loaded from storage after import
+        self._vpn_monitors = {}
+        if cfg.GLUETUN_CONTAINER_NAME:
+            self._vpn_monitors[cfg.GLUETUN_CONTAINER_NAME] = VpnContainerMonitor(cfg.GLUETUN_CONTAINER_NAME)
+        
+        if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+            self._vpn_monitors[cfg.GLUETUN_CONTAINER_NAME_2] = VpnContainerMonitor(cfg.GLUETUN_CONTAINER_NAME_2)
+
         if not self._vpn_monitors:
             logger.info("VPN monitoring disabled - no VPN containers configured")
             return
@@ -553,7 +562,7 @@ class GluetunMonitor:
                 from .autoscaler import ensure_minimum
                 # Run autoscaler in current running loop to provision replacement immediately
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, ensure_minimum, False)
+                await loop.run_in_executor(None, ensure_minimum)
                 logger.info("Immediate autoscaling completed after port change")
             except Exception as autoscale_error:
                 logger.error(f"Error during immediate autoscaling after port change: {autoscale_error}")
@@ -789,6 +798,8 @@ class GluetunMonitor:
             start_time = asyncio.get_event_loop().time()
             while (asyncio.get_event_loop().time() - start_time) < timeout:
                 if await monitor.check_health():
+                    from datetime import datetime, timezone
+                    monitor.update_health_status(True, datetime.now(timezone.utc))
                     return True
                 await asyncio.sleep(1)
             return False
@@ -800,6 +811,8 @@ class GluetunMonitor:
                 start_time = asyncio.get_event_loop().time()
                 while (asyncio.get_event_loop().time() - start_time) < timeout:
                     if await monitor.check_health():
+                        from datetime import datetime, timezone
+                        monitor.update_health_status(True, datetime.now(timezone.utc))
                         return True
                     await asyncio.sleep(1)
         return False

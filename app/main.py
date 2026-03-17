@@ -2,11 +2,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from pydantic import BaseModel
 import asyncio
+import io
 import os
 import json
 import logging
@@ -36,7 +37,6 @@ from .services.gluetun import gluetun_monitor
 from .services.docker_stats import get_container_stats, get_multiple_container_stats, get_total_stats
 from .services.docker_stats_collector import docker_stats_collector
 from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_cache, get_cache
-from .services.acexy import acexy_sync_service
 from .services.stream_loop_detector import stream_loop_detector
 from .services.looping_streams import looping_streams_tracker
 from .services.cache_monitoring_service import start_cache_monitoring
@@ -155,7 +155,7 @@ async def lifespan(app: FastAPI):
             if 'channel_shutdown_delay' in proxy_settings:
                 ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_settings['channel_shutdown_delay']
             if 'max_streams_per_engine' in proxy_settings:
-                cfg.ACEXY_MAX_STREAMS_PER_ENGINE = proxy_settings['max_streams_per_engine']
+                cfg.MAX_STREAMS_PER_ENGINE = proxy_settings['max_streams_per_engine']
             if 'stream_mode' in proxy_settings:
                 # Validate stream_mode before loading
                 mode = proxy_settings['stream_mode']
@@ -244,27 +244,105 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to load persisted engine settings: {e}")
     
+
+    # Load orchestrator settings
+    try:
+        orchestrator_settings = SettingsPersistence.load_orchestrator_config()
+        if orchestrator_settings:
+            logger.info("Loading persisted orchestrator settings")
+            _orch_field_map = {
+                'monitor_interval_s': 'MONITOR_INTERVAL_S',
+                'engine_grace_period_s': 'ENGINE_GRACE_PERIOD_S',
+                'autoscale_interval_s': 'AUTOSCALE_INTERVAL_S',
+                'startup_timeout_s': 'STARTUP_TIMEOUT_S',
+                'idle_ttl_s': 'IDLE_TTL_S',
+                'collect_interval_s': 'COLLECT_INTERVAL_S',
+                'stats_history_max': 'STATS_HISTORY_MAX',
+                'health_check_interval_s': 'HEALTH_CHECK_INTERVAL_S',
+                'health_failure_threshold': 'HEALTH_FAILURE_THRESHOLD',
+                'health_unhealthy_grace_period_s': 'HEALTH_UNHEALTHY_GRACE_PERIOD_S',
+                'health_replacement_cooldown_s': 'HEALTH_REPLACEMENT_COOLDOWN_S',
+                'circuit_breaker_failure_threshold': 'CIRCUIT_BREAKER_FAILURE_THRESHOLD',
+                'circuit_breaker_recovery_timeout_s': 'CIRCUIT_BREAKER_RECOVERY_TIMEOUT_S',
+                'circuit_breaker_replacement_threshold': 'CIRCUIT_BREAKER_REPLACEMENT_THRESHOLD',
+                'circuit_breaker_replacement_timeout_s': 'CIRCUIT_BREAKER_REPLACEMENT_TIMEOUT_S',
+                'max_concurrent_provisions': 'MAX_CONCURRENT_PROVISIONS',
+                'min_provision_interval_s': 'MIN_PROVISION_INTERVAL_S',
+                'port_range_host': 'PORT_RANGE_HOST',
+                'ace_http_range': 'ACE_HTTP_RANGE',
+                'ace_https_range': 'ACE_HTTPS_RANGE',
+                'debug_mode': 'DEBUG_MODE',
+            }
+            for _json_key, _cfg_attr in _orch_field_map.items():
+                if _json_key in orchestrator_settings:
+                    setattr(cfg, _cfg_attr, orchestrator_settings[_json_key])
+            logger.info("Orchestrator settings loaded from persistent storage")
+    except Exception as e:
+        logger.warning(f"Failed to load persisted orchestrator settings: {e}")
+
+    # Load VPN settings
+    try:
+        vpn_settings = SettingsPersistence.load_vpn_config()
+        if vpn_settings:
+            logger.info("Loading persisted VPN settings")
+            vpn_enabled = vpn_settings.get('enabled', False)
+            if 'vpn_mode' in vpn_settings:
+                cfg.VPN_MODE = vpn_settings['vpn_mode']
+            if vpn_enabled:
+                cfg.GLUETUN_CONTAINER_NAME = vpn_settings.get('container_name') or None
+                cfg.GLUETUN_CONTAINER_NAME_2 = vpn_settings.get('container_name_2') or None
+            else:
+                cfg.GLUETUN_CONTAINER_NAME = None
+                cfg.GLUETUN_CONTAINER_NAME_2 = None
+            if 'api_port' in vpn_settings:
+                cfg.GLUETUN_API_PORT = vpn_settings['api_port']
+            if 'port_range_1' in vpn_settings:
+                cfg.GLUETUN_PORT_RANGE_1 = vpn_settings['port_range_1'] or None
+            if 'port_range_2' in vpn_settings:
+                cfg.GLUETUN_PORT_RANGE_2 = vpn_settings['port_range_2'] or None
+            if 'health_check_interval_s' in vpn_settings:
+                cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S = vpn_settings['health_check_interval_s']
+            if 'port_cache_ttl_s' in vpn_settings:
+                cfg.GLUETUN_PORT_CACHE_TTL_S = vpn_settings['port_cache_ttl_s']
+            if 'restart_engines_on_reconnect' in vpn_settings:
+                cfg.VPN_RESTART_ENGINES_ON_RECONNECT = vpn_settings['restart_engines_on_reconnect']
+            if 'unhealthy_restart_timeout_s' in vpn_settings:
+                cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S = vpn_settings['unhealthy_restart_timeout_s']
+            logger.info(f"VPN settings loaded from persistent storage: enabled={vpn_enabled}, mode={cfg.VPN_MODE}, container={cfg.GLUETUN_CONTAINER_NAME}")
+    except Exception as e:
+        logger.warning(f"Failed to load persisted VPN settings: {e}")
+
     # Load state from database first
     load_state_from_db()
     
     # Initialize looping streams tracker with configured retention
     looping_streams_tracker.set_retention_minutes(cfg.STREAM_LOOP_RETENTION_MINUTES)
     
-    # Start Gluetun monitoring BEFORE provisioning to avoid race condition
-    # This ensures health checks work when ensure_minimum() tries to start engines
-    await gluetun_monitor.start()
-    
-    # Wait for Gluetun to become healthy before provisioning engines
-    # This prevents the slow startup issue where each engine creation waits 30s
-    if cfg.GLUETUN_CONTAINER_NAME:
-        logger.info("Waiting for Gluetun to become healthy before provisioning engines...")
-        max_wait_time = 60  # Maximum 60 seconds to wait for Gluetun
-        wait_start = asyncio.get_event_loop().time()
+    async def _provision_worker():
+        """Provision engines in background after VPN is healthy."""
+        state.enter_reprovisioning_mode()
         
-        while (asyncio.get_event_loop().time() - wait_start) < max_wait_time:
-            if gluetun_monitor.is_healthy() is True:
-                logger.info("Gluetun is healthy - proceeding with engine provisioning")
-                
+        if cfg.GLUETUN_CONTAINER_NAME:
+            logger.info("Waiting for Gluetun to become healthy before provisioning engines...")
+            max_wait_time = 60  # Maximum 60 seconds to wait for Gluetun
+            wait_start = asyncio.get_event_loop().time()
+            
+            is_healthy = False
+            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+                logger.info(f"Waiting for both Gluetun containers ({cfg.GLUETUN_CONTAINER_NAME}, {cfg.GLUETUN_CONTAINER_NAME_2}) to become healthy...")
+                v1_task = gluetun_monitor.wait_for_healthy(timeout=max_wait_time, container_name=cfg.GLUETUN_CONTAINER_NAME)
+                v2_task = gluetun_monitor.wait_for_healthy(timeout=max_wait_time, container_name=cfg.GLUETUN_CONTAINER_NAME_2)
+                v1, v2 = await asyncio.gather(v1_task, v2_task)
+                is_healthy = v1 and v2
+                if is_healthy:
+                    logger.info("Both Gluetun containers are healthy - proceeding with engine provisioning")
+            else:
+                logger.info(f"Waiting for Gluetun ({cfg.GLUETUN_CONTAINER_NAME}) to become healthy...")
+                is_healthy = await gluetun_monitor.wait_for_healthy(timeout=max_wait_time)
+                if is_healthy:
+                    logger.info("Gluetun is healthy - proceeding with engine provisioning")
+
+            if is_healthy:
                 # Log VPN location information for all healthy VPN containers
                 from .services.gluetun import get_vpn_status
                 try:
@@ -297,15 +375,46 @@ async def lifespan(app: FastAPI):
                     
                 except Exception as e:
                     logger.error(f"Failed to get VPN status: {e}")
+            else:
+                logger.warning(f"Gluetun did not become healthy within {max_wait_time}s - proceeding anyway")
+        
+        # Now provision engines with Gluetun health checks working
+        # On startup, provision MIN_REPLICAS total containers
+        # We invoke start_acestream directly here instead of autoscaler to isolate
+        # initial provisioning from periodic maintenance logic like circuit breakers
+        from app.services.provisioner import start_acestream, AceProvisionRequest
+        from app.services.state import state
+        
+        target_count = cfg.MIN_REPLICAS
+        logger.info(f"Starting {target_count} AceStream containers for initial startup")
+        
+        provisioned = 0
+        failed = 0
+        for i in range(target_count):
+            try:
+                logger.debug(f"Provisioning initial engine {i+1}/{target_count}")
+                req = AceProvisionRequest(labels={}, env={})
+                response = start_acestream(req)
+                if response and response.container_id:
+                    logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({i+1}/{target_count})")
+                    provisioned += 1
+                else:
+                    logger.error(f"Failed to start AceStream container {i+1}/{target_count}: No response")
+                    failed += 1
+            except Exception as e:
+                logger.error(f"Failed to provision engine {i+1}/{target_count}: {e}")
+                failed += 1
                 
-                break
-            await asyncio.sleep(1)
-        else:
-            logger.warning(f"Gluetun did not become healthy within {max_wait_time}s - proceeding anyway")
-    
-    # Now provision engines with Gluetun health checks working
-    # On startup, provision MIN_REPLICAS total containers
-    ensure_minimum(initial_startup=True)
+        logger.info(f"Initial provisioning complete: {provisioned}/{target_count} engines started ({failed} failed)")
+        
+        # Trigger state re-index to ensure visibility across APIs
+        reindex_existing()
+        state.exit_reprovisioning_mode()
+
+    # Start Gluetun monitoring BEFORE provisioning to avoid race condition
+    # This ensures health checks work when ensure_minimum() tries to start engines
+    await gluetun_monitor.start()
+    asyncio.create_task(_provision_worker())
     
     # Initialize ProxyServer in background to avoid blocking later API calls
     init_thread = threading.Thread(target=_init_proxy_server, daemon=True, name="ProxyServer-Init")
@@ -322,7 +431,6 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(health_monitor.start())  # Start health monitoring  
     asyncio.create_task(health_manager.start())  # Start proactive health management
     asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
-    asyncio.create_task(acexy_sync_service.start())  # Start Acexy sync service
     asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
     asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
     asyncio.create_task(looping_streams_tracker.start())  # Start looping streams tracker
@@ -350,7 +458,6 @@ async def lifespan(app: FastAPI):
     await health_manager.stop()  # Stop health management
     await docker_stats_collector.stop()  # Stop Docker stats collector
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
-    await acexy_sync_service.stop()  # Stop Acexy sync service
     await stream_loop_detector.stop()  # Stop stream loop detector
     await looping_streams_tracker.stop()  # Stop looping streams tracker
     await stop_cleanup_task()  # Stop cache cleanup
@@ -1214,18 +1321,6 @@ def get_health_status_endpoint():
     """Get detailed health status and management information."""
     return health_manager.get_health_summary()
 
-@app.get("/acexy/status")
-def get_acexy_status_endpoint():
-    """
-    Get Acexy proxy integration status.
-    
-    Returns information about the Acexy sync service including:
-    - Whether Acexy integration is enabled
-    - Acexy URL being used
-    - Health status of Acexy connection
-    - Sync interval configuration
-    """
-    return acexy_sync_service.get_status()
 
 @app.post("/health/circuit-breaker/reset", dependencies=[Depends(require_api_key)])
 def reset_circuit_breaker(operation_type: Optional[str] = None):
@@ -1378,7 +1473,6 @@ def get_orchestrator_status():
             "blocked_reason": blocked_reason,
             "blocked_reason_details": blocked_reason_details
         },
-        "acexy": acexy_sync_service.get_status(),
         "config": {
             "auto_delete": cfg.AUTO_DELETE,
             "grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
@@ -1975,32 +2069,61 @@ async def ace_getstream(
     client_ip = get_client_ip(request) if request else "unknown"
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
     
+    reservation_engine_id = None
+    
+    def rollback_reservation():
+        if reservation_engine_id:
+            try:
+                from app.proxy.manager import ProxyManager
+                redis = ProxyManager.get_instance().redis_client
+                if redis:
+                    pending_key = f"ace_proxy:engine:{reservation_engine_id}:pending"
+                    decr_script = """
+                    local current = redis.call('GET', KEYS[1])
+                    if current and tonumber(current) > 0 then
+                        return redis.call('DECR', KEYS[1])
+                    else
+                        return 0
+                    end
+                    """
+                    redis.eval(decr_script, 1, pending_key)
+                    logger.debug(f"Rolled back pending reservation for engine {reservation_engine_id[:12]}")
+            except Exception as e:
+                logger.warning(f"Failed to rollback reservation for engine {reservation_engine_id[:12]}: {e}")
+    
     def select_best_engine():
         """Select the best available engine using layer-based load balancing.
         
         Returns tuple of (selected_engine, current_load)
         Raises HTTPException if no engines available or all at capacity.
         """
+        from app.proxy.manager import ProxyManager
+        
         engines = state.list_engines()
         if not engines:
             raise HTTPException(
                 status_code=503,
                 detail="No engines available"
             )
+            
+        redis = ProxyManager.get_instance().redis_client
         
         # Engine selection: fill engines in layers (round-robin across all engines)
-        # Layer 1: All engines get 1 stream before any gets 2
-        # Layer 2: All engines get 2 streams before any gets 3
-        # Continue until layer (MAX_STREAMS - 1) is filled, then provision new engine
-        # Priority: 1. Engine with LEAST streams (not at max), 2. Forwarded engine
         active_streams = state.list_streams(status="started")
         engine_loads = {}
         for stream in active_streams:
             cid = stream.container_id
             engine_loads[cid] = engine_loads.get(cid, 0) + 1
+            
+        # Add pending load from Redis for concurrent balancing
+        for e in engines:
+            cid = e.container_id
+            pending_key = f"ace_proxy:engine:{cid}:pending"
+            pending_count = int(redis.get(pending_key) or 0) if redis else 0
+            engine_loads[cid] = engine_loads.get(cid, 0) + pending_count
         
         # Filter out engines at max capacity
-        max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
+        max_streams = cfg.MAX_STREAMS_PER_ENGINE
         available_engines = [
             e for e in engines 
             if engine_loads.get(e.container_id, 0) < max_streams
@@ -2013,13 +2136,24 @@ async def ace_getstream(
             )
         
         # Sort: (load, not forwarded) - prefer LEAST load first (layer filling), then forwarded
-        # This ensures all engines reach same level before any engine gets another stream
         engines_sorted = sorted(available_engines, key=lambda e: (
             engine_loads.get(e.container_id, 0),  # Ascending order (least streams first)
             not e.forwarded  # Forwarded engines preferred when load is equal
         ))
         selected_engine = engines_sorted[0]
         current_load = engine_loads.get(selected_engine.container_id, 0)
+        
+        # Atomic Reservation
+        if redis:
+            try:
+                pending_key = f"ace_proxy:engine:{selected_engine.container_id}:pending"
+                pipe = redis.pipeline()
+                pipe.incr(pending_key)
+                pipe.expire(pending_key, 15)  # 15s failsafe
+                pipe.execute()
+                logger.debug(f"Atomically reserved engine {selected_engine.container_id[:12]} pending count")
+            except Exception as e:
+                logger.warning(f"Failed to set Redis pending reservation for engine {selected_engine.container_id[:12]}: {e}")
         
         return selected_engine, current_load
     
@@ -2066,6 +2200,7 @@ async def ace_getstream(
             
             # Channel doesn't exist - need to select engine and create new session
             selected_engine, current_load = select_best_engine()
+            reservation_engine_id = selected_engine.container_id
             
             logger.info(
                 f"Selected engine {selected_engine.container_id[:12]} for new {stream_mode} stream {id} "
@@ -2151,6 +2286,7 @@ async def ace_getstream(
         else:
             # TS mode - use existing ts_proxy architecture
             selected_engine, current_load = select_best_engine()
+            reservation_engine_id = selected_engine.container_id
             
             logger.info(
                 f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {id} "
@@ -2198,9 +2334,11 @@ async def ace_getstream(
             )
         
     except HTTPException:
+        rollback_reservation()
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
+        rollback_reservation()
         logger.error(f"Unexpected error in ace_getstream: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
@@ -2565,8 +2703,8 @@ def get_looping_streams():
     """
     Get list of AceStream IDs that have been detected as looping.
     
-    This endpoint is used by Acexy proxy to check if a stream is looping
-    before selecting an engine. If a stream ID is in this list, Acexy
+    This endpoint is used by the stream proxy to check if a stream is looping
+    before selecting an engine. If a stream ID is in this list, the proxy
     should return an error response to prevent playback attempts.
     
     Returns:
@@ -2630,7 +2768,7 @@ def get_proxy_config():
         "buffer_chunk_size": ProxyConfig.BUFFER_CHUNK_SIZE,
         "redis_chunk_ttl": ProxyConfig.REDIS_CHUNK_TTL,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "engine_variant": cfg.ENGINE_VARIANT,
         # HLS-specific settings
@@ -2732,7 +2870,7 @@ def update_proxy_config(
     if max_streams_per_engine is not None:
         if max_streams_per_engine < 1 or max_streams_per_engine > 20:
             raise HTTPException(status_code=400, detail="max_streams_per_engine must be between 1 and 20")
-        cfg.ACEXY_MAX_STREAMS_PER_ENGINE = max_streams_per_engine
+        cfg.MAX_STREAMS_PER_ENGINE = max_streams_per_engine
     
     if stream_mode is not None:
         if stream_mode not in ['TS', 'HLS']:
@@ -2790,7 +2928,7 @@ def update_proxy_config(
         f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
         f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
-        f"max_streams_per_engine={cfg.ACEXY_MAX_STREAMS_PER_ENGINE}, "
+        f"max_streams_per_engine={cfg.MAX_STREAMS_PER_ENGINE}, "
         f"stream_mode={ProxyConfig.STREAM_MODE}"
     )
     
@@ -2804,7 +2942,7 @@ def update_proxy_config(
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
@@ -2828,7 +2966,7 @@ def update_proxy_config(
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-        "max_streams_per_engine": cfg.ACEXY_MAX_STREAMS_PER_ENGINE,
+        "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
@@ -2841,6 +2979,385 @@ def update_proxy_config(
         "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
     }
 
+
+
+# ============================================================================
+# Orchestrator & VPN Settings Endpoints
+# ============================================================================
+
+class OrchestratorSettingsUpdate(BaseModel):
+    """Model for updating orchestrator core settings."""
+    monitor_interval_s: Optional[int] = None
+    engine_grace_period_s: Optional[int] = None
+    autoscale_interval_s: Optional[int] = None
+    startup_timeout_s: Optional[int] = None
+    idle_ttl_s: Optional[int] = None
+    collect_interval_s: Optional[int] = None
+    stats_history_max: Optional[int] = None
+    health_check_interval_s: Optional[int] = None
+    health_failure_threshold: Optional[int] = None
+    health_unhealthy_grace_period_s: Optional[int] = None
+    health_replacement_cooldown_s: Optional[int] = None
+    circuit_breaker_failure_threshold: Optional[int] = None
+    circuit_breaker_recovery_timeout_s: Optional[int] = None
+    circuit_breaker_replacement_threshold: Optional[int] = None
+    circuit_breaker_replacement_timeout_s: Optional[int] = None
+    max_concurrent_provisions: Optional[int] = None
+    min_provision_interval_s: Optional[float] = None
+    port_range_host: Optional[str] = None
+    ace_http_range: Optional[str] = None
+    ace_https_range: Optional[str] = None
+    debug_mode: Optional[bool] = None
+
+
+class VPNSettingsUpdate(BaseModel):
+    """Model for updating VPN (Gluetun) settings."""
+    enabled: Optional[bool] = None
+    vpn_mode: Optional[str] = None           # 'single' or 'redundant'
+    container_name: Optional[str] = None
+    container_name_2: Optional[str] = None
+    api_port: Optional[int] = None
+    port_range_1: Optional[str] = None       # redundant mode
+    port_range_2: Optional[str] = None       # redundant mode
+    health_check_interval_s: Optional[int] = None
+    port_cache_ttl_s: Optional[int] = None
+    restart_engines_on_reconnect: Optional[bool] = None
+    unhealthy_restart_timeout_s: Optional[int] = None
+
+
+@app.get("/settings/orchestrator")
+def get_orchestrator_settings():
+    """Get current orchestrator core configuration settings."""
+    from .services.settings_persistence import SettingsPersistence
+
+    persisted = SettingsPersistence.load_orchestrator_config()
+    if persisted:
+        return persisted
+
+    # Return defaults from runtime cfg
+    defaults = {
+        "monitor_interval_s": cfg.MONITOR_INTERVAL_S,
+        "engine_grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
+        "autoscale_interval_s": cfg.AUTOSCALE_INTERVAL_S,
+        "startup_timeout_s": cfg.STARTUP_TIMEOUT_S,
+        "idle_ttl_s": cfg.IDLE_TTL_S,
+        "collect_interval_s": cfg.COLLECT_INTERVAL_S,
+        "stats_history_max": cfg.STATS_HISTORY_MAX,
+        "health_check_interval_s": cfg.HEALTH_CHECK_INTERVAL_S,
+        "health_failure_threshold": cfg.HEALTH_FAILURE_THRESHOLD,
+        "health_unhealthy_grace_period_s": cfg.HEALTH_UNHEALTHY_GRACE_PERIOD_S,
+        "health_replacement_cooldown_s": cfg.HEALTH_REPLACEMENT_COOLDOWN_S,
+        "circuit_breaker_failure_threshold": cfg.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        "circuit_breaker_recovery_timeout_s": cfg.CIRCUIT_BREAKER_RECOVERY_TIMEOUT_S,
+        "circuit_breaker_replacement_threshold": cfg.CIRCUIT_BREAKER_REPLACEMENT_THRESHOLD,
+        "circuit_breaker_replacement_timeout_s": cfg.CIRCUIT_BREAKER_REPLACEMENT_TIMEOUT_S,
+        "max_concurrent_provisions": cfg.MAX_CONCURRENT_PROVISIONS,
+        "min_provision_interval_s": cfg.MIN_PROVISION_INTERVAL_S,
+        "port_range_host": cfg.PORT_RANGE_HOST,
+        "ace_http_range": cfg.ACE_HTTP_RANGE,
+        "ace_https_range": cfg.ACE_HTTPS_RANGE,
+        "debug_mode": cfg.DEBUG_MODE,
+    }
+    # Persist defaults so they appear on next load
+    try:
+        SettingsPersistence.save_orchestrator_config(defaults)
+    except Exception:
+        pass
+    return defaults
+
+
+@app.post("/settings/orchestrator", dependencies=[Depends(require_api_key)])
+async def update_orchestrator_settings(settings: OrchestratorSettingsUpdate):
+    """Update orchestrator core configuration settings at runtime and persist."""
+    from .services.settings_persistence import SettingsPersistence
+
+    current = SettingsPersistence.load_orchestrator_config() or {
+        "monitor_interval_s": cfg.MONITOR_INTERVAL_S,
+        "engine_grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
+        "autoscale_interval_s": cfg.AUTOSCALE_INTERVAL_S,
+        "startup_timeout_s": cfg.STARTUP_TIMEOUT_S,
+        "idle_ttl_s": cfg.IDLE_TTL_S,
+        "collect_interval_s": cfg.COLLECT_INTERVAL_S,
+        "stats_history_max": cfg.STATS_HISTORY_MAX,
+        "health_check_interval_s": cfg.HEALTH_CHECK_INTERVAL_S,
+        "health_failure_threshold": cfg.HEALTH_FAILURE_THRESHOLD,
+        "health_unhealthy_grace_period_s": cfg.HEALTH_UNHEALTHY_GRACE_PERIOD_S,
+        "health_replacement_cooldown_s": cfg.HEALTH_REPLACEMENT_COOLDOWN_S,
+        "circuit_breaker_failure_threshold": cfg.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        "circuit_breaker_recovery_timeout_s": cfg.CIRCUIT_BREAKER_RECOVERY_TIMEOUT_S,
+        "circuit_breaker_replacement_threshold": cfg.CIRCUIT_BREAKER_REPLACEMENT_THRESHOLD,
+        "circuit_breaker_replacement_timeout_s": cfg.CIRCUIT_BREAKER_REPLACEMENT_TIMEOUT_S,
+        "max_concurrent_provisions": cfg.MAX_CONCURRENT_PROVISIONS,
+        "min_provision_interval_s": cfg.MIN_PROVISION_INTERVAL_S,
+        "port_range_host": cfg.PORT_RANGE_HOST,
+        "ace_http_range": cfg.ACE_HTTP_RANGE,
+        "ace_https_range": cfg.ACE_HTTPS_RANGE,
+        "debug_mode": cfg.DEBUG_MODE,
+    }
+
+    def _validate_port_range(v: str, field: str):
+        try:
+            start, end = v.split('-')
+            s, e = int(start), int(end)
+            if not (1 <= s <= 65535 and 1 <= e <= 65535):
+                raise HTTPException(status_code=400, detail=f"{field}: ports must be 1-65535")
+            if s > e:
+                raise HTTPException(status_code=400, detail=f"{field}: start must be <= end")
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"{field}: expected 'start-end' format")
+
+    if settings.monitor_interval_s is not None:
+        if settings.monitor_interval_s < 1:
+            raise HTTPException(status_code=400, detail="monitor_interval_s must be >= 1")
+        current["monitor_interval_s"] = settings.monitor_interval_s
+        cfg.MONITOR_INTERVAL_S = settings.monitor_interval_s
+
+    if settings.engine_grace_period_s is not None:
+        if settings.engine_grace_period_s < 1:
+            raise HTTPException(status_code=400, detail="engine_grace_period_s must be >= 1")
+        current["engine_grace_period_s"] = settings.engine_grace_period_s
+        cfg.ENGINE_GRACE_PERIOD_S = settings.engine_grace_period_s
+
+    if settings.autoscale_interval_s is not None:
+        if settings.autoscale_interval_s < 1:
+            raise HTTPException(status_code=400, detail="autoscale_interval_s must be >= 1")
+        current["autoscale_interval_s"] = settings.autoscale_interval_s
+        cfg.AUTOSCALE_INTERVAL_S = settings.autoscale_interval_s
+
+    if settings.startup_timeout_s is not None:
+        if settings.startup_timeout_s < 1:
+            raise HTTPException(status_code=400, detail="startup_timeout_s must be >= 1")
+        current["startup_timeout_s"] = settings.startup_timeout_s
+        cfg.STARTUP_TIMEOUT_S = settings.startup_timeout_s
+
+    if settings.idle_ttl_s is not None:
+        if settings.idle_ttl_s < 1:
+            raise HTTPException(status_code=400, detail="idle_ttl_s must be >= 1")
+        current["idle_ttl_s"] = settings.idle_ttl_s
+        cfg.IDLE_TTL_S = settings.idle_ttl_s
+
+    if settings.collect_interval_s is not None:
+        if settings.collect_interval_s < 1:
+            raise HTTPException(status_code=400, detail="collect_interval_s must be >= 1")
+        current["collect_interval_s"] = settings.collect_interval_s
+        cfg.COLLECT_INTERVAL_S = settings.collect_interval_s
+
+    if settings.stats_history_max is not None:
+        if settings.stats_history_max < 1:
+            raise HTTPException(status_code=400, detail="stats_history_max must be >= 1")
+        current["stats_history_max"] = settings.stats_history_max
+        cfg.STATS_HISTORY_MAX = settings.stats_history_max
+
+    if settings.health_check_interval_s is not None:
+        if settings.health_check_interval_s < 1:
+            raise HTTPException(status_code=400, detail="health_check_interval_s must be >= 1")
+        current["health_check_interval_s"] = settings.health_check_interval_s
+        cfg.HEALTH_CHECK_INTERVAL_S = settings.health_check_interval_s
+
+    if settings.health_failure_threshold is not None:
+        if settings.health_failure_threshold < 1:
+            raise HTTPException(status_code=400, detail="health_failure_threshold must be >= 1")
+        current["health_failure_threshold"] = settings.health_failure_threshold
+        cfg.HEALTH_FAILURE_THRESHOLD = settings.health_failure_threshold
+
+    if settings.health_unhealthy_grace_period_s is not None:
+        if settings.health_unhealthy_grace_period_s < 1:
+            raise HTTPException(status_code=400, detail="health_unhealthy_grace_period_s must be >= 1")
+        current["health_unhealthy_grace_period_s"] = settings.health_unhealthy_grace_period_s
+        cfg.HEALTH_UNHEALTHY_GRACE_PERIOD_S = settings.health_unhealthy_grace_period_s
+
+    if settings.health_replacement_cooldown_s is not None:
+        if settings.health_replacement_cooldown_s < 1:
+            raise HTTPException(status_code=400, detail="health_replacement_cooldown_s must be >= 1")
+        current["health_replacement_cooldown_s"] = settings.health_replacement_cooldown_s
+        cfg.HEALTH_REPLACEMENT_COOLDOWN_S = settings.health_replacement_cooldown_s
+
+    if settings.circuit_breaker_failure_threshold is not None:
+        if settings.circuit_breaker_failure_threshold < 1:
+            raise HTTPException(status_code=400, detail="circuit_breaker_failure_threshold must be >= 1")
+        current["circuit_breaker_failure_threshold"] = settings.circuit_breaker_failure_threshold
+        cfg.CIRCUIT_BREAKER_FAILURE_THRESHOLD = settings.circuit_breaker_failure_threshold
+
+    if settings.circuit_breaker_recovery_timeout_s is not None:
+        if settings.circuit_breaker_recovery_timeout_s < 1:
+            raise HTTPException(status_code=400, detail="circuit_breaker_recovery_timeout_s must be >= 1")
+        current["circuit_breaker_recovery_timeout_s"] = settings.circuit_breaker_recovery_timeout_s
+        cfg.CIRCUIT_BREAKER_RECOVERY_TIMEOUT_S = settings.circuit_breaker_recovery_timeout_s
+
+    if settings.circuit_breaker_replacement_threshold is not None:
+        if settings.circuit_breaker_replacement_threshold < 1:
+            raise HTTPException(status_code=400, detail="circuit_breaker_replacement_threshold must be >= 1")
+        current["circuit_breaker_replacement_threshold"] = settings.circuit_breaker_replacement_threshold
+        cfg.CIRCUIT_BREAKER_REPLACEMENT_THRESHOLD = settings.circuit_breaker_replacement_threshold
+
+    if settings.circuit_breaker_replacement_timeout_s is not None:
+        if settings.circuit_breaker_replacement_timeout_s < 1:
+            raise HTTPException(status_code=400, detail="circuit_breaker_replacement_timeout_s must be >= 1")
+        current["circuit_breaker_replacement_timeout_s"] = settings.circuit_breaker_replacement_timeout_s
+        cfg.CIRCUIT_BREAKER_REPLACEMENT_TIMEOUT_S = settings.circuit_breaker_replacement_timeout_s
+
+    if settings.max_concurrent_provisions is not None:
+        if settings.max_concurrent_provisions < 1:
+            raise HTTPException(status_code=400, detail="max_concurrent_provisions must be >= 1")
+        current["max_concurrent_provisions"] = settings.max_concurrent_provisions
+        cfg.MAX_CONCURRENT_PROVISIONS = settings.max_concurrent_provisions
+
+    if settings.min_provision_interval_s is not None:
+        if settings.min_provision_interval_s < 0:
+            raise HTTPException(status_code=400, detail="min_provision_interval_s must be >= 0")
+        current["min_provision_interval_s"] = settings.min_provision_interval_s
+        cfg.MIN_PROVISION_INTERVAL_S = settings.min_provision_interval_s
+
+    if settings.port_range_host is not None:
+        _validate_port_range(settings.port_range_host, "port_range_host")
+        current["port_range_host"] = settings.port_range_host
+        cfg.PORT_RANGE_HOST = settings.port_range_host
+
+    if settings.ace_http_range is not None:
+        _validate_port_range(settings.ace_http_range, "ace_http_range")
+        current["ace_http_range"] = settings.ace_http_range
+        cfg.ACE_HTTP_RANGE = settings.ace_http_range
+
+    if settings.ace_https_range is not None:
+        _validate_port_range(settings.ace_https_range, "ace_https_range")
+        current["ace_https_range"] = settings.ace_https_range
+        cfg.ACE_HTTPS_RANGE = settings.ace_https_range
+
+    if settings.debug_mode is not None:
+        current["debug_mode"] = settings.debug_mode
+        cfg.DEBUG_MODE = settings.debug_mode
+
+    if SettingsPersistence.save_orchestrator_config(current):
+        logger.info(f"Orchestrator settings persisted")
+    else:
+        logger.warning("Failed to persist orchestrator settings")
+
+    return {"message": "Orchestrator settings updated and persisted", **current}
+
+
+@app.get("/settings/vpn")
+def get_vpn_settings():
+    """Get current VPN (Gluetun) configuration settings."""
+    from .services.settings_persistence import SettingsPersistence
+
+    persisted = SettingsPersistence.load_vpn_config()
+    if persisted:
+        return persisted
+
+    defaults = {
+        "enabled": bool(cfg.GLUETUN_CONTAINER_NAME),
+        "vpn_mode": cfg.VPN_MODE,
+        "container_name": cfg.GLUETUN_CONTAINER_NAME or "",
+        "container_name_2": cfg.GLUETUN_CONTAINER_NAME_2 or "",
+        "api_port": cfg.GLUETUN_API_PORT,
+        "port_range_1": cfg.GLUETUN_PORT_RANGE_1 or "",
+        "port_range_2": cfg.GLUETUN_PORT_RANGE_2 or "",
+        "health_check_interval_s": cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S,
+        "port_cache_ttl_s": cfg.GLUETUN_PORT_CACHE_TTL_S,
+        "restart_engines_on_reconnect": cfg.VPN_RESTART_ENGINES_ON_RECONNECT,
+        "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
+    }
+    try:
+        SettingsPersistence.save_vpn_config(defaults)
+    except Exception:
+        pass
+    return defaults
+
+
+@app.post("/settings/vpn", dependencies=[Depends(require_api_key)])
+async def update_vpn_settings(settings: VPNSettingsUpdate):
+    """Update VPN (Gluetun) configuration settings at runtime and persist."""
+    from .services.settings_persistence import SettingsPersistence
+
+    current = SettingsPersistence.load_vpn_config() or {
+        "enabled": bool(cfg.GLUETUN_CONTAINER_NAME),
+        "vpn_mode": cfg.VPN_MODE,
+        "container_name": cfg.GLUETUN_CONTAINER_NAME or "",
+        "container_name_2": cfg.GLUETUN_CONTAINER_NAME_2 or "",
+        "api_port": cfg.GLUETUN_API_PORT,
+        "port_range_1": cfg.GLUETUN_PORT_RANGE_1 or "",
+        "port_range_2": cfg.GLUETUN_PORT_RANGE_2 or "",
+        "health_check_interval_s": cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S,
+        "port_cache_ttl_s": cfg.GLUETUN_PORT_CACHE_TTL_S,
+        "restart_engines_on_reconnect": cfg.VPN_RESTART_ENGINES_ON_RECONNECT,
+        "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
+    }
+
+    if settings.enabled is not None:
+        current["enabled"] = settings.enabled
+
+    if settings.vpn_mode is not None:
+        if settings.vpn_mode not in ('single', 'redundant'):
+            raise HTTPException(status_code=400, detail="vpn_mode must be 'single' or 'redundant'")
+        current["vpn_mode"] = settings.vpn_mode
+        cfg.VPN_MODE = settings.vpn_mode
+
+    if settings.container_name is not None:
+        current["container_name"] = settings.container_name
+        cfg.GLUETUN_CONTAINER_NAME = settings.container_name or None
+
+    if settings.container_name_2 is not None:
+        current["container_name_2"] = settings.container_name_2
+        cfg.GLUETUN_CONTAINER_NAME_2 = settings.container_name_2 or None
+
+    if settings.api_port is not None:
+        if not (1 <= settings.api_port <= 65535):
+            raise HTTPException(status_code=400, detail="api_port must be 1-65535")
+        current["api_port"] = settings.api_port
+        cfg.GLUETUN_API_PORT = settings.api_port
+
+    if settings.port_range_1 is not None:
+        current["port_range_1"] = settings.port_range_1
+        cfg.GLUETUN_PORT_RANGE_1 = settings.port_range_1 or None
+
+    if settings.port_range_2 is not None:
+        current["port_range_2"] = settings.port_range_2
+        cfg.GLUETUN_PORT_RANGE_2 = settings.port_range_2 or None
+
+    if settings.health_check_interval_s is not None:
+        if settings.health_check_interval_s < 1:
+            raise HTTPException(status_code=400, detail="health_check_interval_s must be >= 1")
+        current["health_check_interval_s"] = settings.health_check_interval_s
+        cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S = settings.health_check_interval_s
+
+    if settings.port_cache_ttl_s is not None:
+        if settings.port_cache_ttl_s < 1:
+            raise HTTPException(status_code=400, detail="port_cache_ttl_s must be >= 1")
+        current["port_cache_ttl_s"] = settings.port_cache_ttl_s
+        cfg.GLUETUN_PORT_CACHE_TTL_S = settings.port_cache_ttl_s
+
+    if settings.restart_engines_on_reconnect is not None:
+        current["restart_engines_on_reconnect"] = settings.restart_engines_on_reconnect
+        cfg.VPN_RESTART_ENGINES_ON_RECONNECT = settings.restart_engines_on_reconnect
+
+    if settings.unhealthy_restart_timeout_s is not None:
+        if settings.unhealthy_restart_timeout_s < 1:
+            raise HTTPException(status_code=400, detail="unhealthy_restart_timeout_s must be >= 1")
+        current["unhealthy_restart_timeout_s"] = settings.unhealthy_restart_timeout_s
+        cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S = settings.unhealthy_restart_timeout_s
+
+    # Apply enabled flag: clear container name if VPN is disabled
+    if not current.get("enabled"):
+        cfg.GLUETUN_CONTAINER_NAME = None
+        cfg.GLUETUN_CONTAINER_NAME_2 = None
+    else:
+        cfg.GLUETUN_CONTAINER_NAME = current.get("container_name") or None
+        cfg.GLUETUN_CONTAINER_NAME_2 = current.get("container_name_2") or None
+
+    # Restart gluetun monitor to pick up new config
+    try:
+        await gluetun_monitor.stop()
+        await gluetun_monitor.start()
+        logger.info("Gluetun monitor restarted with new VPN config")
+    except Exception as e:
+        logger.warning(f"Failed to restart gluetun monitor: {e}")
+
+    if SettingsPersistence.save_vpn_config(current):
+        logger.info("VPN settings persisted")
+    else:
+        logger.warning("Failed to persist VPN settings")
+
+    return {"message": "VPN settings updated and persisted", **current}
 
 
 # ============================================================================
@@ -3356,3 +3873,60 @@ async def purge_engine_cache(api_key: str = Depends(require_api_key)):
     from .services.engine_cache_manager import engine_cache_manager
     await engine_cache_manager.purge_all_contents()
     return {"status": "success", "message": "All cache volume contents purged"}
+
+
+# --- M3U Proxy ---
+
+@app.get("/modify_m3u", tags=["M3U"])
+async def modify_m3u(
+    m3u_url: str = Query(..., description="URL of the source M3U playlist"),
+    host: str = Query(..., description="Replacement hostname or IP address"),
+    port: str = Query(..., description="Replacement port (1-65535)"),
+    timeout: Optional[float] = Query(None, description="HTTP request timeout in seconds (overrides M3U_TIMEOUT env var)"),
+    mode: str = Query("default", description="Rewrite mode: 'default' or 'proxy'"),
+):
+    """Download an M3U playlist from *m3u_url* and rewrite its internal URLs.
+
+    **default mode** – replaces ``http://127.0.0.1:<port>/`` and
+    ``http://localhost:<port>/`` origins with ``http://host:port/``, and
+    converts ``acestream://<id>`` links to
+    ``http://host:port/ace/getstream?id=<id>``.
+
+    **proxy mode** – rewrites every ``http``/``https`` URL as
+    ``http://host:port/proxy?url=<percent-encoded-original>`` and similarly
+    wraps ``acestream://`` links.
+    """
+    from .services.m3u import get_m3u_content, validate_host_port, modify_m3u_content
+
+    # Validate mode
+    if mode not in ("default", "proxy"):
+        raise HTTPException(status_code=400, detail="Parameter 'mode' must be 'default' or 'proxy'.")
+
+    # Validate timeout
+    effective_timeout: float
+    if timeout is not None:
+        if timeout <= 0:
+            raise HTTPException(status_code=400, detail="Parameter 'timeout' must be a positive number.")
+        effective_timeout = timeout
+    else:
+        effective_timeout = cfg.M3U_TIMEOUT
+
+    # Validate host and port
+    ok, port_or_msg = validate_host_port(host.strip(), port.strip())
+    if not ok:
+        raise HTTPException(status_code=400, detail=port_or_msg)
+    validated_port: int = port_or_msg  # type: ignore[assignment]
+
+    # Download playlist
+    content = get_m3u_content(m3u_url.strip(), effective_timeout)
+    if content is None:
+        raise HTTPException(status_code=400, detail="Failed to download the M3U file.")
+
+    # Rewrite URLs
+    modified = modify_m3u_content(content, host.strip(), validated_port, mode)
+
+    return StreamingResponse(
+        io.BytesIO(modified.encode("utf-8")),
+        media_type="application/x-mpegURL",
+        headers={"Content-Disposition": "attachment; filename=\"modified_playlist.m3u\""},
+    )

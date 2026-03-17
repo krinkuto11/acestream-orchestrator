@@ -82,7 +82,6 @@ class StreamManager:
             url = f"http://{self.engine_host}:{self.engine_port}/ace/getstream"
         
         # Generate unique PID to prevent errors when multiple streams access the same engine
-        # This matches the implementation in context/acexy.go lines 328-339
         pid = str(uuid.uuid4())
         
         params = {
@@ -282,33 +281,67 @@ class StreamManager:
             return False
     
     def run(self):
-        """Main execution loop"""
+        """Main execution loop with resilient hot-failover support"""
         stream_end_reason = "normal"
+        self.retry_count = 0
+        
         try:
-            # Start health monitor
+            # Start health monitor (Once)
             health_thread = threading.Thread(target=self._monitor_health, daemon=True)
             health_thread.start()
             
-            # Request stream from engine
-            if not self.request_stream_from_engine():
-                logger.error("Failed to request stream from engine")
-                stream_end_reason = "failed_to_start"
-                return
             
-            # Send stream started event to orchestrator
-            self._send_stream_started_event()
-            
-            # Start streaming
-            if not self.start_stream():
-                logger.error("Failed to start stream")
-                stream_end_reason = "failed_to_start"
-                return
-            
-            # Process stream data
-            self._process_stream_data()
-            
+            while self.running and self.retry_count < self.max_retries:
+                try:
+                    logger.info(f"Connecting to stream (Attempt {self.retry_count + 1}/{self.max_retries}) for content_id={self.content_id}")
+                    
+                    # Request stream from engine (if not connected/reconnecting)
+                    # We always request a new session on reconnect to get updated URLs
+                    if not self.connected:
+                        if not self.request_stream_from_engine():
+                            logger.error("Failed to request stream from engine")
+                            raise RuntimeError("Engine request failed")
+                        
+                        # Send stream started event to orchestrator
+                        self._send_stream_started_event()
+                    
+                    # Start streaming
+                    if not self.start_stream():
+                        logger.error("Failed to start stream")
+                        raise RuntimeError("Stream start failed")
+                    
+                    # Reset retry count on successful stream start & initial read
+                    # Wait, we let _process_stream_data do the reading
+                    
+                    # Process stream data (blocks until EOF or error)
+                    self._process_stream_data()
+                    
+                    # If we exit _process_stream_data and are still running, it's a dropout
+                    if self.running:
+                        logger.warning("Stream read loop exited prematurely. Triggering failover.")
+                        raise RuntimeError("Stream dropout")
+                    else:
+                        break # Normal exit
+                    
+                except Exception as e:
+                    self.retry_count += 1
+                    logger.error(f"Stream error on attempt {self.retry_count}/{self.max_retries}: {e}")
+                    
+                    if self.retry_count >= self.max_retries:
+                        logger.error("Max retries reached, aborting stream")
+                        stream_end_reason = "error"
+                        break
+                    
+                    # Exponential Backoff
+                    backoff = min(2 * self.retry_count, 10)
+                    logger.info(f"Backoff for {backoff}s before reconnecting...")
+                    
+                    # Cleanup before retry
+                    self._cleanup_for_retry()
+                    time.sleep(backoff)
+                    
         except Exception as e:
-            logger.error(f"Stream error: {e}", exc_info=True)
+            logger.error(f"Fatal stream manager error: {e}", exc_info=True)
             stream_end_reason = "error"
         finally:
             # Send stream ended event
@@ -417,6 +450,26 @@ class StreamManager:
         # Send ended event (will check if already sent)
         self._send_stream_ended_event(reason="stopped")
     
+    def _cleanup_for_retry(self):
+        """Cleanup resources for retry, sending ended event for current session ID"""
+        self.connected = False
+        
+        # Send ended event for the current session ID so it doesn't dangle in orchestrator UI
+        self._send_stream_ended_event(reason="failover")
+        self._ended_event_sent = False  # Reset for the next reconnect attempt
+        
+        if self.http_reader:
+            try:
+                self.http_reader.stop()
+            except Exception as e:
+                logger.debug(f"Error stopping http_reader during retry cleanup: {e}")
+                
+        if self.socket:
+            try:
+                self.socket.close()
+            except Exception as e:
+                logger.debug(f"Error closing socket during retry cleanup: {e}")
+
     def _cleanup(self):
         """Cleanup resources"""
         self.connected = False

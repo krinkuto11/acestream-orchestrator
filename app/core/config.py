@@ -50,7 +50,7 @@ class Cfg(BaseModel):
     GLUETUN_CONTAINER_NAME: str | None = os.getenv("GLUETUN_CONTAINER_NAME")
     GLUETUN_CONTAINER_NAME_2: str | None = os.getenv("GLUETUN_CONTAINER_NAME_2")
     VPN_MODE: str = os.getenv("VPN_MODE", "single")  # Options: single, redundant
-    GLUETUN_API_PORT: int = int(os.getenv("GLUETUN_API_PORT", 8000))
+    GLUETUN_API_PORT: int = int(os.getenv("GLUETUN_API_PORT", 8001))
     GLUETUN_HEALTH_CHECK_INTERVAL_S: int = int(os.getenv("GLUETUN_HEALTH_CHECK_INTERVAL_S", 5))
     GLUETUN_PORT_CACHE_TTL_S: int = int(os.getenv("GLUETUN_PORT_CACHE_TTL_S", 60))
     VPN_RESTART_ENGINES_ON_RECONNECT: bool = os.getenv("VPN_RESTART_ENGINES_ON_RECONNECT", "true").lower() == "true"
@@ -67,8 +67,8 @@ class Cfg(BaseModel):
     MAX_CONCURRENT_PROVISIONS: int = int(os.getenv("MAX_CONCURRENT_PROVISIONS", "5"))
     MIN_PROVISION_INTERVAL_S: float = float(os.getenv("MIN_PROVISION_INTERVAL_S", "0.5"))
     
-    # Acexy integration settings
-    ACEXY_MAX_STREAMS_PER_ENGINE: int = int(os.getenv("ACEXY_MAX_STREAMS_PER_ENGINE", "3"))
+    # Engine load balancing settings
+    MAX_STREAMS_PER_ENGINE: int = int(os.getenv("MAX_STREAMS_PER_ENGINE", "3"))
 
     PORT_RANGE_HOST: str = os.getenv("PORT_RANGE_HOST", "19000-19999")
     ACE_HTTP_RANGE: str = os.getenv("ACE_HTTP_RANGE", "40000-44999")
@@ -78,6 +78,8 @@ class Cfg(BaseModel):
     # Engine resource limits
     ENGINE_MEMORY_LIMIT: str | None = os.getenv("ENGINE_MEMORY_LIMIT")
     
+    M3U_TIMEOUT: float = float(os.getenv("M3U_TIMEOUT", "15"))
+
     API_KEY: str | None = os.getenv("API_KEY")
     DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
     AUTO_DELETE: bool = os.getenv("AUTO_DELETE", "true").lower() == "true"
@@ -101,8 +103,8 @@ class Cfg(BaseModel):
             raise ValueError('MIN_FREE_REPLICAS must be >= 0')
         if self.MIN_FREE_REPLICAS > self.MAX_REPLICAS:
             raise ValueError('MIN_FREE_REPLICAS must be <= MAX_REPLICAS')
-        if self.ACEXY_MAX_STREAMS_PER_ENGINE <= 0:
-            raise ValueError('ACEXY_MAX_STREAMS_PER_ENGINE must be > 0')
+        if self.MAX_STREAMS_PER_ENGINE <= 0:
+            raise ValueError('MAX_STREAMS_PER_ENGINE must be > 0')
         return self
 
     @validator('MAX_REPLICAS')
@@ -116,9 +118,10 @@ class Cfg(BaseModel):
 
     @validator('ENGINE_VARIANT')
     def validate_engine_variant(cls, v):
-        valid_variants = ["AceServe-amd64", "AceServe-arm64", "AceServe-arm32"]
-        if v not in valid_variants:
-            raise ValueError(f'ENGINE_VARIANT must be one of: {", ".join(valid_variants)}')
+        # We allow any variant name now because custom variants can be added through the UI
+        # and persisted to JSON, which might not match the initial hardcoded list.
+        if not v:
+            raise ValueError('ENGINE_VARIANT cannot be empty')
         return v
 
     @validator('CONTAINER_LABEL')

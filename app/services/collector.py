@@ -71,12 +71,10 @@ class Collector:
 
             # Check if the stream has an error response
             # When a stream has stopped, the engine may return: {"response": null, "error": "unknown playback session id"}
-            # However, stream lifecycle is now managed by Acexy, so we just skip collecting stats in this case
             if data.get("response") is None and data.get("error"):
                 error_msg = data.get("error", "").lower()
                 logger.debug(f"Stat endpoint reported error for {stream_id}: {data.get('error')}")
                 # Stream has ended on the engine side - skip stats collection
-                # Acexy will handle the stream lifecycle, so we don't need to intervene
                 return
 
             payload = data.get("response") or {}

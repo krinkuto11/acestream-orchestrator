@@ -40,7 +40,7 @@ The behavior is controlled by these environment variables:
 
 ```bash
 # Maximum streams per engine (default: 3)
-ACEXY_MAX_STREAMS_PER_ENGINE=5
+MAX_STREAMS_PER_ENGINE=5
 
 # Minimum initial engines on startup (default: 2)
 MIN_REPLICAS=2
@@ -56,7 +56,7 @@ MAX_REPLICAS=6
 
 ## Example Scenario
 
-With `ACEXY_MAX_STREAMS_PER_ENGINE=5` and 3 initial engines:
+With `MAX_STREAMS_PER_ENGINE=5` and 3 initial engines:
 
 ### Stream Assignment Sequence
 
@@ -145,7 +145,7 @@ T+76   New stream → engine_3 (back to layer 1)
 - **Provisioning time**: Buffer is limited by time to fill remaining layer slots
 
 ### Mitigation Strategies
-1. **Lower `ACEXY_MAX_STREAMS_PER_ENGINE`**: Triggers lookahead provisioning earlier and more frequently
+1. **Lower `MAX_STREAMS_PER_ENGINE`**: Triggers lookahead provisioning earlier and more frequently
 2. **Increase `MIN_REPLICAS`**: Start with more engines on initial startup
 3. **Faster provisioning**: Optimize container startup time to reduce lag between trigger and availability
 4. **Note on `MIN_FREE_REPLICAS`**: This setting only affects the lookahead buffer check and does NOT trigger provisioning on its own
@@ -157,7 +157,7 @@ T+76   New stream → engine_3 (back to layer 1)
 
 ```python
 # Filter out engines at max capacity
-max_streams = cfg.ACEXY_MAX_STREAMS_PER_ENGINE
+max_streams = cfg.MAX_STREAMS_PER_ENGINE
 available_engines = [
     e for e in engines 
     if engine_loads.get(e.container_id, 0) < max_streams
@@ -175,7 +175,7 @@ selected_engine = engines_sorted[0]
 
 ```python
 # Check if ANY engine has reached threshold (lookahead trigger)
-max_streams_threshold = cfg.ACEXY_MAX_STREAMS_PER_ENGINE - 1
+max_streams_threshold = cfg.MAX_STREAMS_PER_ENGINE - 1
 any_engine_near_capacity = any(
     count >= max_streams_threshold 
     for _, count in engines_with_stream_counts
@@ -231,7 +231,7 @@ GET /events?type=system&category=scaling
 ### Problem: New engines not provisioning in time
 
 **Solutions:**
-- Decrease `ACEXY_MAX_STREAMS_PER_ENGINE` for earlier triggers
+- Decrease `MAX_STREAMS_PER_ENGINE` for earlier triggers
 - Increase `MIN_FREE_REPLICAS` to keep idle engines ready
 - Optimize container startup time
 

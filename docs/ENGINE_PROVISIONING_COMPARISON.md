@@ -218,7 +218,7 @@ Control the behavior with environment variables:
 ```bash
 # Number of streams per engine before considering it "full"
 # Lower = more frequent provisioning, higher = more capacity per engine
-ACEXY_MAX_STREAMS_PER_ENGINE=5
+MAX_STREAMS_PER_ENGINE=5
 
 # Minimum engines on startup
 MIN_REPLICAS=2

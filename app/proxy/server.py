@@ -209,25 +209,23 @@ class ProxyServer:
         """Stop a stream session (internal method)"""
         logger.info(f"Stopping stream for content_id={content_id}")
         
-        # Stop stream manager
-        stream_manager = self.stream_managers.get(content_id)
+        # Stop stream manager atomically
+        stream_manager = self.stream_managers.pop(content_id, None)
         if stream_manager:
             stream_manager.stop()
-            del self.stream_managers[content_id]
         
-        # Stop client manager
-        client_manager = self.client_managers.get(content_id)
+        # Stop client manager atomically
+        client_manager = self.client_managers.pop(content_id, None)
         if client_manager:
             client_manager.stop()
-            del self.client_managers[content_id]
         
-        # Stop buffer
-        buffer = self.stream_buffers.get(content_id)
+        # Stop buffer atomically
+        buffer = self.stream_buffers.pop(content_id, None)
         if buffer:
             buffer.stop()
-            del self.stream_buffers[content_id]
         
         # Remove owner from Redis
+
         owner_key = RedisKeys.stream_owner(content_id)
         self.redis_client.delete(owner_key)
         
@@ -237,6 +235,11 @@ class ProxyServer:
         """Clean up idle sessions with no clients"""
         for content_id in list(self.stream_managers.keys()):
             try:
+                # Refresh ownership of the stream to prevent TTL expiry from suppressing shutdown triggers
+                owner_key = RedisKeys.stream_owner(content_id)
+                if self.redis_client:
+                    self.redis_client.set(owner_key, self.worker_id, ex=300)
+                
                 client_manager = self.client_managers.get(content_id)
                 if client_manager:
                     client_count = client_manager.get_total_client_count()

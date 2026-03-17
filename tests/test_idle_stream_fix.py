@@ -72,7 +72,7 @@ def test_max_streams_per_engine_api():
     from app.core.config import cfg
     
     # Set initial value
-    cfg.ACEXY_MAX_STREAMS_PER_ENGINE = 5
+    cfg.MAX_STREAMS_PER_ENGINE = 5
     
     # Import the endpoint after setting the config
     from app.main import get_proxy_config

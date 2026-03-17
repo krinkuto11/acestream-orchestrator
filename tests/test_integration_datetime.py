@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Integration test to verify the datetime parsing fix between acexy and orchestrator
+Integration test to verify the datetime parsing fix between proxy and orchestrator
 """
 
 import asyncio
@@ -243,7 +243,7 @@ func main() {{
     print("The datetime parsing issue has been fixed:")
     print("- Python orchestrator now ensures timezone-aware datetimes when loading from DB")
     print("- JSON responses include timezone information (Z suffix)")
-    print("- Go acexy client can successfully parse the datetime format")
+    print("- Go proxy client can successfully parse the datetime format")
     print("- The original error 'cannot parse \"\" as \"Z07:00\"' should no longer occur")
     
     return True

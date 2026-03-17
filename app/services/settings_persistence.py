@@ -17,6 +17,8 @@ CONFIG_DIR = Path(__file__).parent.parent / "config"
 PROXY_CONFIG_FILE = CONFIG_DIR / "proxy_settings.json"
 LOOP_DETECTION_CONFIG_FILE = CONFIG_DIR / "loop_detection_settings.json"
 ENGINE_SETTINGS_FILE = CONFIG_DIR / "engine_settings.json"
+ORCHESTRATOR_CONFIG_FILE = CONFIG_DIR / "orchestrator_settings.json"
+VPN_CONFIG_FILE = CONFIG_DIR / "vpn_settings.json"
 
 
 class SettingsPersistence:
@@ -160,4 +162,94 @@ class SettingsPersistence:
             return config
         except Exception as e:
             logger.error(f"Failed to load engine settings configuration: {e}")
+            return None
+
+    @staticmethod
+    def save_orchestrator_config(config: Dict[str, Any]) -> bool:
+        """
+        Save orchestrator core configuration to JSON file.
+
+        Args:
+            config: Dictionary containing orchestrator configuration
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            SettingsPersistence.ensure_config_dir()
+
+            with open(ORCHESTRATOR_CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=2)
+
+            logger.debug(f"Orchestrator configuration saved to {ORCHESTRATOR_CONFIG_FILE}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save orchestrator configuration: {e}")
+            return False
+
+    @staticmethod
+    def load_orchestrator_config() -> Optional[Dict[str, Any]]:
+        """
+        Load orchestrator core configuration from JSON file.
+
+        Returns:
+            Dictionary containing orchestrator configuration, or None if file doesn't exist or error occurs
+        """
+        try:
+            if not ORCHESTRATOR_CONFIG_FILE.exists():
+                logger.debug(f"Orchestrator config file not found: {ORCHESTRATOR_CONFIG_FILE}")
+                return None
+
+            with open(ORCHESTRATOR_CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+
+            logger.debug(f"Orchestrator configuration loaded from {ORCHESTRATOR_CONFIG_FILE}")
+            return config
+        except Exception as e:
+            logger.error(f"Failed to load orchestrator configuration: {e}")
+            return None
+
+    @staticmethod
+    def save_vpn_config(config: Dict[str, Any]) -> bool:
+        """
+        Save VPN (Gluetun) configuration to JSON file.
+
+        Args:
+            config: Dictionary containing VPN configuration
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            SettingsPersistence.ensure_config_dir()
+
+            with open(VPN_CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=2)
+
+            logger.debug(f"VPN configuration saved to {VPN_CONFIG_FILE}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save VPN configuration: {e}")
+            return False
+
+    @staticmethod
+    def load_vpn_config() -> Optional[Dict[str, Any]]:
+        """
+        Load VPN (Gluetun) configuration from JSON file.
+
+        Returns:
+            Dictionary containing VPN configuration, or None if file doesn't exist or error occurs
+        """
+        try:
+            if not VPN_CONFIG_FILE.exists():
+                logger.debug(f"VPN config file not found: {VPN_CONFIG_FILE}")
+                return None
+
+            with open(VPN_CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+
+            logger.debug(f"VPN configuration loaded from {VPN_CONFIG_FILE}")
+            return config
+        except Exception as e:
+            logger.error(f"Failed to load VPN configuration: {e}")
             return None
