@@ -235,6 +235,11 @@ class ProxyServer:
         """Clean up idle sessions with no clients"""
         for content_id in list(self.stream_managers.keys()):
             try:
+                # Refresh ownership of the stream to prevent TTL expiry from suppressing shutdown triggers
+                owner_key = RedisKeys.stream_owner(content_id)
+                if self.redis_client:
+                    self.redis_client.set(owner_key, self.worker_id, ex=300)
+                
                 client_manager = self.client_managers.get(content_id)
                 if client_manager:
                     client_count = client_manager.get_total_client_count()
