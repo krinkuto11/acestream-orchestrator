@@ -451,8 +451,12 @@ class StreamManager:
         self._send_stream_ended_event(reason="stopped")
     
     def _cleanup_for_retry(self):
-        """Cleanup resources for retry without marking stream as stopped in state"""
+        """Cleanup resources for retry, sending ended event for current session ID"""
         self.connected = False
+        
+        # Send ended event for the current session ID so it doesn't dangle in orchestrator UI
+        self._send_stream_ended_event(reason="failover")
+        self._ended_event_sent = False  # Reset for the next reconnect attempt
         
         if self.http_reader:
             try:
