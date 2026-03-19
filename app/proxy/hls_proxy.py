@@ -73,17 +73,20 @@ class ClientManager:
         
     def record_activity(self, client_ip: str):
         """Record client activity timestamp"""
+        from ..services.metrics import observe_proxy_client_connect
         with self.lock:
             prev_time = self.last_activity.get(client_ip)
             current_time = time.time()
             self.last_activity[client_ip] = current_time
             if not prev_time:
                 logger.info(f"New client connected: {client_ip}")
+                observe_proxy_client_connect("HLS")
             else:
                 logger.debug(f"Client activity: {client_ip}")
                 
     def cleanup_inactive(self, timeout: float) -> bool:
         """Remove inactive clients and return True if no clients remain"""
+        from ..services.metrics import observe_proxy_client_disconnect
         now = time.time()
         with self.lock:
             active_clients = {
@@ -97,6 +100,7 @@ class ClientManager:
                 for ip in removed:
                     inactive_time = now - self.last_activity[ip]
                     logger.warning(f"Client {ip} inactive for {inactive_time:.1f}s, removing")
+                    observe_proxy_client_disconnect("HLS")
             
             self.last_activity = active_clients
             if active_clients:

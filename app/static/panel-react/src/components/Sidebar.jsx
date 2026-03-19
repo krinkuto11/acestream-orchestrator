@@ -9,7 +9,7 @@ const navigation = [
   { name: 'Streams', href: '/streams', icon: Activity },
   { name: 'Health', href: '/health', icon: ShieldCheck },
   { name: 'VPN', href: '/vpn', icon: Wifi },
-  { name: 'Metrics', href: '/metrics', icon: BarChart3 },
+  { name: 'Dashboard', href: '/metrics', icon: BarChart3 },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]
 

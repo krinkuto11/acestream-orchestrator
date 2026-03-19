@@ -1,6 +1,8 @@
-from prometheus_client import Counter, Gauge, make_asgi_app, Enum
+from prometheus_client import Counter, Gauge, Histogram, make_asgi_app, Enum
 import threading
-from typing import Dict, Optional
+import time
+from collections import deque
+from typing import Any, Deque, Dict, List, Optional, Set
 
 # Aggregated metrics from all engines
 orch_total_uploaded_bytes = Gauge("orch_total_uploaded_bytes", "Total bytes uploaded from all engines")
@@ -31,6 +33,74 @@ orch_performance_min_ms = Gauge("orch_performance_operation_min_ms", "Minimum du
 orch_performance_max_ms = Gauge("orch_performance_operation_max_ms", "Maximum duration in milliseconds", ["operation"])
 orch_performance_success_rate = Gauge("orch_performance_operation_success_rate", "Success rate percentage", ["operation"])
 
+# Proxy RED metrics (rate, errors, duration)
+orch_proxy_stream_requests_total = Counter(
+    "orch_proxy_stream_requests_total",
+    "Total stream requests handled by proxy endpoint",
+    ["mode", "endpoint", "result"],
+)
+orch_proxy_stream_request_duration_seconds = Histogram(
+    "orch_proxy_stream_request_duration_seconds",
+    "Duration of stream endpoint request handling",
+    ["mode", "endpoint"],
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10),
+)
+orch_proxy_ttfb_seconds = Histogram(
+    "orch_proxy_ttfb_seconds",
+    "Approximate time-to-first-byte for stream responses",
+    ["mode", "endpoint"],
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20),
+)
+orch_proxy_http_errors_total = Counter(
+    "orch_proxy_http_errors_total",
+    "Proxy HTTP errors by endpoint and status",
+    ["endpoint", "status_code"],
+)
+orch_proxy_client_connect_total = Counter(
+    "orch_proxy_client_connect_total",
+    "Total client connections accepted by proxy",
+    ["mode"],
+)
+orch_proxy_client_disconnect_total = Counter(
+    "orch_proxy_client_disconnect_total",
+    "Total client disconnects observed by proxy",
+    ["mode"],
+)
+
+# Proxy high-level gauges
+orch_proxy_active_clients = Gauge("orch_proxy_active_clients", "Current active clients across TS and HLS proxy")
+orch_proxy_active_clients_ts = Gauge("orch_proxy_active_clients_ts", "Current active clients connected to TS proxy")
+orch_proxy_active_clients_hls = Gauge("orch_proxy_active_clients_hls", "Current active clients connected to HLS proxy")
+orch_proxy_disconnect_rate_per_minute = Gauge("orch_proxy_disconnect_rate_per_minute", "Client disconnect rate over last minute")
+orch_proxy_success_rate = Gauge("orch_proxy_success_rate", "Successful stream request rate over last minute in percentage")
+orch_proxy_4xx_rate_per_minute = Gauge("orch_proxy_4xx_rate_per_minute", "4xx request rate over last minute")
+orch_proxy_5xx_rate_per_minute = Gauge("orch_proxy_5xx_rate_per_minute", "5xx request rate over last minute")
+orch_proxy_ttfb_avg_ms = Gauge("orch_proxy_ttfb_avg_ms", "Average proxy TTFB over last minute in ms")
+orch_proxy_ttfb_p95_ms = Gauge("orch_proxy_ttfb_p95_ms", "Approximate proxy TTFB p95 over last minute in ms")
+
+# Engine and stream depth gauges
+orch_engine_state_count = Gauge("orch_engine_state_count", "Engine counts by derived state", ["state"])
+orch_engine_uptime_avg_seconds = Gauge("orch_engine_uptime_avg_seconds", "Average engine uptime in seconds")
+orch_stream_buffer_pieces_avg = Gauge("orch_stream_buffer_pieces_avg", "Average stream buffer pieces across live streams")
+orch_stream_buffer_pieces_min = Gauge("orch_stream_buffer_pieces_min", "Minimum stream buffer pieces across live streams")
+orch_active_infohash = Gauge("orch_active_infohash", "Indicator for currently active stream keys", ["stream_key"])
+
+# Docker USE metrics
+orch_docker_total_cpu_percent = Gauge("orch_docker_total_cpu_percent", "Total Docker CPU usage percent across engines")
+orch_docker_total_memory_bytes = Gauge("orch_docker_total_memory_bytes", "Total Docker memory usage in bytes across engines")
+orch_docker_network_rx_bytes_total = Gauge("orch_docker_network_rx_bytes_total", "Total Docker network ingress bytes across engines")
+orch_docker_network_tx_bytes_total = Gauge("orch_docker_network_tx_bytes_total", "Total Docker network egress bytes across engines")
+orch_docker_network_rx_rate_bps = Gauge("orch_docker_network_rx_rate_bps", "Docker network ingress rate in bytes/s across engines")
+orch_docker_network_tx_rate_bps = Gauge("orch_docker_network_tx_rate_bps", "Docker network egress rate in bytes/s across engines")
+orch_docker_block_read_bytes_total = Gauge("orch_docker_block_read_bytes_total", "Total Docker block read bytes across engines")
+orch_docker_block_write_bytes_total = Gauge("orch_docker_block_write_bytes_total", "Total Docker block write bytes across engines")
+orch_docker_restart_total = Gauge("orch_docker_restart_total", "Total restart count across engine containers")
+orch_docker_oom_killed_total = Gauge("orch_docker_oom_killed_total", "Number of engine containers marked OOM killed")
+
+# North-star gauges
+orch_global_egress_bandwidth_mbps = Gauge("orch_global_egress_bandwidth_mbps", "Global outbound bandwidth in Mbps")
+orch_system_success_rate = Gauge("orch_system_success_rate", "System success rate in percentage")
+
 metrics_app = make_asgi_app()
 
 # Cumulative byte tracking across all streams (active and ended)
@@ -39,6 +109,313 @@ _cumulative_lock = threading.Lock()
 _cumulative_uploaded_bytes = 0
 _cumulative_downloaded_bytes = 0
 _stream_last_values: Dict[str, Dict[str, Optional[int]]] = {}  # stream_id -> {uploaded, downloaded}
+_active_stream_keys: Set[str] = set()
+
+_proxy_window_lock = threading.Lock()
+_proxy_request_events: Deque[Dict[str, Any]] = deque(maxlen=5000)
+_proxy_disconnect_events: Deque[float] = deque(maxlen=5000)
+_proxy_ttfb_events: Deque[float] = deque(maxlen=5000)
+
+_docker_rate_lock = threading.Lock()
+_last_network_rx_bytes: Optional[int] = None
+_last_network_tx_bytes: Optional[int] = None
+_last_network_sample_ts: Optional[float] = None
+
+
+def _trim_old_events(now: float, max_age_seconds: float = 60.0):
+    """Trim old metric events from rolling one-minute windows."""
+    with _proxy_window_lock:
+        while _proxy_request_events and (now - _proxy_request_events[0]["ts"]) > max_age_seconds:
+            _proxy_request_events.popleft()
+        while _proxy_disconnect_events and (now - _proxy_disconnect_events[0]) > max_age_seconds:
+            _proxy_disconnect_events.popleft()
+        while _proxy_ttfb_events and (now - _proxy_ttfb_events[0]["ts"]) > max_age_seconds:
+            _proxy_ttfb_events.popleft()
+
+
+def observe_proxy_request(mode: str, endpoint: str, duration_seconds: float, success: bool, status_code: Optional[int] = None):
+    """Record proxy stream request RED metrics."""
+    result = "success" if success else "error"
+    safe_mode = mode or "unknown"
+    safe_endpoint = endpoint or "unknown"
+
+    orch_proxy_stream_requests_total.labels(mode=safe_mode, endpoint=safe_endpoint, result=result).inc()
+    orch_proxy_stream_request_duration_seconds.labels(mode=safe_mode, endpoint=safe_endpoint).observe(max(0.0, duration_seconds))
+
+    now = time.time()
+    event = {
+        "ts": now,
+        "success": success,
+        "status_code": int(status_code) if status_code is not None else (200 if success else 500),
+    }
+    with _proxy_window_lock:
+        _proxy_request_events.append(event)
+
+    if not success and status_code is not None:
+        orch_proxy_http_errors_total.labels(endpoint=safe_endpoint, status_code=str(status_code)).inc()
+
+    _trim_old_events(now)
+
+
+def observe_proxy_ttfb(mode: str, endpoint: str, ttfb_seconds: float):
+    """Record proxy TTFB metrics."""
+    safe_mode = mode or "unknown"
+    safe_endpoint = endpoint or "unknown"
+    sanitized_ttfb = max(0.0, ttfb_seconds)
+
+    orch_proxy_ttfb_seconds.labels(mode=safe_mode, endpoint=safe_endpoint).observe(sanitized_ttfb)
+
+    now = time.time()
+    with _proxy_window_lock:
+        _proxy_ttfb_events.append({"ts": now, "value": sanitized_ttfb})
+    _trim_old_events(now)
+
+
+def observe_proxy_client_connect(mode: str):
+    """Record proxy client connect events."""
+    orch_proxy_client_connect_total.labels(mode=mode or "unknown").inc()
+
+
+def observe_proxy_client_disconnect(mode: str):
+    """Record proxy client disconnect events for rolling disconnect rate."""
+    orch_proxy_client_disconnect_total.labels(mode=mode or "unknown").inc()
+    now = time.time()
+    with _proxy_window_lock:
+        _proxy_disconnect_events.append(now)
+    _trim_old_events(now)
+
+
+def _compute_proxy_clients_snapshot() -> Dict[str, int]:
+    """Best-effort snapshot of active clients for TS and HLS proxies."""
+    ts_clients = 0
+    hls_clients = 0
+
+    try:
+        from ..proxy.manager import ProxyManager
+
+        proxy = ProxyManager.get_instance()
+        redis_client = getattr(proxy, "redis_client", None)
+        if redis_client:
+            from .state import state
+            from ..proxy.redis_keys import RedisKeys
+
+            stream_keys = [s.key for s in state.list_streams(status="started") if s.key]
+            for stream_key in stream_keys:
+                try:
+                    ts_clients += int(redis_client.scard(RedisKeys.clients(stream_key)) or 0)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    try:
+        from ..proxy.hls_proxy import HLSProxyServer
+
+        hls_proxy = HLSProxyServer.get_instance()
+        managers = getattr(hls_proxy, "client_managers", {}) or {}
+        for manager in managers.values():
+            try:
+                with manager.lock:
+                    hls_clients += len(manager.last_activity)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return {
+        "ts": ts_clients,
+        "hls": hls_clients,
+        "total": ts_clients + hls_clients,
+    }
+
+
+def _compute_proxy_window_snapshot() -> Dict[str, float]:
+    """Compute one-minute rolling RED summaries for dashboard and Prometheus gauges."""
+    now = time.time()
+    _trim_old_events(now)
+
+    with _proxy_window_lock:
+        request_events = list(_proxy_request_events)
+        disconnect_events = list(_proxy_disconnect_events)
+        ttfb_events = [e["value"] for e in _proxy_ttfb_events]
+
+    total_requests = len(request_events)
+    success_requests = sum(1 for e in request_events if e["success"])
+    errors_4xx = sum(1 for e in request_events if 400 <= int(e["status_code"]) < 500)
+    errors_5xx = sum(1 for e in request_events if int(e["status_code"]) >= 500)
+
+    success_rate = (success_requests / total_requests * 100.0) if total_requests else 100.0
+    disconnect_rate = float(len(disconnect_events))
+
+    ttfb_avg_ms = (sum(ttfb_events) / len(ttfb_events) * 1000.0) if ttfb_events else 0.0
+    ttfb_p95_ms = 0.0
+    if ttfb_events:
+        sorted_ttfb = sorted(ttfb_events)
+        p95_idx = min(len(sorted_ttfb) - 1, int(round(0.95 * (len(sorted_ttfb) - 1))))
+        ttfb_p95_ms = sorted_ttfb[p95_idx] * 1000.0
+
+    return {
+        "total_requests_1m": float(total_requests),
+        "success_rate_percent": round(success_rate, 2),
+        "disconnect_rate_per_min": disconnect_rate,
+        "error_4xx_rate_per_min": float(errors_4xx),
+        "error_5xx_rate_per_min": float(errors_5xx),
+        "ttfb_avg_ms": round(ttfb_avg_ms, 2),
+        "ttfb_p95_ms": round(ttfb_p95_ms, 2),
+    }
+
+
+def _compute_docker_metrics_snapshot() -> Dict[str, float]:
+    """Compute Docker USE snapshots and derivative throughput rates."""
+    from .docker_stats_collector import docker_stats_collector
+
+    total_stats = docker_stats_collector.get_total_stats() or {}
+    cpu_percent = float(total_stats.get("total_cpu_percent", 0.0) or 0.0)
+    memory_usage = float(total_stats.get("total_memory_usage", 0) or 0)
+    network_rx = int(total_stats.get("total_network_rx_bytes", 0) or 0)
+    network_tx = int(total_stats.get("total_network_tx_bytes", 0) or 0)
+    block_read = float(total_stats.get("total_block_read_bytes", 0) or 0)
+    block_write = float(total_stats.get("total_block_write_bytes", 0) or 0)
+
+    now = time.time()
+    rx_rate = 0.0
+    tx_rate = 0.0
+
+    global _last_network_rx_bytes, _last_network_tx_bytes, _last_network_sample_ts
+    with _docker_rate_lock:
+        if _last_network_sample_ts is not None and now > _last_network_sample_ts:
+            elapsed = now - _last_network_sample_ts
+            if elapsed > 0:
+                rx_rate = max(0.0, (network_rx - (_last_network_rx_bytes or 0)) / elapsed)
+                tx_rate = max(0.0, (network_tx - (_last_network_tx_bytes or 0)) / elapsed)
+
+        _last_network_rx_bytes = network_rx
+        _last_network_tx_bytes = network_tx
+        _last_network_sample_ts = now
+
+    restart_total = 0
+    oom_killed_total = 0
+    try:
+        from .docker_client import get_client
+        from .state import state
+
+        docker_client = get_client()
+        for engine in state.list_engines():
+            try:
+                container = docker_client.containers.get(engine.container_id)
+                container.reload()
+                attrs = container.attrs or {}
+                restart_total += int(attrs.get("RestartCount", 0) or 0)
+                state_info = attrs.get("State", {}) or {}
+                if state_info.get("OOMKilled"):
+                    oom_killed_total += 1
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return {
+        "cpu_percent": round(cpu_percent, 2),
+        "memory_usage": memory_usage,
+        "network_rx_bytes": float(network_rx),
+        "network_tx_bytes": float(network_tx),
+        "network_rx_rate_bps": round(rx_rate, 2),
+        "network_tx_rate_bps": round(tx_rate, 2),
+        "block_read_bytes": block_read,
+        "block_write_bytes": block_write,
+        "restart_total": float(restart_total),
+        "oom_killed_total": float(oom_killed_total),
+    }
+
+
+def get_dashboard_snapshot() -> Dict[str, Any]:
+    """Return a structured snapshot used by the pane-based dashboard."""
+    from .state import state
+
+    streams = state.list_streams_with_stats(status="started")
+    engines = state.list_engines()
+
+    total_speed_up_bps = 0.0
+    total_speed_down_bps = 0.0
+    total_peers = 0
+    buffer_pieces: List[int] = []
+
+    for stream in streams:
+        if stream.speed_up is not None:
+            total_speed_up_bps += float(stream.speed_up) * 1024.0
+        if stream.speed_down is not None:
+            total_speed_down_bps += float(stream.speed_down) * 1024.0
+        if stream.peers is not None:
+            total_peers += int(stream.peers)
+
+        livepos = getattr(stream, "livepos", None)
+        if livepos and getattr(livepos, "buffer_pieces", None) is not None:
+            try:
+                buffer_pieces.append(int(livepos.buffer_pieces))
+            except Exception:
+                continue
+
+    engines_with_streams = set(stream.container_id for stream in streams)
+    now = time.time()
+    uptime_values: List[float] = []
+    for engine in engines:
+        try:
+            uptime_values.append(max(0.0, now - engine.first_seen.timestamp()))
+        except Exception:
+            continue
+
+    engine_state_counts = {
+        "playing": len(engines_with_streams),
+        "idle": max(0, len(engines) - len(engines_with_streams)),
+        "unhealthy": sum(1 for e in engines if e.health_status == "unhealthy"),
+        "unknown": sum(1 for e in engines if e.health_status == "unknown"),
+    }
+
+    proxy_clients = _compute_proxy_clients_snapshot()
+    proxy_window = _compute_proxy_window_snapshot()
+    docker_metrics = _compute_docker_metrics_snapshot()
+
+    return {
+        "timestamp": int(time.time()),
+        "north_star": {
+            "global_active_streams": len(streams),
+            "global_egress_bandwidth_mbps": round((total_speed_up_bps * 8.0) / 1_000_000.0, 3),
+            "system_success_rate_percent": proxy_window["success_rate_percent"],
+            "proxy_active_clients": proxy_clients["total"],
+        },
+        "proxy": {
+            "active_clients": proxy_clients,
+            "request_window_1m": proxy_window,
+            "throughput": {
+                "ingress_mbps": round((docker_metrics["network_rx_rate_bps"] * 8.0) / 1_000_000.0, 3),
+                "egress_mbps": round((docker_metrics["network_tx_rate_bps"] * 8.0) / 1_000_000.0, 3),
+            },
+            "ttfb": {
+                "avg_ms": proxy_window["ttfb_avg_ms"],
+                "p95_ms": proxy_window["ttfb_p95_ms"],
+            },
+        },
+        "engines": {
+            "total": len(engines),
+            "healthy": sum(1 for e in engines if e.health_status == "healthy"),
+            "unhealthy": sum(1 for e in engines if e.health_status == "unhealthy"),
+            "used": len(engines_with_streams),
+            "state_counts": engine_state_counts,
+            "uptime_avg_seconds": round(sum(uptime_values) / len(uptime_values), 2) if uptime_values else 0.0,
+        },
+        "streams": {
+            "active": len(streams),
+            "total_peers": total_peers,
+            "download_speed_mbps": round(total_speed_down_bps / (1024.0 * 1024.0), 3),
+            "upload_speed_mbps": round(total_speed_up_bps / (1024.0 * 1024.0), 3),
+            "buffer": {
+                "avg_pieces": round(sum(buffer_pieces) / len(buffer_pieces), 2) if buffer_pieces else 0.0,
+                "min_pieces": float(min(buffer_pieces)) if buffer_pieces else 0.0,
+            },
+            "active_keys": sorted({s.key for s in streams if s.key}),
+        },
+        "docker": docker_metrics,
+    }
 
 
 def on_stream_stat_update(stream_id: str, uploaded: Optional[int], downloaded: Optional[int]):
@@ -108,7 +485,7 @@ def reset_cumulative_metrics():
         _stream_last_values.clear()
 
 
-def update_custom_metrics():
+def update_custom_metrics() -> Dict[str, Any]:
     """
     Update custom Prometheus metrics with aggregated data from all engines.
     
@@ -227,6 +604,79 @@ def update_custom_metrics():
         orch_vpn2_engines.set(0)
     
     orch_extra_engines.set(extra_engines)
+
+    # Engine state and uptime metrics
+    now = time.time()
+    uptime_seconds: List[float] = []
+    for engine in engines:
+        try:
+            uptime_seconds.append(max(0.0, now - engine.first_seen.timestamp()))
+        except Exception:
+            continue
+
+    engine_state_values = {
+        "playing": float(used_engines),
+        "idle": float(max(0, total_engines - used_engines)),
+        "unhealthy": float(unhealthy_engines),
+        "unknown": float(sum(1 for e in engines if e.health_status == "unknown")),
+    }
+    for state_name, value in engine_state_values.items():
+        orch_engine_state_count.labels(state=state_name).set(value)
+
+    orch_engine_uptime_avg_seconds.set((sum(uptime_seconds) / len(uptime_seconds)) if uptime_seconds else 0.0)
+
+    # Stream buffer health metrics
+    buffer_pieces: List[int] = []
+    for stream in streams:
+        livepos = getattr(stream, "livepos", None)
+        if livepos and getattr(livepos, "buffer_pieces", None) is not None:
+            try:
+                buffer_pieces.append(int(livepos.buffer_pieces))
+            except Exception:
+                continue
+
+    orch_stream_buffer_pieces_avg.set((sum(buffer_pieces) / len(buffer_pieces)) if buffer_pieces else 0.0)
+    orch_stream_buffer_pieces_min.set(min(buffer_pieces) if buffer_pieces else 0.0)
+
+    # Active stream key gauges
+    active_keys = {s.key for s in streams if s.key}
+    global _active_stream_keys
+    for stale_key in (_active_stream_keys - active_keys):
+        orch_active_infohash.labels(stream_key=stale_key).set(0)
+    for active_key in active_keys:
+        orch_active_infohash.labels(stream_key=active_key).set(1)
+    _active_stream_keys = active_keys
+
+    # Proxy and Docker advanced metrics
+    proxy_clients = _compute_proxy_clients_snapshot()
+    proxy_window = _compute_proxy_window_snapshot()
+    docker_metrics = _compute_docker_metrics_snapshot()
+
+    orch_proxy_active_clients.set(proxy_clients["total"])
+    orch_proxy_active_clients_ts.set(proxy_clients["ts"])
+    orch_proxy_active_clients_hls.set(proxy_clients["hls"])
+    orch_proxy_disconnect_rate_per_minute.set(proxy_window["disconnect_rate_per_min"])
+    orch_proxy_success_rate.set(proxy_window["success_rate_percent"])
+    orch_proxy_4xx_rate_per_minute.set(proxy_window["error_4xx_rate_per_min"])
+    orch_proxy_5xx_rate_per_minute.set(proxy_window["error_5xx_rate_per_min"])
+    orch_proxy_ttfb_avg_ms.set(proxy_window["ttfb_avg_ms"])
+    orch_proxy_ttfb_p95_ms.set(proxy_window["ttfb_p95_ms"])
+
+    orch_docker_total_cpu_percent.set(docker_metrics["cpu_percent"])
+    orch_docker_total_memory_bytes.set(docker_metrics["memory_usage"])
+    orch_docker_network_rx_bytes_total.set(docker_metrics["network_rx_bytes"])
+    orch_docker_network_tx_bytes_total.set(docker_metrics["network_tx_bytes"])
+    orch_docker_network_rx_rate_bps.set(docker_metrics["network_rx_rate_bps"])
+    orch_docker_network_tx_rate_bps.set(docker_metrics["network_tx_rate_bps"])
+    orch_docker_block_read_bytes_total.set(docker_metrics["block_read_bytes"])
+    orch_docker_block_write_bytes_total.set(docker_metrics["block_write_bytes"])
+    orch_docker_restart_total.set(docker_metrics["restart_total"])
+    orch_docker_oom_killed_total.set(docker_metrics["oom_killed_total"])
+
+    # North-star metrics
+    global_egress_mbps = (docker_metrics["network_tx_rate_bps"] * 8.0) / 1_000_000.0
+    orch_global_egress_bandwidth_mbps.set(global_egress_mbps)
+    orch_system_success_rate.set(proxy_window["success_rate_percent"])
     
     # Update performance metrics
     # Import here to avoid circular dependency (performance_metrics imports from other modules)
@@ -245,3 +695,5 @@ def update_custom_metrics():
         orch_performance_min_ms.labels(operation=operation).set(stats['min_ms'])
         orch_performance_max_ms.labels(operation=operation).set(stats['max_ms'])
         orch_performance_success_rate.labels(operation=operation).set(stats['success_rate'])
+
+    return get_dashboard_snapshot()

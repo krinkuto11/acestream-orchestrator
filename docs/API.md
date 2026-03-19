@@ -226,6 +226,28 @@ Response:
    - orch_vpn1_engines - Number of engines assigned to VPN1
    - orch_vpn2_engines - Number of engines assigned to VPN2
    - orch_extra_engines - Number of engines beyond MIN_REPLICAS
+   - orch_proxy_stream_requests_total{mode,endpoint,result} - Proxy request rate
+   - orch_proxy_stream_request_duration_seconds{mode,endpoint} - Proxy request duration histogram
+   - orch_proxy_ttfb_seconds{mode,endpoint} - Proxy TTFB histogram
+   - orch_proxy_http_errors_total{endpoint,status_code} - Proxy 4xx/5xx error counts
+   - orch_proxy_client_connect_total{mode} / orch_proxy_client_disconnect_total{mode} - Client lifecycle counters
+   - orch_proxy_active_clients / orch_proxy_active_clients_ts / orch_proxy_active_clients_hls - Current client counts
+   - orch_proxy_success_rate / orch_proxy_4xx_rate_per_minute / orch_proxy_5xx_rate_per_minute - 1m RED summary
+   - orch_proxy_ttfb_avg_ms / orch_proxy_ttfb_p95_ms - 1m TTFB summary
+   - orch_engine_state_count{state} / orch_engine_uptime_avg_seconds - Engine state + uptime summary
+   - orch_stream_buffer_pieces_avg / orch_stream_buffer_pieces_min - Stream buffer health summary
+   - orch_active_infohash{stream_key} - Active stream key indicator
+   - orch_docker_total_cpu_percent / orch_docker_total_memory_bytes - Docker utilization
+   - orch_docker_network_rx_bytes_total / orch_docker_network_tx_bytes_total - Docker network totals
+   - orch_docker_network_rx_rate_bps / orch_docker_network_tx_rate_bps - Docker network rates
+   - orch_docker_block_read_bytes_total / orch_docker_block_write_bytes_total - Docker disk I/O totals
+   - orch_docker_restart_total / orch_docker_oom_killed_total - Container churn/error indicators
+   - orch_global_egress_bandwidth_mbps / orch_system_success_rate - North-star summary
+
+ - GET /metrics/dashboard
+   - Structured JSON snapshot used by the pane-based dashboard.
+   - Includes categories: `north_star`, `proxy`, `engines`, `streams`, `docker`.
+   - Suitable for platform-agnostic dashboards and API consumers that prefer JSON over Prometheus text format.
 
 ## Custom Engine Variant
 

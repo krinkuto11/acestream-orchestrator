@@ -13,6 +13,7 @@ import json
 import logging
 import httpx
 import threading
+import time
 
 from .utils.logging import setup
 from .core.config import cfg
@@ -28,7 +29,11 @@ from .services.collector import collector
 from .services.event_logger import event_logger
 from .services.stream_cleanup import stream_cleanup
 from .services.monitor import docker_monitor
-from .services.metrics import update_custom_metrics
+from .services.metrics import (
+    update_custom_metrics,
+    observe_proxy_request,
+    observe_proxy_ttfb,
+)
 from .services.auth import require_api_key
 from .services.db import engine
 from .models.db_models import Base
@@ -585,6 +590,12 @@ def get_metrics():
     
     # Generate and return Prometheus metrics
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/metrics/dashboard")
+def get_dashboard_metrics_snapshot():
+    """Get structured advanced metrics for the pane-based dashboard."""
+    return update_custom_metrics()
 
 @app.get("/metrics/performance")
 def get_performance_metrics(
@@ -2046,6 +2057,8 @@ async def ace_getstream(
     from app.proxy.utils import get_client_ip
     from app.proxy.config_helper import Config as ProxyConfig
     from .services.looping_streams import looping_streams_tracker
+
+    request_started_at = time.perf_counter()
     
     # Get current stream mode
     stream_mode = ProxyConfig.STREAM_MODE
@@ -2186,6 +2199,10 @@ async def ace_getstream(
                     # Client activity is tracked on each request, not per connection
                     # DO NOT remove client here - let inactivity timeout handle cleanup
                     
+                    elapsed = time.perf_counter() - request_started_at
+                    observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
+                    observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
+
                     return StreamingResponse(
                         iter([manifest_content.encode('utf-8')]),
                         media_type="application/vnd.apple.mpegurl",
@@ -2268,6 +2285,10 @@ async def ace_getstream(
                 hls_proxy.record_client_activity(id, client_ip)
                 manifest_content = await hls_proxy.get_manifest_async(id)
                 
+                elapsed = time.perf_counter() - request_started_at
+                observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
+                observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
+
                 return StreamingResponse(
                     iter([manifest_content.encode('utf-8')]),
                     media_type="application/vnd.apple.mpegurl",
@@ -2324,6 +2345,10 @@ async def ace_getstream(
             )
             
             # Return streaming response with TS data
+            elapsed = time.perf_counter() - request_started_at
+            observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
+            observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
+
             return StreamingResponse(
                 generator.generate(),
                 media_type="video/mp2t",
@@ -2333,12 +2358,16 @@ async def ace_getstream(
                 }
             )
         
-    except HTTPException:
+    except HTTPException as exc:
         rollback_reservation()
+        elapsed = time.perf_counter() - request_started_at
+        observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=False, status_code=exc.status_code)
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
         rollback_reservation()
+        elapsed = time.perf_counter() - request_started_at
+        observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=False, status_code=500)
         logger.error(f"Unexpected error in ace_getstream: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
@@ -2368,6 +2397,7 @@ async def ace_hls_segment(
     from app.proxy.utils import get_client_ip
     
     logger.debug(f"HLS segment request: content_id={content_id}, segment={segment_path}")
+    request_started_at = time.perf_counter()
     
     try:
         hls_proxy = HLSProxyServer.get_instance()
@@ -2379,6 +2409,10 @@ async def ace_hls_segment(
         segment_data = hls_proxy.get_segment(content_id, segment_path)
         
         # Return segment data directly
+        elapsed = time.perf_counter() - request_started_at
+        observe_proxy_request("HLS", "/ace/hls/segment", elapsed, success=True, status_code=200)
+        observe_proxy_ttfb("HLS", "/ace/hls/segment", elapsed)
+
         return Response(
             content=segment_data,
             media_type="video/MP2T",
@@ -2388,9 +2422,13 @@ async def ace_hls_segment(
             }
         )
     except ValueError as e:
+        elapsed = time.perf_counter() - request_started_at
+        observe_proxy_request("HLS", "/ace/hls/segment", elapsed, success=False, status_code=404)
         logger.warning(f"Segment not found: {e}")
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        elapsed = time.perf_counter() - request_started_at
+        observe_proxy_request("HLS", "/ace/hls/segment", elapsed, success=False, status_code=500)
         logger.error(f"Error serving HLS segment: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Segment error: {str(e)}")
 

@@ -1,18 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { AlertCircle, ArrowUpDown, ArrowUp, ArrowDown, HardDrive, Activity, Users } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { AlertCircle, Activity, Users, Gauge, Cpu, Server, ShieldCheck, Network } from 'lucide-react'
 import { formatBytes } from '../utils/formatters'
-import { Line } from 'react-chartjs-2'
+import { Line, Bar } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
-  Legend
+  Legend,
 } from 'chart.js'
 
 ChartJS.register(
@@ -20,62 +22,92 @@ ChartJS.register(
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend
 )
 
+function Pane({ title, subtitle, icon: Icon, children, className = '' }) {
+  return (
+    <Card className={`border-slate-200 bg-white/80 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-950/70 ${className}`}>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+          <span className="rounded-md bg-slate-100 p-1.5 dark:bg-slate-800">
+            <Icon className="h-4 w-4" />
+          </span>
+          {title}
+        </CardTitle>
+        {subtitle && <p className="text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>}
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
+  )
+}
+
+function StatTile({ label, value, hint }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+      <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50">{value}</p>
+      {hint && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{hint}</p>}
+    </div>
+  )
+}
+
+function formatMbps(value) {
+  return `${(Number(value) || 0).toFixed(2)} Mbps`
+}
+
+function formatPercent(value) {
+  return `${(Number(value) || 0).toFixed(2)}%`
+}
+
 export function MetricsPage({ apiKey, orchUrl }) {
-  const [metrics, setMetrics] = useState('')
+  const [snapshot, setSnapshot] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [historicalData, setHistoricalData] = useState({
+  const [history, setHistory] = useState({
     timestamps: [],
-    uploadSpeedMbps: [],
-    downloadSpeedMbps: [],
+    egressMbps: [],
+    ingressMbps: [],
     activeStreams: [],
-    usedEngines: [],
-    peers: []
+    activeClients: [],
+    successRate: [],
+    ttfbP95Ms: [],
+    cpuPercent: [],
+    memoryBytes: [],
   })
 
-  const fetchMetrics = useCallback(async () => {
+  const fetchSnapshot = useCallback(async () => {
     try {
-      setLoading(true)
       const headers = {}
       if (apiKey) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
-      
-      const response = await fetch(`${orchUrl}/metrics`, { headers })
+
+      const response = await fetch(`${orchUrl}/metrics/dashboard`, { headers })
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`)
       }
-      
-      const data = await response.text()
-      setMetrics(data)
+
+      const data = await response.json()
+      setSnapshot(data)
       setError(null)
-      
-      // Parse and store historical data for speeds and counts only
-      const parsed = parseMetrics(data)
+
       const now = new Date()
-      
-      setHistoricalData(prev => {
-        const maxPoints = 60 // Keep last 60 data points (10 minutes at 10s intervals)
-        
-        const newTimestamps = [...prev.timestamps, now].slice(-maxPoints)
-        const newUploadSpeedMbps = [...prev.uploadSpeedMbps, parsed.orch_total_upload_speed_mbps || 0].slice(-maxPoints)
-        const newDownloadSpeedMbps = [...prev.downloadSpeedMbps, parsed.orch_total_download_speed_mbps || 0].slice(-maxPoints)
-        const newActiveStreams = [...prev.activeStreams, parsed.orch_total_streams || 0].slice(-maxPoints)
-        const newUsedEngines = [...prev.usedEngines, parsed.orch_used_engines || 0].slice(-maxPoints)
-        const newPeers = [...prev.peers, parsed.orch_total_peers || 0].slice(-maxPoints)
-        
+      setHistory(prev => {
+        const maxPoints = 90
         return {
-          timestamps: newTimestamps,
-          uploadSpeedMbps: newUploadSpeedMbps,
-          downloadSpeedMbps: newDownloadSpeedMbps,
-          activeStreams: newActiveStreams,
-          usedEngines: newUsedEngines,
-          peers: newPeers
+          timestamps: [...prev.timestamps, now].slice(-maxPoints),
+          egressMbps: [...prev.egressMbps, data?.proxy?.throughput?.egress_mbps || 0].slice(-maxPoints),
+          ingressMbps: [...prev.ingressMbps, data?.proxy?.throughput?.ingress_mbps || 0].slice(-maxPoints),
+          activeStreams: [...prev.activeStreams, data?.north_star?.global_active_streams || 0].slice(-maxPoints),
+          activeClients: [...prev.activeClients, data?.north_star?.proxy_active_clients || 0].slice(-maxPoints),
+          successRate: [...prev.successRate, data?.proxy?.request_window_1m?.success_rate_percent || 0].slice(-maxPoints),
+          ttfbP95Ms: [...prev.ttfbP95Ms, data?.proxy?.ttfb?.p95_ms || 0].slice(-maxPoints),
+          cpuPercent: [...prev.cpuPercent, data?.docker?.cpu_percent || 0].slice(-maxPoints),
+          memoryBytes: [...prev.memoryBytes, data?.docker?.memory_usage || 0].slice(-maxPoints),
         }
       })
     } catch (err) {
@@ -86,74 +118,47 @@ export function MetricsPage({ apiKey, orchUrl }) {
   }, [orchUrl, apiKey])
 
   useEffect(() => {
-    fetchMetrics()
-    const interval = setInterval(fetchMetrics, 10000) // Refresh every 10 seconds
+    fetchSnapshot()
+    const interval = setInterval(fetchSnapshot, 5000)
     return () => clearInterval(interval)
-  }, [fetchMetrics])
+  }, [fetchSnapshot])
 
-  // Parse metrics to extract key values
-  const parseMetrics = (metricsText) => {
-    const lines = metricsText.split('\n')
-    const parsed = {}
-    
-    lines.forEach(line => {
-      if (line.startsWith('#') || !line.trim()) return
-      
-      // Updated regex to handle scientific notation (e.g., 1.27451136e+08)
-      const match = line.match(/^(\w+)(?:{.*?})?\s+([\d.eE+-]+)/)
-      if (match) {
-        const [, name, value] = match
-        if (!parsed[name]) {
-          parsed[name] = parseFloat(value)
-        } else {
-          parsed[name] += parseFloat(value)
-        }
-      }
-    })
-    
-    return parsed
-  }
-
-  const parsedMetrics = metrics ? parseMetrics(metrics) : {}
-
-  // Create chart data
-  const createChartData = (label, data, borderColor, backgroundColor) => ({
-    labels: historicalData.timestamps.map(ts => ts.toLocaleTimeString()),
+  const labels = history.timestamps.map(ts => ts.toLocaleTimeString())
+  const chartData = (label, data, borderColor, backgroundColor) => ({
+    labels,
     datasets: [{
       label,
       data,
       borderColor,
       backgroundColor,
       tension: 0.3,
-      fill: true
-    }]
+      fill: true,
+    }],
   })
 
-  const createDualChartData = (label1, data1, label2, data2, color1, color2) => ({
-    labels: historicalData.timestamps.map(ts => ts.toLocaleTimeString()),
+  const dualChartData = (a, b) => ({
+    labels,
     datasets: [
       {
-        label: label1,
-        data: data1,
-        borderColor: color1.border,
-        backgroundColor: color1.bg,
+        label: a.label,
+        data: a.data,
+        borderColor: a.border,
+        backgroundColor: a.bg,
         tension: 0.3,
         fill: true,
-        yAxisID: 'y'
       },
       {
-        label: label2,
-        data: data2,
-        borderColor: color2.border,
-        backgroundColor: color2.bg,
+        label: b.label,
+        data: b.data,
+        borderColor: b.border,
+        backgroundColor: b.bg,
         tension: 0.3,
         fill: true,
-        yAxisID: 'y'
       }
-    ]
+    ],
   })
 
-  const chartOptions = (title, yAxisLabel) => ({
+  const lineOptions = (title, yAxisLabel) => ({
     responsive: true,
     maintainAspectRatio: false,
     interaction: {
@@ -173,23 +178,43 @@ export function MetricsPage({ apiKey, orchUrl }) {
       y: {
         type: 'linear',
         display: true,
-        position: 'left',
+        beginAtZero: true,
         title: {
           display: true,
           text: yAxisLabel,
         },
-        beginAtZero: true
-      }
+      },
     },
   })
+
+  const barOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false,
+      },
+    },
+    scales: {
+      y: {
+        beginAtZero: true,
+      },
+    },
+  }
+
+  const engineState = snapshot?.engines?.state_counts || {}
+  const activeKeys = snapshot?.streams?.active_keys || []
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Metrics</h1>
-          <p className="text-muted-foreground mt-1">Real-time metrics and statistics</p>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Streaming Observability</h1>
+          <p className="mt-1 text-slate-600 dark:text-slate-400">Pane-based dashboard for RED proxy telemetry, USE infrastructure metrics, and stream health.</p>
         </div>
+        <Badge variant={loading ? 'secondary' : 'outline'}>
+          {loading ? 'Refreshing...' : 'Live'}
+        </Badge>
       </div>
 
       {error && (
@@ -199,199 +224,179 @@ export function MetricsPage({ apiKey, orchUrl }) {
         </Alert>
       )}
 
-      {/* Key Metrics Summary */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Downloaded</CardTitle>
-            <ArrowDown className="h-4 w-4 text-blue-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatBytes(parsedMetrics.orch_total_downloaded_bytes || 0)}</div>
-            <p className="text-xs text-muted-foreground mt-1">All-time total</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Uploaded</CardTitle>
-            <ArrowUp className="h-4 w-4 text-green-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatBytes(parsedMetrics.orch_total_uploaded_bytes || 0)}</div>
-            <p className="text-xs text-muted-foreground mt-1">All-time total</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Download Speed</CardTitle>
-            <ArrowDown className="h-4 w-4 text-blue-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{(parsedMetrics.orch_total_download_speed_mbps || 0).toFixed(2)} MB/s</div>
-            <p className="text-xs text-muted-foreground mt-1">Current speed</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Upload Speed</CardTitle>
-            <ArrowUp className="h-4 w-4 text-green-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{(parsedMetrics.orch_total_upload_speed_mbps || 0).toFixed(2)} MB/s</div>
-            <p className="text-xs text-muted-foreground mt-1">Current speed</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Streams</CardTitle>
-            <Activity className="h-4 w-4 text-purple-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{parsedMetrics.orch_total_streams || 0}</div>
-            <p className="text-xs text-muted-foreground mt-1">{parsedMetrics.orch_used_engines || 0} engines in use</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Connected Peers</CardTitle>
-            <Users className="h-4 w-4 text-orange-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{parsedMetrics.orch_total_peers || 0}</div>
-            <p className="text-xs text-muted-foreground mt-1">Current connections</p>
-          </CardContent>
-        </Card>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatTile label="Global Active Streams" value={snapshot?.north_star?.global_active_streams || 0} hint="Current viewers" />
+        <StatTile label="Global Egress" value={formatMbps(snapshot?.north_star?.global_egress_bandwidth_mbps)} hint="North star throughput" />
+        <StatTile label="System Success Rate" value={formatPercent(snapshot?.north_star?.system_success_rate_percent)} hint="1-minute rolling window" />
+        <StatTile label="Proxy Active Clients" value={snapshot?.north_star?.proxy_active_clients || 0} hint="TS + HLS clients" />
       </div>
 
-      {/* Charts */}
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Transfer Speeds Chart */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Transfer Speeds (MB/s)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div style={{ height: '300px' }}>
-              {loading && historicalData.timestamps.length === 0 ? (
-                <div className="flex items-center justify-center h-full">
-                  <p className="text-muted-foreground">Loading chart data...</p>
-                </div>
-              ) : (
-                <Line
-                  data={createDualChartData(
-                    'Download Speed',
-                    historicalData.downloadSpeedMbps,
-                    'Upload Speed',
-                    historicalData.uploadSpeedMbps,
-                    { border: 'rgb(59, 130, 246)', bg: 'rgba(59, 130, 246, 0.1)' },
-                    { border: 'rgb(34, 197, 94)', bg: 'rgba(34, 197, 94, 0.1)' }
-                  )}
-                  options={chartOptions('Transfer Speeds Over Time', 'MB/s')}
-                />
+      <div className="grid gap-5 xl:grid-cols-12">
+        <Pane title="Proxy Throughput" subtitle="Ingress vs egress (1 minute trend)" icon={Network} className="xl:col-span-8">
+          <div style={{ height: '260px' }}>
+            <Line
+              data={dualChartData(
+                { label: 'Ingress Mbps', data: history.ingressMbps, border: 'rgb(14, 165, 233)', bg: 'rgba(14, 165, 233, 0.16)' },
+                { label: 'Egress Mbps', data: history.egressMbps, border: 'rgb(16, 185, 129)', bg: 'rgba(16, 185, 129, 0.16)' }
               )}
-            </div>
-          </CardContent>
-        </Card>
+              options={lineOptions('Proxy Throughput', 'Mbps')}
+            />
+          </div>
+        </Pane>
 
-        {/* Active Streams Chart */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Active Streams</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div style={{ height: '300px' }}>
-              {loading && historicalData.timestamps.length === 0 ? (
-                <div className="flex items-center justify-center h-full">
-                  <p className="text-muted-foreground">Loading chart data...</p>
-                </div>
-              ) : (
-                <Line
-                  data={createChartData(
-                    'Active Streams',
-                    historicalData.activeStreams,
-                    'rgb(168, 85, 247)',
-                    'rgba(168, 85, 247, 0.1)'
-                  )}
-                  options={chartOptions('Active Streams Over Time', 'Count')}
-                />
-              )}
+        <Pane title="Request Reliability" subtitle="RED summary" icon={ShieldCheck} className="xl:col-span-4">
+          <div className="grid gap-3">
+            <StatTile
+              label="Success Rate"
+              value={formatPercent(snapshot?.proxy?.request_window_1m?.success_rate_percent)}
+              hint={`${snapshot?.proxy?.request_window_1m?.total_requests_1m || 0} requests in last minute`}
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <StatTile label="4xx/min" value={snapshot?.proxy?.request_window_1m?.error_4xx_rate_per_min || 0} />
+              <StatTile label="5xx/min" value={snapshot?.proxy?.request_window_1m?.error_5xx_rate_per_min || 0} />
             </div>
-          </CardContent>
-        </Card>
+            <div className="grid grid-cols-2 gap-3">
+              <StatTile label="TTFB avg" value={`${(snapshot?.proxy?.ttfb?.avg_ms || 0).toFixed(1)} ms`} />
+              <StatTile label="TTFB p95" value={`${(snapshot?.proxy?.ttfb?.p95_ms || 0).toFixed(1)} ms`} />
+            </div>
+          </div>
+        </Pane>
 
-        {/* Used Engines Chart */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Engines in Use</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div style={{ height: '300px' }}>
-              {loading && historicalData.timestamps.length === 0 ? (
-                <div className="flex items-center justify-center h-full">
-                  <p className="text-muted-foreground">Loading chart data...</p>
-                </div>
-              ) : (
-                <Line
-                  data={createChartData(
-                    'Used Engines',
-                    historicalData.usedEngines,
-                    'rgb(234, 179, 8)',
-                    'rgba(234, 179, 8, 0.1)'
-                  )}
-                  options={chartOptions('Engines in Use Over Time', 'Count')}
-                />
+        <Pane title="Connections & Streams" subtitle="Current client pressure" icon={Users} className="xl:col-span-6">
+          <div className="mb-3 grid grid-cols-2 gap-3">
+            <StatTile label="Active Clients" value={snapshot?.north_star?.proxy_active_clients || 0} hint={`TS ${snapshot?.proxy?.active_clients?.ts || 0} | HLS ${snapshot?.proxy?.active_clients?.hls || 0}`} />
+            <StatTile label="Active Streams" value={snapshot?.north_star?.global_active_streams || 0} hint={`${snapshot?.engines?.used || 0} engines used`} />
+          </div>
+          <div style={{ height: '220px' }}>
+            <Line
+              data={dualChartData(
+                { label: 'Active Clients', data: history.activeClients, border: 'rgb(249, 115, 22)', bg: 'rgba(249, 115, 22, 0.18)' },
+                { label: 'Active Streams', data: history.activeStreams, border: 'rgb(59, 130, 246)', bg: 'rgba(59, 130, 246, 0.14)' }
               )}
-            </div>
-          </CardContent>
-        </Card>
+              options={lineOptions('Load Footprint', 'Count')}
+            />
+          </div>
+        </Pane>
 
-        {/* Peer Count Chart */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Connected Peers</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div style={{ height: '300px' }}>
-              {loading && historicalData.timestamps.length === 0 ? (
-                <div className="flex items-center justify-center h-full">
-                  <p className="text-muted-foreground">Loading chart data...</p>
-                </div>
+        <Pane title="Engine State" subtitle="Healthy routing capacity" icon={Server} className="xl:col-span-3">
+          <div className="mb-3 grid grid-cols-2 gap-3">
+            <StatTile label="Total" value={snapshot?.engines?.total || 0} />
+            <StatTile label="Healthy" value={snapshot?.engines?.healthy || 0} />
+            <StatTile label="Unhealthy" value={snapshot?.engines?.unhealthy || 0} />
+            <StatTile label="Uptime avg" value={`${Math.round((snapshot?.engines?.uptime_avg_seconds || 0) / 60)} min`} />
+          </div>
+          <div style={{ height: '170px' }}>
+            <Bar
+              data={{
+                labels: ['Playing', 'Idle', 'Unhealthy', 'Unknown'],
+                datasets: [{
+                  data: [engineState.playing || 0, engineState.idle || 0, engineState.unhealthy || 0, engineState.unknown || 0],
+                  backgroundColor: ['rgba(16,185,129,0.7)', 'rgba(59,130,246,0.7)', 'rgba(239,68,68,0.7)', 'rgba(148,163,184,0.7)'],
+                  borderColor: ['rgb(16,185,129)', 'rgb(59,130,246)', 'rgb(239,68,68)', 'rgb(148,163,184)'],
+                  borderWidth: 1,
+                }],
+              }}
+              options={barOptions}
+            />
+          </div>
+        </Pane>
+
+        <Pane title="Infrastructure USE" subtitle="Docker saturation and utilization" icon={Cpu} className="xl:col-span-3">
+          <div className="grid gap-3">
+            <StatTile label="CPU" value={formatPercent(snapshot?.docker?.cpu_percent)} />
+            <StatTile label="Memory" value={formatBytes(snapshot?.docker?.memory_usage || 0)} />
+            <StatTile label="Restart Total" value={snapshot?.docker?.restart_total || 0} />
+            <StatTile label="OOM Killed" value={snapshot?.docker?.oom_killed_total || 0} />
+          </div>
+        </Pane>
+
+        <Pane title="Latency & System Drift" subtitle="P95 TTFB and success trend" icon={Gauge} className="xl:col-span-6">
+          <div style={{ height: '240px' }}>
+            <Line
+              data={{
+                labels,
+                datasets: [
+                  {
+                    label: 'TTFB p95 (ms)',
+                    data: history.ttfbP95Ms,
+                    borderColor: 'rgb(239,68,68)',
+                    backgroundColor: 'rgba(239,68,68,0.14)',
+                    tension: 0.28,
+                    fill: true,
+                    yAxisID: 'y',
+                  },
+                  {
+                    label: 'Success Rate (%)',
+                    data: history.successRate,
+                    borderColor: 'rgb(22,163,74)',
+                    backgroundColor: 'rgba(22,163,74,0.12)',
+                    tension: 0.28,
+                    fill: true,
+                    yAxisID: 'y2',
+                  },
+                ],
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                  y: { beginAtZero: true, title: { display: true, text: 'ms' } },
+                  y2: {
+                    position: 'right',
+                    min: 0,
+                    max: 100,
+                    grid: { drawOnChartArea: false },
+                    title: { display: true, text: '%' },
+                  },
+                },
+              }}
+            />
+          </div>
+        </Pane>
+
+        <Pane title="Stream Health" subtitle="Peers, buffer health, and active keys" icon={Activity} className="xl:col-span-6">
+          <div className="mb-3 grid grid-cols-2 gap-3">
+            <StatTile label="Total Peers" value={snapshot?.streams?.total_peers || 0} />
+            <StatTile label="Buffer Avg Pieces" value={snapshot?.streams?.buffer?.avg_pieces || 0} />
+            <StatTile label="Buffer Min Pieces" value={snapshot?.streams?.buffer?.min_pieces || 0} />
+            <StatTile label="Download Speed" value={`${(snapshot?.streams?.download_speed_mbps || 0).toFixed(2)} MB/s`} />
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+            <p className="mb-2 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Active Infohash / Content Keys</p>
+            <div className="max-h-28 space-y-1 overflow-auto pr-1">
+              {activeKeys.length === 0 ? (
+                <p className="text-xs text-slate-500 dark:text-slate-400">No active streams</p>
               ) : (
-                <Line
-                  data={createChartData(
-                    'Peers',
-                    historicalData.peers,
-                    'rgb(249, 115, 22)',
-                    'rgba(249, 115, 22, 0.1)'
-                  )}
-                  options={chartOptions('Connected Peers Over Time', 'Count')}
-                />
+                activeKeys.map((key) => (
+                  <div key={key} className="truncate rounded-md bg-white px-2 py-1 text-xs text-slate-700 dark:bg-slate-950 dark:text-slate-300">
+                    {key}
+                  </div>
+                ))
               )}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </Pane>
       </div>
 
-      {/* Raw Metrics */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Raw Prometheus Metrics</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading && !metrics ? (
-            <p className="text-muted-foreground">Loading metrics...</p>
-          ) : (
-            <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-xs max-h-96">
-              {metrics || 'No metrics available'}
-            </pre>
-          )}
-        </CardContent>
-      </Card>
+      <div className="grid gap-5 md:grid-cols-2">
+        <Pane title="CPU Trend" subtitle="Container utilization over time" icon={Cpu}>
+          <div style={{ height: '180px' }}>
+            <Line
+              data={chartData('CPU %', history.cpuPercent, 'rgb(234, 88, 12)', 'rgba(234, 88, 12, 0.14)')}
+              options={lineOptions('CPU', '%')}
+            />
+          </div>
+        </Pane>
+        <Pane title="Memory Trend" subtitle="Container memory footprint" icon={Server}>
+          <div style={{ height: '180px' }}>
+            <Line
+              data={chartData('Memory Bytes', history.memoryBytes, 'rgb(59, 130, 246)', 'rgba(59, 130, 246, 0.16)')}
+              options={lineOptions('Memory', 'bytes')}
+            />
+          </div>
+        </Pane>
+      </div>
     </div>
   )
 }
