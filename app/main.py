@@ -594,9 +594,12 @@ def get_metrics():
 
 
 @app.get("/metrics/dashboard")
-def get_dashboard_metrics_snapshot():
+def get_dashboard_metrics_snapshot(
+    window_seconds: int = Query(cfg.DASHBOARD_DEFAULT_WINDOW_S, ge=60, le=604800),
+    max_points: int = Query(360, ge=30, le=2000),
+):
     """Get structured advanced metrics for the pane-based dashboard."""
-    return update_custom_metrics()
+    return update_custom_metrics(window_seconds=window_seconds, max_points=max_points)
 
 @app.get("/metrics/performance")
 def get_performance_metrics(

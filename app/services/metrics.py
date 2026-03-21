@@ -1,6 +1,7 @@
 from prometheus_client import Counter, Gauge, Histogram, make_asgi_app, Enum
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from collections import deque
 from typing import Any, Deque, Dict, List, Optional, Set
 
@@ -130,6 +131,7 @@ _last_proxy_client_bytes: Dict[str, int] = {}
 _last_proxy_stream_ingress_bytes: Dict[str, int] = {}
 _proxy_total_ingress_bytes = 0
 _proxy_total_egress_bytes = 0
+_dashboard_last_persist_ts: Optional[float] = None
 
 _docker_rate_lock = threading.Lock()
 _last_network_rx_bytes: Optional[int] = None
@@ -397,6 +399,92 @@ def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
         }
 
 
+def _persist_dashboard_sample(snapshot: Dict[str, Any]):
+    """Persist snapshot sample points for windowed dashboard history."""
+    from .db import SessionLocal
+    from ..core.config import cfg
+    from ..models.db_models import DashboardMetricSampleRow
+
+    global _dashboard_last_persist_ts
+    now = time.time()
+    if _dashboard_last_persist_ts is not None and (now - _dashboard_last_persist_ts) < cfg.DASHBOARD_PERSIST_INTERVAL_S:
+        return
+
+    row = DashboardMetricSampleRow(
+        ts=datetime.now(timezone.utc),
+        proxy_ingress_rate_bps=float(snapshot.get("proxy", {}).get("throughput", {}).get("ingress_bps", 0.0)),
+        proxy_egress_rate_bps=float(snapshot.get("proxy", {}).get("throughput", {}).get("egress_bps", 0.0)),
+        active_streams=int(snapshot.get("north_star", {}).get("global_active_streams", 0)),
+        active_clients=int(snapshot.get("north_star", {}).get("proxy_active_clients", 0)),
+        success_rate_percent=float(snapshot.get("proxy", {}).get("request_window_1m", {}).get("success_rate_percent", 100.0)),
+        ttfb_p95_ms=float(snapshot.get("proxy", {}).get("ttfb", {}).get("p95_ms", 0.0)),
+        docker_cpu_percent=float(snapshot.get("docker", {}).get("cpu_percent", 0.0)),
+        docker_memory_bytes=float(snapshot.get("docker", {}).get("memory_usage", 0.0)),
+    )
+
+    try:
+        with SessionLocal() as session:
+            session.add(row)
+
+            retention_cutoff = datetime.now(timezone.utc) - timedelta(hours=cfg.DASHBOARD_METRICS_RETENTION_HOURS)
+            session.query(DashboardMetricSampleRow).filter(DashboardMetricSampleRow.ts < retention_cutoff).delete()
+            session.commit()
+
+        _dashboard_last_persist_ts = now
+    except Exception:
+        # Persistence should not break live metrics path
+        return
+
+
+def _load_dashboard_history(window_seconds: int, max_points: int) -> Dict[str, List[Any]]:
+    """Load persisted dashboard metric samples for a given observation window."""
+    from .db import SessionLocal
+    from ..models.db_models import DashboardMetricSampleRow
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(60, int(window_seconds)))
+
+    try:
+        with SessionLocal() as session:
+            rows = (
+                session.query(DashboardMetricSampleRow)
+                .filter(DashboardMetricSampleRow.ts >= cutoff)
+                .order_by(DashboardMetricSampleRow.ts.asc())
+                .all()
+            )
+    except Exception:
+        rows = []
+
+    if not rows:
+        return {
+            "timestamps": [],
+            "egressMbps": [],
+            "ingressMbps": [],
+            "activeStreams": [],
+            "activeClients": [],
+            "successRate": [],
+            "ttfbP95Ms": [],
+            "cpuPercent": [],
+            "memoryBytes": [],
+        }
+
+    step = 1
+    if max_points > 0 and len(rows) > max_points:
+        step = max(1, len(rows) // max_points)
+    sampled = rows[::step] if step > 1 else rows
+
+    return {
+        "timestamps": [r.ts.isoformat() for r in sampled],
+        "egressMbps": [round((float(r.proxy_egress_rate_bps) * 8.0) / 1_000_000.0, 3) for r in sampled],
+        "ingressMbps": [round((float(r.proxy_ingress_rate_bps) * 8.0) / 1_000_000.0, 3) for r in sampled],
+        "activeStreams": [int(r.active_streams or 0) for r in sampled],
+        "activeClients": [int(r.active_clients or 0) for r in sampled],
+        "successRate": [float(r.success_rate_percent or 0.0) for r in sampled],
+        "ttfbP95Ms": [float(r.ttfb_p95_ms or 0.0) for r in sampled],
+        "cpuPercent": [float(r.docker_cpu_percent or 0.0) for r in sampled],
+        "memoryBytes": [float(r.docker_memory_bytes or 0.0) for r in sampled],
+    }
+
+
 def _compute_docker_metrics_snapshot() -> Dict[str, float]:
     """Compute Docker USE snapshots and derivative throughput rates."""
     from .docker_stats_collector import docker_stats_collector
@@ -460,7 +548,7 @@ def _compute_docker_metrics_snapshot() -> Dict[str, float]:
     }
 
 
-def get_dashboard_snapshot() -> Dict[str, Any]:
+def get_dashboard_snapshot(window_seconds: int = 900, max_points: int = 360) -> Dict[str, Any]:
     """Return a structured snapshot used by the pane-based dashboard."""
     from .state import state
 
@@ -522,6 +610,8 @@ def get_dashboard_snapshot() -> Dict[str, Any]:
             "throughput": {
                 "ingress_mbps": round((proxy_throughput["ingress_rate_bps"] * 8.0) / 1_000_000.0, 3),
                 "egress_mbps": round((proxy_throughput["egress_rate_bps"] * 8.0) / 1_000_000.0, 3),
+                "ingress_bps": proxy_throughput["ingress_rate_bps"],
+                "egress_bps": proxy_throughput["egress_rate_bps"],
                 "ingress_total_bytes": proxy_throughput["ingress_total_bytes"],
                 "egress_total_bytes": proxy_throughput["egress_total_bytes"],
             },
@@ -550,6 +640,7 @@ def get_dashboard_snapshot() -> Dict[str, Any]:
             "active_keys": sorted({s.key for s in streams if s.key}),
         },
         "docker": docker_metrics,
+        "observation_window_seconds": int(window_seconds),
     }
 
 
@@ -620,7 +711,7 @@ def reset_cumulative_metrics():
         _stream_last_values.clear()
 
 
-def update_custom_metrics() -> Dict[str, Any]:
+def update_custom_metrics(window_seconds: int = 900, max_points: int = 360) -> Dict[str, Any]:
     """
     Update custom Prometheus metrics with aggregated data from all engines.
     
@@ -836,4 +927,7 @@ def update_custom_metrics() -> Dict[str, Any]:
         orch_performance_max_ms.labels(operation=operation).set(stats['max_ms'])
         orch_performance_success_rate.labels(operation=operation).set(stats['success_rate'])
 
-    return get_dashboard_snapshot()
+    snapshot = get_dashboard_snapshot(window_seconds=window_seconds, max_points=max_points)
+    _persist_dashboard_sample(snapshot)
+    snapshot["history"] = _load_dashboard_history(window_seconds=window_seconds, max_points=max_points)
+    return snapshot

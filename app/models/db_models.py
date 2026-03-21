@@ -61,3 +61,17 @@ class EventRow(Base):
     details: Mapped[dict | None] = mapped_column(JSON, default={})
     container_id: Mapped[str | None] = mapped_column(String(128))
     stream_id: Mapped[str | None] = mapped_column(String(256))
+
+
+class DashboardMetricSampleRow(Base):
+    __tablename__ = "dashboard_metric_samples"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    proxy_ingress_rate_bps: Mapped[float] = mapped_column(default=0.0)
+    proxy_egress_rate_bps: Mapped[float] = mapped_column(default=0.0)
+    active_streams: Mapped[int] = mapped_column(Integer, default=0)
+    active_clients: Mapped[int] = mapped_column(Integer, default=0)
+    success_rate_percent: Mapped[float] = mapped_column(default=100.0)
+    ttfb_p95_ms: Mapped[float] = mapped_column(default=0.0)
+    docker_cpu_percent: Mapped[float] = mapped_column(default=0.0)
+    docker_memory_bytes: Mapped[float] = mapped_column(default=0.0)

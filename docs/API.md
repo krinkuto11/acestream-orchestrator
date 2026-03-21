@@ -246,8 +246,28 @@ Response:
 
  - GET /metrics/dashboard
    - Structured JSON snapshot used by the pane-based dashboard.
-   - Includes categories: `north_star`, `proxy`, `engines`, `streams`, `docker`.
+   - Query params:
+     - `window_seconds` (optional): observation window for historical series. Range `60..604800`.
+     - `max_points` (optional): maximum returned points in each historical series. Range `30..2000`.
+   - Includes categories: `north_star`, `proxy`, `engines`, `streams`, `docker`, `history`.
+   - Includes `observation_window_seconds` to reflect the effective window used.
    - Suitable for platform-agnostic dashboards and API consumers that prefer JSON over Prometheus text format.
+
+Example:
+```bash
+curl "http://localhost:8000/metrics/dashboard?window_seconds=3600&max_points=240"
+```
+
+History payload fields:
+- `history.timestamps` - ISO timestamps for each sampled point
+- `history.egressMbps` - Proxy egress throughput time series
+- `history.ingressMbps` - Proxy ingress throughput time series
+- `history.activeStreams` - Active stream count time series
+- `history.activeClients` - Active client count time series
+- `history.successRate` - 1m success rate time series
+- `history.ttfbP95Ms` - 1m p95 TTFB time series
+- `history.cpuPercent` - Docker CPU percent time series
+- `history.memoryBytes` - Docker memory usage time series
 
 ## Custom Engine Variant
 

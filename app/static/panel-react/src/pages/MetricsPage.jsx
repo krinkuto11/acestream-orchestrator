@@ -64,6 +64,16 @@ function formatPercent(value) {
 }
 
 export function MetricsPage({ apiKey, orchUrl }) {
+  const WINDOW_OPTIONS = [
+    { label: '5m', value: 300 },
+    { label: '15m', value: 900 },
+    { label: '30m', value: 1800 },
+    { label: '1h', value: 3600 },
+    { label: '6h', value: 21600 },
+    { label: '24h', value: 86400 },
+  ]
+
+  const [windowSeconds, setWindowSeconds] = useState(900)
   const [snapshot, setSnapshot] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -86,7 +96,7 @@ export function MetricsPage({ apiKey, orchUrl }) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
 
-      const response = await fetch(`${orchUrl}/metrics/dashboard`, { headers })
+      const response = await fetch(`${orchUrl}/metrics/dashboard?window_seconds=${windowSeconds}&max_points=360`, { headers })
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`)
       }
@@ -95,29 +105,29 @@ export function MetricsPage({ apiKey, orchUrl }) {
       setSnapshot(data)
       setError(null)
 
-      const now = new Date()
-      setHistory(prev => {
-        const maxPoints = 90
-        return {
-          timestamps: [...prev.timestamps, now].slice(-maxPoints),
-          egressMbps: [...prev.egressMbps, data?.proxy?.throughput?.egress_mbps || 0].slice(-maxPoints),
-          ingressMbps: [...prev.ingressMbps, data?.proxy?.throughput?.ingress_mbps || 0].slice(-maxPoints),
-          activeStreams: [...prev.activeStreams, data?.north_star?.global_active_streams || 0].slice(-maxPoints),
-          activeClients: [...prev.activeClients, data?.north_star?.proxy_active_clients || 0].slice(-maxPoints),
-          successRate: [...prev.successRate, data?.proxy?.request_window_1m?.success_rate_percent || 0].slice(-maxPoints),
-          ttfbP95Ms: [...prev.ttfbP95Ms, data?.proxy?.ttfb?.p95_ms || 0].slice(-maxPoints),
-          cpuPercent: [...prev.cpuPercent, data?.docker?.cpu_percent || 0].slice(-maxPoints),
-          memoryBytes: [...prev.memoryBytes, data?.docker?.memory_usage || 0].slice(-maxPoints),
-        }
-      })
+      const persistedHistory = data?.history
+      if (persistedHistory && Array.isArray(persistedHistory.timestamps)) {
+        setHistory({
+          timestamps: persistedHistory.timestamps.map(ts => new Date(ts)),
+          egressMbps: persistedHistory.egressMbps || [],
+          ingressMbps: persistedHistory.ingressMbps || [],
+          activeStreams: persistedHistory.activeStreams || [],
+          activeClients: persistedHistory.activeClients || [],
+          successRate: persistedHistory.successRate || [],
+          ttfbP95Ms: persistedHistory.ttfbP95Ms || [],
+          cpuPercent: persistedHistory.cpuPercent || [],
+          memoryBytes: persistedHistory.memoryBytes || [],
+        })
+      }
     } catch (err) {
       setError(err.message || String(err))
     } finally {
       setLoading(false)
     }
-  }, [orchUrl, apiKey])
+  }, [orchUrl, apiKey, windowSeconds])
 
   useEffect(() => {
+    setLoading(true)
     fetchSnapshot()
     const interval = setInterval(fetchSnapshot, 5000)
     return () => clearInterval(interval)
@@ -212,9 +222,21 @@ export function MetricsPage({ apiKey, orchUrl }) {
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Streaming Observability</h1>
           <p className="mt-1 text-slate-600 dark:text-slate-400">Pane-based dashboard for RED proxy telemetry, USE infrastructure metrics, and stream health.</p>
         </div>
-        <Badge variant={loading ? 'secondary' : 'outline'}>
-          {loading ? 'Refreshing...' : 'Live'}
-        </Badge>
+        <div className="flex items-center gap-3">
+          <label className="text-sm text-slate-600 dark:text-slate-300">Window</label>
+          <select
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+            value={windowSeconds}
+            onChange={(e) => setWindowSeconds(parseInt(e.target.value, 10))}
+          >
+            {WINDOW_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <Badge variant={loading ? 'secondary' : 'outline'}>
+            {loading ? 'Refreshing...' : 'Live'}
+          </Badge>
+        </div>
       </div>
 
       {error && (
