@@ -42,6 +42,9 @@ class HTTPStreamReader:
 
     def _read_stream(self):
         """Thread worker that reads HTTP stream and writes to pipe"""
+        # Local import avoids module-level coupling during proxy startup.
+        from ..services.metrics import observe_proxy_ingress_bytes
+
         try:
             # Build headers - mimic VLC player for better compatibility
             # Use provided user_agent or fall back to VLC default if None
@@ -101,6 +104,7 @@ class HTTPStreamReader:
                         try:
                             # Write binary data to pipe
                             os.write(self.pipe_write, chunk)
+                            observe_proxy_ingress_bytes("TS", len(chunk))
                             chunk_count += 1
 
                             # Log progress periodically

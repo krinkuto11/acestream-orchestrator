@@ -389,8 +389,10 @@ def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
         observed_delta_ingress = max(0, _proxy_ingress_observed_bytes - _last_proxy_ingress_observed_bytes)
         observed_delta_egress = max(0, _proxy_egress_observed_bytes - _last_proxy_egress_observed_bytes)
 
-        delta_ingress = delta_ts_ingress + observed_delta_ingress
-        delta_egress = delta_ts_egress + observed_delta_egress
+        # Prefer direct observed deltas from live data paths. Fall back to Redis-derived
+        # deltas when observers are unavailable.
+        delta_ingress = observed_delta_ingress if observed_delta_ingress > 0 else delta_ts_ingress
+        delta_egress = observed_delta_egress if observed_delta_egress > 0 else delta_ts_egress
 
         _proxy_total_ingress_bytes += delta_ingress
         _proxy_total_egress_bytes += delta_egress
