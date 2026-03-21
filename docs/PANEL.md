@@ -1,181 +1,91 @@
-# Acestream Orchestrator Dashboard
+# Panel User Guide
 
-Route: `/panel`.
+Route:
 
-![Dashboard Overview](images/dashboard_overview.png)
-
-## Overview
-
-The Acestream Orchestrator Dashboard is a modern, high-performance web interface built with **React** and **Material-UI** for monitoring and managing Acestream engines, streams, and VPN connections. The dashboard features a professional dark theme with responsive design optimized for operational visibility and performance.
-
-### Technology Stack
-
-- **React 18**: Modern React with hooks for efficient state management
-- **Material-UI 5**: Comprehensive UI component library with excellent accessibility
-- **Vite**: Fast build tool and development server
-- **Chart.js**: Interactive charts for stream statistics
-- **LocalStorage**: Caching for user preferences and settings
-
-## Key Features
-
-### 🖥️ Modern Dashboard Interface
-- **Material-UI Components**: Professional, consistent design system
-- **React Architecture**: Component-based structure for maintainability
-- **Responsive Grid Layout**: Adapts seamlessly to different screen sizes
-- **Real-time updates** with configurable refresh intervals (2-30 seconds)
-- **Card-based design** with Material-UI cards and typography
-- **Visual health indicators** with intuitive color coding and icons
-
-### ⚡ Performance Optimizations
-- **React Hooks**: Efficient state management with `useState`, `useEffect`, and `useCallback`
-- **LocalStorage Caching**: User preferences and settings cached to reduce network requests
-- **Optimized Rendering**: Components only re-render when necessary
-- **Memoized Callbacks**: `useCallback` prevents unnecessary function recreations
-- **Batch API Calls**: Single fetch for all data using `Promise.all`
-- **Virtual DOM**: React's efficient diffing algorithm for minimal DOM updates
-
-### 📊 Key Performance Indicators (KPIs)
-- **Engines**: Total number of managed engines
-- **Active Streams**: Currently running streams
-- **Healthy Engines**: Engines passing health checks
-- **VPN Status**: Connection status (Connected/Disconnected/Disabled)
-- **Last Update**: Timestamp of most recent data refresh
-
-### 🔧 Engine Management
-Enhanced engine cards displaying:
-- **Engine name and port** (no more confusing labels)
-- **Health status** with color-coded indicators:
-  - 🟢 Green: Healthy engines responding properly
-  - 🔴 Red: Unhealthy engines not responding
-  - ⚪ Gray: Unknown status or pending health check
-- **Active stream count** for each engine
-- **Last usage tracking** with "time ago" formatting
-- **Health check timing** showing when last checked
-- **Delete engine** functionality with confirmation
-
-### 🎬 Stream Analytics
-- **Stream listing** with enhanced metadata
-- **Real-time statistics** with dual-axis charts:
-  - Download/Upload speeds (MB/s)
-  - Peer connections
-  - Historical data visualization
-- **Stream controls**: Stop stream and delete engine buttons
-- **Detailed session information** including:
-  - Stream ID and session details
-  - Content key and type
-  - Engine assignment
-  - Start time and duration
-  - Direct links to statistics and command URLs
-
-### 🌐 VPN Integration
-Comprehensive VPN monitoring section:
-- **VPN status**: Running, stopped, or not configured
-- **Health monitoring**: Real-time connection health
-- **Container information**: Gluetun container status
-- **Forwarded port**: Current port forwarding configuration
-- **Last check**: Timestamp of most recent VPN health check
-
-### ⚙️ Advanced Engine Settings (NEW)
-Comprehensive engine parameter configuration interface:
-- **Platform Detection**: Automatically detects system architecture (amd64/arm32/arm64)
-- **Custom Variant Toggle**: Enable/disable custom engine parameters
-- **ARM Version Selection**: Choose between AceStream v3.2.13 or v3.2.14 for ARM platforms
-- **Parameter Configuration**: 35 configurable parameters organized into 7 categories:
-  - **Basic Settings**: Console mode, bind options, access tokens
-  - **Cache Configuration**: Memory/disk cache settings and sizes
-  - **Buffer Settings**: Live and VOD buffer configuration
-  - **Connection Settings**: P2P connections, bandwidth limits, port settings
-  - **WebRTC Settings**: WebRTC connection options
-  - **Advanced Settings**: Stats reporting, slot management
-  - **Logging Settings**: Debug levels, log files, log rotation
-- **Per-Parameter Control**: Each parameter can be individually enabled/disabled
-- **Unit Display**: Proper units shown (MB, GB, seconds, etc.)
-- **VPN-Aware**: P2P port configuration shows warnings when VPN is enabled
-- **Save & Reprovision**: Save settings and reprovision all engines with new configuration
-- **Real-time Validation**: Configuration validated before saving
-
-## Configuration
-
-### Connection Settings
-- **Server URL**: Orchestrator base URL (default: http://localhost:8000)
-- **API Key**: Bearer token for protected endpoints
-- **Refresh Interval**: Auto-refresh frequency (2s, 5s, 10s, 30s)
-
-### Authentication
-For protected endpoints, provide your API key in the "API Key" field. The dashboard will automatically include the Bearer token in requests to protected endpoints.
-
-## Health Monitoring
-
-### Engine Health Checking
-The dashboard implements intelligent health monitoring using the Acestream API endpoint `/server/api?api_version=3&method=get_status`. When engines hang or become unresponsive, this endpoint fails to respond, allowing automatic detection of problematic engines.
-
-**Health Status Indicators:**
-- **Healthy** (Green): Engine responding normally to API requests
-- **Unhealthy** (Red): Engine not responding or returning errors
-- **Unknown** (Gray): Health status pending or unable to determine
-
-### Background Monitoring
-- Health checks run automatically every 30 seconds
-- Real-time status updates in the dashboard
-- Visual indicators update immediately when status changes
-- Historical health check timing displayed
-
-## Stream Usage Tracking
-
-The dashboard tracks when streams were last loaded into each engine, enabling intelligent engine selection:
-- **Last usage timestamp** displayed with human-readable formatting
-- **Usage patterns** help identify idle engines
-- **Proxy integration** can use this data for load balancing
-- **Automatic updates** when new streams start
-
-## VPN Status Monitoring
-
-When Gluetun VPN integration is configured, the dashboard provides comprehensive VPN monitoring:
-- **Real-time connection status** with visual indicators
-- **Health monitoring** of VPN container and connection
-- **Port forwarding information** for proxy configuration
-- **Container status** and last health check timing
-
-## Technical Details
-
-### CORS Support
-The panel is served from the same host as the orchestrator. If you need to serve it separately, enable CORS in `main.py`.
-
-### API Integration
-The dashboard interfaces with the following endpoints:
-- `GET /engines` - Engine listing with health data
-- `GET /streams` - Active stream information
-- `GET /vpn/status` - VPN status and configuration
-- `GET /streams/{id}/stats` - Historical stream statistics
-- `DELETE /containers/{id}` - Engine deletion (protected)
-- `GET /custom-variant/platform` - Platform detection (NEW)
-- `GET /custom-variant/config` - Custom variant configuration (NEW)
-- `POST /custom-variant/config` - Update custom variant (protected, NEW)
-- `POST /custom-variant/reprovision` - Reprovision engines (protected, NEW)
-
-### Browser Compatibility
-- Modern browsers with ES6+ support
-- Responsive design for desktop and mobile
-- Chart.js integration for data visualization
-- Local storage for settings persistence
-
-## Building the Dashboard
-
-### Development
-
-For development with hot-reload:
-
-```bash
-cd app/static/panel-react
-npm install
-npm run dev
+```text
+/panel
 ```
 
-The development server runs at http://localhost:3000 with API proxy configured.
+## Open The Panel
 
-### Production Build
+1. Start the orchestrator.
+2. Open `http://<host>:8000/panel`.
+3. If protected endpoints are enabled, go to Settings and set the API key.
 
-To build the dashboard for production (local development only):
+## Navigation
+
+- Overview: global status summary
+- Engines: engine status and engine configuration
+- Streams: active streams and actions
+- Events: event log and filters
+- Health: health checks and circuit breaker state
+- VPN: VPN status (single or redundant mode)
+- Dashboard: metrics and historical trends
+- Settings: runtime configuration
+
+## Common Tasks
+
+### Configure API key
+
+1. Open Settings > General.
+2. Set API key.
+3. Save.
+
+### Change refresh interval
+
+1. Open Settings > General.
+2. Select refresh interval.
+3. Save.
+
+### Configure engines
+
+1. Open Engines > Engine Configuration.
+2. Set replica and provisioning options.
+3. Save or Save and Reprovision.
+
+### Stop a stream
+
+1. Open Streams.
+2. Select stream.
+3. Stop stream.
+
+### Delete an engine
+
+1. Open Engines.
+2. Select engine.
+3. Delete engine.
+
+### Set dashboard metrics window
+
+1. Open Dashboard.
+2. Select a window (for example 5m, 15m, 1h, 24h).
+3. Charts and window totals update to the selected range.
+
+## Dashboard Metrics Notes
+
+- Throughput charts are rates in Mbps.
+- Global ingress and egress totals are window-scoped totals in bytes for the selected window.
+- Error rates include upstream proxy failures.
+
+## Troubleshooting
+
+### No data in panel
+
+- Check orchestrator is running.
+- Check browser can reach `http://<host>:8000`.
+- Check API key in Settings if endpoints are protected.
+
+### Engines page actions fail
+
+- Confirm API key is valid.
+- Confirm Docker socket is mounted in the orchestrator container.
+
+### VPN page empty or disconnected
+
+- Confirm VPN compose profile is running.
+- Check container names configured in Settings > VPN.
+
+## Build The Panel Locally
 
 ```bash
 cd app/static/panel-react
@@ -183,55 +93,4 @@ npm install
 npm run build
 ```
 
-The built files are placed in `app/static/panel/` and served by FastAPI at `/panel`.
-
-### Deployment
-
-The dashboard is built automatically during Docker image creation. The Dockerfile includes steps to:
-1. Install Node.js and npm
-2. Copy the React source files from `app/static/panel-react/`
-3. Run `npm install` and `npm run build`
-4. The built files are placed in `app/static/panel/` and served by FastAPI
-
-No additional setup is required when deploying via Docker - the dashboard is built as part of the image build process.
-
-For non-Docker deployments:
-1. Build the dashboard manually using `npm run build` in `app/static/panel-react/`
-2. The server will automatically serve the built files from `app/static/panel/`
-
-## Architecture
-
-### Component Structure
-
-```
-src/
-├── App.jsx                           # Main application component
-├── main.jsx                         # React entry point with theme
-├── components/
-│   ├── ModernSidebar.jsx            # Navigation sidebar
-│   ├── ModernHeader.jsx             # AppBar with settings
-│   ├── VPNStatus.jsx                # VPN monitoring
-│   └── ThemeProvider.jsx            # Dark/light theme
-├── pages/
-│   ├── OverviewPage.jsx             # Dashboard home
-│   ├── EnginesPage.jsx              # Engine status cards
-│   ├── StreamsPage.jsx              # Active streams
-│   ├── HealthPage.jsx               # Health monitoring
-│   ├── VPNPage.jsx                  # VPN details
-│   ├── MetricsPage.jsx              # Metrics and stats
-│   ├── SettingsPage.jsx             # Connection settings
-│   └── AdvancedEngineSettingsPage.jsx  # Custom variant config (NEW)
-├── hooks/
-│   └── useLocalStorage.js           # Persistent settings hook
-└── utils/
-    └── formatters.js                # Date/time/size formatting
-```
-
-### Performance Features
-
-1. **Efficient State Management**: React hooks minimize unnecessary re-renders
-2. **Memoized Callbacks**: `useCallback` prevents function recreation on every render
-3. **Batched API Calls**: Single `Promise.all` fetch for all data sources
-4. **Conditional Rendering**: Components only render when data is available
-5. **LocalStorage Caching**: User preferences persisted across sessions
-6. **Virtual DOM**: React's efficient diffing algorithm for minimal DOM updates
+Built files are served from `app/static/panel/` by FastAPI.

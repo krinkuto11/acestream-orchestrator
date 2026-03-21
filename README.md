@@ -42,6 +42,28 @@ Stream URL format:
 http://<host>:8000/ace/getstream?id=<acestream_id>
 ```
 
+## Minimal Usage
+
+1. Start containers with one of the compose files.
+2. Open `http://<host>:8000/panel`.
+3. Set API key in Settings if protected endpoints are enabled.
+4. Use stream URL format in your player.
+
+## Modify M3U Playlist
+
+If your playlist contains AceStream IDs or direct AceStream engine URLs, rewrite each entry to use the orchestrator endpoint.
+
+Target format:
+
+```text
+http://<host>:8000/ace/getstream?id=<acestream_id>
+```
+
+Typical replacements:
+
+- `acestream://<id>` -> `http://<host>:8000/ace/getstream?id=<id>`
+- `http://127.0.0.1:6878/ace/getstream?id=<id>` -> `http://<host>:8000/ace/getstream?id=<id>`
+
 ## Requirements
 
 - Docker and Docker Compose
