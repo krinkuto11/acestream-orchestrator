@@ -77,6 +77,10 @@ orch_proxy_4xx_rate_per_minute = Gauge("orch_proxy_4xx_rate_per_minute", "4xx re
 orch_proxy_5xx_rate_per_minute = Gauge("orch_proxy_5xx_rate_per_minute", "5xx request rate over last minute")
 orch_proxy_ttfb_avg_ms = Gauge("orch_proxy_ttfb_avg_ms", "Average proxy TTFB over last minute in ms")
 orch_proxy_ttfb_p95_ms = Gauge("orch_proxy_ttfb_p95_ms", "Approximate proxy TTFB p95 over last minute in ms")
+orch_proxy_ingress_bytes_total = Gauge("orch_proxy_ingress_bytes_total", "Total bytes ingressed by proxy from upstream engines")
+orch_proxy_egress_bytes_total = Gauge("orch_proxy_egress_bytes_total", "Total bytes egressed by proxy to downstream clients")
+orch_proxy_ingress_rate_bps = Gauge("orch_proxy_ingress_rate_bps", "Proxy ingress rate in bytes/s")
+orch_proxy_egress_rate_bps = Gauge("orch_proxy_egress_rate_bps", "Proxy egress rate in bytes/s")
 
 # Engine and stream depth gauges
 orch_engine_state_count = Gauge("orch_engine_state_count", "Engine counts by derived state", ["state"])
@@ -115,6 +119,17 @@ _proxy_window_lock = threading.Lock()
 _proxy_request_events: Deque[Dict[str, Any]] = deque(maxlen=5000)
 _proxy_disconnect_events: Deque[float] = deque(maxlen=5000)
 _proxy_ttfb_events: Deque[float] = deque(maxlen=5000)
+
+_proxy_io_lock = threading.Lock()
+_proxy_ingress_observed_bytes = 0
+_proxy_egress_observed_bytes = 0
+_last_proxy_egress_observed_bytes = 0
+_last_proxy_ingress_observed_bytes = 0
+_last_proxy_sample_ts: Optional[float] = None
+_last_proxy_client_bytes: Dict[str, int] = {}
+_last_proxy_stream_ingress_bytes: Dict[str, int] = {}
+_proxy_total_ingress_bytes = 0
+_proxy_total_egress_bytes = 0
 
 _docker_rate_lock = threading.Lock()
 _last_network_rx_bytes: Optional[int] = None
@@ -183,6 +198,24 @@ def observe_proxy_client_disconnect(mode: str):
     with _proxy_window_lock:
         _proxy_disconnect_events.append(now)
     _trim_old_events(now)
+
+
+def observe_proxy_ingress_bytes(mode: str, byte_count: int):
+    """Observe upstream bytes received by proxy (used for HLS downloads)."""
+    if byte_count <= 0:
+        return
+    global _proxy_ingress_observed_bytes
+    with _proxy_io_lock:
+        _proxy_ingress_observed_bytes += int(byte_count)
+
+
+def observe_proxy_egress_bytes(mode: str, byte_count: int):
+    """Observe downstream bytes sent by proxy (used for HLS segments)."""
+    if byte_count <= 0:
+        return
+    global _proxy_egress_observed_bytes
+    with _proxy_io_lock:
+        _proxy_egress_observed_bytes += int(byte_count)
 
 
 def _compute_proxy_clients_snapshot() -> Dict[str, int]:
@@ -263,6 +296,105 @@ def _compute_proxy_window_snapshot() -> Dict[str, float]:
         "ttfb_avg_ms": round(ttfb_avg_ms, 2),
         "ttfb_p95_ms": round(ttfb_p95_ms, 2),
     }
+
+
+def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
+    """Compute proxy-native ingress/egress totals and rates.
+
+    - TS egress uses Redis client `bytes_sent` deltas.
+    - TS ingress uses Redis stream buffer index deltas.
+    - HLS ingress/egress uses explicit observer hooks in HLS fetch/serve paths.
+    """
+    from .state import state
+
+    now = time.time()
+    current_client_bytes: Dict[str, int] = {}
+    current_stream_ingress_bytes: Dict[str, int] = {}
+
+    try:
+        from ..proxy.manager import ProxyManager
+        from ..proxy.redis_keys import RedisKeys
+        from ..proxy.config_helper import Config as ProxyConfig
+
+        proxy = ProxyManager.get_instance()
+        redis_client = getattr(proxy, "redis_client", None)
+        if redis_client:
+            active_keys = {s.key for s in state.list_streams(status="started") if s.key}
+            chunk_size = int(getattr(ProxyConfig, "BUFFER_CHUNK_SIZE", 188 * 5644))
+
+            for stream_key in active_keys:
+                try:
+                    buffer_index_raw = redis_client.get(RedisKeys.buffer_index(stream_key))
+                    buffer_index = int(buffer_index_raw or 0)
+                    current_stream_ingress_bytes[stream_key] = max(0, buffer_index) * chunk_size
+                except Exception:
+                    continue
+
+                try:
+                    client_ids = redis_client.smembers(RedisKeys.clients(stream_key)) or []
+                except Exception:
+                    client_ids = []
+
+                for client_id_raw in client_ids:
+                    try:
+                        client_id = client_id_raw.decode("utf-8") if isinstance(client_id_raw, bytes) else str(client_id_raw)
+                        client_key = RedisKeys.client_metadata(stream_key, client_id)
+                        bytes_sent_raw = redis_client.hget(client_key, "bytes_sent")
+                        if bytes_sent_raw is None:
+                            continue
+                        bytes_sent = int(bytes_sent_raw.decode("utf-8") if isinstance(bytes_sent_raw, bytes) else bytes_sent_raw)
+                        current_client_bytes[f"{stream_key}:{client_id}"] = max(0, bytes_sent)
+                    except Exception:
+                        continue
+    except Exception:
+        pass
+
+    global _proxy_total_ingress_bytes, _proxy_total_egress_bytes
+    global _last_proxy_sample_ts, _last_proxy_client_bytes, _last_proxy_stream_ingress_bytes
+    global _last_proxy_egress_observed_bytes, _last_proxy_ingress_observed_bytes
+
+    with _proxy_io_lock:
+        delta_ts_egress = 0
+        for key, current_value in current_client_bytes.items():
+            prev_value = _last_proxy_client_bytes.get(key)
+            if prev_value is not None and current_value >= prev_value:
+                delta_ts_egress += current_value - prev_value
+
+        delta_ts_ingress = 0
+        for stream_key, current_value in current_stream_ingress_bytes.items():
+            prev_value = _last_proxy_stream_ingress_bytes.get(stream_key)
+            if prev_value is not None and current_value >= prev_value:
+                delta_ts_ingress += current_value - prev_value
+
+        observed_delta_ingress = max(0, _proxy_ingress_observed_bytes - _last_proxy_ingress_observed_bytes)
+        observed_delta_egress = max(0, _proxy_egress_observed_bytes - _last_proxy_egress_observed_bytes)
+
+        delta_ingress = delta_ts_ingress + observed_delta_ingress
+        delta_egress = delta_ts_egress + observed_delta_egress
+
+        _proxy_total_ingress_bytes += delta_ingress
+        _proxy_total_egress_bytes += delta_egress
+
+        ingress_rate_bps = 0.0
+        egress_rate_bps = 0.0
+        if _last_proxy_sample_ts is not None and now > _last_proxy_sample_ts:
+            elapsed = now - _last_proxy_sample_ts
+            if elapsed > 0:
+                ingress_rate_bps = delta_ingress / elapsed
+                egress_rate_bps = delta_egress / elapsed
+
+        _last_proxy_client_bytes = current_client_bytes
+        _last_proxy_stream_ingress_bytes = current_stream_ingress_bytes
+        _last_proxy_ingress_observed_bytes = _proxy_ingress_observed_bytes
+        _last_proxy_egress_observed_bytes = _proxy_egress_observed_bytes
+        _last_proxy_sample_ts = now
+
+        return {
+            "ingress_total_bytes": float(_proxy_total_ingress_bytes),
+            "egress_total_bytes": float(_proxy_total_egress_bytes),
+            "ingress_rate_bps": round(max(0.0, ingress_rate_bps), 2),
+            "egress_rate_bps": round(max(0.0, egress_rate_bps), 2),
+        }
 
 
 def _compute_docker_metrics_snapshot() -> Dict[str, float]:
@@ -373,13 +505,14 @@ def get_dashboard_snapshot() -> Dict[str, Any]:
 
     proxy_clients = _compute_proxy_clients_snapshot()
     proxy_window = _compute_proxy_window_snapshot()
+    proxy_throughput = _compute_proxy_throughput_snapshot()
     docker_metrics = _compute_docker_metrics_snapshot()
 
     return {
         "timestamp": int(time.time()),
         "north_star": {
             "global_active_streams": len(streams),
-            "global_egress_bandwidth_mbps": round((total_speed_up_bps * 8.0) / 1_000_000.0, 3),
+            "global_egress_bandwidth_mbps": round((proxy_throughput["egress_rate_bps"] * 8.0) / 1_000_000.0, 3),
             "system_success_rate_percent": proxy_window["success_rate_percent"],
             "proxy_active_clients": proxy_clients["total"],
         },
@@ -387,8 +520,10 @@ def get_dashboard_snapshot() -> Dict[str, Any]:
             "active_clients": proxy_clients,
             "request_window_1m": proxy_window,
             "throughput": {
-                "ingress_mbps": round((docker_metrics["network_rx_rate_bps"] * 8.0) / 1_000_000.0, 3),
-                "egress_mbps": round((docker_metrics["network_tx_rate_bps"] * 8.0) / 1_000_000.0, 3),
+                "ingress_mbps": round((proxy_throughput["ingress_rate_bps"] * 8.0) / 1_000_000.0, 3),
+                "egress_mbps": round((proxy_throughput["egress_rate_bps"] * 8.0) / 1_000_000.0, 3),
+                "ingress_total_bytes": proxy_throughput["ingress_total_bytes"],
+                "egress_total_bytes": proxy_throughput["egress_total_bytes"],
             },
             "ttfb": {
                 "avg_ms": proxy_window["ttfb_avg_ms"],
@@ -650,6 +785,7 @@ def update_custom_metrics() -> Dict[str, Any]:
     # Proxy and Docker advanced metrics
     proxy_clients = _compute_proxy_clients_snapshot()
     proxy_window = _compute_proxy_window_snapshot()
+    proxy_throughput = _compute_proxy_throughput_snapshot()
     docker_metrics = _compute_docker_metrics_snapshot()
 
     orch_proxy_active_clients.set(proxy_clients["total"])
@@ -661,6 +797,10 @@ def update_custom_metrics() -> Dict[str, Any]:
     orch_proxy_5xx_rate_per_minute.set(proxy_window["error_5xx_rate_per_min"])
     orch_proxy_ttfb_avg_ms.set(proxy_window["ttfb_avg_ms"])
     orch_proxy_ttfb_p95_ms.set(proxy_window["ttfb_p95_ms"])
+    orch_proxy_ingress_bytes_total.set(proxy_throughput["ingress_total_bytes"])
+    orch_proxy_egress_bytes_total.set(proxy_throughput["egress_total_bytes"])
+    orch_proxy_ingress_rate_bps.set(proxy_throughput["ingress_rate_bps"])
+    orch_proxy_egress_rate_bps.set(proxy_throughput["egress_rate_bps"])
 
     orch_docker_total_cpu_percent.set(docker_metrics["cpu_percent"])
     orch_docker_total_memory_bytes.set(docker_metrics["memory_usage"])
@@ -674,7 +814,7 @@ def update_custom_metrics() -> Dict[str, Any]:
     orch_docker_oom_killed_total.set(docker_metrics["oom_killed_total"])
 
     # North-star metrics
-    global_egress_mbps = (docker_metrics["network_tx_rate_bps"] * 8.0) / 1_000_000.0
+    global_egress_mbps = (proxy_throughput["egress_rate_bps"] * 8.0) / 1_000_000.0
     orch_global_egress_bandwidth_mbps.set(global_egress_mbps)
     orch_system_success_rate.set(proxy_window["success_rate_percent"])
     

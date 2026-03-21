@@ -33,6 +33,7 @@ from .services.metrics import (
     update_custom_metrics,
     observe_proxy_request,
     observe_proxy_ttfb,
+    observe_proxy_egress_bytes,
 )
 from .services.auth import require_api_key
 from .services.db import engine
@@ -2407,6 +2408,7 @@ async def ace_hls_segment(
         hls_proxy.record_client_activity(content_id, client_ip)
         
         segment_data = hls_proxy.get_segment(content_id, segment_path)
+        observe_proxy_egress_bytes("HLS", len(segment_data))
         
         # Return segment data directly
         elapsed = time.perf_counter() - request_started_at

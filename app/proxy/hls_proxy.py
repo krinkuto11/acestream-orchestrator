@@ -543,6 +543,7 @@ class StreamFetcher:
     async def _download_segment(self, url: str) -> Optional[bytes]:
         """Download a single segment (async version with performance tracking)"""
         from ..services.performance_metrics import Timer, performance_metrics
+        from ..services.metrics import observe_proxy_ingress_bytes
         
         # Check if manager is still running before downloading
         if not self.manager.running:
@@ -553,7 +554,9 @@ class StreamFetcher:
             try:
                 response = await self.client.get(url)
                 response.raise_for_status()
-                return response.content
+                payload = response.content
+                observe_proxy_ingress_bytes("HLS", len(payload))
+                return payload
             except Exception as e:
                 # Only log if manager is still running (expected errors when stopping)
                 if self.manager.running:
