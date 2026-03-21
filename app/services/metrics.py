@@ -321,7 +321,11 @@ def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
         proxy = ProxyManager.get_instance()
         redis_client = getattr(proxy, "redis_client", None)
         if redis_client:
-            active_keys = {s.key for s in state.list_streams(status="started") if s.key}
+            active_streams = state.list_streams(status="started")
+            if not active_streams:
+                # Fallback for transitional states where streams may not yet be marked as started.
+                active_streams = state.list_streams()
+            active_keys = {s.key for s in active_streams if s.key}
             chunk_size = int(getattr(ProxyConfig, "BUFFER_CHUNK_SIZE", 188 * 5644))
 
             for stream_key in active_keys:
@@ -362,11 +366,25 @@ def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
             if prev_value is not None and current_value >= prev_value:
                 delta_ts_egress += current_value - prev_value
 
+        # If client IDs churn quickly, per-client deltas can be lost; fall back to aggregate deltas.
+        if delta_ts_egress == 0 and current_client_bytes and _last_proxy_client_bytes:
+            current_total = sum(current_client_bytes.values())
+            last_total = sum(_last_proxy_client_bytes.values())
+            if current_total > last_total:
+                delta_ts_egress = current_total - last_total
+
         delta_ts_ingress = 0
         for stream_key, current_value in current_stream_ingress_bytes.items():
             prev_value = _last_proxy_stream_ingress_bytes.get(stream_key)
             if prev_value is not None and current_value >= prev_value:
                 delta_ts_ingress += current_value - prev_value
+
+        # Fallback for stream-key churn/reindexing where per-key diff may miss positive movement.
+        if delta_ts_ingress == 0 and current_stream_ingress_bytes and _last_proxy_stream_ingress_bytes:
+            current_total = sum(current_stream_ingress_bytes.values())
+            last_total = sum(_last_proxy_stream_ingress_bytes.values())
+            if current_total > last_total:
+                delta_ts_ingress = current_total - last_total
 
         observed_delta_ingress = max(0, _proxy_ingress_observed_bytes - _last_proxy_ingress_observed_bytes)
         observed_delta_egress = max(0, _proxy_egress_observed_bytes - _last_proxy_egress_observed_bytes)
