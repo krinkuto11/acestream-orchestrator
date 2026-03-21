@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This guide covers deployment of the AceStream Orchestrator in various configurations. Since v1.6.0, all configuration is managed via the **Settings Dashboard**.
+This guide covers deployment of the AceStream Orchestrator in various configurations. Configuration is managed via the **Settings Dashboard**.
 
 ## Table of Contents
 

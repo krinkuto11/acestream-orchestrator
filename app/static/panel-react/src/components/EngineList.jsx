@@ -369,19 +369,27 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
           {/* View Toggle Button */}
           <div className="flex gap-2">
             <Button
-              variant={viewMode === 'cards' ? 'default' : 'outline'}
+              variant="outline"
               size="sm"
               onClick={() => setViewMode('cards')}
-              className="flex items-center gap-2"
+              className={`flex items-center gap-2 border-slate-300 dark:border-slate-700 ${
+                viewMode === 'cards'
+                  ? 'bg-slate-900 text-slate-50 hover:bg-slate-800 dark:bg-slate-700 dark:text-slate-50 dark:hover:bg-slate-600'
+                  : 'bg-transparent text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+              }`}
             >
               <LayoutGrid className="h-4 w-4" />
               Cards
             </Button>
             <Button
-              variant={viewMode === 'table' ? 'default' : 'outline'}
+              variant="outline"
               size="sm"
               onClick={() => setViewMode('table')}
-              className="flex items-center gap-2"
+              className={`flex items-center gap-2 border-slate-300 dark:border-slate-700 ${
+                viewMode === 'table'
+                  ? 'bg-slate-900 text-slate-50 hover:bg-slate-800 dark:bg-slate-700 dark:text-slate-50 dark:hover:bg-slate-600'
+                  : 'bg-transparent text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+              }`}
             >
               <Table2 className="h-4 w-4" />
               Table
@@ -437,19 +445,27 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
         {/* View Toggle Button */}
         <div className="flex gap-2">
           <Button
-            variant={viewMode === 'cards' ? 'default' : 'outline'}
+            variant="outline"
             size="sm"
             onClick={() => setViewMode('cards')}
-            className="flex items-center gap-2"
+            className={`flex items-center gap-2 border-slate-300 dark:border-slate-700 ${
+              viewMode === 'cards'
+                ? 'bg-slate-900 text-slate-50 hover:bg-slate-800 dark:bg-slate-700 dark:text-slate-50 dark:hover:bg-slate-600'
+                : 'bg-transparent text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+            }`}
           >
             <LayoutGrid className="h-4 w-4" />
             Cards
           </Button>
           <Button
-            variant={viewMode === 'table' ? 'default' : 'outline'}
+            variant="outline"
             size="sm"
             onClick={() => setViewMode('table')}
-            className="flex items-center gap-2"
+            className={`flex items-center gap-2 border-slate-300 dark:border-slate-700 ${
+              viewMode === 'table'
+                ? 'bg-slate-900 text-slate-50 hover:bg-slate-800 dark:bg-slate-700 dark:text-slate-50 dark:hover:bg-slate-600'
+                : 'bg-transparent text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+            }`}
           >
             <Table2 className="h-4 w-4" />
             Table

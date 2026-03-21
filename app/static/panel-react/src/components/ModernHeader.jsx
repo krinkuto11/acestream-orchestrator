@@ -41,7 +41,7 @@ export function ModernHeader({ isConnected, lastUpdate, onOpenSettings }) {
   }
   
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-50 w-full border-b border-slate-200 bg-white/70 backdrop-blur-md supports-[backdrop-filter]:bg-white/55 dark:border-slate-700 dark:bg-slate-950/85 dark:supports-[backdrop-filter]:bg-slate-950/75">
       <div className="flex h-16 items-center gap-4 px-6">
         {/* Connection Status */}
         <div className="flex items-center gap-2">

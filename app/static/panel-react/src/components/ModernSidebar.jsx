@@ -23,7 +23,7 @@ const navigation = [
   { name: 'Events', href: '/events', icon: FileText },
   { name: 'Health', href: '/health', icon: ShieldCheck },
   { name: 'VPN', href: '/vpn', icon: Wifi },
-  { name: 'Metrics', href: '/metrics', icon: BarChart3 },
+  { name: 'Dashboard', href: '/metrics', icon: BarChart3 },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]
 
@@ -58,14 +58,17 @@ export function ModernSidebar() {
 
   return (
     <div className={cn(
-      "fixed left-0 top-0 flex h-screen flex-col border-r bg-card transition-all duration-300",
+      "fixed left-0 top-0 flex h-screen flex-col border-r border-slate-200 bg-white/85 backdrop-blur-md transition-all duration-300 dark:border-slate-700 dark:bg-slate-950/90",
       collapsed ? "w-16" : "w-64"
     )}>
       {/* Logo */}
-      <div className="flex h-16 items-center border-b px-6 gap-2">
+      <div className={cn(
+        "flex h-16 items-center border-b",
+        collapsed ? "justify-center px-0" : "gap-2 px-6"
+      )}>
         {!collapsed && (
           <>
-            <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8" />
+            <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8 shrink-0 object-contain" />
             <h1 className="text-lg font-bold text-primary leading-tight">
               <span className="block">AceStream</span>
               <span className="block">Orchestrator</span>
@@ -73,7 +76,7 @@ export function ModernSidebar() {
           </>
         )}
         {collapsed && (
-          <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8" />
+          <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8 shrink-0 object-contain" />
         )}
       </div>
 
@@ -88,8 +91,8 @@ export function ModernSidebar() {
               className={cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                 isActive
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                  ? 'bg-slate-900 text-slate-50 dark:bg-slate-700 dark:text-slate-50'
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100',
                 collapsed && 'justify-center'
               )}
               title={collapsed ? item.name : undefined}

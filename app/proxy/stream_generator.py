@@ -45,6 +45,9 @@ class StreamGenerator:
     
     def generate(self):
         """Generator function that produces stream content for the client"""
+        # Local import avoids creating import cycles at module import time.
+        from ..services.metrics import observe_proxy_egress_bytes
+
         self.stream_start_time = time.time()
         self.bytes_sent = 0
         self.chunks_sent = 0
@@ -81,6 +84,7 @@ class StreamGenerator:
                     for chunk in chunks:
                         yield chunk
                         self.bytes_sent += len(chunk)
+                        observe_proxy_egress_bytes("TS", len(chunk))
                         self.chunks_sent += 1
                     
                     # Update local index

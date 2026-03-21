@@ -1,6 +1,6 @@
 # Settings Reference
 
-Since version 1.6.0, the AceStream Orchestrator uses a UI-driven configuration system. All settings are persisted to JSON files (`app/config/orchestrator_settings.json` and `vpn_settings.json`) and can be managed via the **Settings** dashboard.
+The AceStream Orchestrator uses a UI-driven configuration system. All settings are persisted to JSON files (`app/config/orchestrator_settings.json` and `vpn_settings.json`) and can be managed via the **Settings** dashboard.
 
 ## Orchestrator Settings
 

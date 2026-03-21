@@ -73,17 +73,20 @@ class ClientManager:
         
     def record_activity(self, client_ip: str):
         """Record client activity timestamp"""
+        from ..services.metrics import observe_proxy_client_connect
         with self.lock:
             prev_time = self.last_activity.get(client_ip)
             current_time = time.time()
             self.last_activity[client_ip] = current_time
             if not prev_time:
                 logger.info(f"New client connected: {client_ip}")
+                observe_proxy_client_connect("HLS")
             else:
                 logger.debug(f"Client activity: {client_ip}")
                 
     def cleanup_inactive(self, timeout: float) -> bool:
         """Remove inactive clients and return True if no clients remain"""
+        from ..services.metrics import observe_proxy_client_disconnect
         now = time.time()
         with self.lock:
             active_clients = {
@@ -97,6 +100,7 @@ class ClientManager:
                 for ip in removed:
                     inactive_time = now - self.last_activity[ip]
                     logger.warning(f"Client {ip} inactive for {inactive_time:.1f}s, removing")
+                    observe_proxy_client_disconnect("HLS")
             
             self.last_activity = active_clients
             if active_clients:
@@ -539,6 +543,7 @@ class StreamFetcher:
     async def _download_segment(self, url: str) -> Optional[bytes]:
         """Download a single segment (async version with performance tracking)"""
         from ..services.performance_metrics import Timer, performance_metrics
+        from ..services.metrics import observe_proxy_ingress_bytes
         
         # Check if manager is still running before downloading
         if not self.manager.running:
@@ -549,7 +554,9 @@ class StreamFetcher:
             try:
                 response = await self.client.get(url)
                 response.raise_for_status()
-                return response.content
+                payload = response.content
+                observe_proxy_ingress_bytes("HLS", len(payload))
+                return payload
             except Exception as e:
                 # Only log if manager is still running (expected errors when stopping)
                 if self.manager.running:

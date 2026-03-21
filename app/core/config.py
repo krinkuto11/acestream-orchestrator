@@ -28,6 +28,9 @@ class Cfg(BaseModel):
 
     COLLECT_INTERVAL_S: int = int(os.getenv("COLLECT_INTERVAL_S", 1))
     STATS_HISTORY_MAX: int = int(os.getenv("STATS_HISTORY_MAX", 720))
+    DASHBOARD_DEFAULT_WINDOW_S: int = int(os.getenv("DASHBOARD_DEFAULT_WINDOW_S", 900))
+    DASHBOARD_PERSIST_INTERVAL_S: int = int(os.getenv("DASHBOARD_PERSIST_INTERVAL_S", 5))
+    DASHBOARD_METRICS_RETENTION_HOURS: int = int(os.getenv("DASHBOARD_METRICS_RETENTION_HOURS", 168))
     
     # Docker monitoring configuration
     MONITOR_INTERVAL_S: int = int(os.getenv("MONITOR_INTERVAL_S", 10))
@@ -149,7 +152,7 @@ class Cfg(BaseModel):
             raise ValueError('GLUETUN_API_PORT must be between 1-65535')
         return v
 
-    @validator('STARTUP_TIMEOUT_S', 'IDLE_TTL_S', 'COLLECT_INTERVAL_S', 'MONITOR_INTERVAL_S', 'ENGINE_GRACE_PERIOD_S', 'AUTOSCALE_INTERVAL_S', 'GLUETUN_HEALTH_CHECK_INTERVAL_S', 'GLUETUN_PORT_CACHE_TTL_S')
+    @validator('STARTUP_TIMEOUT_S', 'IDLE_TTL_S', 'COLLECT_INTERVAL_S', 'MONITOR_INTERVAL_S', 'ENGINE_GRACE_PERIOD_S', 'AUTOSCALE_INTERVAL_S', 'GLUETUN_HEALTH_CHECK_INTERVAL_S', 'GLUETUN_PORT_CACHE_TTL_S', 'DASHBOARD_DEFAULT_WINDOW_S', 'DASHBOARD_PERSIST_INTERVAL_S', 'DASHBOARD_METRICS_RETENTION_HOURS')
     def validate_positive_timeouts(cls, v):
         if v <= 0:
             raise ValueError('Timeout values must be > 0')
