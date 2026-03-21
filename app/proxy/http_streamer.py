@@ -43,7 +43,7 @@ class HTTPStreamReader:
     def _read_stream(self):
         """Thread worker that reads HTTP stream and writes to pipe"""
         # Local import avoids module-level coupling during proxy startup.
-        from ..services.metrics import observe_proxy_ingress_bytes
+        from ..services.metrics import observe_proxy_ingress_bytes, observe_proxy_request
 
         try:
             # Build headers - mimic VLC player for better compatibility
@@ -80,6 +80,13 @@ class HTTPStreamReader:
 
             if self.response.status_code != 200:
                 logger.error(f"HTTP {self.response.status_code} from {self.url}")
+                observe_proxy_request(
+                    mode="TS",
+                    endpoint="/proxy/upstream",
+                    duration_seconds=0.0,
+                    success=False,
+                    status_code=int(self.response.status_code),
+                )
                 # Log a preview of the response body (limited to avoid loading entire response into memory)
                 try:
                     # Read only first 500 bytes without loading entire response

@@ -248,13 +248,13 @@ export function MetricsPage({ apiKey, orchUrl }) {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Global Active Streams" value={snapshot?.north_star?.global_active_streams || 0} hint="Current viewers" />
-        <StatTile label="Global Egress" value={formatMbps(snapshot?.north_star?.global_egress_bandwidth_mbps)} hint="North star throughput" />
-        <StatTile label="System Success Rate" value={formatPercent(snapshot?.north_star?.system_success_rate_percent)} hint="1-minute rolling window" />
+        <StatTile label="Global Egress Total" value={formatBytes(snapshot?.proxy?.throughput?.egress_total_bytes || 0)} hint="Cumulative bytes served to clients" />
+        <StatTile label="Global Ingress Total" value={formatBytes(snapshot?.proxy?.throughput?.ingress_total_bytes || 0)} hint="Cumulative bytes received from upstream" />
         <StatTile label="Proxy Active Clients" value={snapshot?.north_star?.proxy_active_clients || 0} hint="TS + HLS clients" />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-12">
-        <Pane title="Proxy Throughput" subtitle="Ingress vs egress (1 minute trend)" icon={Network} className="xl:col-span-8">
+        <Pane title="Proxy Throughput" subtitle="Ingress vs egress rate trend" icon={Network} className="xl:col-span-8">
           <div style={{ height: '260px' }}>
             <Line
               data={dualChartData(
@@ -264,6 +264,9 @@ export function MetricsPage({ apiKey, orchUrl }) {
               options={lineOptions('Proxy Throughput', 'Mbps')}
             />
           </div>
+          <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+            Rates are shown in Mbps (megabits per second). For reference: 1 MB/s = 8 Mbps.
+          </p>
         </Pane>
 
         <Pane title="Request Reliability" subtitle="RED summary" icon={ShieldCheck} className="xl:col-span-4">
