@@ -226,7 +226,7 @@ Response:
    - orch_vpn1_engines - Number of engines assigned to VPN1
    - orch_vpn2_engines - Number of engines assigned to VPN2
    - orch_extra_engines - Number of engines beyond MIN_REPLICAS
-   - orch_proxy_stream_requests_total{mode,endpoint,result} - Proxy request rate
+  - orch_proxy_stream_requests_total{mode,endpoint,result} - Proxy request rate (includes upstream fetch failures labeled as endpoint `/proxy/upstream`)
    - orch_proxy_stream_request_duration_seconds{mode,endpoint} - Proxy request duration histogram
    - orch_proxy_ttfb_seconds{mode,endpoint} - Proxy TTFB histogram
    - orch_proxy_http_errors_total{endpoint,status_code} - Proxy 4xx/5xx error counts
@@ -251,6 +251,10 @@ Response:
      - `max_points` (optional): maximum returned points in each historical series. Range `30..2000`.
    - Includes categories: `north_star`, `proxy`, `engines`, `streams`, `docker`, `history`.
    - Includes `observation_window_seconds` to reflect the effective window used.
+   - `proxy.throughput` includes:
+     - `ingress_mbps` / `egress_mbps` (instantaneous rates)
+     - `ingress_total_bytes` / `egress_total_bytes` (process lifetime cumulative totals)
+     - `window_ingress_total_bytes` / `window_egress_total_bytes` (totals over selected `window_seconds`)
    - Suitable for platform-agnostic dashboards and API consumers that prefer JSON over Prometheus text format.
 
 Example:
