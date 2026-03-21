@@ -121,7 +121,7 @@ function AppContent() {
 
   return (
     <BrowserRouter basename="/panel">
-      <div className="min-h-screen bg-[radial-gradient(80%_60%_at_20%_0%,rgba(148,163,184,0.10),transparent_60%),radial-gradient(70%_50%_at_100%_0%,rgba(148,163,184,0.12),transparent_60%)] dark:bg-[radial-gradient(80%_60%_at_20%_0%,rgba(51,65,85,0.35),transparent_60%),radial-gradient(70%_50%_at_100%_0%,rgba(30,41,59,0.45),transparent_60%)]">
+      <div className="min-h-screen bg-slate-50 bg-[radial-gradient(80%_60%_at_20%_0%,rgba(148,163,184,0.10),transparent_60%),radial-gradient(70%_50%_at_100%_0%,rgba(148,163,184,0.12),transparent_60%)] dark:bg-slate-950 dark:bg-[radial-gradient(80%_60%_at_20%_0%,rgba(51,65,85,0.35),transparent_60%),radial-gradient(70%_50%_at_100%_0%,rgba(30,41,59,0.45),transparent_60%)]">
         <ModernSidebar />
         
         <div className="flex flex-col min-h-screen transition-all duration-300" style={{ marginLeft: 'var(--sidebar-width, 16rem)' }}>
