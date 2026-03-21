@@ -62,10 +62,13 @@ export function ModernSidebar() {
       collapsed ? "w-16" : "w-64"
     )}>
       {/* Logo */}
-      <div className="flex h-16 items-center border-b px-6 gap-2">
+      <div className={cn(
+        "flex h-16 items-center border-b",
+        collapsed ? "justify-center px-0" : "gap-2 px-6"
+      )}>
         {!collapsed && (
           <>
-            <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8" />
+            <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8 shrink-0 object-contain" />
             <h1 className="text-lg font-bold text-primary leading-tight">
               <span className="block">AceStream</span>
               <span className="block">Orchestrator</span>
@@ -73,7 +76,7 @@ export function ModernSidebar() {
           </>
         )}
         {collapsed && (
-          <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8" />
+          <img src="/favicon-96x96-dark.png" alt="AceStream Logo" className="h-8 w-8 shrink-0 object-contain" />
         )}
       </div>
 

@@ -131,6 +131,9 @@ _last_proxy_client_bytes: Dict[str, int] = {}
 _last_proxy_stream_ingress_bytes: Dict[str, int] = {}
 _proxy_total_ingress_bytes = 0
 _proxy_total_egress_bytes = 0
+_last_proxy_ingress_rate_bps = 0.0
+_last_proxy_egress_rate_bps = 0.0
+_last_proxy_rate_ts: Optional[float] = None
 _dashboard_last_persist_ts: Optional[float] = None
 
 _docker_rate_lock = threading.Lock()
@@ -358,6 +361,7 @@ def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
     global _proxy_total_ingress_bytes, _proxy_total_egress_bytes
     global _last_proxy_sample_ts, _last_proxy_client_bytes, _last_proxy_stream_ingress_bytes
     global _last_proxy_egress_observed_bytes, _last_proxy_ingress_observed_bytes
+    global _last_proxy_ingress_rate_bps, _last_proxy_egress_rate_bps, _last_proxy_rate_ts
 
     with _proxy_io_lock:
         delta_ts_egress = 0
@@ -404,6 +408,22 @@ def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
             if elapsed > 0:
                 ingress_rate_bps = delta_ingress / elapsed
                 egress_rate_bps = delta_egress / elapsed
+
+        # Dashboard polls and Prometheus scrapes can interleave. In those cases, one poll
+        # may consume the full delta while the next sees zero immediately after. Keep the
+        # last fresh non-zero rate for a short window to avoid false zero spikes.
+        rate_hold_seconds = 10.0
+        if ingress_rate_bps > 0 or egress_rate_bps > 0:
+            _last_proxy_ingress_rate_bps = ingress_rate_bps
+            _last_proxy_egress_rate_bps = egress_rate_bps
+            _last_proxy_rate_ts = now
+        elif _last_proxy_rate_ts is not None and (now - _last_proxy_rate_ts) <= rate_hold_seconds:
+            ingress_rate_bps = _last_proxy_ingress_rate_bps
+            egress_rate_bps = _last_proxy_egress_rate_bps
+        else:
+            _last_proxy_ingress_rate_bps = 0.0
+            _last_proxy_egress_rate_bps = 0.0
+            _last_proxy_rate_ts = None
 
         _last_proxy_client_bytes = current_client_bytes
         _last_proxy_stream_ingress_bytes = current_stream_ingress_bytes
