@@ -63,6 +63,13 @@ function formatPercent(value) {
   return `${(Number(value) || 0).toFixed(2)}%`
 }
 
+function formatWindowLabel(seconds) {
+  const value = Number(seconds) || 0
+  if (value >= 86400) return `${Math.round(value / 86400)}d`
+  if (value >= 3600) return `${Math.round(value / 3600)}h`
+  return `${Math.round(value / 60)}m`
+}
+
 export function MetricsPage({ apiKey, orchUrl }) {
   const WINDOW_OPTIONS = [
     { label: '5m', value: 300 },
@@ -214,6 +221,8 @@ export function MetricsPage({ apiKey, orchUrl }) {
 
   const engineState = snapshot?.engines?.state_counts || {}
   const activeKeys = snapshot?.streams?.active_keys || []
+  const effectiveWindowSeconds = snapshot?.observation_window_seconds || windowSeconds
+  const windowLabel = formatWindowLabel(effectiveWindowSeconds)
 
   return (
     <div className="space-y-6">
@@ -248,8 +257,16 @@ export function MetricsPage({ apiKey, orchUrl }) {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Global Active Streams" value={snapshot?.north_star?.global_active_streams || 0} hint="Current viewers" />
-        <StatTile label="Global Egress Total" value={formatBytes(snapshot?.proxy?.throughput?.egress_total_bytes || 0)} hint="Cumulative bytes served to clients" />
-        <StatTile label="Global Ingress Total" value={formatBytes(snapshot?.proxy?.throughput?.ingress_total_bytes || 0)} hint="Cumulative bytes received from upstream" />
+        <StatTile
+          label="Global Egress Total"
+          value={formatBytes(snapshot?.proxy?.throughput?.window_egress_total_bytes || 0)}
+          hint={`Total over selected window (${windowLabel})`}
+        />
+        <StatTile
+          label="Global Ingress Total"
+          value={formatBytes(snapshot?.proxy?.throughput?.window_ingress_total_bytes || 0)}
+          hint={`Total over selected window (${windowLabel})`}
+        />
         <StatTile label="Proxy Active Clients" value={snapshot?.north_star?.proxy_active_clients || 0} hint="TS + HLS clients" />
       </div>
 

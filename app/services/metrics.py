@@ -525,6 +525,52 @@ def _load_dashboard_history(window_seconds: int, max_points: int) -> Dict[str, L
     }
 
 
+def _compute_window_throughput_totals(window_seconds: int) -> Dict[str, float]:
+    """Compute approximate ingress/egress bytes over the requested window from persisted samples."""
+    from .db import SessionLocal
+    from ..core.config import cfg
+    from ..models.db_models import DashboardMetricSampleRow
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(60, int(window_seconds)))
+
+    try:
+        with SessionLocal() as session:
+            rows = (
+                session.query(DashboardMetricSampleRow)
+                .filter(DashboardMetricSampleRow.ts >= cutoff)
+                .order_by(DashboardMetricSampleRow.ts.asc())
+                .all()
+            )
+    except Exception:
+        rows = []
+
+    if not rows:
+        return {
+            "window_ingress_total_bytes": 0.0,
+            "window_egress_total_bytes": 0.0,
+        }
+
+    ingress_total = 0.0
+    egress_total = 0.0
+
+    if len(rows) == 1:
+        default_interval = float(max(1, int(cfg.DASHBOARD_PERSIST_INTERVAL_S)))
+        ingress_total = float(rows[0].proxy_ingress_rate_bps or 0.0) * default_interval
+        egress_total = float(rows[0].proxy_egress_rate_bps or 0.0) * default_interval
+    else:
+        for idx in range(len(rows) - 1):
+            current = rows[idx]
+            nxt = rows[idx + 1]
+            elapsed = max(0.0, (nxt.ts - current.ts).total_seconds())
+            ingress_total += float(current.proxy_ingress_rate_bps or 0.0) * elapsed
+            egress_total += float(current.proxy_egress_rate_bps or 0.0) * elapsed
+
+    return {
+        "window_ingress_total_bytes": round(max(0.0, ingress_total), 2),
+        "window_egress_total_bytes": round(max(0.0, egress_total), 2),
+    }
+
+
 def _compute_docker_metrics_snapshot() -> Dict[str, float]:
     """Compute Docker USE snapshots and derivative throughput rates."""
     from .docker_stats_collector import docker_stats_collector
@@ -634,6 +680,7 @@ def get_dashboard_snapshot(window_seconds: int = 900, max_points: int = 360) -> 
     proxy_clients = _compute_proxy_clients_snapshot()
     proxy_window = _compute_proxy_window_snapshot()
     proxy_throughput = _compute_proxy_throughput_snapshot()
+    window_totals = _compute_window_throughput_totals(window_seconds=window_seconds)
     docker_metrics = _compute_docker_metrics_snapshot()
 
     return {
@@ -654,6 +701,8 @@ def get_dashboard_snapshot(window_seconds: int = 900, max_points: int = 360) -> 
                 "egress_bps": proxy_throughput["egress_rate_bps"],
                 "ingress_total_bytes": proxy_throughput["ingress_total_bytes"],
                 "egress_total_bytes": proxy_throughput["egress_total_bytes"],
+                "window_ingress_total_bytes": window_totals["window_ingress_total_bytes"],
+                "window_egress_total_bytes": window_totals["window_egress_total_bytes"],
             },
             "ttfb": {
                 "avg_ms": proxy_window["ttfb_avg_ms"],
