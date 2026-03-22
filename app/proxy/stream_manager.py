@@ -54,6 +54,8 @@ class StreamManager:
         self.ace_api_client = None
         self.resolved_infohash = None
         self.legacy_status_probe = None
+        self._last_legacy_stats_publish = 0.0
+        self._legacy_stats_publish_interval_s = 2.0
         
         # Connection state
         self.running = True
@@ -267,7 +269,8 @@ class StreamManager:
                         "source": "proxy",
                         "worker_id": self.worker_id or "unknown",
                         "proxy.control_mode": self.control_mode,
-                        "stream.resolved_infohash": str(self.resolved_infohash or "")
+                        "stream.resolved_infohash": str(self.resolved_infohash or ""),
+                        "host.api_port": str(self.engine_api_port or "")
                     }
                 )
 
@@ -478,6 +481,7 @@ class StreamManager:
                 
                 if not ready:
                     # Timeout - no data available, loop continues quickly
+                    self._maybe_publish_legacy_stats()
                     continue
                 
                 # Socket is ready for reading - measure read performance
@@ -494,18 +498,84 @@ class StreamManager:
                 if success:
                     self.last_data_time = time.time()
                     chunk_count += 1
+                    self._maybe_publish_legacy_stats()
                     
                     if chunk_count % 1000 == 0:
                         logger.debug(f"Processed {chunk_count} chunks for content_id={self.content_id}")
                 
             except BlockingIOError:
                 # Non-blocking socket has no data, this is expected
+                self._maybe_publish_legacy_stats()
                 continue
             except Exception as e:
                 logger.error(f"Error processing stream data: {e}")
                 break
         
         logger.info(f"Stream processing ended for content_id={self.content_id}")
+
+    def _maybe_publish_legacy_stats(self):
+        """Publish stats snapshots for legacy API sessions using the active API connection."""
+        if self.control_mode != "LEGACY_API" or not self.ace_api_client:
+            return
+
+        now = time.time()
+        if now - self._last_legacy_stats_publish < self._legacy_stats_publish_interval_s:
+            return
+
+        self._last_legacy_stats_publish = now
+
+        try:
+            probe = self.ace_api_client.collect_status_samples(
+                samples=1,
+                interval_s=0.0,
+                per_sample_timeout_s=0.5,
+            )
+        except Exception as e:
+            logger.debug(f"Legacy stats probe failed for content_id={self.content_id}: {e}")
+            return
+
+        try:
+            from datetime import datetime, timezone
+            from ..models.schemas import LivePosData, StreamStatSnapshot
+            from ..services.state import state as orchestrator_state
+
+            if self.stream_id and orchestrator_state.get_stream(self.stream_id):
+                stream_id_for_stats = self.stream_id
+            else:
+                stream_id_for_stats = None
+                for stream in orchestrator_state.list_streams(status="started"):
+                    if stream.playback_session_id == self.playback_session_id and stream.container_id == self.engine_container_id:
+                        stream_id_for_stats = stream.id
+                        break
+
+            if not stream_id_for_stats:
+                return
+
+            livepos = None
+            livepos_raw = probe.get("livepos") or {}
+            if livepos_raw:
+                livepos = LivePosData(
+                    pos=livepos_raw.get("pos"),
+                    live_first=livepos_raw.get("live_first") or livepos_raw.get("first_ts"),
+                    live_last=livepos_raw.get("live_last") or livepos_raw.get("last_ts"),
+                    first_ts=livepos_raw.get("first_ts"),
+                    last_ts=livepos_raw.get("last_ts"),
+                    buffer_pieces=str(livepos_raw.get("buffer_pieces")) if livepos_raw.get("buffer_pieces") is not None else None,
+                )
+
+            snap = StreamStatSnapshot(
+                ts=datetime.now(timezone.utc),
+                peers=probe.get("peers"),
+                speed_down=probe.get("speed_down"),
+                speed_up=probe.get("speed_up"),
+                downloaded=probe.get("downloaded"),
+                uploaded=probe.get("uploaded"),
+                status=probe.get("status_text") or probe.get("status"),
+                livepos=livepos,
+            )
+            orchestrator_state.append_stat(stream_id_for_stats, snap)
+        except Exception as e:
+            logger.debug(f"Failed to publish legacy stats snapshot for content_id={self.content_id}: {e}")
     
     def _monitor_health(self):
         """Monitor stream health"""

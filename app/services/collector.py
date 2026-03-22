@@ -4,10 +4,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, Optional, Any
 from .state import state
-from ..models.schemas import LivePosData, StreamStatSnapshot
+from ..models.schemas import StreamStatSnapshot
 from ..core.config import cfg
 from .metrics import on_stream_stat_update
-from ..proxy.ace_api_client import AceLegacyApiClient
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +50,8 @@ class Collector:
 
     async def _collect_one(self, client: httpx.AsyncClient, stream_id: str, stat_url: str):
         if not stat_url:
-            await self._collect_one_legacy_api(stream_id)
+            # Legacy API streams don't expose stat_url and status is session-scoped.
+            # Their stats are pushed from the active StreamManager connection.
             return
 
         try:
@@ -168,83 +168,5 @@ class Collector:
         except Exception:
             logger.exception(f"Unhandled exception while collecting stats for {stream_id} from {stat_url}")
             return
-
-    async def _collect_one_legacy_api(self, stream_id: str):
-        """Collect stats for legacy API streams that don't expose stat_url/command_url."""
-        try:
-            stream = state.get_stream(stream_id)
-            if not stream or stream.status != "started":
-                return
-
-            # Compatibility mode: only apply fallback for streams without stat_url.
-            if stream.stat_url:
-                return
-
-            engine = state.get_engine(stream.container_id)
-            if not engine:
-                logger.debug(f"Legacy stats skipped for {stream_id}: engine {stream.container_id} not found")
-                return
-
-            api_host = engine.host
-            api_port = engine.api_port or 62062
-
-            def _probe_status() -> Dict[str, Any]:
-                client = AceLegacyApiClient(
-                    host=api_host,
-                    port=api_port,
-                    connect_timeout=2,
-                    response_timeout=2,
-                )
-                try:
-                    client.connect()
-                    client.authenticate()
-                    return client.collect_status_samples(samples=1, interval_s=0.0, per_sample_timeout_s=1.0)
-                finally:
-                    try:
-                        client.shutdown()
-                    except Exception:
-                        pass
-
-            status_probe = await asyncio.to_thread(_probe_status)
-            if not status_probe:
-                return
-
-            livepos = None
-            livepos_raw = status_probe.get("livepos") or {}
-            if livepos_raw:
-                livepos = LivePosData(
-                    pos=livepos_raw.get("pos"),
-                    live_first=livepos_raw.get("live_first") or livepos_raw.get("first_ts"),
-                    live_last=livepos_raw.get("live_last") or livepos_raw.get("last_ts"),
-                    first_ts=livepos_raw.get("first_ts"),
-                    last_ts=livepos_raw.get("last_ts"),
-                    buffer_pieces=str(livepos_raw.get("buffer_pieces")) if livepos_raw.get("buffer_pieces") is not None else None,
-                )
-
-            snap = StreamStatSnapshot(
-                ts=datetime.now(timezone.utc),
-                peers=status_probe.get("peers"),
-                speed_down=status_probe.get("speed_down"),
-                speed_up=status_probe.get("speed_up"),
-                downloaded=status_probe.get("downloaded"),
-                uploaded=status_probe.get("uploaded"),
-                status=status_probe.get("status_text") or status_probe.get("status"),
-                livepos=livepos,
-            )
-
-            state.append_stat(stream_id, snap)
-            try:
-                on_stream_stat_update(stream_id, snap.uploaded, snap.downloaded)
-            except Exception:
-                logger.exception(f"Error updating cumulative metrics for legacy stream {stream_id}")
-
-            logger.debug(
-                f"Collected legacy API stats for {stream_id} from {api_host}:{api_port}: "
-                f"peers={snap.peers} speed_down={snap.speed_down} speed_up={snap.speed_up}"
-            )
-        except Exception as e:
-            logger.debug(f"Legacy API stats collection skipped for {stream_id}: {e}")
-            return
-
 
 collector = Collector()

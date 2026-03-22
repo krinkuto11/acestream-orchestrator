@@ -189,21 +189,21 @@ def test_collector_handles_normal_stats():
     print("✅ Collector still collects normal stats correctly")
 
 
-def test_collector_uses_legacy_fallback_when_stat_url_missing():
-    """Test collector routes to legacy fallback when stat_url is empty."""
-    print("Testing collector legacy fallback path...")
+def test_collector_skips_missing_stat_url():
+    """Collector should no-op when stat_url is missing (legacy mode is pushed by StreamManager)."""
+    print("Testing collector skip path for missing stat_url...")
 
     collector = Collector()
     mock_client = MagicMock()
 
     async def run_test():
-        with patch.object(collector, '_collect_one_legacy_api', new_callable=AsyncMock) as mock_legacy:
+        with patch.object(mock_client, 'get', new_callable=AsyncMock) as mock_get:
             await collector._collect_one(mock_client, "legacy_stream", "")
-            mock_legacy.assert_awaited_once_with("legacy_stream")
+            mock_get.assert_not_awaited()
 
     asyncio.run(run_test())
 
-    print("✅ Collector uses legacy fallback when stat_url is missing")
+    print("✅ Collector skips missing stat_url as expected")
 
 
 if __name__ == "__main__":
@@ -217,7 +217,7 @@ if __name__ == "__main__":
     print()
     test_collector_handles_normal_stats()
     print()
-    test_collector_uses_legacy_fallback_when_stat_url_missing()
+    test_collector_skips_missing_stat_url()
     
     print("\n🎉 All tests passed!")
     print("\nVerified that:")

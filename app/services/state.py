@@ -130,6 +130,29 @@ class State:
             self.streams[stream_id] = st
             if stream_id not in eng.streams: eng.streams.append(stream_id)
 
+            # Seed first snapshot from stream-start labels (legacy API compatibility).
+            if evt.labels:
+                def _to_int(v):
+                    try:
+                        if v is None or str(v).strip() == "":
+                            return None
+                        return int(float(str(v)))
+                    except (TypeError, ValueError):
+                        return None
+
+                status_text = evt.labels.get("stream.status_text")
+                peers = _to_int(evt.labels.get("stream.peers"))
+                http_peers = _to_int(evt.labels.get("stream.http_peers"))
+                progress = _to_int(evt.labels.get("stream.progress"))
+
+                if any(v is not None for v in [status_text, peers, http_peers, progress]):
+                    initial_snap = StreamStatSnapshot(
+                        ts=self.now(),
+                        peers=peers if peers is not None else http_peers,
+                        status=status_text,
+                    )
+                    self.stream_stats.setdefault(stream_id, []).append(initial_snap)
+
         with SessionLocal() as s:
             s.merge(EngineRow(engine_key=eng.container_id, container_id=evt.container_id, container_name=container_name,
                               host=eng.host, port=eng.port, labels=eng.labels, forwarded=eng.forwarded, 
