@@ -52,6 +52,7 @@ class StreamManager:
         self.is_live = None
         self.control_mode = (ConfigHelper.control_mode() or "LEGACY_HTTP").upper()
         self.ace_api_client = None
+        self._legacy_api_lock = threading.Lock()
         self.resolved_infohash = None
         self.legacy_status_probe = None
         self._last_legacy_stats_publish = 0.0
@@ -481,7 +482,6 @@ class StreamManager:
                 
                 if not ready:
                     # Timeout - no data available, loop continues quickly
-                    self._maybe_publish_legacy_stats()
                     continue
                 
                 # Socket is ready for reading - measure read performance
@@ -498,14 +498,12 @@ class StreamManager:
                 if success:
                     self.last_data_time = time.time()
                     chunk_count += 1
-                    self._maybe_publish_legacy_stats()
                     
                     if chunk_count % 1000 == 0:
                         logger.debug(f"Processed {chunk_count} chunks for content_id={self.content_id}")
                 
             except BlockingIOError:
                 # Non-blocking socket has no data, this is expected
-                self._maybe_publish_legacy_stats()
                 continue
             except Exception as e:
                 logger.error(f"Error processing stream data: {e}")
@@ -514,90 +512,26 @@ class StreamManager:
         logger.info(f"Stream processing ended for content_id={self.content_id}")
 
     def _maybe_publish_legacy_stats(self):
-        """Publish stats snapshots for legacy API sessions using the active API connection."""
-        if self.control_mode != "LEGACY_API" or not self.ace_api_client:
-            return
+        """Deprecated: legacy stats are now gathered by the collector service."""
+        return
 
-        now = time.time()
-        if now - self._last_legacy_stats_publish < self._legacy_stats_publish_interval_s:
-            return
-
-        self._last_legacy_stats_publish = now
+    def collect_legacy_stats_probe(self, samples: int = 1, per_sample_timeout_s: float = 1.0):
+        """Return a status probe for the active legacy API session, if available."""
+        if self.control_mode != "LEGACY_API" or not self.ace_api_client or not self.running:
+            return None
 
         try:
-            probe = self.ace_api_client.collect_status_samples(
-                samples=2,
-                interval_s=0.0,
-                per_sample_timeout_s=1.0,
-            )
+            with self._legacy_api_lock:
+                if not self.ace_api_client:
+                    return None
+                return self.ace_api_client.collect_status_samples(
+                    samples=max(1, int(samples)),
+                    interval_s=0.0,
+                    per_sample_timeout_s=max(0.2, float(per_sample_timeout_s)),
+                )
         except Exception as e:
             logger.debug(f"Legacy stats probe failed for content_id={self.content_id}: {e}")
-            return
-
-        try:
-            from datetime import datetime, timezone
-            from ..models.schemas import LivePosData, StreamStatSnapshot
-            from ..services.state import state as orchestrator_state
-
-            if self.stream_id and orchestrator_state.get_stream(self.stream_id):
-                stream_id_for_stats = self.stream_id
-            else:
-                stream_id_for_stats = None
-                guessed_stream_id = f"{self.content_id}|{self.playback_session_id}"
-                if orchestrator_state.get_stream(guessed_stream_id):
-                    stream_id_for_stats = guessed_stream_id
-
-                for stream in orchestrator_state.list_streams(status="started"):
-                    if stream.playback_session_id == self.playback_session_id and stream.container_id == self.engine_container_id:
-                        stream_id_for_stats = stream.id
-                        break
-
-            if not stream_id_for_stats:
-                return
-
-            speed_down = probe.get("speed_down")
-            if speed_down is None:
-                speed_down = probe.get("http_speed_down")
-
-            peers = probe.get("peers")
-            if peers is None:
-                peers = probe.get("http_peers")
-
-            downloaded = probe.get("downloaded")
-            if downloaded is None:
-                downloaded = probe.get("http_downloaded")
-
-            # Keep numeric fields stable for the panel even when probe omits fields.
-            speed_down = 0 if speed_down is None else speed_down
-            speed_up = 0 if probe.get("speed_up") is None else probe.get("speed_up")
-            downloaded = 0 if downloaded is None else downloaded
-            uploaded = 0 if probe.get("uploaded") is None else probe.get("uploaded")
-
-            livepos = None
-            livepos_raw = probe.get("livepos") or {}
-            if livepos_raw:
-                livepos = LivePosData(
-                    pos=livepos_raw.get("pos"),
-                    live_first=livepos_raw.get("live_first") or livepos_raw.get("first_ts"),
-                    live_last=livepos_raw.get("live_last") or livepos_raw.get("last_ts"),
-                    first_ts=livepos_raw.get("first_ts"),
-                    last_ts=livepos_raw.get("last_ts"),
-                    buffer_pieces=str(livepos_raw.get("buffer_pieces")) if livepos_raw.get("buffer_pieces") is not None else None,
-                )
-
-            snap = StreamStatSnapshot(
-                ts=datetime.now(timezone.utc),
-                peers=peers,
-                speed_down=speed_down,
-                speed_up=speed_up,
-                downloaded=downloaded,
-                uploaded=uploaded,
-                status=probe.get("status_text") or probe.get("status"),
-                livepos=livepos,
-            )
-            orchestrator_state.append_stat(stream_id_for_stats, snap)
-        except Exception as e:
-            logger.debug(f"Failed to publish legacy stats snapshot for content_id={self.content_id}: {e}")
+            return None
     
     def _monitor_health(self):
         """Monitor stream health"""
@@ -637,9 +571,11 @@ class StreamManager:
         # Send stop command to AceStream engine
         if self.control_mode == "LEGACY_API" and self.ace_api_client:
             try:
-                self.ace_api_client.stop_stream()
-                self.ace_api_client.shutdown()
-                self.ace_api_client = None
+                with self._legacy_api_lock:
+                    if self.ace_api_client:
+                        self.ace_api_client.stop_stream()
+                        self.ace_api_client.shutdown()
+                        self.ace_api_client = None
                 logger.info("Sent STOP/SHUTDOWN to AceStream legacy API")
             except Exception as e:
                 logger.warning(f"Failed to send legacy API stop command: {e}")
@@ -675,7 +611,9 @@ class StreamManager:
 
         if self.ace_api_client:
             try:
-                self.ace_api_client.shutdown()
+                with self._legacy_api_lock:
+                    if self.ace_api_client:
+                        self.ace_api_client.shutdown()
             except Exception as e:
                 logger.debug(f"Error closing legacy API client during retry cleanup: {e}")
             self.ace_api_client = None
@@ -696,7 +634,9 @@ class StreamManager:
 
         if self.ace_api_client:
             try:
-                self.ace_api_client.shutdown()
+                with self._legacy_api_lock:
+                    if self.ace_api_client:
+                        self.ace_api_client.shutdown()
             except Exception:
                 pass
             self.ace_api_client = None
