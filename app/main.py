@@ -213,7 +213,6 @@ async def lifespan(app: FastAPI):
             # Load manual engines into state if manual mode is enabled
             if engine_settings.get('manual_mode'):
                 logger.info("Manual mode is enabled. Injecting manual engines into state on startup.")
-                from .services.state import state
                 from .models.schemas import EngineState
                 
                 for man_eng in engine_settings.get("manual_engines", []):
