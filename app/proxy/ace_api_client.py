@@ -45,8 +45,7 @@ class AceLegacyApiClient:
         self.product_key = product_key
 
         self._sock: Optional[socket.socket] = None
-        self._reader = None
-        self._writer = None
+        self._recv_buffer = b""
         self._authenticated = False
 
         # Default profile used when engine asks for USERDATA.
@@ -87,31 +86,19 @@ class AceLegacyApiClient:
         """Open TCP connection to AceStream API."""
         self._sock = socket.create_connection((self.host, self.port), timeout=self.connect_timeout)
         self._sock.settimeout(self.response_timeout)
-        self._reader = self._sock.makefile("r", encoding="utf-8", newline="\n")
-        self._writer = self._sock.makefile("w", encoding="utf-8", newline="\n")
+        self._recv_buffer = b""
         logger.debug("Connected to legacy AceStream API at %s:%s", self.host, self.port)
 
     def close(self):
         """Close API connection."""
-        try:
-            if self._writer:
-                self._writer.close()
-        except Exception:
-            pass
-        try:
-            if self._reader:
-                self._reader.close()
-        except Exception:
-            pass
         try:
             if self._sock:
                 self._sock.close()
         except Exception:
             pass
 
-        self._writer = None
-        self._reader = None
         self._sock = None
+        self._recv_buffer = b""
         self._authenticated = False
 
     def authenticate(self):
@@ -339,7 +326,12 @@ class AceLegacyApiClient:
 
             deadline = time.time() + max(0.2, per_sample_timeout_s)
             while time.time() < deadline:
-                cmd, parts, _ = self._read_message(timeout=max(0.05, deadline - time.time()))
+                try:
+                    cmd, parts, _ = self._read_message(timeout=max(0.05, deadline - time.time()))
+                except AceLegacyApiError as exc:
+                    # Missing STATUS replies should not break stream setup.
+                    logger.debug("STATUS probe timed out/failed: %s", exc)
+                    break
 
                 if cmd == "STATUS":
                     raw = " ".join(parts)
@@ -500,17 +492,28 @@ class AceLegacyApiClient:
             self._write(f"USERDATA [{{\"gender\": {self._gender}}}, {{\"age\": {self._age}}}]")
 
     def _read_message(self, timeout: float) -> Tuple[str, list, Dict[str, str]]:
-        if not self._reader:
+        if not self._sock:
             raise AceLegacyApiError("API client is not connected")
 
-        if self._sock:
-            self._sock.settimeout(timeout)
+        self._sock.settimeout(timeout)
 
-        line = self._reader.readline()
-        if not line:
-            raise AceLegacyApiError("Connection closed by AceStream API")
+        # Read lines from the raw socket to avoid makefile timeout poisoning
+        # ("cannot read from timed out object") after intermittent timeouts.
+        while b"\n" not in self._recv_buffer:
+            try:
+                chunk = self._sock.recv(4096)
+            except socket.timeout as exc:
+                raise AceLegacyApiError("Timeout waiting for AceStream API message") from exc
+            except OSError as exc:
+                raise AceLegacyApiError(f"Socket read error: {exc}") from exc
 
-        line = line.strip()
+            if not chunk:
+                raise AceLegacyApiError("Connection closed by AceStream API")
+
+            self._recv_buffer += chunk
+
+        line_bytes, self._recv_buffer = self._recv_buffer.split(b"\n", 1)
+        line = line_bytes.decode("utf-8", errors="replace").strip("\r").strip()
         if not line:
             raise AceLegacyApiError("Received empty line from AceStream API")
 
@@ -526,9 +529,11 @@ class AceLegacyApiClient:
         return cmd, parts, kv
 
     def _write(self, message: str):
-        if not self._writer:
+        if not self._sock:
             raise AceLegacyApiError("API client is not connected")
 
         logger.debug("[ACE API] >>> %s", message)
-        self._writer.write(f"{message}\r\n")
-        self._writer.flush()
+        try:
+            self._sock.sendall(f"{message}\r\n".encode("utf-8"))
+        except OSError as exc:
+            raise AceLegacyApiError(f"Socket write error: {exc}") from exc

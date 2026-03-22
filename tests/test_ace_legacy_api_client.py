@@ -1,4 +1,4 @@
-from app.proxy.ace_api_client import AceLegacyApiClient
+from app.proxy.ace_api_client import AceLegacyApiClient, AceLegacyApiError
 
 
 def test_normalize_session_id_numeric_only():
@@ -148,3 +148,20 @@ def test_start_stream_with_seekback_fallback_when_no_livepos(monkeypatch):
     result = client.start_stream_with_seekback("abc123", mode="infohash", seekback_seconds=10)
 
     assert result["url"].endswith("/0.1")
+
+
+def test_collect_status_samples_tolerates_timeouts(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    monkeypatch.setattr(client, "_write", lambda *_: None)
+    monkeypatch.setattr(
+        client,
+        "_read_message",
+        lambda timeout=0: (_ for _ in ()).throw(AceLegacyApiError("timeout")),
+    )
+
+    probe = client.collect_status_samples(samples=1, interval_s=0.0, per_sample_timeout_s=0.2)
+
+    assert probe["status"] is None
+    assert probe["livepos"] is None
+    assert probe["raw_status_lines"] == []
