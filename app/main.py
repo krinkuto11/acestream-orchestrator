@@ -171,6 +171,11 @@ async def lifespan(app: FastAPI):
                 mode = str(proxy_settings['control_mode']).upper()
                 if mode in ['LEGACY_HTTP', 'LEGACY_API']:
                     ProxyConfig.CONTROL_MODE = mode
+            if 'legacy_api_liveseek_seconds' in proxy_settings:
+                try:
+                    ProxyConfig.LEGACY_API_LIVESEEK_SECONDS = max(0, int(proxy_settings['legacy_api_liveseek_seconds']))
+                except (TypeError, ValueError):
+                    logger.warning("Invalid persisted legacy_api_liveseek_seconds value; keeping current runtime default")
             logger.info("Proxy settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
@@ -1176,59 +1181,134 @@ async def get_stream_extended_stats(stream_id: str):
 @app.get("/streams/{stream_id}/livepos")
 async def get_stream_livepos(stream_id: str):
     """
-    Get live position data for a stream from its stat URL.
-    This returns livepos information including current position, buffer, and timestamps.
+    Get live position data for a stream from stat URL or LEGACY_API probe.
+    This returns livepos details and derived live performance metrics.
     """
     import httpx
+
+    def _to_int(value):
+        if value is None or value == "":
+            return None
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
+    def _build_livepos_response(livepos, is_live, status_payload=None):
+        if not livepos:
+            return {
+                "has_livepos": False,
+                "is_live": bool(is_live),
+            }
+
+        normalized = {
+            "pos": livepos.get("pos"),
+            "live_first": livepos.get("live_first") or livepos.get("first_ts") or livepos.get("first"),
+            "live_last": livepos.get("live_last") or livepos.get("last_ts") or livepos.get("last"),
+            "first_ts": livepos.get("first_ts") or livepos.get("first"),
+            "last_ts": livepos.get("last_ts") or livepos.get("last"),
+            "buffer_pieces": livepos.get("buffer_pieces"),
+        }
+
+        pos_i = _to_int(normalized.get("pos"))
+        first_i = _to_int(normalized.get("live_first"))
+        last_i = _to_int(normalized.get("live_last"))
+
+        live_delay_seconds = None
+        dvr_window_seconds = None
+        playback_offset_seconds = None
+        if pos_i is not None and last_i is not None:
+            live_delay_seconds = max(0, last_i - pos_i)
+        if first_i is not None and last_i is not None:
+            dvr_window_seconds = max(0, last_i - first_i)
+        if pos_i is not None and first_i is not None:
+            playback_offset_seconds = max(0, pos_i - first_i)
+
+        performance = {
+            "live_delay_seconds": live_delay_seconds,
+            "dvr_window_seconds": dvr_window_seconds,
+            "playback_offset_seconds": playback_offset_seconds,
+        }
+
+        if status_payload:
+            performance.update({
+                "status": status_payload.get("status_text") or status_payload.get("status"),
+                "peers": status_payload.get("peers"),
+                "http_peers": status_payload.get("http_peers"),
+                "speed_down": status_payload.get("speed_down"),
+                "http_speed_down": status_payload.get("http_speed_down"),
+                "speed_up": status_payload.get("speed_up"),
+                "downloaded": status_payload.get("downloaded"),
+                "http_downloaded": status_payload.get("http_downloaded"),
+                "uploaded": status_payload.get("uploaded"),
+                "total_progress": status_payload.get("total_progress"),
+                "immediate_progress": status_payload.get("immediate_progress"),
+            })
+
+        return {
+            "has_livepos": True,
+            "is_live": bool(is_live),
+            "livepos": normalized,
+            "performance": performance,
+        }
     
     # Get the stream from state
     stream = state.get_stream(stream_id)
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
     
-    if not stream.stat_url:
-        raise HTTPException(status_code=400, detail="Stream has no stat URL")
-    
-    # Fetch livepos data from stat URL
+    if stream.stat_url:
+        # Fetch livepos data from stat URL (LEGACY_HTTP path)
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(stream.stat_url)
+                response.raise_for_status()
+                data = response.json()
+
+                payload = data.get("response")
+                if not payload:
+                    raise HTTPException(status_code=503, detail="No response data from stat URL")
+
+                return _build_livepos_response(
+                    payload.get("livepos"),
+                    payload.get("is_live", 0) == 1,
+                    status_payload=payload,
+                )
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to fetch livepos for stream {stream_id}: {e}")
+            raise HTTPException(status_code=503, detail=f"Failed to fetch livepos data: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error processing livepos for stream {stream_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Error processing livepos data: {str(e)}")
+
+    # LEGACY_API path (no stat_url): ask active proxy stream manager for a probe.
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(stream.stat_url)
-            response.raise_for_status()
-            data = response.json()
-            
-            # Extract response payload
-            payload = data.get("response")
-            if not payload:
-                raise HTTPException(status_code=503, detail="No response data from stat URL")
-            
-            # Extract livepos data
-            livepos = payload.get("livepos")
-            if not livepos:
-                # Stream might not be live or doesn't have livepos data
-                return {
-                    "has_livepos": False,
-                    "is_live": payload.get("is_live", 0) == 1
-                }
-            
-            # Return livepos data with additional context
-            # Extract all relevant fields from livepos according to AceStream API
-            return {
-                "has_livepos": True,
-                "is_live": payload.get("is_live", 0) == 1,
-                "livepos": {
-                    "pos": livepos.get("pos"),
-                    "live_first": livepos.get("live_first") or livepos.get("first_ts") or livepos.get("first"),
-                    "live_last": livepos.get("live_last") or livepos.get("last_ts") or livepos.get("last"),
-                    "first_ts": livepos.get("first_ts") or livepos.get("first"),
-                    "last_ts": livepos.get("last_ts") or livepos.get("last"),
-                    "buffer_pieces": livepos.get("buffer_pieces")
-                }
-            }
-    except httpx.HTTPError as e:
-        logger.error(f"Failed to fetch livepos for stream {stream_id}: {e}")
-        raise HTTPException(status_code=503, detail=f"Failed to fetch livepos data: {str(e)}")
+        from .proxy.server import ProxyServer
+
+        proxy = ProxyServer.get_instance()
+        manager = proxy.stream_managers.get(stream.key) if proxy else None
+        if not manager:
+            raise HTTPException(status_code=400, detail="Legacy stream manager not available")
+
+        probe = await asyncio.to_thread(
+            manager.collect_legacy_stats_probe,
+            1,
+            1.0,
+            True,
+        )
+        if not probe:
+            raise HTTPException(status_code=503, detail="No legacy probe data available")
+
+        livepos = probe.get("livepos") or {}
+        return _build_livepos_response(
+            livepos,
+            is_live=(stream.is_live is True),
+            status_payload=probe,
+        )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error processing livepos for stream {stream_id}: {e}")
+        logger.error(f"Error processing legacy livepos for stream {stream_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing livepos data: {str(e)}")
 
 @app.delete("/streams/{stream_id}", dependencies=[Depends(require_api_key)])
@@ -3038,6 +3118,7 @@ def get_proxy_config():
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": ProxyConfig.CONTROL_MODE,
+        "legacy_api_liveseek_seconds": ProxyConfig.LEGACY_API_LIVESEEK_SECONDS,
         "engine_variant": cfg.ENGINE_VARIANT,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
@@ -3062,6 +3143,7 @@ def update_proxy_config(
     max_streams_per_engine: Optional[int] = None,
     stream_mode: Optional[str] = None,
     control_mode: Optional[str] = None,
+    legacy_api_liveseek_seconds: Optional[int] = None,
     # HLS-specific parameters
     hls_max_segments: Optional[int] = None,
     hls_initial_segments: Optional[int] = None,
@@ -3086,6 +3168,7 @@ def update_proxy_config(
         max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
         stream_mode: Stream mode - 'TS' for MPEG-TS or 'HLS' for HLS streaming
         control_mode: Engine control mode - 'LEGACY_HTTP' (default) or 'LEGACY_API' (optional)
+        legacy_api_liveseek_seconds: Optional delayed-live seekback used in LEGACY_API mode (min: 0, max: 120)
         hls_max_segments: Maximum HLS segments to buffer (min: 5, max: 100)
         hls_initial_segments: Minimum HLS segments before playback (min: 1, max: 10)
         hls_window_size: Number of segments in HLS manifest window (min: 3, max: 20)
@@ -3161,6 +3244,11 @@ def update_proxy_config(
             raise HTTPException(status_code=400, detail="control_mode='LEGACY_API' requires stream_mode='TS'")
 
         ProxyConfig.CONTROL_MODE = normalized_control_mode
+
+    if legacy_api_liveseek_seconds is not None:
+        if legacy_api_liveseek_seconds < 0 or legacy_api_liveseek_seconds > 120:
+            raise HTTPException(status_code=400, detail="legacy_api_liveseek_seconds must be between 0 and 120")
+        ProxyConfig.LEGACY_API_LIVESEEK_SECONDS = legacy_api_liveseek_seconds
     
     # HLS-specific settings validation and updates
     if hls_max_segments is not None:
@@ -3214,7 +3302,8 @@ def update_proxy_config(
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
         f"max_streams_per_engine={cfg.MAX_STREAMS_PER_ENGINE}, "
         f"stream_mode={ProxyConfig.STREAM_MODE}, "
-        f"control_mode={ProxyConfig.CONTROL_MODE}"
+        f"control_mode={ProxyConfig.CONTROL_MODE}, "
+        f"legacy_api_liveseek_seconds={ProxyConfig.LEGACY_API_LIVESEEK_SECONDS}"
     )
     
     # Persist settings to JSON file
@@ -3230,6 +3319,7 @@ def update_proxy_config(
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": ProxyConfig.CONTROL_MODE,
+        "legacy_api_liveseek_seconds": ProxyConfig.LEGACY_API_LIVESEEK_SECONDS,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
@@ -3255,6 +3345,7 @@ def update_proxy_config(
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": ProxyConfig.CONTROL_MODE,
+        "legacy_api_liveseek_seconds": ProxyConfig.LEGACY_API_LIVESEEK_SECONDS,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,

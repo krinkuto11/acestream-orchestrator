@@ -190,7 +190,12 @@ class StreamManager:
                 raise AceLegacyApiError(f"Preflight failed: {message}")
 
             self.resolved_infohash = preflight.get("infohash") or self.content_id
-            start_info = client.start_stream(self.resolved_infohash, mode="infohash")
+            seekback_seconds = max(0, int(ConfigHelper.legacy_api_liveseek_seconds() or 0))
+            start_info = client.start_stream_with_seekback(
+                self.resolved_infohash,
+                mode="infohash",
+                seekback_seconds=seekback_seconds,
+            )
             self.legacy_status_probe = client.collect_status_samples(samples=1, interval_s=0.0, per_sample_timeout_s=1.0)
 
             playback_url = start_info.get("url")

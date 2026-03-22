@@ -79,3 +79,4 @@ While UI is preferred, environmental variables can still be passed to the contai
 - `DB_URL`: Backend database path (Default: `sqlite:///./orchestrator.db`).
 - `PROXY_STREAM_MODE`: Initial stream mode (`TS` or `HLS`).
 - `PROXY_CONTROL_MODE`: Initial control mode (`LEGACY_HTTP` or `LEGACY_API`).
+- `PROXY_LEGACY_API_LIVESEEK_SECONDS`: Optional live delay for `LEGACY_API` (default `0`, disabled). When `> 0`, live streams can seek back by N seconds after startup to improve stability.

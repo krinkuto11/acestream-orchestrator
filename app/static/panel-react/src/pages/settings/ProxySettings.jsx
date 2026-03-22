@@ -26,6 +26,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(DEFAULT_MAX_STREAMS_PER_ENGINE)
   const [streamMode, setStreamMode] = useState('TS')
   const [controlMode, setControlMode] = useState('LEGACY_HTTP')
+  const [legacyApiLiveSeekSeconds, setLegacyApiLiveSeekSeconds] = useState(0)
   const [engineVariant, setEngineVariant] = useState('')
 
   // HLS-specific state
@@ -91,6 +92,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
         setMaxStreamsPerEngine(data.max_streams_per_engine || DEFAULT_MAX_STREAMS_PER_ENGINE)
         setStreamMode(data.stream_mode || 'TS')
         setControlMode(data.control_mode || 'LEGACY_HTTP')
+        setLegacyApiLiveSeekSeconds(data.legacy_api_liveseek_seconds || 0)
         setEngineVariant(data.engine_variant || '')
         setVlcUserAgent(data.vlc_user_agent)
         setChunkSize(data.chunk_size)
@@ -168,6 +170,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
       params.append('max_streams_per_engine', maxStreamsPerEngine)
       params.append('stream_mode', streamMode)
       params.append('control_mode', controlMode)
+      params.append('legacy_api_liveseek_seconds', legacyApiLiveSeekSeconds)
       // HLS-specific parameters
       params.append('hls_max_segments', hlsMaxSegments)
       params.append('hls_initial_segments', hlsInitialSegments)
@@ -349,6 +352,26 @@ export function ProxySettings({ apiKey, orchUrl }) {
               for HELLOBG/READY/LOADASYNC/START control and remains optional.
             </p>
           </div>
+
+          {controlMode === 'LEGACY_API' && (
+            <div className="space-y-2">
+              <Label htmlFor="legacy-api-liveseek-seconds">Legacy API Live Seekback (seconds)</Label>
+              <Input
+                id="legacy-api-liveseek-seconds"
+                type="number"
+                min="0"
+                max="120"
+                value={legacyApiLiveSeekSeconds}
+                onChange={(e) => setLegacyApiLiveSeekSeconds(parseInt(e.target.value, 10) || 0)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Optional delayed-live stabilization for LEGACY_API mode. 0 disables it.
+                When set above 0, the proxy starts live playback and then seeks back by N seconds
+                to reduce edge-of-live instability.
+                <br /><strong>Range:</strong> 0-120 seconds. <strong>Recommended:</strong> 5-15 seconds.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
