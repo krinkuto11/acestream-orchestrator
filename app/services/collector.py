@@ -1,4 +1,5 @@
 import asyncio
+import os
 import httpx
 import logging
 from datetime import datetime, timezone
@@ -23,6 +24,13 @@ class Collector:
     def __init__(self):
         self._task = None
         self._stop = asyncio.Event()
+        # Legacy API status probes are blocking socket calls; limit offloaded
+        # concurrency so the collector loop remains responsive under load.
+        try:
+            legacy_probe_workers = max(2, int(os.getenv("LEGACY_STATS_PROBE_WORKERS", "8")))
+        except Exception:
+            legacy_probe_workers = 8
+        self._legacy_probe_semaphore = asyncio.Semaphore(legacy_probe_workers)
 
     async def start(self):
         if self._task and not self._task.done():
@@ -184,7 +192,12 @@ class Collector:
             if not manager:
                 return
 
-            probe = manager.collect_legacy_stats_probe(samples=1, per_sample_timeout_s=1.0)
+            async with self._legacy_probe_semaphore:
+                probe = await asyncio.to_thread(
+                    manager.collect_legacy_stats_probe,
+                    1,
+                    1.0,
+                )
             if not probe:
                 return
 

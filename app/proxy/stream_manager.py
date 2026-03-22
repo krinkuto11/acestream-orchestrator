@@ -55,8 +55,14 @@ class StreamManager:
         self._legacy_api_lock = threading.Lock()
         self.resolved_infohash = None
         self.legacy_status_probe = None
-        self._last_legacy_stats_publish = 0.0
-        self._legacy_stats_publish_interval_s = 2.0
+        self._legacy_probe_cache = None
+        self._legacy_probe_cache_ts = 0.0
+        # Keep probe cadence aligned with collector interval so legacy mode
+        # has comparable overhead to stat_url polling mode.
+        try:
+            self._legacy_probe_cache_ttl_s = max(0.5, float(os.getenv("COLLECT_INTERVAL_S", "1")))
+        except Exception:
+            self._legacy_probe_cache_ttl_s = 1.0
         
         # Connection state
         self.running = True
@@ -515,23 +521,37 @@ class StreamManager:
         """Deprecated: legacy stats are now gathered by the collector service."""
         return
 
-    def collect_legacy_stats_probe(self, samples: int = 1, per_sample_timeout_s: float = 1.0):
+    def collect_legacy_stats_probe(self, samples: int = 1, per_sample_timeout_s: float = 1.0, force: bool = False):
         """Return a status probe for the active legacy API session, if available."""
         if self.control_mode != "LEGACY_API" or not self.ace_api_client or not self.running:
             return None
 
+        now = time.monotonic()
+        if not force and self._legacy_probe_cache is not None:
+            if (now - self._legacy_probe_cache_ts) < self._legacy_probe_cache_ttl_s:
+                return self._legacy_probe_cache
+
+        # Avoid piling up blocking STATUS requests under load.
+        locked = self._legacy_api_lock.acquire(timeout=0.05)
+        if not locked:
+            return self._legacy_probe_cache
+
         try:
-            with self._legacy_api_lock:
-                if not self.ace_api_client:
-                    return None
-                return self.ace_api_client.collect_status_samples(
-                    samples=max(1, int(samples)),
-                    interval_s=0.0,
-                    per_sample_timeout_s=max(0.2, float(per_sample_timeout_s)),
-                )
+            if not self.ace_api_client:
+                return self._legacy_probe_cache
+            probe = self.ace_api_client.collect_status_samples(
+                samples=max(1, int(samples)),
+                interval_s=0.0,
+                per_sample_timeout_s=max(0.2, float(per_sample_timeout_s)),
+            )
+            self._legacy_probe_cache = probe
+            self._legacy_probe_cache_ts = time.monotonic()
+            return probe
         except Exception as e:
             logger.debug(f"Legacy stats probe failed for content_id={self.content_id}: {e}")
-            return None
+            return self._legacy_probe_cache
+        finally:
+            self._legacy_api_lock.release()
     
     def _monitor_health(self):
         """Monitor stream health"""
@@ -618,6 +638,8 @@ class StreamManager:
                 logger.debug(f"Error closing legacy API client during retry cleanup: {e}")
             self.ace_api_client = None
         self.legacy_status_probe = None
+        self._legacy_probe_cache = None
+        self._legacy_probe_cache_ts = 0.0
 
     def _cleanup(self):
         """Cleanup resources"""
@@ -641,6 +663,8 @@ class StreamManager:
                 pass
             self.ace_api_client = None
         self.legacy_status_probe = None
+        self._legacy_probe_cache = None
+        self._legacy_probe_cache_ts = 0.0
         
         # Update stream state in Redis
         if hasattr(self.buffer, 'redis_client') and self.buffer.redis_client:
