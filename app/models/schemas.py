@@ -34,6 +34,7 @@ class EngineState(BaseModel):
     container_name: Optional[str] = None
     host: str
     port: int
+    api_port: Optional[int] = None
     labels: Dict[str, str] = {}
     forwarded: bool = False
     first_seen: datetime

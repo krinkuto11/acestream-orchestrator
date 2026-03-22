@@ -25,6 +25,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [channelShutdownDelay, setChannelShutdownDelay] = useState(5)
   const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(DEFAULT_MAX_STREAMS_PER_ENGINE)
   const [streamMode, setStreamMode] = useState('TS')
+  const [controlMode, setControlMode] = useState('LEGACY_HTTP')
   const [engineVariant, setEngineVariant] = useState('')
 
   // HLS-specific state
@@ -82,6 +83,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
         setChannelShutdownDelay(data.channel_shutdown_delay)
         setMaxStreamsPerEngine(data.max_streams_per_engine || DEFAULT_MAX_STREAMS_PER_ENGINE)
         setStreamMode(data.stream_mode || 'TS')
+        setControlMode(data.control_mode || 'LEGACY_HTTP')
         setEngineVariant(data.engine_variant || '')
         setVlcUserAgent(data.vlc_user_agent)
         setChunkSize(data.chunk_size)
@@ -158,6 +160,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
       params.append('channel_shutdown_delay', channelShutdownDelay)
       params.append('max_streams_per_engine', maxStreamsPerEngine)
       params.append('stream_mode', streamMode)
+      params.append('control_mode', controlMode)
       // HLS-specific parameters
       params.append('hls_max_segments', hlsMaxSegments)
       params.append('hls_initial_segments', hlsInitialSegments)
@@ -210,6 +213,10 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   setError('HLS mode is not available with current engine configuration. Use an AceServe variant with disk or hybrid cache.')
                   return
                 }
+                if (value === 'HLS' && controlMode === 'LEGACY_API') {
+                  setError('HLS mode requires Legacy HTTP control mode.')
+                  return
+                }
                 setStreamMode(value)
                 setError(null)
               }}
@@ -251,6 +258,33 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   </span>
                 </>
               )}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="control-mode">Engine Control Mode</Label>
+            <Select
+              value={controlMode}
+              onValueChange={(value) => {
+                if (value === 'LEGACY_API' && streamMode === 'HLS') {
+                  setError('Legacy API control mode is only supported with MPEG-TS stream mode.')
+                  return
+                }
+                setControlMode(value)
+                setError(null)
+              }}
+            >
+              <SelectTrigger id="control-mode">
+                <SelectValue placeholder="Select control mode" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="LEGACY_HTTP">Legacy HTTP (default)</SelectItem>
+                <SelectItem value="LEGACY_API">Legacy API (socket control)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Legacy HTTP uses /ace/getstream JSON control flow. Legacy API uses the AceStream API port
+              for HELLOBG/READY/LOADASYNC/START control and remains optional.
             </p>
           </div>
         </CardContent>

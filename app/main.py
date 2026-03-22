@@ -166,6 +166,10 @@ async def lifespan(app: FastAPI):
                 # Validate stream_mode before loading
                 mode = proxy_settings['stream_mode']
                 ProxyConfig.STREAM_MODE = mode
+            if 'control_mode' in proxy_settings:
+                mode = str(proxy_settings['control_mode']).upper()
+                if mode in ['LEGACY_HTTP', 'LEGACY_API']:
+                    ProxyConfig.CONTROL_MODE = mode
             logger.info("Proxy settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
@@ -2066,6 +2070,13 @@ async def ace_getstream(
     
     # Get current stream mode
     stream_mode = ProxyConfig.STREAM_MODE
+    control_mode = (ProxyConfig.CONTROL_MODE or 'LEGACY_HTTP').upper()
+
+    if stream_mode == 'HLS' and control_mode == 'LEGACY_API':
+        raise HTTPException(
+            status_code=400,
+            detail="HLS mode requires control_mode='LEGACY_HTTP'"
+        )
     
     # Check if stream is on the looping blacklist
     if looping_streams_tracker.is_looping(id):
@@ -2330,6 +2341,7 @@ async def ace_getstream(
                 content_id=id,
                 engine_host=selected_engine.host,
                 engine_port=selected_engine.port,
+                engine_api_port=selected_engine.api_port,
                 engine_container_id=selected_engine.container_id
             )
             
@@ -2813,6 +2825,7 @@ def get_proxy_config():
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
+        "control_mode": ProxyConfig.CONTROL_MODE,
         "engine_variant": cfg.ENGINE_VARIANT,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
@@ -2836,6 +2849,7 @@ def update_proxy_config(
     channel_shutdown_delay: Optional[int] = None,
     max_streams_per_engine: Optional[int] = None,
     stream_mode: Optional[str] = None,
+    control_mode: Optional[str] = None,
     # HLS-specific parameters
     hls_max_segments: Optional[int] = None,
     hls_initial_segments: Optional[int] = None,
@@ -2859,6 +2873,7 @@ def update_proxy_config(
         channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
         max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
         stream_mode: Stream mode - 'TS' for MPEG-TS or 'HLS' for HLS streaming
+        control_mode: Engine control mode - 'LEGACY_HTTP' (default) or 'LEGACY_API' (optional)
         hls_max_segments: Maximum HLS segments to buffer (min: 5, max: 100)
         hls_initial_segments: Minimum HLS segments before playback (min: 1, max: 10)
         hls_window_size: Number of segments in HLS manifest window (min: 3, max: 20)
@@ -2918,8 +2933,22 @@ def update_proxy_config(
     if stream_mode is not None:
         if stream_mode not in ['TS', 'HLS']:
             raise HTTPException(status_code=400, detail="stream_mode must be either 'TS' or 'HLS'")
+
+        # Legacy API control currently supports TS flow only.
+        if stream_mode == 'HLS' and ProxyConfig.CONTROL_MODE == 'LEGACY_API':
+            raise HTTPException(status_code=400, detail="HLS mode is only supported with control_mode='LEGACY_HTTP'")
         
         ProxyConfig.STREAM_MODE = stream_mode
+
+    if control_mode is not None:
+        normalized_control_mode = str(control_mode).upper()
+        if normalized_control_mode not in ['LEGACY_HTTP', 'LEGACY_API']:
+            raise HTTPException(status_code=400, detail="control_mode must be either 'LEGACY_HTTP' or 'LEGACY_API'")
+
+        if normalized_control_mode == 'LEGACY_API' and ProxyConfig.STREAM_MODE == 'HLS':
+            raise HTTPException(status_code=400, detail="control_mode='LEGACY_API' requires stream_mode='TS'")
+
+        ProxyConfig.CONTROL_MODE = normalized_control_mode
     
     # HLS-specific settings validation and updates
     if hls_max_segments is not None:
@@ -2972,7 +3001,8 @@ def update_proxy_config(
         f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
         f"max_streams_per_engine={cfg.MAX_STREAMS_PER_ENGINE}, "
-        f"stream_mode={ProxyConfig.STREAM_MODE}"
+        f"stream_mode={ProxyConfig.STREAM_MODE}, "
+        f"control_mode={ProxyConfig.CONTROL_MODE}"
     )
     
     # Persist settings to JSON file
@@ -2987,6 +3017,7 @@ def update_proxy_config(
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
+        "control_mode": ProxyConfig.CONTROL_MODE,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
@@ -3011,6 +3042,7 @@ def update_proxy_config(
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
+        "control_mode": ProxyConfig.CONTROL_MODE,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,

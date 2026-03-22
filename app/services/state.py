@@ -94,8 +94,16 @@ class State:
                 container_name = f"engine-{evt.engine.host}-{evt.engine.port}"
             
             if not eng:
+                api_port = None
+                if evt.labels:
+                    api_port_raw = evt.labels.get("host.api_port") or evt.labels.get("acestream.api_port")
+                    if api_port_raw:
+                        try:
+                            api_port = int(api_port_raw)
+                        except ValueError:
+                            api_port = None
                 eng = EngineState(container_id=key, container_name=container_name, host=evt.engine.host, port=evt.engine.port,
-                                  labels=evt.labels or {}, forwarded=False, first_seen=self.now(), last_seen=self.now(), streams=[],
+                                  api_port=api_port, labels=evt.labels or {}, forwarded=False, first_seen=self.now(), last_seen=self.now(), streams=[],
                                   health_status="unknown", last_health_check=None, last_stream_usage=self.now(),
                                   vpn_container=None)
                 self.engines[key] = eng
@@ -105,6 +113,13 @@ class State:
                 if container_name and not eng.container_name:
                     eng.container_name = container_name
                 if evt.labels: eng.labels.update(evt.labels)
+                if evt.labels and eng.api_port is None:
+                    api_port_raw = evt.labels.get("host.api_port") or evt.labels.get("acestream.api_port")
+                    if api_port_raw:
+                        try:
+                            eng.api_port = int(api_port_raw)
+                        except ValueError:
+                            pass
 
             stream_id = (evt.labels.get("stream_id") if evt.labels else None) or f"{evt.stream.key}|{evt.session.playback_session_id}"
             st = StreamState(id=stream_id, key_type=evt.stream.key_type, key=evt.stream.key,
@@ -432,9 +447,18 @@ class State:
                 
                 forwarded = getattr(e, 'forwarded', False)
                 vpn_container = getattr(e, 'vpn_container', None)
+                api_port = 62062
+                api_port_raw = (e.labels or {}).get("host.api_port") or (e.labels or {}).get("acestream.api_port")
+                if api_port_raw:
+                    try:
+                        api_port = int(api_port_raw)
+                    except ValueError:
+                        api_port = 62062
                 
                 self.engines[e.engine_key] = EngineState(container_id=e.engine_key, container_name=container_name,
-                                                         host=e.host, port=e.port, labels=e.labels or {}, forwarded=forwarded,
+                                                         host=e.host, port=e.port,
+                                                         api_port=api_port,
+                                                         labels=e.labels or {}, forwarded=forwarded,
                                                          first_seen=first_seen, last_seen=last_seen, streams=[],
                                                          health_status="unknown", last_health_check=None, last_stream_usage=None,
                                                          vpn_container=vpn_container)

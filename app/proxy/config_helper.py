@@ -58,6 +58,11 @@ class Config:
     
     # Stream mode (TS or HLS)
     STREAM_MODE = os.getenv('PROXY_STREAM_MODE', 'TS')  # Default to MPEG-TS for backwards compatibility
+
+    # Engine control mode
+    # LEGACY_HTTP: current /ace/getstream JSON HTTP control flow
+    # LEGACY_API: telnet-style AceStream API control flow (optional)
+    CONTROL_MODE = os.getenv('PROXY_CONTROL_MODE', 'LEGACY_HTTP')
     
     # HLS-specific settings
     HLS_MAX_SEGMENTS = int(os.getenv('HLS_MAX_SEGMENTS', '20'))  # Maximum segments to buffer
@@ -189,6 +194,11 @@ class ConfigHelper:
     def stream_mode():
         """Get stream mode (TS or HLS)."""
         return Config.STREAM_MODE
+
+    @staticmethod
+    def control_mode():
+        """Get engine control mode (LEGACY_HTTP or LEGACY_API)."""
+        return Config.CONTROL_MODE
     
     # HLS-specific configuration helpers
     @staticmethod

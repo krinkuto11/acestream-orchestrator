@@ -11,6 +11,7 @@ import requests
 import os
 import uuid
 from typing import Optional
+from urllib.parse import urlparse, urlunparse
 
 from .http_streamer import HTTPStreamReader
 from .stream_buffer import StreamBuffer
@@ -18,6 +19,7 @@ from .client_manager import ClientManager
 from .redis_keys import RedisKeys
 from .constants import StreamState, EventType, StreamMetadataField, VLC_USER_AGENT
 from .config_helper import ConfigHelper, Config
+from .ace_api_client import AceLegacyApiClient, AceLegacyApiError
 from .utils import get_logger
 
 logger = get_logger()
@@ -30,11 +32,12 @@ STREAM_EVENT_HANDLER_TIMEOUT = 2.0
 class StreamManager:
     """Manages connection to AceStream engine and stream health"""
     
-    def __init__(self, content_id, engine_host, engine_port, engine_container_id, buffer, client_manager, worker_id=None, api_key=None):
+    def __init__(self, content_id, engine_host, engine_port, engine_container_id, buffer, client_manager, engine_api_port=None, worker_id=None, api_key=None):
         # Basic properties
         self.content_id = content_id
         self.engine_host = engine_host
         self.engine_port = engine_port
+        self.engine_api_port = engine_api_port or 62062
         self.engine_container_id = engine_container_id  # Added for events
         self.buffer = buffer
         self.client_manager = client_manager
@@ -47,6 +50,8 @@ class StreamManager:
         self.command_url = None
         self.playback_session_id = None
         self.is_live = None
+        self.control_mode = (ConfigHelper.control_mode() or "LEGACY_HTTP").upper()
+        self.ace_api_client = None
         
         # Connection state
         self.running = True
@@ -70,7 +75,13 @@ class StreamManager:
         logger.info(f"StreamManager initialized for content_id={content_id}")
     
     def request_stream_from_engine(self):
-        """Request stream from AceStream engine API"""
+        """Request stream from AceStream engine according to selected control mode."""
+        if self.control_mode == "LEGACY_API":
+            return self._request_stream_legacy_api()
+        return self._request_stream_legacy_http()
+
+    def _request_stream_legacy_http(self):
+        """Current JSON-over-HTTP control flow (default)."""
         # Check stream mode to determine which endpoint to use
         stream_mode = Config.STREAM_MODE
         
@@ -146,6 +157,64 @@ class StreamManager:
             logger.error(f"Request details - URL: {full_url}, Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}")
             logger.debug(f"Exception details: {e}", exc_info=True)
             return False
+
+    def _request_stream_legacy_api(self):
+        """Optional telnet-style legacy API control flow."""
+        session_id = str(uuid.uuid4())
+        try:
+            logger.info(
+                f"Requesting stream from AceStream legacy API: {self.engine_host}:{self.engine_api_port}"
+            )
+            client = AceLegacyApiClient(
+                host=self.engine_host,
+                port=self.engine_api_port,
+                connect_timeout=10,
+                response_timeout=10,
+            )
+            client.connect()
+            client.authenticate()
+
+            _, mode = client.resolve_content(self.content_id, session_id=session_id)
+            start_info = client.start_stream(self.content_id, mode=mode)
+
+            playback_url = start_info.get("url")
+            if not playback_url:
+                raise AceLegacyApiError("Legacy API START did not return playback URL")
+
+            self.playback_url = self._normalize_playback_url(playback_url)
+            self.stat_url = None
+            self.command_url = None
+            self.playback_session_id = start_info.get("playback_session_id", session_id)
+            self.is_live = int(start_info.get("is_live", 1) or 1)
+            self.ace_api_client = client
+
+            logger.info(f"AceStream legacy API session started: playback_session_id={self.playback_session_id}")
+            logger.info(f"Playback URL: {self.playback_url}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to request stream from AceStream legacy API: {e}")
+            logger.error(
+                f"Request details - API: {self.engine_host}:{self.engine_api_port}, Content ID: {self.content_id}"
+            )
+            logger.debug(f"Exception details: {e}", exc_info=True)
+            try:
+                if self.ace_api_client:
+                    self.ace_api_client.shutdown()
+            except Exception:
+                pass
+            self.ace_api_client = None
+            return False
+
+    def _normalize_playback_url(self, url: str) -> str:
+        """Rewrite localhost playback URLs so proxy can always reach the selected engine."""
+        try:
+            parsed = urlparse(url)
+            if parsed.hostname in {"127.0.0.1", "localhost"}:
+                netloc = f"{self.engine_host}:{parsed.port}" if parsed.port else self.engine_host
+                return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+        except Exception:
+            pass
+        return url
     
     def _send_stream_started_event(self):
         """Send stream started event to orchestrator in background (non-blocking)
@@ -440,7 +509,15 @@ class StreamManager:
                 pass
         
         # Send stop command to AceStream engine
-        if self.command_url:
+        if self.control_mode == "LEGACY_API" and self.ace_api_client:
+            try:
+                self.ace_api_client.stop_stream()
+                self.ace_api_client.shutdown()
+                self.ace_api_client = None
+                logger.info("Sent STOP/SHUTDOWN to AceStream legacy API")
+            except Exception as e:
+                logger.warning(f"Failed to send legacy API stop command: {e}")
+        elif self.command_url:
             try:
                 requests.get(f"{self.command_url}?method=stop", timeout=5)
                 logger.info("Sent stop command to AceStream engine")
@@ -470,6 +547,13 @@ class StreamManager:
             except Exception as e:
                 logger.debug(f"Error closing socket during retry cleanup: {e}")
 
+        if self.ace_api_client:
+            try:
+                self.ace_api_client.shutdown()
+            except Exception as e:
+                logger.debug(f"Error closing legacy API client during retry cleanup: {e}")
+            self.ace_api_client = None
+
     def _cleanup(self):
         """Cleanup resources"""
         self.connected = False
@@ -482,6 +566,13 @@ class StreamManager:
                 self.socket.close()
             except:
                 pass
+
+        if self.ace_api_client:
+            try:
+                self.ace_api_client.shutdown()
+            except Exception:
+                pass
+            self.ace_api_client = None
         
         # Update stream state in Redis
         if hasattr(self.buffer, 'redis_client') and self.buffer.redis_client:

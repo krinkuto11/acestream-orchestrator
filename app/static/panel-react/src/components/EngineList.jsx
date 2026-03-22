@@ -94,6 +94,11 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
             <p className="text-sm text-muted-foreground">
               {engine.host}:{engine.port}
             </p>
+            {engine.api_port && (
+              <p className="text-xs text-muted-foreground">
+                API: {engine.host}:{engine.api_port}
+              </p>
+            )}
           </div>
           <div className="flex gap-2 items-center">
             <Badge variant={healthVariant} className="flex items-center gap-1">
@@ -201,6 +206,12 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
                   <div>
                     <p className="text-xs text-muted-foreground">Forwarded Port</p>
                     <p className="text-sm font-medium font-mono">{engine.forwarded_port}</p>
+                  </div>
+                )}
+                {engine.api_port && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">API Port</p>
+                    <p className="text-sm font-medium font-mono">{engine.api_port}</p>
                   </div>
                 )}
               </div>

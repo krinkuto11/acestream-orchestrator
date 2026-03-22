@@ -28,8 +28,10 @@ def _decrement_vpn_pending_counter(vpn_container: Optional[str]):
 
 ACESTREAM_LABEL_HTTP = "acestream.http_port"
 ACESTREAM_LABEL_HTTPS = "acestream.https_port"
+ACESTREAM_LABEL_API = "acestream.api_port"
 HOST_LABEL_HTTP = "host.http_port"
 HOST_LABEL_HTTPS = "host.https_port"
+HOST_LABEL_API = "host.api_port"
 FORWARDED_LABEL = "acestream.forwarded"
 VPN_CONTAINER_LABEL = "acestream.vpn_container"
 ENGINE_VARIANT_LABEL = "acestream.engine_variant"
@@ -52,6 +54,8 @@ class AceProvisionResponse(BaseModel):
     host_http_port: int
     container_http_port: int
     container_https_port: int
+    host_api_port: Optional[int] = None
+    container_api_port: Optional[int] = None
 
 def start_container(req: StartRequest) -> dict:
     from .naming import generate_container_name
@@ -122,6 +126,10 @@ def _release_ports_from_labels(labels: dict):
     try:
         if labels.get(HOST_LABEL_HTTPS):
             alloc.free_host(int(labels.get(HOST_LABEL_HTTPS)))
+    except Exception: pass
+    try:
+        if labels.get(HOST_LABEL_API):
+            alloc.free_host(int(labels.get(HOST_LABEL_API)))
     except Exception: pass
     try:
         cp = labels.get(ACESTREAM_LABEL_HTTP); alloc.free_http(int(cp) if cp else None)
@@ -441,6 +449,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     user_conf = req.env.get("CONF")
     user_http_port = _parse_conf_port(user_conf, "http") if user_conf else None
     user_https_port = _parse_conf_port(user_conf, "https") if user_conf else None
+    user_api_port = _parse_conf_port(user_conf, "api") if user_conf else None
     
     # Determine ports to use
     if user_http_port is not None:
@@ -477,6 +486,15 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         # HTTPS ports always use the regular HTTPS range, regardless of Gluetun
         # HTTPS ports don't count against MAX_REPLICAS
         c_https = alloc.alloc_https(avoid=c_http)
+
+    # Determine API port to expose for legacy AceStream API control channel
+    if user_api_port is not None:
+        c_api = user_api_port
+        host_api = user_api_port
+        alloc.reserve_host(host_api)
+    else:
+        host_api = alloc.alloc_host()
+        c_api = host_api
 
     # Get variant configuration
     variant_config = get_variant_config(cfg.ENGINE_VARIANT)
@@ -546,7 +564,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     if variant_config["config_type"] == "env":
         # Legacy ENV-based configuration (mainly for custom variants with base_args)
         base_args = variant_config.get("base_args", "")
-        port_args = f" --http-port {c_http} --https-port {c_https}"
+        port_args = f" --http-port {c_http} --https-port {c_https} --api-port {c_api}"
         # Add P2P port if available
         if p2p_port:
             port_args += f" --port {p2p_port}"
@@ -563,10 +581,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         if is_aceserve_default:
             # Minimal ports for AceServe as per user requirement. AceServe docker images already 
             # have --bind-all etc. in their default parameters.
-            port_args = ["--http-port", str(c_http)]
+            port_args = ["--http-port", str(c_http), "--api-port", str(c_api)]
         else:
             # Standard ports for other variants (including krinkuto11 and custom)
-            port_args = ["--http-port", str(c_http), "--https-port", str(c_https)]
+            port_args = ["--http-port", str(c_http), "--https-port", str(c_https), "--api-port", str(c_api)]
             
         # Add P2P port if available
         if p2p_port:
@@ -578,7 +596,9 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     labels = {**req.labels, key: val,
               ACESTREAM_LABEL_HTTP: str(c_http),
               ACESTREAM_LABEL_HTTPS: str(c_https),
+              ACESTREAM_LABEL_API: str(c_api),
               HOST_LABEL_HTTP: str(host_http),
+              HOST_LABEL_API: str(host_api),
               ENGINE_VARIANT_LABEL: engine_variant_name}
     
     # Add VPN container label if using VPN
@@ -594,6 +614,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         ports = None
     else:
         ports = {f"{c_http}/tcp": host_http}
+        ports[f"{c_api}/tcp"] = host_api
         if cfg.ACE_MAP_HTTPS:
             host_https = alloc.alloc_host()
             ports[f"{c_https}/tcp"] = host_https
@@ -767,6 +788,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         container_name=actual_container_name,
         host=engine_host,
         port=host_http,
+        api_port=host_api,
         labels=labels,
         forwarded=is_forwarded,
         first_seen=now,
@@ -816,5 +838,7 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         container_name=actual_container_name,
         host_http_port=host_http, 
         container_http_port=c_http, 
-        container_https_port=c_https
+        container_https_port=c_https,
+        host_api_port=host_api,
+        container_api_port=c_api
     )
