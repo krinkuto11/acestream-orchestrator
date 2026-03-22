@@ -138,14 +138,21 @@ def _release_ports_from_labels(labels: dict):
         sp = labels.get(ACESTREAM_LABEL_HTTPS); alloc.free_https(int(sp) if sp else None)
     except Exception: pass
     
-    # Release Gluetun ports if using Gluetun
-    # Only free one port per container (use HOST_LABEL_HTTP as the primary port)
-    # to match the reserve behavior and avoid double-counting
+    # Release Gluetun ports if using Gluetun.
+    # HTTP and legacy API ports are both allocated from the Gluetun range.
     if cfg.GLUETUN_CONTAINER_NAME:
         try:
             hp = labels.get(HOST_LABEL_HTTP)
             vpn_container = labels.get(VPN_CONTAINER_LABEL)
             alloc.free_gluetun_port(int(hp) if hp else None, vpn_container)
+        except Exception: pass
+        try:
+            ap = labels.get(HOST_LABEL_API)
+            hp = labels.get(HOST_LABEL_HTTP)
+            vpn_container = labels.get(VPN_CONTAINER_LABEL)
+            # Avoid double-free if API and HTTP share the same port.
+            if ap and ap != hp:
+                alloc.free_gluetun_port(int(ap), vpn_container)
         except Exception: pass
 
 def stop_container(container_id: str):
@@ -491,9 +498,17 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     if user_api_port is not None:
         c_api = user_api_port
         host_api = user_api_port
-        alloc.reserve_host(host_api)
+        if cfg.GLUETUN_CONTAINER_NAME:
+            alloc.reserve_gluetun_port(host_api, vpn_container)
+        else:
+            alloc.reserve_host(host_api)
     else:
-        host_api = alloc.alloc_host()
+        if cfg.GLUETUN_CONTAINER_NAME:
+            # Keep legacy API control port in the same VPN-specific published range
+            # as the engine's HTTP port to ensure it is reachable in redundant mode.
+            host_api = alloc.alloc_gluetun_port(vpn_container)
+        else:
+            host_api = alloc.alloc_host()
         c_api = host_api
 
     # Get variant configuration
