@@ -394,7 +394,6 @@ async def lifespan(app: FastAPI):
         # We invoke start_acestream directly here instead of autoscaler to isolate
         # initial provisioning from periodic maintenance logic like circuit breakers
         from app.services.provisioner import start_acestream, AceProvisionRequest
-        from app.services.state import state
         
         target_count = cfg.MIN_REPLICAS
         logger.info(f"Starting {target_count} AceStream containers for initial startup")
