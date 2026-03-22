@@ -526,9 +526,9 @@ class StreamManager:
 
         try:
             probe = self.ace_api_client.collect_status_samples(
-                samples=1,
+                samples=2,
                 interval_s=0.0,
-                per_sample_timeout_s=0.5,
+                per_sample_timeout_s=1.0,
             )
         except Exception as e:
             logger.debug(f"Legacy stats probe failed for content_id={self.content_id}: {e}")
@@ -543,6 +543,10 @@ class StreamManager:
                 stream_id_for_stats = self.stream_id
             else:
                 stream_id_for_stats = None
+                guessed_stream_id = f"{self.content_id}|{self.playback_session_id}"
+                if orchestrator_state.get_stream(guessed_stream_id):
+                    stream_id_for_stats = guessed_stream_id
+
                 for stream in orchestrator_state.list_streams(status="started"):
                     if stream.playback_session_id == self.playback_session_id and stream.container_id == self.engine_container_id:
                         stream_id_for_stats = stream.id
@@ -550,6 +554,24 @@ class StreamManager:
 
             if not stream_id_for_stats:
                 return
+
+            speed_down = probe.get("speed_down")
+            if speed_down is None:
+                speed_down = probe.get("http_speed_down")
+
+            peers = probe.get("peers")
+            if peers is None:
+                peers = probe.get("http_peers")
+
+            downloaded = probe.get("downloaded")
+            if downloaded is None:
+                downloaded = probe.get("http_downloaded")
+
+            # Keep numeric fields stable for the panel even when probe omits fields.
+            speed_down = 0 if speed_down is None else speed_down
+            speed_up = 0 if probe.get("speed_up") is None else probe.get("speed_up")
+            downloaded = 0 if downloaded is None else downloaded
+            uploaded = 0 if probe.get("uploaded") is None else probe.get("uploaded")
 
             livepos = None
             livepos_raw = probe.get("livepos") or {}
@@ -565,11 +587,11 @@ class StreamManager:
 
             snap = StreamStatSnapshot(
                 ts=datetime.now(timezone.utc),
-                peers=probe.get("peers"),
-                speed_down=probe.get("speed_down"),
-                speed_up=probe.get("speed_up"),
-                downloaded=probe.get("downloaded"),
-                uploaded=probe.get("uploaded"),
+                peers=peers,
+                speed_down=speed_down,
+                speed_up=speed_up,
+                downloaded=downloaded,
+                uploaded=uploaded,
                 status=probe.get("status_text") or probe.get("status"),
                 livepos=livepos,
             )
