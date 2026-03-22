@@ -26,13 +26,13 @@ export function SettingsPage({
       </div>
 
       <Tabs defaultValue="general" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-6 lg:w-[960px]">
-          <TabsTrigger value="general">General</TabsTrigger>
-          <TabsTrigger value="orchestrator">Orchestrator</TabsTrigger>
-          <TabsTrigger value="vpn">VPN</TabsTrigger>
-          <TabsTrigger value="proxy">Proxy</TabsTrigger>
-          <TabsTrigger value="loop-detection">Loop Detection</TabsTrigger>
-          <TabsTrigger value="backup">Backup</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-6 border-slate-700 bg-slate-900/90 text-slate-300 lg:w-[960px]">
+          <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="general">General</TabsTrigger>
+          <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="orchestrator">Orchestrator</TabsTrigger>
+          <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="vpn">VPN</TabsTrigger>
+          <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="proxy">Proxy</TabsTrigger>
+          <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="loop-detection">Loop Detection</TabsTrigger>
+          <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="backup">Backup</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="space-y-6">
