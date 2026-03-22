@@ -11,7 +11,7 @@ import requests
 import os
 import uuid
 from typing import Optional
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 from .http_streamer import HTTPStreamReader
 from .stream_buffer import StreamBuffer
@@ -215,10 +215,21 @@ class StreamManager:
     def _normalize_playback_url(self, url: str) -> str:
         """Rewrite localhost playback URLs so proxy can always reach the selected engine."""
         try:
-            parsed = urlparse(url)
+            normalized_url = (url or "").strip()
+
+            # Legacy API START can return percent-encoded URL strings such as
+            # http%3A//172.19.0.2%3A19000/content/.... Decode before parsing.
+            if "%" in normalized_url:
+                decoded_candidate = unquote(normalized_url)
+                if decoded_candidate.startswith(("http://", "https://")):
+                    normalized_url = decoded_candidate
+
+            parsed = urlparse(normalized_url)
             if parsed.hostname in {"127.0.0.1", "localhost"}:
                 netloc = f"{self.engine_host}:{parsed.port}" if parsed.port else self.engine_host
                 return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+            if parsed.scheme and parsed.netloc:
+                return normalized_url
         except Exception:
             pass
         return url
