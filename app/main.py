@@ -1090,6 +1090,15 @@ async def get_stream_extended_stats(stream_id: str):
     stream = state.get_stream(stream_id)
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
+
+    # Additional stable cache key to share results across stream session IDs
+    # for the same content (e.g. infohash|legacy-<session>). This keeps the
+    # panel fast during reconnects/failovers.
+    content_cache_key = f"stream_extended_stats:content:{stream.key}"
+    cached_content_stats = cache.get(content_cache_key)
+    if cached_content_stats is not None:
+        cache.set(cache_key, cached_content_stats, ttl=3600.0)
+        return cached_content_stats
     
     extended_stats = None
 
@@ -1103,13 +1112,21 @@ async def get_stream_extended_stats(stream_id: str):
         if engine_state:
             infohash = stream.key if stream.key_type == "infohash" else None
 
+            # Fast path: legacy stream IDs usually have infohash prefix
+            # (<infohash>|legacy-<session>). Use it directly to avoid an API
+            # connect/auth/resolve round-trip on request path.
+            if not infohash and "|" in stream_id:
+                maybe_infohash = stream_id.split("|", 1)[0].strip().lower()
+                if len(maybe_infohash) == 40 and all(c in "0123456789abcdef" for c in maybe_infohash):
+                    infohash = maybe_infohash
+
             if not infohash and engine_state.api_port:
                 def _resolve_infohash_via_legacy_api() -> Optional[str]:
                     client = AceLegacyApiClient(
                         host=engine_state.host,
                         port=engine_state.api_port or 62062,
-                        connect_timeout=3,
-                        response_timeout=3,
+                        connect_timeout=2,
+                        response_timeout=2,
                     )
                     try:
                         client.connect()
@@ -1124,7 +1141,13 @@ async def get_stream_extended_stats(stream_id: str):
                         except Exception:
                             pass
 
-                infohash = await asyncio.to_thread(_resolve_infohash_via_legacy_api)
+                try:
+                    infohash = await asyncio.wait_for(
+                        asyncio.to_thread(_resolve_infohash_via_legacy_api),
+                        timeout=3.0,
+                    )
+                except asyncio.TimeoutError:
+                    infohash = None
 
             if infohash:
                 extended_stats = await fetch_extended_content_info(
@@ -1137,10 +1160,16 @@ async def get_stream_extended_stats(stream_id: str):
 
     # Avoid noisy panel failures for streams where metadata cannot be resolved.
     if extended_stats is None:
-        return {"available": False}
+        unavailable = {"available": False}
+        # Short negative cache to avoid repeated expensive lookups while keeping
+        # quick recovery when metadata becomes available.
+        cache.set(cache_key, unavailable, ttl=30.0)
+        cache.set(content_cache_key, unavailable, ttl=30.0)
+        return unavailable
     
     # Cache the result for 1 hour (3600 seconds) since stream title/infohash rarely change
     cache.set(cache_key, extended_stats, ttl=3600.0)
+    cache.set(content_cache_key, extended_stats, ttl=3600.0)
     
     return extended_stats
 
