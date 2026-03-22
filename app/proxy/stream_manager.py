@@ -52,6 +52,8 @@ class StreamManager:
         self.is_live = None
         self.control_mode = (ConfigHelper.control_mode() or "LEGACY_HTTP").upper()
         self.ace_api_client = None
+        self.resolved_infohash = None
+        self.legacy_status_probe = None
         
         # Connection state
         self.running = True
@@ -160,7 +162,6 @@ class StreamManager:
 
     def _request_stream_legacy_api(self):
         """Optional telnet-style legacy API control flow."""
-        session_id = str(uuid.uuid4())
         try:
             logger.info(
                 f"Requesting stream from AceStream legacy API: {self.engine_host}:{self.engine_api_port}"
@@ -174,18 +175,24 @@ class StreamManager:
             client.connect()
             client.authenticate()
 
-            _, mode = client.resolve_content(self.content_id, session_id=session_id)
-            start_info = client.start_stream(self.content_id, mode=mode)
+            preflight = client.preflight(self.content_id, tier="light")
+            if not preflight.get("available"):
+                message = preflight.get("message") or "content unavailable"
+                raise AceLegacyApiError(f"Preflight failed: {message}")
+
+            self.resolved_infohash = preflight.get("infohash") or self.content_id
+            start_info = client.start_stream(self.resolved_infohash, mode="infohash")
+            self.legacy_status_probe = client.collect_status_samples(samples=1, interval_s=0.0, per_sample_timeout_s=1.0)
 
             playback_url = start_info.get("url")
             if not playback_url:
                 raise AceLegacyApiError("Legacy API START did not return playback URL")
 
             self.playback_url = self._normalize_playback_url(playback_url)
-            self.stat_url = None
-            self.command_url = None
-            self.playback_session_id = start_info.get("playback_session_id", session_id)
-            self.is_live = int(start_info.get("is_live", 1) or 1)
+            self.stat_url = ""
+            self.command_url = ""
+            self.playback_session_id = start_info.get("playback_session_id", f"legacy-{int(time.time())}")
+            self.is_live = int(start_info.get("stream", 1) or 1)
             self.ace_api_client = client
 
             logger.info(f"AceStream legacy API session started: playback_session_id={self.playback_session_id}")
@@ -247,9 +254,25 @@ class StreamManager:
                     ),
                     labels={
                         "source": "proxy",
-                        "worker_id": self.worker_id or "unknown"
+                        "worker_id": self.worker_id or "unknown",
+                        "proxy.control_mode": self.control_mode,
+                        "stream.resolved_infohash": str(self.resolved_infohash or "")
                     }
                 )
+
+                if self.legacy_status_probe:
+                    status_text = self.legacy_status_probe.get("status_text")
+                    peers = self.legacy_status_probe.get("peers")
+                    http_peers = self.legacy_status_probe.get("http_peers")
+                    progress = self.legacy_status_probe.get("progress")
+                    if status_text is not None:
+                        event.labels["stream.status_text"] = str(status_text)
+                    if peers is not None:
+                        event.labels["stream.peers"] = str(peers)
+                    if http_peers is not None:
+                        event.labels["stream.http_peers"] = str(http_peers)
+                    if progress is not None:
+                        event.labels["stream.progress"] = str(progress)
                 
                 # Call internal handler directly (no HTTP request)
                 try:
@@ -553,6 +576,7 @@ class StreamManager:
             except Exception as e:
                 logger.debug(f"Error closing legacy API client during retry cleanup: {e}")
             self.ace_api_client = None
+        self.legacy_status_probe = None
 
     def _cleanup(self):
         """Cleanup resources"""
@@ -573,6 +597,7 @@ class StreamManager:
             except Exception:
                 pass
             self.ace_api_client = None
+        self.legacy_status_probe = None
         
         # Update stream state in Redis
         if hasattr(self.buffer, 'redis_client') and self.buffer.redis_client:

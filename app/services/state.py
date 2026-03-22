@@ -125,7 +125,7 @@ class State:
             st = StreamState(id=stream_id, key_type=evt.stream.key_type, key=evt.stream.key,
                              container_id=key, container_name=eng.container_name if eng else container_name,
                              playback_session_id=evt.session.playback_session_id,
-                             stat_url=str(evt.session.stat_url), command_url=str(evt.session.command_url),
+                             stat_url=str(evt.session.stat_url or ""), command_url=str(evt.session.command_url or ""),
                              is_live=bool(evt.session.is_live), started_at=self.now(), status="started")
             self.streams[stream_id] = st
             if stream_id not in eng.streams: eng.streams.append(stream_id)

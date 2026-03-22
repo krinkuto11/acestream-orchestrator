@@ -48,6 +48,13 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [customVariantCacheType, setCustomVariantCacheType] = useState('')
   const [variantDisplayName, setVariantDisplayName] = useState('')
 
+  // Preflight diagnostics state
+  const [preflightContentId, setPreflightContentId] = useState('')
+  const [preflightTier, setPreflightTier] = useState('light')
+  const [preflightLoading, setPreflightLoading] = useState(false)
+  const [preflightResult, setPreflightResult] = useState(null)
+  const [preflightError, setPreflightError] = useState(null)
+
   // Check if HLS is supported - double check both variant and cache type
   const isAceServeVariant = engineVariant.startsWith('AceServe')
   const hasCompatibleCache = !customVariantEnabled || (customVariantCacheType !== 'memory')
@@ -193,6 +200,61 @@ export function ProxySettings({ apiKey, orchUrl }) {
     }
   }
 
+  const runPreflight = async () => {
+    const contentId = preflightContentId.trim()
+    if (!contentId) {
+      setPreflightError('Content ID is required (infohash, PID, or magnet URI).')
+      setPreflightResult(null)
+      return
+    }
+
+    setPreflightLoading(true)
+    setPreflightError(null)
+    setPreflightResult(null)
+
+    try {
+      const headers = {}
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`
+      }
+
+      const response = await fetch(
+        `${orchUrl}/ace/preflight?id=${encodeURIComponent(contentId)}&tier=${encodeURIComponent(preflightTier)}`,
+        { headers }
+      )
+
+      let payload = null
+      try {
+        payload = await response.json()
+      } catch {
+        payload = null
+      }
+
+      if (!response.ok) {
+        const detail = payload?.detail || `HTTP ${response.status}: ${response.statusText}`
+        throw new Error(detail)
+      }
+
+      setPreflightResult(payload)
+    } catch (err) {
+      setPreflightError(err.message || String(err))
+    } finally {
+      setPreflightLoading(false)
+    }
+  }
+
+  const copyResolvedInfohash = async () => {
+    const infohash = preflightResult?.result?.infohash
+    if (!infohash) return
+
+    try {
+      await navigator.clipboard.writeText(infohash)
+      setMessage('Resolved infohash copied to clipboard')
+    } catch (err) {
+      setError('Failed to copy infohash: ' + (err.message || String(err)))
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -287,6 +349,114 @@ export function ProxySettings({ apiKey, orchUrl }) {
               for HELLOBG/READY/LOADASYNC/START control and remains optional.
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Preflight Diagnostics</CardTitle>
+          <CardDescription>
+            Validate content availability using the current control mode before opening a client playback session.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="preflight-content-id">Content ID</Label>
+            <Input
+              id="preflight-content-id"
+              type="text"
+              placeholder="infohash, PID, or magnet URI"
+              value={preflightContentId}
+              onChange={(e) => setPreflightContentId(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="preflight-tier">Preflight Tier</Label>
+            <Select value={preflightTier} onValueChange={setPreflightTier}>
+              <SelectTrigger id="preflight-tier">
+                <SelectValue placeholder="Select preflight tier" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="light">light (resolve only)</SelectItem>
+                <SelectItem value="deep">deep (resolve + start + status sample + stop)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button onClick={runPreflight} disabled={preflightLoading}>
+              {preflightLoading ? 'Running Preflight...' : 'Run Preflight'}
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              Current mode: <strong>{controlMode}</strong>
+            </p>
+          </div>
+
+          {preflightError && (
+            <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive rounded-md">
+              <AlertCircle className="h-4 w-4 text-destructive" />
+              <span className="text-sm text-destructive">{preflightError}</span>
+            </div>
+          )}
+
+          {preflightResult && (
+            <div className="space-y-3 rounded-md border p-3 bg-muted/30">
+              <div className="flex flex-wrap gap-2">
+                <span className={`text-xs px-2 py-1 rounded border ${preflightResult?.result?.available ? 'bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400'}`}>
+                  {preflightResult?.result?.available ? 'AVAILABLE' : 'UNAVAILABLE'}
+                </span>
+                <span className="text-xs px-2 py-1 rounded border bg-background/50">
+                  tier: {preflightResult?.tier || preflightTier}
+                </span>
+                <span className="text-xs px-2 py-1 rounded border bg-background/50">
+                  mode: {preflightResult?.control_mode || controlMode}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground">Availability</p>
+                  <p className="font-semibold">
+                    {preflightResult?.result?.available ? 'Available' : 'Unavailable'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Resolved Infohash</p>
+                  <p className="font-mono break-all">{preflightResult?.result?.infohash || 'N/A'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Control Mode</p>
+                  <p>{preflightResult?.control_mode || controlMode}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Status Probe</p>
+                  <p>{preflightResult?.result?.status_probe?.status_text || 'N/A'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={copyResolvedInfohash}
+                  disabled={!preflightResult?.result?.infohash}
+                >
+                  Copy Resolved Infohash
+                </Button>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Raw Response</p>
+                <pre className="text-xs overflow-x-auto rounded bg-background p-2 border">
+                  {JSON.stringify(preflightResult, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            Tip: use <strong>light</strong> for fast checks and <strong>deep</strong> when investigating prebuffering,
+            peer discovery, or status parsing behavior.
+          </p>
         </CardContent>
       </Card>
 

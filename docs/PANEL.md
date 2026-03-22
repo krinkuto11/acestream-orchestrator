@@ -10,18 +10,58 @@ Route:
 
 1. Start the orchestrator.
 2. Open `http://<host>:8000/panel`.
-3. If protected endpoints are enabled, go to Settings and set the API key.
+3. If protected endpoints are enabled, open Settings > General and set API key.
 
 ## Navigation
 
 - Overview: global status summary
-- Engines: engine status and engine configuration
-- Streams: active streams and actions
+- Engines: engine state and provisioning controls
+- Streams: active and ended streams, diagnostics, actions
 - Events: event log and filters
 - Health: health checks and circuit breaker state
-- VPN: VPN status (single or redundant mode)
+- VPN: VPN health and forwarding state (single or redundant)
 - Dashboard: metrics and historical trends
 - Settings: runtime configuration
+
+## Proxy Settings Workflows
+
+### Select stream/control behavior
+
+1. Open Settings > Proxy.
+2. Choose Stream Mode:
+	- `TS`: MPEG-TS output
+	- `HLS`: HLS manifest + segments
+3. Choose Engine Control Mode:
+	- `LEGACY_HTTP`: default `/ace/getstream` control flow
+	- `LEGACY_API`: socket control flow (`HELLOBG/READY/LOADASYNC/START`)
+
+Notes:
+- `HLS` requires `LEGACY_HTTP`.
+- `LEGACY_API` is supported only with `TS`.
+
+### Run preflight diagnostics from GUI
+
+1. Open Settings > Proxy > Preflight Diagnostics.
+2. Enter content identifier (infohash, PID, or magnet URI).
+3. Select tier:
+	- `light`: resolve/canonicalize only
+	- `deep`: resolve + START + STATUS/livepos sample + STOP
+4. Run preflight and inspect:
+	- Availability
+	- Resolved infohash
+	- Control mode used
+	- Raw JSON payload
+
+Use `light` for quick checks and `deep` for startup or buffering investigation.
+
+## Streams Page Updates
+
+Expanded stream details now include:
+- Control mode labels (`proxy.control_mode`) when present
+- Resolved canonical infohash (`stream.resolved_infohash`) when available
+- Conditional action links for `stat_url` and `command_url`
+
+In `LEGACY_API` mode, direct `stat_url` or `command_url` can be unavailable for some sessions. The panel now renders this as informational text instead of broken links.
 
 ## Common Tasks
 
@@ -31,29 +71,16 @@ Route:
 2. Set API key.
 3. Save.
 
-### Change refresh interval
-
-1. Open Settings > General.
-2. Select refresh interval.
-3. Save.
-
 ### Configure engines
 
 1. Open Engines > Engine Configuration.
 2. Set replica and provisioning options.
 3. Save or Save and Reprovision.
 
-### Stop a stream
+### Stop stream(s)
 
 1. Open Streams.
-2. Select stream.
-3. Stop stream.
-
-### Delete an engine
-
-1. Open Engines.
-2. Select engine.
-3. Delete engine.
+2. Select one stream and stop it, or multi-select and use batch stop.
 
 ### Set dashboard metrics window
 
@@ -61,29 +88,24 @@ Route:
 2. Select a window (for example 5m, 15m, 1h, 24h).
 3. Charts and window totals update to the selected range.
 
-## Dashboard Metrics Notes
-
-- Throughput charts are rates in Mbps.
-- Global ingress and egress totals are window-scoped totals in bytes for the selected window.
-- Error rates include upstream proxy failures.
-
 ## Troubleshooting
 
 ### No data in panel
 
-- Check orchestrator is running.
-- Check browser can reach `http://<host>:8000`.
-- Check API key in Settings if endpoints are protected.
+- Confirm orchestrator is running.
+- Confirm browser reachability to `http://<host>:8000`.
+- Confirm API key is set in Settings when protected endpoints are enabled.
 
-### Engines page actions fail
+### Preflight fails in deep tier
 
-- Confirm API key is valid.
-- Confirm Docker socket is mounted in the orchestrator container.
+- Check selected control mode in Settings > Proxy.
+- Confirm engine availability in Engines page.
+- Retry in `light` tier to separate resolve issues from startup/status issues.
 
-### VPN page empty or disconnected
+### Streams show unavailable command/stat URLs
 
-- Confirm VPN compose profile is running.
-- Check container names configured in Settings > VPN.
+- This is expected in some `LEGACY_API` flows.
+- Use labels and diagnostics fields in expanded stream view.
 
 ## Build The Panel Locally
 

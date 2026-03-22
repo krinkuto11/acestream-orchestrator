@@ -347,6 +347,9 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   }
 
   const bufferDuration = calculateBufferDuration()
+  const streamLabels = stream.labels || {}
+  const streamControlMode = streamLabels['proxy.control_mode'] || null
+  const resolvedInfohash = streamLabels['stream.resolved_infohash'] || null
 
   return (
     <>
@@ -554,6 +557,18 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                     <p className="text-sm font-medium text-foreground">{formatTime(stream.ended_at)}</p>
                   </div>
                 )}
+                {streamControlMode && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Control Mode</p>
+                    <p className="text-sm font-medium text-foreground">{streamControlMode}</p>
+                  </div>
+                )}
+                {resolvedInfohash && (
+                  <div className="col-span-full">
+                    <p className="text-xs text-muted-foreground">Resolved Infohash</p>
+                    <p className="text-sm font-medium text-foreground break-all">{resolvedInfohash}</p>
+                  </div>
+                )}
 
                 {/* LivePos Information */}
                 {stream.livepos && (
@@ -628,23 +643,31 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
               </div>
 
               {/* Links */}
-              <div className="flex gap-4">
-                <a
-                  href={stream.stat_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-primary hover:underline flex items-center gap-1"
-                >
-                  Statistics URL <ExternalLink className="h-3 w-3" />
-                </a>
-                <a
-                  href={stream.command_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-primary hover:underline flex items-center gap-1"
-                >
-                  Command URL <ExternalLink className="h-3 w-3" />
-                </a>
+              <div className="flex flex-wrap gap-4">
+                {stream.stat_url ? (
+                  <a
+                    href={stream.stat_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-primary hover:underline flex items-center gap-1"
+                  >
+                    Statistics URL <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : (
+                  <span className="text-sm text-muted-foreground">Statistics URL not available in this control flow</span>
+                )}
+                {stream.command_url ? (
+                  <a
+                    href={stream.command_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-primary hover:underline flex items-center gap-1"
+                  >
+                    Command URL <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : (
+                  <span className="text-sm text-muted-foreground">Command URL not available in this control flow</span>
+                )}
               </div>
 
               {/* Chart */}

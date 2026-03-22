@@ -9,8 +9,9 @@ import hashlib
 import json
 import logging
 import socket
+import threading
 import time
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,10 @@ class AceLegacyApiError(Exception):
 
 class AceLegacyApiClient:
     """Simple line-based client for the AceStream legacy API port."""
+
+    _canonical_cache: Dict[str, Tuple[str, float]] = {}
+    _canonical_cache_lock = threading.Lock()
+    _canonical_cache_ttl_s = 600
 
     def __init__(
         self,
@@ -47,6 +52,36 @@ class AceLegacyApiClient:
         # Default profile used when engine asks for USERDATA.
         self._gender = 1
         self._age = 3
+
+    @staticmethod
+    def _normalize_session_id(session_id: Optional[str]) -> str:
+        """Legacy engine requires a numeric session identifier for LOADASYNC."""
+        if session_id is None:
+            return "0"
+        normalized = str(session_id).strip()
+        return normalized if normalized.isdigit() else "0"
+
+    @classmethod
+    def _get_cached_canonical_infohash(cls, content_id: str) -> Optional[str]:
+        now = time.time()
+        with cls._canonical_cache_lock:
+            item = cls._canonical_cache.get(content_id)
+            if not item:
+                return None
+            infohash, ts = item
+            if now - ts > cls._canonical_cache_ttl_s:
+                cls._canonical_cache.pop(content_id, None)
+                return None
+            return infohash
+
+    @classmethod
+    def _set_cached_canonical_infohash(cls, content_id: str, infohash: str):
+        if not content_id or not infohash:
+            return
+        now = time.time()
+        with cls._canonical_cache_lock:
+            cls._canonical_cache[content_id] = (infohash, now)
+            cls._canonical_cache[infohash] = (infohash, now)
 
     def connect(self):
         """Open TCP connection to AceStream API."""
@@ -107,21 +142,32 @@ class AceLegacyApiClient:
         if version_code >= 3003600:
             self._write("SETOPTIONS use_stop_notifications=1")
 
-    def resolve_content(self, content_id: str, session_id: str) -> Tuple[Dict, str]:
+    def resolve_content(self, content_id: str, session_id: Optional[str] = None) -> Tuple[Dict, str]:
         """
         Resolve metadata using LOADASYNC.
 
         Returns tuple of (load_response_json, mode) where mode is one of
         {"content_id", "infohash"} and should be reused for START.
         """
+        normalized_session_id = self._normalize_session_id(session_id)
+
+        cached_infohash = self._get_cached_canonical_infohash(content_id)
+        if cached_infohash and cached_infohash != content_id:
+            cached_resp = self._loadasync_infohash(cached_infohash, normalized_session_id)
+            if cached_resp.get("status") in (1, 2):
+                self._set_cached_canonical_infohash(content_id, cached_infohash)
+                return cached_resp, "infohash"
+
         # First try PID/content_id mode.
-        load_resp = self._loadasync_pid(content_id, session_id)
+        load_resp = self._loadasync_pid(content_id, normalized_session_id)
         if load_resp.get("status") in (1, 2):
+            self._set_cached_canonical_infohash(content_id, load_resp.get("infohash") or content_id)
             return load_resp, "content_id"
 
         # Fallback to INFOHASH mode.
-        load_resp = self._loadasync_infohash(content_id, session_id)
+        load_resp = self._loadasync_infohash(content_id, normalized_session_id)
         if load_resp.get("status") in (1, 2):
+            self._set_cached_canonical_infohash(content_id, load_resp.get("infohash") or content_id)
             return load_resp, "infohash"
 
         message = load_resp.get("message", "content unavailable")
@@ -145,6 +191,175 @@ class AceLegacyApiClient:
                 key, value = token.split("=", 1)
                 params[key] = value
         return params
+
+    @staticmethod
+    def parse_status_line(status_line: str) -> Dict[str, str]:
+        """Parse STATUS payload using HTTPAceProxy-compatible normalization rules."""
+        if not status_line.startswith("STATUS "):
+            return {}
+
+        recvbuffer = status_line.split(" ", 1)[1].split(";")
+
+        if any(x in ["main:wait", "main:seekprebuf"] for x in recvbuffer):
+            if len(recvbuffer) > 1:
+                del recvbuffer[1]
+        elif any(x in ["main:buf", "main:prebuf"] for x in recvbuffer):
+            if len(recvbuffer) > 2:
+                del recvbuffer[1:3]
+
+        keys = [
+            "status",
+            "total_progress",
+            "immediate_progress",
+            "speed_down",
+            "http_speed_down",
+            "speed_up",
+            "peers",
+            "http_peers",
+            "downloaded",
+            "http_downloaded",
+            "uploaded",
+        ]
+        parsed: Dict[str, str] = {}
+        for key, value in zip(keys, recvbuffer):
+            parsed[key] = value.split(":", 1)[1] if "main:" in value else value
+        return parsed
+
+    @staticmethod
+    def parse_event_line(event_line: str) -> Dict[str, str]:
+        """Parse EVENT line into a flat key/value dictionary."""
+        if not event_line.startswith("EVENT "):
+            return {}
+
+        parts = event_line.split()
+        parsed: Dict[str, str] = {"event": parts[1] if len(parts) > 1 else ""}
+        for token in parts[2:]:
+            if "=" in token:
+                key, value = token.split("=", 1)
+                parsed[key] = value
+        return parsed
+
+    def collect_status_samples(
+        self,
+        samples: int = 3,
+        interval_s: float = 0.5,
+        per_sample_timeout_s: float = 2.0,
+    ) -> Dict[str, Any]:
+        """Collect STATUS and livepos EVENT data after START for deep availability checks."""
+        status_lines = []
+        event_lines = []
+        last_status: Dict[str, str] = {}
+        last_livepos: Dict[str, str] = {}
+
+        for idx in range(max(1, samples)):
+            self._write("STATUS")
+
+            deadline = time.time() + max(0.2, per_sample_timeout_s)
+            while time.time() < deadline:
+                cmd, parts, _ = self._read_message(timeout=max(0.05, deadline - time.time()))
+
+                if cmd == "STATUS":
+                    raw = " ".join(parts)
+                    status_lines.append(raw)
+                    parsed = self.parse_status_line(raw)
+                    if parsed:
+                        last_status = parsed
+                    break
+
+                if cmd == "EVENT":
+                    raw = " ".join(parts)
+                    event_lines.append(raw)
+                    parsed_event = self.parse_event_line(raw)
+                    if parsed_event.get("event") == "livepos":
+                        last_livepos = parsed_event
+                    self._handle_async(cmd, parts)
+                    continue
+
+                self._handle_async(cmd, parts)
+
+            if idx < samples - 1:
+                time.sleep(max(0.0, interval_s))
+
+        def _to_int(value: Optional[str]) -> Optional[int]:
+            if value is None or value == "":
+                return None
+            try:
+                return int(float(value))
+            except (TypeError, ValueError):
+                return None
+
+        progress_value = last_status.get("immediate_progress") or last_status.get("total_progress")
+
+        livepos_payload = None
+        if last_livepos:
+            livepos_payload = {
+                "pos": last_livepos.get("pos"),
+                "live_first": last_livepos.get("live_first") or last_livepos.get("first_ts"),
+                "live_last": last_livepos.get("live_last") or last_livepos.get("last_ts"),
+                "first_ts": last_livepos.get("first_ts"),
+                "last_ts": last_livepos.get("last_ts"),
+                "buffer_pieces": _to_int(last_livepos.get("buffer_pieces")),
+                "is_live": _to_int(last_livepos.get("is_live")),
+            }
+
+        return {
+            "status_text": last_status.get("status"),
+            "status": last_status.get("status"),
+            "total_progress": _to_int(last_status.get("total_progress")),
+            "immediate_progress": _to_int(last_status.get("immediate_progress")),
+            "progress": _to_int(progress_value),
+            "speed_down": _to_int(last_status.get("speed_down")),
+            "http_speed_down": _to_int(last_status.get("http_speed_down")),
+            "speed_up": _to_int(last_status.get("speed_up")),
+            "peers": _to_int(last_status.get("peers")),
+            "http_peers": _to_int(last_status.get("http_peers")),
+            "downloaded": _to_int(last_status.get("downloaded")),
+            "http_downloaded": _to_int(last_status.get("http_downloaded")),
+            "uploaded": _to_int(last_status.get("uploaded")),
+            "livepos": livepos_payload,
+            "raw_status_lines": status_lines,
+            "raw_event_lines": event_lines,
+        }
+
+    def preflight(self, content_id: str, tier: str = "light") -> Dict[str, Any]:
+        """Run light/deep availability checks and return canonicalized metadata."""
+        tier_value = (tier or "light").strip().lower()
+        if tier_value not in {"light", "deep"}:
+            raise AceLegacyApiError("tier must be either 'light' or 'deep'")
+
+        loadresp, _ = self.resolve_content(content_id, session_id="0")
+        status_code = loadresp.get("status")
+        available = status_code in (1, 2)
+        resolved_infohash = loadresp.get("infohash") or content_id
+
+        payload: Dict[str, Any] = {
+            "tier": tier_value,
+            "available": available,
+            "status_code": status_code,
+            "infohash": resolved_infohash,
+            "loadresp": loadresp,
+            "can_retry": True,
+            "should_wait": bool(status_code == 2),
+        }
+
+        if not available:
+            payload["message"] = loadresp.get("message", "content unavailable")
+            return payload
+
+        if tier_value == "deep":
+            start_info = self.start_stream(resolved_infohash, mode="infohash")
+            status_probe = self.collect_status_samples(samples=3, interval_s=0.5, per_sample_timeout_s=2.0)
+            payload["start"] = start_info
+            payload["status_probe"] = status_probe
+
+            peers = status_probe.get("peers") or 0
+            http_peers = status_probe.get("http_peers") or 0
+            status_text = status_probe.get("status_text")
+            payload["available"] = bool(peers > 0 or http_peers > 0 or status_text in {"dl", "buf", "prebuf"})
+
+            self.stop_stream()
+
+        return payload
 
     def stop_stream(self):
         """Stop active playback session on this API connection."""
@@ -183,6 +398,16 @@ class AceLegacyApiClient:
             cmd, parts, kv = self._read_message(timeout=max(0.05, deadline - time.time()))
             if cmd == expected_cmd:
                 return cmd, parts, kv
+
+            if cmd == "EVENT" and len(parts) > 2 and parts[1] == "showdialog":
+                dialog_text = ""
+                for token in parts[2:]:
+                    if token.startswith("text="):
+                        dialog_text = unquote(token.split("=", 1)[1])
+                        break
+                if dialog_text:
+                    raise AceLegacyApiError(f"Engine dialog error: {dialog_text}")
+
             self._handle_async(cmd, parts)
         raise AceLegacyApiError(f"Timeout waiting for {expected_cmd}")
 

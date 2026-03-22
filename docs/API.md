@@ -68,6 +68,49 @@ Response:
 ```
 ### Stream Management Operations
 
+ - GET /ace/preflight?id=<content_id>&tier=light|deep
+   - Runs short availability probing without opening a long-lived proxy client session.
+   - Uses least-loaded engine selection (same balancing policy as stream startup).
+   - Works in both control paths:
+     - `LEGACY_HTTP`: probes through `/ace/getstream` with optional short status check in `deep` tier.
+     - `LEGACY_API`: probes through API port (`HELLOBG/READY/LOADASYNC/START/STATUS/STOP`).
+   - Supports two tiers:
+     - `light`: resolve/canonicalize only (fast)
+     - `deep`: resolve + START + STATUS/livepos sampling + STOP (richer diagnostics)
+   - In `LEGACY_API` control mode:
+     - Uses numeric `LOADASYNC` session IDs.
+     - Canonicalizes aliases to resolved `infohash` before START.
+     - Parses `STATUS` and `EVENT livepos` with HTTPAceProxy-compatible rules.
+   - Response shape:
+   ```json
+   {
+     "control_mode": "LEGACY_API",
+     "tier": "deep",
+     "engine": {
+       "container_id": "...",
+       "host": "127.0.0.1",
+       "port": 6878,
+       "api_port": 62062,
+       "forwarded": false
+     },
+     "result": {
+       "available": true,
+       "infohash": "...",
+       "status_code": 1,
+       "status_probe": {
+         "status_text": "dl",
+         "peers": 3,
+         "http_peers": 0,
+         "progress": 0,
+         "livepos": {
+           "pos": "...",
+           "buffer_pieces": 15
+         }
+       }
+     }
+   }
+   ```
+
  - DELETE /streams/{stream_id} (protected) → Stop a single stream
    - Stops a stream by calling its command URL with method=stop
    - Marks the stream as ended in state
@@ -123,6 +166,10 @@ Response:
    - Use `status=ended` to get ended streams (will typically return empty list since ended streams are immediately removed from memory)
    - Can filter by `container_id` to get streams for a specific engine
    - **Note**: A backup cleanup routine runs every 5 minutes to catch any streams that failed immediate removal
+   - `labels` may include legacy diagnostics fields when available:
+     - `proxy.control_mode`: control path used for stream startup (`LEGACY_HTTP` or `LEGACY_API`)
+     - `stream.resolved_infohash`: canonical infohash used for START in legacy API flow
+     - `stream.status_text`, `stream.peers`, `stream.http_peers`, `stream.progress`: best-effort probe values from startup sampling
 
  - GET /streams/{stream_id}/stats?since=<ISO8601> → StreamStatSnapshot[]
 

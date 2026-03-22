@@ -47,6 +47,7 @@ from .services.stream_loop_detector import stream_loop_detector
 from .services.looping_streams import looping_streams_tracker
 from .services.cache_monitoring_service import start_cache_monitoring
 from .proxy.manager import ProxyManager
+from .proxy.ace_api_client import AceLegacyApiClient, AceLegacyApiError
 
 logger = logging.getLogger(__name__)
 
@@ -2033,6 +2034,151 @@ def clear_cache():
 # ============================================================================
 # AceStream Proxy Endpoints
 # ============================================================================
+
+@app.get("/ace/preflight")
+def ace_preflight(
+    id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+    tier: str = Query("light", description="Availability probe tier: light or deep"),
+):
+    """Run a short availability probe and canonicalize content IDs before playback."""
+    from .proxy.config_helper import Config as ProxyConfig
+    import requests
+
+    normalized_tier = (tier or "light").strip().lower()
+    if normalized_tier not in {"light", "deep"}:
+        raise HTTPException(status_code=400, detail="tier must be 'light' or 'deep'")
+
+    control_mode = (ProxyConfig.CONTROL_MODE or "LEGACY_HTTP").upper()
+
+    engines = state.list_engines()
+    if not engines:
+        raise HTTPException(status_code=503, detail="No engines available")
+
+    active_streams = state.list_streams(status="started")
+    engine_loads = {}
+    for stream in active_streams:
+        engine_loads[stream.container_id] = engine_loads.get(stream.container_id, 0) + 1
+
+    max_streams = cfg.MAX_STREAMS_PER_ENGINE
+    available_engines = [e for e in engines if engine_loads.get(e.container_id, 0) < max_streams]
+    if not available_engines:
+        raise HTTPException(
+            status_code=503,
+            detail=f"All engines at maximum capacity ({max_streams} streams per engine)",
+        )
+
+    selected_engine = sorted(
+        available_engines,
+        key=lambda e: (engine_loads.get(e.container_id, 0), not e.forwarded),
+    )[0]
+
+    if control_mode == "LEGACY_API":
+        api_port = selected_engine.api_port or 62062
+        client = AceLegacyApiClient(
+            host=selected_engine.host,
+            port=api_port,
+            connect_timeout=8,
+            response_timeout=8,
+        )
+        try:
+            client.connect()
+            client.authenticate()
+            preflight_result = client.preflight(id, tier=normalized_tier)
+            return {
+                "control_mode": control_mode,
+                "tier": normalized_tier,
+                "engine": {
+                    "container_id": selected_engine.container_id,
+                    "host": selected_engine.host,
+                    "port": selected_engine.port,
+                    "api_port": api_port,
+                    "forwarded": selected_engine.forwarded,
+                },
+                "result": preflight_result,
+            }
+        except AceLegacyApiError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        finally:
+            try:
+                client.shutdown()
+            except Exception:
+                pass
+
+    # HTTP control fallback for compatibility in LEGACY_HTTP mode.
+    url = f"http://{selected_engine.host}:{selected_engine.port}/ace/getstream"
+    pid = f"preflight-{int(time.time())}"
+    params = {"id": id, "format": "json", "pid": pid}
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"HTTP preflight failed: {e}")
+
+    if payload.get("error"):
+        return {
+            "control_mode": control_mode,
+            "tier": normalized_tier,
+            "engine": {
+                "container_id": selected_engine.container_id,
+                "host": selected_engine.host,
+                "port": selected_engine.port,
+                "api_port": selected_engine.api_port,
+                "forwarded": selected_engine.forwarded,
+            },
+            "result": {
+                "available": False,
+                "message": payload.get("error"),
+                "can_retry": True,
+                "should_wait": False,
+            },
+        }
+
+    response_data = payload.get("response") or {}
+    result: Dict[str, Any] = {
+        "available": bool(response_data.get("playback_url")),
+        "infohash": response_data.get("infohash"),
+        "playback_session_id": response_data.get("playback_session_id"),
+        "playback_url": response_data.get("playback_url"),
+        "stat_url": response_data.get("stat_url"),
+        "command_url": response_data.get("command_url"),
+        "is_live": response_data.get("is_live"),
+        "can_retry": True,
+        "should_wait": False,
+    }
+
+    if normalized_tier == "deep" and response_data.get("stat_url"):
+        try:
+            stat_response = requests.get(response_data.get("stat_url"), timeout=8)
+            stat_response.raise_for_status()
+            stat_payload = (stat_response.json() or {}).get("response") or {}
+            result["status_probe"] = {
+                "status_text": stat_payload.get("status_text") or stat_payload.get("status"),
+                "status": stat_payload.get("status"),
+                "progress": stat_payload.get("progress"),
+                "peers": stat_payload.get("peers"),
+                "http_peers": stat_payload.get("http_peers"),
+                "speed_down": stat_payload.get("speed_down"),
+                "speed_up": stat_payload.get("speed_up"),
+                "downloaded": stat_payload.get("downloaded"),
+                "uploaded": stat_payload.get("uploaded"),
+                "livepos": stat_payload.get("livepos"),
+            }
+        except Exception as e:
+            result["status_probe_error"] = str(e)
+
+    return {
+        "control_mode": control_mode,
+        "tier": normalized_tier,
+        "engine": {
+            "container_id": selected_engine.container_id,
+            "host": selected_engine.host,
+            "port": selected_engine.port,
+            "api_port": selected_engine.api_port,
+            "forwarded": selected_engine.forwarded,
+        },
+        "result": result,
+    }
 
 @app.get("/ace/getstream")
 async def ace_getstream(

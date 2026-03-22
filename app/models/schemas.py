@@ -13,8 +13,8 @@ class StreamKey(BaseModel):
 
 class SessionInfo(BaseModel):
     playback_session_id: str
-    stat_url: HttpUrl
-    command_url: HttpUrl
+    stat_url: Optional[str] = None
+    command_url: Optional[str] = None
     is_live: int
 
 class StreamStartedEvent(BaseModel):

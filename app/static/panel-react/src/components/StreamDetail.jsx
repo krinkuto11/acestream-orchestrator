@@ -167,6 +167,10 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
     },
   }
 
+  const streamLabels = stream?.labels || {}
+  const streamControlMode = streamLabels['proxy.control_mode'] || null
+  const resolvedInfohash = streamLabels['stream.resolved_infohash'] || null
+
   return (
     <Card>
       <CardHeader>
@@ -202,6 +206,18 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
                 <p className="text-xs text-muted-foreground">Started At</p>
                 <p className="text-sm font-medium">{formatTime(stream.started_at)}</p>
               </div>
+              {streamControlMode && (
+                <div>
+                  <p className="text-xs text-muted-foreground">Control Mode</p>
+                  <p className="text-sm font-medium">{streamControlMode}</p>
+                </div>
+              )}
+              {resolvedInfohash && (
+                <div className="col-span-2">
+                  <p className="text-xs text-muted-foreground">Resolved Infohash</p>
+                  <p className="text-sm font-medium break-all">{resolvedInfohash}</p>
+                </div>
+              )}
               
               {/* Extended Stats from analyze_content API */}
               {/* extended stats loading indicator removed to reduce UI clutter */}
@@ -272,23 +288,31 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
               )}
             </div>
 
-            <div className="flex gap-4">
-              <a 
-                href={stream.stat_url} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-sm text-primary hover:underline flex items-center gap-1"
-              >
-                Statistics URL <ExternalLink className="h-3 w-3" />
-              </a>
-              <a 
-                href={stream.command_url} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-sm text-primary hover:underline flex items-center gap-1"
-              >
-                Command URL <ExternalLink className="h-3 w-3" />
-              </a>
+            <div className="flex flex-wrap gap-4">
+              {stream.stat_url ? (
+                <a
+                  href={stream.stat_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-primary hover:underline flex items-center gap-1"
+                >
+                  Statistics URL <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : (
+                <span className="text-sm text-muted-foreground">Statistics URL not available in this control flow</span>
+              )}
+              {stream.command_url ? (
+                <a
+                  href={stream.command_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-primary hover:underline flex items-center gap-1"
+                >
+                  Command URL <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : (
+                <span className="text-sm text-muted-foreground">Command URL not available in this control flow</span>
+              )}
             </div>
           </CollapsibleContent>
         </Collapsible>
