@@ -1076,7 +1076,7 @@ async def get_stream_extended_stats(stream_id: str):
     Get extended statistics for a stream by querying the AceStream analyze_content API.
     This returns additional metadata like content_type, title, is_live, mime, categories, etc.
     """
-    from .utils.acestream_api import get_stream_extended_stats
+    from .utils.acestream_api import get_stream_extended_stats, fetch_extended_content_info
     from .services.cache import get_cache
     
     # Check cache first to avoid hammering the AceStream engine
@@ -1091,14 +1091,53 @@ async def get_stream_extended_stats(stream_id: str):
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
     
-    if not stream.stat_url:
-        raise HTTPException(status_code=400, detail="Stream has no stat URL")
-    
-    # Fetch extended stats
-    extended_stats = await get_stream_extended_stats(stream.stat_url)
-    
+    extended_stats = None
+
+    # Preferred path: stat URL available (legacy HTTP flow)
+    if stream.stat_url:
+        extended_stats = await get_stream_extended_stats(stream.stat_url)
+    else:
+        # Legacy API compatibility path: no stat URL/command URL available.
+        # Resolve infohash from stream key or API port, then query analyze_content directly.
+        engine_state = state.get_engine(stream.container_id)
+        if engine_state:
+            infohash = stream.key if stream.key_type == "infohash" else None
+
+            if not infohash and engine_state.api_port:
+                def _resolve_infohash_via_legacy_api() -> Optional[str]:
+                    client = AceLegacyApiClient(
+                        host=engine_state.host,
+                        port=engine_state.api_port or 62062,
+                        connect_timeout=3,
+                        response_timeout=3,
+                    )
+                    try:
+                        client.connect()
+                        client.authenticate()
+                        loadresp, _ = client.resolve_content(stream.key, session_id="0")
+                        return loadresp.get("infohash")
+                    except Exception:
+                        return None
+                    finally:
+                        try:
+                            client.shutdown()
+                        except Exception:
+                            pass
+
+                infohash = await asyncio.to_thread(_resolve_infohash_via_legacy_api)
+
+            if infohash:
+                extended_stats = await fetch_extended_content_info(
+                    engine_state.host,
+                    engine_state.port,
+                    infohash,
+                )
+                if isinstance(extended_stats, dict) and "infohash" not in extended_stats:
+                    extended_stats["infohash"] = infohash
+
+    # Avoid noisy panel failures for streams where metadata cannot be resolved.
     if extended_stats is None:
-        raise HTTPException(status_code=503, detail="Unable to fetch extended stats from AceStream engine")
+        return {"available": False}
     
     # Cache the result for 1 hour (3600 seconds) since stream title/infohash rarely change
     cache.set(cache_key, extended_stats, ttl=3600.0)
