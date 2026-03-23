@@ -296,6 +296,12 @@ class State:
             except Exception:
                 # Database operation failed, but we can continue since we've updated memory state
                 pass
+
+            try:
+                from .engine_info import invalidate_engine_version_cache
+                invalidate_engine_version_cache(container_id)
+            except Exception:
+                pass
         
         return removed_engine
 

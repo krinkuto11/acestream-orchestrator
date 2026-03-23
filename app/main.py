@@ -903,7 +903,19 @@ def get_engines():
         from .services.gluetun import gluetun_monitor, get_forwarded_port_sync
         from .services.engine_info import get_engine_version_info_sync
         
-        running_container_ids = {c.id for c in list_managed() if c.status == "running"}
+        managed_containers = list_managed()
+        running_containers = [c for c in managed_containers if c.status == "running"]
+        running_container_ids = {c.id for c in running_containers}
+
+        # Container start timestamp changes on restart, which invalidates version cache.
+        container_started_at = {}
+        for c in running_containers:
+            started_at = None
+            try:
+                started_at = (c.attrs or {}).get("State", {}).get("StartedAt")
+            except Exception:
+                started_at = None
+            container_started_at[c.id] = str(started_at or "unknown")
         
         # In redundant VPN mode, filter out engines assigned to unhealthy VPNs
         # This hides engines from the proxy when their VPN is down
@@ -956,7 +968,12 @@ def get_engines():
             
             # Get engine version info
             try:
-                version_info = get_engine_version_info_sync(engine.host, engine.port)
+                version_info = get_engine_version_info_sync(
+                    engine.host,
+                    engine.port,
+                    cache_key=engine.container_id,
+                    cache_revision=container_started_at.get(engine.container_id),
+                )
                 if version_info:
                     engine.platform = version_info.get("platform")
                     engine.version = version_info.get("version")
