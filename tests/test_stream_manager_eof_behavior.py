@@ -109,3 +109,39 @@ def test_preflight_failure_aborts_without_retry(monkeypatch):
 
     assert cleanup_for_retry_calls["count"] == 0
     assert manager.retry_count == 1
+
+
+def test_legacy_api_proxy_playback_forces_light_preflight(monkeypatch):
+    manager = _build_manager()
+    manager.control_mode = "LEGACY_API"
+    manager.engine_host = "gluetun"
+    manager.engine_api_port = 19001
+
+    calls = {"tier": None}
+
+    class _FakeClient:
+        def connect(self):
+            return None
+
+        def authenticate(self):
+            return None
+
+        def preflight(self, content_id, tier="light"):
+            calls["tier"] = tier
+            return {"available": True, "infohash": "resolved-hash"}
+
+        def start_stream(self, infohash, mode="infohash"):
+            return {
+                "url": "http%3A//127.0.0.1%3A19000/content/resolved-hash/0.1",
+                "playback_session_id": "legacy-1",
+                "stream": "1",
+            }
+
+        def collect_status_samples(self, samples=1, interval_s=0.0, per_sample_timeout_s=1.0):
+            return {"status_text": "dl", "peers": 1}
+
+    monkeypatch.setattr("app.proxy.stream_manager.ConfigHelper.legacy_api_preflight_tier", lambda: "deep")
+    monkeypatch.setattr("app.proxy.stream_manager.AceLegacyApiClient", lambda *args, **kwargs: _FakeClient())
+
+    assert manager._request_stream_legacy_api() is True
+    assert calls["tier"] == "light"

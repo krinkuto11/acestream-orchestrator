@@ -190,7 +190,13 @@ class StreamManager:
             client.connect()
             client.authenticate()
 
-            preflight_tier = ConfigHelper.legacy_api_preflight_tier()
+            configured_tier = ConfigHelper.legacy_api_preflight_tier()
+            preflight_tier = "light"
+            if configured_tier != "light":
+                logger.info(
+                    "LEGACY_API proxy playback forces light preflight; configured tier '%s' is reserved for manual /ace/preflight checks",
+                    configured_tier,
+                )
             logger.info(
                 f"Running LEGACY_API preflight: content_id={self.content_id}, tier={preflight_tier}"
             )
