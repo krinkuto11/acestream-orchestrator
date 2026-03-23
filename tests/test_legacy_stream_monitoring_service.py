@@ -143,3 +143,33 @@ async def test_monitor_auto_stops_after_runtime_limit(monkeypatch):
     assert current is not None
     assert current["status"] == "stopped"
     assert current["sample_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_monitor_delete_removes_entry(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeAceLegacyApiClient)
+
+    service = LegacyStreamMonitoringService()
+
+    monitor = await service.start_monitor(content_id="abc123", interval_s=0.5, run_seconds=0)
+    monitor_id = monitor["monitor_id"]
+
+    await asyncio.sleep(0.6)
+
+    deleted = await service.delete_monitor(monitor_id)
+    assert deleted is True
+
+    current = await service.get_monitor(monitor_id)
+    assert current is None

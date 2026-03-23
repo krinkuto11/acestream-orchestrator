@@ -135,9 +135,15 @@ Response:
 
  - GET /ace/monitor/legacy/{monitor_id} (protected)
    - Returns a single monitor session including `recent_status` history (in-memory ring buffer).
+   - Includes `livepos_movement` summary with movement/stuck signals:
+     - `is_moving`, `direction`, `pos_delta`, `last_ts_delta`, `downloaded_delta`, `movement_events`.
+   - Sessions that timeout, fail to connect, or become non-moving are marked `status=dead` and are not retried.
 
  - DELETE /ace/monitor/legacy/{monitor_id} (protected)
    - Stops a monitor session and closes the legacy API connection (`STOP` + `SHUTDOWN`).
+
+ - DELETE /ace/monitor/legacy/{monitor_id}/entry (protected)
+   - Stops the session (if still running) and removes the monitor entry from in-memory session list.
 
  - DELETE /streams/{stream_id} (protected) → Stop a single stream
    - Stops a stream by calling its command URL with method=stop

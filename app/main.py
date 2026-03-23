@@ -2252,6 +2252,15 @@ async def stop_legacy_stream_monitor(monitor_id: str):
         raise HTTPException(status_code=404, detail="legacy monitor not found")
     return {"stopped": True, "monitor_id": monitor_id}
 
+
+@app.delete("/ace/monitor/legacy/{monitor_id}/entry", dependencies=[Depends(require_api_key)])
+async def delete_legacy_stream_monitor(monitor_id: str):
+    """Delete a legacy monitoring entry and ensure its API session is stopped."""
+    deleted = await legacy_stream_monitoring_service.delete_monitor(monitor_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="legacy monitor not found")
+    return {"deleted": True, "monitor_id": monitor_id}
+
 @app.get("/ace/preflight")
 def ace_preflight(
     id: str = Query(..., description="AceStream content ID (infohash or content_id)"),

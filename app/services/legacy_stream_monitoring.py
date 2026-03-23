@@ -140,12 +140,66 @@ class LegacyStreamMonitoringService:
             "ended_at": raw.get("ended_at"),
             "sample_count": raw.get("sample_count", 0),
             "last_error": raw.get("last_error"),
+            "dead_reason": raw.get("dead_reason"),
+            "reconnect_attempts": raw.get("reconnect_attempts", 0),
             "engine": raw.get("engine") or {},
             "session": raw.get("session") or {},
             "latest_status": raw.get("latest_status") or {},
             "recent_status": list(raw.get("recent_status") or []),
             "livepos_movement": self._build_livepos_movement(raw),
         }
+
+    @staticmethod
+    def _is_timeout_or_connect_error(message: str) -> bool:
+        text = (message or "").strip().lower()
+        if not text:
+            return False
+        patterns = [
+            "timeout",
+            "timed out",
+            "connection closed",
+            "socket",
+            "not connected",
+            "connect",
+        ]
+        return any(p in text for p in patterns)
+
+    def _is_session_stuck(self, raw: Dict[str, Any]) -> bool:
+        samples = list(raw.get("recent_status") or [])
+        if len(samples) < 8:
+            return False
+
+        window = samples[-8:]
+        pos_values: List[int] = []
+        last_ts_values: List[int] = []
+        downloaded_values: List[int] = []
+
+        for sample in window:
+            livepos = sample.get("livepos") or {}
+            pos_val = self._to_int(livepos.get("pos"))
+            ts_val = self._to_int(livepos.get("last_ts") or livepos.get("live_last"))
+            dl_val = self._to_int(sample.get("downloaded") or sample.get("http_downloaded"))
+
+            if pos_val is not None:
+                pos_values.append(pos_val)
+            if ts_val is not None:
+                last_ts_values.append(ts_val)
+            if dl_val is not None:
+                downloaded_values.append(dl_val)
+
+        # If neither pos nor last_ts has enough points, we cannot classify as stuck.
+        if len(pos_values) < 2 and len(last_ts_values) < 2:
+            return False
+
+        pos_static = len(pos_values) >= 2 and all(v == pos_values[0] for v in pos_values)
+        ts_static = len(last_ts_values) >= 2 and all(v == last_ts_values[0] for v in last_ts_values)
+
+        downloaded_growth = 0
+        if len(downloaded_values) >= 2:
+            downloaded_growth = downloaded_values[-1] - downloaded_values[0]
+
+        # Consider stream stuck when timeline doesn't move and there is no payload growth.
+        return bool((pos_static or ts_static) and downloaded_growth <= 0)
 
     def _pick_engine(self, requested_container_id: Optional[str]) -> Dict[str, Any]:
         engines = state.list_engines()
@@ -236,6 +290,8 @@ class LegacyStreamMonitoringService:
                 "ended_at": None,
                 "sample_count": 0,
                 "last_error": None,
+                "dead_reason": None,
+                "reconnect_attempts": 0,
                 "engine": engine,
                 "session": {},
                 "latest_status": {},
@@ -265,7 +321,7 @@ class LegacyStreamMonitoringService:
         async with self._lock:
             session = self._sessions.get(monitor_id)
             if not session:
-                return
+                return False
             sample_history = session.setdefault("recent_status", [])
             sample_history.append(sample)
             if len(sample_history) > 120:
@@ -274,6 +330,7 @@ class LegacyStreamMonitoringService:
             session["latest_status"] = sample
             session["last_collected_at"] = sample.get("ts")
             session["sample_count"] = int(session.get("sample_count", 0)) + 1
+            return self._is_session_stuck(session)
 
     async def _run_monitor(
         self,
@@ -339,14 +396,16 @@ class LegacyStreamMonitoringService:
                         status_code = loadresp.get("status")
                         if status_code not in (1, 2):
                             message = loadresp.get("message") or "content unavailable"
+                            await self._update_session(monitor_id, reconnect_attempts=1)
                             await self._update_session(
                                 monitor_id,
-                                status="reconnecting",
+                                status="dead",
+                                dead_reason=f"LOADASYNC status={status_code}: {message}",
                                 last_error=f"LOADASYNC status={status_code}: {message}",
+                                ended_at=self._utc_iso(),
                             )
                             await _shutdown_client()
-                            await asyncio.wait_for(stop_event.wait(), timeout=interval_s)
-                            continue
+                            break
 
                         resolved_infohash = loadresp.get("infohash") or content_id
                         start_info = await asyncio.to_thread(client.start_stream, resolved_infohash, "infohash")
@@ -386,7 +445,20 @@ class LegacyStreamMonitoringService:
                         "uploaded": probe.get("uploaded"),
                         "livepos": probe.get("livepos"),
                     }
-                    await self._append_sample(monitor_id, sample)
+                    session_stuck = await self._append_sample(monitor_id, sample)
+                    if session_stuck:
+                        await self._update_session(
+                            monitor_id,
+                            status="dead",
+                            dead_reason="livepos_stuck",
+                            last_error="livepos did not move and payload did not grow",
+                            ended_at=self._utc_iso(),
+                        )
+                        logger.warning(
+                            "Legacy monitor %s marked dead: livepos did not move",
+                            monitor_id,
+                        )
+                        break
 
                     try:
                         await asyncio.wait_for(stop_event.wait(), timeout=interval_s)
@@ -396,23 +468,28 @@ class LegacyStreamMonitoringService:
                     # wait_for(stop_event) timeout path above
                     pass
                 except Exception as e:
+                    error_text = str(e)
+                    await self._update_session(monitor_id, reconnect_attempts=1)
+                    dead_reason = "timeout_or_connect_error" if self._is_timeout_or_connect_error(error_text) else "runtime_error"
                     await self._update_session(
                         monitor_id,
-                        status="reconnecting",
-                        last_error=str(e),
+                        status="dead",
+                        dead_reason=dead_reason,
+                        last_error=error_text,
+                        ended_at=self._utc_iso(),
                     )
                     logger.warning(
-                        "Legacy monitor %s reconnecting after error: %s",
+                        "Legacy monitor %s marked dead after error: %s",
                         monitor_id,
                         e,
                     )
                     await _shutdown_client()
-                    try:
-                        await asyncio.wait_for(stop_event.wait(), timeout=min(2.0, interval_s))
-                    except asyncio.TimeoutError:
-                        pass
+                    break
 
-            await self._update_session(monitor_id, status="stopped", ended_at=self._utc_iso())
+            async with self._lock:
+                final_state = self._sessions.get(monitor_id, {}).get("status")
+            if final_state not in {"dead", "deleted"}:
+                await self._update_session(monitor_id, status="stopped", ended_at=self._utc_iso())
         finally:
             await _shutdown_client()
             await self._update_session(monitor_id, ended_at=self._utc_iso())
@@ -428,6 +505,12 @@ class LegacyStreamMonitoringService:
         if task:
             try:
                 await asyncio.wait_for(task, timeout=5.0)
+            except asyncio.TimeoutError:
+                task.cancel()
+                try:
+                    await task
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -448,6 +531,22 @@ class LegacyStreamMonitoringService:
             if await self.stop_monitor(monitor_id):
                 stopped += 1
         return stopped
+
+    async def delete_monitor(self, monitor_id: str) -> bool:
+        monitor_exists = False
+        async with self._lock:
+            monitor_exists = monitor_id in self._sessions or monitor_id in self._stop_events
+        if not monitor_exists:
+            return False
+
+        await self.stop_monitor(monitor_id)
+
+        async with self._lock:
+            self._sessions.pop(monitor_id, None)
+            self._tasks.pop(monitor_id, None)
+            self._stop_events.pop(monitor_id, None)
+
+        return True
 
     async def get_monitor(self, monitor_id: str) -> Optional[Dict[str, Any]]:
         async with self._lock:
