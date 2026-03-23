@@ -690,8 +690,6 @@ export function OverviewPage({ engines, streams, vpnStatus, orchestratorStatus, 
 
       <SystemStatus vpnStatus={vpnStatus} orchestratorStatus={orchestratorStatus} />
 
-      <LegacyMonitorSessions orchUrl={orchUrl} apiKey={apiKey} />
-
       <RecentActivity 
         streams={streams} 
         engines={engines} 

@@ -20,6 +20,7 @@ const navigation = [
   { name: 'Overview', href: '/', icon: LayoutDashboard },
   { name: 'Engines', href: '/engines', icon: Server },
   { name: 'Streams', href: '/streams', icon: Activity },
+  { name: 'Stream Monitoring', href: '/stream-monitoring', icon: Activity },
   { name: 'Events', href: '/events', icon: FileText },
   { name: 'Health', href: '/health', icon: ShieldCheck },
   { name: 'VPN', href: '/vpn', icon: Wifi },

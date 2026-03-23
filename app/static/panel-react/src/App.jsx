@@ -11,6 +11,7 @@ import { EventsPage } from './pages/EventsPage'
 import { HealthPage } from './pages/HealthPage'
 import { VPNPage } from './pages/VPNPage'
 import { MetricsPage } from './pages/MetricsPage'
+import { StreamMonitoringPage } from './pages/StreamMonitoringPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import { useFavicon } from './hooks/useFavicon'
@@ -209,6 +210,15 @@ function AppContent() {
                 path="/metrics" 
                 element={
                   <MetricsPage
+                    apiKey={apiKey}
+                    orchUrl={orchUrl}
+                  />
+                } 
+              />
+              <Route 
+                path="/stream-monitoring" 
+                element={
+                  <StreamMonitoringPage
                     apiKey={apiKey}
                     orchUrl={orchUrl}
                   />

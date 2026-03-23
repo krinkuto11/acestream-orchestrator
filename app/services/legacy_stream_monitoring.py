@@ -35,6 +35,99 @@ class LegacyStreamMonitoringService:
     def _utc_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
 
+    @staticmethod
+    def _to_int(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            text = str(value).strip()
+            if text == "":
+                return None
+            return int(float(text))
+        except Exception:
+            return None
+
+    def _build_livepos_movement(self, raw: Dict[str, Any]) -> Dict[str, Any]:
+        samples = list(raw.get("recent_status") or [])
+        if not samples:
+            return {
+                "is_moving": False,
+                "direction": "unknown",
+                "pos_delta": None,
+                "last_ts_delta": None,
+                "downloaded_delta": None,
+                "sample_points": 0,
+                "movement_events": 0,
+            }
+
+        pos_points: List[int] = []
+        last_ts_points: List[int] = []
+        downloaded_points: List[int] = []
+
+        for sample in samples:
+            livepos = sample.get("livepos") or {}
+            pos_val = self._to_int(livepos.get("pos"))
+            ts_val = self._to_int(livepos.get("last_ts") or livepos.get("live_last"))
+            dl_val = self._to_int(sample.get("downloaded") or sample.get("http_downloaded"))
+
+            if pos_val is not None:
+                pos_points.append(pos_val)
+            if ts_val is not None:
+                last_ts_points.append(ts_val)
+            if dl_val is not None:
+                downloaded_points.append(dl_val)
+
+        pos_delta = None
+        if len(pos_points) >= 2:
+            pos_delta = pos_points[-1] - pos_points[0]
+
+        last_ts_delta = None
+        if len(last_ts_points) >= 2:
+            last_ts_delta = last_ts_points[-1] - last_ts_points[0]
+
+        downloaded_delta = None
+        if len(downloaded_points) >= 2:
+            downloaded_delta = downloaded_points[-1] - downloaded_points[0]
+
+        movement_events = 0
+        movement_events += sum(1 for prev, curr in zip(pos_points, pos_points[1:]) if curr != prev)
+        movement_events += sum(1 for prev, curr in zip(last_ts_points, last_ts_points[1:]) if curr != prev)
+
+        is_moving = bool(
+            (pos_delta is not None and pos_delta > 0)
+            or (last_ts_delta is not None and last_ts_delta > 0)
+        )
+
+        direction = "unknown"
+        if pos_delta is not None:
+            if pos_delta > 0:
+                direction = "forward"
+            elif pos_delta < 0:
+                direction = "backward"
+            else:
+                direction = "stable"
+        elif last_ts_delta is not None:
+            if last_ts_delta > 0:
+                direction = "forward"
+            elif last_ts_delta < 0:
+                direction = "backward"
+            else:
+                direction = "stable"
+
+        latest_livepos = (samples[-1].get("livepos") or {}) if samples else {}
+
+        return {
+            "is_moving": is_moving,
+            "direction": direction,
+            "current_pos": self._to_int(latest_livepos.get("pos")),
+            "current_last_ts": self._to_int(latest_livepos.get("last_ts") or latest_livepos.get("live_last")),
+            "pos_delta": pos_delta,
+            "last_ts_delta": last_ts_delta,
+            "downloaded_delta": downloaded_delta,
+            "sample_points": len(samples),
+            "movement_events": movement_events,
+        }
+
     def _serialize_session(self, monitor_id: str, raw: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "monitor_id": monitor_id,
@@ -51,6 +144,7 @@ class LegacyStreamMonitoringService:
             "session": raw.get("session") or {},
             "latest_status": raw.get("latest_status") or {},
             "recent_status": list(raw.get("recent_status") or []),
+            "livepos_movement": self._build_livepos_movement(raw),
         }
 
     def _pick_engine(self, requested_container_id: Optional[str]) -> Dict[str, Any]:

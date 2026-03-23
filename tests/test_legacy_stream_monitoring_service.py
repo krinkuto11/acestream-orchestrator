@@ -40,7 +40,10 @@ class _FakeAceLegacyApiClient:
             "peers": 2,
             "downloaded": self._sample_idx * 1000,
             "uploaded": self._sample_idx * 10,
-            "livepos": {"pos": "123"},
+            "livepos": {
+                "pos": str(100 + self._sample_idx),
+                "last_ts": str(1000 + self._sample_idx),
+            },
         }
 
     def stop_stream(self):
@@ -77,6 +80,9 @@ async def test_monitor_collects_status_samples(monkeypatch):
     assert current is not None
     assert current["sample_count"] >= 1
     assert current["latest_status"]["status_text"] == "dl"
+    assert current["livepos_movement"]["is_moving"] is True
+    assert current["livepos_movement"]["direction"] == "forward"
+    assert current["livepos_movement"]["pos_delta"] is not None
 
     stopped = await service.stop_monitor(monitor_id)
     assert stopped is True
