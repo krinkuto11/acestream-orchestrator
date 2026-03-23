@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Server, Activity, CheckCircle, ShieldCheck, Clock, TrendingUp, TrendingDown, AlertTriangle, Download, Upload, Cpu, MemoryStick } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Server, Activity, CheckCircle, ShieldCheck, Clock, TrendingUp, TrendingDown, AlertTriangle, Download, Upload, Cpu, MemoryStick, PlayCircle, StopCircle } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { cn } from '@/lib/utils'
 import { formatBytesPerSecond, formatBytes } from '@/utils/formatters'
@@ -274,11 +276,23 @@ function LegacyMonitorSessions({ orchUrl, apiKey }) {
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [actionError, setActionError] = useState(null)
+  const [starting, setStarting] = useState(false)
+  const [stoppingById, setStoppingById] = useState({})
+  const [newMonitor, setNewMonitor] = useState({
+    content_id: '',
+    interval_s: '1.0',
+    run_seconds: '0',
+  })
 
   useEffect(() => {
     let cancelled = false
 
-    const fetchMonitors = async () => {
+    const fetchMonitors = async (showLoading = false) => {
+      if (showLoading) {
+        setLoading(true)
+      }
+
       if (!apiKey) {
         if (!cancelled) {
           setMonitors([])
@@ -315,13 +329,120 @@ function LegacyMonitorSessions({ orchUrl, apiKey }) {
       }
     }
 
-    fetchMonitors()
-    const interval = setInterval(fetchMonitors, 5000)
+    fetchMonitors(true)
+    const interval = setInterval(() => fetchMonitors(false), 5000)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
   }, [orchUrl, apiKey])
+
+  const fetchMonitorsNow = async () => {
+    if (!apiKey) {
+      return
+    }
+    try {
+      const response = await fetch(`${orchUrl}/ace/monitor/legacy`, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      })
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`)
+      }
+      const payload = await response.json()
+      setMonitors(Array.isArray(payload?.items) ? payload.items : [])
+      setError(null)
+    } catch (err) {
+      setError(err?.message || 'Failed to fetch legacy monitor sessions')
+    }
+  }
+
+  const handleStartMonitor = async () => {
+    if (!apiKey) {
+      setActionError('Set API key in Settings to start monitor sessions')
+      return
+    }
+
+    const contentId = (newMonitor.content_id || '').trim()
+    if (!contentId) {
+      setActionError('content_id is required')
+      return
+    }
+
+    setStarting(true)
+    setActionError(null)
+
+    try {
+      const response = await fetch(`${orchUrl}/ace/monitor/legacy/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          content_id: contentId,
+          interval_s: Number(newMonitor.interval_s || 1),
+          run_seconds: Number(newMonitor.run_seconds || 0),
+        }),
+      })
+
+      if (!response.ok) {
+        let detail = `${response.status} ${response.statusText}`
+        try {
+          const errPayload = await response.json()
+          detail = errPayload?.detail || detail
+        } catch {
+          // keep fallback detail string
+        }
+        throw new Error(detail)
+      }
+
+      await response.json()
+      setNewMonitor((prev) => ({ ...prev, content_id: '' }))
+      await fetchMonitorsNow()
+    } catch (err) {
+      setActionError(err?.message || 'Failed to start monitor session')
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  const handleStopMonitor = async (monitorId) => {
+    if (!apiKey) {
+      setActionError('Set API key in Settings to stop monitor sessions')
+      return
+    }
+
+    setStoppingById((prev) => ({ ...prev, [monitorId]: true }))
+    setActionError(null)
+
+    try {
+      const response = await fetch(`${orchUrl}/ace/monitor/legacy/${encodeURIComponent(monitorId)}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      })
+
+      if (!response.ok) {
+        let detail = `${response.status} ${response.statusText}`
+        try {
+          const errPayload = await response.json()
+          detail = errPayload?.detail || detail
+        } catch {
+          // keep fallback detail string
+        }
+        throw new Error(detail)
+      }
+
+      await fetchMonitorsNow()
+    } catch (err) {
+      setActionError(err?.message || 'Failed to stop monitor session')
+    } finally {
+      setStoppingById((prev) => ({ ...prev, [monitorId]: false }))
+    }
+  }
 
   const activeCount = monitors.filter((m) => ['starting', 'running', 'reconnecting'].includes(m.status)).length
 
@@ -339,6 +460,41 @@ function LegacyMonitorSessions({ orchUrl, apiKey }) {
         </CardTitle>
       </CardHeader>
       <CardContent>
+        <div className="mb-3 grid gap-2 md:grid-cols-5">
+          <Input
+            className="md:col-span-3"
+            placeholder="content_id / infohash"
+            value={newMonitor.content_id}
+            onChange={(e) => setNewMonitor((prev) => ({ ...prev, content_id: e.target.value }))}
+          />
+          <Input
+            type="number"
+            min="0.5"
+            step="0.5"
+            placeholder="interval_s"
+            value={newMonitor.interval_s}
+            onChange={(e) => setNewMonitor((prev) => ({ ...prev, interval_s: e.target.value }))}
+          />
+          <Input
+            type="number"
+            min="0"
+            step="1"
+            placeholder="run_seconds"
+            value={newMonitor.run_seconds}
+            onChange={(e) => setNewMonitor((prev) => ({ ...prev, run_seconds: e.target.value }))}
+          />
+        </div>
+        <div className="mb-3 flex items-center gap-2">
+          <Button onClick={handleStartMonitor} disabled={starting || !apiKey} size="sm">
+            <PlayCircle className="mr-1 h-4 w-4" />
+            {starting ? 'Starting...' : 'Start Monitor'}
+          </Button>
+          <span className="text-xs text-muted-foreground">interval default 1s, run_seconds 0 means continuous</span>
+        </div>
+        {actionError && (
+          <p className="mb-3 text-xs text-red-600 dark:text-red-400">{actionError}</p>
+        )}
+
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading monitor sessions...</p>
         ) : error ? (
@@ -370,6 +526,15 @@ function LegacyMonitorSessions({ orchUrl, apiKey }) {
                       {monitor.status}
                     </Badge>
                     <span className="text-xs text-muted-foreground">{formatMonitorAge(monitor.last_collected_at)}</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleStopMonitor(monitor.monitor_id)}
+                      disabled={Boolean(stoppingById[monitor.monitor_id]) || !apiKey}
+                    >
+                      <StopCircle className="mr-1 h-3 w-3" />
+                      {stoppingById[monitor.monitor_id] ? 'Stopping...' : 'Stop'}
+                    </Button>
                   </div>
                 </div>
               )
