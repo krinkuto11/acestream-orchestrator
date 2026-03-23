@@ -120,6 +120,7 @@ Response:
    ```json
    {
      "content_id": "6422e8bc34282871634c81947be093c04ad1bb29",
+     "stream_name": "Example Channel",
      "interval_s": 1.0,
      "run_seconds": 0,
      "per_sample_timeout_s": 1.0,
@@ -130,10 +131,11 @@ Response:
      - `interval_s` minimum is `0.5` (recommended: `1.0`).
      - `run_seconds=0` means run until manually stopped.
      - `engine_container_id` is optional; if omitted, engine selection uses the same balancing strategy as proxy stream allocation.
+     - `stream_name` is optional and is persisted in monitor sessions (useful when sessions are created from playlist entries).
 
  - GET /ace/monitor/legacy (protected)
    - Lists all monitor sessions with latest STATUS sample and summary counters.
-   - Includes engine assignment per monitor session.
+   - Includes engine assignment per monitor session and optional `stream_name` when provided at creation time.
 
  - POST /ace/monitor/legacy/parse-m3u (protected)
    - Parses uploaded/inline M3U content and extracts `acestream://<id>` entries.

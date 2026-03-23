@@ -134,6 +134,7 @@ class LegacyStreamMonitoringService:
         return {
             "monitor_id": monitor_id,
             "content_id": raw.get("content_id"),
+            "stream_name": raw.get("stream_name"),
             "status": raw.get("status"),
             "interval_s": raw.get("interval_s"),
             "run_seconds": raw.get("run_seconds"),
@@ -250,6 +251,7 @@ class LegacyStreamMonitoringService:
     async def start_monitor(
         self,
         content_id: str,
+        stream_name: Optional[str] = None,
         interval_s: float = 1.0,
         run_seconds: int = 0,
         per_sample_timeout_s: float = 1.0,
@@ -262,6 +264,7 @@ class LegacyStreamMonitoringService:
         interval_value = max(0.5, float(interval_s))
         timeout_value = max(0.2, float(per_sample_timeout_s))
         runtime_limit = max(0, int(run_seconds))
+        normalized_stream_name = (stream_name or "").strip() or None
 
         async with self._lock:
             engine = self._pick_engine(engine_container_id)
@@ -270,6 +273,7 @@ class LegacyStreamMonitoringService:
             self._stop_events[monitor_id] = stop_event
             self._sessions[monitor_id] = {
                 "content_id": normalized_content_id,
+                "stream_name": normalized_stream_name,
                 "status": "starting",
                 "interval_s": interval_value,
                 "run_seconds": runtime_limit,

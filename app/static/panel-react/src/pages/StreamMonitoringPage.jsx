@@ -7,7 +7,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Progress } from '@/components/ui/progress'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Radio, PlayCircle, StopCircle, MoveRight, Trash2, ChevronDown, ChevronUp, Activity, Gauge, Users } from 'lucide-react'
+import { Radio, PlayCircle, StopCircle, MoveRight, Trash2, ChevronDown, ChevronUp, Activity, Gauge, Users, Play } from 'lucide-react'
 import { formatBytesPerSecond, formatBytes } from '@/utils/formatters'
 
 function formatAge(ts) {
@@ -43,10 +43,10 @@ function statusVariant(status) {
 }
 
 function statusAccent(status) {
-  if (status === 'running') return 'border-emerald-200/80 bg-emerald-50/60 dark:border-emerald-900/70 dark:bg-emerald-950/30'
-  if (status === 'stuck') return 'border-amber-200/80 bg-amber-50/70 dark:border-amber-900/70 dark:bg-amber-950/25'
-  if (status === 'dead') return 'border-rose-200/80 bg-rose-50/70 dark:border-rose-900/70 dark:bg-rose-950/25'
-  return 'border-slate-200/80 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-900/50'
+  if (status === 'running') return 'border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/20'
+  if (status === 'stuck') return 'border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/20'
+  if (status === 'dead') return 'border-rose-200 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/20'
+  return 'border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/40'
 }
 
 function toInt(value) {
@@ -323,6 +323,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
         },
         body: JSON.stringify({
           content_id: contentId,
+          stream_name: null,
           interval_s: Number(newMonitor.interval_s || 1),
           run_seconds: Number(newMonitor.run_seconds || 0),
         }),
@@ -732,6 +733,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
             },
             body: JSON.stringify({
               content_id: entry.content_id,
+              stream_name: entry.name || null,
               interval_s: Number(newMonitor.interval_s || 1),
               run_seconds: Number(newMonitor.run_seconds || 0),
             }),
@@ -765,7 +767,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
         </Badge>
       </div>
 
-      <Card className="border-slate-200/80 bg-gradient-to-br from-white via-slate-50 to-sky-50/60 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900/80">
+      <Card className="border-slate-200 bg-gradient-to-br from-white via-slate-50 to-sky-50 dark:border-slate-800 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900/70">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <Radio className="h-4 w-4" />
@@ -805,7 +807,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
             <span className="text-xs text-muted-foreground">interval default 1s, run_seconds 0 means continuous</span>
           </div>
 
-          <div className="mt-4 rounded-lg border border-slate-200/80 bg-white/70 p-3 dark:border-slate-800 dark:bg-slate-900/60">
+          <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900/50">
             <p className="text-xs font-medium text-slate-700 dark:text-slate-300">Import M3U (acestream://)</p>
             <p className="mt-1 text-xs text-muted-foreground">Upload an M3U file to parse stream names and AceStream IDs.</p>
 
@@ -847,9 +849,9 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                   </Button>
                 </div>
 
-                <div className="max-h-56 space-y-1 overflow-auto rounded-md border border-slate-200/70 bg-slate-50/60 p-2 dark:border-slate-800 dark:bg-slate-950/40">
+                <div className="max-h-56 space-y-1 overflow-auto rounded-md border border-slate-200 bg-slate-50 p-2 dark:border-slate-800 dark:bg-slate-950/40">
                   {m3uEntries.map((entry) => (
-                    <div key={entry.content_id} className="flex items-center justify-between gap-2 rounded border border-slate-200/70 bg-white/80 px-2 py-1 dark:border-slate-700 dark:bg-slate-900/70">
+                    <div key={entry.content_id} className="flex items-center justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-900/60">
                       <div className="flex items-center gap-2">
                         <Checkbox
                           checked={Boolean(m3uSelectedById[entry.content_id])}
@@ -884,25 +886,25 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
       </Card>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/70 p-3 dark:border-emerald-900/70 dark:bg-emerald-950/30">
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/20">
           <p className="text-xs text-emerald-700 dark:text-emerald-300">Running Streams</p>
           <p className="mt-1 text-2xl font-semibold text-emerald-900 dark:text-emerald-100">{runningCount}</p>
         </div>
-        <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 p-3 dark:border-amber-900/70 dark:bg-amber-950/30">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/20">
           <p className="text-xs text-amber-700 dark:text-amber-300">Stuck Sessions</p>
           <p className="mt-1 text-2xl font-semibold text-amber-900 dark:text-amber-100">{stuckCount}</p>
         </div>
-        <div className="rounded-xl border border-rose-200/80 bg-rose-50/70 p-3 dark:border-rose-900/70 dark:bg-rose-950/30">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 dark:border-rose-900 dark:bg-rose-950/20">
           <p className="text-xs text-rose-700 dark:text-rose-300">Dead Sessions</p>
           <p className="mt-1 text-2xl font-semibold text-rose-900 dark:text-rose-100">{deadCount}</p>
         </div>
-        <div className="rounded-xl border border-sky-200/80 bg-sky-50/70 p-3 dark:border-sky-900/70 dark:bg-sky-950/30">
+        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 dark:border-sky-900 dark:bg-sky-950/20">
           <p className="text-xs text-sky-700 dark:text-sky-300">Aggregate Downlink</p>
           <p className="mt-1 text-2xl font-semibold text-sky-900 dark:text-sky-100">{formatBytesPerSecond(totalDownloadKbps * 1024)}</p>
         </div>
       </div>
 
-      <Card className="border-slate-200/80 bg-gradient-to-b from-white to-slate-50/70 dark:from-slate-950 dark:to-slate-900/70">
+      <Card className="border-slate-200 bg-gradient-to-b from-white to-slate-50 dark:border-slate-800 dark:from-slate-950 dark:to-slate-900/60">
         <CardHeader>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <CardTitle className="text-base flex items-center gap-2">
@@ -956,7 +958,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
               </Button>
             </div>
             <div className="mx-1 h-4 w-px bg-slate-300 dark:bg-slate-700" />
-            <div className="flex items-center gap-2 rounded-md border border-slate-200/80 px-2 py-1 dark:border-slate-800">
+            <div className="flex items-center gap-2 rounded-md border border-slate-200 px-2 py-1 dark:border-slate-800">
               <Checkbox checked={allVisibleSelected} onCheckedChange={handleSelectAllVisible} />
               <span className="text-xs text-muted-foreground">Select visible ({selectedVisibleIds.length}/{visibleMonitorIds.length})</span>
             </div>
@@ -982,7 +984,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
               {groupedMonitors.map((group) => (
                 <div key={group.key} className="space-y-2">
                   {groupByStatus && (
-                    <div className="flex items-center justify-between rounded-md bg-slate-100/70 px-2 py-1 text-xs text-slate-700 dark:bg-slate-900/70 dark:text-slate-300">
+                    <div className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-300">
                       <span className="font-medium">{group.label}</span>
                       <span>{group.items.length}</span>
                     </div>
@@ -1028,7 +1030,14 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                         <button type="button" className="w-full text-left">
                           <div className={`flex items-start justify-between gap-3 ${isCompact ? 'flex-wrap' : ''}`}>
                             <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{monitor.content_id}</p>
+                              {monitor.stream_name ? (
+                                <>
+                                  <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{monitor.stream_name}</p>
+                                  <p className="truncate text-[11px] text-muted-foreground">{monitor.content_id}</p>
+                                </>
+                              ) : (
+                                <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{monitor.content_id}</p>
+                              )}
                               <div className={`mt-2 flex flex-wrap items-center gap-2 ${isCompact ? 'text-[11px]' : ''}`}>
                                 <Badge variant={statusVariant(monitor.status)}>{monitor.status}</Badge>
                                 <Badge variant={movementVariant(movement)}>{movementLabel(movement)}</Badge>
@@ -1044,8 +1053,13 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                                   engine {engineShortId}
                                 </Badge>
                                 {isPlayingInProxy && (
-                                  <Badge variant="default">
-                                    Playing in proxy
+                                  <Badge
+                                    variant="default"
+                                    className="px-1.5"
+                                    title="Playing in proxy"
+                                    aria-label="Playing in proxy"
+                                  >
+                                    <Play className="h-3 w-3" />
                                   </Badge>
                                 )}
                               </div>
@@ -1061,29 +1075,29 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                           </div>
 
                           <div className={`mt-3 grid gap-2 ${isCompact ? 'grid-cols-2 lg:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
-                            <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                            <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                               <p className="text-[11px] text-muted-foreground">Status</p>
                               <p className="mt-1 text-sm font-medium">{statusText}</p>
                             </div>
-                            <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                            <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                               <p className="text-[11px] text-muted-foreground">Down / Up</p>
                               <p className="mt-1 text-sm font-medium">{formatBytesPerSecond((speedDown || 0) * 1024)} / {formatBytesPerSecond((speedUp || 0) * 1024)}</p>
                             </div>
-                            <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                            <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                               <p className="text-[11px] text-muted-foreground">Progress</p>
                               <p className="mt-1 text-sm font-medium">{progress}%</p>
                               <Progress className="mt-1 h-1.5 bg-slate-200 dark:bg-slate-800" value={Math.max(0, Math.min(100, Number(progress) || 0))} />
                             </div>
-                            <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                            <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                               <p className="text-[11px] text-muted-foreground">Movement events</p>
                               <p className="mt-1 text-sm font-medium">{movement.movement_events ?? 0} / {movement.sample_points ?? 0}</p>
                             </div>
-                            <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                            <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                               <p className="text-[11px] text-muted-foreground">Engine</p>
                               <p className="mt-1 text-sm font-medium">{engineShortId}</p>
                             </div>
                             {isCompact && (
-                              <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                              <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                                 <p className="text-[11px] text-muted-foreground">ID</p>
                                 <p className="mt-1 truncate text-sm font-medium">{monitor.monitor_id.slice(0, 8)}</p>
                               </div>
@@ -1095,13 +1109,13 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
 
                       <CollapsibleContent>
                         {monitor.status === 'dead' && (
-                          <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
+                          <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/20 dark:text-rose-300">
                             dead reason: {deadReason || 'unknown'}
                           </p>
                         )}
 
                         <div className="mt-3 grid gap-2 md:grid-cols-2 lg:grid-cols-4 text-xs">
-                          <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                          <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                             <p className="text-muted-foreground">Position Delta</p>
                             <p className="mt-1 flex items-center gap-1 font-medium">
                               <MoveRight className="h-3 w-3" />
@@ -1109,36 +1123,36 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                             </p>
                           </div>
 
-                          <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                          <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                             <p className="text-muted-foreground">Live Timestamp Delta</p>
                             <p className="mt-1 font-medium">{movement.last_ts_delta ?? 'n/a'}</p>
                           </div>
 
-                          <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                          <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                             <p className="text-muted-foreground">Downloaded Delta</p>
                             <p className="mt-1 font-medium">
                               {movement.downloaded_delta != null ? formatBytes(movement.downloaded_delta) : 'n/a'}
                             </p>
                           </div>
 
-                          <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                          <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                             <p className="text-muted-foreground">Current Timeline</p>
                             <p className="mt-1 font-medium">pos {movement.current_pos ?? 'n/a'} / ts {movement.current_last_ts ?? 'n/a'}</p>
                           </div>
                         </div>
 
                         <div className="mt-3 grid gap-3 md:grid-cols-2">
-                          <div className="rounded-lg border border-emerald-200/70 bg-emerald-50/50 p-2 dark:border-emerald-900/50 dark:bg-emerald-950/20">
+                          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 dark:border-emerald-900 dark:bg-emerald-950/20">
                             <p className="mb-1 text-xs text-emerald-700 dark:text-emerald-300">POS movement (sliding trend)</p>
                             <Sparkline values={posSeries} color="#22c55e" label="pos trend" />
                           </div>
-                          <div className="rounded-lg border border-sky-200/70 bg-sky-50/50 p-2 dark:border-sky-900/50 dark:bg-sky-950/20">
+                          <div className="rounded-lg border border-sky-200 bg-sky-50 p-2 dark:border-sky-900 dark:bg-sky-950/20">
                             <p className="mb-1 text-xs text-sky-700 dark:text-sky-300">last_ts movement (sliding trend)</p>
                             <Sparkline values={lastTsSeries} color="#0ea5e9" label="last_ts trend" />
                           </div>
                         </div>
 
-                        <div className="mt-3 rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                        <div className="mt-3 rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                           <p className="mb-1 text-xs text-muted-foreground">Live buffer window (first_ts -&gt; pos -&gt; last_ts)</p>
                           <BufferWindowBar livepos={livepos} />
                         </div>

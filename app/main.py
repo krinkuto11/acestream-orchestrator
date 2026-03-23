@@ -2203,6 +2203,7 @@ def clear_cache():
 
 class LegacyStreamMonitorStartRequest(BaseModel):
     content_id: str
+    stream_name: Optional[str] = None
     interval_s: float = 1.0
     run_seconds: int = 0
     per_sample_timeout_s: float = 1.0
@@ -2223,6 +2224,7 @@ async def start_legacy_stream_monitor(req: LegacyStreamMonitorStartRequest):
     try:
         monitor = await legacy_stream_monitoring_service.start_monitor(
             content_id=req.content_id,
+            stream_name=req.stream_name,
             interval_s=req.interval_s,
             run_seconds=req.run_seconds,
             per_sample_timeout_s=req.per_sample_timeout_s,

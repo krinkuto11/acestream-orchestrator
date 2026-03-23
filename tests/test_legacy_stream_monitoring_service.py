@@ -95,13 +95,19 @@ async def test_monitor_collects_status_samples(monkeypatch):
 
     service = LegacyStreamMonitoringService()
 
-    monitor = await service.start_monitor(content_id="abc123", interval_s=0.5, run_seconds=0)
+    monitor = await service.start_monitor(
+        content_id="abc123",
+        stream_name="Test Channel",
+        interval_s=0.5,
+        run_seconds=0,
+    )
     monitor_id = monitor["monitor_id"]
 
     await asyncio.sleep(1.2)
 
     current = await service.get_monitor(monitor_id)
     assert current is not None
+    assert current["stream_name"] == "Test Channel"
     assert current["sample_count"] >= 1
     assert current["latest_status"]["status_text"] == "dl"
     assert current["livepos_movement"]["is_moving"] is True
