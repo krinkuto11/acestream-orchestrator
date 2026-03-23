@@ -127,8 +127,8 @@ function ResourceUsage({ orchUrl }) {
     // Fetch immediately
     fetchTotalStats()
 
-    // Refresh every 5 seconds
-    const interval = setInterval(fetchTotalStats, 5000)
+    // Refresh every second for near real-time panel updates
+    const interval = setInterval(fetchTotalStats, 1000)
 
     return () => clearInterval(interval)
   }, [orchUrl])
@@ -330,7 +330,7 @@ function LegacyMonitorSessions({ orchUrl, apiKey }) {
     }
 
     fetchMonitors(true)
-    const interval = setInterval(() => fetchMonitors(false), 5000)
+    const interval = setInterval(() => fetchMonitors(false), 1000)
     return () => {
       cancelled = true
       clearInterval(interval)

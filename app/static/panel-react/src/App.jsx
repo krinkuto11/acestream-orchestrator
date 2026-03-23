@@ -22,7 +22,7 @@ function AppContent() {
   // Always use the current browser origin as URL so the UI works regardless of which IP/host is used to access it
   const orchUrl = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:8000'
   const [apiKey, setApiKey] = useLocalStorage('orch_apikey', '')
-  const [refreshInterval, setRefreshInterval] = useLocalStorage('refresh_interval', 5000)
+  const [refreshInterval, setRefreshInterval] = useLocalStorage('refresh_interval', 1000)
   const [maxEventsDisplay, setMaxEventsDisplay] = useLocalStorage('max_events_display', 100)
   
   const [engines, setEngines] = useState([])
@@ -83,7 +83,8 @@ function AppContent() {
 
   useEffect(() => {
     fetchData()
-    const interval = setInterval(fetchData, refreshInterval)
+    const intervalMs = Math.max(1000, Number(refreshInterval) || 1000)
+    const interval = setInterval(fetchData, intervalMs)
     return () => clearInterval(interval)
   }, [fetchData, refreshInterval])
 
