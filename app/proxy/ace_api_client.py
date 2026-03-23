@@ -350,20 +350,23 @@ class AceLegacyApiClient:
         def _increase_count(values: list) -> int:
             return sum(1 for prev, curr in zip(values, values[1:]) if curr > prev)
 
+        def _change_count(values: list) -> int:
+            return sum(1 for prev, curr in zip(values, values[1:]) if curr != prev)
+
         positions = _values("pos")
         last_timestamps = _values("last_ts")
         progress_values = _values("progress")
         downloaded_values = _values("downloaded")
 
-        timeline_increases = max(
-            _increase_count(positions),
-            _increase_count(last_timestamps),
+        timeline_changes = max(
+            _change_count(positions),
+            _change_count(last_timestamps),
             _increase_count(progress_values),
         )
-        download_increases = _increase_count(downloaded_values)
+        download_changes = _change_count(downloaded_values)
 
-        # Require sustained advancement, not a single jump that may come from stale snapshots.
-        return bool(timeline_increases >= 2 and download_increases >= 2)
+        # Require sustained timeline movement and non-static payload to block static false positives.
+        return bool(timeline_changes >= 2 and download_changes >= 1)
 
     def preflight(self, content_id: str, tier: str = "light") -> Dict[str, Any]:
         """Run light/deep availability checks and return canonicalized metadata."""
@@ -406,6 +409,8 @@ class AceLegacyApiClient:
                 "transport_signal": has_transport_signal,
                 "progression_signal": has_progression,
             }
+            if not payload["available"]:
+                payload["message"] = "deep preflight did not observe sustained stream progression"
 
             self.stop_stream()
 

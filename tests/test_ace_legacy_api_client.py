@@ -128,6 +128,41 @@ def test_preflight_deep_rejects_false_positive_without_progression(monkeypatch):
     assert result["availability_checks"]["progression_signal"] is False
 
 
+def test_preflight_deep_accepts_moving_stream_with_fluctuating_downloaded(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    def fake_resolve(content_id, session_id=None):
+        return {"status": 1, "infohash": "abc123"}, "content_id"
+
+    def fake_start(content_id, mode, stream_type="output_format=http"):
+        return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
+
+    def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
+        # Typical moving stream: live timeline advances while downloaded can oscillate.
+        return {
+            "status_text": "dl",
+            "peers": 1,
+            "http_peers": 0,
+            "sample_points": [
+                {"status": "dl", "progress": 0, "downloaded": 13107200, "pos": 1774259009, "last_ts": 1774259009},
+                {"status": "dl", "progress": 0, "downloaded": 12845056, "pos": 1774259012, "last_ts": 1774259012},
+                {"status": "dl", "progress": 0, "downloaded": 13369344, "pos": 1774259015, "last_ts": 1774259015},
+                {"status": "dl", "progress": 0, "downloaded": 12582912, "pos": 1774259018, "last_ts": 1774259018},
+            ],
+        }
+
+    monkeypatch.setattr(client, "resolve_content", fake_resolve)
+    monkeypatch.setattr(client, "start_stream", fake_start)
+    monkeypatch.setattr(client, "collect_status_samples", fake_collect)
+    monkeypatch.setattr(client, "stop_stream", lambda: None)
+
+    result = client.preflight("orig-hash", tier="deep")
+
+    assert result["available"] is True
+    assert result["availability_checks"]["transport_signal"] is True
+    assert result["availability_checks"]["progression_signal"] is True
+
+
 def test_collect_status_samples_tolerates_timeouts(monkeypatch):
     client = AceLegacyApiClient("127.0.0.1", 62062)
 
