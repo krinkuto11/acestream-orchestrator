@@ -458,27 +458,53 @@ class LegacyStreamMonitoringService:
                         "livepos": probe.get("livepos"),
                     }
                     session_stuck = await self._append_sample(monitor_id, sample)
+                    async with self._lock:
+                        previous_status = (self._sessions.get(monitor_id) or {}).get("status")
+
                     if session_stuck:
                         await self._update_session(
                             monitor_id,
-                            status="dead",
-                            dead_reason="livepos_stuck",
+                            status="stuck",
+                            dead_reason=None,
                             last_error="livepos did not move and payload did not grow",
-                            ended_at=self._utc_iso(),
                         )
-                        logger.warning(
-                            "Legacy monitor %s marked dead: livepos did not move",
+                        if previous_status != "stuck":
+                            logger.warning(
+                                "Legacy monitor %s marked stuck: livepos did not move",
+                                monitor_id,
+                            )
+                    else:
+                        await self._update_session(
                             monitor_id,
+                            status="running",
+                            dead_reason=None,
+                            last_error=None,
                         )
-                        break
+                        if previous_status == "stuck":
+                            logger.info(
+                                "Legacy monitor %s recovered from stuck state",
+                                monitor_id,
+                            )
 
                     try:
                         await asyncio.wait_for(stop_event.wait(), timeout=interval_s)
                     except asyncio.TimeoutError:
                         pass
                 except asyncio.TimeoutError:
-                    # wait_for(stop_event) timeout path above
-                    pass
+                    await self._update_session(monitor_id, reconnect_attempts=1)
+                    await self._update_session(
+                        monitor_id,
+                        status="dead",
+                        dead_reason="timeout_or_connect_error",
+                        last_error="api timeout",
+                        ended_at=self._utc_iso(),
+                    )
+                    logger.warning(
+                        "Legacy monitor %s marked dead after API timeout",
+                        monitor_id,
+                    )
+                    await _shutdown_client()
+                    break
                 except Exception as e:
                     error_text = str(e)
                     await self._update_session(monitor_id, reconnect_attempts=1)

@@ -53,6 +53,30 @@ class _FakeAceLegacyApiClient:
         return None
 
 
+class _FakeStaticLiveposClient(_FakeAceLegacyApiClient):
+    def collect_status_samples(self, samples=1, interval_s=0.0, per_sample_timeout_s=1.0):
+        self._sample_idx += 1
+        return {
+            "status_text": "dl",
+            "status": "dl",
+            "progress": self._sample_idx,
+            "speed_down": 1000,
+            "speed_up": 10,
+            "peers": 2,
+            "downloaded": 5000,
+            "uploaded": self._sample_idx * 10,
+            "livepos": {
+                "pos": "100",
+                "last_ts": "1000",
+            },
+        }
+
+
+class _FakeTimeoutClient(_FakeAceLegacyApiClient):
+    def collect_status_samples(self, samples=1, interval_s=0.0, per_sample_timeout_s=1.0):
+        raise asyncio.TimeoutError("api timed out")
+
+
 @pytest.mark.asyncio
 async def test_monitor_collects_status_samples(monkeypatch):
     from app.services import legacy_stream_monitoring as module
@@ -194,3 +218,66 @@ def test_stuck_detection_requires_about_20s_without_movement():
         "recent_status": [dict(sample) for _ in range(21)],
     }
     assert service._is_session_stuck(raw_at_threshold) is True
+
+
+@pytest.mark.asyncio
+async def test_stuck_stream_is_not_marked_dead(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeStaticLiveposClient)
+
+    service = LegacyStreamMonitoringService()
+    service._stuck_no_movement_seconds = 1.0
+
+    monitor = await service.start_monitor(content_id="abc123", interval_s=0.5, run_seconds=0)
+    monitor_id = monitor["monitor_id"]
+
+    await asyncio.sleep(2.1)
+
+    current = await service.get_monitor(monitor_id)
+    assert current is not None
+    assert current["status"] == "stuck"
+    assert current["dead_reason"] is None
+    assert current["sample_count"] >= 3
+
+    stopped = await service.stop_monitor(monitor_id)
+    assert stopped is True
+
+
+@pytest.mark.asyncio
+async def test_api_timeout_marks_stream_dead_and_stops(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeTimeoutClient)
+
+    service = LegacyStreamMonitoringService()
+
+    monitor = await service.start_monitor(content_id="abc123", interval_s=0.5, run_seconds=0)
+    monitor_id = monitor["monitor_id"]
+
+    await asyncio.sleep(0.8)
+
+    current = await service.get_monitor(monitor_id)
+    assert current is not None
+    assert current["status"] == "dead"
+    assert current["dead_reason"] == "timeout_or_connect_error"
