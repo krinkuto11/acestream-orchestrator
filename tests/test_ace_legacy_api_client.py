@@ -63,8 +63,18 @@ def test_preflight_deep_stops_stream(monkeypatch):
         assert mode == "infohash"
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
-    def fake_collect(samples=3, interval_s=0.5, per_sample_timeout_s=2.0):
-        return {"status_text": "dl", "peers": 1, "http_peers": 0}
+    def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
+        return {
+            "status_text": "dl",
+            "peers": 1,
+            "http_peers": 0,
+            "sample_points": [
+                {"status": "dl", "progress": 0, "downloaded": 100, "pos": 1000, "last_ts": 1000},
+                {"status": "dl", "progress": 1, "downloaded": 120, "pos": 1001, "last_ts": 1001},
+                {"status": "dl", "progress": 2, "downloaded": 145, "pos": 1002, "last_ts": 1002},
+                {"status": "dl", "progress": 3, "downloaded": 170, "pos": 1003, "last_ts": 1003},
+            ],
+        }
 
     def fake_stop():
         calls["stop"] += 1
@@ -78,8 +88,44 @@ def test_preflight_deep_stops_stream(monkeypatch):
 
     assert result["available"] is True
     assert result["infohash"] == "abc123"
+    assert result["availability_checks"]["transport_signal"] is True
+    assert result["availability_checks"]["progression_signal"] is True
     assert calls["start"] == 1
     assert calls["stop"] == 1
+
+
+def test_preflight_deep_rejects_false_positive_without_progression(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    def fake_resolve(content_id, session_id=None):
+        return {"status": 1, "infohash": "abc123"}, "content_id"
+
+    def fake_start(content_id, mode, stream_type="output_format=http"):
+        return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
+
+    def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
+        # Transport looks healthy but probe is fully static.
+        return {
+            "status_text": "dl",
+            "peers": 1,
+            "http_peers": 0,
+            "sample_points": [
+                {"status": "dl", "progress": 0, "downloaded": 7864320, "pos": 1774256958, "last_ts": 1774256958},
+                {"status": "dl", "progress": 0, "downloaded": 7864320, "pos": 1774256958, "last_ts": 1774256958},
+                {"status": "dl", "progress": 0, "downloaded": 7864320, "pos": 1774256958, "last_ts": 1774256958},
+            ],
+        }
+
+    monkeypatch.setattr(client, "resolve_content", fake_resolve)
+    monkeypatch.setattr(client, "start_stream", fake_start)
+    monkeypatch.setattr(client, "collect_status_samples", fake_collect)
+    monkeypatch.setattr(client, "stop_stream", lambda: None)
+
+    result = client.preflight("orig-hash", tier="deep")
+
+    assert result["available"] is False
+    assert result["availability_checks"]["transport_signal"] is True
+    assert result["availability_checks"]["progression_signal"] is False
 
 
 def test_collect_status_samples_tolerates_timeouts(monkeypatch):

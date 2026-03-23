@@ -186,7 +186,8 @@ class StreamManager:
             client.connect()
             client.authenticate()
 
-            preflight = client.preflight(self.content_id, tier="light")
+            preflight_tier = ConfigHelper.legacy_api_preflight_tier()
+            preflight = client.preflight(self.content_id, tier=preflight_tier)
             if not preflight.get("available"):
                 message = preflight.get("message") or "content unavailable"
                 raise AceLegacyApiError(f"Preflight failed: {message}")

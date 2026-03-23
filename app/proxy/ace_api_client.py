@@ -241,10 +241,21 @@ class AceLegacyApiClient:
         """Collect STATUS and livepos EVENT data after START for deep availability checks."""
         status_lines = []
         event_lines = []
+        sample_points = []
         last_status: Dict[str, str] = {}
         last_livepos: Dict[str, str] = {}
 
+        def _to_int(value: Optional[str]) -> Optional[int]:
+            if value is None or value == "":
+                return None
+            try:
+                return int(float(value))
+            except (TypeError, ValueError):
+                return None
+
         for idx in range(max(1, samples)):
+            sample_status: Dict[str, str] = {}
+            sample_livepos: Dict[str, str] = {}
             self._write("STATUS")
 
             deadline = time.time() + max(0.2, per_sample_timeout_s)
@@ -261,6 +272,7 @@ class AceLegacyApiClient:
                     status_lines.append(raw)
                     parsed = self.parse_status_line(raw)
                     if parsed:
+                        sample_status = parsed
                         last_status = parsed
                     break
 
@@ -269,22 +281,27 @@ class AceLegacyApiClient:
                     event_lines.append(raw)
                     parsed_event = self.parse_event_line(raw)
                     if parsed_event.get("event") == "livepos":
+                        sample_livepos = parsed_event
                         last_livepos = parsed_event
                     self._handle_async(cmd, parts)
                     continue
 
                 self._handle_async(cmd, parts)
 
+            if sample_status or sample_livepos:
+                progress_value = sample_status.get("immediate_progress") or sample_status.get("total_progress")
+                sample_points.append(
+                    {
+                        "status": sample_status.get("status"),
+                        "progress": _to_int(progress_value),
+                        "downloaded": _to_int(sample_status.get("downloaded")),
+                        "pos": _to_int(sample_livepos.get("pos")),
+                        "last_ts": _to_int(sample_livepos.get("last_ts") or sample_livepos.get("live_last")),
+                    }
+                )
+
             if idx < samples - 1:
                 time.sleep(max(0.0, interval_s))
-
-        def _to_int(value: Optional[str]) -> Optional[int]:
-            if value is None or value == "":
-                return None
-            try:
-                return int(float(value))
-            except (TypeError, ValueError):
-                return None
 
         progress_value = last_status.get("immediate_progress") or last_status.get("total_progress")
 
@@ -315,9 +332,38 @@ class AceLegacyApiClient:
             "http_downloaded": _to_int(last_status.get("http_downloaded")),
             "uploaded": _to_int(last_status.get("uploaded")),
             "livepos": livepos_payload,
+            "sample_points": sample_points,
             "raw_status_lines": status_lines,
             "raw_event_lines": event_lines,
         }
+
+    @staticmethod
+    def _probe_has_progression(sample_points: list) -> bool:
+        """Return True when probe samples show actual stream movement and data growth."""
+
+        if len(sample_points) < 3:
+            return False
+
+        def _values(key: str) -> list:
+            return [point.get(key) for point in sample_points if isinstance(point.get(key), int)]
+
+        def _increase_count(values: list) -> int:
+            return sum(1 for prev, curr in zip(values, values[1:]) if curr > prev)
+
+        positions = _values("pos")
+        last_timestamps = _values("last_ts")
+        progress_values = _values("progress")
+        downloaded_values = _values("downloaded")
+
+        timeline_increases = max(
+            _increase_count(positions),
+            _increase_count(last_timestamps),
+            _increase_count(progress_values),
+        )
+        download_increases = _increase_count(downloaded_values)
+
+        # Require sustained advancement, not a single jump that may come from stale snapshots.
+        return bool(timeline_increases >= 2 and download_increases >= 2)
 
     def preflight(self, content_id: str, tier: str = "light") -> Dict[str, Any]:
         """Run light/deep availability checks and return canonicalized metadata."""
@@ -346,14 +392,20 @@ class AceLegacyApiClient:
 
         if tier_value == "deep":
             start_info = self.start_stream(resolved_infohash, mode="infohash")
-            status_probe = self.collect_status_samples(samples=3, interval_s=0.5, per_sample_timeout_s=2.0)
+            status_probe = self.collect_status_samples(samples=4, interval_s=0.5, per_sample_timeout_s=2.0)
             payload["start"] = start_info
             payload["status_probe"] = status_probe
 
             peers = status_probe.get("peers") or 0
             http_peers = status_probe.get("http_peers") or 0
             status_text = status_probe.get("status_text")
-            payload["available"] = bool(peers > 0 or http_peers > 0 or status_text in {"dl", "buf", "prebuf"})
+            has_transport_signal = bool(peers > 0 or http_peers > 0 or status_text in {"dl", "buf", "prebuf"})
+            has_progression = self._probe_has_progression(status_probe.get("sample_points") or [])
+            payload["available"] = bool(has_transport_signal and has_progression)
+            payload["availability_checks"] = {
+                "transport_signal": has_transport_signal,
+                "progression_signal": has_progression,
+            }
 
             self.stop_stream()
 

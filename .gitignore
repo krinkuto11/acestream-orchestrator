@@ -80,3 +80,4 @@ app/config/loop_detection_settings.json
 qui-develop/
 compose.text.yml
 hashes.txt
+legacy_api_monitoring_suite

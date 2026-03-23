@@ -26,6 +26,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(DEFAULT_MAX_STREAMS_PER_ENGINE)
   const [streamMode, setStreamMode] = useState('TS')
   const [controlMode, setControlMode] = useState('LEGACY_HTTP')
+  const [legacyApiPreflightTier, setLegacyApiPreflightTier] = useState('light')
   const [engineVariant, setEngineVariant] = useState('')
 
   // HLS-specific state
@@ -91,6 +92,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
         setMaxStreamsPerEngine(data.max_streams_per_engine || DEFAULT_MAX_STREAMS_PER_ENGINE)
         setStreamMode(data.stream_mode || 'TS')
         setControlMode(data.control_mode || 'LEGACY_HTTP')
+        setLegacyApiPreflightTier(data.legacy_api_preflight_tier || 'light')
         setEngineVariant(data.engine_variant || '')
         setVlcUserAgent(data.vlc_user_agent)
         setChunkSize(data.chunk_size)
@@ -168,6 +170,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
       params.append('max_streams_per_engine', maxStreamsPerEngine)
       params.append('stream_mode', streamMode)
       params.append('control_mode', controlMode)
+      params.append('legacy_api_preflight_tier', legacyApiPreflightTier)
       // HLS-specific parameters
       params.append('hls_max_segments', hlsMaxSegments)
       params.append('hls_initial_segments', hlsInitialSegments)
@@ -347,6 +350,28 @@ export function ProxySettings({ apiKey, orchUrl }) {
             <p className="text-xs text-muted-foreground">
               Legacy HTTP uses /ace/getstream JSON control flow. Legacy API uses the AceStream API port
               for HELLOBG/READY/LOADASYNC/START control and remains optional.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="legacy-api-preflight-tier">Legacy API Preflight Tier</Label>
+            <Select
+              value={legacyApiPreflightTier}
+              onValueChange={(value) => {
+                setLegacyApiPreflightTier(value)
+                setError(null)
+              }}
+            >
+              <SelectTrigger id="legacy-api-preflight-tier">
+                <SelectValue placeholder="Select preflight tier" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="light">light (faster)</SelectItem>
+                <SelectItem value="deep">deep (stricter false-positive filtering)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Used by proxy playback in LEGACY_API mode before START. Deep performs additional movement/data checks.
             </p>
           </div>
 

@@ -171,6 +171,10 @@ async def lifespan(app: FastAPI):
                 mode = str(proxy_settings['control_mode']).upper()
                 if mode in ['LEGACY_HTTP', 'LEGACY_API']:
                     ProxyConfig.CONTROL_MODE = mode
+            if 'legacy_api_preflight_tier' in proxy_settings:
+                tier = str(proxy_settings['legacy_api_preflight_tier']).strip().lower()
+                if tier in ['light', 'deep']:
+                    ProxyConfig.LEGACY_API_PREFLIGHT_TIER = tier
             logger.info("Proxy settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
@@ -3113,7 +3117,7 @@ def get_proxy_config():
     Returns proxy buffer and streaming settings that can be adjusted at runtime.
     """
     from .proxy import constants as proxy_constants
-    from .proxy.config_helper import Config as ProxyConfig
+    from .proxy.config_helper import Config as ProxyConfig, ConfigHelper
     
     return {
         "vlc_user_agent": proxy_constants.VLC_USER_AGENT,
@@ -3130,6 +3134,7 @@ def get_proxy_config():
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": ProxyConfig.CONTROL_MODE,
+        "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
         "engine_variant": cfg.ENGINE_VARIANT,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
@@ -3154,6 +3159,7 @@ def update_proxy_config(
     max_streams_per_engine: Optional[int] = None,
     stream_mode: Optional[str] = None,
     control_mode: Optional[str] = None,
+    legacy_api_preflight_tier: Optional[str] = None,
     # HLS-specific parameters
     hls_max_segments: Optional[int] = None,
     hls_initial_segments: Optional[int] = None,
@@ -3178,6 +3184,7 @@ def update_proxy_config(
         max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
         stream_mode: Stream mode - 'TS' for MPEG-TS or 'HLS' for HLS streaming
         control_mode: Engine control mode - 'LEGACY_HTTP' (default) or 'LEGACY_API' (optional)
+        legacy_api_preflight_tier: Legacy API preflight tier - 'light' or 'deep'
         hls_max_segments: Maximum HLS segments to buffer (min: 5, max: 100)
         hls_initial_segments: Minimum HLS segments before playback (min: 1, max: 10)
         hls_window_size: Number of segments in HLS manifest window (min: 3, max: 20)
@@ -3191,7 +3198,7 @@ def update_proxy_config(
     Changes take effect for new streams only.
     """
     from .proxy import constants as proxy_constants
-    from .proxy.config_helper import Config as ProxyConfig
+    from .proxy.config_helper import Config as ProxyConfig, ConfigHelper
     
     # Validation and updates
     if initial_data_wait_timeout is not None:
@@ -3254,6 +3261,12 @@ def update_proxy_config(
 
         ProxyConfig.CONTROL_MODE = normalized_control_mode
 
+    if legacy_api_preflight_tier is not None:
+        normalized_tier = str(legacy_api_preflight_tier).strip().lower()
+        if normalized_tier not in ['light', 'deep']:
+            raise HTTPException(status_code=400, detail="legacy_api_preflight_tier must be either 'light' or 'deep'")
+        ProxyConfig.LEGACY_API_PREFLIGHT_TIER = normalized_tier
+
     # HLS-specific settings validation and updates
     if hls_max_segments is not None:
         if hls_max_segments < 5 or hls_max_segments > 100:
@@ -3306,7 +3319,8 @@ def update_proxy_config(
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
         f"max_streams_per_engine={cfg.MAX_STREAMS_PER_ENGINE}, "
         f"stream_mode={ProxyConfig.STREAM_MODE}, "
-        f"control_mode={ProxyConfig.CONTROL_MODE}"
+        f"control_mode={ProxyConfig.CONTROL_MODE}, "
+        f"legacy_api_preflight_tier={ConfigHelper.legacy_api_preflight_tier()}"
     )
     
     # Persist settings to JSON file
@@ -3322,6 +3336,7 @@ def update_proxy_config(
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": ProxyConfig.CONTROL_MODE,
+        "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
@@ -3347,6 +3362,7 @@ def update_proxy_config(
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": ProxyConfig.CONTROL_MODE,
+        "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
