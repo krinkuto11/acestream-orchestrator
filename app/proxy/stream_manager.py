@@ -187,10 +187,26 @@ class StreamManager:
             client.authenticate()
 
             preflight_tier = ConfigHelper.legacy_api_preflight_tier()
+            logger.info(
+                f"Running LEGACY_API preflight: content_id={self.content_id}, tier={preflight_tier}"
+            )
             preflight = client.preflight(self.content_id, tier=preflight_tier)
             if not preflight.get("available"):
                 message = preflight.get("message") or "content unavailable"
+                availability_checks = preflight.get("availability_checks") or {}
+                logger.warning(
+                    "LEGACY_API preflight failed: "
+                    f"content_id={self.content_id}, tier={preflight_tier}, "
+                    f"status_code={preflight.get('status_code')}, message={message}, "
+                    f"checks={availability_checks}"
+                )
                 raise AceLegacyApiError(f"Preflight failed: {message}")
+
+            logger.info(
+                "LEGACY_API preflight passed: "
+                f"content_id={self.content_id}, tier={preflight_tier}, "
+                f"resolved_infohash={preflight.get('infohash')}"
+            )
 
             self.resolved_infohash = preflight.get("infohash") or self.content_id
             start_info = client.start_stream(self.resolved_infohash, mode="infohash")

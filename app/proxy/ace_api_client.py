@@ -374,6 +374,8 @@ class AceLegacyApiClient:
         if tier_value not in {"light", "deep"}:
             raise AceLegacyApiError("tier must be either 'light' or 'deep'")
 
+        logger.info("Legacy preflight started: content_id=%s tier=%s", content_id, tier_value)
+
         loadresp, _ = self.resolve_content(content_id, session_id="0")
         status_code = loadresp.get("status")
         available = status_code in (1, 2)
@@ -391,6 +393,13 @@ class AceLegacyApiClient:
 
         if not available:
             payload["message"] = loadresp.get("message", "content unavailable")
+            logger.warning(
+                "Legacy preflight failed: content_id=%s tier=%s status_code=%s message=%s",
+                content_id,
+                tier_value,
+                status_code,
+                payload.get("message"),
+            )
             return payload
 
         if tier_value == "deep":
@@ -411,8 +420,31 @@ class AceLegacyApiClient:
             }
             if not payload["available"]:
                 payload["message"] = "deep preflight did not observe sustained stream progression"
+                logger.warning(
+                    "Legacy preflight failed: content_id=%s tier=%s checks=%s message=%s",
+                    content_id,
+                    tier_value,
+                    payload.get("availability_checks"),
+                    payload.get("message"),
+                )
+            else:
+                logger.info(
+                    "Legacy preflight passed: content_id=%s tier=%s checks=%s",
+                    content_id,
+                    tier_value,
+                    payload.get("availability_checks"),
+                )
 
             self.stop_stream()
+
+        if tier_value == "light":
+            logger.info(
+                "Legacy preflight passed: content_id=%s tier=%s status_code=%s infohash=%s",
+                content_id,
+                tier_value,
+                status_code,
+                resolved_infohash,
+            )
 
         return payload
 
