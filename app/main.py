@@ -1015,6 +1015,7 @@ def get_engines_with_metrics():
     """Get all engines with aggregated stream metrics (peers, download/upload speeds)."""
     engines = state.list_engines()
     all_active_streams = state.list_streams_with_stats(status="started")
+    monitor_loads = state.get_active_monitor_load_by_engine()
     
     # Group streams by container_id and aggregate metrics
     engine_metrics = {}
@@ -1025,7 +1026,8 @@ def get_engines_with_metrics():
                 'total_peers': 0,
                 'total_speed_down': 0,
                 'total_speed_up': 0,
-                'stream_count': 0
+                'stream_count': 0,
+                'monitor_stream_count': 0
             }
         
         # Aggregate metrics from active streams
@@ -1040,13 +1042,17 @@ def get_engines_with_metrics():
     # Enrich engine data with metrics
     result = []
     for engine in engines:
+        monitor_stream_count = monitor_loads.get(engine.container_id, 0)
         engine_dict = engine.model_dump()
         metrics = engine_metrics.get(engine.container_id, {
             'total_peers': 0,
             'total_speed_down': 0,
             'total_speed_up': 0,
-            'stream_count': 0
+            'stream_count': 0,
+            'monitor_stream_count': 0
         })
+        metrics['monitor_stream_count'] = monitor_stream_count
+        metrics['stream_count'] = int(metrics.get('stream_count', 0)) + monitor_stream_count
         engine_dict.update(metrics)
         result.append(engine_dict)
     
@@ -1541,6 +1547,7 @@ def get_orchestrator_status():
     # Get engine and stream counts
     engines = state.list_engines()
     active_streams = state.list_streams(status="started")
+    monitor_container_ids = state.get_active_monitor_container_ids()
     
     # Get Docker container status
     docker_status = replica_validator.get_docker_container_status()
@@ -1558,7 +1565,7 @@ def get_orchestrator_status():
     # Count unique engines that have active streams (not total streams)
     # Multiple streams can run on the same engine
     total_capacity = len(engines)
-    engines_with_streams = len(set(stream.container_id for stream in active_streams))
+    engines_with_streams = len(set(stream.container_id for stream in active_streams).union(monitor_container_ids))
     used_capacity = engines_with_streams
     available_capacity = max(0, total_capacity - used_capacity)
     
@@ -2305,9 +2312,13 @@ def ace_preflight(
         raise HTTPException(status_code=503, detail="No engines available")
 
     active_streams = state.list_streams(status="started")
+    monitor_loads = state.get_active_monitor_load_by_engine()
     engine_loads = {}
     for stream in active_streams:
         engine_loads[stream.container_id] = engine_loads.get(stream.container_id, 0) + 1
+
+    for container_id, monitor_count in monitor_loads.items():
+        engine_loads[container_id] = engine_loads.get(container_id, 0) + monitor_count
 
     max_streams = cfg.MAX_STREAMS_PER_ENGINE
     available_engines = [e for e in engines if engine_loads.get(e.container_id, 0) < max_streams]
@@ -2589,7 +2600,8 @@ async def ace_getstream(
                     api_port=monitor_engine.get("api_port") or 62062,
                     forwarded=bool(monitor_engine.get("forwarded")),
                 )
-                current_load = len(state.list_streams(status="started", container_id=selected_engine.container_id))
+                monitor_loads = state.get_active_monitor_load_by_engine()
+                current_load = len(state.list_streams(status="started", container_id=selected_engine.container_id)) + monitor_loads.get(selected_engine.container_id, 0)
                 playback_url = monitor_session.get("playback_url")
                 if not playback_url:
                     raise HTTPException(status_code=500, detail="Monitor session has no playback URL")
@@ -2711,7 +2723,8 @@ async def ace_getstream(
                     api_port=monitor_engine.get("api_port") or 62062,
                     forwarded=bool(monitor_engine.get("forwarded")),
                 )
-                current_load = len(state.list_streams(status="started", container_id=selected_engine.container_id))
+                monitor_loads = state.get_active_monitor_load_by_engine()
+                current_load = len(state.list_streams(status="started", container_id=selected_engine.container_id)) + monitor_loads.get(selected_engine.container_id, 0)
             else:
                 selected_engine, current_load = select_best_engine()
                 reservation_engine_id = selected_engine.container_id

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import threading
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..models.schemas import EngineState, StreamState, StreamStartedEvent, StreamEndedEvent, StreamStatSnapshot
@@ -9,6 +9,8 @@ from ..services.db import SessionLocal
 from ..models.db_models import EngineRow, StreamRow, StatRow
 
 logger = logging.getLogger(__name__)
+
+ACTIVE_MONITOR_SESSION_STATUSES: Set[str] = {"starting", "running", "stuck", "reconnecting"}
 
 class State:
     def __init__(self):
@@ -425,6 +427,27 @@ class State:
     def list_monitor_sessions(self) -> List[Dict[str, object]]:
         with self._lock:
             return [dict(v) for v in self.monitor_sessions.values()]
+
+    def get_active_monitor_load_by_engine(self) -> Dict[str, int]:
+        """Return active monitor-session counts keyed by engine container_id."""
+        with self._lock:
+            counts: Dict[str, int] = {}
+            for session in self.monitor_sessions.values():
+                if (session.get("status") or "") not in ACTIVE_MONITOR_SESSION_STATUSES:
+                    continue
+
+                engine = session.get("engine") or {}
+                container_id = engine.get("container_id")
+                if not container_id:
+                    continue
+
+                counts[container_id] = counts.get(container_id, 0) + 1
+
+            return counts
+
+    def get_active_monitor_container_ids(self) -> Set[str]:
+        """Return engine container IDs that currently host active monitor sessions."""
+        return set(self.get_active_monitor_load_by_engine().keys())
 
     def remove_monitor_session(self, monitor_id: str) -> Optional[Dict[str, object]]:
         with self._lock:

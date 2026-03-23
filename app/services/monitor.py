@@ -121,6 +121,7 @@ class DockerMonitor:
             all_engines = state.list_engines()
             active_streams = state.list_streams(status="started")
             used_container_ids = {stream.container_id for stream in active_streams}
+            used_container_ids.update(state.get_active_monitor_container_ids())
             
             # Find empty engines that can be stopped
             empty_engines = [e for e in all_engines if e.container_id not in used_container_ids]

@@ -61,6 +61,11 @@ def select_best_engine(
         cid = stream.container_id
         engine_loads[cid] = engine_loads.get(cid, 0) + 1
 
+    # Count active monitoring sessions as stream load on each engine.
+    monitor_loads = state.get_active_monitor_load_by_engine()
+    for cid, monitor_count in monitor_loads.items():
+        engine_loads[cid] = engine_loads.get(cid, 0) + monitor_count
+
     for e in engines:
         cid = e.container_id
         pending_count = 0
