@@ -171,11 +171,6 @@ async def lifespan(app: FastAPI):
                 mode = str(proxy_settings['control_mode']).upper()
                 if mode in ['LEGACY_HTTP', 'LEGACY_API']:
                     ProxyConfig.CONTROL_MODE = mode
-            if 'legacy_api_liveseek_seconds' in proxy_settings:
-                try:
-                    ProxyConfig.LEGACY_API_LIVESEEK_SECONDS = max(0, int(proxy_settings['legacy_api_liveseek_seconds']))
-                except (TypeError, ValueError):
-                    logger.warning("Invalid persisted legacy_api_liveseek_seconds value; keeping current runtime default")
             logger.info("Proxy settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
@@ -3118,7 +3113,6 @@ def get_proxy_config():
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": ProxyConfig.CONTROL_MODE,
-        "legacy_api_liveseek_seconds": ProxyConfig.LEGACY_API_LIVESEEK_SECONDS,
         "engine_variant": cfg.ENGINE_VARIANT,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
@@ -3143,7 +3137,6 @@ def update_proxy_config(
     max_streams_per_engine: Optional[int] = None,
     stream_mode: Optional[str] = None,
     control_mode: Optional[str] = None,
-    legacy_api_liveseek_seconds: Optional[int] = None,
     # HLS-specific parameters
     hls_max_segments: Optional[int] = None,
     hls_initial_segments: Optional[int] = None,
@@ -3168,7 +3161,6 @@ def update_proxy_config(
         max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
         stream_mode: Stream mode - 'TS' for MPEG-TS or 'HLS' for HLS streaming
         control_mode: Engine control mode - 'LEGACY_HTTP' (default) or 'LEGACY_API' (optional)
-        legacy_api_liveseek_seconds: Optional delayed-live seekback used in LEGACY_API mode (min: 0, max: 120)
         hls_max_segments: Maximum HLS segments to buffer (min: 5, max: 100)
         hls_initial_segments: Minimum HLS segments before playback (min: 1, max: 10)
         hls_window_size: Number of segments in HLS manifest window (min: 3, max: 20)
@@ -3245,11 +3237,6 @@ def update_proxy_config(
 
         ProxyConfig.CONTROL_MODE = normalized_control_mode
 
-    if legacy_api_liveseek_seconds is not None:
-        if legacy_api_liveseek_seconds < 0 or legacy_api_liveseek_seconds > 120:
-            raise HTTPException(status_code=400, detail="legacy_api_liveseek_seconds must be between 0 and 120")
-        ProxyConfig.LEGACY_API_LIVESEEK_SECONDS = legacy_api_liveseek_seconds
-    
     # HLS-specific settings validation and updates
     if hls_max_segments is not None:
         if hls_max_segments < 5 or hls_max_segments > 100:
@@ -3302,8 +3289,7 @@ def update_proxy_config(
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
         f"max_streams_per_engine={cfg.MAX_STREAMS_PER_ENGINE}, "
         f"stream_mode={ProxyConfig.STREAM_MODE}, "
-        f"control_mode={ProxyConfig.CONTROL_MODE}, "
-        f"legacy_api_liveseek_seconds={ProxyConfig.LEGACY_API_LIVESEEK_SECONDS}"
+        f"control_mode={ProxyConfig.CONTROL_MODE}"
     )
     
     # Persist settings to JSON file
@@ -3319,7 +3305,6 @@ def update_proxy_config(
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": ProxyConfig.CONTROL_MODE,
-        "legacy_api_liveseek_seconds": ProxyConfig.LEGACY_API_LIVESEEK_SECONDS,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
@@ -3345,7 +3330,6 @@ def update_proxy_config(
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": ProxyConfig.CONTROL_MODE,
-        "legacy_api_liveseek_seconds": ProxyConfig.LEGACY_API_LIVESEEK_SECONDS,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,

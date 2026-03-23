@@ -63,7 +63,6 @@ class Config:
     # LEGACY_HTTP: current /ace/getstream JSON HTTP control flow
     # LEGACY_API: telnet-style AceStream API control flow (optional)
     CONTROL_MODE = os.getenv('PROXY_CONTROL_MODE', 'LEGACY_HTTP')
-    LEGACY_API_LIVESEEK_SECONDS = int(os.getenv('PROXY_LEGACY_API_LIVESEEK_SECONDS', '0'))
     
     # HLS-specific settings
     HLS_MAX_SEGMENTS = int(os.getenv('HLS_MAX_SEGMENTS', '20'))  # Maximum segments to buffer
@@ -200,11 +199,6 @@ class ConfigHelper:
     def control_mode():
         """Get engine control mode (LEGACY_HTTP or LEGACY_API)."""
         return Config.CONTROL_MODE
-
-    @staticmethod
-    def legacy_api_liveseek_seconds():
-        """Get optional LIVESEEK delay (seconds) for LEGACY_API live streams."""
-        return Config.LEGACY_API_LIVESEEK_SECONDS
     
     # HLS-specific configuration helpers
     @staticmethod
