@@ -339,7 +339,7 @@ class AceLegacyApiClient:
 
     @staticmethod
     def _probe_has_progression(sample_points: list) -> bool:
-        """Return True when probe samples show actual stream movement and data growth."""
+        """Return True when probe samples show live timeline movement via last_ts."""
 
         if len(sample_points) < 3:
             return False
@@ -347,31 +347,16 @@ class AceLegacyApiClient:
         def _values(key: str) -> list:
             return [point.get(key) for point in sample_points if isinstance(point.get(key), int)]
 
-        def _increase_count(values: list) -> int:
-            return sum(1 for prev, curr in zip(values, values[1:]) if curr > prev)
-
         def _change_count(values: list) -> int:
             return sum(1 for prev, curr in zip(values, values[1:]) if curr != prev)
 
-        positions = _values("pos")
         last_timestamps = _values("last_ts")
-        progress_values = _values("progress")
-        downloaded_values = _values("downloaded")
+        # A stream is considered stuck only when last_ts does not move.
+        # pos can plateau on healthy streams and should not trigger stuck detection.
+        if len(last_timestamps) < 2:
+            return False
 
-        timeline_changes = max(
-            _change_count(positions),
-            _change_count(last_timestamps),
-            _increase_count(progress_values),
-        )
-        download_increases = _increase_count(downloaded_values)
-        has_timeline_signal = bool(len(positions) >= 2 or len(last_timestamps) >= 2)
-
-        # Accept either sustained movement, or early movement + strong payload growth.
-        # The second branch avoids transient false negatives when the final sample briefly plateaus.
-        sustained_progression = timeline_changes >= 2 and download_increases >= 1
-        warmup_then_plateau = timeline_changes >= 1 and download_increases >= 2 and has_timeline_signal
-
-        return bool(sustained_progression or warmup_then_plateau)
+        return _change_count(last_timestamps) >= 1
 
     def preflight(self, content_id: str, tier: str = "light") -> Dict[str, Any]:
         """Run light/deep availability checks and return canonicalized metadata."""
