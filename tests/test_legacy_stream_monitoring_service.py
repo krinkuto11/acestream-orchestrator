@@ -173,3 +173,24 @@ async def test_monitor_delete_removes_entry(monkeypatch):
 
     current = await service.get_monitor(monitor_id)
     assert current is None
+
+
+def test_stuck_detection_requires_about_20s_without_movement():
+    service = LegacyStreamMonitoringService()
+
+    sample = {
+        "livepos": {"pos": "100", "last_ts": "1000"},
+        "downloaded": 5000,
+    }
+
+    raw_just_under_threshold = {
+        "interval_s": 1.0,
+        "recent_status": [dict(sample) for _ in range(20)],
+    }
+    assert service._is_session_stuck(raw_just_under_threshold) is False
+
+    raw_at_threshold = {
+        "interval_s": 1.0,
+        "recent_status": [dict(sample) for _ in range(21)],
+    }
+    assert service._is_session_stuck(raw_at_threshold) is True

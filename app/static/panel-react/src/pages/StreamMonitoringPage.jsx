@@ -96,7 +96,9 @@ function BufferWindowBar({ livepos }) {
     return <p className="text-xs text-muted-foreground">Buffer window unavailable</p>
   }
 
-  const ratio = Math.max(0, Math.min(1, (pos - first) / (last - first)))
+  const totalSeconds = Math.max(0, last - first)
+  const posSeconds = Math.max(0, pos - first)
+  const ratio = Math.max(0, Math.min(1, posSeconds / Math.max(1, totalSeconds)))
   const markerLeft = `${ratio * 100}%`
 
   return (
@@ -106,9 +108,12 @@ function BufferWindowBar({ livepos }) {
         <div className="absolute -top-1 h-4 w-1 rounded bg-sky-700 dark:bg-sky-300" style={{ left: markerLeft }} />
       </div>
       <div className="flex justify-between text-[11px] text-muted-foreground">
-        <span>first_ts: {first}</span>
-        <span>pos: {pos}</span>
-        <span>last_ts: {last}</span>
+        <span>0s</span>
+        <span>pos: {posSeconds}s</span>
+        <span>{totalSeconds}s</span>
+      </div>
+      <div className="text-[11px] text-muted-foreground">
+        abs first_ts={first}, pos={pos}, last_ts={last}
       </div>
     </div>
   )

@@ -30,6 +30,7 @@ class LegacyStreamMonitoringService:
         self._tasks: Dict[str, asyncio.Task] = {}
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._stop_events: Dict[str, asyncio.Event] = {}
+        self._stuck_no_movement_seconds = 20.0
 
     @staticmethod
     def _utc_iso() -> str:
@@ -166,10 +167,21 @@ class LegacyStreamMonitoringService:
 
     def _is_session_stuck(self, raw: Dict[str, Any]) -> bool:
         samples = list(raw.get("recent_status") or [])
-        if len(samples) < 8:
+        if len(samples) < 2:
             return False
 
-        window = samples[-8:]
+        try:
+            interval_s = float(raw.get("interval_s") or 1.0)
+        except Exception:
+            interval_s = 1.0
+        interval_s = max(0.5, interval_s)
+
+        # Require approximately 20 seconds worth of non-movement before marking dead.
+        required_samples = max(2, int(self._stuck_no_movement_seconds / interval_s) + 1)
+        if len(samples) < required_samples:
+            return False
+
+        window = samples[-required_samples:]
         pos_values: List[int] = []
         last_ts_values: List[int] = []
         downloaded_values: List[int] = []
