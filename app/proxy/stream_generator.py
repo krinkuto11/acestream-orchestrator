@@ -143,7 +143,7 @@ class StreamGenerator:
         logger.error(f"[{self.client_id}] Stream initialization timeout")
         return False
     
-    def _wait_for_initial_data(self):
+    def _wait_for_initial_data(self, min_index=None):
         """Wait for initial data to arrive in the buffer before starting streaming.
         
         This is critical because the HTTP streamer needs time to connect to the
@@ -153,12 +153,15 @@ class StreamGenerator:
         timeout = ConfigHelper.initial_data_wait_timeout()
         check_interval = ConfigHelper.initial_data_check_interval()
         start_time = time.time()
+        baseline_index = max(0, int(min_index or 0))
         
-        logger.info(f"[{self.client_id}] Waiting for initial data in buffer (timeout: {timeout}s)...")
+        logger.info(
+            f"[{self.client_id}] Waiting for initial data in buffer (timeout: {timeout}s, baseline_index: {baseline_index})..."
+        )
         
         while time.time() - start_time < timeout:
-            # Check if buffer has any data
-            if self.buffer.index > 0:
+            # Wait for fresh data beyond baseline index to avoid stale chunk reuse
+            if self.buffer.index > baseline_index:
                 elapsed = time.time() - start_time
                 logger.info(f"[{self.client_id}] Initial data available after {elapsed:.2f}s (buffer index: {self.buffer.index})")
                 return True
@@ -168,7 +171,9 @@ class StreamGenerator:
             time.sleep(check_interval)
         
         # Timeout - no data arrived
-        logger.error(f"[{self.client_id}] Timeout waiting for initial data (buffer still empty after {timeout}s)")
+        logger.error(
+            f"[{self.client_id}] Timeout waiting for initial data (buffer index: {self.buffer.index}, baseline_index: {baseline_index}, waited: {timeout}s)"
+        )
         return False
     
     def _setup_streaming(self):
@@ -191,10 +196,14 @@ class StreamGenerator:
         
         # Add client
         self.client_manager.add_client(self.client_id, self.client_ip, self.client_user_agent)
+
+        # Capture the current index before waiting so startup only accepts
+        # fresh data for this session, not stale Redis chunks.
+        start_index = self.buffer.index
         
         # Wait for initial data in buffer before starting streaming
         # This gives the HTTP streamer time to fetch data from the playback URL
-        if not self._wait_for_initial_data():
+        if not self._wait_for_initial_data(min_index=start_index):
             # Error already logged in _wait_for_initial_data
             return False
         

@@ -82,6 +82,8 @@ class StreamManager:
         # Orchestrator event tracking
         self.stream_id = None  # Will be set after sending start event
         self._ended_event_sent = False  # Track if we've already sent the ended event
+        self._ended_event_stream_id = None
+        self._stream_exit_reason = None
         
         logger.info(f"StreamManager initialized for content_id={content_id}")
     
@@ -316,6 +318,8 @@ class StreamManager:
         
         # Generate a temporary stream_id immediately so proxy can proceed
         self.stream_id = f"temp-ts-{self.content_id[:16]}-{int(time.time())}"
+        self._ended_event_sent = False
+        self._ended_event_stream_id = None
         
         # Send event in background thread (non-blocking, no join)
         handler_thread = threading.Thread(
@@ -329,7 +333,7 @@ class StreamManager:
     def _send_stream_ended_event(self, reason="normal"):
         """Send stream ended event to orchestrator using internal handler (no HTTP)"""
         # Check if we've already sent the ended event
-        if self._ended_event_sent:
+        if self._ended_event_sent and self._ended_event_stream_id == self.stream_id:
             logger.debug(f"Stream ended event already sent for stream_id={self.stream_id}, skipping")
             return
         
@@ -355,6 +359,7 @@ class StreamManager:
             
             # Mark as sent
             self._ended_event_sent = True
+            self._ended_event_stream_id = self.stream_id
             
             logger.info(f"Sent stream ended event to orchestrator: stream_id={self.stream_id}, reason={reason}")
             
@@ -407,6 +412,7 @@ class StreamManager:
             while self.running and self.retry_count < self.max_retries:
                 try:
                     logger.info(f"Connecting to stream (Attempt {self.retry_count + 1}/{self.max_retries}) for content_id={self.content_id}")
+                    self._stream_exit_reason = None
                     
                     # Request stream from engine (if not connected/reconnecting)
                     # We always request a new session on reconnect to get updated URLs
@@ -431,6 +437,17 @@ class StreamManager:
                     
                     # If we exit _process_stream_data and are still running, it's a dropout
                     if self.running:
+                        if self._stream_exit_reason == "eof":
+                            active_clients = 0
+                            try:
+                                active_clients = int(self.client_manager.get_total_client_count())
+                            except Exception:
+                                active_clients = 0
+
+                            if active_clients <= 0:
+                                logger.info("Stream ended with EOF and no active clients; skipping failover.")
+                                break
+
                         logger.warning("Stream read loop exited prematurely. Triggering failover.")
                         raise RuntimeError("Stream dropout")
                     else:
@@ -497,6 +514,7 @@ class StreamManager:
                 if not chunk:
                     # EOF - stream ended
                     logger.info("Stream ended (EOF)")
+                    self._stream_exit_reason = "eof"
                     break
                 
                 # Add to buffer
@@ -513,6 +531,7 @@ class StreamManager:
                 continue
             except Exception as e:
                 logger.error(f"Error processing stream data: {e}")
+                self._stream_exit_reason = "error"
                 break
         
         logger.info(f"Stream processing ended for content_id={self.content_id}")

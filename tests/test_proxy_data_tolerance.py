@@ -6,7 +6,6 @@ import pytest
 import os
 import time
 from unittest.mock import Mock, patch, MagicMock
-import gevent
 
 
 def test_no_data_timeout_is_configurable():
@@ -174,6 +173,40 @@ def test_stream_generator_respects_custom_no_data_timeout():
             expected_timeout = 5 * 0.01
             assert elapsed < expected_timeout + 0.5  # Give 0.5s overhead
             assert len(chunks_received) == 0
+
+
+def test_stream_generator_waits_for_fresh_data_not_stale(monkeypatch):
+    """Initial readiness should require buffer advancement past baseline index."""
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    class DummyBuffer:
+        def __init__(self):
+            self.index = 36
+
+    stream_generator.buffer = DummyBuffer()
+
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.initial_data_wait_timeout", lambda: 0.2)
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.initial_data_check_interval", lambda: 0.01)
+
+    sleeps = {"count": 0}
+
+    def _sleep_and_advance(_interval):
+        sleeps["count"] += 1
+        if sleeps["count"] == 2:
+            # Simulate first fresh chunk arriving after startup.
+            stream_generator.buffer.index = 37
+
+    monkeypatch.setattr("app.proxy.stream_generator.time.sleep", _sleep_and_advance)
+
+    assert stream_generator._wait_for_initial_data(min_index=36) is True
 
 
 def test_api_key_is_passed_to_stream_manager():
