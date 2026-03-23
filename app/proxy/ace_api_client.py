@@ -363,10 +363,15 @@ class AceLegacyApiClient:
             _change_count(last_timestamps),
             _increase_count(progress_values),
         )
-        download_changes = _change_count(downloaded_values)
+        download_increases = _increase_count(downloaded_values)
+        has_timeline_signal = bool(len(positions) >= 2 or len(last_timestamps) >= 2)
 
-        # Require sustained timeline movement and non-static payload to block static false positives.
-        return bool(timeline_changes >= 2 and download_changes >= 1)
+        # Accept either sustained movement, or early movement + strong payload growth.
+        # The second branch avoids transient false negatives when the final sample briefly plateaus.
+        sustained_progression = timeline_changes >= 2 and download_increases >= 1
+        warmup_then_plateau = timeline_changes >= 1 and download_increases >= 2 and has_timeline_signal
+
+        return bool(sustained_progression or warmup_then_plateau)
 
     def preflight(self, content_id: str, tier: str = "light") -> Dict[str, Any]:
         """Run light/deep availability checks and return canonicalized metadata."""
