@@ -79,3 +79,33 @@ def test_send_stream_ended_event_idempotent_for_same_stream(monkeypatch):
     manager._send_stream_ended_event(reason="failover")
 
     assert calls["count"] == 1
+
+
+def test_preflight_failure_aborts_without_retry(monkeypatch):
+    manager = _build_manager()
+
+    manager.running = True
+    manager.connected = False
+
+    monkeypatch.setattr(manager, "_monitor_health", lambda: None)
+
+    def _fake_request_stream_from_engine():
+        manager._last_request_failure_type = "preflight_failed"
+        return False
+
+    monkeypatch.setattr(manager, "request_stream_from_engine", _fake_request_stream_from_engine)
+    monkeypatch.setattr(manager, "_send_stream_started_event", lambda: None)
+
+    cleanup_for_retry_calls = {"count": 0}
+
+    def _fake_cleanup_for_retry():
+        cleanup_for_retry_calls["count"] += 1
+
+    monkeypatch.setattr(manager, "_cleanup_for_retry", _fake_cleanup_for_retry)
+    monkeypatch.setattr(manager, "_send_stream_ended_event", lambda reason="normal": None)
+    monkeypatch.setattr(manager, "_cleanup", lambda: None)
+
+    manager.run()
+
+    assert cleanup_for_retry_calls["count"] == 0
+    assert manager.retry_count == 1

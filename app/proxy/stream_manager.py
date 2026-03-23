@@ -57,6 +57,7 @@ class StreamManager:
         self.legacy_status_probe = None
         self._legacy_probe_cache = None
         self._legacy_probe_cache_ts = 0.0
+        self._last_request_failure_type = None
         # Keep probe cadence aligned with collector interval so legacy mode
         # has comparable overhead to stat_url polling mode.
         try:
@@ -89,6 +90,7 @@ class StreamManager:
     
     def request_stream_from_engine(self):
         """Request stream from AceStream engine according to selected control mode."""
+        self._last_request_failure_type = None
         if self.control_mode == "LEGACY_API":
             return self._request_stream_legacy_api()
         return self._request_stream_legacy_http()
@@ -165,6 +167,7 @@ class StreamManager:
             return True
             
         except Exception as e:
+            self._last_request_failure_type = "request_failed"
             # Log detailed error information for both request and general exceptions
             logger.error(f"Failed to request stream from AceStream engine: {e}")
             logger.error(f"Request details - URL: {full_url}, Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}")
@@ -173,6 +176,7 @@ class StreamManager:
 
     def _request_stream_legacy_api(self):
         """Optional telnet-style legacy API control flow."""
+        client = None
         try:
             logger.info(
                 f"Requesting stream from AceStream legacy API: {self.engine_host}:{self.engine_api_port}"
@@ -200,6 +204,7 @@ class StreamManager:
                     f"status_code={preflight.get('status_code')}, message={message}, "
                     f"checks={availability_checks}"
                 )
+                self._last_request_failure_type = "preflight_failed"
                 raise AceLegacyApiError(f"Preflight failed: {message}")
 
             logger.info(
@@ -227,6 +232,8 @@ class StreamManager:
             logger.info(f"Playback URL: {self.playback_url}")
             return True
         except Exception as e:
+            if not self._last_request_failure_type:
+                self._last_request_failure_type = "request_failed"
             logger.error(f"Failed to request stream from AceStream legacy API: {e}")
             logger.error(
                 f"Request details - API: {self.engine_host}:{self.engine_api_port}, Content ID: {self.content_id}"
@@ -235,6 +242,8 @@ class StreamManager:
             try:
                 if self.ace_api_client:
                     self.ace_api_client.shutdown()
+                elif client:
+                    client.shutdown()
             except Exception:
                 pass
             self.ace_api_client = None
@@ -473,6 +482,14 @@ class StreamManager:
                 except Exception as e:
                     self.retry_count += 1
                     logger.error(f"Stream error on attempt {self.retry_count}/{self.max_retries}: {e}")
+
+                    if self._last_request_failure_type == "preflight_failed":
+                        logger.warning(
+                            "Preflight rejected stream; aborting without further retries: "
+                            f"content_id={self.content_id}"
+                        )
+                        stream_end_reason = "preflight_failed"
+                        break
                     
                     if self.retry_count >= self.max_retries:
                         logger.error("Max retries reached, aborting stream")
