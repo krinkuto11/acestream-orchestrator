@@ -2619,6 +2619,7 @@ async def ace_getstream(
                         'stat_url': monitor_session.get('stat_url') or '',
                         'command_url': monitor_session.get('command_url') or '',
                         'is_live': 1,
+                        'owns_engine_session': False,
                     }
                 else:
                     # Request new session from AceStream engine
@@ -2658,7 +2659,8 @@ async def ace_getstream(
                         'playback_session_id': resp_data.get('playback_session_id'),
                         'stat_url': resp_data.get('stat_url'),
                         'command_url': resp_data.get('command_url'),
-                        'is_live': resp_data.get('is_live', 1)
+                        'is_live': resp_data.get('is_live', 1),
+                        'owns_engine_session': True,
                     }
 
                 # Initialize HLS proxy channel

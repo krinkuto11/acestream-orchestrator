@@ -59,6 +59,7 @@ class StreamManager:
         self._legacy_probe_cache_ts = 0.0
         self._last_request_failure_type = None
         self.existing_session = existing_session or {}
+        self.owns_engine_session = True
         # Keep probe cadence aligned with collector interval so legacy mode
         # has comparable overhead to stat_url polling mode.
         try:
@@ -111,6 +112,7 @@ class StreamManager:
         latest_status = self.existing_session.get("latest_status") or {}
         if latest_status:
             self.legacy_status_probe = latest_status
+        self.owns_engine_session = False
         logger.info(
             "Using existing monitored session for content_id=%s monitor_id=%s",
             self.content_id,
@@ -679,8 +681,13 @@ class StreamManager:
             except:
                 pass
         
-        # Send stop command to AceStream engine
-        if self.control_mode == "LEGACY_API" and self.ace_api_client:
+        # Send stop command only when this proxy owns the engine session.
+        if not self.owns_engine_session:
+            logger.info(
+                "Skipping engine stop for content_id=%s because session is owned by monitoring",
+                self.content_id,
+            )
+        elif self.control_mode == "LEGACY_API" and self.ace_api_client:
             try:
                 with self._legacy_api_lock:
                     if self.ace_api_client:
