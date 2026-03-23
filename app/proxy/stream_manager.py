@@ -32,7 +32,7 @@ STREAM_EVENT_HANDLER_TIMEOUT = 2.0
 class StreamManager:
     """Manages connection to AceStream engine and stream health"""
     
-    def __init__(self, content_id, engine_host, engine_port, engine_container_id, buffer, client_manager, engine_api_port=None, worker_id=None, api_key=None):
+    def __init__(self, content_id, engine_host, engine_port, engine_container_id, buffer, client_manager, engine_api_port=None, worker_id=None, api_key=None, existing_session=None):
         # Basic properties
         self.content_id = content_id
         self.engine_host = engine_host
@@ -58,6 +58,7 @@ class StreamManager:
         self._legacy_probe_cache = None
         self._legacy_probe_cache_ts = 0.0
         self._last_request_failure_type = None
+        self.existing_session = existing_session or {}
         # Keep probe cadence aligned with collector interval so legacy mode
         # has comparable overhead to stat_url polling mode.
         try:
@@ -87,6 +88,31 @@ class StreamManager:
         self._stream_exit_reason = None
         
         logger.info(f"StreamManager initialized for content_id={content_id}")
+
+    def _apply_existing_session(self):
+        """Use a pre-existing monitoring session instead of starting a new engine session."""
+        session = self.existing_session.get("session") or {}
+        if not session:
+            return False
+
+        playback_url = (session.get("playback_url") or "").strip()
+        if not playback_url:
+            return False
+
+        self.playback_url = self._normalize_playback_url(playback_url)
+        self.playback_session_id = session.get("playback_session_id") or self.playback_session_id
+        self.stat_url = session.get("stat_url") or ""
+        self.command_url = session.get("command_url") or ""
+        self.is_live = int(session.get("is_live", 1) or 1)
+        latest_status = self.existing_session.get("latest_status") or {}
+        if latest_status:
+            self.legacy_status_probe = latest_status
+        logger.info(
+            "Using existing monitored session for content_id=%s monitor_id=%s",
+            self.content_id,
+            self.existing_session.get("monitor_id"),
+        )
+        return True
     
     def request_stream_from_engine(self):
         """Request stream from AceStream engine according to selected control mode."""
@@ -449,9 +475,11 @@ class StreamManager:
                     # Request stream from engine (if not connected/reconnecting)
                     # We always request a new session on reconnect to get updated URLs
                     if not self.connected:
-                        if not self.request_stream_from_engine():
-                            logger.error("Failed to request stream from engine")
-                            raise RuntimeError("Engine request failed")
+                        reused_existing = self._apply_existing_session()
+                        if not reused_existing:
+                            if not self.request_stream_from_engine():
+                                logger.error("Failed to request stream from engine")
+                                raise RuntimeError("Engine request failed")
                         
                         # Send stream started event to orchestrator
                         self._send_stream_started_event()

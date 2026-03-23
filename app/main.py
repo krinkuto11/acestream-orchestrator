@@ -13,6 +13,7 @@ import json
 import logging
 import httpx
 import threading
+from types import SimpleNamespace
 import time
 
 from .utils.logging import setup
@@ -35,6 +36,7 @@ from .services.metrics import (
     observe_proxy_ttfb,
     observe_proxy_egress_bytes,
 )
+from .services.engine_selection import select_best_engine as select_best_engine_shared
 from .services.auth import require_api_key
 from .services.db import engine
 from .models.db_models import Base
@@ -2468,6 +2470,16 @@ async def ace_getstream(
     # Get client info
     client_ip = get_client_ip(request) if request else "unknown"
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
+
+    reusable_monitor_session = await legacy_stream_monitoring_service.get_reusable_session_for_content(id)
+    if reusable_monitor_session:
+        monitor_engine = reusable_monitor_session.get("engine") or {}
+        logger.info(
+            "Reusing monitor session %s for stream %s on engine %s",
+            reusable_monitor_session.get("monitor_id"),
+            id,
+            str(monitor_engine.get("container_id") or "unknown")[:12],
+        )
     
     reservation_engine_id = None
     
@@ -2497,65 +2509,7 @@ async def ace_getstream(
         Returns tuple of (selected_engine, current_load)
         Raises HTTPException if no engines available or all at capacity.
         """
-        from app.proxy.manager import ProxyManager
-        
-        engines = state.list_engines()
-        if not engines:
-            raise HTTPException(
-                status_code=503,
-                detail="No engines available"
-            )
-            
-        redis = ProxyManager.get_instance().redis_client
-        
-        # Engine selection: fill engines in layers (round-robin across all engines)
-        active_streams = state.list_streams(status="started")
-        engine_loads = {}
-        for stream in active_streams:
-            cid = stream.container_id
-            engine_loads[cid] = engine_loads.get(cid, 0) + 1
-            
-        # Add pending load from Redis for concurrent balancing
-        for e in engines:
-            cid = e.container_id
-            pending_key = f"ace_proxy:engine:{cid}:pending"
-            pending_count = int(redis.get(pending_key) or 0) if redis else 0
-            engine_loads[cid] = engine_loads.get(cid, 0) + pending_count
-        
-        # Filter out engines at max capacity
-        max_streams = cfg.MAX_STREAMS_PER_ENGINE
-        available_engines = [
-            e for e in engines 
-            if engine_loads.get(e.container_id, 0) < max_streams
-        ]
-        
-        if not available_engines:
-            raise HTTPException(
-                status_code=503,
-                detail=f"All engines at maximum capacity ({max_streams} streams per engine)"
-            )
-        
-        # Sort: (load, not forwarded) - prefer LEAST load first (layer filling), then forwarded
-        engines_sorted = sorted(available_engines, key=lambda e: (
-            engine_loads.get(e.container_id, 0),  # Ascending order (least streams first)
-            not e.forwarded  # Forwarded engines preferred when load is equal
-        ))
-        selected_engine = engines_sorted[0]
-        current_load = engine_loads.get(selected_engine.container_id, 0)
-        
-        # Atomic Reservation
-        if redis:
-            try:
-                pending_key = f"ace_proxy:engine:{selected_engine.container_id}:pending"
-                pipe = redis.pipeline()
-                pipe.incr(pending_key)
-                pipe.expire(pending_key, 15)  # 15s failsafe
-                pipe.execute()
-                logger.debug(f"Atomically reserved engine {selected_engine.container_id[:12]} pending count")
-            except Exception as e:
-                logger.warning(f"Failed to set Redis pending reservation for engine {selected_engine.container_id[:12]}: {e}")
-        
-        return selected_engine, current_load
+        return select_best_engine_shared(reserve_pending=True)
     
     try:
         # Handle HLS mode differently from TS mode
@@ -2602,9 +2556,24 @@ async def ace_getstream(
                     logger.error(f"Timeout getting HLS manifest: {e}")
                     raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
             
-            # Channel doesn't exist - need to select engine and create new session
-            selected_engine, current_load = select_best_engine()
-            reservation_engine_id = selected_engine.container_id
+            # Channel doesn't exist - either reuse monitor session or select engine.
+            if reusable_monitor_session:
+                monitor_engine = reusable_monitor_session.get("engine") or {}
+                monitor_session = reusable_monitor_session.get("session") or {}
+                selected_engine = SimpleNamespace(
+                    container_id=monitor_engine.get("container_id"),
+                    host=monitor_engine.get("host"),
+                    port=monitor_engine.get("port"),
+                    api_port=monitor_engine.get("api_port") or 62062,
+                    forwarded=bool(monitor_engine.get("forwarded")),
+                )
+                current_load = len(state.list_streams(status="started", container_id=selected_engine.container_id))
+                playback_url = monitor_session.get("playback_url")
+                if not playback_url:
+                    raise HTTPException(status_code=500, detail="Monitor session has no playback URL")
+            else:
+                selected_engine, current_load = select_best_engine()
+                reservation_engine_id = selected_engine.container_id
             
             logger.info(
                 f"Selected engine {selected_engine.container_id[:12]} for new {stream_mode} stream {id} "
@@ -2615,47 +2584,60 @@ async def ace_getstream(
                 f"Client {client_id} initializing new {stream_mode} stream {id} from {client_ip}"
             )
             
-            # Request new session from AceStream engine
-            hls_url = f"http://{selected_engine.host}:{selected_engine.port}/ace/manifest.m3u8"
-            pid = str(uuid4())
-            params = {
-                "id": id,
-                "format": "json",
-                "pid": pid
-            }
-            
             try:
-                logger.info(f"Requesting HLS stream from engine: {hls_url}")
-                response = requests.get(hls_url, params=params, timeout=10)
-                response.raise_for_status()
-                data = response.json()
-                
-                if data.get("error"):
-                    error_msg = data['error']
-                    logger.error(f"AceStream engine returned error: {error_msg}")
-                    raise HTTPException(status_code=500, detail=f"AceStream engine error: {error_msg}")
-                
-                # Get session info from response
-                resp_data = data.get("response", {})
-                playback_url = resp_data.get("playback_url")
-                
-                if not playback_url:
-                    logger.error("No playback_url in AceStream response")
-                    raise HTTPException(status_code=500, detail="No playback URL in engine response")
-                
-                logger.info(f"HLS playback URL: {playback_url}")
-                
-                # Get API key from environment
-                api_key = os.getenv('API_KEY')
-                
-                # Prepare session info for event tracking
-                session_info = {
-                    'playback_session_id': resp_data.get('playback_session_id'),
-                    'stat_url': resp_data.get('stat_url'),
-                    'command_url': resp_data.get('command_url'),
-                    'is_live': resp_data.get('is_live', 1)
-                }
-                
+                if reusable_monitor_session:
+                    logger.info("Using playback URL from monitoring session for HLS stream")
+                    # Get API key from environment
+                    api_key = os.getenv('API_KEY')
+
+                    monitor_session = reusable_monitor_session.get("session") or {}
+                    session_info = {
+                        'playback_session_id': monitor_session.get('playback_session_id'),
+                        'stat_url': monitor_session.get('stat_url') or '',
+                        'command_url': monitor_session.get('command_url') or '',
+                        'is_live': 1,
+                    }
+                else:
+                    # Request new session from AceStream engine
+                    hls_url = f"http://{selected_engine.host}:{selected_engine.port}/ace/manifest.m3u8"
+                    pid = str(uuid4())
+                    params = {
+                        "id": id,
+                        "format": "json",
+                        "pid": pid
+                    }
+
+                    logger.info(f"Requesting HLS stream from engine: {hls_url}")
+                    response = requests.get(hls_url, params=params, timeout=10)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    if data.get("error"):
+                        error_msg = data['error']
+                        logger.error(f"AceStream engine returned error: {error_msg}")
+                        raise HTTPException(status_code=500, detail=f"AceStream engine error: {error_msg}")
+
+                    # Get session info from response
+                    resp_data = data.get("response", {})
+                    playback_url = resp_data.get("playback_url")
+
+                    if not playback_url:
+                        logger.error("No playback_url in AceStream response")
+                        raise HTTPException(status_code=500, detail="No playback URL in engine response")
+
+                    logger.info(f"HLS playback URL: {playback_url}")
+
+                    # Get API key from environment
+                    api_key = os.getenv('API_KEY')
+
+                    # Prepare session info for event tracking
+                    session_info = {
+                        'playback_session_id': resp_data.get('playback_session_id'),
+                        'stat_url': resp_data.get('stat_url'),
+                        'command_url': resp_data.get('command_url'),
+                        'is_live': resp_data.get('is_live', 1)
+                    }
+
                 # Initialize HLS proxy channel
                 hls_proxy.initialize_channel(
                     channel_id=id,
@@ -2693,8 +2675,19 @@ async def ace_getstream(
                 raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
         else:
             # TS mode - use existing ts_proxy architecture
-            selected_engine, current_load = select_best_engine()
-            reservation_engine_id = selected_engine.container_id
+            if reusable_monitor_session:
+                monitor_engine = reusable_monitor_session.get("engine") or {}
+                selected_engine = SimpleNamespace(
+                    container_id=monitor_engine.get("container_id"),
+                    host=monitor_engine.get("host"),
+                    port=monitor_engine.get("port"),
+                    api_port=monitor_engine.get("api_port") or 62062,
+                    forwarded=bool(monitor_engine.get("forwarded")),
+                )
+                current_load = len(state.list_streams(status="started", container_id=selected_engine.container_id))
+            else:
+                selected_engine, current_load = select_best_engine()
+                reservation_engine_id = selected_engine.container_id
             
             logger.info(
                 f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {id} "
@@ -2714,7 +2707,8 @@ async def ace_getstream(
                 engine_host=selected_engine.host,
                 engine_port=selected_engine.port,
                 engine_api_port=selected_engine.api_port,
-                engine_container_id=selected_engine.container_id
+                engine_container_id=selected_engine.container_id,
+                existing_session=reusable_monitor_session,
             )
             
             if not success:

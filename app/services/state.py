@@ -16,6 +16,7 @@ class State:
         self.engines: Dict[str, EngineState] = {}
         self.streams: Dict[str, StreamState] = {}
         self.stream_stats: Dict[str, List[StreamStatSnapshot]] = {}
+        self.monitor_sessions: Dict[str, Dict[str, object]] = {}
         
         # Emergency mode state for redundant VPN failure handling
         self._emergency_mode = False
@@ -408,8 +409,27 @@ class State:
                 "engines": list(self.engines.values()),
                 "streams": list(self.streams.values()),
                 "stream_stats": dict(self.stream_stats),
+                "monitor_sessions": dict(self.monitor_sessions),
                 "cache_stats": dict(self.cache_stats)
             }
+
+    def upsert_monitor_session(self, monitor_id: str, session_data: Dict[str, object]):
+        with self._lock:
+            self.monitor_sessions[monitor_id] = dict(session_data or {})
+
+    def get_monitor_session(self, monitor_id: str) -> Optional[Dict[str, object]]:
+        with self._lock:
+            data = self.monitor_sessions.get(monitor_id)
+            return dict(data) if data else None
+
+    def list_monitor_sessions(self) -> List[Dict[str, object]]:
+        with self._lock:
+            return [dict(v) for v in self.monitor_sessions.values()]
+
+    def remove_monitor_session(self, monitor_id: str) -> Optional[Dict[str, object]]:
+        with self._lock:
+            data = self.monitor_sessions.pop(monitor_id, None)
+            return dict(data) if data else None
 
     def update_cache_stats(self, total_bytes: int, volume_count: int):
         """Update cache statistics in state."""
@@ -509,6 +529,7 @@ class State:
             self.engines.clear()
             self.streams.clear()
             self.stream_stats.clear()
+            self.monitor_sessions.clear()
         
         # Also clear cumulative metrics tracking
         try:

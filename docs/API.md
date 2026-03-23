@@ -115,6 +115,7 @@ Response:
    - Starts an async monitor session that uses `LEGACY_API` control flow only for telemetry.
    - Flow: `HELLOBG/READY/LOADASYNC/START`, then `STATUS` probe once per `interval_s`.
    - No player clients are attached and no stream data is proxied to consumers.
+   - Monitor session state is tracked in orchestrator state (including selected engine and latest status).
    - Body:
    ```json
    {
@@ -128,10 +129,11 @@ Response:
    - Notes:
      - `interval_s` minimum is `0.5` (recommended: `1.0`).
      - `run_seconds=0` means run until manually stopped.
-     - `engine_container_id` is optional; if omitted, least-loaded engine is selected.
+     - `engine_container_id` is optional; if omitted, engine selection uses the same balancing strategy as proxy stream allocation.
 
  - GET /ace/monitor/legacy (protected)
    - Lists all monitor sessions with latest STATUS sample and summary counters.
+   - Includes engine assignment per monitor session.
 
  - GET /ace/monitor/legacy/{monitor_id} (protected)
    - Returns a single monitor session including `recent_status` history (in-memory ring buffer).
@@ -145,6 +147,11 @@ Response:
 
  - DELETE /ace/monitor/legacy/{monitor_id}/entry (protected)
    - Stops the session (if still running) and removes the monitor entry from in-memory session list.
+
+ - GET /ace/getstream?id=... (TS/HLS proxy)
+   - If the requested content is already being monitored (`/ace/monitor/legacy`), proxy reuses that monitor session playback URL.
+   - Reused sessions inherit monitor engine assignment (no duplicate START for the same content).
+   - Stream stats remain visible under `/streams` by using monitor telemetry when direct legacy stat probing is unavailable.
 
  - DELETE /streams/{stream_id} (protected) → Stop a single stream
    - Stops a stream by calling its command URL with method=stop

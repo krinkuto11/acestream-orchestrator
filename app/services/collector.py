@@ -198,6 +198,15 @@ class Collector:
                     1,
                     1.0,
                 )
+
+            if not probe:
+                # Stream may be reusing a monitoring session (no direct legacy socket on proxy side).
+                from .legacy_stream_monitoring import legacy_stream_monitoring_service
+
+                reusable = await legacy_stream_monitoring_service.get_reusable_session_for_content(stream.key)
+                if reusable:
+                    probe = reusable.get("latest_status") or None
+
             if not probe:
                 return
 

@@ -3,7 +3,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Radio, PlayCircle, StopCircle, MoveRight, Trash2 } from 'lucide-react'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Progress } from '@/components/ui/progress'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Radio, PlayCircle, StopCircle, MoveRight, Trash2, ChevronDown, ChevronUp, Activity, Gauge, Users } from 'lucide-react'
 import { formatBytesPerSecond, formatBytes } from '@/utils/formatters'
 
 function formatAge(ts) {
@@ -32,9 +36,17 @@ function movementLabel(movement) {
 
 function statusVariant(status) {
   if (status === 'running') return 'success'
+  if (status === 'stuck') return 'warning'
   if (status === 'dead') return 'destructive'
   if (status === 'reconnecting') return 'warning'
   return 'secondary'
+}
+
+function statusAccent(status) {
+  if (status === 'running') return 'border-emerald-200/80 bg-emerald-50/60 dark:border-emerald-900/70 dark:bg-emerald-950/30'
+  if (status === 'stuck') return 'border-amber-200/80 bg-amber-50/70 dark:border-amber-900/70 dark:bg-amber-950/25'
+  if (status === 'dead') return 'border-rose-200/80 bg-rose-50/70 dark:border-rose-900/70 dark:bg-rose-950/25'
+  return 'border-slate-200/80 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-900/50'
 }
 
 function toInt(value) {
@@ -98,20 +110,52 @@ function BufferWindowBar({ livepos }) {
 
   const totalSeconds = Math.max(0, last - first)
   const posSeconds = Math.max(0, pos - first)
-  const ratio = Math.max(0, Math.min(1, posSeconds / Math.max(1, totalSeconds)))
-  const markerLeft = `${ratio * 100}%`
+  const leadSeconds = Math.max(0, last - pos)
+
+  // Adapt viewport size from the lead gap so last-pos remains readable.
+  // If gap is zero, keep a small tail window for context.
+  const desiredGapRatio = 0.25
+  const minWindowFromGap = 8
+  const maxWindowFromGap = 240
+  const windowFromGap = leadSeconds > 0
+    ? Math.ceil(leadSeconds / desiredGapRatio)
+    : minWindowFromGap
+  const adaptiveWindowSeconds = Math.min(
+    totalSeconds,
+    Math.max(minWindowFromGap, Math.min(maxWindowFromGap, windowFromGap)),
+  )
+
+  const viewportStart = Math.max(first, last - adaptiveWindowSeconds)
+  const viewportEnd = last
+  const viewportSpan = Math.max(1, viewportEnd - viewportStart)
+  const viewportPosRatio = Math.max(0, Math.min(1, (pos - viewportStart) / viewportSpan))
+  const viewportLastRatio = 1
+  const viewportStartOffset = viewportStart - first
 
   return (
     <div className="space-y-1">
       <div className="relative h-2 w-full rounded-full bg-slate-200 dark:bg-slate-700">
-        <div className="absolute inset-y-0 left-0 rounded-full bg-sky-400/60" style={{ width: '100%' }} />
-        <div className="absolute -top-1 h-4 w-1 rounded bg-sky-700 dark:bg-sky-300" style={{ left: markerLeft }} />
+        <div className="absolute inset-y-0 left-0 rounded-full bg-sky-300/60" style={{ width: '100%' }} />
+        <div
+          className="absolute -top-1 h-4 w-1 -translate-x-1/2 rounded bg-emerald-700 dark:bg-emerald-300"
+          style={{ left: `${viewportPosRatio * 100}%` }}
+          title="pos"
+        />
+        <div
+          className="absolute -top-1 h-4 w-1 -translate-x-1/2 rounded bg-sky-700 dark:bg-sky-300"
+          style={{ left: `${viewportLastRatio * 100}%` }}
+          title="last_ts"
+        />
       </div>
       <div className="flex justify-between text-[11px] text-muted-foreground">
-        <span>0s</span>
+        <span>{viewportStartOffset}s</span>
         <span>pos: {posSeconds}s</span>
         <span>{totalSeconds}s</span>
       </div>
+      <div className="mt-1 text-[11px] text-muted-foreground">
+        adaptive window: {adaptiveWindowSeconds}s, gap (last-pos): {leadSeconds}s
+      </div>
+
       <div className="text-[11px] text-muted-foreground">
         abs first_ts={first}, pos={pos}, last_ts={last}
       </div>
@@ -120,6 +164,7 @@ function BufferWindowBar({ livepos }) {
 }
 
 export function StreamMonitoringPage({ orchUrl, apiKey }) {
+  const uiPrefsStorageKey = 'stream-monitoring-ui-prefs-v1'
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -127,11 +172,46 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
   const [starting, setStarting] = useState(false)
   const [stoppingById, setStoppingById] = useState({})
   const [deletingById, setDeletingById] = useState({})
+  const [expandedById, setExpandedById] = useState({})
+  const [selectedById, setSelectedById] = useState({})
+  const [viewMode, setViewMode] = useState('cards')
+  const [sortMode, setSortMode] = useState('status_then_recent')
+  const [groupByStatus, setGroupByStatus] = useState(true)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [batchBusy, setBatchBusy] = useState(false)
   const [newMonitor, setNewMonitor] = useState({
     content_id: '',
     interval_s: '1.0',
     run_seconds: '0',
   })
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(uiPrefsStorageKey)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (typeof parsed.viewMode === 'string') setViewMode(parsed.viewMode)
+      if (typeof parsed.sortMode === 'string') setSortMode(parsed.sortMode)
+      if (typeof parsed.groupByStatus === 'boolean') setGroupByStatus(parsed.groupByStatus)
+      if (typeof parsed.statusFilter === 'string') setStatusFilter(parsed.statusFilter)
+    } catch {
+      // Ignore malformed persisted preferences.
+    }
+  }, [])
+
+  useEffect(() => {
+    const prefs = {
+      viewMode,
+      sortMode,
+      groupByStatus,
+      statusFilter,
+    }
+    try {
+      window.localStorage.setItem(uiPrefsStorageKey, JSON.stringify(prefs))
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [viewMode, sortMode, groupByStatus, statusFilter])
 
   const fetchMonitorsNow = async (showLoading = false) => {
     if (showLoading) {
@@ -303,7 +383,222 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     }
   }
 
-  const activeCount = monitors.filter((m) => ['starting', 'running'].includes(m.status)).length
+  const statusRank = {
+    running: 0,
+    starting: 1,
+    stuck: 2,
+    reconnecting: 3,
+    stopped: 4,
+    dead: 5,
+  }
+
+  const parsedMonitors = monitors.map((monitor) => {
+    const latest = monitor.latest_status || {}
+    const progressValue = Number(latest.progress ?? latest.immediate_progress ?? latest.total_progress ?? 0) || 0
+    const speedDownKbps = Number(latest.speed_down ?? latest.http_speed_down ?? 0) || 0
+    const speedUpKbps = Number(latest.speed_up ?? 0) || 0
+    const peers = Number(latest.peers ?? latest.http_peers ?? 0) || 0
+    const lastCollectedAtMs = monitor.last_collected_at ? Date.parse(monitor.last_collected_at) : 0
+    return {
+      ...monitor,
+      _derived: {
+        latest,
+        progressValue,
+        speedDownKbps,
+        speedUpKbps,
+        peers,
+        lastCollectedAtMs: Number.isFinite(lastCollectedAtMs) ? lastCollectedAtMs : 0,
+      },
+    }
+  })
+
+  const filterCounts = {
+    all: parsedMonitors.length,
+    active: parsedMonitors.filter((m) => ['running', 'starting', 'stuck', 'reconnecting'].includes(m.status)).length,
+    running: parsedMonitors.filter((m) => m.status === 'running').length,
+    stuck: parsedMonitors.filter((m) => m.status === 'stuck').length,
+    dead: parsedMonitors.filter((m) => m.status === 'dead').length,
+  }
+
+  const filteredMonitors = parsedMonitors.filter((monitor) => {
+    if (statusFilter === 'active') {
+      return ['running', 'starting', 'stuck', 'reconnecting'].includes(monitor.status)
+    }
+    if (statusFilter === 'running') {
+      return monitor.status === 'running'
+    }
+    if (statusFilter === 'stuck') {
+      return monitor.status === 'stuck'
+    }
+    if (statusFilter === 'dead') {
+      return monitor.status === 'dead'
+    }
+    return true
+  })
+
+  const sortedMonitors = [...filteredMonitors].sort((a, b) => {
+    const aStatusRank = statusRank[a.status] ?? 99
+    const bStatusRank = statusRank[b.status] ?? 99
+
+    if (sortMode === 'recent') {
+      return b._derived.lastCollectedAtMs - a._derived.lastCollectedAtMs
+    }
+    if (sortMode === 'speed') {
+      return b._derived.speedDownKbps - a._derived.speedDownKbps
+    }
+    if (sortMode === 'progress') {
+      return b._derived.progressValue - a._derived.progressValue
+    }
+    if (sortMode === 'content') {
+      return (a.content_id || '').localeCompare(b.content_id || '')
+    }
+
+    if (aStatusRank !== bStatusRank) return aStatusRank - bStatusRank
+    return b._derived.lastCollectedAtMs - a._derived.lastCollectedAtMs
+  })
+
+  const groupedMonitors = groupByStatus
+    ? [
+      { key: 'running', label: 'Running', items: sortedMonitors.filter((m) => m.status === 'running') },
+      { key: 'starting', label: 'Starting', items: sortedMonitors.filter((m) => m.status === 'starting') },
+      { key: 'stuck', label: 'Stuck', items: sortedMonitors.filter((m) => m.status === 'stuck') },
+      { key: 'reconnecting', label: 'Reconnecting', items: sortedMonitors.filter((m) => m.status === 'reconnecting') },
+      { key: 'stopped', label: 'Stopped', items: sortedMonitors.filter((m) => m.status === 'stopped') },
+      { key: 'dead', label: 'Dead', items: sortedMonitors.filter((m) => m.status === 'dead') },
+      { key: 'other', label: 'Other', items: sortedMonitors.filter((m) => !statusRank.hasOwnProperty(m.status)) },
+    ].filter((group) => group.items.length > 0)
+    : [{ key: 'all', label: 'All Sessions', items: sortedMonitors }]
+
+  const visibleMonitorIds = sortedMonitors.map((m) => m.monitor_id)
+  const selectedVisibleIds = visibleMonitorIds.filter((id) => Boolean(selectedById[id]))
+  const selectedMonitors = sortedMonitors.filter((m) => Boolean(selectedById[m.monitor_id]))
+  const allVisibleSelected = visibleMonitorIds.length > 0 && selectedVisibleIds.length === visibleMonitorIds.length
+
+  const activeCount = monitors.filter((m) => ['starting', 'running', 'stuck'].includes(m.status)).length
+  const deadCount = monitors.filter((m) => m.status === 'dead').length
+  const stuckCount = monitors.filter((m) => m.status === 'stuck').length
+  const avgProgress = monitors.length > 0
+    ? Math.round(parsedMonitors.reduce((acc, monitor) => acc + monitor._derived.progressValue, 0) / monitors.length)
+    : 0
+  const totalDownloadKbps = parsedMonitors.reduce((acc, monitor) => acc + monitor._derived.speedDownKbps, 0)
+
+  const handleExpandAll = () => {
+    setExpandedById((prev) => {
+      const next = { ...prev }
+      for (const id of visibleMonitorIds) next[id] = true
+      return next
+    })
+  }
+
+  const handleCollapseAll = () => {
+    setExpandedById((prev) => {
+      const next = { ...prev }
+      for (const id of visibleMonitorIds) next[id] = false
+      return next
+    })
+  }
+
+  const handleSelectAllVisible = (checked) => {
+    const shouldSelect = Boolean(checked)
+    setSelectedById((prev) => {
+      const next = { ...prev }
+      for (const id of visibleMonitorIds) {
+        next[id] = shouldSelect
+      }
+      return next
+    })
+  }
+
+  const handleBatchStop = async () => {
+    if (!apiKey) {
+      setActionError('Set API key in Settings to run batch stop')
+      return
+    }
+
+    const targetMonitors = selectedMonitors.filter((m) => m.status !== 'dead')
+    if (targetMonitors.length === 0) {
+      setActionError('No stoppable selected sessions')
+      return
+    }
+
+    setBatchBusy(true)
+    setActionError(null)
+    const failures = []
+
+    try {
+      for (const monitor of targetMonitors) {
+        setStoppingById((prev) => ({ ...prev, [monitor.monitor_id]: true }))
+        try {
+          const response = await fetch(`${orchUrl}/ace/monitor/legacy/${encodeURIComponent(monitor.monitor_id)}`, {
+            method: 'DELETE',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+            },
+          })
+          if (!response.ok) {
+            failures.push(monitor.monitor_id)
+          }
+        } catch {
+          failures.push(monitor.monitor_id)
+        } finally {
+          setStoppingById((prev) => ({ ...prev, [monitor.monitor_id]: false }))
+        }
+      }
+
+      await fetchMonitorsNow(false)
+
+      if (failures.length > 0) {
+        setActionError(`Batch stop completed with ${failures.length} failure(s)`)
+      }
+    } finally {
+      setBatchBusy(false)
+    }
+  }
+
+  const handleBatchDelete = async () => {
+    if (!apiKey) {
+      setActionError('Set API key in Settings to run batch delete')
+      return
+    }
+    if (selectedMonitors.length === 0) {
+      setActionError('No selected sessions to delete')
+      return
+    }
+
+    setBatchBusy(true)
+    setActionError(null)
+    const failures = []
+
+    try {
+      for (const monitor of selectedMonitors) {
+        setDeletingById((prev) => ({ ...prev, [monitor.monitor_id]: true }))
+        try {
+          const response = await fetch(`${orchUrl}/ace/monitor/legacy/${encodeURIComponent(monitor.monitor_id)}/entry`, {
+            method: 'DELETE',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+            },
+          })
+          if (!response.ok) {
+            failures.push(monitor.monitor_id)
+          }
+        } catch {
+          failures.push(monitor.monitor_id)
+        } finally {
+          setDeletingById((prev) => ({ ...prev, [monitor.monitor_id]: false }))
+        }
+      }
+
+      await fetchMonitorsNow(false)
+      setSelectedById({})
+
+      if (failures.length > 0) {
+        setActionError(`Batch delete completed with ${failures.length} failure(s)`)
+      }
+    } finally {
+      setBatchBusy(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -317,7 +612,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
         </Badge>
       </div>
 
-      <Card>
+      <Card className="border-slate-200/80 bg-gradient-to-br from-white via-slate-50 to-sky-50/60 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900/80">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <Radio className="h-4 w-4" />
@@ -362,9 +657,92 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
         </CardContent>
       </Card>
 
-      <Card>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/70 p-3 dark:border-emerald-900/70 dark:bg-emerald-950/30">
+          <p className="text-xs text-emerald-700 dark:text-emerald-300">Active Sessions</p>
+          <p className="mt-1 text-2xl font-semibold text-emerald-900 dark:text-emerald-100">{activeCount}</p>
+        </div>
+        <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 p-3 dark:border-amber-900/70 dark:bg-amber-950/30">
+          <p className="text-xs text-amber-700 dark:text-amber-300">Stuck Sessions</p>
+          <p className="mt-1 text-2xl font-semibold text-amber-900 dark:text-amber-100">{stuckCount}</p>
+        </div>
+        <div className="rounded-xl border border-rose-200/80 bg-rose-50/70 p-3 dark:border-rose-900/70 dark:bg-rose-950/30">
+          <p className="text-xs text-rose-700 dark:text-rose-300">Dead Sessions</p>
+          <p className="mt-1 text-2xl font-semibold text-rose-900 dark:text-rose-100">{deadCount}</p>
+        </div>
+        <div className="rounded-xl border border-sky-200/80 bg-sky-50/70 p-3 dark:border-sky-900/70 dark:bg-sky-950/30">
+          <p className="text-xs text-sky-700 dark:text-sky-300">Aggregate Downlink</p>
+          <p className="mt-1 text-2xl font-semibold text-sky-900 dark:text-sky-100">{formatBytesPerSecond(totalDownloadKbps * 1024)}</p>
+        </div>
+      </div>
+
+      <Card className="border-slate-200/80 bg-gradient-to-b from-white to-slate-50/70 dark:from-slate-950 dark:to-slate-900/70">
         <CardHeader>
-          <CardTitle className="text-base">Active Sessions</CardTitle>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+            <Activity className="h-4 w-4" />
+            Session List
+            </CardTitle>
+            <div className="grid gap-2 sm:grid-cols-2 lg:flex lg:items-center">
+              <Select value={sortMode} onValueChange={setSortMode}>
+                <SelectTrigger className="h-8 min-w-[180px] text-xs">
+                  <SelectValue placeholder="Sort sessions" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="status_then_recent">Status then recent</SelectItem>
+                  <SelectItem value="recent">Most recent first</SelectItem>
+                  <SelectItem value="speed">Highest downlink</SelectItem>
+                  <SelectItem value="progress">Highest progress</SelectItem>
+                  <SelectItem value="content">Content id A-Z</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant={groupByStatus ? 'default' : 'outline'} onClick={() => setGroupByStatus((prev) => !prev)}>
+                  {groupByStatus ? 'Grouped' : 'Ungrouped'}
+                </Button>
+                <Button size="sm" variant={viewMode === 'table' ? 'default' : 'outline'} onClick={() => setViewMode((prev) => (prev === 'cards' ? 'table' : 'cards'))}>
+                  {viewMode === 'table' ? 'Table mode' : 'Card mode'}
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={handleExpandAll}>Expand all</Button>
+            <Button size="sm" variant="outline" onClick={handleCollapseAll}>Collapse all</Button>
+            <div className="mx-1 h-4 w-px bg-slate-300 dark:bg-slate-700" />
+            <div className="flex flex-wrap items-center gap-1">
+              <Button size="sm" variant={statusFilter === 'all' ? 'default' : 'outline'} onClick={() => setStatusFilter('all')}>
+                All ({filterCounts.all})
+              </Button>
+              <Button size="sm" variant={statusFilter === 'active' ? 'default' : 'outline'} onClick={() => setStatusFilter('active')}>
+                Active ({filterCounts.active})
+              </Button>
+              <Button size="sm" variant={statusFilter === 'running' ? 'default' : 'outline'} onClick={() => setStatusFilter('running')}>
+                Running ({filterCounts.running})
+              </Button>
+              <Button size="sm" variant={statusFilter === 'stuck' ? 'warning' : 'outline'} onClick={() => setStatusFilter('stuck')}>
+                Stuck ({filterCounts.stuck})
+              </Button>
+              <Button size="sm" variant={statusFilter === 'dead' ? 'destructive' : 'outline'} onClick={() => setStatusFilter('dead')}>
+                Dead ({filterCounts.dead})
+              </Button>
+            </div>
+            <div className="mx-1 h-4 w-px bg-slate-300 dark:bg-slate-700" />
+            <div className="flex items-center gap-2 rounded-md border border-slate-200/80 px-2 py-1 dark:border-slate-800">
+              <Checkbox checked={allVisibleSelected} onCheckedChange={handleSelectAllVisible} />
+              <span className="text-xs text-muted-foreground">Select visible ({selectedVisibleIds.length}/{visibleMonitorIds.length})</span>
+            </div>
+            <Button size="sm" variant="outline" disabled={batchBusy || selectedMonitors.length === 0 || !apiKey} onClick={handleBatchStop}>
+              Batch stop
+            </Button>
+            <Button size="sm" variant="destructive" disabled={batchBusy || selectedMonitors.length === 0 || !apiKey} onClick={handleBatchDelete}>
+              Batch delete
+            </Button>
+          </div>
+
+          <p className="text-xs text-muted-foreground">Compact by default. Expand any block for full telemetry details. Showing {sortedMonitors.length} filtered sessions.</p>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -375,38 +753,155 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
             <p className="text-sm text-muted-foreground">No stream monitoring sessions</p>
           ) : (
             <div className="space-y-3">
-              {monitors.map((monitor) => {
-                const latest = monitor.latest_status || {}
+              {groupedMonitors.map((group) => (
+                <div key={group.key} className="space-y-2">
+                  {groupByStatus && (
+                    <div className="flex items-center justify-between rounded-md bg-slate-100/70 px-2 py-1 text-xs text-slate-700 dark:bg-slate-900/70 dark:text-slate-300">
+                      <span className="font-medium">{group.label}</span>
+                      <span>{group.items.length}</span>
+                    </div>
+                  )}
+
+                  {group.items.map((monitor) => {
+                const latest = monitor._derived.latest || {}
                 const movement = monitor.livepos_movement || {}
                 const statusText = latest.status_text || latest.status || 'unknown'
-                const peers = latest.peers ?? latest.http_peers ?? 0
-                const speedDown = latest.speed_down ?? latest.http_speed_down ?? 0
-                const speedUp = latest.speed_up ?? 0
-                const progress = latest.progress ?? latest.immediate_progress ?? latest.total_progress ?? 0
+                const peers = monitor._derived.peers
+                const speedDown = monitor._derived.speedDownKbps
+                const speedUp = monitor._derived.speedUpKbps
+                const progress = monitor._derived.progressValue
                 const livepos = latest.livepos || {}
                 const posSeries = buildSeries(monitor.recent_status || [], ['livepos', 'pos'])
                 const lastTsSeries = buildSeries(monitor.recent_status || [], ['livepos', 'last_ts'])
                 const deadReason = monitor.dead_reason || monitor.last_error
+                const isExpanded = Boolean(expandedById[monitor.monitor_id])
+                const isCompact = viewMode === 'table'
 
                 return (
-                  <div key={monitor.monitor_id} className="rounded-md border p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold truncate">{monitor.content_id}</p>
-                        <div className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
-                          <span>status: {statusText}</span>
-                          <span>peers: {peers}</span>
-                          <span>down: {formatBytesPerSecond((speedDown || 0) * 1024)}</span>
-                          <span>up: {formatBytesPerSecond((speedUp || 0) * 1024)}</span>
-                          <span>progress: {progress}%</span>
-                        </div>
+                  <Collapsible
+                    key={monitor.monitor_id}
+                    open={isExpanded}
+                    onOpenChange={(open) => setExpandedById((prev) => ({ ...prev, [monitor.monitor_id]: open }))}
+                  >
+                    <div className={`rounded-xl border shadow-sm transition-colors ${isCompact ? 'p-2' : 'p-3'} ${statusAccent(monitor.status)}`}>
+                      <div className="flex items-start gap-2">
+                        <Checkbox
+                          checked={Boolean(selectedById[monitor.monitor_id])}
+                          onCheckedChange={(checked) => {
+                            const shouldSelect = Boolean(checked)
+                            setSelectedById((prev) => ({ ...prev, [monitor.monitor_id]: shouldSelect }))
+                          }}
+                          className="mt-1"
+                        />
+
+                        <CollapsibleTrigger asChild>
+                        <button type="button" className="w-full text-left">
+                          <div className={`flex items-start justify-between gap-3 ${isCompact ? 'flex-wrap' : ''}`}>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{monitor.content_id}</p>
+                              <div className={`mt-2 flex flex-wrap items-center gap-2 ${isCompact ? 'text-[11px]' : ''}`}>
+                                <Badge variant={statusVariant(monitor.status)}>{monitor.status}</Badge>
+                                <Badge variant={movementVariant(movement)}>{movementLabel(movement)}</Badge>
+                                <Badge variant="info" className="gap-1">
+                                  <Users className="h-3 w-3" />
+                                  peers {peers}
+                                </Badge>
+                                <Badge variant="secondary" className="gap-1">
+                                  <Gauge className="h-3 w-3" />
+                                  {formatBytesPerSecond((speedDown || 0) * 1024)}
+                                </Badge>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col items-end gap-1">
+                              <span className="text-xs text-muted-foreground">{formatAge(monitor.last_collected_at)}</span>
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <span>{isExpanded ? 'Collapse' : 'Expand'}</span>
+                                {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className={`mt-3 grid gap-2 ${isCompact ? 'grid-cols-2 lg:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
+                            <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                              <p className="text-[11px] text-muted-foreground">Status</p>
+                              <p className="mt-1 text-sm font-medium">{statusText}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                              <p className="text-[11px] text-muted-foreground">Down / Up</p>
+                              <p className="mt-1 text-sm font-medium">{formatBytesPerSecond((speedDown || 0) * 1024)} / {formatBytesPerSecond((speedUp || 0) * 1024)}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                              <p className="text-[11px] text-muted-foreground">Progress</p>
+                              <p className="mt-1 text-sm font-medium">{progress}%</p>
+                              <Progress className="mt-1 h-1.5 bg-slate-200 dark:bg-slate-800" value={Math.max(0, Math.min(100, Number(progress) || 0))} />
+                            </div>
+                            <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                              <p className="text-[11px] text-muted-foreground">Movement events</p>
+                              <p className="mt-1 text-sm font-medium">{movement.movement_events ?? 0} / {movement.sample_points ?? 0}</p>
+                            </div>
+                            {isCompact && (
+                              <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                                <p className="text-[11px] text-muted-foreground">ID</p>
+                                <p className="mt-1 truncate text-sm font-medium">{monitor.monitor_id.slice(0, 8)}</p>
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                        </CollapsibleTrigger>
                       </div>
-                      <div className="flex flex-col items-end gap-1">
-                        <Badge variant={statusVariant(monitor.status)}>
-                          {monitor.status}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">{formatAge(monitor.last_collected_at)}</span>
-                        <div className="flex items-center gap-1">
+
+                      <CollapsibleContent>
+                        {monitor.status === 'dead' && (
+                          <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
+                            dead reason: {deadReason || 'unknown'}
+                          </p>
+                        )}
+
+                        <div className="mt-3 grid gap-2 md:grid-cols-2 lg:grid-cols-4 text-xs">
+                          <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                            <p className="text-muted-foreground">Position Delta</p>
+                            <p className="mt-1 flex items-center gap-1 font-medium">
+                              <MoveRight className="h-3 w-3" />
+                              {movement.pos_delta ?? 'n/a'}
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                            <p className="text-muted-foreground">Live Timestamp Delta</p>
+                            <p className="mt-1 font-medium">{movement.last_ts_delta ?? 'n/a'}</p>
+                          </div>
+
+                          <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                            <p className="text-muted-foreground">Downloaded Delta</p>
+                            <p className="mt-1 font-medium">
+                              {movement.downloaded_delta != null ? formatBytes(movement.downloaded_delta) : 'n/a'}
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                            <p className="text-muted-foreground">Current Timeline</p>
+                            <p className="mt-1 font-medium">pos {movement.current_pos ?? 'n/a'} / ts {movement.current_last_ts ?? 'n/a'}</p>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                          <div className="rounded-lg border border-emerald-200/70 bg-emerald-50/50 p-2 dark:border-emerald-900/50 dark:bg-emerald-950/20">
+                            <p className="mb-1 text-xs text-emerald-700 dark:text-emerald-300">POS movement (sliding trend)</p>
+                            <Sparkline values={posSeries} color="#22c55e" label="pos trend" />
+                          </div>
+                          <div className="rounded-lg border border-sky-200/70 bg-sky-50/50 p-2 dark:border-sky-900/50 dark:bg-sky-950/20">
+                            <p className="mb-1 text-xs text-sky-700 dark:text-sky-300">last_ts movement (sliding trend)</p>
+                            <Sparkline values={lastTsSeries} color="#0ea5e9" label="last_ts trend" />
+                          </div>
+                        </div>
+
+                        <div className="mt-3 rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                          <p className="mb-1 text-xs text-muted-foreground">Live buffer window (first_ts -&gt; pos -&gt; last_ts)</p>
+                          <BufferWindowBar livepos={livepos} />
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
                           <Button
                             variant="outline"
                             size="sm"
@@ -426,70 +921,21 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                             {deletingById[monitor.monitor_id] ? 'Deleting...' : 'Delete'}
                           </Button>
                         </div>
-                      </div>
+                      </CollapsibleContent>
                     </div>
-
-                    {monitor.status === 'dead' && (
-                      <p className="mt-2 text-xs text-red-600 dark:text-red-400">dead reason: {deadReason || 'unknown'}</p>
-                    )}
-
-                    <div className="mt-3 grid gap-2 md:grid-cols-2 lg:grid-cols-4 text-xs">
-                      <div className="rounded-md bg-muted/40 p-2">
-                        <p className="text-muted-foreground">Livepos Movement</p>
-                        <div className="mt-1 flex items-center gap-1">
-                          <Badge variant={movementVariant(movement)}>{movementLabel(movement)}</Badge>
-                        </div>
-                      </div>
-
-                      <div className="rounded-md bg-muted/40 p-2">
-                        <p className="text-muted-foreground">Position Delta</p>
-                        <p className="mt-1 font-medium flex items-center gap-1">
-                          <MoveRight className="h-3 w-3" />
-                          {movement.pos_delta ?? 'n/a'}
-                        </p>
-                      </div>
-
-                      <div className="rounded-md bg-muted/40 p-2">
-                        <p className="text-muted-foreground">Live Timestamp Delta</p>
-                        <p className="mt-1 font-medium">{movement.last_ts_delta ?? 'n/a'}</p>
-                      </div>
-
-                      <div className="rounded-md bg-muted/40 p-2">
-                        <p className="text-muted-foreground">Downloaded Delta</p>
-                        <p className="mt-1 font-medium">
-                          {movement.downloaded_delta != null ? formatBytes(movement.downloaded_delta) : 'n/a'}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      <div className="rounded-md bg-muted/30 p-2">
-                        <p className="mb-1 text-xs text-muted-foreground">POS movement (sliding trend)</p>
-                        <Sparkline values={posSeries} color="#22c55e" label="pos trend" />
-                      </div>
-                      <div className="rounded-md bg-muted/30 p-2">
-                        <p className="mb-1 text-xs text-muted-foreground">last_ts movement (sliding trend)</p>
-                        <Sparkline values={lastTsSeries} color="#0ea5e9" label="last_ts trend" />
-                      </div>
-                    </div>
-
-                    <div className="mt-3 rounded-md bg-muted/30 p-2">
-                      <p className="mb-1 text-xs text-muted-foreground">Live buffer window (first_ts -&gt; pos -&gt; last_ts)</p>
-                      <BufferWindowBar livepos={livepos} />
-                    </div>
-
-                    <div className="mt-2 grid gap-2 md:grid-cols-3 text-xs text-muted-foreground">
-                      <span>current pos: {movement.current_pos ?? 'n/a'}</span>
-                      <span>current last_ts: {movement.current_last_ts ?? 'n/a'}</span>
-                      <span>movement events: {movement.movement_events ?? 0} / samples: {movement.sample_points ?? 0}</span>
-                    </div>
-                  </div>
+                  </Collapsible>
                 )
-              })}
+                  })}
+                </div>
+              ))}
             </div>
           )}
         </CardContent>
       </Card>
+
+      <div className="text-xs text-muted-foreground">
+        Fleet snapshot: {monitors.length} sessions, average progress {avgProgress}%.
+      </div>
     </div>
   )
 }

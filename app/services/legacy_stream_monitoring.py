@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from ..proxy.ace_api_client import AceLegacyApiClient
 from .state import state
 from ..core.config import cfg
+from .engine_selection import select_best_engine
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,12 @@ class LegacyStreamMonitoringService:
             "livepos_movement": self._build_livepos_movement(raw),
         }
 
+    def _publish_session_state(self, monitor_id: str, raw: Dict[str, Any]) -> None:
+        try:
+            state.upsert_monitor_session(monitor_id, self._serialize_session(monitor_id, raw))
+        except Exception:
+            logger.debug("Failed to publish monitor session state for %s", monitor_id, exc_info=True)
+
     @staticmethod
     def _is_timeout_or_connect_error(message: str) -> bool:
         text = (message or "").strip().lower()
@@ -214,54 +221,14 @@ class LegacyStreamMonitoringService:
         return bool((pos_static or ts_static) and downloaded_growth <= 0)
 
     def _pick_engine(self, requested_container_id: Optional[str]) -> Dict[str, Any]:
-        engines = state.list_engines()
-        if not engines:
-            raise RuntimeError("No engines available")
-
-        active_streams = state.list_streams(status="started")
-        active_by_engine: Dict[str, int] = {}
-        for stream in active_streams:
-            active_by_engine[stream.container_id] = active_by_engine.get(stream.container_id, 0) + 1
-
-        monitor_by_engine: Dict[str, int] = {}
-        for session in self._sessions.values():
-            if session.get("status") in {"starting", "running", "reconnecting"}:
-                engine = session.get("engine") or {}
-                container_id = engine.get("container_id")
-                if container_id:
-                    monitor_by_engine[container_id] = monitor_by_engine.get(container_id, 0) + 1
-
-        if requested_container_id:
-            selected = next((e for e in engines if e.container_id == requested_container_id), None)
-            if not selected:
-                raise RuntimeError(f"Engine '{requested_container_id}' not found")
-            return {
-                "container_id": selected.container_id,
-                "host": selected.host,
-                "port": selected.port,
-                "api_port": selected.api_port or 62062,
-                "forwarded": bool(selected.forwarded),
-            }
-
-        # Keep balancing consistent with stream startup, but include monitor load too.
-        max_streams = cfg.MAX_STREAMS_PER_ENGINE
-        available = [
-            e
-            for e in engines
-            if (active_by_engine.get(e.container_id, 0) + monitor_by_engine.get(e.container_id, 0)) < max_streams
-        ]
-        if not available:
-            raise RuntimeError(
-                f"All engines at maximum capacity ({max_streams} streams/monitors per engine)"
+        try:
+            selected, _ = select_best_engine(
+                requested_container_id=requested_container_id,
+                reserve_pending=False,
+                not_found_error=f"Engine '{requested_container_id}' not found" if requested_container_id else "engine_not_found",
             )
-
-        selected = sorted(
-            available,
-            key=lambda e: (
-                active_by_engine.get(e.container_id, 0) + monitor_by_engine.get(e.container_id, 0),
-                not e.forwarded,
-            ),
-        )[0]
+        except Exception as e:
+            raise RuntimeError(str(getattr(e, "detail", str(e))))
 
         return {
             "container_id": selected.container_id,
@@ -309,6 +276,7 @@ class LegacyStreamMonitoringService:
                 "latest_status": {},
                 "recent_status": [],
             }
+            self._publish_session_state(monitor_id, self._sessions[monitor_id])
             task = asyncio.create_task(
                 self._run_monitor(
                     monitor_id=monitor_id,
@@ -328,6 +296,7 @@ class LegacyStreamMonitoringService:
             if not session:
                 return
             session.update(kwargs)
+            self._publish_session_state(monitor_id, session)
 
     async def _append_sample(self, monitor_id: str, sample: Dict[str, Any]):
         async with self._lock:
@@ -342,6 +311,7 @@ class LegacyStreamMonitoringService:
             session["latest_status"] = sample
             session["last_collected_at"] = sample.get("ts")
             session["sample_count"] = int(session.get("sample_count", 0)) + 1
+            self._publish_session_state(monitor_id, session)
             return self._is_session_stuck(session)
 
     async def _run_monitor(
@@ -583,6 +553,7 @@ class LegacyStreamMonitoringService:
             self._sessions.pop(monitor_id, None)
             self._tasks.pop(monitor_id, None)
             self._stop_events.pop(monitor_id, None)
+        state.remove_monitor_session(monitor_id)
 
         return True
 
@@ -599,6 +570,40 @@ class LegacyStreamMonitoringService:
                 self._serialize_session(monitor_id, raw)
                 for monitor_id, raw in self._sessions.items()
             ]
+
+    async def get_reusable_session_for_content(self, content_id: str) -> Optional[Dict[str, Any]]:
+        normalized = (content_id or "").strip().lower()
+        if not normalized:
+            return None
+
+        async with self._lock:
+            candidates: List[Dict[str, Any]] = []
+            for monitor_id, raw in self._sessions.items():
+                if (raw.get("content_id") or "").strip().lower() != normalized:
+                    continue
+                if raw.get("status") not in {"running", "stuck", "starting"}:
+                    continue
+
+                session = raw.get("session") or {}
+                engine = raw.get("engine") or {}
+                playback_url = (session.get("playback_url") or "").strip()
+                if not playback_url or not engine.get("container_id"):
+                    continue
+
+                candidates.append({
+                    "monitor_id": monitor_id,
+                    "status": raw.get("status"),
+                    "last_collected_at": raw.get("last_collected_at") or "",
+                    "engine": dict(engine),
+                    "session": dict(session),
+                    "latest_status": dict(raw.get("latest_status") or {}),
+                })
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda c: c.get("last_collected_at") or "", reverse=True)
+        return candidates[0]
 
 
 legacy_stream_monitoring_service = LegacyStreamMonitoringService()
