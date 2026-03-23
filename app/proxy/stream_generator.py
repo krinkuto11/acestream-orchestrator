@@ -124,21 +124,32 @@ class StreamGenerator:
     
     def _wait_for_initialization(self):
         """Wait for stream to initialize"""
+        from .server import ProxyServer
+
         timeout = ConfigHelper.channel_init_grace_period()
         start_time = time.time()
+        check_interval = 0.2
+        proxy_server = ProxyServer.get_instance()
         
         logger.info(f"[{self.client_id}] Waiting for stream initialization (timeout: {timeout}s)")
         
         while time.time() - start_time < timeout:
-            # Check if stream is ready (would check Redis metadata in full implementation)
-            # For now, just wait a bit
-            # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
-            time.sleep(1)
-            
-            # TODO: Check Redis for stream state
-            # For now, assume ready after a short wait
-            if time.time() - start_time > 2:
+            manager = proxy_server.stream_managers.get(self.content_id)
+            if manager is None:
+                logger.error(f"[{self.client_id}] Stream manager missing during initialization")
+                return False
+
+            # Terminal rejection path: do not keep clients waiting for full timeout.
+            if getattr(manager, "_last_request_failure_type", None) == "preflight_failed":
+                logger.warning(f"[{self.client_id}] Stream initialization aborted: preflight rejected stream")
+                return False
+
+            # Stream manager must complete session request before clients start normal streaming.
+            if bool(getattr(manager, "connected", False)) and bool(getattr(manager, "playback_url", None)):
                 return True
+
+            # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
+            time.sleep(check_interval)
         
         logger.error(f"[{self.client_id}] Stream initialization timeout")
         return False
