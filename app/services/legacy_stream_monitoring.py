@@ -221,9 +221,18 @@ class LegacyStreamMonitoringService:
         return bool((pos_static or ts_static) and downloaded_growth <= 0)
 
     def _pick_engine(self, requested_container_id: Optional[str]) -> Dict[str, Any]:
+        monitor_by_engine: Dict[str, int] = {}
+        for session in self._sessions.values():
+            if session.get("status") in {"starting", "running", "stuck", "reconnecting"}:
+                engine = session.get("engine") or {}
+                container_id = engine.get("container_id")
+                if container_id:
+                    monitor_by_engine[container_id] = monitor_by_engine.get(container_id, 0) + 1
+
         try:
             selected, _ = select_best_engine(
                 requested_container_id=requested_container_id,
+                additional_load_by_engine=monitor_by_engine,
                 reserve_pending=False,
                 not_found_error=f"Engine '{requested_container_id}' not found" if requested_container_id else "engine_not_found",
             )

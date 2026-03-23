@@ -30,7 +30,7 @@ function movementVariant(movement) {
 function movementLabel(movement) {
   if (!movement) return 'unknown'
   if (movement.is_moving) return `moving (${movement.direction})`
-  if (movement.direction === 'stable') return 'stable'
+  if (movement.direction === 'stable') return 'stuck'
   return 'unknown'
 }
 
@@ -54,6 +54,15 @@ function toInt(value) {
   const n = Number(value)
   if (Number.isNaN(n)) return null
   return n
+}
+
+function normalizeContentRef(value) {
+  if (!value) return ''
+  const trimmed = String(value).trim().toLowerCase()
+  if (trimmed.startsWith('acestream://')) {
+    return trimmed.slice('acestream://'.length)
+  }
+  return trimmed
 }
 
 function buildSeries(samples, keyPath) {
@@ -166,6 +175,7 @@ function BufferWindowBar({ livepos }) {
 export function StreamMonitoringPage({ orchUrl, apiKey }) {
   const uiPrefsStorageKey = 'stream-monitoring-ui-prefs-v1'
   const [monitors, setMonitors] = useState([])
+  const [activeProxyKeys, setActiveProxyKeys] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [actionError, setActionError] = useState(null)
@@ -232,19 +242,41 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     }
 
     try {
-      const response = await fetch(`${orchUrl}/ace/monitor/legacy`, {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
-      })
-      if (!response.ok) {
-        throw new Error(`${response.status} ${response.statusText}`)
+      const [monitorResponse, streamsResponse] = await Promise.all([
+        fetch(`${orchUrl}/ace/monitor/legacy`, {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+        }),
+        fetch(`${orchUrl}/streams?status=started`, {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+        }),
+      ])
+
+      if (!monitorResponse.ok) {
+        throw new Error(`${monitorResponse.status} ${monitorResponse.statusText}`)
       }
-      const payload = await response.json()
+
+      const payload = await monitorResponse.json()
       setMonitors(Array.isArray(payload?.items) ? payload.items : [])
+
+      if (streamsResponse.ok) {
+        const streamItems = await streamsResponse.json()
+        const keys = new Set(
+          (Array.isArray(streamItems) ? streamItems : [])
+            .map((stream) => normalizeContentRef(stream?.key))
+            .filter(Boolean),
+        )
+        setActiveProxyKeys(keys)
+      } else {
+        setActiveProxyKeys(new Set())
+      }
       setError(null)
     } catch (err) {
       setError(err?.message || 'Failed to fetch stream monitoring sessions')
+      setActiveProxyKeys(new Set())
     } finally {
       setLoading(false)
     }
@@ -481,6 +513,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
   const allVisibleSelected = visibleMonitorIds.length > 0 && selectedVisibleIds.length === visibleMonitorIds.length
 
   const activeCount = monitors.filter((m) => ['starting', 'running', 'stuck'].includes(m.status)).length
+  const runningCount = monitors.filter((m) => m.status === 'running').length
   const deadCount = monitors.filter((m) => m.status === 'dead').length
   const stuckCount = monitors.filter((m) => m.status === 'stuck').length
   const avgProgress = monitors.length > 0
@@ -852,8 +885,8 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/70 p-3 dark:border-emerald-900/70 dark:bg-emerald-950/30">
-          <p className="text-xs text-emerald-700 dark:text-emerald-300">Active Sessions</p>
-          <p className="mt-1 text-2xl font-semibold text-emerald-900 dark:text-emerald-100">{activeCount}</p>
+          <p className="text-xs text-emerald-700 dark:text-emerald-300">Running Streams</p>
+          <p className="mt-1 text-2xl font-semibold text-emerald-900 dark:text-emerald-100">{runningCount}</p>
         </div>
         <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 p-3 dark:border-amber-900/70 dark:bg-amber-950/30">
           <p className="text-xs text-amber-700 dark:text-amber-300">Stuck Sessions</p>
@@ -969,6 +1002,10 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                 const deadReason = monitor.dead_reason || monitor.last_error
                 const isExpanded = Boolean(expandedById[monitor.monitor_id])
                 const isCompact = viewMode === 'table'
+                const engineInfo = monitor.engine || {}
+                const engineId = engineInfo.container_id || 'n/a'
+                const engineShortId = engineId !== 'n/a' ? engineId.slice(0, 12) : 'n/a'
+                const isPlayingInProxy = activeProxyKeys.has(normalizeContentRef(monitor.content_id))
 
                 return (
                   <Collapsible
@@ -1003,6 +1040,14 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                                   <Gauge className="h-3 w-3" />
                                   {formatBytesPerSecond((speedDown || 0) * 1024)}
                                 </Badge>
+                                <Badge variant="outline">
+                                  engine {engineShortId}
+                                </Badge>
+                                {isPlayingInProxy && (
+                                  <Badge variant="default">
+                                    Playing in proxy
+                                  </Badge>
+                                )}
                               </div>
                             </div>
 
@@ -1032,6 +1077,10 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                             <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
                               <p className="text-[11px] text-muted-foreground">Movement events</p>
                               <p className="mt-1 text-sm font-medium">{movement.movement_events ?? 0} / {movement.sample_points ?? 0}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">
+                              <p className="text-[11px] text-muted-foreground">Engine</p>
+                              <p className="mt-1 text-sm font-medium">{engineShortId}</p>
                             </div>
                             {isCompact && (
                               <div className="rounded-lg border border-slate-200/70 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/70">

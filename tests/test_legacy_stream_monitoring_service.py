@@ -281,3 +281,41 @@ async def test_api_timeout_marks_stream_dead_and_stops(monkeypatch):
     assert current is not None
     assert current["status"] == "dead"
     assert current["dead_reason"] == "timeout_or_connect_error"
+
+
+@pytest.mark.asyncio
+async def test_monitor_balancing_spreads_bulk_sessions_across_engines(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine_1 = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=True,
+    )
+    engine_2 = SimpleNamespace(
+        container_id="engine-2",
+        host="127.0.0.1",
+        port=6879,
+        api_port=62063,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine_1, engine_2])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeAceLegacyApiClient)
+
+    service = LegacyStreamMonitoringService()
+
+    first = await service.start_monitor(content_id="aaa", interval_s=1.0, run_seconds=0)
+    second = await service.start_monitor(content_id="bbb", interval_s=1.0, run_seconds=0)
+
+    first_engine = (first.get("engine") or {}).get("container_id")
+    second_engine = (second.get("engine") or {}).get("container_id")
+
+    assert first_engine is not None
+    assert second_engine is not None
+    assert first_engine != second_engine
+
+    await service.stop_all()
