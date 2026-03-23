@@ -246,6 +246,7 @@ def test_stream_generator_initialization_fails_fast_on_preflight_rejection(monke
     )
 
     manager = Mock()
+    manager.control_mode = "LEGACY_API"
     manager._last_request_failure_type = "preflight_failed"
     manager.connected = False
     manager.playback_url = None
@@ -264,6 +265,40 @@ def test_stream_generator_initialization_fails_fast_on_preflight_rejection(monke
     monkeypatch.setattr("app.proxy.stream_generator.time.sleep", _sleep)
 
     assert stream_generator._wait_for_initialization() is False
+    assert sleep_calls["count"] == 0
+
+
+def test_stream_generator_initialization_ignores_preflight_rejection_in_http_mode(monkeypatch):
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=True,
+    )
+
+    manager = Mock()
+    manager.control_mode = "LEGACY_HTTP"
+    manager._last_request_failure_type = "preflight_failed"
+    manager.connected = False
+    manager.playback_url = None
+
+    mock_proxy_instance = Mock()
+    mock_proxy_instance.stream_managers = {"test_content_id": manager}
+
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.channel_init_grace_period", lambda: 10)
+    monkeypatch.setattr("app.proxy.server.ProxyServer.get_instance", lambda: mock_proxy_instance)
+
+    sleep_calls = {"count": 0}
+
+    def _sleep(_interval):
+        sleep_calls["count"] += 1
+
+    monkeypatch.setattr("app.proxy.stream_generator.time.sleep", _sleep)
+
+    assert stream_generator._wait_for_initialization() is True
     assert sleep_calls["count"] == 0
 
 

@@ -2665,7 +2665,7 @@ async def ace_getstream(
                 client_id=client_id,
                 client_ip=client_ip,
                 client_user_agent=user_agent,
-                stream_initializing=True
+                stream_initializing=(control_mode == 'LEGACY_API')
             )
             
             # Return streaming response with TS data
