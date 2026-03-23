@@ -7,6 +7,16 @@ import { cn } from '@/lib/utils'
 import { formatBytesPerSecond, formatBytes } from '@/utils/formatters'
 import { Progress } from '@/components/ui/progress'
 
+function formatMonitorAge(ts) {
+  if (!ts) return 'n/a'
+  const parsed = Date.parse(ts)
+  if (Number.isNaN(parsed)) return 'n/a'
+  const delta = Math.max(0, Math.floor((Date.now() - parsed) / 1000))
+  if (delta < 60) return `${delta}s ago`
+  if (delta < 3600) return `${Math.floor(delta / 60)}m ago`
+  return `${Math.floor(delta / 3600)}h ago`
+}
+
 function StatCard({ title, value, icon: Icon, trend, trendValue, variant = 'default' }) {
   const variantClasses = {
     default: 'text-primary',
@@ -260,6 +270,117 @@ function SystemStatus({ vpnStatus, orchestratorStatus }) {
   )
 }
 
+function LegacyMonitorSessions({ orchUrl, apiKey }) {
+  const [monitors, setMonitors] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const fetchMonitors = async () => {
+      if (!apiKey) {
+        if (!cancelled) {
+          setMonitors([])
+          setLoading(false)
+          setError('Set API key in Settings to view legacy monitor sessions')
+        }
+        return
+      }
+
+      try {
+        const response = await fetch(`${orchUrl}/ace/monitor/legacy`, {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+        })
+
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`)
+        }
+
+        const payload = await response.json()
+        if (!cancelled) {
+          setMonitors(Array.isArray(payload?.items) ? payload.items : [])
+          setError(null)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err?.message || 'Failed to fetch legacy monitor sessions')
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      }
+    }
+
+    fetchMonitors()
+    const interval = setInterval(fetchMonitors, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [orchUrl, apiKey])
+
+  const activeCount = monitors.filter((m) => ['starting', 'running', 'reconnecting'].includes(m.status)).length
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <Activity className="h-4 w-4" />
+            Legacy Monitor Sessions
+          </span>
+          <Badge variant={activeCount > 0 ? 'success' : 'secondary'}>
+            {activeCount} active
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Loading monitor sessions...</p>
+        ) : error ? (
+          <p className="text-sm text-muted-foreground">{error}</p>
+        ) : monitors.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No legacy monitor sessions</p>
+        ) : (
+          <div className="space-y-2">
+            {monitors.slice(0, 6).map((monitor) => {
+              const latest = monitor.latest_status || {}
+              const statusText = latest.status_text || latest.status || 'unknown'
+              const peers = latest.peers ?? latest.http_peers ?? 0
+              const speedDown = latest.speed_down ?? latest.http_speed_down ?? 0
+              const progress = latest.progress ?? latest.immediate_progress ?? latest.total_progress ?? 0
+
+              return (
+                <div key={monitor.monitor_id} className="flex items-center justify-between rounded-md border p-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">{monitor.content_id}</p>
+                    <div className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                      <span>status: {statusText}</span>
+                      <span>peers: {peers}</span>
+                      <span>down: {formatBytesPerSecond((speedDown || 0) * 1024)}</span>
+                      <span>progress: {progress}%</span>
+                    </div>
+                  </div>
+                  <div className="ml-3 flex flex-col items-end gap-1">
+                    <Badge variant={monitor.status === 'running' ? 'success' : (monitor.status === 'reconnecting' ? 'warning' : 'secondary')}>
+                      {monitor.status}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">{formatMonitorAge(monitor.last_collected_at)}</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 function StreamCard({ stream, orchUrl, apiKey }) {
   const [title, setTitle] = React.useState(null)
   const [loading, setLoading] = React.useState(true)
@@ -403,6 +524,8 @@ export function OverviewPage({ engines, streams, vpnStatus, orchestratorStatus, 
       <ResourceUsage orchUrl={orchUrl} />
 
       <SystemStatus vpnStatus={vpnStatus} orchestratorStatus={orchestratorStatus} />
+
+      <LegacyMonitorSessions orchUrl={orchUrl} apiKey={apiKey} />
 
       <RecentActivity 
         streams={streams} 

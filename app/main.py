@@ -46,6 +46,7 @@ from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_ca
 from .services.stream_loop_detector import stream_loop_detector
 from .services.looping_streams import looping_streams_tracker
 from .services.cache_monitoring_service import start_cache_monitoring
+from .services.legacy_stream_monitoring import legacy_stream_monitoring_service
 from .proxy.manager import ProxyManager
 from .proxy.ace_api_client import AceLegacyApiClient, AceLegacyApiError
 
@@ -473,6 +474,7 @@ async def lifespan(app: FastAPI):
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
     await stream_loop_detector.stop()  # Stop stream loop detector
     await looping_streams_tracker.stop()  # Stop looping streams tracker
+    await legacy_stream_monitoring_service.stop_all()  # Stop legacy monitor sessions
     await stop_cleanup_task()  # Stop cache cleanup
     
     # Give a small delay to ensure any pending operations complete
@@ -2196,6 +2198,59 @@ def clear_cache():
 # ============================================================================
 # AceStream Proxy Endpoints
 # ============================================================================
+
+class LegacyStreamMonitorStartRequest(BaseModel):
+    content_id: str
+    interval_s: float = 1.0
+    run_seconds: int = 0
+    per_sample_timeout_s: float = 1.0
+    engine_container_id: Optional[str] = None
+
+
+@app.post("/ace/monitor/legacy/start", dependencies=[Depends(require_api_key)])
+async def start_legacy_stream_monitor(req: LegacyStreamMonitorStartRequest):
+    """Start a background legacy API monitor that collects STATUS every interval.
+
+    The monitor uses LOADASYNC/START once, does not stream to clients, and gathers
+    STATUS/livepos telemetry only for observability.
+    """
+    try:
+        monitor = await legacy_stream_monitoring_service.start_monitor(
+            content_id=req.content_id,
+            interval_s=req.interval_s,
+            run_seconds=req.run_seconds,
+            per_sample_timeout_s=req.per_sample_timeout_s,
+            engine_container_id=req.engine_container_id,
+        )
+        return monitor
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.get("/ace/monitor/legacy", dependencies=[Depends(require_api_key)])
+async def list_legacy_stream_monitors():
+    """List all legacy monitoring sessions and their latest STATUS sample."""
+    return {"items": await legacy_stream_monitoring_service.list_monitors()}
+
+
+@app.get("/ace/monitor/legacy/{monitor_id}", dependencies=[Depends(require_api_key)])
+async def get_legacy_stream_monitor(monitor_id: str):
+    """Get a single legacy monitoring session including recent STATUS history."""
+    monitor = await legacy_stream_monitoring_service.get_monitor(monitor_id)
+    if not monitor:
+        raise HTTPException(status_code=404, detail="legacy monitor not found")
+    return monitor
+
+
+@app.delete("/ace/monitor/legacy/{monitor_id}", dependencies=[Depends(require_api_key)])
+async def stop_legacy_stream_monitor(monitor_id: str):
+    """Stop a legacy monitoring session and close its API connection."""
+    stopped = await legacy_stream_monitoring_service.stop_monitor(monitor_id)
+    if not stopped:
+        raise HTTPException(status_code=404, detail="legacy monitor not found")
+    return {"stopped": True, "monitor_id": monitor_id}
 
 @app.get("/ace/preflight")
 def ace_preflight(

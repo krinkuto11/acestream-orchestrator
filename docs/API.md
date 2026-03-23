@@ -111,6 +111,34 @@ Response:
    }
    ```
 
+ - POST /ace/monitor/legacy/start (protected)
+   - Starts an async monitor session that uses `LEGACY_API` control flow only for telemetry.
+   - Flow: `HELLOBG/READY/LOADASYNC/START`, then `STATUS` probe once per `interval_s`.
+   - No player clients are attached and no stream data is proxied to consumers.
+   - Body:
+   ```json
+   {
+     "content_id": "6422e8bc34282871634c81947be093c04ad1bb29",
+     "interval_s": 1.0,
+     "run_seconds": 0,
+     "per_sample_timeout_s": 1.0,
+     "engine_container_id": null
+   }
+   ```
+   - Notes:
+     - `interval_s` minimum is `0.5` (recommended: `1.0`).
+     - `run_seconds=0` means run until manually stopped.
+     - `engine_container_id` is optional; if omitted, least-loaded engine is selected.
+
+ - GET /ace/monitor/legacy (protected)
+   - Lists all monitor sessions with latest STATUS sample and summary counters.
+
+ - GET /ace/monitor/legacy/{monitor_id} (protected)
+   - Returns a single monitor session including `recent_status` history (in-memory ring buffer).
+
+ - DELETE /ace/monitor/legacy/{monitor_id} (protected)
+   - Stops a monitor session and closes the legacy API connection (`STOP` + `SHUTDOWN`).
+
  - DELETE /streams/{stream_id} (protected) → Stop a single stream
    - Stops a stream by calling its command URL with method=stop
    - Marks the stream as ended in state
