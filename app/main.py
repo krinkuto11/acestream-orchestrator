@@ -2209,6 +2209,10 @@ class LegacyStreamMonitorStartRequest(BaseModel):
     engine_container_id: Optional[str] = None
 
 
+class LegacyStreamMonitorM3UParseRequest(BaseModel):
+    m3u_content: str
+
+
 @app.post("/ace/monitor/legacy/start", dependencies=[Depends(require_api_key)])
 async def start_legacy_stream_monitor(req: LegacyStreamMonitorStartRequest):
     """Start a background legacy API monitor that collects STATUS every interval.
@@ -2229,6 +2233,22 @@ async def start_legacy_stream_monitor(req: LegacyStreamMonitorStartRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.post("/ace/monitor/legacy/parse-m3u", dependencies=[Depends(require_api_key)])
+async def parse_legacy_monitor_m3u(req: LegacyStreamMonitorM3UParseRequest):
+    """Parse M3U content and extract acestream IDs with stream names."""
+    from .services.m3u import parse_acestream_m3u_entries
+
+    content = (req.m3u_content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="m3u_content is required")
+
+    entries = parse_acestream_m3u_entries(content)
+    return {
+        "count": len(entries),
+        "items": entries,
+    }
 
 
 @app.get("/ace/monitor/legacy", dependencies=[Depends(require_api_key)])

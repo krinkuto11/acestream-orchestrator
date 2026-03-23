@@ -179,6 +179,12 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
   const [groupByStatus, setGroupByStatus] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
   const [batchBusy, setBatchBusy] = useState(false)
+  const [m3uFileName, setM3uFileName] = useState('')
+  const [m3uContent, setM3uContent] = useState('')
+  const [m3uEntries, setM3uEntries] = useState([])
+  const [m3uSelectedById, setM3uSelectedById] = useState({})
+  const [m3uParsing, setM3uParsing] = useState(false)
+  const [m3uStarting, setM3uStarting] = useState(false)
   const [newMonitor, setNewMonitor] = useState({
     content_id: '',
     interval_s: '1.0',
@@ -600,6 +606,120 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     }
   }
 
+  const handleM3uFilePicked = async (event) => {
+    const file = event?.target?.files?.[0]
+    if (!file) return
+
+    try {
+      const text = await file.text()
+      setM3uFileName(file.name || 'playlist.m3u')
+      setM3uContent(text || '')
+      setM3uEntries([])
+      setM3uSelectedById({})
+      setActionError(null)
+    } catch {
+      setActionError('Failed to read selected M3U file')
+    }
+  }
+
+  const handleParseM3u = async () => {
+    if (!apiKey) {
+      setActionError('Set API key in Settings to parse M3U playlists')
+      return
+    }
+    if (!m3uContent.trim()) {
+      setActionError('Select an M3U file first')
+      return
+    }
+
+    setM3uParsing(true)
+    setActionError(null)
+    try {
+      const response = await fetch(`${orchUrl}/ace/monitor/legacy/parse-m3u`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          m3u_content: m3uContent,
+        }),
+      })
+
+      if (!response.ok) {
+        let detail = `${response.status} ${response.statusText}`
+        try {
+          const payload = await response.json()
+          detail = payload?.detail || detail
+        } catch {
+          // Keep fallback detail.
+        }
+        throw new Error(detail)
+      }
+
+      const payload = await response.json()
+      const items = Array.isArray(payload?.items) ? payload.items : []
+      setM3uEntries(items)
+      const initialSelection = {}
+      for (const item of items) {
+        if (item?.content_id) initialSelection[item.content_id] = true
+      }
+      setM3uSelectedById(initialSelection)
+    } catch (err) {
+      setActionError(err?.message || 'Failed to parse M3U content')
+    } finally {
+      setM3uParsing(false)
+    }
+  }
+
+  const handleStartSelectedM3uEntries = async () => {
+    if (!apiKey) {
+      setActionError('Set API key in Settings to start monitor sessions')
+      return
+    }
+
+    const selectedEntries = m3uEntries.filter((entry) => Boolean(m3uSelectedById[entry.content_id]))
+    if (selectedEntries.length === 0) {
+      setActionError('Select at least one parsed playlist entry')
+      return
+    }
+
+    setM3uStarting(true)
+    setActionError(null)
+
+    const failures = []
+    try {
+      for (const entry of selectedEntries) {
+        try {
+          const response = await fetch(`${orchUrl}/ace/monitor/legacy/start`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              content_id: entry.content_id,
+              interval_s: Number(newMonitor.interval_s || 1),
+              run_seconds: Number(newMonitor.run_seconds || 0),
+            }),
+          })
+          if (!response.ok) {
+            failures.push(entry.content_id)
+          }
+        } catch {
+          failures.push(entry.content_id)
+        }
+      }
+
+      await fetchMonitorsNow(false)
+      if (failures.length > 0) {
+        setActionError(`Started with ${failures.length} failure(s)`)
+      }
+    } finally {
+      setM3uStarting(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -651,6 +771,79 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
             </Button>
             <span className="text-xs text-muted-foreground">interval default 1s, run_seconds 0 means continuous</span>
           </div>
+
+          <div className="mt-4 rounded-lg border border-slate-200/80 bg-white/70 p-3 dark:border-slate-800 dark:bg-slate-900/60">
+            <p className="text-xs font-medium text-slate-700 dark:text-slate-300">Import M3U (acestream://)</p>
+            <p className="mt-1 text-xs text-muted-foreground">Upload an M3U file to parse stream names and AceStream IDs.</p>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Input type="file" accept=".m3u,.m3u8,text/plain" onChange={handleM3uFilePicked} className="max-w-md" />
+              <Button size="sm" variant="outline" onClick={handleParseM3u} disabled={m3uParsing || !m3uContent || !apiKey}>
+                {m3uParsing ? 'Parsing...' : 'Parse playlist'}
+              </Button>
+              {m3uFileName && <span className="text-xs text-muted-foreground">{m3uFileName}</span>}
+            </div>
+
+            {m3uEntries.length > 0 && (
+              <div className="mt-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const next = {}
+                      for (const entry of m3uEntries) next[entry.content_id] = true
+                      setM3uSelectedById(next)
+                    }}
+                  >
+                    Select all
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setM3uSelectedById({})}
+                  >
+                    Clear selection
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleStartSelectedM3uEntries}
+                    disabled={m3uStarting || !apiKey}
+                  >
+                    {m3uStarting ? 'Starting selected...' : 'Start selected entries'}
+                  </Button>
+                </div>
+
+                <div className="max-h-56 space-y-1 overflow-auto rounded-md border border-slate-200/70 bg-slate-50/60 p-2 dark:border-slate-800 dark:bg-slate-950/40">
+                  {m3uEntries.map((entry) => (
+                    <div key={entry.content_id} className="flex items-center justify-between gap-2 rounded border border-slate-200/70 bg-white/80 px-2 py-1 dark:border-slate-700 dark:bg-slate-900/70">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          checked={Boolean(m3uSelectedById[entry.content_id])}
+                          onCheckedChange={(checked) => {
+                            const shouldSelect = Boolean(checked)
+                            setM3uSelectedById((prev) => ({ ...prev, [entry.content_id]: shouldSelect }))
+                          }}
+                        />
+                        <div>
+                          <p className="text-xs font-medium text-slate-800 dark:text-slate-200">{entry.name || 'Unnamed stream'}</p>
+                          <p className="text-[11px] text-muted-foreground">{entry.content_id}</p>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setNewMonitor((prev) => ({ ...prev, content_id: entry.content_id }))}
+                      >
+                        Use ID
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           {actionError && (
             <p className="mt-2 text-xs text-red-600 dark:text-red-400">{actionError}</p>
           )}

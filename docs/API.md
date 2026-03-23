@@ -135,6 +135,29 @@ Response:
    - Lists all monitor sessions with latest STATUS sample and summary counters.
    - Includes engine assignment per monitor session.
 
+ - POST /ace/monitor/legacy/parse-m3u (protected)
+   - Parses uploaded/inline M3U content and extracts `acestream://<id>` entries.
+   - Returns parsed stream names (from `#EXTINF`) and normalized content IDs.
+   - Body:
+   ```json
+   {
+     "m3u_content": "#EXTM3U\n#EXTINF:-1,My Stream\nacestream://aabb...\n"
+   }
+   ```
+   - Response:
+   ```json
+   {
+     "count": 1,
+     "items": [
+       {
+         "content_id": "aabb...",
+         "name": "My Stream",
+         "line_number": "2"
+       }
+     ]
+   }
+   ```
+
  - GET /ace/monitor/legacy/{monitor_id} (protected)
    - Returns a single monitor session including `recent_status` history (in-memory ring buffer).
    - Includes `livepos_movement` summary with movement/stuck signals:
