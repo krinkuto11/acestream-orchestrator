@@ -100,7 +100,11 @@ class StreamManager:
             return False
 
         self.playback_url = self._normalize_playback_url(playback_url)
-        self.playback_session_id = session.get("playback_session_id") or self.playback_session_id
+        self.playback_session_id = (
+            session.get("playback_session_id")
+            or self.playback_session_id
+            or f"reuse-{self.content_id[:16]}-{int(time.time())}"
+        )
         self.stat_url = session.get("stat_url") or ""
         self.command_url = session.get("command_url") or ""
         self.is_live = int(session.get("is_live", 1) or 1)
@@ -327,7 +331,7 @@ class StreamManager:
                         key=self.content_id
                     ),
                     session=SessionInfo(
-                        playback_session_id=self.playback_session_id,
+                        playback_session_id=self.playback_session_id or f"fallback-{self.content_id[:16]}-{int(time.time())}",
                         stat_url=self.stat_url,
                         command_url=self.command_url,
                         is_live=self.is_live

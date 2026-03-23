@@ -2611,8 +2611,11 @@ async def ace_getstream(
                     api_key = os.getenv('API_KEY')
 
                     monitor_session = reusable_monitor_session.get("session") or {}
+                    monitor_playback_session_id = monitor_session.get('playback_session_id')
+                    if not monitor_playback_session_id:
+                        monitor_playback_session_id = f"hls-reuse-{id[:16]}-{int(time.time())}"
                     session_info = {
-                        'playback_session_id': monitor_session.get('playback_session_id'),
+                        'playback_session_id': monitor_playback_session_id,
                         'stat_url': monitor_session.get('stat_url') or '',
                         'command_url': monitor_session.get('command_url') or '',
                         'is_live': 1,

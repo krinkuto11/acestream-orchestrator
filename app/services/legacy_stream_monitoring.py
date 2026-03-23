@@ -393,12 +393,16 @@ class LegacyStreamMonitoringService:
                         start_info = await asyncio.to_thread(client.start_stream, resolved_infohash, "infohash")
                         stream_started = True
 
+                        playback_session_id = start_info.get("playback_session_id")
+                        if not playback_session_id:
+                            playback_session_id = f"legacy-monitor-{monitor_id[:8]}-{int(time.time())}"
+
                         await self._update_session(
                             monitor_id,
                             status="running",
                             last_error=None,
                             session={
-                                "playback_session_id": start_info.get("playback_session_id"),
+                                "playback_session_id": playback_session_id,
                                 "playback_url": start_info.get("url"),
                                 "resolved_infohash": resolved_infohash,
                             },
