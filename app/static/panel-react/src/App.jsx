@@ -11,6 +11,7 @@ import { EventsPage } from './pages/EventsPage'
 import { HealthPage } from './pages/HealthPage'
 import { VPNPage } from './pages/VPNPage'
 import { MetricsPage } from './pages/MetricsPage'
+import { StreamMonitoringPage } from './pages/StreamMonitoringPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import { useFavicon } from './hooks/useFavicon'
@@ -22,7 +23,7 @@ function AppContent() {
   // Always use the current browser origin as URL so the UI works regardless of which IP/host is used to access it
   const orchUrl = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:8000'
   const [apiKey, setApiKey] = useLocalStorage('orch_apikey', '')
-  const [refreshInterval, setRefreshInterval] = useLocalStorage('refresh_interval', 5000)
+  const [refreshInterval, setRefreshInterval] = useLocalStorage('refresh_interval', 1000)
   const [maxEventsDisplay, setMaxEventsDisplay] = useLocalStorage('max_events_display', 100)
   
   const [engines, setEngines] = useState([])
@@ -83,7 +84,8 @@ function AppContent() {
 
   useEffect(() => {
     fetchData()
-    const interval = setInterval(fetchData, refreshInterval)
+    const intervalMs = Math.max(1000, Number(refreshInterval) || 1000)
+    const interval = setInterval(fetchData, intervalMs)
     return () => clearInterval(interval)
   }, [fetchData, refreshInterval])
 
@@ -208,6 +210,15 @@ function AppContent() {
                 path="/metrics" 
                 element={
                   <MetricsPage
+                    apiKey={apiKey}
+                    orchUrl={orchUrl}
+                  />
+                } 
+              />
+              <Route 
+                path="/stream-monitoring" 
+                element={
+                  <StreamMonitoringPage
                     apiKey={apiKey}
                     orchUrl={orchUrl}
                   />

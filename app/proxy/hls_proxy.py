@@ -173,6 +173,7 @@ class StreamManager:
         self.stat_url = session_info.get('stat_url')
         self.command_url = session_info.get('command_url')
         self.is_live = session_info.get('is_live', 1)
+        self.owns_engine_session = bool(session_info.get('owns_engine_session', True))
         
         # API key for orchestrator events
         self.api_key = api_key
@@ -210,8 +211,13 @@ class StreamManager:
         self.cleanup_running = False
         logger.info(f"Stopping stream manager for channel {self.channel_id}")
         
-        # Send stop command to AceStream engine
-        if self.command_url:
+        # Send stop command only when this HLS proxy owns the engine session.
+        if not self.owns_engine_session:
+            logger.info(
+                "Skipping engine stop for channel %s because session is owned by monitoring",
+                self.channel_id,
+            )
+        elif self.command_url:
             try:
                 requests.get(f"{self.command_url}?method=stop", timeout=5)
                 logger.info("Sent stop command to AceStream engine")

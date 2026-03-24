@@ -45,9 +45,30 @@ The AceStream Orchestrator uses a UI-driven configuration system. All settings a
 ---
 
 ## Proxy Settings
-- **Stream Mode**: Toggle between `TS` (MPEG-TS) and `HLS`.
-- **Connection Timouts**: Various timeouts for client/stream/chunk handling.
+- **Stream Mode**: `TS` (MPEG-TS) or `HLS`.
+- **Engine Control Mode**: `LEGACY_HTTP` (default) or `LEGACY_API` (socket control).
+- **Connection Timeouts**: Timeouts for client/stream/chunk handling.
 - **Buffer Settings**: Initial chunk buffer and chunk sizes.
+
+### Proxy Mode Compatibility
+
+- `HLS` requires `LEGACY_HTTP` control mode.
+- `LEGACY_API` requires `TS` stream mode.
+
+The API enforces these constraints and the panel prevents unsupported combinations.
+
+### Preflight Diagnostics
+
+Proxy settings include a preflight diagnostic tool (Settings > Proxy) backed by:
+
+- `GET /ace/preflight?id=<content_id>&tier=light|deep`
+
+Tier behavior:
+
+- `light`: resolve and canonicalize only
+- `deep`: resolve + start + short status/livepos sampling + stop
+
+Use preflight to validate content before opening client sessions, especially when tuning `LEGACY_API` behavior.
 
 ---
 
@@ -56,3 +77,6 @@ While UI is preferred, environmental variables can still be passed to the contai
 - `API_KEY`: API Bearer for protected endpoints.
 - `DOCKER_NETWORK`: Specify a custom network for engines.
 - `DB_URL`: Backend database path (Default: `sqlite:///./orchestrator.db`).
+- `PROXY_STREAM_MODE`: Initial stream mode (`TS` or `HLS`).
+- `PROXY_CONTROL_MODE`: Initial control mode (`LEGACY_HTTP` or `LEGACY_API`).
+- `PROXY_LEGACY_API_PREFLIGHT_TIER`: Initial LEGACY_API preflight tier (`light` or `deep`).

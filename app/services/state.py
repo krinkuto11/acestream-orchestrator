@@ -1,7 +1,7 @@
 from __future__ import annotations
 import threading
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..models.schemas import EngineState, StreamState, StreamStartedEvent, StreamEndedEvent, StreamStatSnapshot
@@ -10,12 +10,15 @@ from ..models.db_models import EngineRow, StreamRow, StatRow
 
 logger = logging.getLogger(__name__)
 
+ACTIVE_MONITOR_SESSION_STATUSES: Set[str] = {"starting", "running", "stuck", "reconnecting"}
+
 class State:
     def __init__(self):
         self._lock = threading.RLock()
         self.engines: Dict[str, EngineState] = {}
         self.streams: Dict[str, StreamState] = {}
         self.stream_stats: Dict[str, List[StreamStatSnapshot]] = {}
+        self.monitor_sessions: Dict[str, Dict[str, object]] = {}
         
         # Emergency mode state for redundant VPN failure handling
         self._emergency_mode = False
@@ -94,8 +97,16 @@ class State:
                 container_name = f"engine-{evt.engine.host}-{evt.engine.port}"
             
             if not eng:
+                api_port = None
+                if evt.labels:
+                    api_port_raw = evt.labels.get("host.api_port") or evt.labels.get("acestream.api_port")
+                    if api_port_raw:
+                        try:
+                            api_port = int(api_port_raw)
+                        except ValueError:
+                            api_port = None
                 eng = EngineState(container_id=key, container_name=container_name, host=evt.engine.host, port=evt.engine.port,
-                                  labels=evt.labels or {}, forwarded=False, first_seen=self.now(), last_seen=self.now(), streams=[],
+                                  api_port=api_port, labels=evt.labels or {}, forwarded=False, first_seen=self.now(), last_seen=self.now(), streams=[],
                                   health_status="unknown", last_health_check=None, last_stream_usage=self.now(),
                                   vpn_container=None)
                 self.engines[key] = eng
@@ -105,15 +116,45 @@ class State:
                 if container_name and not eng.container_name:
                     eng.container_name = container_name
                 if evt.labels: eng.labels.update(evt.labels)
+                if evt.labels and eng.api_port is None:
+                    api_port_raw = evt.labels.get("host.api_port") or evt.labels.get("acestream.api_port")
+                    if api_port_raw:
+                        try:
+                            eng.api_port = int(api_port_raw)
+                        except ValueError:
+                            pass
 
             stream_id = (evt.labels.get("stream_id") if evt.labels else None) or f"{evt.stream.key}|{evt.session.playback_session_id}"
             st = StreamState(id=stream_id, key_type=evt.stream.key_type, key=evt.stream.key,
                              container_id=key, container_name=eng.container_name if eng else container_name,
                              playback_session_id=evt.session.playback_session_id,
-                             stat_url=str(evt.session.stat_url), command_url=str(evt.session.command_url),
+                             stat_url=str(evt.session.stat_url or ""), command_url=str(evt.session.command_url or ""),
                              is_live=bool(evt.session.is_live), started_at=self.now(), status="started")
             self.streams[stream_id] = st
             if stream_id not in eng.streams: eng.streams.append(stream_id)
+
+            # Seed first snapshot from stream-start labels (legacy API compatibility).
+            if evt.labels:
+                def _to_int(v):
+                    try:
+                        if v is None or str(v).strip() == "":
+                            return None
+                        return int(float(str(v)))
+                    except (TypeError, ValueError):
+                        return None
+
+                status_text = evt.labels.get("stream.status_text")
+                peers = _to_int(evt.labels.get("stream.peers"))
+                http_peers = _to_int(evt.labels.get("stream.http_peers"))
+                progress = _to_int(evt.labels.get("stream.progress"))
+
+                if any(v is not None for v in [status_text, peers, http_peers, progress]):
+                    initial_snap = StreamStatSnapshot(
+                        ts=self.now(),
+                        peers=peers if peers is not None else http_peers,
+                        status=status_text,
+                    )
+                    self.stream_stats.setdefault(stream_id, []).append(initial_snap)
 
         with SessionLocal() as s:
             s.merge(EngineRow(engine_key=eng.container_id, container_id=evt.container_id, container_name=container_name,
@@ -258,6 +299,12 @@ class State:
             except Exception:
                 # Database operation failed, but we can continue since we've updated memory state
                 pass
+
+            try:
+                from .engine_info import invalidate_engine_version_cache
+                invalidate_engine_version_cache(container_id)
+            except Exception:
+                pass
         
         return removed_engine
 
@@ -364,8 +411,48 @@ class State:
                 "engines": list(self.engines.values()),
                 "streams": list(self.streams.values()),
                 "stream_stats": dict(self.stream_stats),
+                "monitor_sessions": dict(self.monitor_sessions),
                 "cache_stats": dict(self.cache_stats)
             }
+
+    def upsert_monitor_session(self, monitor_id: str, session_data: Dict[str, object]):
+        with self._lock:
+            self.monitor_sessions[monitor_id] = dict(session_data or {})
+
+    def get_monitor_session(self, monitor_id: str) -> Optional[Dict[str, object]]:
+        with self._lock:
+            data = self.monitor_sessions.get(monitor_id)
+            return dict(data) if data else None
+
+    def list_monitor_sessions(self) -> List[Dict[str, object]]:
+        with self._lock:
+            return [dict(v) for v in self.monitor_sessions.values()]
+
+    def get_active_monitor_load_by_engine(self) -> Dict[str, int]:
+        """Return active monitor-session counts keyed by engine container_id."""
+        with self._lock:
+            counts: Dict[str, int] = {}
+            for session in self.monitor_sessions.values():
+                if (session.get("status") or "") not in ACTIVE_MONITOR_SESSION_STATUSES:
+                    continue
+
+                engine = session.get("engine") or {}
+                container_id = engine.get("container_id")
+                if not container_id:
+                    continue
+
+                counts[container_id] = counts.get(container_id, 0) + 1
+
+            return counts
+
+    def get_active_monitor_container_ids(self) -> Set[str]:
+        """Return engine container IDs that currently host active monitor sessions."""
+        return set(self.get_active_monitor_load_by_engine().keys())
+
+    def remove_monitor_session(self, monitor_id: str) -> Optional[Dict[str, object]]:
+        with self._lock:
+            data = self.monitor_sessions.pop(monitor_id, None)
+            return dict(data) if data else None
 
     def update_cache_stats(self, total_bytes: int, volume_count: int):
         """Update cache statistics in state."""
@@ -432,9 +519,18 @@ class State:
                 
                 forwarded = getattr(e, 'forwarded', False)
                 vpn_container = getattr(e, 'vpn_container', None)
+                api_port = 62062
+                api_port_raw = (e.labels or {}).get("host.api_port") or (e.labels or {}).get("acestream.api_port")
+                if api_port_raw:
+                    try:
+                        api_port = int(api_port_raw)
+                    except ValueError:
+                        api_port = 62062
                 
                 self.engines[e.engine_key] = EngineState(container_id=e.engine_key, container_name=container_name,
-                                                         host=e.host, port=e.port, labels=e.labels or {}, forwarded=forwarded,
+                                                         host=e.host, port=e.port,
+                                                         api_port=api_port,
+                                                         labels=e.labels or {}, forwarded=forwarded,
                                                          first_seen=first_seen, last_seen=last_seen, streams=[],
                                                          health_status="unknown", last_health_check=None, last_stream_usage=None,
                                                          vpn_container=vpn_container)
@@ -456,6 +552,7 @@ class State:
             self.engines.clear()
             self.streams.clear()
             self.stream_stats.clear()
+            self.monitor_sessions.clear()
         
         # Also clear cumulative metrics tracking
         try:

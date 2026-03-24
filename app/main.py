@@ -13,6 +13,7 @@ import json
 import logging
 import httpx
 import threading
+from types import SimpleNamespace
 import time
 
 from .utils.logging import setup
@@ -35,6 +36,7 @@ from .services.metrics import (
     observe_proxy_ttfb,
     observe_proxy_egress_bytes,
 )
+from .services.engine_selection import select_best_engine as select_best_engine_shared
 from .services.auth import require_api_key
 from .services.db import engine
 from .models.db_models import Base
@@ -46,7 +48,9 @@ from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_ca
 from .services.stream_loop_detector import stream_loop_detector
 from .services.looping_streams import looping_streams_tracker
 from .services.cache_monitoring_service import start_cache_monitoring
+from .services.legacy_stream_monitoring import legacy_stream_monitoring_service
 from .proxy.manager import ProxyManager
+from .proxy.ace_api_client import AceLegacyApiClient, AceLegacyApiError
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +170,14 @@ async def lifespan(app: FastAPI):
                 # Validate stream_mode before loading
                 mode = proxy_settings['stream_mode']
                 ProxyConfig.STREAM_MODE = mode
+            if 'control_mode' in proxy_settings:
+                mode = str(proxy_settings['control_mode']).upper()
+                if mode in ['LEGACY_HTTP', 'LEGACY_API']:
+                    ProxyConfig.CONTROL_MODE = mode
+            if 'legacy_api_preflight_tier' in proxy_settings:
+                tier = str(proxy_settings['legacy_api_preflight_tier']).strip().lower()
+                if tier in ['light', 'deep']:
+                    ProxyConfig.LEGACY_API_PREFLIGHT_TIER = tier
             logger.info("Proxy settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
@@ -208,7 +220,6 @@ async def lifespan(app: FastAPI):
             # Load manual engines into state if manual mode is enabled
             if engine_settings.get('manual_mode'):
                 logger.info("Manual mode is enabled. Injecting manual engines into state on startup.")
-                from .services.state import state
                 from .models.schemas import EngineState
                 
                 for man_eng in engine_settings.get("manual_engines", []):
@@ -389,7 +400,6 @@ async def lifespan(app: FastAPI):
         # We invoke start_acestream directly here instead of autoscaler to isolate
         # initial provisioning from periodic maintenance logic like circuit breakers
         from app.services.provisioner import start_acestream, AceProvisionRequest
-        from app.services.state import state
         
         target_count = cfg.MIN_REPLICAS
         logger.info(f"Starting {target_count} AceStream containers for initial startup")
@@ -466,6 +476,7 @@ async def lifespan(app: FastAPI):
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
     await stream_loop_detector.stop()  # Stop stream loop detector
     await looping_streams_tracker.stop()  # Stop looping streams tracker
+    await legacy_stream_monitoring_service.stop_all()  # Stop legacy monitor sessions
     await stop_cleanup_task()  # Stop cache cleanup
     
     # Give a small delay to ensure any pending operations complete
@@ -900,7 +911,19 @@ def get_engines():
         from .services.gluetun import gluetun_monitor, get_forwarded_port_sync
         from .services.engine_info import get_engine_version_info_sync
         
-        running_container_ids = {c.id for c in list_managed() if c.status == "running"}
+        managed_containers = list_managed()
+        running_containers = [c for c in managed_containers if c.status == "running"]
+        running_container_ids = {c.id for c in running_containers}
+
+        # Container start timestamp changes on restart, which invalidates version cache.
+        container_started_at = {}
+        for c in running_containers:
+            started_at = None
+            try:
+                started_at = (c.attrs or {}).get("State", {}).get("StartedAt")
+            except Exception:
+                started_at = None
+            container_started_at[c.id] = str(started_at or "unknown")
         
         # In redundant VPN mode, filter out engines assigned to unhealthy VPNs
         # This hides engines from the proxy when their VPN is down
@@ -953,7 +976,12 @@ def get_engines():
             
             # Get engine version info
             try:
-                version_info = get_engine_version_info_sync(engine.host, engine.port)
+                version_info = get_engine_version_info_sync(
+                    engine.host,
+                    engine.port,
+                    cache_key=engine.container_id,
+                    cache_revision=container_started_at.get(engine.container_id),
+                )
                 if version_info:
                     engine.platform = version_info.get("platform")
                     engine.version = version_info.get("version")
@@ -987,6 +1015,7 @@ def get_engines_with_metrics():
     """Get all engines with aggregated stream metrics (peers, download/upload speeds)."""
     engines = state.list_engines()
     all_active_streams = state.list_streams_with_stats(status="started")
+    monitor_loads = state.get_active_monitor_load_by_engine()
     
     # Group streams by container_id and aggregate metrics
     engine_metrics = {}
@@ -997,7 +1026,8 @@ def get_engines_with_metrics():
                 'total_peers': 0,
                 'total_speed_down': 0,
                 'total_speed_up': 0,
-                'stream_count': 0
+                'stream_count': 0,
+                'monitor_stream_count': 0
             }
         
         # Aggregate metrics from active streams
@@ -1012,13 +1042,17 @@ def get_engines_with_metrics():
     # Enrich engine data with metrics
     result = []
     for engine in engines:
+        monitor_stream_count = monitor_loads.get(engine.container_id, 0)
         engine_dict = engine.model_dump()
         metrics = engine_metrics.get(engine.container_id, {
             'total_peers': 0,
             'total_speed_down': 0,
             'total_speed_up': 0,
-            'stream_count': 0
+            'stream_count': 0,
+            'monitor_stream_count': 0
         })
+        metrics['monitor_stream_count'] = monitor_stream_count
+        metrics['stream_count'] = int(metrics.get('stream_count', 0)) + monitor_stream_count
         engine_dict.update(metrics)
         result.append(engine_dict)
     
@@ -1073,7 +1107,7 @@ async def get_stream_extended_stats(stream_id: str):
     Get extended statistics for a stream by querying the AceStream analyze_content API.
     This returns additional metadata like content_type, title, is_live, mime, categories, etc.
     """
-    from .utils.acestream_api import get_stream_extended_stats
+    from .utils.acestream_api import get_stream_extended_stats, fetch_extended_content_info
     from .services.cache import get_cache
     
     # Check cache first to avoid hammering the AceStream engine
@@ -1087,77 +1121,220 @@ async def get_stream_extended_stats(stream_id: str):
     stream = state.get_stream(stream_id)
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
+
+    # Additional stable cache key to share results across stream session IDs
+    # for the same content (e.g. infohash|legacy-<session>). This keeps the
+    # panel fast during reconnects/failovers.
+    content_cache_key = f"stream_extended_stats:content:{stream.key}"
+    cached_content_stats = cache.get(content_cache_key)
+    if cached_content_stats is not None:
+        cache.set(cache_key, cached_content_stats, ttl=3600.0)
+        return cached_content_stats
     
-    if not stream.stat_url:
-        raise HTTPException(status_code=400, detail="Stream has no stat URL")
-    
-    # Fetch extended stats
-    extended_stats = await get_stream_extended_stats(stream.stat_url)
-    
+    extended_stats = None
+
+    # Preferred path: stat URL available (legacy HTTP flow)
+    if stream.stat_url:
+        extended_stats = await get_stream_extended_stats(stream.stat_url)
+    else:
+        # Legacy API compatibility path: no stat URL/command URL available.
+        # Resolve infohash from stream key or API port, then query analyze_content directly.
+        engine_state = state.get_engine(stream.container_id)
+        if engine_state:
+            infohash = stream.key if stream.key_type == "infohash" else None
+
+            # Fast path: legacy stream IDs usually have infohash prefix
+            # (<infohash>|legacy-<session>). Use it directly to avoid an API
+            # connect/auth/resolve round-trip on request path.
+            if not infohash and "|" in stream_id:
+                maybe_infohash = stream_id.split("|", 1)[0].strip().lower()
+                if len(maybe_infohash) == 40 and all(c in "0123456789abcdef" for c in maybe_infohash):
+                    infohash = maybe_infohash
+
+            if not infohash and engine_state.api_port:
+                def _resolve_infohash_via_legacy_api() -> Optional[str]:
+                    client = AceLegacyApiClient(
+                        host=engine_state.host,
+                        port=engine_state.api_port or 62062,
+                        connect_timeout=2,
+                        response_timeout=2,
+                    )
+                    try:
+                        client.connect()
+                        client.authenticate()
+                        loadresp, _ = client.resolve_content(stream.key, session_id="0")
+                        return loadresp.get("infohash")
+                    except Exception:
+                        return None
+                    finally:
+                        try:
+                            client.shutdown()
+                        except Exception:
+                            pass
+
+                try:
+                    infohash = await asyncio.wait_for(
+                        asyncio.to_thread(_resolve_infohash_via_legacy_api),
+                        timeout=3.0,
+                    )
+                except asyncio.TimeoutError:
+                    infohash = None
+
+            if infohash:
+                extended_stats = await fetch_extended_content_info(
+                    engine_state.host,
+                    engine_state.port,
+                    infohash,
+                )
+                if isinstance(extended_stats, dict) and "infohash" not in extended_stats:
+                    extended_stats["infohash"] = infohash
+
+    # Avoid noisy panel failures for streams where metadata cannot be resolved.
     if extended_stats is None:
-        raise HTTPException(status_code=503, detail="Unable to fetch extended stats from AceStream engine")
+        unavailable = {"available": False}
+        # Short negative cache to avoid repeated expensive lookups while keeping
+        # quick recovery when metadata becomes available.
+        cache.set(cache_key, unavailable, ttl=30.0)
+        cache.set(content_cache_key, unavailable, ttl=30.0)
+        return unavailable
     
     # Cache the result for 1 hour (3600 seconds) since stream title/infohash rarely change
     cache.set(cache_key, extended_stats, ttl=3600.0)
+    cache.set(content_cache_key, extended_stats, ttl=3600.0)
     
     return extended_stats
 
 @app.get("/streams/{stream_id}/livepos")
 async def get_stream_livepos(stream_id: str):
     """
-    Get live position data for a stream from its stat URL.
-    This returns livepos information including current position, buffer, and timestamps.
+    Get live position data for a stream from stat URL or LEGACY_API probe.
+    This returns livepos details and derived live performance metrics.
     """
     import httpx
+
+    def _to_int(value):
+        if value is None or value == "":
+            return None
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
+    def _build_livepos_response(livepos, is_live, status_payload=None):
+        if not livepos:
+            return {
+                "has_livepos": False,
+                "is_live": bool(is_live),
+            }
+
+        normalized = {
+            "pos": livepos.get("pos"),
+            "live_first": livepos.get("live_first") or livepos.get("first_ts") or livepos.get("first"),
+            "live_last": livepos.get("live_last") or livepos.get("last_ts") or livepos.get("last"),
+            "first_ts": livepos.get("first_ts") or livepos.get("first"),
+            "last_ts": livepos.get("last_ts") or livepos.get("last"),
+            "buffer_pieces": livepos.get("buffer_pieces"),
+        }
+
+        pos_i = _to_int(normalized.get("pos"))
+        first_i = _to_int(normalized.get("live_first"))
+        last_i = _to_int(normalized.get("live_last"))
+
+        live_delay_seconds = None
+        dvr_window_seconds = None
+        playback_offset_seconds = None
+        if pos_i is not None and last_i is not None:
+            live_delay_seconds = max(0, last_i - pos_i)
+        if first_i is not None and last_i is not None:
+            dvr_window_seconds = max(0, last_i - first_i)
+        if pos_i is not None and first_i is not None:
+            playback_offset_seconds = max(0, pos_i - first_i)
+
+        performance = {
+            "live_delay_seconds": live_delay_seconds,
+            "dvr_window_seconds": dvr_window_seconds,
+            "playback_offset_seconds": playback_offset_seconds,
+        }
+
+        if status_payload:
+            performance.update({
+                "status": status_payload.get("status_text") or status_payload.get("status"),
+                "peers": status_payload.get("peers"),
+                "http_peers": status_payload.get("http_peers"),
+                "speed_down": status_payload.get("speed_down"),
+                "http_speed_down": status_payload.get("http_speed_down"),
+                "speed_up": status_payload.get("speed_up"),
+                "downloaded": status_payload.get("downloaded"),
+                "http_downloaded": status_payload.get("http_downloaded"),
+                "uploaded": status_payload.get("uploaded"),
+                "total_progress": status_payload.get("total_progress"),
+                "immediate_progress": status_payload.get("immediate_progress"),
+            })
+
+        return {
+            "has_livepos": True,
+            "is_live": bool(is_live),
+            "livepos": normalized,
+            "performance": performance,
+        }
     
     # Get the stream from state
     stream = state.get_stream(stream_id)
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
     
-    if not stream.stat_url:
-        raise HTTPException(status_code=400, detail="Stream has no stat URL")
-    
-    # Fetch livepos data from stat URL
+    if stream.stat_url:
+        # Fetch livepos data from stat URL (LEGACY_HTTP path)
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(stream.stat_url)
+                response.raise_for_status()
+                data = response.json()
+
+                payload = data.get("response")
+                if not payload:
+                    raise HTTPException(status_code=503, detail="No response data from stat URL")
+
+                return _build_livepos_response(
+                    payload.get("livepos"),
+                    payload.get("is_live", 0) == 1,
+                    status_payload=payload,
+                )
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to fetch livepos for stream {stream_id}: {e}")
+            raise HTTPException(status_code=503, detail=f"Failed to fetch livepos data: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error processing livepos for stream {stream_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Error processing livepos data: {str(e)}")
+
+    # LEGACY_API path (no stat_url): ask active proxy stream manager for a probe.
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(stream.stat_url)
-            response.raise_for_status()
-            data = response.json()
-            
-            # Extract response payload
-            payload = data.get("response")
-            if not payload:
-                raise HTTPException(status_code=503, detail="No response data from stat URL")
-            
-            # Extract livepos data
-            livepos = payload.get("livepos")
-            if not livepos:
-                # Stream might not be live or doesn't have livepos data
-                return {
-                    "has_livepos": False,
-                    "is_live": payload.get("is_live", 0) == 1
-                }
-            
-            # Return livepos data with additional context
-            # Extract all relevant fields from livepos according to AceStream API
-            return {
-                "has_livepos": True,
-                "is_live": payload.get("is_live", 0) == 1,
-                "livepos": {
-                    "pos": livepos.get("pos"),
-                    "live_first": livepos.get("live_first") or livepos.get("first_ts") or livepos.get("first"),
-                    "live_last": livepos.get("live_last") or livepos.get("last_ts") or livepos.get("last"),
-                    "first_ts": livepos.get("first_ts") or livepos.get("first"),
-                    "last_ts": livepos.get("last_ts") or livepos.get("last"),
-                    "buffer_pieces": livepos.get("buffer_pieces")
-                }
-            }
-    except httpx.HTTPError as e:
-        logger.error(f"Failed to fetch livepos for stream {stream_id}: {e}")
-        raise HTTPException(status_code=503, detail=f"Failed to fetch livepos data: {str(e)}")
+        from .proxy.server import ProxyServer
+
+        proxy = ProxyServer.get_instance()
+        manager = proxy.stream_managers.get(stream.key) if proxy else None
+        if not manager:
+            raise HTTPException(status_code=400, detail="Legacy stream manager not available")
+
+        probe = await asyncio.to_thread(
+            manager.collect_legacy_stats_probe,
+            1,
+            1.0,
+            True,
+        )
+        if not probe:
+            raise HTTPException(status_code=503, detail="No legacy probe data available")
+
+        livepos = probe.get("livepos") or {}
+        return _build_livepos_response(
+            livepos,
+            is_live=(stream.is_live is True),
+            status_payload=probe,
+        )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error processing livepos for stream {stream_id}: {e}")
+        logger.error(f"Error processing legacy livepos for stream {stream_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing livepos data: {str(e)}")
 
 @app.delete("/streams/{stream_id}", dependencies=[Depends(require_api_key)])
@@ -1370,6 +1547,7 @@ def get_orchestrator_status():
     # Get engine and stream counts
     engines = state.list_engines()
     active_streams = state.list_streams(status="started")
+    monitor_container_ids = state.get_active_monitor_container_ids()
     
     # Get Docker container status
     docker_status = replica_validator.get_docker_container_status()
@@ -1387,7 +1565,7 @@ def get_orchestrator_status():
     # Count unique engines that have active streams (not total streams)
     # Multiple streams can run on the same engine
     total_capacity = len(engines)
-    engines_with_streams = len(set(stream.container_id for stream in active_streams))
+    engines_with_streams = len(set(stream.container_id for stream in active_streams).union(monitor_container_ids))
     used_capacity = engines_with_streams
     available_capacity = max(0, total_capacity - used_capacity)
     
@@ -2030,6 +2208,257 @@ def clear_cache():
 # AceStream Proxy Endpoints
 # ============================================================================
 
+class LegacyStreamMonitorStartRequest(BaseModel):
+    content_id: str
+    stream_name: Optional[str] = None
+    interval_s: float = 1.0
+    run_seconds: int = 0
+    per_sample_timeout_s: float = 1.0
+    engine_container_id: Optional[str] = None
+
+
+class LegacyStreamMonitorM3UParseRequest(BaseModel):
+    m3u_content: str
+
+
+@app.post("/ace/monitor/legacy/start", dependencies=[Depends(require_api_key)])
+async def start_legacy_stream_monitor(req: LegacyStreamMonitorStartRequest):
+    """Start a background legacy API monitor that collects STATUS every interval.
+
+    The monitor uses LOADASYNC/START once, does not stream to clients, and gathers
+    STATUS/livepos telemetry only for observability.
+    """
+    try:
+        monitor = await legacy_stream_monitoring_service.start_monitor(
+            content_id=req.content_id,
+            stream_name=req.stream_name,
+            interval_s=req.interval_s,
+            run_seconds=req.run_seconds,
+            per_sample_timeout_s=req.per_sample_timeout_s,
+            engine_container_id=req.engine_container_id,
+        )
+        return monitor
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.post("/ace/monitor/legacy/parse-m3u", dependencies=[Depends(require_api_key)])
+async def parse_legacy_monitor_m3u(req: LegacyStreamMonitorM3UParseRequest):
+    """Parse M3U content and extract acestream IDs with stream names."""
+    from .services.m3u import parse_acestream_m3u_entries
+
+    content = (req.m3u_content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="m3u_content is required")
+
+    entries = parse_acestream_m3u_entries(content)
+    return {
+        "count": len(entries),
+        "items": entries,
+    }
+
+
+@app.get("/ace/monitor/legacy", dependencies=[Depends(require_api_key)])
+async def list_legacy_stream_monitors(
+    include_recent_status: bool = Query(
+        True,
+        description="Include recent_status history in each monitor item. Set false to return latest_status-only summaries.",
+    )
+):
+    """List all legacy monitoring sessions and their latest STATUS sample."""
+    return {
+        "items": await legacy_stream_monitoring_service.list_monitors(
+            include_recent_status=include_recent_status,
+        )
+    }
+
+
+@app.get("/ace/monitor/legacy/{monitor_id}", dependencies=[Depends(require_api_key)])
+async def get_legacy_stream_monitor(
+    monitor_id: str,
+    include_recent_status: bool = Query(
+        True,
+        description="Include recent_status history. Set false to return latest_status-only summary for this monitor.",
+    ),
+):
+    """Get a single legacy monitoring session including recent STATUS history."""
+    monitor = await legacy_stream_monitoring_service.get_monitor(
+        monitor_id,
+        include_recent_status=include_recent_status,
+    )
+    if not monitor:
+        raise HTTPException(status_code=404, detail="legacy monitor not found")
+    return monitor
+
+
+@app.delete("/ace/monitor/legacy/{monitor_id}", dependencies=[Depends(require_api_key)])
+async def stop_legacy_stream_monitor(monitor_id: str):
+    """Stop a legacy monitoring session and close its API connection."""
+    stopped = await legacy_stream_monitoring_service.stop_monitor(monitor_id)
+    if not stopped:
+        raise HTTPException(status_code=404, detail="legacy monitor not found")
+    return {"stopped": True, "monitor_id": monitor_id}
+
+
+@app.delete("/ace/monitor/legacy/{monitor_id}/entry", dependencies=[Depends(require_api_key)])
+async def delete_legacy_stream_monitor(monitor_id: str):
+    """Delete a legacy monitoring entry and ensure its API session is stopped."""
+    deleted = await legacy_stream_monitoring_service.delete_monitor(monitor_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="legacy monitor not found")
+    return {"deleted": True, "monitor_id": monitor_id}
+
+@app.get("/ace/preflight")
+def ace_preflight(
+    id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+    tier: str = Query("light", description="Availability probe tier: light or deep"),
+):
+    """Run a short availability probe and canonicalize content IDs before playback."""
+    from .proxy.config_helper import Config as ProxyConfig
+    import requests
+
+    normalized_tier = (tier or "light").strip().lower()
+    if normalized_tier not in {"light", "deep"}:
+        raise HTTPException(status_code=400, detail="tier must be 'light' or 'deep'")
+
+    control_mode = (ProxyConfig.CONTROL_MODE or "LEGACY_HTTP").upper()
+
+    engines = state.list_engines()
+    if not engines:
+        raise HTTPException(status_code=503, detail="No engines available")
+
+    active_streams = state.list_streams(status="started")
+    monitor_loads = state.get_active_monitor_load_by_engine()
+    engine_loads = {}
+    for stream in active_streams:
+        engine_loads[stream.container_id] = engine_loads.get(stream.container_id, 0) + 1
+
+    for container_id, monitor_count in monitor_loads.items():
+        engine_loads[container_id] = engine_loads.get(container_id, 0) + monitor_count
+
+    max_streams = cfg.MAX_STREAMS_PER_ENGINE
+    available_engines = [e for e in engines if engine_loads.get(e.container_id, 0) < max_streams]
+    if not available_engines:
+        raise HTTPException(
+            status_code=503,
+            detail=f"All engines at maximum capacity ({max_streams} streams per engine)",
+        )
+
+    selected_engine = sorted(
+        available_engines,
+        key=lambda e: (engine_loads.get(e.container_id, 0), not e.forwarded),
+    )[0]
+
+    if control_mode == "LEGACY_API":
+        api_port = selected_engine.api_port or 62062
+        client = AceLegacyApiClient(
+            host=selected_engine.host,
+            port=api_port,
+            connect_timeout=8,
+            response_timeout=8,
+        )
+        try:
+            client.connect()
+            client.authenticate()
+            preflight_result = client.preflight(id, tier=normalized_tier)
+            return {
+                "control_mode": control_mode,
+                "tier": normalized_tier,
+                "engine": {
+                    "container_id": selected_engine.container_id,
+                    "host": selected_engine.host,
+                    "port": selected_engine.port,
+                    "api_port": api_port,
+                    "forwarded": selected_engine.forwarded,
+                },
+                "result": preflight_result,
+            }
+        except AceLegacyApiError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        finally:
+            try:
+                client.shutdown()
+            except Exception:
+                pass
+
+    # HTTP control fallback for compatibility in LEGACY_HTTP mode.
+    url = f"http://{selected_engine.host}:{selected_engine.port}/ace/getstream"
+    pid = f"preflight-{int(time.time())}"
+    params = {"id": id, "format": "json", "pid": pid}
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"HTTP preflight failed: {e}")
+
+    if payload.get("error"):
+        return {
+            "control_mode": control_mode,
+            "tier": normalized_tier,
+            "engine": {
+                "container_id": selected_engine.container_id,
+                "host": selected_engine.host,
+                "port": selected_engine.port,
+                "api_port": selected_engine.api_port,
+                "forwarded": selected_engine.forwarded,
+            },
+            "result": {
+                "available": False,
+                "message": payload.get("error"),
+                "can_retry": True,
+                "should_wait": False,
+            },
+        }
+
+    response_data = payload.get("response") or {}
+    result: Dict[str, Any] = {
+        "available": bool(response_data.get("playback_url")),
+        "infohash": response_data.get("infohash"),
+        "playback_session_id": response_data.get("playback_session_id"),
+        "playback_url": response_data.get("playback_url"),
+        "stat_url": response_data.get("stat_url"),
+        "command_url": response_data.get("command_url"),
+        "is_live": response_data.get("is_live"),
+        "can_retry": True,
+        "should_wait": False,
+    }
+
+    if normalized_tier == "deep" and response_data.get("stat_url"):
+        try:
+            stat_response = requests.get(response_data.get("stat_url"), timeout=8)
+            stat_response.raise_for_status()
+            stat_payload = (stat_response.json() or {}).get("response") or {}
+            result["status_probe"] = {
+                "status_text": stat_payload.get("status_text") or stat_payload.get("status"),
+                "status": stat_payload.get("status"),
+                "progress": stat_payload.get("progress"),
+                "peers": stat_payload.get("peers"),
+                "http_peers": stat_payload.get("http_peers"),
+                "speed_down": stat_payload.get("speed_down"),
+                "speed_up": stat_payload.get("speed_up"),
+                "downloaded": stat_payload.get("downloaded"),
+                "uploaded": stat_payload.get("uploaded"),
+                "livepos": stat_payload.get("livepos"),
+            }
+        except Exception as e:
+            result["status_probe_error"] = str(e)
+
+    return {
+        "control_mode": control_mode,
+        "tier": normalized_tier,
+        "engine": {
+            "container_id": selected_engine.container_id,
+            "host": selected_engine.host,
+            "port": selected_engine.port,
+            "api_port": selected_engine.api_port,
+            "forwarded": selected_engine.forwarded,
+        },
+        "result": result,
+    }
+
 @app.get("/ace/getstream")
 async def ace_getstream(
     id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
@@ -2066,6 +2495,13 @@ async def ace_getstream(
     
     # Get current stream mode
     stream_mode = ProxyConfig.STREAM_MODE
+    control_mode = (ProxyConfig.CONTROL_MODE or 'LEGACY_HTTP').upper()
+
+    if stream_mode == 'HLS' and control_mode == 'LEGACY_API':
+        raise HTTPException(
+            status_code=400,
+            detail="HLS mode requires control_mode='LEGACY_HTTP'"
+        )
     
     # Check if stream is on the looping blacklist
     if looping_streams_tracker.is_looping(id):
@@ -2085,6 +2521,16 @@ async def ace_getstream(
     # Get client info
     client_ip = get_client_ip(request) if request else "unknown"
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
+
+    reusable_monitor_session = await legacy_stream_monitoring_service.get_reusable_session_for_content(id)
+    if reusable_monitor_session:
+        monitor_engine = reusable_monitor_session.get("engine") or {}
+        logger.info(
+            "Reusing monitor session %s for stream %s on engine %s",
+            reusable_monitor_session.get("monitor_id"),
+            id,
+            str(monitor_engine.get("container_id") or "unknown")[:12],
+        )
     
     reservation_engine_id = None
     
@@ -2114,65 +2560,7 @@ async def ace_getstream(
         Returns tuple of (selected_engine, current_load)
         Raises HTTPException if no engines available or all at capacity.
         """
-        from app.proxy.manager import ProxyManager
-        
-        engines = state.list_engines()
-        if not engines:
-            raise HTTPException(
-                status_code=503,
-                detail="No engines available"
-            )
-            
-        redis = ProxyManager.get_instance().redis_client
-        
-        # Engine selection: fill engines in layers (round-robin across all engines)
-        active_streams = state.list_streams(status="started")
-        engine_loads = {}
-        for stream in active_streams:
-            cid = stream.container_id
-            engine_loads[cid] = engine_loads.get(cid, 0) + 1
-            
-        # Add pending load from Redis for concurrent balancing
-        for e in engines:
-            cid = e.container_id
-            pending_key = f"ace_proxy:engine:{cid}:pending"
-            pending_count = int(redis.get(pending_key) or 0) if redis else 0
-            engine_loads[cid] = engine_loads.get(cid, 0) + pending_count
-        
-        # Filter out engines at max capacity
-        max_streams = cfg.MAX_STREAMS_PER_ENGINE
-        available_engines = [
-            e for e in engines 
-            if engine_loads.get(e.container_id, 0) < max_streams
-        ]
-        
-        if not available_engines:
-            raise HTTPException(
-                status_code=503,
-                detail=f"All engines at maximum capacity ({max_streams} streams per engine)"
-            )
-        
-        # Sort: (load, not forwarded) - prefer LEAST load first (layer filling), then forwarded
-        engines_sorted = sorted(available_engines, key=lambda e: (
-            engine_loads.get(e.container_id, 0),  # Ascending order (least streams first)
-            not e.forwarded  # Forwarded engines preferred when load is equal
-        ))
-        selected_engine = engines_sorted[0]
-        current_load = engine_loads.get(selected_engine.container_id, 0)
-        
-        # Atomic Reservation
-        if redis:
-            try:
-                pending_key = f"ace_proxy:engine:{selected_engine.container_id}:pending"
-                pipe = redis.pipeline()
-                pipe.incr(pending_key)
-                pipe.expire(pending_key, 15)  # 15s failsafe
-                pipe.execute()
-                logger.debug(f"Atomically reserved engine {selected_engine.container_id[:12]} pending count")
-            except Exception as e:
-                logger.warning(f"Failed to set Redis pending reservation for engine {selected_engine.container_id[:12]}: {e}")
-        
-        return selected_engine, current_load
+        return select_best_engine_shared(reserve_pending=True)
     
     try:
         # Handle HLS mode differently from TS mode
@@ -2219,9 +2607,25 @@ async def ace_getstream(
                     logger.error(f"Timeout getting HLS manifest: {e}")
                     raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
             
-            # Channel doesn't exist - need to select engine and create new session
-            selected_engine, current_load = select_best_engine()
-            reservation_engine_id = selected_engine.container_id
+            # Channel doesn't exist - either reuse monitor session or select engine.
+            if reusable_monitor_session:
+                monitor_engine = reusable_monitor_session.get("engine") or {}
+                monitor_session = reusable_monitor_session.get("session") or {}
+                selected_engine = SimpleNamespace(
+                    container_id=monitor_engine.get("container_id"),
+                    host=monitor_engine.get("host"),
+                    port=monitor_engine.get("port"),
+                    api_port=monitor_engine.get("api_port") or 62062,
+                    forwarded=bool(monitor_engine.get("forwarded")),
+                )
+                monitor_loads = state.get_active_monitor_load_by_engine()
+                current_load = len(state.list_streams(status="started", container_id=selected_engine.container_id)) + monitor_loads.get(selected_engine.container_id, 0)
+                playback_url = monitor_session.get("playback_url")
+                if not playback_url:
+                    raise HTTPException(status_code=500, detail="Monitor session has no playback URL")
+            else:
+                selected_engine, current_load = select_best_engine()
+                reservation_engine_id = selected_engine.container_id
             
             logger.info(
                 f"Selected engine {selected_engine.container_id[:12]} for new {stream_mode} stream {id} "
@@ -2232,47 +2636,65 @@ async def ace_getstream(
                 f"Client {client_id} initializing new {stream_mode} stream {id} from {client_ip}"
             )
             
-            # Request new session from AceStream engine
-            hls_url = f"http://{selected_engine.host}:{selected_engine.port}/ace/manifest.m3u8"
-            pid = str(uuid4())
-            params = {
-                "id": id,
-                "format": "json",
-                "pid": pid
-            }
-            
             try:
-                logger.info(f"Requesting HLS stream from engine: {hls_url}")
-                response = requests.get(hls_url, params=params, timeout=10)
-                response.raise_for_status()
-                data = response.json()
-                
-                if data.get("error"):
-                    error_msg = data['error']
-                    logger.error(f"AceStream engine returned error: {error_msg}")
-                    raise HTTPException(status_code=500, detail=f"AceStream engine error: {error_msg}")
-                
-                # Get session info from response
-                resp_data = data.get("response", {})
-                playback_url = resp_data.get("playback_url")
-                
-                if not playback_url:
-                    logger.error("No playback_url in AceStream response")
-                    raise HTTPException(status_code=500, detail="No playback URL in engine response")
-                
-                logger.info(f"HLS playback URL: {playback_url}")
-                
-                # Get API key from environment
-                api_key = os.getenv('API_KEY')
-                
-                # Prepare session info for event tracking
-                session_info = {
-                    'playback_session_id': resp_data.get('playback_session_id'),
-                    'stat_url': resp_data.get('stat_url'),
-                    'command_url': resp_data.get('command_url'),
-                    'is_live': resp_data.get('is_live', 1)
-                }
-                
+                if reusable_monitor_session:
+                    logger.info("Using playback URL from monitoring session for HLS stream")
+                    # Get API key from environment
+                    api_key = os.getenv('API_KEY')
+
+                    monitor_session = reusable_monitor_session.get("session") or {}
+                    monitor_playback_session_id = monitor_session.get('playback_session_id')
+                    if not monitor_playback_session_id:
+                        monitor_playback_session_id = f"hls-reuse-{id[:16]}-{int(time.time())}"
+                    session_info = {
+                        'playback_session_id': monitor_playback_session_id,
+                        'stat_url': monitor_session.get('stat_url') or '',
+                        'command_url': monitor_session.get('command_url') or '',
+                        'is_live': 1,
+                        'owns_engine_session': False,
+                    }
+                else:
+                    # Request new session from AceStream engine
+                    hls_url = f"http://{selected_engine.host}:{selected_engine.port}/ace/manifest.m3u8"
+                    pid = str(uuid4())
+                    params = {
+                        "id": id,
+                        "format": "json",
+                        "pid": pid
+                    }
+
+                    logger.info(f"Requesting HLS stream from engine: {hls_url}")
+                    response = requests.get(hls_url, params=params, timeout=10)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    if data.get("error"):
+                        error_msg = data['error']
+                        logger.error(f"AceStream engine returned error: {error_msg}")
+                        raise HTTPException(status_code=500, detail=f"AceStream engine error: {error_msg}")
+
+                    # Get session info from response
+                    resp_data = data.get("response", {})
+                    playback_url = resp_data.get("playback_url")
+
+                    if not playback_url:
+                        logger.error("No playback_url in AceStream response")
+                        raise HTTPException(status_code=500, detail="No playback URL in engine response")
+
+                    logger.info(f"HLS playback URL: {playback_url}")
+
+                    # Get API key from environment
+                    api_key = os.getenv('API_KEY')
+
+                    # Prepare session info for event tracking
+                    session_info = {
+                        'playback_session_id': resp_data.get('playback_session_id'),
+                        'stat_url': resp_data.get('stat_url'),
+                        'command_url': resp_data.get('command_url'),
+                        'is_live': resp_data.get('is_live', 1),
+                        'owns_engine_session': True,
+                    }
+
                 # Initialize HLS proxy channel
                 hls_proxy.initialize_channel(
                     channel_id=id,
@@ -2310,8 +2732,20 @@ async def ace_getstream(
                 raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
         else:
             # TS mode - use existing ts_proxy architecture
-            selected_engine, current_load = select_best_engine()
-            reservation_engine_id = selected_engine.container_id
+            if reusable_monitor_session:
+                monitor_engine = reusable_monitor_session.get("engine") or {}
+                selected_engine = SimpleNamespace(
+                    container_id=monitor_engine.get("container_id"),
+                    host=monitor_engine.get("host"),
+                    port=monitor_engine.get("port"),
+                    api_port=monitor_engine.get("api_port") or 62062,
+                    forwarded=bool(monitor_engine.get("forwarded")),
+                )
+                monitor_loads = state.get_active_monitor_load_by_engine()
+                current_load = len(state.list_streams(status="started", container_id=selected_engine.container_id)) + monitor_loads.get(selected_engine.container_id, 0)
+            else:
+                selected_engine, current_load = select_best_engine()
+                reservation_engine_id = selected_engine.container_id
             
             logger.info(
                 f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {id} "
@@ -2330,7 +2764,9 @@ async def ace_getstream(
                 content_id=id,
                 engine_host=selected_engine.host,
                 engine_port=selected_engine.port,
-                engine_container_id=selected_engine.container_id
+                engine_api_port=selected_engine.api_port,
+                engine_container_id=selected_engine.container_id,
+                existing_session=reusable_monitor_session,
             )
             
             if not success:
@@ -2345,7 +2781,7 @@ async def ace_getstream(
                 client_id=client_id,
                 client_ip=client_ip,
                 client_user_agent=user_agent,
-                stream_initializing=False
+                stream_initializing=(control_mode == 'LEGACY_API')
             )
             
             # Return streaming response with TS data
@@ -2797,7 +3233,7 @@ def get_proxy_config():
     Returns proxy buffer and streaming settings that can be adjusted at runtime.
     """
     from .proxy import constants as proxy_constants
-    from .proxy.config_helper import Config as ProxyConfig
+    from .proxy.config_helper import Config as ProxyConfig, ConfigHelper
     
     return {
         "vlc_user_agent": proxy_constants.VLC_USER_AGENT,
@@ -2813,6 +3249,8 @@ def get_proxy_config():
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
+        "control_mode": ProxyConfig.CONTROL_MODE,
+        "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
         "engine_variant": cfg.ENGINE_VARIANT,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
@@ -2836,6 +3274,8 @@ def update_proxy_config(
     channel_shutdown_delay: Optional[int] = None,
     max_streams_per_engine: Optional[int] = None,
     stream_mode: Optional[str] = None,
+    control_mode: Optional[str] = None,
+    legacy_api_preflight_tier: Optional[str] = None,
     # HLS-specific parameters
     hls_max_segments: Optional[int] = None,
     hls_initial_segments: Optional[int] = None,
@@ -2859,6 +3299,8 @@ def update_proxy_config(
         channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
         max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
         stream_mode: Stream mode - 'TS' for MPEG-TS or 'HLS' for HLS streaming
+        control_mode: Engine control mode - 'LEGACY_HTTP' (default) or 'LEGACY_API' (optional)
+        legacy_api_preflight_tier: Legacy API preflight tier - 'light' or 'deep'
         hls_max_segments: Maximum HLS segments to buffer (min: 5, max: 100)
         hls_initial_segments: Minimum HLS segments before playback (min: 1, max: 10)
         hls_window_size: Number of segments in HLS manifest window (min: 3, max: 20)
@@ -2872,7 +3314,7 @@ def update_proxy_config(
     Changes take effect for new streams only.
     """
     from .proxy import constants as proxy_constants
-    from .proxy.config_helper import Config as ProxyConfig
+    from .proxy.config_helper import Config as ProxyConfig, ConfigHelper
     
     # Validation and updates
     if initial_data_wait_timeout is not None:
@@ -2918,9 +3360,29 @@ def update_proxy_config(
     if stream_mode is not None:
         if stream_mode not in ['TS', 'HLS']:
             raise HTTPException(status_code=400, detail="stream_mode must be either 'TS' or 'HLS'")
+
+        # Legacy API control currently supports TS flow only.
+        if stream_mode == 'HLS' and ProxyConfig.CONTROL_MODE == 'LEGACY_API':
+            raise HTTPException(status_code=400, detail="HLS mode is only supported with control_mode='LEGACY_HTTP'")
         
         ProxyConfig.STREAM_MODE = stream_mode
-    
+
+    if control_mode is not None:
+        normalized_control_mode = str(control_mode).upper()
+        if normalized_control_mode not in ['LEGACY_HTTP', 'LEGACY_API']:
+            raise HTTPException(status_code=400, detail="control_mode must be either 'LEGACY_HTTP' or 'LEGACY_API'")
+
+        if normalized_control_mode == 'LEGACY_API' and ProxyConfig.STREAM_MODE == 'HLS':
+            raise HTTPException(status_code=400, detail="control_mode='LEGACY_API' requires stream_mode='TS'")
+
+        ProxyConfig.CONTROL_MODE = normalized_control_mode
+
+    if legacy_api_preflight_tier is not None:
+        normalized_tier = str(legacy_api_preflight_tier).strip().lower()
+        if normalized_tier not in ['light', 'deep']:
+            raise HTTPException(status_code=400, detail="legacy_api_preflight_tier must be either 'light' or 'deep'")
+        ProxyConfig.LEGACY_API_PREFLIGHT_TIER = normalized_tier
+
     # HLS-specific settings validation and updates
     if hls_max_segments is not None:
         if hls_max_segments < 5 or hls_max_segments > 100:
@@ -2972,7 +3434,9 @@ def update_proxy_config(
         f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
         f"max_streams_per_engine={cfg.MAX_STREAMS_PER_ENGINE}, "
-        f"stream_mode={ProxyConfig.STREAM_MODE}"
+        f"stream_mode={ProxyConfig.STREAM_MODE}, "
+        f"control_mode={ProxyConfig.CONTROL_MODE}, "
+        f"legacy_api_preflight_tier={ConfigHelper.legacy_api_preflight_tier()}"
     )
     
     # Persist settings to JSON file
@@ -2987,6 +3451,8 @@ def update_proxy_config(
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
+        "control_mode": ProxyConfig.CONTROL_MODE,
+        "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
@@ -3011,6 +3477,8 @@ def update_proxy_config(
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
+        "control_mode": ProxyConfig.CONTROL_MODE,
+        "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,

@@ -58,6 +58,16 @@ class Config:
     
     # Stream mode (TS or HLS)
     STREAM_MODE = os.getenv('PROXY_STREAM_MODE', 'TS')  # Default to MPEG-TS for backwards compatibility
+
+    # Engine control mode
+    # LEGACY_HTTP: current /ace/getstream JSON HTTP control flow
+    # LEGACY_API: telnet-style AceStream API control flow (optional)
+    CONTROL_MODE = os.getenv('PROXY_CONTROL_MODE', 'LEGACY_HTTP')
+
+    # LEGACY_API preflight tier used before START when proxy control mode is LEGACY_API.
+    # light: resolve/canonicalize only
+    # deep: resolve + start + status/livepos sampling + stop
+    LEGACY_API_PREFLIGHT_TIER = os.getenv('PROXY_LEGACY_API_PREFLIGHT_TIER', 'light')
     
     # HLS-specific settings
     HLS_MAX_SEGMENTS = int(os.getenv('HLS_MAX_SEGMENTS', '20'))  # Maximum segments to buffer
@@ -189,6 +199,17 @@ class ConfigHelper:
     def stream_mode():
         """Get stream mode (TS or HLS)."""
         return Config.STREAM_MODE
+
+    @staticmethod
+    def control_mode():
+        """Get engine control mode (LEGACY_HTTP or LEGACY_API)."""
+        return Config.CONTROL_MODE
+
+    @staticmethod
+    def legacy_api_preflight_tier():
+        """Get LEGACY_API preflight tier (light or deep)."""
+        tier = str(Config.LEGACY_API_PREFLIGHT_TIER or "light").strip().lower()
+        return tier if tier in {"light", "deep"} else "light"
     
     # HLS-specific configuration helpers
     @staticmethod

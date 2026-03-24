@@ -52,6 +52,7 @@ export function GeneralSettings({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="1000">1 second</SelectItem>
                 <SelectItem value="2000">2 seconds</SelectItem>
                 <SelectItem value="5000">5 seconds</SelectItem>
                 <SelectItem value="10000">10 seconds</SelectItem>

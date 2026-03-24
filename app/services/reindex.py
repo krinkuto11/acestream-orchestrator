@@ -1,6 +1,15 @@
 from .ports import alloc
 from .health import list_managed
-from .provisioner import ACESTREAM_LABEL_HTTP, ACESTREAM_LABEL_HTTPS, HOST_LABEL_HTTP, HOST_LABEL_HTTPS, FORWARDED_LABEL, ENGINE_VARIANT_LABEL
+from .provisioner import (
+    ACESTREAM_LABEL_HTTP,
+    ACESTREAM_LABEL_HTTPS,
+    ACESTREAM_LABEL_API,
+    HOST_LABEL_HTTP,
+    HOST_LABEL_HTTPS,
+    HOST_LABEL_API,
+    FORWARDED_LABEL,
+    ENGINE_VARIANT_LABEL,
+)
 from .state import state
 from .inspect import get_container_name
 from ..models.schemas import EngineState
@@ -27,6 +36,7 @@ def reindex_existing():
         try:
             if HOST_LABEL_HTTP in lbl: alloc.reserve_host(int(lbl[HOST_LABEL_HTTP]))
             if HOST_LABEL_HTTPS in lbl: alloc.reserve_host(int(lbl[HOST_LABEL_HTTPS]))
+            if HOST_LABEL_API in lbl: alloc.reserve_host(int(lbl[HOST_LABEL_API]))
         except Exception: pass
         
         # Extract VPN container assignment from labels
@@ -76,6 +86,8 @@ def reindex_existing():
                 except Exception:
                     # If extraction fails, keep port as 0
                     pass
+
+            api_port = int(lbl.get(HOST_LABEL_API) or lbl.get(ACESTREAM_LABEL_API) or 62062)
             
             now = state.now()
             
@@ -93,7 +105,7 @@ def reindex_existing():
             engine_variant = lbl.get(ENGINE_VARIANT_LABEL)
             
             state.engines[key] = EngineState(container_id=key, container_name=container_name, host=host, port=port, 
-                                            labels=lbl, forwarded=should_be_forwarded, first_seen=now, last_seen=now, 
+                                            api_port=api_port, labels=lbl, forwarded=should_be_forwarded, first_seen=now, last_seen=now, 
                                             streams=[], vpn_container=vpn_container, engine_variant=engine_variant)
             
             # Set VPN container assignment in state if present

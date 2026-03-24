@@ -189,6 +189,70 @@ def test_collector_handles_normal_stats():
     print("✅ Collector still collects normal stats correctly")
 
 
+def test_collector_collects_missing_stat_url_via_legacy_proxy_session():
+    """Collector should gather legacy stats via active proxy session when stat_url is missing."""
+    print("Testing collector legacy path for missing stat_url...")
+
+    test_state = State()
+    evt = StreamStartedEvent(
+        container_id="legacy_container",
+        engine=EngineAddress(host="127.0.0.1", port=6878),
+        stream=StreamKey(key_type="content_id", key="legacy_content_id"),
+        session=SessionInfo(
+            playback_session_id="legacy_session",
+            stat_url="",
+            command_url="",
+            is_live=1,
+        ),
+        labels={"stream_id": "legacy_stream"},
+    )
+    test_state.on_stream_started(evt)
+
+    collector = Collector()
+    mock_client = MagicMock()
+
+    mock_manager = MagicMock()
+    mock_manager.collect_legacy_stats_probe.return_value = {
+        "status_text": "dl",
+        "peers": 7,
+        "speed_down": 1024,
+        "speed_up": 256,
+        "downloaded": 12345,
+        "uploaded": 678,
+        "livepos": {
+            "pos": "1767630000",
+            "live_first": "1767629800",
+            "live_last": "1767630010",
+            "buffer_pieces": 12,
+        },
+    }
+
+    mock_proxy = MagicMock()
+    mock_proxy.stream_managers = {"legacy_content_id": mock_manager}
+
+    async def run_test():
+        with patch.object(mock_client, 'get', new_callable=AsyncMock) as mock_get:
+            with patch('app.services.collector.state', test_state):
+                with patch('app.proxy.server.ProxyServer.get_instance', return_value=mock_proxy):
+                    await collector._collect_one(mock_client, "legacy_stream", "")
+            mock_get.assert_not_awaited()
+
+    asyncio.run(run_test())
+
+    stats = test_state.get_stream_stats("legacy_stream")
+    assert len(stats) == 1
+    assert stats[0].status == "dl"
+    assert stats[0].peers == 7
+    assert stats[0].speed_down == 1024
+    assert stats[0].speed_up == 256
+    assert stats[0].downloaded == 12345
+    assert stats[0].uploaded == 678
+    assert stats[0].livepos is not None
+    assert stats[0].livepos.pos == "1767630000"
+
+    print("✅ Collector gathers missing stat_url streams via legacy proxy session")
+
+
 if __name__ == "__main__":
     print("🧪 Testing that collector no longer performs stale stream detection...\n")
     
@@ -199,6 +263,8 @@ if __name__ == "__main__":
     test_collector_collect_one_signature()
     print()
     test_collector_handles_normal_stats()
+    print()
+    test_collector_collects_missing_stat_url_via_legacy_proxy_session()
     
     print("\n🎉 All tests passed!")
     print("\nVerified that:")
@@ -206,3 +272,4 @@ if __name__ == "__main__":
     print("  • Collector skips stats collection when errors occur")
     print("  • Collector still collects stats for normal responses")
     print("  • Stream lifecycle is now managed by Proxy")
+    print("  • Legacy streams without stat_url are gathered via collector")

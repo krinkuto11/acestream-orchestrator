@@ -78,3 +78,6 @@ app/config/loop_detection_settings.json
 
 # Reference UI code (not part of project)
 qui-develop/
+compose.text.yml
+hashes.txt
+legacy_api_monitoring_suite

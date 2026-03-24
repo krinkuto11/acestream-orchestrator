@@ -262,9 +262,19 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
 
       {/* Tabs for Engine Status and Configuration */}
       <Tabs defaultValue="status" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="status">Engine Status</TabsTrigger>
-          <TabsTrigger value="configuration">Engine Configuration</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 border-slate-700 bg-slate-900/90 text-slate-300">
+          <TabsTrigger
+            value="status"
+            className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50"
+          >
+            Engine Status
+          </TabsTrigger>
+          <TabsTrigger
+            value="configuration"
+            className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50"
+          >
+            Engine Configuration
+          </TabsTrigger>
         </TabsList>
 
         {/* Engine Status Tab */}

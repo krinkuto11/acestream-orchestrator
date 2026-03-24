@@ -124,6 +124,9 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
           <span className="text-sm text-white">{engine.host}:{engine.port}</span>
         </TableCell>
         <TableCell className="text-center">
+          <span className="text-sm text-white">{engine.api_port || '—'}</span>
+        </TableCell>
+        <TableCell className="text-center">
           <Badge variant={healthVariant} className="flex items-center gap-1 w-fit mx-auto">
             <Activity className="h-3 w-3" />
             <span className="text-white">{healthStatus.toUpperCase()}</span>
@@ -197,7 +200,7 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
       </TableRow>
       {isExpanded && (
         <TableRow>
-          <TableCell colSpan={vpnMode ? 15 : 14} className="p-6 bg-muted/50">
+          <TableCell colSpan={vpnMode ? 16 : 15} className="p-6 bg-muted/50">
             <div className="space-y-6">
               {/* Engine Details */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -212,6 +215,10 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
                 <div>
                   <p className="text-xs text-muted-foreground">Address</p>
                   <p className="text-sm font-medium text-foreground">{engine.host}:{engine.port}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">API Port</p>
+                  <p className="text-sm font-medium text-foreground">{engine.api_port || 'N/A'}</p>
                 </div>
                 {engine.platform && (
                   <div>
@@ -366,6 +373,9 @@ function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUr
               >
                 Address <SortIcon column="host" />
               </TableHead>
+              <TableHead className="text-center">
+                API Port
+              </TableHead>
               <TableHead 
                 className="cursor-pointer select-none text-center"
                 onClick={() => handleSort('health_status')}
@@ -430,7 +440,7 @@ function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUr
           <TableBody>
             {sortedEngines.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={vpnMode ? 15 : 14} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={vpnMode ? 16 : 15} className="text-center py-8 text-muted-foreground">
                   No engines available
                 </TableCell>
               </TableRow>

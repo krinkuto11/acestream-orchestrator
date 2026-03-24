@@ -125,6 +125,7 @@ class ReplicaValidator:
             # Get current state
             all_engines = state.list_engines()
             active_streams = state.list_streams(status="started")
+            monitor_container_ids = state.get_active_monitor_container_ids()
             docker_status = self.get_docker_container_status()
             
             # Check if Docker socket is available
@@ -132,6 +133,7 @@ class ReplicaValidator:
                 logger.warning("Docker socket temporarily unavailable - skipping state synchronization to avoid premature cleanup")
                 # Return current state counts without modification
                 used_container_ids = {stream.container_id for stream in active_streams}
+                used_container_ids.update(monitor_container_ids)
                 state_engine_count = len(all_engines)
                 used_engines = len(used_container_ids)
                 free_count = state_engine_count - used_engines
@@ -147,6 +149,7 @@ class ReplicaValidator:
             
             # Find engines currently in use
             used_container_ids = {stream.container_id for stream in active_streams}
+            used_container_ids.update(monitor_container_ids)
             
             # Docker containers as source of truth for total running count
             total_running = docker_status['total_running']

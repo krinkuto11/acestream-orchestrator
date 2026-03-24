@@ -1,10 +1,11 @@
 import asyncio
+import os
 import httpx
 import logging
 from datetime import datetime, timezone
 from typing import Dict, Optional, Any
 from .state import state
-from ..models.schemas import StreamStatSnapshot
+from ..models.schemas import StreamStatSnapshot, LivePosData
 from ..core.config import cfg
 from .metrics import on_stream_stat_update
 
@@ -23,6 +24,13 @@ class Collector:
     def __init__(self):
         self._task = None
         self._stop = asyncio.Event()
+        # Legacy API status probes are blocking socket calls; limit offloaded
+        # concurrency so the collector loop remains responsive under load.
+        try:
+            legacy_probe_workers = max(2, int(os.getenv("LEGACY_STATS_PROBE_WORKERS", "8")))
+        except Exception:
+            legacy_probe_workers = 8
+        self._legacy_probe_semaphore = asyncio.Semaphore(legacy_probe_workers)
 
     async def start(self):
         if self._task and not self._task.done():
@@ -49,6 +57,14 @@ class Collector:
                     pass
 
     async def _collect_one(self, client: httpx.AsyncClient, stream_id: str, stat_url: str):
+        if not stat_url:
+            # Legacy API streams don't expose stat_url. Pull stats from the
+            # active proxy StreamManager session.
+            stream = state.get_stream(stream_id)
+            if stream:
+                await self._collect_legacy_stream(stream_id, stream)
+            return
+
         try:
             logger.debug(f"Collecting stats for stream_id={stream_id} url={stat_url}")
             r = await client.get(stat_url)
@@ -164,5 +180,84 @@ class Collector:
             logger.exception(f"Unhandled exception while collecting stats for {stream_id} from {stat_url}")
             return
 
+    async def _collect_legacy_stream(self, stream_id: str, stream) -> None:
+        """Collect stats for a legacy API stream through the active proxy session."""
+        try:
+            # Legacy stats can only be queried on the same API session used for START,
+            # so we read them from the in-process proxy stream manager.
+            from ..proxy.server import ProxyServer
+
+            proxy = ProxyServer.get_instance()
+            manager = proxy.stream_managers.get(stream.key) if proxy else None
+            if not manager:
+                return
+
+            async with self._legacy_probe_semaphore:
+                probe = await asyncio.to_thread(
+                    manager.collect_legacy_stats_probe,
+                    1,
+                    1.0,
+                )
+
+            if not probe:
+                # Stream may be reusing a monitoring session (no direct legacy socket on proxy side).
+                from .legacy_stream_monitoring import legacy_stream_monitoring_service
+
+                reusable = await legacy_stream_monitoring_service.get_reusable_session_for_content(stream.key)
+                if reusable:
+                    probe = reusable.get("latest_status") or None
+
+            if not probe:
+                return
+
+            speed_down = probe.get("speed_down")
+            if speed_down is None:
+                speed_down = probe.get("http_speed_down")
+
+            peers = probe.get("peers")
+            if peers is None:
+                peers = probe.get("http_peers")
+
+            downloaded = probe.get("downloaded")
+            if downloaded is None:
+                downloaded = probe.get("http_downloaded")
+
+            # Keep numeric fields stable for panel/metrics even if probe omits fields.
+            speed_down = 0 if speed_down is None else speed_down
+            speed_up = 0 if probe.get("speed_up") is None else probe.get("speed_up")
+            downloaded = 0 if downloaded is None else downloaded
+            uploaded = 0 if probe.get("uploaded") is None else probe.get("uploaded")
+
+            livepos = None
+            livepos_raw = probe.get("livepos") or {}
+            if livepos_raw:
+                livepos = LivePosData(
+                    pos=livepos_raw.get("pos"),
+                    live_first=livepos_raw.get("live_first") or livepos_raw.get("first_ts"),
+                    live_last=livepos_raw.get("live_last") or livepos_raw.get("last_ts"),
+                    first_ts=livepos_raw.get("first_ts"),
+                    last_ts=livepos_raw.get("last_ts"),
+                    buffer_pieces=str(livepos_raw.get("buffer_pieces")) if livepos_raw.get("buffer_pieces") is not None else None,
+                )
+
+            snap = StreamStatSnapshot(
+                ts=datetime.now(timezone.utc),
+                peers=peers,
+                speed_down=speed_down,
+                speed_up=speed_up,
+                downloaded=downloaded,
+                uploaded=uploaded,
+                status=probe.get("status_text") or probe.get("status"),
+                livepos=livepos,
+            )
+            state.append_stat(stream_id, snap)
+
+            try:
+                on_stream_stat_update(stream_id, snap.uploaded, snap.downloaded)
+            except Exception:
+                logger.exception(f"Error updating cumulative metrics for legacy stream {stream_id}")
+        except Exception:
+            logger.exception(f"Unhandled exception while collecting legacy stats for {stream_id}")
+            return
 
 collector = Collector()

@@ -136,7 +136,7 @@ export function MetricsPage({ apiKey, orchUrl }) {
   useEffect(() => {
     setLoading(true)
     fetchSnapshot()
-    const interval = setInterval(fetchSnapshot, 5000)
+    const interval = setInterval(fetchSnapshot, 1000)
     return () => clearInterval(interval)
   }, [fetchSnapshot])
 

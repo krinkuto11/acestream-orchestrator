@@ -68,6 +68,124 @@ Response:
 ```
 ### Stream Management Operations
 
+ - GET /ace/preflight?id=<content_id>&tier=light|deep
+   - Runs short availability probing without opening a long-lived proxy client session.
+   - Uses least-loaded engine selection (same balancing policy as stream startup).
+   - Works in both control paths:
+     - `LEGACY_HTTP`: probes through `/ace/getstream` with optional short status check in `deep` tier.
+     - `LEGACY_API`: probes through API port (`HELLOBG/READY/LOADASYNC/START/STATUS/STOP`).
+   - Supports two tiers:
+     - `light`: resolve/canonicalize only (fast)
+     - `deep`: resolve + START + STATUS/livepos sampling + STOP (richer diagnostics)
+   - In `LEGACY_API` control mode:
+     - Uses numeric `LOADASYNC` session IDs.
+     - Canonicalizes aliases to resolved `infohash` before START.
+     - Parses `STATUS` and `EVENT livepos` with HTTPAceProxy-compatible rules.
+   - Response shape:
+   ```json
+   {
+     "control_mode": "LEGACY_API",
+     "tier": "deep",
+     "engine": {
+       "container_id": "...",
+       "host": "127.0.0.1",
+       "port": 6878,
+       "api_port": 62062,
+       "forwarded": false
+     },
+     "result": {
+       "available": true,
+       "infohash": "...",
+       "status_code": 1,
+       "status_probe": {
+         "status_text": "dl",
+         "peers": 3,
+         "http_peers": 0,
+         "progress": 0,
+         "livepos": {
+           "pos": "...",
+           "buffer_pieces": 15
+         }
+       }
+     }
+   }
+   ```
+
+ - POST /ace/monitor/legacy/start (protected)
+   - Starts an async monitor session that uses `LEGACY_API` control flow only for telemetry.
+   - Flow: `HELLOBG/READY/LOADASYNC/START`, then `STATUS` probe once per `interval_s`.
+   - No player clients are attached and no stream data is proxied to consumers.
+   - Monitor session state is tracked in orchestrator state (including selected engine and latest status).
+   - Body:
+   ```json
+   {
+     "content_id": "6422e8bc34282871634c81947be093c04ad1bb29",
+     "stream_name": "Example Channel",
+     "interval_s": 1.0,
+     "run_seconds": 0,
+     "per_sample_timeout_s": 1.0,
+     "engine_container_id": null
+   }
+   ```
+   - Notes:
+     - `interval_s` minimum is `0.5` (recommended: `1.0`).
+     - `run_seconds=0` means run until manually stopped.
+     - `engine_container_id` is optional; if omitted, engine selection uses the same balancing strategy as proxy stream allocation.
+     - `stream_name` is optional and is persisted in monitor sessions (useful when sessions are created from playlist entries).
+
+ - GET /ace/monitor/legacy (protected)
+   - Lists all monitor sessions with latest STATUS sample and summary counters.
+   - Includes engine assignment per monitor session and optional `stream_name` when provided at creation time.
+   - Query params:
+     - `include_recent_status=true|false` (default: `true`)
+       - `true`: includes `recent_status` history in each monitor item.
+       - `false`: omits `recent_status` and returns lightweight latest-status summaries.
+
+ - POST /ace/monitor/legacy/parse-m3u (protected)
+   - Parses uploaded/inline M3U content and extracts `acestream://<id>` entries.
+   - Returns parsed stream names (from `#EXTINF`) and normalized content IDs.
+   - Body:
+   ```json
+   {
+     "m3u_content": "#EXTM3U\n#EXTINF:-1,My Stream\nacestream://aabb...\n"
+   }
+   ```
+   - Response:
+   ```json
+   {
+     "count": 1,
+     "items": [
+       {
+         "content_id": "aabb...",
+         "name": "My Stream",
+         "line_number": "2"
+       }
+     ]
+   }
+   ```
+
+ - GET /ace/monitor/legacy/{monitor_id} (protected)
+   - Returns a single monitor session including `recent_status` history (in-memory ring buffer).
+   - Query params:
+     - `include_recent_status=true|false` (default: `true`)
+       - `true`: includes `recent_status` history.
+       - `false`: omits `recent_status` and returns a lightweight latest-status summary.
+   - Includes `livepos_movement` summary with movement/stuck signals:
+     - `is_moving`, `direction`, `pos_delta`, `last_ts_delta`, `downloaded_delta`, `movement_events`.
+  - Sessions with non-moving `livepos` are labeled `status=stuck` and continue being monitored.
+  - Sessions that timeout or fail to connect are marked `status=dead` and monitoring is stopped.
+
+ - DELETE /ace/monitor/legacy/{monitor_id} (protected)
+   - Stops a monitor session and closes the legacy API connection (`STOP` + `SHUTDOWN`).
+
+ - DELETE /ace/monitor/legacy/{monitor_id}/entry (protected)
+   - Stops the session (if still running) and removes the monitor entry from in-memory session list.
+
+ - GET /ace/getstream?id=... (TS/HLS proxy)
+   - If the requested content is already being monitored (`/ace/monitor/legacy`), proxy reuses that monitor session playback URL.
+   - Reused sessions inherit monitor engine assignment (no duplicate START for the same content).
+   - Stream stats remain visible under `/streams` by using monitor telemetry when direct legacy stat probing is unavailable.
+
  - DELETE /streams/{stream_id} (protected) → Stop a single stream
    - Stops a stream by calling its command URL with method=stop
    - Marks the stream as ended in state
@@ -123,6 +241,10 @@ Response:
    - Use `status=ended` to get ended streams (will typically return empty list since ended streams are immediately removed from memory)
    - Can filter by `container_id` to get streams for a specific engine
    - **Note**: A backup cleanup routine runs every 5 minutes to catch any streams that failed immediate removal
+   - `labels` may include legacy diagnostics fields when available:
+     - `proxy.control_mode`: control path used for stream startup (`LEGACY_HTTP` or `LEGACY_API`)
+     - `stream.resolved_infohash`: canonical infohash used for START in legacy API flow
+     - `stream.status_text`, `stream.peers`, `stream.http_peers`, `stream.progress`: best-effort probe values from startup sampling
 
  - GET /streams/{stream_id}/stats?since=<ISO8601> → StreamStatSnapshot[]
 

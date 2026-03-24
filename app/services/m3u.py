@@ -3,6 +3,7 @@
 import re
 import logging
 from urllib.parse import quote, urlparse
+from typing import Dict, List
 
 import requests
 
@@ -106,3 +107,55 @@ def modify_m3u_content(content: str, host: str, port: int, mode: str = "default"
         modified = acestream_pattern.sub(acestream_replacement, modified)
 
         return modified
+
+
+def parse_acestream_m3u_entries(content: str) -> List[Dict[str, str]]:
+    """Parse `acestream://` lines from M3U content and pair them with stream names.
+
+    Name extraction follows EXTINF convention: `#EXTINF:-1,<stream name>`.
+    Returns unique entries by content_id preserving first occurrence order.
+    """
+    lines = (content or "").splitlines()
+    entries: List[Dict[str, str]] = []
+    seen_ids = set()
+
+    pending_name = ""
+    acestream_pattern = re.compile(r"acestream://([a-fA-F0-9]{40})")
+
+    for idx, raw_line in enumerate(lines, start=1):
+        line = (raw_line or "").strip()
+        if not line:
+            continue
+
+        if line.startswith("#EXTINF"):
+            comma_idx = line.find(",")
+            if comma_idx >= 0 and comma_idx < len(line) - 1:
+                pending_name = line[comma_idx + 1 :].strip()
+            else:
+                pending_name = ""
+            continue
+
+        if line.startswith("#"):
+            continue
+
+        match = acestream_pattern.search(line)
+        if not match:
+            continue
+
+        content_id = match.group(1).lower()
+        if content_id in seen_ids:
+            pending_name = ""
+            continue
+
+        display_name = pending_name or f"AceStream {len(entries) + 1}"
+        entries.append(
+            {
+                "content_id": content_id,
+                "name": display_name,
+                "line_number": str(idx),
+            }
+        )
+        seen_ids.add(content_id)
+        pending_name = ""
+
+    return entries

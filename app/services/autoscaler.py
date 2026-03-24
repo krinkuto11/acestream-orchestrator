@@ -75,9 +75,12 @@ def ensure_minimum():
         all_engines = state.list_engines()
         if all_engines:
             # Get stream counts per engine
+            monitor_loads = state.get_active_monitor_load_by_engine()
             engines_with_stream_counts = []
             for engine in all_engines:
-                stream_count = len(state.list_streams(status="started", container_id=engine.container_id))
+                active_stream_count = len(state.list_streams(status="started", container_id=engine.container_id))
+                monitor_stream_count = monitor_loads.get(engine.container_id, 0)
+                stream_count = active_stream_count + monitor_stream_count
                 engines_with_stream_counts.append((engine.container_id, stream_count))
             
             # Calculate min and max stream counts
@@ -273,11 +276,16 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
     
     # Check if engine has any active streams
     active_streams = state.list_streams(status="started", container_id=container_id)
-    if active_streams:
+    monitor_loads = state.get_active_monitor_load_by_engine()
+    monitor_stream_count = monitor_loads.get(container_id, 0)
+    if active_streams or monitor_stream_count > 0:
         # Engine has active streams, remove from empty tracking
         if container_id in _empty_engine_timestamps:
             del _empty_engine_timestamps[container_id]
-        logger.debug(f"Engine {container_id[:12]} cannot be stopped - has {len(active_streams)} active streams")
+        logger.debug(
+            f"Engine {container_id[:12]} cannot be stopped - has "
+            f"{len(active_streams)} active streams and {monitor_stream_count} monitoring sessions"
+        )
         return False
     
     # Check if stopping this engine would violate replica constraints

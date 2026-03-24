@@ -138,7 +138,7 @@ class ProxyServer:
         except Exception as e:
             logger.error(f"Error handling event: {e}")
     
-    def start_stream(self, content_id, engine_host, engine_port, engine_container_id=None):
+    def start_stream(self, content_id, engine_host, engine_port, engine_container_id=None, engine_api_port=None, existing_session=None):
         """Start a new stream session"""
         if content_id in self.stream_managers:
             logger.info(f"Stream already exists for content_id={content_id}")
@@ -165,11 +165,13 @@ class ProxyServer:
                 content_id=content_id,
                 engine_host=engine_host,
                 engine_port=engine_port,
+                engine_api_port=engine_api_port,
                 engine_container_id=engine_container_id,
                 buffer=buffer,
                 client_manager=client_manager,
                 worker_id=self.worker_id,
-                api_key=api_key
+                api_key=api_key,
+                existing_session=existing_session,
             )
             self.stream_managers[content_id] = stream_manager
             
@@ -223,13 +225,66 @@ class ProxyServer:
         buffer = self.stream_buffers.pop(content_id, None)
         if buffer:
             buffer.stop()
-        
-        # Remove owner from Redis
 
-        owner_key = RedisKeys.stream_owner(content_id)
-        self.redis_client.delete(owner_key)
+        # Flush all Redis keys related to this stream so stale cache does not survive stream end.
+        self._flush_stream_redis_cache(content_id)
         
         logger.info(f"Stream stopped for content_id={content_id}")
+
+    def _flush_stream_redis_cache(self, content_id: str) -> int:
+        """Remove Redis keys associated with one proxy stream.
+
+        This is called on stream teardown so stream-end paths deterministically
+        clear buffered chunks and per-stream metadata/client bookkeeping.
+        """
+        if not self.redis_client:
+            return 0
+
+        deleted_count = 0
+
+        direct_keys = [
+            RedisKeys.stream_owner(content_id),
+            RedisKeys.stream_metadata(content_id),
+            RedisKeys.buffer_index(content_id),
+            RedisKeys.stream_stopping(content_id),
+            RedisKeys.clients(content_id),
+            RedisKeys.last_client_disconnect(content_id),
+            RedisKeys.connection_attempt(content_id),
+            RedisKeys.last_data(content_id),
+            f"ace_proxy:stream:{content_id}:activity",
+            f"ace_proxy:stream:{content_id}:init_time",
+        ]
+
+        wildcard_patterns = [
+            f"{RedisKeys.buffer_chunk_prefix(content_id)}*",
+            f"ace_proxy:stream:{content_id}:clients:*",
+            f"ace_proxy:stream:{content_id}:worker:*",
+        ]
+
+        try:
+            if direct_keys:
+                deleted_count += int(self.redis_client.delete(*direct_keys) or 0)
+        except Exception as e:
+            logger.warning(f"Failed deleting direct Redis keys for stream {content_id}: {e}")
+
+        for pattern in wildcard_patterns:
+            try:
+                matched_keys = list(self.redis_client.scan_iter(match=pattern, count=500))
+                if not matched_keys:
+                    continue
+                deleted_count += int(self.redis_client.delete(*matched_keys) or 0)
+            except Exception as e:
+                logger.warning(
+                    "Failed deleting wildcard Redis keys for stream %s with pattern %s: %s",
+                    content_id,
+                    pattern,
+                    e,
+                )
+
+        if deleted_count > 0:
+            logger.info("Flushed %s Redis keys for stream %s", deleted_count, content_id)
+
+        return deleted_count
     
     def _cleanup_idle_sessions(self):
         """Clean up idle sessions with no clients"""

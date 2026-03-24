@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 # Service-level unit tests
 # ---------------------------------------------------------------------------
 
-from app.services.m3u import get_m3u_content, validate_host_port, modify_m3u_content
+from app.services.m3u import get_m3u_content, validate_host_port, modify_m3u_content, parse_acestream_m3u_entries
 
 
 # --- validate_host_port ---
@@ -169,6 +169,33 @@ def test_modify_proxy_converts_acestream():
     result = modify_m3u_content(content, "proxy.host", 8888, mode="proxy")
     assert "http://proxy.host:8888/proxy?url=" in result
     assert "acestream://" not in result
+
+
+def test_parse_acestream_m3u_entries_extracts_name_and_id():
+    content = (
+        "#EXTM3U\n"
+        "#EXTINF:-1 tvg-id=\"x\",My Channel\n"
+        "acestream://AABBCCDDEEFF00112233445566778899AABBCCDD\n"
+    )
+
+    parsed = parse_acestream_m3u_entries(content)
+    assert len(parsed) == 1
+    assert parsed[0]["content_id"] == "aabbccddeeff00112233445566778899aabbccdd"
+    assert parsed[0]["name"] == "My Channel"
+
+
+def test_parse_acestream_m3u_entries_deduplicates_ids():
+    content = (
+        "#EXTM3U\n"
+        "#EXTINF:-1,One\n"
+        "acestream://aabbccddeeff00112233445566778899aabbccdd\n"
+        "#EXTINF:-1,Two\n"
+        "acestream://aabbccddeeff00112233445566778899aabbccdd\n"
+    )
+
+    parsed = parse_acestream_m3u_entries(content)
+    assert len(parsed) == 1
+    assert parsed[0]["name"] == "One"
 
 
 # ---------------------------------------------------------------------------

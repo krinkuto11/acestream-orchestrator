@@ -25,6 +25,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [channelShutdownDelay, setChannelShutdownDelay] = useState(5)
   const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(DEFAULT_MAX_STREAMS_PER_ENGINE)
   const [streamMode, setStreamMode] = useState('TS')
+  const [controlMode, setControlMode] = useState('LEGACY_HTTP')
   const [engineVariant, setEngineVariant] = useState('')
 
   // HLS-specific state
@@ -46,6 +47,13 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [customVariantEnabled, setCustomVariantEnabled] = useState(false)
   const [customVariantCacheType, setCustomVariantCacheType] = useState('')
   const [variantDisplayName, setVariantDisplayName] = useState('')
+
+  // Preflight diagnostics state
+  const [preflightContentId, setPreflightContentId] = useState('')
+  const [preflightTier, setPreflightTier] = useState('light')
+  const [preflightLoading, setPreflightLoading] = useState(false)
+  const [preflightResult, setPreflightResult] = useState(null)
+  const [preflightError, setPreflightError] = useState(null)
 
   // Check if HLS is supported - double check both variant and cache type
   const isAceServeVariant = engineVariant.startsWith('AceServe')
@@ -82,6 +90,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
         setChannelShutdownDelay(data.channel_shutdown_delay)
         setMaxStreamsPerEngine(data.max_streams_per_engine || DEFAULT_MAX_STREAMS_PER_ENGINE)
         setStreamMode(data.stream_mode || 'TS')
+        setControlMode(data.control_mode || 'LEGACY_HTTP')
         setEngineVariant(data.engine_variant || '')
         setVlcUserAgent(data.vlc_user_agent)
         setChunkSize(data.chunk_size)
@@ -158,6 +167,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
       params.append('channel_shutdown_delay', channelShutdownDelay)
       params.append('max_streams_per_engine', maxStreamsPerEngine)
       params.append('stream_mode', streamMode)
+      params.append('control_mode', controlMode)
       // HLS-specific parameters
       params.append('hls_max_segments', hlsMaxSegments)
       params.append('hls_initial_segments', hlsInitialSegments)
@@ -190,6 +200,61 @@ export function ProxySettings({ apiKey, orchUrl }) {
     }
   }
 
+  const runPreflight = async () => {
+    const contentId = preflightContentId.trim()
+    if (!contentId) {
+      setPreflightError('Content ID is required (infohash, PID, or magnet URI).')
+      setPreflightResult(null)
+      return
+    }
+
+    setPreflightLoading(true)
+    setPreflightError(null)
+    setPreflightResult(null)
+
+    try {
+      const headers = {}
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`
+      }
+
+      const response = await fetch(
+        `${orchUrl}/ace/preflight?id=${encodeURIComponent(contentId)}&tier=${encodeURIComponent(preflightTier)}`,
+        { headers }
+      )
+
+      let payload = null
+      try {
+        payload = await response.json()
+      } catch {
+        payload = null
+      }
+
+      if (!response.ok) {
+        const detail = payload?.detail || `HTTP ${response.status}: ${response.statusText}`
+        throw new Error(detail)
+      }
+
+      setPreflightResult(payload)
+    } catch (err) {
+      setPreflightError(err.message || String(err))
+    } finally {
+      setPreflightLoading(false)
+    }
+  }
+
+  const copyResolvedInfohash = async () => {
+    const infohash = preflightResult?.result?.infohash
+    if (!infohash) return
+
+    try {
+      await navigator.clipboard.writeText(infohash)
+      setMessage('Resolved infohash copied to clipboard')
+    } catch (err) {
+      setError('Failed to copy infohash: ' + (err.message || String(err)))
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -208,6 +273,10 @@ export function ProxySettings({ apiKey, orchUrl }) {
                 // Prevent switching to HLS if not supported
                 if (value === 'HLS' && !hlsSupported) {
                   setError('HLS mode is not available with current engine configuration. Use an AceServe variant with disk or hybrid cache.')
+                  return
+                }
+                if (value === 'HLS' && controlMode === 'LEGACY_API') {
+                  setError('HLS mode requires Legacy HTTP control mode.')
                   return
                 }
                 setStreamMode(value)
@@ -253,6 +322,150 @@ export function ProxySettings({ apiKey, orchUrl }) {
               )}
             </p>
           </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="control-mode">Engine Control Mode</Label>
+            <Select
+              value={controlMode}
+              onValueChange={(value) => {
+                if (value === 'LEGACY_API' && streamMode === 'HLS') {
+                  setError('Legacy API control mode is only supported with MPEG-TS stream mode.')
+                  return
+                }
+                setControlMode(value)
+                setError(null)
+              }}
+            >
+              <SelectTrigger id="control-mode">
+                <SelectValue placeholder="Select control mode" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="LEGACY_HTTP">Legacy HTTP (default)</SelectItem>
+                <SelectItem value="LEGACY_API">Legacy API (socket control)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Legacy HTTP uses /ace/getstream JSON control flow. Legacy API uses the AceStream API port
+              for HELLOBG/READY/LOADASYNC/START control and remains optional.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Legacy API Playback Preflight</Label>
+            <p className="text-xs text-muted-foreground">
+              Proxy playback now always uses <strong>light</strong> preflight in LEGACY_API mode.
+              Use the <strong>Preflight Diagnostics</strong> section below for manual deep checks.
+            </p>
+          </div>
+
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Preflight Diagnostics</CardTitle>
+          <CardDescription>
+            Validate content availability using the current control mode before opening a client playback session.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="preflight-content-id">Content ID</Label>
+            <Input
+              id="preflight-content-id"
+              type="text"
+              placeholder="infohash, PID, or magnet URI"
+              value={preflightContentId}
+              onChange={(e) => setPreflightContentId(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="preflight-tier">Preflight Tier</Label>
+            <Select value={preflightTier} onValueChange={setPreflightTier}>
+              <SelectTrigger id="preflight-tier">
+                <SelectValue placeholder="Select preflight tier" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="light">light (resolve only)</SelectItem>
+                <SelectItem value="deep">deep (resolve + start + status sample + stop)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button onClick={runPreflight} disabled={preflightLoading}>
+              {preflightLoading ? 'Running Preflight...' : 'Run Preflight'}
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              Current mode: <strong>{controlMode}</strong>
+            </p>
+          </div>
+
+          {preflightError && (
+            <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive rounded-md">
+              <AlertCircle className="h-4 w-4 text-destructive" />
+              <span className="text-sm text-destructive">{preflightError}</span>
+            </div>
+          )}
+
+          {preflightResult && (
+            <div className="space-y-3 rounded-md border p-3 bg-muted/30">
+              <div className="flex flex-wrap gap-2">
+                <span className={`text-xs px-2 py-1 rounded border ${preflightResult?.result?.available ? 'bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400'}`}>
+                  {preflightResult?.result?.available ? 'AVAILABLE' : 'UNAVAILABLE'}
+                </span>
+                <span className="text-xs px-2 py-1 rounded border bg-background/50">
+                  tier: {preflightResult?.tier || preflightTier}
+                </span>
+                <span className="text-xs px-2 py-1 rounded border bg-background/50">
+                  mode: {preflightResult?.control_mode || controlMode}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground">Availability</p>
+                  <p className="font-semibold">
+                    {preflightResult?.result?.available ? 'Available' : 'Unavailable'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Resolved Infohash</p>
+                  <p className="font-mono break-all">{preflightResult?.result?.infohash || 'N/A'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Control Mode</p>
+                  <p>{preflightResult?.control_mode || controlMode}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Status Probe</p>
+                  <p>{preflightResult?.result?.status_probe?.status_text || 'N/A'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={copyResolvedInfohash}
+                  disabled={!preflightResult?.result?.infohash}
+                >
+                  Copy Resolved Infohash
+                </Button>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Raw Response</p>
+                <pre className="text-xs overflow-x-auto rounded bg-background p-2 border">
+                  {JSON.stringify(preflightResult, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            Tip: use <strong>light</strong> for fast checks and <strong>deep</strong> when investigating prebuffering,
+            peer discovery, or status parsing behavior.
+          </p>
         </CardContent>
       </Card>
 
