@@ -2276,9 +2276,18 @@ async def list_legacy_stream_monitors(
 
 
 @app.get("/ace/monitor/legacy/{monitor_id}", dependencies=[Depends(require_api_key)])
-async def get_legacy_stream_monitor(monitor_id: str):
+async def get_legacy_stream_monitor(
+    monitor_id: str,
+    include_recent_status: bool = Query(
+        True,
+        description="Include recent_status history. Set false to return latest_status-only summary for this monitor.",
+    ),
+):
     """Get a single legacy monitoring session including recent STATUS history."""
-    monitor = await legacy_stream_monitoring_service.get_monitor(monitor_id)
+    monitor = await legacy_stream_monitoring_service.get_monitor(
+        monitor_id,
+        include_recent_status=include_recent_status,
+    )
     if not monitor:
         raise HTTPException(status_code=404, detail="legacy monitor not found")
     return monitor

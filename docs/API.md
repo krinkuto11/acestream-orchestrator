@@ -166,6 +166,10 @@ Response:
 
  - GET /ace/monitor/legacy/{monitor_id} (protected)
    - Returns a single monitor session including `recent_status` history (in-memory ring buffer).
+   - Query params:
+     - `include_recent_status=true|false` (default: `true`)
+       - `true`: includes `recent_status` history.
+       - `false`: omits `recent_status` and returns a lightweight latest-status summary.
    - Includes `livepos_movement` summary with movement/stuck signals:
      - `is_moving`, `direction`, `pos_delta`, `last_ts_delta`, `downloaded_delta`, `movement_events`.
   - Sessions with non-moving `livepos` are labeled `status=stuck` and continue being monitored.

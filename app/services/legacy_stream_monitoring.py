@@ -592,12 +592,20 @@ class LegacyStreamMonitoringService:
 
         return True
 
-    async def get_monitor(self, monitor_id: str) -> Optional[Dict[str, Any]]:
+    async def get_monitor(
+        self,
+        monitor_id: str,
+        include_recent_status: bool = True,
+    ) -> Optional[Dict[str, Any]]:
         async with self._lock:
             raw = self._sessions.get(monitor_id)
             if not raw:
                 return None
-            return self._serialize_session(monitor_id, raw)
+            return self._serialize_session(
+                monitor_id,
+                raw,
+                include_recent_status=include_recent_status,
+            )
 
     async def list_monitors(self, include_recent_status: bool = True) -> List[Dict[str, Any]]:
         async with self._lock:

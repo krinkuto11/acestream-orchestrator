@@ -1096,10 +1096,6 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                               <p className="text-[11px] text-muted-foreground">Movement events</p>
                               <p className="mt-1 text-sm font-medium">{movement.movement_events ?? 0} / {movement.sample_points ?? 0}</p>
                             </div>
-                            <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-                              <p className="text-[11px] text-muted-foreground">Engine</p>
-                              <p className="mt-1 text-sm font-medium">{engineShortId}</p>
-                            </div>
                             {isCompact && (
                               <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                                 <p className="text-[11px] text-muted-foreground">ID</p>
