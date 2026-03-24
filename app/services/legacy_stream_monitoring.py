@@ -130,8 +130,13 @@ class LegacyStreamMonitoringService:
             "movement_events": movement_events,
         }
 
-    def _serialize_session(self, monitor_id: str, raw: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+    def _serialize_session(
+        self,
+        monitor_id: str,
+        raw: Dict[str, Any],
+        include_recent_status: bool = True,
+    ) -> Dict[str, Any]:
+        payload = {
             "monitor_id": monitor_id,
             "content_id": raw.get("content_id"),
             "stream_name": raw.get("stream_name"),
@@ -148,9 +153,13 @@ class LegacyStreamMonitoringService:
             "engine": raw.get("engine") or {},
             "session": raw.get("session") or {},
             "latest_status": raw.get("latest_status") or {},
-            "recent_status": list(raw.get("recent_status") or []),
             "livepos_movement": self._build_livepos_movement(raw),
         }
+
+        if include_recent_status:
+            payload["recent_status"] = list(raw.get("recent_status") or [])
+
+        return payload
 
     def _publish_session_state(self, monitor_id: str, raw: Dict[str, Any]) -> None:
         try:
@@ -193,12 +202,16 @@ class LegacyStreamMonitoringService:
         pos_values: List[int] = []
         last_ts_values: List[int] = []
         downloaded_values: List[int] = []
+        livepos_missing_samples = 0
 
         for sample in window:
             livepos = sample.get("livepos") or {}
             pos_val = self._to_int(livepos.get("pos"))
             ts_val = self._to_int(livepos.get("last_ts") or livepos.get("live_last"))
             dl_val = self._to_int(sample.get("downloaded") or sample.get("http_downloaded"))
+
+            if pos_val is None and ts_val is None:
+                livepos_missing_samples += 1
 
             if pos_val is not None:
                 pos_values.append(pos_val)
@@ -207,7 +220,12 @@ class LegacyStreamMonitoringService:
             if dl_val is not None:
                 downloaded_values.append(dl_val)
 
-        # If neither pos nor last_ts has enough points, we cannot classify as stuck.
+        # If livepos is consistently absent for the full window, classify as stuck.
+        if livepos_missing_samples == len(window):
+            return True
+
+        # If neither pos nor last_ts has enough points and livepos is intermittently missing,
+        # we still cannot classify as stuck.
         if len(pos_values) < 2 and len(last_ts_values) < 2:
             return False
 
@@ -581,10 +599,14 @@ class LegacyStreamMonitoringService:
                 return None
             return self._serialize_session(monitor_id, raw)
 
-    async def list_monitors(self) -> List[Dict[str, Any]]:
+    async def list_monitors(self, include_recent_status: bool = True) -> List[Dict[str, Any]]:
         async with self._lock:
             return [
-                self._serialize_session(monitor_id, raw)
+                self._serialize_session(
+                    monitor_id,
+                    raw,
+                    include_recent_status=include_recent_status,
+                )
                 for monitor_id, raw in self._sessions.items()
             ]
 

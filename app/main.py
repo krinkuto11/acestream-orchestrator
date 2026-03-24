@@ -2261,9 +2261,18 @@ async def parse_legacy_monitor_m3u(req: LegacyStreamMonitorM3UParseRequest):
 
 
 @app.get("/ace/monitor/legacy", dependencies=[Depends(require_api_key)])
-async def list_legacy_stream_monitors():
+async def list_legacy_stream_monitors(
+    include_recent_status: bool = Query(
+        True,
+        description="Include recent_status history in each monitor item. Set false to return latest_status-only summaries.",
+    )
+):
     """List all legacy monitoring sessions and their latest STATUS sample."""
-    return {"items": await legacy_stream_monitoring_service.list_monitors()}
+    return {
+        "items": await legacy_stream_monitoring_service.list_monitors(
+            include_recent_status=include_recent_status,
+        )
+    }
 
 
 @app.get("/ace/monitor/legacy/{monitor_id}", dependencies=[Depends(require_api_key)])

@@ -20,14 +20,18 @@ function formatAge(ts) {
   return `${Math.floor(delta / 3600)}h ago`
 }
 
-function movementVariant(movement) {
+function movementVariant(movement, status) {
+  if (status === 'stuck') return 'warning'
+  if (status === 'dead') return 'secondary'
   if (!movement) return 'secondary'
   if (movement.is_moving) return 'success'
   if (movement.direction === 'stable') return 'warning'
   return 'secondary'
 }
 
-function movementLabel(movement) {
+function movementLabel(movement, status) {
+  if (status === 'stuck') return 'stuck'
+  if (status === 'dead') return 'unknown'
   if (!movement) return 'unknown'
   if (movement.is_moving) return `moving (${movement.direction})`
   if (movement.direction === 'stable') return 'stuck'
@@ -1040,7 +1044,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                               )}
                               <div className={`mt-2 flex flex-wrap items-center gap-2 ${isCompact ? 'text-[11px]' : ''}`}>
                                 <Badge variant={statusVariant(monitor.status)}>{monitor.status}</Badge>
-                                <Badge variant={movementVariant(movement)}>{movementLabel(movement)}</Badge>
+                                <Badge variant={movementVariant(movement, monitor.status)}>{movementLabel(movement, monitor.status)}</Badge>
                                 <Badge variant="info" className="gap-1">
                                   <Users className="h-3 w-3" />
                                   peers {peers}

@@ -136,6 +136,10 @@ Response:
  - GET /ace/monitor/legacy (protected)
    - Lists all monitor sessions with latest STATUS sample and summary counters.
    - Includes engine assignment per monitor session and optional `stream_name` when provided at creation time.
+   - Query params:
+     - `include_recent_status=true|false` (default: `true`)
+       - `true`: includes `recent_status` history in each monitor item.
+       - `false`: omits `recent_status` and returns lightweight latest-status summaries.
 
  - POST /ace/monitor/legacy/parse-m3u (protected)
    - Parses uploaded/inline M3U content and extracts `acestream://<id>` entries.
