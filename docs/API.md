@@ -119,6 +119,7 @@ Response:
    - Body:
    ```json
    {
+     "monitor_id": "my-monitor-001",
      "content_id": "6422e8bc34282871634c81947be093c04ad1bb29",
      "stream_name": "Example Channel",
      "interval_s": 1.0,
@@ -132,6 +133,7 @@ Response:
      - `run_seconds=0` means run until manually stopped.
      - `engine_container_id` is optional; if omitted, engine selection uses the same balancing strategy as proxy stream allocation.
      - `stream_name` is optional and is persisted in monitor sessions (useful when sessions are created from playlist entries).
+    - `monitor_id` is optional; when provided and a monitor with that ID already exists, the existing session is returned and no new monitor is started.
 
  - GET /ace/monitor/legacy (protected)
    - Lists all monitor sessions with latest STATUS sample and summary counters.

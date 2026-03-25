@@ -77,6 +77,13 @@ class _FakeTimeoutClient(_FakeAceLegacyApiClient):
         raise asyncio.TimeoutError("api timed out")
 
 
+class _FakeFailoverClient(_FakeAceLegacyApiClient):
+    def collect_status_samples(self, samples=1, interval_s=0.0, per_sample_timeout_s=1.0):
+        if int(self.port) == 62062:
+            raise asyncio.TimeoutError("api timed out on primary engine")
+        return super().collect_status_samples(samples=samples, interval_s=interval_s, per_sample_timeout_s=per_sample_timeout_s)
+
+
 @pytest.mark.asyncio
 async def test_monitor_collects_status_samples(monkeypatch):
     from app.services import legacy_stream_monitoring as module
@@ -144,6 +151,87 @@ async def test_monitor_rejects_missing_requested_engine(monkeypatch):
             content_id="abc123",
             engine_container_id="engine-does-not-exist",
         )
+
+
+@pytest.mark.asyncio
+async def test_monitor_start_is_idempotent_for_same_monitor_id(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeAceLegacyApiClient)
+
+    service = LegacyStreamMonitoringService()
+
+    first = await service.start_monitor(
+        monitor_id="fixed-monitor-id",
+        content_id="abc123",
+        interval_s=0.5,
+        run_seconds=0,
+    )
+
+    second = await service.start_monitor(
+        monitor_id="fixed-monitor-id",
+        content_id="different-content-id",
+        interval_s=0.5,
+        run_seconds=0,
+    )
+
+    assert first["monitor_id"] == "fixed-monitor-id"
+    assert second["monitor_id"] == "fixed-monitor-id"
+    assert second["content_id"] == "abc123"
+
+    monitors = await service.list_monitors()
+    assert len(monitors) == 1
+
+    await service.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_monitor_start_deduplicates_active_session_for_same_content_id(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeAceLegacyApiClient)
+
+    service = LegacyStreamMonitoringService()
+
+    first = await service.start_monitor(
+        content_id="abc123",
+        interval_s=0.5,
+        run_seconds=0,
+    )
+
+    second = await service.start_monitor(
+        content_id="abc123",
+        interval_s=0.5,
+        run_seconds=0,
+        monitor_id="another-monitor-id",
+    )
+
+    assert first["monitor_id"] == second["monitor_id"]
+
+    monitors = await service.list_monitors()
+    assert len(monitors) == 1
+
+    await service.stop_all()
 
 
 @pytest.mark.asyncio
@@ -287,6 +375,45 @@ async def test_api_timeout_marks_stream_dead_and_stops(monkeypatch):
     assert current is not None
     assert current["status"] == "dead"
     assert current["dead_reason"] == "timeout_or_connect_error"
+
+
+@pytest.mark.asyncio
+async def test_dead_monitor_retries_once_on_different_engine(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine_1 = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=True,
+    )
+    engine_2 = SimpleNamespace(
+        container_id="engine-2",
+        host="127.0.0.1",
+        port=6879,
+        api_port=62063,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine_1, engine_2])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeFailoverClient)
+
+    service = LegacyStreamMonitoringService()
+
+    monitor = await service.start_monitor(content_id="abc123", interval_s=0.5, run_seconds=0)
+    monitor_id = monitor["monitor_id"]
+
+    await asyncio.sleep(1.6)
+
+    current = await service.get_monitor(monitor_id)
+    assert current is not None
+    assert current["status"] in {"running", "stuck"}
+    assert current["reconnect_attempts"] == 1
+    assert (current.get("engine") or {}).get("container_id") == "engine-2"
+
+    await service.stop_all()
 
 
 @pytest.mark.asyncio
