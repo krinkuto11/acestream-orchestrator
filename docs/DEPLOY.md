@@ -34,8 +34,9 @@ open http://localhost:8000/panel
 For VPN-protected engines:
 
 ```bash
-# 1. Configure VPN credentials in docker-compose.gluetun.yml
-# Edit WIREGUARD_PRIVATE_KEY or other VPN settings
+# 1. Copy and edit the environment file
+cp .env.example .env
+# Edit .env: set API_KEY, GLUETUN_CONTAINER_NAME, VPN credentials in docker-compose.gluetun.yml
 
 # 2. Start with VPN
 docker-compose -f docker-compose.gluetun.yml up -d
@@ -131,7 +132,8 @@ docker-compose -f docker-compose.gluetun-redundant.yml up -d
 
 ### Security
 
-- [ ] **Set strong API key** - Set in Settings > Orchestrator
+- [ ] **Set strong API key** — Set `API_KEY` in `.env` or in Settings > Orchestrator.  
+  Requests to protected endpoints must include `Authorization: Bearer <API_KEY>`.
 - [ ] **Restrict firewall** - Only allow necessary ports
 - [ ] **Enable HTTPS** - Use reverse proxy (nginx, traefik) for TLS
 

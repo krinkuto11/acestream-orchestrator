@@ -459,7 +459,7 @@ Response:
 Update custom variant configuration. Validates configuration before saving.
 
 **Headers:**
-- `X-API-KEY`: API key for authentication
+- `Authorization`: `Bearer <API_KEY>`
 - `Content-Type`: application/json
 
 Body:
@@ -502,7 +502,7 @@ Response:
 Delete all engines and reprovision them with current custom variant settings. This is a potentially disruptive operation that interrupts all active streams.
 
 **Headers:**
-- `X-API-KEY`: API key for authentication
+- `Authorization`: `Bearer <API_KEY>`
 
 Response:
 ```json
@@ -602,7 +602,7 @@ Response:
 Save a template to a specific slot (1-10).
 
 **Headers:**
-- `X-API-KEY`: API key for authentication
+- `Authorization`: `Bearer <API_KEY>`
 
 Body:
 ```json
@@ -621,14 +621,14 @@ Body:
 Delete a template from a specific slot. Cannot delete the currently active template.
 
 **Headers:**
-- `X-API-KEY`: API key for authentication
+- `Authorization`: `Bearer <API_KEY>`
 
 ### PATCH /custom-variant/templates/{slot_id}/rename (protected)
 
 Rename a template.
 
 **Headers:**
-- `X-API-KEY`: API key for authentication
+- `Authorization`: `Bearer <API_KEY>`
 
 Body:
 ```json
@@ -642,7 +642,7 @@ Body:
 Activate a template (load it as current config).
 
 **Headers:**
-- `X-API-KEY`: API key for authentication
+- `Authorization`: `Bearer <API_KEY>`
 
 Response:
 ```json
@@ -664,7 +664,7 @@ Response: JSON file download with template data
 Import a template from JSON.
 
 **Headers:**
-- `X-API-KEY`: API key for authentication
+- `Authorization`: `Bearer <API_KEY>`
 
 Body:
 ```json
@@ -751,7 +751,7 @@ Response:
 Manually trigger cleanup of old events.
 
 **Headers:**
-- `X-API-KEY`: API key for authentication
+- `Authorization`: `Bearer <API_KEY>`
 
 **Query Parameters:**
 - `max_age_days` (int, optional): Delete events older than this many days (default: 30, minimum: 1)

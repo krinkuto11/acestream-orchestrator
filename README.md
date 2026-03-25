@@ -7,7 +7,7 @@ On-demand AceStream engine orchestration with a built-in proxy, health managemen
 > [!WARNING]
 > **LEGAL DISCLAIMER: EDUCATIONAL USE ONLY**
 > 
-> This software is a proof-of-concept designed strictly for **educational and research purposes**. The primary intent of this project is to demonstrate the feasability of a high availability scenario for the AceStream protocol and should not be used for illegal acts.
+> This software is a proof-of-concept designed strictly for **educational and research purposes**. The primary intent of this project is to demonstrate the feasibility of a high availability scenario for the AceStream protocol and should not be used for illegal acts.
 
 ## Quick Start
 
@@ -82,29 +82,41 @@ GET  /metrics/dashboard
 POST /provision/acestream
 ```
 
-Protected endpoints require `X-API-KEY`.
+Protected endpoints require:
+
+```
+Authorization: Bearer <API_KEY>
+```
+
+Set `API_KEY` as an environment variable or configure it in **Settings → Orchestrator** after startup.
 
 ## Configuration
 
-Use the panel Settings sections for runtime configuration:
+Most settings can be changed at runtime in the **Settings** panel and are persisted to `app/config/*.json`.
+For the initial deploy (especially VPN mode) use environment variables — see [`.env.example`](.env.example) for a full reference, or [docs/CONFIG.md](docs/CONFIG.md) for detailed descriptions.
 
-- General
-- Orchestrator
-- VPN
-- Proxy
-- Loop detection
-- Backup
+Key environment variables:
 
-Environment variables are still supported through container configuration. See docs for complete options.
+| Variable | Default | Purpose |
+|---|---|---|
+| `API_KEY` | *(none)* | Bearer token for protected endpoints |
+| `MIN_REPLICAS` | `2` | Minimum engine containers to keep running |
+| `MAX_REPLICAS` | `6` | Maximum concurrent engines |
+| `PORT_RANGE_HOST` | `19000-19999` | Host ports mapped to engine containers |
+| `GLUETUN_CONTAINER_NAME` | *(none)* | Gluetun container name (VPN mode) |
+| `VPN_MODE` | `single` | `single` or `redundant` |
+| `DEBUG_MODE` | `false` | Verbose logging |
 
 ## Documentation
 
-- [docs/DEPLOY.md](docs/DEPLOY.md)
-- [docs/API.md](docs/API.md)
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [docs/PANEL.md](docs/PANEL.md)
-- [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md)
-- [docs/GLUETUN_INTEGRATION.md](docs/GLUETUN_INTEGRATION.md)
+- [docs/DEPLOY.md](docs/DEPLOY.md) — Deployment guide (standalone, single VPN, redundant VPN)
+- [docs/CONFIG.md](docs/CONFIG.md) — Complete environment variable reference
+- [docs/API.md](docs/API.md) — Full API reference
+- [docs/SECURITY.md](docs/SECURITY.md) — Authentication, network exposure, TLS
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Internal architecture and database schema
+- [docs/PANEL.md](docs/PANEL.md) — Web dashboard user guide
+- [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) — VPN port allocation testing
+- [docs/GLUETUN_INTEGRATION.md](docs/GLUETUN_INTEGRATION.md) — Gluetun VPN integration details
 
 ## Development
 
