@@ -266,6 +266,63 @@ class LegacyStreamMonitoringService:
             "forwarded": bool(selected.forwarded),
         }
 
+    def _pick_engine_excluding(self, excluded_container_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        engines = [e for e in state.list_engines() if e.container_id != excluded_container_id]
+        if not engines:
+            return None
+
+        active_streams = state.list_streams(status="started")
+        engine_loads: Dict[str, int] = {}
+        for stream in active_streams:
+            cid = stream.container_id
+            engine_loads[cid] = engine_loads.get(cid, 0) + 1
+
+        monitor_loads = state.get_active_monitor_load_by_engine()
+        for cid, monitor_count in monitor_loads.items():
+            engine_loads[cid] = engine_loads.get(cid, 0) + monitor_count
+
+        max_streams = cfg.MAX_STREAMS_PER_ENGINE
+        available = [e for e in engines if engine_loads.get(e.container_id, 0) < max_streams]
+        if not available:
+            return None
+
+        selected = sorted(
+            available,
+            key=lambda e: (engine_loads.get(e.container_id, 0), not e.forwarded),
+        )[0]
+
+        return {
+            "container_id": selected.container_id,
+            "host": selected.host,
+            "port": selected.port,
+            "api_port": selected.api_port or 62062,
+            "forwarded": bool(selected.forwarded),
+        }
+
+    async def _failover_retry_dead_monitor(self, monitor_id: str, reason: str, error_text: str) -> bool:
+        async with self._lock:
+            session = self._sessions.get(monitor_id)
+            if not session:
+                return False
+
+            attempts = int(session.get("reconnect_attempts") or 0)
+            if attempts >= 1:
+                return False
+
+            current_engine = session.get("engine") or {}
+            failover_engine = self._pick_engine_excluding(current_engine.get("container_id"))
+            if not failover_engine:
+                return False
+
+            session["reconnect_attempts"] = attempts + 1
+            session["status"] = "reconnecting"
+            session["dead_reason"] = None
+            session["last_error"] = f"{reason}: {error_text}"
+            session["engine"] = failover_engine
+            session["session"] = {}
+            self._publish_session_state(monitor_id, session)
+            return True
+
     async def start_monitor(
         self,
         content_id: str,
@@ -274,6 +331,7 @@ class LegacyStreamMonitoringService:
         run_seconds: int = 0,
         per_sample_timeout_s: float = 1.0,
         engine_container_id: Optional[str] = None,
+        monitor_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         normalized_content_id = (content_id or "").strip().lower()
         if not normalized_content_id:
@@ -283,10 +341,26 @@ class LegacyStreamMonitoringService:
         timeout_value = max(0.2, float(per_sample_timeout_s))
         runtime_limit = max(0, int(run_seconds))
         normalized_stream_name = (stream_name or "").strip() or None
+        requested_monitor_id = (monitor_id or "").strip() or None
 
         async with self._lock:
+            existing_for_content: Optional[str] = None
+            for existing_monitor_id, raw in self._sessions.items():
+                if (raw.get("content_id") or "").strip().lower() != normalized_content_id:
+                    continue
+                if raw.get("status") not in {"starting", "running", "stuck", "reconnecting"}:
+                    continue
+                existing_for_content = existing_monitor_id
+                break
+
+            if existing_for_content:
+                return self._serialize_session(existing_for_content, self._sessions[existing_for_content])
+
+            if requested_monitor_id and requested_monitor_id in self._sessions:
+                return self._serialize_session(requested_monitor_id, self._sessions[requested_monitor_id])
+
             engine = self._pick_engine(engine_container_id)
-            monitor_id = str(uuid.uuid4())
+            monitor_id = requested_monitor_id or str(uuid.uuid4())
             stop_event = asyncio.Event()
             self._stop_events[monitor_id] = stop_event
             self._sessions[monitor_id] = {
@@ -409,15 +483,22 @@ class LegacyStreamMonitoringService:
                         status_code = loadresp.get("status")
                         if status_code not in (1, 2):
                             message = loadresp.get("message") or "content unavailable"
-                            await self._update_session(monitor_id, reconnect_attempts=1)
+                            dead_reason = f"LOADASYNC status={status_code}: {message}"
+                            did_failover = await self._failover_retry_dead_monitor(monitor_id, "loadasync_error", dead_reason)
+                            await _shutdown_client()
+                            if did_failover:
+                                logger.warning(
+                                    "Legacy monitor %s failed LOADASYNC on current engine; retrying on different engine",
+                                    monitor_id,
+                                )
+                                continue
                             await self._update_session(
                                 monitor_id,
                                 status="dead",
-                                dead_reason=f"LOADASYNC status={status_code}: {message}",
-                                last_error=f"LOADASYNC status={status_code}: {message}",
+                                dead_reason=dead_reason,
+                                last_error=dead_reason,
                                 ended_at=self._utc_iso(),
                             )
-                            await _shutdown_client()
                             break
 
                         resolved_infohash = loadresp.get("infohash") or content_id
@@ -496,7 +577,18 @@ class LegacyStreamMonitoringService:
                     except asyncio.TimeoutError:
                         pass
                 except asyncio.TimeoutError:
-                    await self._update_session(monitor_id, reconnect_attempts=1)
+                    did_failover = await self._failover_retry_dead_monitor(
+                        monitor_id,
+                        "timeout_or_connect_error",
+                        "api timeout",
+                    )
+                    await _shutdown_client()
+                    if did_failover:
+                        logger.warning(
+                            "Legacy monitor %s timed out; retrying on different engine",
+                            monitor_id,
+                        )
+                        continue
                     await self._update_session(
                         monitor_id,
                         status="dead",
@@ -508,12 +600,19 @@ class LegacyStreamMonitoringService:
                         "Legacy monitor %s marked dead after API timeout",
                         monitor_id,
                     )
-                    await _shutdown_client()
                     break
                 except Exception as e:
                     error_text = str(e)
-                    await self._update_session(monitor_id, reconnect_attempts=1)
                     dead_reason = "timeout_or_connect_error" if self._is_timeout_or_connect_error(error_text) else "runtime_error"
+                    did_failover = await self._failover_retry_dead_monitor(monitor_id, dead_reason, error_text)
+                    await _shutdown_client()
+                    if did_failover:
+                        logger.warning(
+                            "Legacy monitor %s failed (%s); retrying on different engine",
+                            monitor_id,
+                            dead_reason,
+                        )
+                        continue
                     await self._update_session(
                         monitor_id,
                         status="dead",
@@ -526,7 +625,6 @@ class LegacyStreamMonitoringService:
                         monitor_id,
                         e,
                     )
-                    await _shutdown_client()
                     break
 
             async with self._lock:

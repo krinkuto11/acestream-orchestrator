@@ -484,7 +484,7 @@ async def lifespan(app: FastAPI):
     
     cleanup_on_shutdown()
 
-__version__ = "1.5.3"
+__version__ = "1.6.2"
 
 app = FastAPI(
     title="On-Demand Orchestrator",
@@ -2209,6 +2209,7 @@ def clear_cache():
 # ============================================================================
 
 class LegacyStreamMonitorStartRequest(BaseModel):
+    monitor_id: Optional[str] = None
     content_id: str
     stream_name: Optional[str] = None
     interval_s: float = 1.0
@@ -2236,6 +2237,7 @@ async def start_legacy_stream_monitor(req: LegacyStreamMonitorStartRequest):
             run_seconds=req.run_seconds,
             per_sample_timeout_s=req.per_sample_timeout_s,
             engine_container_id=req.engine_container_id,
+            monitor_id=req.monitor_id,
         )
         return monitor
     except ValueError as e:
