@@ -20,16 +20,6 @@ function formatAge(ts) {
   return `${Math.floor(delta / 3600)}h ago`
 }
 
-function formatTimelineTimestamp(value) {
-  const parsed = Number.parseInt(String(value ?? ''), 10)
-  if (!Number.isFinite(parsed)) return 'N/A'
-  try {
-    return new Date(parsed * 1000).toLocaleTimeString()
-  } catch {
-    return String(parsed)
-  }
-}
-
 function movementVariant(movement, status) {
   if (status === 'stuck') return 'warning'
   if (status === 'dead') return 'secondary'
@@ -203,10 +193,6 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
   const [groupByStatus, setGroupByStatus] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
   const [batchBusy, setBatchBusy] = useState(false)
-  const [seekValueById, setSeekValueById] = useState({})
-  const [seekBusyById, setSeekBusyById] = useState({})
-  const [seekErrorById, setSeekErrorById] = useState({})
-  const [seekMessageById, setSeekMessageById] = useState({})
   const [m3uFileName, setM3uFileName] = useState('')
   const [m3uContent, setM3uContent] = useState('')
   const [m3uEntries, setM3uEntries] = useState([])
@@ -437,77 +423,6 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
       setActionError(err?.message || 'Failed to delete monitor entry')
     } finally {
       setDeletingById((prev) => ({ ...prev, [monitorId]: false }))
-    }
-  }
-
-  const handleSeekTimelineChange = (monitorId, value) => {
-    const parsed = Number.parseInt(String(value ?? ''), 10)
-    if (!Number.isFinite(parsed)) return
-    setSeekValueById((prev) => ({ ...prev, [monitorId]: parsed }))
-    setSeekErrorById((prev) => ({ ...prev, [monitorId]: null }))
-    setSeekMessageById((prev) => ({ ...prev, [monitorId]: null }))
-  }
-
-  const handleSeekTimelineCommit = async (monitor, firstTs, lastTs) => {
-    const monitorId = monitor?.monitor_id
-    if (!monitorId || !Number.isFinite(firstTs) || !Number.isFinite(lastTs) || lastTs <= firstTs) {
-      return
-    }
-
-    const selected = Number.parseInt(String(seekValueById[monitorId] ?? ''), 10)
-    if (!Number.isFinite(selected)) {
-      return
-    }
-
-    // LIVESEEK is intended for catch-up (backwards seek) on live broadcasts.
-    if (selected >= lastTs) {
-      setSeekErrorById((prev) => ({ ...prev, [monitorId]: 'Move the slider left of the live edge to seek.' }))
-      return
-    }
-
-    if (!apiKey) {
-      setSeekErrorById((prev) => ({ ...prev, [monitorId]: 'Set API key in Settings to seek this stream.' }))
-      return
-    }
-
-    setSeekBusyById((prev) => ({ ...prev, [monitorId]: true }))
-    setSeekErrorById((prev) => ({ ...prev, [monitorId]: null }))
-    setSeekMessageById((prev) => ({ ...prev, [monitorId]: null }))
-
-    try {
-      const response = await fetch(
-        `${orchUrl}/api/v1/streams/${encodeURIComponent(monitorId)}/seek`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ target_timestamp: selected }),
-        },
-      )
-
-      let payload = null
-      try {
-        payload = await response.json()
-      } catch {
-        payload = null
-      }
-
-      if (!response.ok) {
-        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
-      }
-
-      const switchedUrl = payload?.result?.playback_url || payload?.result?.url || 'updated playback URL'
-      setSeekMessageById((prev) => ({
-        ...prev,
-        [monitorId]: `Seek applied to ${formatTimelineTimestamp(selected)} (${switchedUrl})`,
-      }))
-      await fetchMonitorsNow(false)
-    } catch (err) {
-      setSeekErrorById((prev) => ({ ...prev, [monitorId]: err?.message || 'Seek failed' }))
-    } finally {
-      setSeekBusyById((prev) => ({ ...prev, [monitorId]: false }))
     }
   }
 
@@ -1088,12 +1003,6 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                 const speedUp = monitor._derived.speedUpKbps
                 const progress = monitor._derived.progressValue
                 const livepos = latest.livepos || {}
-                const timelineFirstTs = toInt(livepos.first_ts ?? livepos.live_first)
-                const timelineLastTs = toInt(livepos.last_ts ?? livepos.live_last)
-                const timelinePos = toInt(livepos.pos)
-                const hasTimeline = Number.isFinite(timelineFirstTs)
-                  && Number.isFinite(timelineLastTs)
-                  && timelineLastTs > timelineFirstTs
                 const posSeries = buildSeries(monitor.recent_status || [], ['livepos', 'pos'])
                 const lastTsSeries = buildSeries(monitor.recent_status || [], ['livepos', 'last_ts'])
                 const deadReason = monitor.dead_reason || monitor.last_error
@@ -1103,20 +1012,6 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                 const engineId = engineInfo.container_id || 'n/a'
                 const engineShortId = engineId !== 'n/a' ? engineId.slice(0, 12) : 'n/a'
                 const isPlayingInProxy = activeProxyKeys.has(normalizeContentRef(monitor.content_id))
-                const seekBusy = Boolean(seekBusyById[monitor.monitor_id])
-                const seekError = seekErrorById[monitor.monitor_id]
-                const seekMessage = seekMessageById[monitor.monitor_id]
-                const seekCandidateRaw = toInt(seekValueById[monitor.monitor_id])
-                const seekCandidate = hasTimeline
-                  ? Math.max(
-                    timelineFirstTs,
-                    Math.min(
-                      timelineLastTs,
-                      seekCandidateRaw ?? timelinePos ?? timelineLastTs,
-                    ),
-                  )
-                  : null
-                const canSeek = hasTimeline && isPlayingInProxy && monitor.status !== 'dead'
 
                 return (
                   <Collapsible
@@ -1260,49 +1155,6 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
                         <div className="mt-3 rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
                           <p className="mb-1 text-xs text-muted-foreground">Live buffer window (first_ts -&gt; pos -&gt; last_ts)</p>
                           <BufferWindowBar livepos={livepos} />
-                        </div>
-
-                        <div className="mt-3 rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-                          <p className="mb-1 text-xs text-muted-foreground">Live timeline seek (catch-up)</p>
-                          {hasTimeline ? (
-                            <>
-                              <input
-                                type="range"
-                                min={timelineFirstTs}
-                                max={timelineLastTs}
-                                step={1}
-                                value={seekCandidate ?? timelineLastTs}
-                                onChange={(e) => handleSeekTimelineChange(monitor.monitor_id, e.target.value)}
-                                onMouseUp={() => handleSeekTimelineCommit(monitor, timelineFirstTs, timelineLastTs)}
-                                onTouchEnd={() => handleSeekTimelineCommit(monitor, timelineFirstTs, timelineLastTs)}
-                                disabled={!canSeek || seekBusy}
-                                className="w-full"
-                              />
-                              <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
-                                <div>
-                                  <p>Window Start</p>
-                                  <p className="font-medium text-foreground">{formatTimelineTimestamp(timelineFirstTs)}</p>
-                                </div>
-                                <div>
-                                  <p>Selected</p>
-                                  <p className="font-medium text-foreground">{formatTimelineTimestamp(seekCandidate)}</p>
-                                </div>
-                                <div>
-                                  <p>Live Edge</p>
-                                  <p className="font-medium text-foreground">{formatTimelineTimestamp(timelineLastTs)}</p>
-                                </div>
-                              </div>
-                            </>
-                          ) : (
-                            <p className="text-xs text-muted-foreground">Timeline is unavailable for this monitor session.</p>
-                          )}
-
-                          {!isPlayingInProxy && (
-                            <p className="mt-2 text-xs text-muted-foreground">Timeline seek requires an active proxy playback session for this content.</p>
-                          )}
-                          {seekBusy && <p className="mt-2 text-xs text-muted-foreground">Applying seek...</p>}
-                          {seekMessage && <p className="mt-2 text-xs text-green-600 dark:text-green-400">{seekMessage}</p>}
-                          {seekError && <p className="mt-2 text-xs text-destructive">{seekError}</p>}
                         </div>
 
                         <div className="mt-3 flex flex-wrap items-center gap-2">

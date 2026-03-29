@@ -73,6 +73,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const [clients, setClients] = useState([])
   const [clientsLoading, setClientsLoading] = useState(false)
   const [streamStatus, setStreamStatus] = useState(null) // For tracking AceStream stat URL status
+  const [seekValue, setSeekValue] = useState(null)
+  const [seekLoading, setSeekLoading] = useState(false)
+  const [seekError, setSeekError] = useState(null)
+  const [seekMessage, setSeekMessage] = useState(null)
 
   // Track if we have fetched data at least once to prevent loading flicker on refreshes
   const hasClientsDataRef = useRef(false)
@@ -350,6 +354,92 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const streamLabels = stream.labels || {}
   const streamControlMode = streamLabels['proxy.control_mode'] || null
   const resolvedInfohash = streamLabels['stream.resolved_infohash'] || null
+  const isLegacyApiMode = typeof streamControlMode === 'string' && streamControlMode.toUpperCase().startsWith('LEGACY_API')
+  const timelineFirstTs = Number.parseInt(String(stream.livepos?.first_ts ?? stream.livepos?.live_first ?? ''), 10)
+  const timelineLastTs = Number.parseInt(String(stream.livepos?.last_ts ?? stream.livepos?.live_last ?? ''), 10)
+  const timelinePos = Number.parseInt(String(stream.livepos?.pos ?? ''), 10)
+  const canSeekTimeline = Boolean(
+    isActive
+    && Number.isFinite(timelineFirstTs)
+    && Number.isFinite(timelineLastTs)
+    && timelineLastTs > timelineFirstTs
+  )
+
+  useEffect(() => {
+    if (Number.isFinite(timelinePos)) {
+      setSeekValue(timelinePos)
+    }
+  }, [timelinePos])
+
+  const formatTimelineTimestamp = (value) => {
+    const parsed = Number.parseInt(String(value ?? ''), 10)
+    if (!Number.isFinite(parsed)) return 'N/A'
+    try {
+      return new Date(parsed * 1000).toLocaleTimeString()
+    } catch {
+      return String(parsed)
+    }
+  }
+
+  const handleSeekCommit = async () => {
+    const selected = Number.parseInt(String(seekValue ?? ''), 10)
+    if (!canSeekTimeline || !Number.isFinite(selected)) {
+      return
+    }
+
+    if (selected >= timelineLastTs) {
+      setSeekError('Move the slider left of the live edge to seek.')
+      return
+    }
+
+    if (!apiKey) {
+      setSeekError('Set API key in Settings to seek this stream.')
+      return
+    }
+
+    setSeekLoading(true)
+    setSeekError(null)
+    setSeekMessage(null)
+
+    try {
+      const response = await fetch(
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/seek`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ target_timestamp: selected }),
+        },
+      )
+
+      let payload = null
+      try {
+        payload = await response.json()
+      } catch {
+        payload = null
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      const switchedUrl = payload?.result?.playback_url || payload?.result?.url || 'updated playback URL'
+      setSeekMessage(`Seek applied to ${formatTimelineTimestamp(selected)} (${switchedUrl})`)
+    } catch (err) {
+      setSeekError(err?.message || 'Seek failed')
+    } finally {
+      setSeekLoading(false)
+    }
+  }
+
+  const showMissingControlFlowHint = !isLegacyApiMode
+  const showLinksBlock = Boolean(
+    stream.stat_url
+    || stream.command_url
+    || showMissingControlFlowHint,
+  )
 
   return (
     <>
@@ -642,33 +732,90 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                 )}
               </div>
 
+              {isActive && (
+                <div className="rounded-md border p-3 bg-muted/30 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-foreground">Live Timeline (Catch-up)</p>
+                    <Badge variant={isActive ? 'success' : 'secondary'}>
+                      {isActive ? 'Live' : 'Not live'}
+                    </Badge>
+                  </div>
+
+                  {canSeekTimeline ? (
+                    <>
+                      <input
+                        type="range"
+                        min={timelineFirstTs}
+                        max={timelineLastTs}
+                        step={1}
+                        value={seekValue ?? timelinePos ?? timelineLastTs}
+                        onChange={(e) => {
+                          setSeekValue(Number.parseInt(e.target.value, 10))
+                          setSeekError(null)
+                          setSeekMessage(null)
+                        }}
+                        onMouseUp={handleSeekCommit}
+                        onTouchEnd={handleSeekCommit}
+                        disabled={!isLegacyApiMode || seekLoading}
+                        className="w-full"
+                      />
+                      <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+                        <div>
+                          <p>Window Start</p>
+                          <p className="font-medium text-foreground">{formatTimelineTimestamp(timelineFirstTs)}</p>
+                        </div>
+                        <div>
+                          <p>Selected</p>
+                          <p className="font-medium text-foreground">{formatTimelineTimestamp(seekValue)}</p>
+                        </div>
+                        <div>
+                          <p>Live Edge</p>
+                          <p className="font-medium text-foreground">{formatTimelineTimestamp(timelineLastTs)}</p>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Live timeline is unavailable for this stream.</p>
+                  )}
+
+                  {!isLegacyApiMode && (
+                    <p className="text-xs text-muted-foreground">LIVESEEK requires LEGACY_API control mode.</p>
+                  )}
+                  {seekLoading && <p className="text-xs text-muted-foreground">Applying seek...</p>}
+                  {seekMessage && <p className="text-xs text-green-600 dark:text-green-400">{seekMessage}</p>}
+                  {seekError && <p className="text-xs text-destructive">{seekError}</p>}
+                </div>
+              )}
+
               {/* Links */}
-              <div className="flex flex-wrap gap-4">
-                {stream.stat_url ? (
-                  <a
-                    href={stream.stat_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-primary hover:underline flex items-center gap-1"
-                  >
-                    Statistics URL <ExternalLink className="h-3 w-3" />
-                  </a>
-                ) : (
-                  <span className="text-sm text-muted-foreground">Statistics URL not available in this control flow</span>
-                )}
-                {stream.command_url ? (
-                  <a
-                    href={stream.command_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-primary hover:underline flex items-center gap-1"
-                  >
-                    Command URL <ExternalLink className="h-3 w-3" />
-                  </a>
-                ) : (
-                  <span className="text-sm text-muted-foreground">Command URL not available in this control flow</span>
-                )}
-              </div>
+              {showLinksBlock && (
+                <div className="flex flex-wrap gap-4">
+                  {stream.stat_url ? (
+                    <a
+                      href={stream.stat_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-primary hover:underline flex items-center gap-1"
+                    >
+                      Statistics URL <ExternalLink className="h-3 w-3" />
+                    </a>
+                  ) : showMissingControlFlowHint ? (
+                    <span className="text-sm text-muted-foreground">Statistics URL not available in this control flow</span>
+                  ) : null}
+                  {stream.command_url ? (
+                    <a
+                      href={stream.command_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-primary hover:underline flex items-center gap-1"
+                    >
+                      Command URL <ExternalLink className="h-3 w-3" />
+                    </a>
+                  ) : showMissingControlFlowHint ? (
+                    <span className="text-sm text-muted-foreground">Command URL not available in this control flow</span>
+                  ) : null}
+                </div>
+              )}
 
               {/* Chart */}
               {isActive && (

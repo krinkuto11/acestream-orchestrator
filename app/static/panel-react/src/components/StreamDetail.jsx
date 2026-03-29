@@ -277,7 +277,13 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
   const streamLabels = stream?.labels || {}
   const streamControlMode = streamLabels['proxy.control_mode'] || null
   const resolvedInfohash = streamLabels['stream.resolved_infohash'] || null
-  const isLegacyApiMode = streamControlMode === 'LEGACY_API'
+  const isLegacyApiMode = typeof streamControlMode === 'string' && streamControlMode.toUpperCase().startsWith('LEGACY_API')
+  const showMissingControlFlowHint = !isLegacyApiMode
+  const showLinksBlock = Boolean(
+    stream.stat_url
+    || stream.command_url
+    || showMissingControlFlowHint,
+  )
   const liveposTimeline = liveposData?.livepos || {}
   const timelineFirstTs = Number.parseInt(String(liveposTimeline.first_ts ?? liveposTimeline.live_first ?? ''), 10)
   const timelineLastTs = Number.parseInt(String(liveposTimeline.last_ts ?? liveposTimeline.live_last ?? ''), 10)
@@ -407,32 +413,34 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
               )}
             </div>
 
-            <div className="flex flex-wrap gap-4">
-              {stream.stat_url ? (
-                <a
-                  href={stream.stat_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-primary hover:underline flex items-center gap-1"
-                >
-                  Statistics URL <ExternalLink className="h-3 w-3" />
-                </a>
-              ) : (
-                <span className="text-sm text-muted-foreground">Statistics URL not available in this control flow</span>
-              )}
-              {stream.command_url ? (
-                <a
-                  href={stream.command_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-primary hover:underline flex items-center gap-1"
-                >
-                  Command URL <ExternalLink className="h-3 w-3" />
-                </a>
-              ) : (
-                <span className="text-sm text-muted-foreground">Command URL not available in this control flow</span>
-              )}
-            </div>
+            {showLinksBlock && (
+              <div className="flex flex-wrap gap-4">
+                {stream.stat_url ? (
+                  <a
+                    href={stream.stat_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-primary hover:underline flex items-center gap-1"
+                  >
+                    Statistics URL <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : showMissingControlFlowHint ? (
+                  <span className="text-sm text-muted-foreground">Statistics URL not available in this control flow</span>
+                ) : null}
+                {stream.command_url ? (
+                  <a
+                    href={stream.command_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-primary hover:underline flex items-center gap-1"
+                  >
+                    Command URL <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : showMissingControlFlowHint ? (
+                  <span className="text-sm text-muted-foreground">Command URL not available in this control flow</span>
+                ) : null}
+              </div>
+            )}
           </CollapsibleContent>
         </Collapsible>
 
