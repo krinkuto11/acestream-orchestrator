@@ -37,6 +37,11 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
   const [extendedStats, setExtendedStats] = useState(null)
   const [extendedStatsLoading, setExtendedStatsLoading] = useState(false)
   const [isExtendedStatsOpen, setIsExtendedStatsOpen] = useState(false)
+  const [liveposData, setLiveposData] = useState(null)
+  const [seekValue, setSeekValue] = useState(null)
+  const [seekLoading, setSeekLoading] = useState(false)
+  const [seekError, setSeekError] = useState(null)
+  const [seekMessage, setSeekMessage] = useState(null)
 
   const fetchStats = useCallback(async () => {
     if (!stream) return
@@ -91,12 +96,114 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
     }
   }, [stream, orchUrl, apiKey])
 
+  const fetchLivepos = useCallback(async () => {
+    if (!stream) return
+
+    try {
+      const headers = {}
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`
+      }
+
+      const response = await fetch(
+        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/livepos`,
+        { headers }
+      )
+
+      if (response.ok) {
+        const data = await response.json()
+        setLiveposData(data)
+      }
+    } catch (err) {
+      console.error('Failed to fetch livepos:', err)
+    }
+  }, [stream, orchUrl, apiKey])
+
   useEffect(() => {
     fetchStats()
     fetchExtendedStats()
+    fetchLivepos()
     const interval = setInterval(fetchStats, 10000) // Refresh every 10 seconds
-    return () => clearInterval(interval)
-  }, [fetchStats, fetchExtendedStats])
+    const liveposInterval = setInterval(fetchLivepos, 5000)
+    return () => {
+      clearInterval(interval)
+      clearInterval(liveposInterval)
+    }
+  }, [fetchStats, fetchExtendedStats, fetchLivepos])
+
+  useEffect(() => {
+    const posRaw = liveposData?.livepos?.pos
+    const posValue = Number.parseInt(String(posRaw ?? ''), 10)
+    if (Number.isFinite(posValue)) {
+      setSeekValue(posValue)
+    }
+  }, [liveposData?.livepos?.pos])
+
+  const formatTimelineTimestamp = (value) => {
+    const parsed = Number.parseInt(String(value ?? ''), 10)
+    if (!Number.isFinite(parsed)) return 'N/A'
+    try {
+      return new Date(parsed * 1000).toLocaleTimeString()
+    } catch {
+      return String(parsed)
+    }
+  }
+
+  const handleSeekCommit = async () => {
+    const timeline = liveposData?.livepos || {}
+    const firstTs = Number.parseInt(String(timeline.first_ts ?? timeline.live_first ?? ''), 10)
+    const lastTs = Number.parseInt(String(timeline.last_ts ?? timeline.live_last ?? ''), 10)
+    const selected = Number.parseInt(String(seekValue ?? ''), 10)
+
+    if (!Number.isFinite(firstTs) || !Number.isFinite(lastTs) || !Number.isFinite(selected)) {
+      return
+    }
+
+    // LIVESEEK is intended for catch-up (backwards seek) on live broadcasts.
+    if (selected >= lastTs) {
+      return
+    }
+
+    setSeekLoading(true)
+    setSeekError(null)
+    setSeekMessage(null)
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+      }
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`
+      }
+
+      const response = await fetch(
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/seek`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ target_timestamp: selected }),
+        }
+      )
+
+      let payload = null
+      try {
+        payload = await response.json()
+      } catch {
+        payload = null
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      const switchedUrl = payload?.result?.playback_url || payload?.result?.url || 'updated playback URL'
+      setSeekMessage(`Seek applied to ${formatTimelineTimestamp(selected)} (${switchedUrl})`)
+      fetchLivepos()
+    } catch (err) {
+      setSeekError(err.message || String(err))
+    } finally {
+      setSeekLoading(false)
+    }
+  }
 
   // AceStream API returns speed in KB/s, so we divide by 1024 to convert to MB/s
   const chartData = {
@@ -170,6 +277,18 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
   const streamLabels = stream?.labels || {}
   const streamControlMode = streamLabels['proxy.control_mode'] || null
   const resolvedInfohash = streamLabels['stream.resolved_infohash'] || null
+  const isLegacyApiMode = streamControlMode === 'LEGACY_API'
+  const liveposTimeline = liveposData?.livepos || {}
+  const timelineFirstTs = Number.parseInt(String(liveposTimeline.first_ts ?? liveposTimeline.live_first ?? ''), 10)
+  const timelineLastTs = Number.parseInt(String(liveposTimeline.last_ts ?? liveposTimeline.live_last ?? ''), 10)
+  const timelinePos = Number.parseInt(String(liveposTimeline.pos ?? ''), 10)
+  const canSeekTimeline = Boolean(
+    liveposData?.has_livepos
+    && liveposData?.is_live
+    && Number.isFinite(timelineFirstTs)
+    && Number.isFinite(timelineLastTs)
+    && timelineLastTs > timelineFirstTs
+  )
 
   return (
     <Card>
@@ -318,6 +437,55 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
         </Collapsible>
 
         <div className="border-t pt-4">
+          <div className="mb-4 rounded-md border p-3 bg-muted/30 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold">Live Timeline (Catch-up)</p>
+              <Badge variant={liveposData?.is_live ? 'success' : 'secondary'}>
+                {liveposData?.is_live ? 'Live' : 'Not live'}
+              </Badge>
+            </div>
+
+            {canSeekTimeline ? (
+              <>
+                <input
+                  type="range"
+                  min={timelineFirstTs}
+                  max={timelineLastTs}
+                  step={1}
+                  value={seekValue ?? timelinePos ?? timelineLastTs}
+                  onChange={(e) => setSeekValue(Number.parseInt(e.target.value, 10))}
+                  onMouseUp={handleSeekCommit}
+                  onTouchEnd={handleSeekCommit}
+                  disabled={!isLegacyApiMode || seekLoading}
+                  className="w-full"
+                />
+                <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+                  <div>
+                    <p>Window Start</p>
+                    <p className="font-medium text-foreground">{formatTimelineTimestamp(timelineFirstTs)}</p>
+                  </div>
+                  <div>
+                    <p>Selected</p>
+                    <p className="font-medium text-foreground">{formatTimelineTimestamp(seekValue)}</p>
+                  </div>
+                  <div>
+                    <p>Live Edge</p>
+                    <p className="font-medium text-foreground">{formatTimelineTimestamp(timelineLastTs)}</p>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">Live timeline is unavailable for this stream.</p>
+            )}
+
+            {!isLegacyApiMode && (
+              <p className="text-xs text-muted-foreground">LIVESEEK requires LEGACY_API control mode.</p>
+            )}
+            {seekLoading && <p className="text-xs text-muted-foreground">Applying seek...</p>}
+            {seekMessage && <p className="text-xs text-green-600 dark:text-green-400">{seekMessage}</p>}
+            {seekError && <p className="text-xs text-destructive">{seekError}</p>}
+          </div>
+
           <div className="h-80">
             {stats.length > 0 ? (
               <Line data={chartData} options={chartOptions} />

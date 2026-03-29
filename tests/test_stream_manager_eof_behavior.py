@@ -130,7 +130,7 @@ def test_legacy_api_proxy_playback_forces_light_preflight(monkeypatch):
             calls["tier"] = tier
             return {"available": True, "infohash": "resolved-hash"}
 
-        def start_stream(self, infohash, mode="infohash", stream_type="output_format=http", file_indexes="0"):
+        def start_stream(self, infohash, mode="infohash", stream_type="output_format=http", file_indexes="0", seekback=None):
             return {
                 "url": "http%3A//127.0.0.1%3A19000/content/resolved-hash/0.1",
                 "playback_session_id": "legacy-1",
@@ -145,3 +145,27 @@ def test_legacy_api_proxy_playback_forces_light_preflight(monkeypatch):
 
     assert manager._request_stream_legacy_api() is True
     assert calls["tier"] == "light"
+
+
+def test_stream_manager_seek_stream_schedules_switch():
+    manager = _build_manager()
+    manager.control_mode = "LEGACY_API"
+    manager.running = True
+
+    class _FakeLegacyClient:
+        def seek_stream(self, target_timestamp):
+            assert target_timestamp == 1700002000
+            return {
+                "url": "http%3A//127.0.0.1%3A19000/content/seeked/0.1",
+                "playback_session_id": "seek-session-1",
+                "stream": "1",
+            }
+
+    manager.ace_api_client = _FakeLegacyClient()
+
+    result = manager.seek_stream(1700002000)
+
+    assert result["target_timestamp"] == 1700002000
+    assert result["playback_session_id"] == "seek-session-1"
+    assert manager._pending_seek_start_info is not None
+    assert manager._pending_seek_start_info.get("url") == "http://127.0.0.1:19000/content/seeked/0.1"

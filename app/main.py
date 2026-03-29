@@ -2225,6 +2225,10 @@ class LegacyStreamMonitorM3UParseRequest(BaseModel):
     m3u_content: str
 
 
+class StreamSeekRequest(BaseModel):
+    target_timestamp: int
+
+
 @app.post("/ace/monitor/legacy/start", dependencies=[Depends(require_api_key)])
 async def start_legacy_stream_monitor(req: LegacyStreamMonitorStartRequest):
     """Start a background legacy API monitor that collects STATUS every interval.
@@ -2364,26 +2368,47 @@ def _normalize_file_indexes(file_indexes: Optional[str]) -> str:
     return normalized
 
 
-def _build_stream_key(input_type: str, input_value: str, file_indexes: str = "0") -> str:
-    if input_type in {"content_id", "infohash"} and file_indexes == "0":
+def _normalize_seekback(seekback: Optional[int]) -> int:
+    if seekback is None:
+        return 0
+    try:
+        normalized = int(float(seekback))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="seekback must be a non-negative integer")
+    if normalized < 0:
+        raise HTTPException(status_code=400, detail="seekback must be a non-negative integer")
+    return normalized
+
+
+def _build_stream_key(input_type: str, input_value: str, file_indexes: str = "0", seekback: int = 0) -> str:
+    if input_type in {"content_id", "infohash"} and file_indexes == "0" and seekback <= 0:
         return input_value
 
     # Preserve previous key format for non-id inputs when file index is default.
-    if input_type not in {"content_id", "infohash"} and file_indexes == "0":
+    if input_type not in {"content_id", "infohash"} and file_indexes == "0" and seekback <= 0:
         digest = hashlib.sha1(input_value.encode("utf-8")).hexdigest()
         return f"{input_type}:{digest}"
 
-    keyed_payload = f"{input_type}:{input_value}|file_indexes={file_indexes}"
+    keyed_payload = f"{input_type}:{input_value}|file_indexes={file_indexes}|seekback={seekback}"
     digest = hashlib.sha1(keyed_payload.encode("utf-8")).hexdigest()
     return f"{input_type}:{digest}"
 
 
-def _build_engine_stream_params(input_type: str, input_value: str, pid: str, file_indexes: str = "0") -> Dict[str, str]:
+def _build_engine_stream_params(
+    input_type: str,
+    input_value: str,
+    pid: str,
+    file_indexes: str = "0",
+    seekback: int = 0,
+) -> Dict[str, str]:
     params: Dict[str, str] = {
         "format": "json",
         "pid": pid,
         "file_indexes": file_indexes,
     }
+
+    if seekback > 0:
+        params["seekback"] = str(seekback)
 
     if input_type in {"content_id", "infohash"}:
         params["id"] = input_value
@@ -2402,7 +2427,12 @@ def _build_engine_stream_params(input_type: str, input_value: str, pid: str, fil
     return params
 
 
-def _build_stream_query_params(input_type: str, input_value: str, file_indexes: str = "0") -> Dict[str, str]:
+def _build_stream_query_params(
+    input_type: str,
+    input_value: str,
+    file_indexes: str = "0",
+    seekback: int = 0,
+) -> Dict[str, str]:
     if input_type == "content_id":
         params = {"id": input_value}
     else:
@@ -2410,6 +2440,9 @@ def _build_stream_query_params(input_type: str, input_value: str, file_indexes: 
 
     if file_indexes != "0":
         params["file_indexes"] = file_indexes
+
+    if seekback > 0:
+        params["seekback"] = str(seekback)
 
     return params
 
@@ -2421,6 +2454,7 @@ def ace_preflight(
     direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
     raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
     file_indexes: Optional[str] = Query("0", description="Comma-separated torrent file indexes (for example: 0 or 0,2)"),
+    seekback: Optional[int] = Query(0, description="Optional catch-up offset in seconds for live streams"),
     tier: str = Query("light", description="Availability probe tier: light or deep"),
 ):
     """Run a short availability probe and canonicalize content IDs before playback."""
@@ -2429,7 +2463,8 @@ def ace_preflight(
 
     input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
     normalized_file_indexes = _normalize_file_indexes(file_indexes)
-    stream_key = _build_stream_key(input_type, input_value, normalized_file_indexes)
+    normalized_seekback = _normalize_seekback(seekback)
+    stream_key = _build_stream_key(input_type, input_value, normalized_file_indexes, normalized_seekback)
 
     normalized_tier = (tier or "light").strip().lower()
     if normalized_tier not in {"light", "deep"}:
@@ -2508,6 +2543,7 @@ def ace_preflight(
                         input_value,
                         mode=resolved_mode,
                         file_indexes=normalized_file_indexes,
+                        seekback=normalized_seekback,
                     )
                     status_probe = client.collect_status_samples(samples=4, interval_s=0.5, per_sample_timeout_s=2.0)
                     preflight_result["start"] = start_info
@@ -2519,6 +2555,7 @@ def ace_preflight(
                 "tier": normalized_tier,
                 "input_type": input_type,
                 "file_indexes": normalized_file_indexes,
+                "seekback": normalized_seekback,
                 "stream_key": stream_key,
                 "engine": {
                     "container_id": selected_engine.container_id,
@@ -2540,7 +2577,13 @@ def ace_preflight(
     # HTTP control fallback for compatibility in LEGACY_HTTP mode.
     url = f"http://{selected_engine.host}:{selected_engine.port}/ace/getstream"
     pid = f"preflight-{int(time.time())}"
-    params = _build_engine_stream_params(input_type, input_value, pid=pid, file_indexes=normalized_file_indexes)
+    params = _build_engine_stream_params(
+        input_type,
+        input_value,
+        pid=pid,
+        file_indexes=normalized_file_indexes,
+        seekback=normalized_seekback,
+    )
     try:
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
@@ -2554,6 +2597,7 @@ def ace_preflight(
             "tier": normalized_tier,
             "input_type": input_type,
             "file_indexes": normalized_file_indexes,
+            "seekback": normalized_seekback,
             "stream_key": stream_key,
             "engine": {
                 "container_id": selected_engine.container_id,
@@ -2608,6 +2652,7 @@ def ace_preflight(
         "tier": normalized_tier,
         "input_type": input_type,
         "file_indexes": normalized_file_indexes,
+        "seekback": normalized_seekback,
         "stream_key": stream_key,
         "engine": {
             "container_id": selected_engine.container_id,
@@ -2627,6 +2672,7 @@ async def ace_getstream(
     direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
     raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
     file_indexes: Optional[str] = Query("0", description="Comma-separated torrent file indexes (for example: 0 or 0,2)"),
+    seekback: Optional[int] = Query(0, description="Optional catch-up offset in seconds for live streams"),
     request: Request = None,
 ):
     """Proxy endpoint for AceStream video streams with multiplexing.
@@ -2649,6 +2695,7 @@ async def ace_getstream(
         direct_url: Direct media/magnet URL
         raw_data: Raw torrent data payload
         file_indexes: Comma-separated torrent file indexes
+        seekback: Optional catch-up offset in seconds for live streams
         request: FastAPI Request object for client info
         
     Returns:
@@ -2665,7 +2712,8 @@ async def ace_getstream(
 
     input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
     normalized_file_indexes = _normalize_file_indexes(file_indexes)
-    stream_key = _build_stream_key(input_type, input_value, normalized_file_indexes)
+    normalized_seekback = _normalize_seekback(seekback)
+    stream_key = _build_stream_key(input_type, input_value, normalized_file_indexes, normalized_seekback)
     
     # Get current stream mode
     stream_mode = ProxyConfig.STREAM_MODE
@@ -2697,7 +2745,7 @@ async def ace_getstream(
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
 
     reusable_monitor_session = None
-    if input_type in {"content_id", "infohash"} and normalized_file_indexes == "0":
+    if input_type in {"content_id", "infohash"} and normalized_file_indexes == "0" and normalized_seekback <= 0:
         reusable_monitor_session = await legacy_stream_monitoring_service.get_reusable_session_for_content(input_value)
     if reusable_monitor_session:
         monitor_engine = reusable_monitor_session.get("engine") or {}
@@ -2838,6 +2886,7 @@ async def ace_getstream(
                         input_value,
                         pid=pid,
                         file_indexes=normalized_file_indexes,
+                        seekback=normalized_seekback,
                     )
 
                     logger.info(f"Requesting HLS stream from engine: {hls_url}")
@@ -2949,6 +2998,7 @@ async def ace_getstream(
                 source_input=input_value,
                 source_input_type=input_type,
                 file_indexes=normalized_file_indexes,
+                seekback=normalized_seekback,
             )
             
             if not success:
@@ -3066,6 +3116,7 @@ async def ace_manifest(
     direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
     raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
     file_indexes: Optional[str] = Query("0", description="Comma-separated torrent file indexes (for example: 0 or 0,2)"),
+    seekback: Optional[int] = Query(0, description="Optional catch-up offset in seconds for live streams"),
 ):
     """Proxy endpoint for AceStream HLS streams (M3U8).
     
@@ -3079,13 +3130,20 @@ async def ace_manifest(
         direct_url: Direct media/magnet URL
         raw_data: Raw torrent data payload
         file_indexes: Comma-separated torrent file indexes
+        seekback: Optional catch-up offset in seconds for live streams
         
     Returns:
         Redirects to /ace/getstream
     """
     input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
     normalized_file_indexes = _normalize_file_indexes(file_indexes)
-    redirect_params = _build_stream_query_params(input_type, input_value, normalized_file_indexes)
+    normalized_seekback = _normalize_seekback(seekback)
+    redirect_params = _build_stream_query_params(
+        input_type,
+        input_value,
+        normalized_file_indexes,
+        normalized_seekback,
+    )
     redirect_query = urlencode(redirect_params)
 
     raise HTTPException(
@@ -3093,6 +3151,53 @@ async def ace_manifest(
         detail="This endpoint is deprecated. Use /ace/getstream which now supports both TS and HLS modes based on proxy settings.",
         headers={"Location": f"/ace/getstream?{redirect_query}"}
     )
+
+
+@app.post("/api/v1/streams/{monitor_id}/seek", dependencies=[Depends(require_api_key)])
+async def seek_stream_live(monitor_id: str, req: StreamSeekRequest):
+    """Seek an active LEGACY_API stream to the given live timestamp via LIVESEEK."""
+    target_timestamp = int(req.target_timestamp)
+    if target_timestamp < 0:
+        raise HTTPException(status_code=400, detail="target_timestamp must be non-negative")
+
+    proxy = ProxyManager.get_instance()
+
+    stream = state.get_stream(monitor_id)
+    stream_key = stream.key if stream else monitor_id
+    stream_id = stream.id if stream else None
+
+    manager = proxy.stream_managers.get(stream_key)
+
+    # Compatibility fallback when monitor_id points to a legacy monitor session.
+    if not manager:
+        monitor = await legacy_stream_monitoring_service.get_monitor(monitor_id, include_recent_status=False)
+        monitor_content_id = (monitor or {}).get("content_id") if monitor else None
+        normalized_monitor_content_id = (monitor_content_id or "").strip().lower()
+        if normalized_monitor_content_id:
+            manager = proxy.stream_managers.get(normalized_monitor_content_id)
+            stream_key = normalized_monitor_content_id
+
+    if not manager:
+        raise HTTPException(status_code=404, detail="Active proxy stream not found for seek request")
+
+    try:
+        seek_result = await asyncio.to_thread(manager.seek_stream, target_timestamp)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to seek stream {monitor_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Seek failed: {str(e)}")
+
+    return {
+        "ok": True,
+        "monitor_id": monitor_id,
+        "stream_id": stream_id,
+        "stream_key": stream_key,
+        "target_timestamp": target_timestamp,
+        "result": seek_result,
+    }
 
 
 @app.get("/proxy/status")

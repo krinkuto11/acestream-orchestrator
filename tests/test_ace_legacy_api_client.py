@@ -330,3 +330,46 @@ def test_start_stream_supports_torrent_direct_raw(monkeypatch):
     assert "START TORRENT https://example.test/file.torrent 2" in commands[0]
     assert commands[1].startswith("START URL magnet:?xt=urn:btih:abc")
     assert commands[2].startswith("START RAW ZmFrZS1yYXctcGF5bG9hZA==")
+
+
+def test_seek_stream_sends_liveseek_and_returns_new_start(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+    commands = []
+
+    monkeypatch.setattr(client, "_write", lambda msg: commands.append(msg))
+    monkeypatch.setattr(
+        client,
+        "_wait_for",
+        lambda *_args, **_kwargs: ("START", ["START", "url=http://new-url", "playback_session_id=s2"], {}),
+    )
+
+    payload = client.seek_stream(1700001200)
+
+    assert commands == ["LIVESEEK 1700001200"]
+    assert payload["url"] == "http://new-url"
+    assert payload["playback_session_id"] == "s2"
+
+
+def test_start_stream_seekback_waits_livepos_and_returns_second_start(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+    commands = []
+    wait_for_responses = [
+        ("START", ["START", "url=http://first-url", "playback_session_id=s1"], {}),
+        ("START", ["START", "url=http://second-url", "playback_session_id=s2"], {}),
+    ]
+
+    monkeypatch.setattr(client, "_write", lambda msg: commands.append(msg))
+    monkeypatch.setattr(client, "_wait_for", lambda *_args, **_kwargs: wait_for_responses.pop(0))
+    monkeypatch.setattr(
+        client,
+        "_read_message",
+        lambda timeout=0: ("EVENT", ["EVENT", "livepos", "last_ts=1700001000", "pos=1700000990"], {}),
+    )
+
+    payload = client.start_stream("abc123", mode="infohash", seekback=25)
+
+    assert commands[0].startswith("START INFOHASH abc123")
+    assert commands[1] == "LIVESEEK 1700000975"
+    assert payload["url"] == "http://second-url"
+    assert payload["playback_session_id"] == "s2"
+    assert payload["seek_target_timestamp"] == "1700000975"

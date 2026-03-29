@@ -149,6 +149,7 @@ class ProxyServer:
         source_input=None,
         source_input_type="content_id",
         file_indexes="0",
+        seekback=0,
     ):
         """Start a new stream session"""
         if content_id in self.stream_managers:
@@ -186,6 +187,7 @@ class ProxyServer:
                 source_input=source_input,
                 source_input_type=source_input_type,
                 file_indexes=file_indexes,
+                seekback=seekback,
             )
             self.stream_managers[content_id] = stream_manager
             
@@ -220,6 +222,13 @@ class ProxyServer:
         
         logger.info(f"Stopping proxy session for content_id={content_id} (called from state synchronization)")
         self._stop_stream(content_id)
+
+    def seek_stream_by_key(self, content_id: str, target_timestamp: int):
+        """Seek an active proxy session using LIVESEEK in LEGACY_API mode."""
+        stream_manager = self.stream_managers.get(content_id)
+        if not stream_manager:
+            raise RuntimeError(f"No active proxy session for stream key '{content_id}'")
+        return stream_manager.seek_stream(target_timestamp)
     
     def _stop_stream(self, content_id):
         """Stop a stream session (internal method)"""

@@ -11,6 +11,7 @@ class StreamKey(BaseModel):
     key_type: Literal["content_id", "infohash", "torrent_url", "direct_url", "raw_data", "url", "magnet"]
     key: str
     file_indexes: str = "0"
+    seekback: int = 0
 
 class SessionInfo(BaseModel):
     playback_session_id: str
@@ -65,6 +66,7 @@ class StreamState(BaseModel):
     key_type: Literal["content_id", "infohash", "torrent_url", "direct_url", "raw_data", "url", "magnet"]
     key: str
     file_indexes: str = "0"
+    seekback: int = 0
     container_id: str
     container_name: Optional[str] = None
     playback_session_id: str

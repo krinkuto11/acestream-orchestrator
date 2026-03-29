@@ -47,6 +47,7 @@ class StreamManager:
         source_input=None,
         source_input_type="content_id",
         file_indexes="0",
+        seekback=0,
     ):
         # Basic properties
         self.content_id = content_id
@@ -85,6 +86,11 @@ class StreamManager:
         self.source_input = str(source_input if source_input is not None else content_id)
         normalized_file_indexes = str(file_indexes if file_indexes is not None else "0").strip()
         self.file_indexes = normalized_file_indexes or "0"
+        try:
+            normalized_seekback = int(float(seekback))
+        except (TypeError, ValueError):
+            normalized_seekback = 0
+        self.seekback = max(0, normalized_seekback)
         # Keep probe cadence aligned with collector interval so legacy mode
         # has comparable overhead to stat_url polling mode.
         try:
@@ -102,6 +108,8 @@ class StreamManager:
         # HTTP stream reader
         self.http_reader = None
         self.socket = None  # Read end of pipe from http_reader
+        self._reader_lock = threading.RLock()
+        self._pending_seek_start_info = None
         
         # Health monitoring
         self.last_data_time = time.time()
@@ -122,6 +130,9 @@ class StreamManager:
             "pid": str(uuid.uuid4()),
             "file_indexes": self.file_indexes,
         }
+
+        if self.seekback > 0:
+            params["seekback"] = str(self.seekback)
 
         if self.source_input_type in {"content_id", "infohash"}:
             params["id"] = self.source_input
@@ -341,6 +352,7 @@ class StreamManager:
                 start_payload,
                 mode=start_mode,
                 file_indexes=self.file_indexes,
+                seekback=self.seekback,
             )
             self.legacy_status_probe = client.collect_status_samples(samples=1, interval_s=0.0, per_sample_timeout_s=1.0)
 
@@ -422,6 +434,7 @@ class StreamManager:
                         key_type=self.source_input_type,
                         key=self.content_id,
                         file_indexes=self.file_indexes,
+                        seekback=self.seekback,
                     ),
                     session=SessionInfo(
                         playback_session_id=self.playback_session_id or f"fallback-{self.content_id[:16]}-{int(time.time())}",
@@ -435,6 +448,7 @@ class StreamManager:
                         "proxy.control_mode": self.control_mode,
                         "stream.input_type": self.source_input_type,
                         "stream.file_indexes": self.file_indexes,
+                        "stream.seekback": str(self.seekback),
                         "stream.resolved_infohash": str(self.resolved_infohash or ""),
                         "host.api_port": str(self.engine_api_port or "")
                     }
@@ -532,11 +546,12 @@ class StreamManager:
             
             # Create HTTP stream reader with VLC user agent for better compatibility
             # Some AceStream engines may behave differently based on the user agent
-            self.http_reader = HTTPStreamReader(
-                url=self.playback_url,
-                user_agent=VLC_USER_AGENT,
-                chunk_size=ConfigHelper.chunk_size()
-            )
+            with self._reader_lock:
+                self.http_reader = HTTPStreamReader(
+                    url=self.playback_url,
+                    user_agent=VLC_USER_AGENT,
+                    chunk_size=ConfigHelper.chunk_size()
+                )
             
             # Start reader and get pipe
             self.socket = self.http_reader.start()
@@ -554,6 +569,93 @@ class StreamManager:
             logger.error(f"Details - Playback URL: {self.playback_url}, Content ID: {self.content_id}")
             logger.debug(f"Exception details: {e}", exc_info=True)
             return False
+
+    def seek_stream(self, target_timestamp: int):
+        """Issue LIVESEEK for an active LEGACY_API stream and schedule reader URL switch."""
+        if self.control_mode != "LEGACY_API":
+            raise RuntimeError("LIVESEEK is only available when control_mode is LEGACY_API")
+        if not self.running:
+            raise RuntimeError("Stream is not running")
+
+        locked = self._legacy_api_lock.acquire(timeout=2.0)
+        if not locked:
+            raise RuntimeError("Legacy API client is busy, please retry")
+
+        try:
+            if not self.ace_api_client:
+                raise RuntimeError("Legacy API session is not active")
+
+            start_info = self.ace_api_client.seek_stream(int(target_timestamp))
+        finally:
+            self._legacy_api_lock.release()
+
+        playback_url = start_info.get("url")
+        if not playback_url:
+            raise RuntimeError("LIVESEEK did not return a playback URL")
+
+        normalized_url = self._normalize_playback_url(playback_url)
+        with self._reader_lock:
+            self._pending_seek_start_info = dict(start_info)
+            self._pending_seek_start_info["url"] = normalized_url
+
+        self._legacy_probe_cache = None
+        self._legacy_probe_cache_ts = 0.0
+
+        return {
+            "playback_url": normalized_url,
+            "playback_session_id": start_info.get("playback_session_id"),
+            "stream": start_info.get("stream"),
+            "target_timestamp": int(target_timestamp),
+        }
+
+    def _apply_pending_seek_switch(self):
+        """Switch HTTP reader to a newly-seeked playback URL without tearing down stream state."""
+        pending = None
+        with self._reader_lock:
+            if self._pending_seek_start_info:
+                pending = dict(self._pending_seek_start_info)
+                self._pending_seek_start_info = None
+
+        if not pending:
+            return False
+
+        next_url = pending.get("url")
+        if not next_url:
+            return False
+
+        logger.info(
+            "Applying LIVESEEK playback switch for content_id=%s target_url=%s",
+            self.content_id,
+            next_url,
+        )
+
+        with self._reader_lock:
+            old_reader = self.http_reader
+            old_socket = self.socket
+
+            self.connected = False
+
+            if old_reader:
+                try:
+                    old_reader.stop()
+                except Exception as e:
+                    logger.debug("Failed to stop previous HTTP reader during LIVESEEK switch: %s", e)
+
+            if old_socket:
+                try:
+                    old_socket.close()
+                except Exception:
+                    pass
+
+            self.playback_url = next_url
+            if pending.get("playback_session_id"):
+                self.playback_session_id = pending.get("playback_session_id")
+
+        if not self.start_stream():
+            raise RuntimeError("Failed to restart HTTP stream reader after LIVESEEK")
+
+        self.last_data_time = time.time()
+        return True
     
     def run(self):
         """Main execution loop with resilient hot-failover support"""
@@ -650,21 +752,26 @@ class StreamManager:
         from ..services.performance_metrics import Timer, performance_metrics
         
         chunk_count = 0
-        
-        # Set socket to non-blocking mode for better performance
-        # This allows us to check for data availability without long blocking waits
-        try:
-            import fcntl
-            import os as os_module
-            fd = self.socket.fileno()
-            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-            fcntl.fcntl(fd, fcntl.F_SETFL, flags | os_module.O_NONBLOCK)
-            logger.debug(f"Set socket to non-blocking mode for content_id={self.content_id}")
-        except Exception as e:
-            logger.warning(f"Could not set socket to non-blocking mode: {e}, using blocking mode with short timeout")
+
+        def _set_socket_non_blocking(sock_obj):
+            # Set socket to non-blocking mode for better performance.
+            try:
+                import fcntl
+                import os as os_module
+                fd = sock_obj.fileno()
+                flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+                fcntl.fcntl(fd, fcntl.F_SETFL, flags | os_module.O_NONBLOCK)
+                logger.debug(f"Set socket to non-blocking mode for content_id={self.content_id}")
+            except Exception as e:
+                logger.warning(f"Could not set socket to non-blocking mode: {e}, using blocking mode with short timeout")
+
+        _set_socket_non_blocking(self.socket)
         
         while self.running and self.connected:
             try:
+                if self._apply_pending_seek_switch():
+                    _set_socket_non_blocking(self.socket)
+
                 # Use select with short timeout for responsive shutdown and health checks
                 # Reduced from 5.0s to 0.5s for better responsiveness
                 import select
@@ -831,6 +938,7 @@ class StreamManager:
         self.legacy_status_probe = None
         self._legacy_probe_cache = None
         self._legacy_probe_cache_ts = 0.0
+        self._pending_seek_start_info = None
 
     def _cleanup(self):
         """Cleanup resources"""
