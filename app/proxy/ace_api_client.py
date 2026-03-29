@@ -13,7 +13,7 @@ import socket
 import threading
 import time
 from typing import Any, Dict, Optional, Tuple
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +309,40 @@ class AceLegacyApiClient:
 
         target = max(0, target)
         self._write(f"LIVESEEK {target}")
+        return True
+
+    def pause_stream(self) -> bool:
+        """Pause active playback session on this API connection."""
+        self._write("PAUSE")
+        return True
+
+    def resume_stream(self) -> bool:
+        """Resume paused playback session on this API connection."""
+        self._write("RESUME")
+        return True
+
+    def save_stream(self, infohash: str, index: int = 0, path: str = "") -> bool:
+        """Request SAVE for a content file to a target path."""
+        normalized_infohash = str(infohash or "").strip()
+        if not normalized_infohash:
+            raise AceLegacyApiError("SAVE requires a non-empty infohash")
+
+        normalized_path = str(path or "").strip()
+        if not normalized_path:
+            raise AceLegacyApiError("SAVE requires a non-empty path")
+
+        try:
+            normalized_index = int(index)
+        except (TypeError, ValueError) as exc:
+            raise AceLegacyApiError(f"Invalid SAVE index: {index}") from exc
+
+        if normalized_index < 0:
+            raise AceLegacyApiError("SAVE index must be non-negative")
+
+        encoded_path = quote(normalized_path, safe="/._-~")
+        self._write(
+            f"SAVE infohash={normalized_infohash} index={normalized_index} path={encoded_path}"
+        )
         return True
 
     @staticmethod

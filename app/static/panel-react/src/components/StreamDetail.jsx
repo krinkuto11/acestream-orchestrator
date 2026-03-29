@@ -1,7 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { X, StopCircle, Trash2, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { X, StopCircle, Trash2, ExternalLink, ChevronDown, ChevronUp, Pause, Save, PlayCircle } from 'lucide-react'
 import { Line } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
@@ -42,6 +51,13 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
   const [seekLoading, setSeekLoading] = useState(false)
   const [seekError, setSeekError] = useState(null)
   const [seekMessage, setSeekMessage] = useState(null)
+  const [isPaused, setIsPaused] = useState(Boolean(stream?.paused))
+  const [controlLoading, setControlLoading] = useState(false)
+  const [controlError, setControlError] = useState(null)
+  const [controlMessage, setControlMessage] = useState(null)
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false)
+  const [savePath, setSavePath] = useState('')
+  const [saveIndex, setSaveIndex] = useState('0')
 
   const fetchStats = useCallback(async () => {
     if (!stream) return
@@ -139,6 +155,10 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
     }
   }, [liveposData?.livepos?.pos])
 
+  useEffect(() => {
+    setIsPaused(Boolean(stream?.paused))
+  }, [stream?.paused])
+
   const formatTimelineTimestamp = (value) => {
     const parsed = Number.parseInt(String(value ?? ''), 10)
     if (!Number.isFinite(parsed)) return 'N/A'
@@ -205,6 +225,107 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
       setSeekError(err.message || String(err))
     } finally {
       setSeekLoading(false)
+    }
+  }
+
+  const handlePauseResume = async (shouldPause) => {
+    if (!apiKey) {
+      setControlError('Set API key in Settings to use media controls.')
+      return
+    }
+
+    setControlLoading(true)
+    setControlError(null)
+    setControlMessage(null)
+
+    try {
+      const action = shouldPause ? 'pause' : 'resume'
+      const response = await fetch(
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/${action}`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+        },
+      )
+
+      let payload = null
+      try {
+        payload = await response.json()
+      } catch {
+        payload = null
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      setIsPaused(shouldPause)
+      setControlMessage(shouldPause ? 'Stream paused.' : 'Stream resumed.')
+    } catch (err) {
+      setControlError(err?.message || 'Failed to update playback state')
+    } finally {
+      setControlLoading(false)
+    }
+  }
+
+  const handleSaveStream = async () => {
+    if (!apiKey) {
+      setControlError('Set API key in Settings to use media controls.')
+      return
+    }
+
+    const normalizedPath = String(savePath || '').trim()
+    if (!normalizedPath) {
+      setControlError('Save path is required.')
+      return
+    }
+
+    const parsedIndex = Number.parseInt(String(saveIndex || '0'), 10)
+    if (!Number.isFinite(parsedIndex) || parsedIndex < 0) {
+      setControlError('Save index must be a non-negative integer.')
+      return
+    }
+
+    setControlLoading(true)
+    setControlError(null)
+    setControlMessage(null)
+
+    try {
+      const response = await fetch(
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/save`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            path: normalizedPath,
+            index: parsedIndex,
+            infohash: resolvedInfohash || undefined,
+          }),
+        },
+      )
+
+      let payload = null
+      try {
+        payload = await response.json()
+      } catch {
+        payload = null
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      setControlMessage(`Save command issued for index ${parsedIndex}.`)
+      setSaveDialogOpen(false)
+    } catch (err) {
+      setControlError(err?.message || 'Failed to issue save command')
+    } finally {
+      setControlLoading(false)
     }
   }
 
@@ -539,23 +660,94 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
           </div>
         </div>
 
-        <div className="flex gap-3">
-          <Button
-            variant="destructive"
-            onClick={() => onStopStream(stream.id, stream.container_id)}
-            className="flex items-center gap-2"
-          >
-            <StopCircle className="h-4 w-4" />
-            Stop Stream
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => onDeleteEngine(stream.container_id)}
-            className="flex items-center gap-2 text-destructive hover:text-destructive"
-          >
-            <Trash2 className="h-4 w-4" />
-            Delete Engine
-          </Button>
+        <div className="space-y-3">
+          {isLegacyApiMode ? (
+            <div className="flex flex-wrap gap-3">
+              <Button
+                variant="outline"
+                disabled={controlLoading || !apiKey}
+                onClick={() => handlePauseResume(!isPaused)}
+                className="flex items-center gap-2"
+              >
+                {isPaused ? <PlayCircle className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                {isPaused ? 'Resume' : 'Pause'}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={controlLoading || !apiKey}
+                onClick={() => setSaveDialogOpen(true)}
+                className="flex items-center gap-2"
+              >
+                <Save className="h-4 w-4" />
+                Save
+              </Button>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">PAUSE/RESUME/SAVE require LEGACY_API control mode.</p>
+          )}
+
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="destructive"
+              onClick={() => onStopStream(stream.id, stream.container_id)}
+              className="flex items-center gap-2"
+            >
+              <StopCircle className="h-4 w-4" />
+              Stop Stream
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => onDeleteEngine(stream.container_id)}
+              className="flex items-center gap-2 text-destructive hover:text-destructive"
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete Engine
+            </Button>
+          </div>
+
+          {controlLoading && <p className="text-xs text-muted-foreground">Sending control command...</p>}
+          {controlMessage && <p className="text-xs text-green-600 dark:text-green-400">{controlMessage}</p>}
+          {controlError && <p className="text-xs text-destructive">{controlError}</p>}
+
+          <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Save Stream File</DialogTitle>
+                <DialogDescription>
+                  Issue SAVE for this stream to store a file on disk from the active AceStream session.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">Destination path</p>
+                  <Input
+                    value={savePath}
+                    onChange={(e) => setSavePath(e.target.value)}
+                    placeholder="/downloads"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">File index</p>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={saveIndex}
+                    onChange={(e) => setSaveIndex(e.target.value)}
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSaveStream} disabled={controlLoading}>
+                  Save Now
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </CardContent>
     </Card>

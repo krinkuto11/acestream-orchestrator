@@ -320,6 +320,14 @@ class State:
     def get_stream(self, stream_id: str) -> Optional[StreamState]:
         with self._lock:
             return self.streams.get(stream_id)
+
+    def set_stream_paused(self, stream_id: str, paused: bool) -> Optional[StreamState]:
+        with self._lock:
+            stream = self.streams.get(stream_id)
+            if not stream:
+                return None
+            stream.paused = bool(paused)
+            return stream.model_copy()
     
     def update_stream_metadata(
         self, 

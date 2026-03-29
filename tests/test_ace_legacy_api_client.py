@@ -377,3 +377,49 @@ def test_start_stream_seekback_waits_livepos_and_returns_second_start(monkeypatc
     assert payload["playback_session_id"] == "s1"
     assert payload["seek_target_timestamp"] == "1700000975"
     assert payload["seek_issued"] == "1"
+
+
+def test_pause_resume_stream_send_expected_commands(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+    commands = []
+
+    monkeypatch.setattr(client, "_write", lambda msg: commands.append(msg))
+
+    assert client.pause_stream() is True
+    assert client.resume_stream() is True
+    assert commands == ["PAUSE", "RESUME"]
+
+
+def test_save_stream_sends_encoded_command(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+    commands = []
+
+    monkeypatch.setattr(client, "_write", lambda msg: commands.append(msg))
+
+    assert client.save_stream("abcd1234", index=2, path="/tmp/media files") is True
+    assert commands == ["SAVE infohash=abcd1234 index=2 path=/tmp/media%20files"]
+
+
+def test_save_stream_validates_inputs():
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    try:
+        client.save_stream("", index=0, path="/tmp")
+    except AceLegacyApiError as exc:
+        assert "infohash" in str(exc)
+    else:
+        raise AssertionError("Expected AceLegacyApiError for empty infohash")
+
+    try:
+        client.save_stream("abcd1234", index=0, path="")
+    except AceLegacyApiError as exc:
+        assert "path" in str(exc)
+    else:
+        raise AssertionError("Expected AceLegacyApiError for empty path")
+
+    try:
+        client.save_stream("abcd1234", index=-1, path="/tmp")
+    except AceLegacyApiError as exc:
+        assert "non-negative" in str(exc)
+    else:
+        raise AssertionError("Expected AceLegacyApiError for negative index")

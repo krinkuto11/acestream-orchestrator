@@ -600,6 +600,103 @@ class StreamManager:
             "target_timestamp": int(target_timestamp),
         }
 
+    def _set_runtime_pause_state(self, paused: bool):
+        status_value = "pause" if paused else "dl"
+
+        if isinstance(self.legacy_status_probe, dict):
+            self.legacy_status_probe["paused"] = bool(paused)
+            self.legacy_status_probe["status"] = status_value
+            self.legacy_status_probe["status_text"] = status_value
+
+        if isinstance(self._legacy_probe_cache, dict):
+            self._legacy_probe_cache["paused"] = bool(paused)
+            self._legacy_probe_cache["status"] = status_value
+            self._legacy_probe_cache["status_text"] = status_value
+
+    def pause_stream(self):
+        """Issue PAUSE for an active LEGACY_API stream."""
+        if self.control_mode != "LEGACY_API":
+            raise RuntimeError("PAUSE is only available when control_mode is LEGACY_API")
+        if not self.running:
+            raise RuntimeError("Stream is not running")
+
+        locked = self._legacy_api_lock.acquire(timeout=2.0)
+        if not locked:
+            raise RuntimeError("Legacy API client is busy, please retry")
+
+        try:
+            if not self.ace_api_client:
+                raise RuntimeError("Legacy API session is not active")
+            issued = self.ace_api_client.pause_stream()
+        finally:
+            self._legacy_api_lock.release()
+
+        if not issued:
+            raise RuntimeError("PAUSE command was not accepted")
+
+        self._set_runtime_pause_state(True)
+        return {"status": "paused"}
+
+    def resume_stream(self):
+        """Issue RESUME for an active LEGACY_API stream."""
+        if self.control_mode != "LEGACY_API":
+            raise RuntimeError("RESUME is only available when control_mode is LEGACY_API")
+        if not self.running:
+            raise RuntimeError("Stream is not running")
+
+        locked = self._legacy_api_lock.acquire(timeout=2.0)
+        if not locked:
+            raise RuntimeError("Legacy API client is busy, please retry")
+
+        try:
+            if not self.ace_api_client:
+                raise RuntimeError("Legacy API session is not active")
+            issued = self.ace_api_client.resume_stream()
+        finally:
+            self._legacy_api_lock.release()
+
+        if not issued:
+            raise RuntimeError("RESUME command was not accepted")
+
+        self._set_runtime_pause_state(False)
+        return {"status": "resumed"}
+
+    def save_stream(self, infohash: Optional[str] = None, index: int = 0, path: str = ""):
+        """Issue SAVE for an active LEGACY_API stream."""
+        if self.control_mode != "LEGACY_API":
+            raise RuntimeError("SAVE is only available when control_mode is LEGACY_API")
+        if not self.running:
+            raise RuntimeError("Stream is not running")
+
+        target_infohash = str(infohash or "").strip()
+        if not target_infohash:
+            target_infohash = str(self.resolved_infohash or "").strip()
+        if not target_infohash and self.source_input_type == "infohash":
+            target_infohash = str(self.source_input or "").strip()
+        if not target_infohash:
+            raise RuntimeError("No resolved infohash available for SAVE")
+
+        locked = self._legacy_api_lock.acquire(timeout=2.0)
+        if not locked:
+            raise RuntimeError("Legacy API client is busy, please retry")
+
+        try:
+            if not self.ace_api_client:
+                raise RuntimeError("Legacy API session is not active")
+            issued = self.ace_api_client.save_stream(target_infohash, index=index, path=path)
+        finally:
+            self._legacy_api_lock.release()
+
+        if not issued:
+            raise RuntimeError("SAVE command was not accepted")
+
+        return {
+            "status": "save_issued",
+            "infohash": target_infohash,
+            "index": int(index),
+            "path": str(path),
+        }
+
     def _apply_pending_seek_switch(self):
         """Switch HTTP reader to a newly-seeked playback URL without tearing down stream state."""
         pending = None

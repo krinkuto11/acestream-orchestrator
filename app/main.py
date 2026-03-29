@@ -2229,6 +2229,12 @@ class StreamSeekRequest(BaseModel):
     target_timestamp: int
 
 
+class StreamSaveRequest(BaseModel):
+    path: str
+    index: int = 0
+    infohash: Optional[str] = None
+
+
 @app.post("/ace/monitor/legacy/start", dependencies=[Depends(require_api_key)])
 async def start_legacy_stream_monitor(req: LegacyStreamMonitorStartRequest):
     """Start a background legacy API monitor that collects STATUS every interval.
@@ -3160,21 +3166,7 @@ async def seek_stream_live(monitor_id: str, req: StreamSeekRequest):
     if target_timestamp < 0:
         raise HTTPException(status_code=400, detail="target_timestamp must be non-negative")
 
-    proxy = ProxyManager.get_instance()
-
-    stream = state.get_stream(monitor_id)
-    stream_key = stream.key if stream else monitor_id
-
-    manager = proxy.stream_managers.get(stream_key)
-
-    # Compatibility fallback when monitor_id points to a legacy monitor session.
-    if not manager:
-        monitor = await legacy_stream_monitoring_service.get_monitor(monitor_id, include_recent_status=False)
-        monitor_content_id = (monitor or {}).get("content_id") if monitor else None
-        normalized_monitor_content_id = (monitor_content_id or "").strip().lower()
-        if normalized_monitor_content_id:
-            manager = proxy.stream_managers.get(normalized_monitor_content_id)
-            stream_key = normalized_monitor_content_id
+    manager, _, _ = await _resolve_proxy_stream_manager(monitor_id)
 
     if not manager:
         raise HTTPException(status_code=404, detail="Active proxy stream not found for seek request")
@@ -3190,6 +3182,118 @@ async def seek_stream_live(monitor_id: str, req: StreamSeekRequest):
         raise HTTPException(status_code=500, detail=f"Seek failed: {str(e)}")
 
     return {"status": "seek_issued"}
+
+
+async def _resolve_proxy_stream_manager(monitor_id: str):
+    """Resolve active StreamManager by stream id or monitor_id fallback."""
+    proxy = ProxyManager.get_instance()
+
+    stream = state.get_stream(monitor_id)
+    stream_key = stream.key if stream else monitor_id
+    manager = proxy.stream_managers.get(stream_key)
+
+    # Compatibility fallback when monitor_id points to a legacy monitor session.
+    if not manager:
+        monitor = await legacy_stream_monitoring_service.get_monitor(monitor_id, include_recent_status=False)
+        monitor_content_id = (monitor or {}).get("content_id") if monitor else None
+        normalized_monitor_content_id = (monitor_content_id or "").strip().lower()
+        if normalized_monitor_content_id:
+            manager = proxy.stream_managers.get(normalized_monitor_content_id)
+            stream_key = normalized_monitor_content_id
+
+    return manager, stream, stream_key
+
+
+def _set_stream_paused_runtime_state(monitor_id: str, stream: Optional[StreamState], paused: bool):
+    if stream:
+        state.set_stream_paused(stream.id, paused)
+
+    monitor_session = state.get_monitor_session(monitor_id)
+    if monitor_session:
+        monitor_session["paused"] = bool(paused)
+        monitor_session["status"] = "paused" if paused else "running"
+        state.upsert_monitor_session(monitor_id, monitor_session)
+
+
+@app.post("/api/v1/streams/{monitor_id}/pause", dependencies=[Depends(require_api_key)])
+async def pause_stream_live(monitor_id: str):
+    """Pause an active LEGACY_API stream via PAUSE command."""
+    manager, stream, _ = await _resolve_proxy_stream_manager(monitor_id)
+    if not manager:
+        raise HTTPException(status_code=404, detail="Active proxy stream not found for pause request")
+
+    try:
+        await asyncio.to_thread(manager.pause_stream)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except AceLegacyApiError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to pause stream {monitor_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Pause failed: {str(e)}")
+
+    _set_stream_paused_runtime_state(monitor_id, stream, True)
+    return {"status": "paused"}
+
+
+@app.post("/api/v1/streams/{monitor_id}/resume", dependencies=[Depends(require_api_key)])
+async def resume_stream_live(monitor_id: str):
+    """Resume an active LEGACY_API stream via RESUME command."""
+    manager, stream, _ = await _resolve_proxy_stream_manager(monitor_id)
+    if not manager:
+        raise HTTPException(status_code=404, detail="Active proxy stream not found for resume request")
+
+    try:
+        await asyncio.to_thread(manager.resume_stream)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except AceLegacyApiError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to resume stream {monitor_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Resume failed: {str(e)}")
+
+    _set_stream_paused_runtime_state(monitor_id, stream, False)
+    return {"status": "resumed"}
+
+
+@app.post("/api/v1/streams/{monitor_id}/save", dependencies=[Depends(require_api_key)])
+async def save_stream_live(monitor_id: str, req: StreamSaveRequest):
+    """Request SAVE for an active LEGACY_API stream session."""
+    save_path = str(req.path or "").strip()
+    if not save_path:
+        raise HTTPException(status_code=400, detail="path is required")
+
+    file_index = int(req.index)
+    if file_index < 0:
+        raise HTTPException(status_code=400, detail="index must be non-negative")
+
+    manager, _, _ = await _resolve_proxy_stream_manager(monitor_id)
+    if not manager:
+        raise HTTPException(status_code=404, detail="Active proxy stream not found for save request")
+
+    try:
+        result = await asyncio.to_thread(
+            manager.save_stream,
+            infohash=req.infohash,
+            index=file_index,
+            path=save_path,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except AceLegacyApiError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to save stream {monitor_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Save failed: {str(e)}")
+
+    return result
 
 
 @app.get("/proxy/status")
