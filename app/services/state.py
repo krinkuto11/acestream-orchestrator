@@ -126,6 +126,7 @@ class State:
 
             stream_id = (evt.labels.get("stream_id") if evt.labels else None) or f"{evt.stream.key}|{evt.session.playback_session_id}"
             st = StreamState(id=stream_id, key_type=evt.stream.key_type, key=evt.stream.key,
+                             file_indexes=evt.stream.file_indexes,
                              container_id=key, container_name=eng.container_name if eng else container_name,
                              playback_session_id=evt.session.playback_session_id,
                              stat_url=str(evt.session.stat_url or ""), command_url=str(evt.session.command_url or ""),

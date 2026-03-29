@@ -37,6 +37,51 @@ const PREFLIGHT_INPUT_OPTIONS = {
   },
 }
 
+const extractLoadRespFiles = (payload) => {
+  const files = payload?.result?.loadresp?.files
+  if (!Array.isArray(files)) {
+    return []
+  }
+
+  return files.map((entry, idx) => {
+    let fileIndex = idx
+    if (entry && typeof entry === 'object') {
+      const candidates = [entry.index, entry.file_index, entry.i, entry.id]
+      for (const candidate of candidates) {
+        if (typeof candidate === 'number' && Number.isInteger(candidate) && candidate >= 0) {
+          fileIndex = candidate
+          break
+        }
+        if (typeof candidate === 'string' && /^\d+$/.test(candidate.trim())) {
+          fileIndex = Number(candidate.trim())
+          break
+        }
+      }
+    }
+
+    let label = ''
+    if (typeof entry === 'string') {
+      label = entry
+    } else if (entry && typeof entry === 'object') {
+      label = entry.filename || entry.name || entry.path || entry.title || entry.label || ''
+      if (!label) {
+        try {
+          label = JSON.stringify(entry)
+        } catch {
+          label = `File ${idx}`
+        }
+      }
+    } else {
+      label = `File ${idx}`
+    }
+
+    return {
+      index: fileIndex,
+      label,
+    }
+  })
+}
+
 export function ProxySettings({ apiKey, orchUrl }) {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState(null)
@@ -78,6 +123,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   // Preflight diagnostics state
   const [preflightInputType, setPreflightInputType] = useState('content_id')
   const [preflightContentId, setPreflightContentId] = useState('')
+  const [preflightFileIndexes, setPreflightFileIndexes] = useState('0')
   const [preflightTier, setPreflightTier] = useState('light')
   const [preflightLoading, setPreflightLoading] = useState(false)
   const [preflightResult, setPreflightResult] = useState(null)
@@ -230,6 +276,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
 
   const runPreflight = async () => {
     const contentId = preflightContentId.trim()
+    const normalizedFileIndexes = (preflightFileIndexes || '').trim() || '0'
     const selectedInput = PREFLIGHT_INPUT_OPTIONS[preflightInputType] || PREFLIGHT_INPUT_OPTIONS.content_id
     if (!contentId) {
       setPreflightError(`${selectedInput.label} is required.`)
@@ -249,7 +296,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
 
       const queryParam = selectedInput.param
       const response = await fetch(
-        `${orchUrl}/ace/preflight?${queryParam}=${encodeURIComponent(contentId)}&tier=${encodeURIComponent(preflightTier)}`,
+        `${orchUrl}/ace/preflight?${queryParam}=${encodeURIComponent(contentId)}&file_indexes=${encodeURIComponent(normalizedFileIndexes)}&tier=${encodeURIComponent(preflightTier)}`,
         { headers }
       )
 
@@ -284,6 +331,8 @@ export function ProxySettings({ apiKey, orchUrl }) {
       setError('Failed to copy infohash: ' + (err.message || String(err)))
     }
   }
+
+  const preflightFiles = extractLoadRespFiles(preflightResult)
 
   return (
     <div className="space-y-6">
@@ -427,6 +476,29 @@ export function ProxySettings({ apiKey, orchUrl }) {
           </div>
 
           <div className="space-y-2">
+            <Label htmlFor="preflight-file-indexes">File Index</Label>
+            <Input
+              id="preflight-file-indexes"
+              type="number"
+              min="0"
+              step="1"
+              value={preflightFileIndexes}
+              onChange={(e) => {
+                const rawValue = e.target.value
+                if (!rawValue) {
+                  setPreflightFileIndexes('0')
+                  return
+                }
+                const parsed = parseInt(rawValue, 10)
+                setPreflightFileIndexes(Number.isFinite(parsed) && parsed >= 0 ? String(parsed) : '0')
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              Choose which file inside a multi-file torrent to start. Default is index 0.
+            </p>
+          </div>
+
+          <div className="space-y-2">
             <Label htmlFor="preflight-tier">Preflight Tier</Label>
             <Select value={preflightTier} onValueChange={setPreflightTier}>
               <SelectTrigger id="preflight-tier">
@@ -480,6 +552,10 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   <p className="font-mono break-all">{preflightResult?.result?.infohash || 'N/A'}</p>
                 </div>
                 <div>
+                  <p className="text-xs text-muted-foreground">Selected File Index</p>
+                  <p>{preflightResult?.file_indexes || preflightFileIndexes || '0'}</p>
+                </div>
+                <div>
                   <p className="text-xs text-muted-foreground">Control Mode</p>
                   <p>{preflightResult?.control_mode || controlMode}</p>
                 </div>
@@ -499,6 +575,24 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   Copy Resolved Infohash
                 </Button>
               </div>
+              {preflightFiles.length > 0 && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-2">Files returned by LOADRESP (click to select)</p>
+                  <div className="space-y-1 max-h-56 overflow-y-auto rounded border bg-background p-2">
+                    {preflightFiles.map((file, idx) => (
+                      <button
+                        key={`${file.index}-${idx}`}
+                        type="button"
+                        onClick={() => setPreflightFileIndexes(String(file.index))}
+                        className="w-full rounded border px-2 py-1 text-left text-xs hover:bg-muted"
+                      >
+                        <span className="font-mono mr-2">#{file.index}</span>
+                        <span>{file.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Raw Response</p>
                 <pre className="text-xs overflow-x-auto rounded bg-background p-2 border">

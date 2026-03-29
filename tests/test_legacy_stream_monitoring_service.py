@@ -23,7 +23,7 @@ class _FakeAceLegacyApiClient:
     def resolve_content(self, content_id, session_id=None):
         return ({"status": 1, "infohash": content_id}, "infohash")
 
-    def start_stream(self, content_id, mode, stream_type="output_format=http"):
+    def start_stream(self, content_id, mode, stream_type="output_format=http", file_indexes="0"):
         return {
             "playback_session_id": "test-session",
             "url": "http://127.0.0.1:6878/content/test/0.0",

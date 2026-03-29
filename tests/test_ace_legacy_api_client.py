@@ -57,10 +57,11 @@ def test_preflight_deep_stops_stream(monkeypatch):
     def fake_resolve(content_id, session_id=None):
         return {"status": 1, "infohash": "abc123"}, "content_id"
 
-    def fake_start(content_id, mode, stream_type="output_format=http"):
+    def fake_start(content_id, mode, stream_type="output_format=http", file_indexes="0"):
         calls["start"] += 1
         assert content_id == "abc123"
         assert mode == "infohash"
+        assert file_indexes == "0"
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
     def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
@@ -100,7 +101,7 @@ def test_preflight_deep_rejects_false_positive_without_progression(monkeypatch):
     def fake_resolve(content_id, session_id=None):
         return {"status": 1, "infohash": "abc123"}, "content_id"
 
-    def fake_start(content_id, mode, stream_type="output_format=http"):
+    def fake_start(content_id, mode, stream_type="output_format=http", file_indexes="0"):
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
     def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
@@ -134,7 +135,7 @@ def test_preflight_deep_accepts_moving_stream_with_fluctuating_downloaded(monkey
     def fake_resolve(content_id, session_id=None):
         return {"status": 1, "infohash": "abc123"}, "content_id"
 
-    def fake_start(content_id, mode, stream_type="output_format=http"):
+    def fake_start(content_id, mode, stream_type="output_format=http", file_indexes="0"):
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
     def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
@@ -169,7 +170,7 @@ def test_preflight_deep_accepts_early_progression_with_tail_plateau(monkeypatch)
     def fake_resolve(content_id, session_id=None):
         return {"status": 1, "infohash": "abc123"}, "content_id"
 
-    def fake_start(content_id, mode, stream_type="output_format=http"):
+    def fake_start(content_id, mode, stream_type="output_format=http", file_indexes="0"):
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
     def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
@@ -205,7 +206,7 @@ def test_preflight_deep_accepts_when_pos_plateaus_but_last_ts_moves(monkeypatch)
     def fake_resolve(content_id, session_id=None):
         return {"status": 1, "infohash": "abc123"}, "content_id"
 
-    def fake_start(content_id, mode, stream_type="output_format=http"):
+    def fake_start(content_id, mode, stream_type="output_format=http", file_indexes="0"):
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
     def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
@@ -239,7 +240,7 @@ def test_preflight_deep_rejects_when_last_ts_static_even_if_pos_moves(monkeypatc
     def fake_resolve(content_id, session_id=None):
         return {"status": 1, "infohash": "abc123"}, "content_id"
 
-    def fake_start(content_id, mode, stream_type="output_format=http"):
+    def fake_start(content_id, mode, stream_type="output_format=http", file_indexes="0"):
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
     def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
@@ -321,10 +322,11 @@ def test_start_stream_supports_torrent_direct_raw(monkeypatch):
     monkeypatch.setattr(client, "_write", lambda msg: commands.append(msg))
     monkeypatch.setattr(client, "_wait_for", lambda *_args, **_kwargs: ("START", ["START", "url=http://x", "playback_session_id=s1"], {}))
 
-    client.start_stream("https://example.test/file.torrent", mode="torrent_url")
+    client.start_stream("https://example.test/file.torrent", mode="torrent_url", file_indexes="2")
     client.start_stream("magnet:?xt=urn:btih:abc", mode="direct_url")
     client.start_stream("ZmFrZS1yYXctcGF5bG9hZA==", mode="raw_data")
 
     assert commands[0].startswith("START TORRENT https://example.test/file.torrent")
+    assert "START TORRENT https://example.test/file.torrent 2" in commands[0]
     assert commands[1].startswith("START URL magnet:?xt=urn:btih:abc")
     assert commands[2].startswith("START RAW ZmFrZS1yYXctcGF5bG9hZA==")

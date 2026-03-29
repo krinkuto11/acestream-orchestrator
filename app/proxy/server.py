@@ -148,6 +148,7 @@ class ProxyServer:
         existing_session=None,
         source_input=None,
         source_input_type="content_id",
+        file_indexes="0",
     ):
         """Start a new stream session"""
         if content_id in self.stream_managers:
@@ -184,6 +185,7 @@ class ProxyServer:
                 existing_session=existing_session,
                 source_input=source_input,
                 source_input_type=source_input_type,
+                file_indexes=file_indexes,
             )
             self.stream_managers[content_id] = stream_manager
             

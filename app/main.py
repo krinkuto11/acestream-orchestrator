@@ -12,6 +12,7 @@ import os
 import json
 import logging
 import hashlib
+import re
 import httpx
 import threading
 from types import SimpleNamespace
@@ -2349,18 +2350,39 @@ def _select_stream_input(
     return choices[0]
 
 
-def _build_stream_key(input_type: str, input_value: str) -> str:
-    if input_type in {"content_id", "infohash"}:
+def _normalize_file_indexes(file_indexes: Optional[str]) -> str:
+    normalized = str(file_indexes if file_indexes is not None else "0").strip()
+    if not normalized:
+        return "0"
+
+    # Keep query contract strict so stream identities are deterministic.
+    if not re.fullmatch(r"\d+(,\d+)*", normalized):
+        raise HTTPException(
+            status_code=400,
+            detail="file_indexes must be a comma-separated list of non-negative integers (for example: 0 or 0,2)",
+        )
+    return normalized
+
+
+def _build_stream_key(input_type: str, input_value: str, file_indexes: str = "0") -> str:
+    if input_type in {"content_id", "infohash"} and file_indexes == "0":
         return input_value
 
-    digest = hashlib.sha1(input_value.encode("utf-8")).hexdigest()
+    # Preserve previous key format for non-id inputs when file index is default.
+    if input_type not in {"content_id", "infohash"} and file_indexes == "0":
+        digest = hashlib.sha1(input_value.encode("utf-8")).hexdigest()
+        return f"{input_type}:{digest}"
+
+    keyed_payload = f"{input_type}:{input_value}|file_indexes={file_indexes}"
+    digest = hashlib.sha1(keyed_payload.encode("utf-8")).hexdigest()
     return f"{input_type}:{digest}"
 
 
-def _build_engine_stream_params(input_type: str, input_value: str, pid: str) -> Dict[str, str]:
+def _build_engine_stream_params(input_type: str, input_value: str, pid: str, file_indexes: str = "0") -> Dict[str, str]:
     params: Dict[str, str] = {
         "format": "json",
         "pid": pid,
+        "file_indexes": file_indexes,
     }
 
     if input_type in {"content_id", "infohash"}:
@@ -2380,10 +2402,16 @@ def _build_engine_stream_params(input_type: str, input_value: str, pid: str) -> 
     return params
 
 
-def _build_stream_query_params(input_type: str, input_value: str) -> Dict[str, str]:
+def _build_stream_query_params(input_type: str, input_value: str, file_indexes: str = "0") -> Dict[str, str]:
     if input_type == "content_id":
-        return {"id": input_value}
-    return {input_type: input_value}
+        params = {"id": input_value}
+    else:
+        params = {input_type: input_value}
+
+    if file_indexes != "0":
+        params["file_indexes"] = file_indexes
+
+    return params
 
 @app.get("/ace/preflight")
 def ace_preflight(
@@ -2392,6 +2420,7 @@ def ace_preflight(
     torrent_url: Optional[str] = Query(None, description="Direct .torrent URL"),
     direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
     raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
+    file_indexes: Optional[str] = Query("0", description="Comma-separated torrent file indexes (for example: 0 or 0,2)"),
     tier: str = Query("light", description="Availability probe tier: light or deep"),
 ):
     """Run a short availability probe and canonicalize content IDs before playback."""
@@ -2399,7 +2428,8 @@ def ace_preflight(
     import requests
 
     input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
-    stream_key = _build_stream_key(input_type, input_value)
+    normalized_file_indexes = _normalize_file_indexes(file_indexes)
+    stream_key = _build_stream_key(input_type, input_value, normalized_file_indexes)
 
     normalized_tier = (tier or "light").strip().lower()
     if normalized_tier not in {"light", "deep"}:
@@ -2445,7 +2475,11 @@ def ace_preflight(
             client.connect()
             client.authenticate()
             if input_type in {"content_id", "infohash"}:
-                preflight_result = client.preflight(input_value, tier=normalized_tier)
+                preflight_result = client.preflight(
+                    input_value,
+                    tier=normalized_tier,
+                    file_indexes=normalized_file_indexes,
+                )
             else:
                 resolve_resp, resolved_mode = client.resolve_content(
                     input_value,
@@ -2470,7 +2504,11 @@ def ace_preflight(
                     preflight_result["message"] = resolve_resp.get("message", "content unavailable")
 
                 if normalized_tier == "deep" and preflight_result["available"]:
-                    start_info = client.start_stream(input_value, mode=resolved_mode)
+                    start_info = client.start_stream(
+                        input_value,
+                        mode=resolved_mode,
+                        file_indexes=normalized_file_indexes,
+                    )
                     status_probe = client.collect_status_samples(samples=4, interval_s=0.5, per_sample_timeout_s=2.0)
                     preflight_result["start"] = start_info
                     preflight_result["status_probe"] = status_probe
@@ -2480,6 +2518,7 @@ def ace_preflight(
                 "control_mode": control_mode,
                 "tier": normalized_tier,
                 "input_type": input_type,
+                "file_indexes": normalized_file_indexes,
                 "stream_key": stream_key,
                 "engine": {
                     "container_id": selected_engine.container_id,
@@ -2501,7 +2540,7 @@ def ace_preflight(
     # HTTP control fallback for compatibility in LEGACY_HTTP mode.
     url = f"http://{selected_engine.host}:{selected_engine.port}/ace/getstream"
     pid = f"preflight-{int(time.time())}"
-    params = _build_engine_stream_params(input_type, input_value, pid=pid)
+    params = _build_engine_stream_params(input_type, input_value, pid=pid, file_indexes=normalized_file_indexes)
     try:
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
@@ -2514,6 +2553,7 @@ def ace_preflight(
             "control_mode": control_mode,
             "tier": normalized_tier,
             "input_type": input_type,
+            "file_indexes": normalized_file_indexes,
             "stream_key": stream_key,
             "engine": {
                 "container_id": selected_engine.container_id,
@@ -2567,6 +2607,7 @@ def ace_preflight(
         "control_mode": control_mode,
         "tier": normalized_tier,
         "input_type": input_type,
+        "file_indexes": normalized_file_indexes,
         "stream_key": stream_key,
         "engine": {
             "container_id": selected_engine.container_id,
@@ -2585,6 +2626,7 @@ async def ace_getstream(
     torrent_url: Optional[str] = Query(None, description="Direct .torrent URL"),
     direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
     raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
+    file_indexes: Optional[str] = Query("0", description="Comma-separated torrent file indexes (for example: 0 or 0,2)"),
     request: Request = None,
 ):
     """Proxy endpoint for AceStream video streams with multiplexing.
@@ -2606,6 +2648,7 @@ async def ace_getstream(
         torrent_url: Direct .torrent URL
         direct_url: Direct media/magnet URL
         raw_data: Raw torrent data payload
+        file_indexes: Comma-separated torrent file indexes
         request: FastAPI Request object for client info
         
     Returns:
@@ -2621,7 +2664,8 @@ async def ace_getstream(
     request_started_at = time.perf_counter()
 
     input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
-    stream_key = _build_stream_key(input_type, input_value)
+    normalized_file_indexes = _normalize_file_indexes(file_indexes)
+    stream_key = _build_stream_key(input_type, input_value, normalized_file_indexes)
     
     # Get current stream mode
     stream_mode = ProxyConfig.STREAM_MODE
@@ -2653,7 +2697,7 @@ async def ace_getstream(
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
 
     reusable_monitor_session = None
-    if input_type in {"content_id", "infohash"}:
+    if input_type in {"content_id", "infohash"} and normalized_file_indexes == "0":
         reusable_monitor_session = await legacy_stream_monitoring_service.get_reusable_session_for_content(input_value)
     if reusable_monitor_session:
         monitor_engine = reusable_monitor_session.get("engine") or {}
@@ -2789,7 +2833,12 @@ async def ace_getstream(
                     # Request new session from AceStream engine
                     hls_url = f"http://{selected_engine.host}:{selected_engine.port}/ace/manifest.m3u8"
                     pid = str(uuid4())
-                    params = _build_engine_stream_params(input_type, input_value, pid=pid)
+                    params = _build_engine_stream_params(
+                        input_type,
+                        input_value,
+                        pid=pid,
+                        file_indexes=normalized_file_indexes,
+                    )
 
                     logger.info(f"Requesting HLS stream from engine: {hls_url}")
                     response = requests.get(hls_url, params=params, timeout=10)
@@ -2833,6 +2882,7 @@ async def ace_getstream(
                     session_info=session_info,
                     api_key=api_key,
                     stream_key_type=input_type,
+                    file_indexes=normalized_file_indexes,
                 )
                 
                 # Track client activity and get manifest for the newly created channel
@@ -2898,6 +2948,7 @@ async def ace_getstream(
                 existing_session=reusable_monitor_session,
                 source_input=input_value,
                 source_input_type=input_type,
+                file_indexes=normalized_file_indexes,
             )
             
             if not success:
@@ -3014,6 +3065,7 @@ async def ace_manifest(
     torrent_url: Optional[str] = Query(None, description="Direct .torrent URL"),
     direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
     raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
+    file_indexes: Optional[str] = Query("0", description="Comma-separated torrent file indexes (for example: 0 or 0,2)"),
 ):
     """Proxy endpoint for AceStream HLS streams (M3U8).
     
@@ -3026,12 +3078,14 @@ async def ace_manifest(
         torrent_url: Direct .torrent URL
         direct_url: Direct media/magnet URL
         raw_data: Raw torrent data payload
+        file_indexes: Comma-separated torrent file indexes
         
     Returns:
         Redirects to /ace/getstream
     """
     input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
-    redirect_params = _build_stream_query_params(input_type, input_value)
+    normalized_file_indexes = _normalize_file_indexes(file_indexes)
+    redirect_params = _build_stream_query_params(input_type, input_value, normalized_file_indexes)
     redirect_query = urlencode(redirect_params)
 
     raise HTTPException(

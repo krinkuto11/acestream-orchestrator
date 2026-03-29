@@ -126,11 +126,11 @@ def test_legacy_api_proxy_playback_forces_light_preflight(monkeypatch):
         def authenticate(self):
             return None
 
-        def preflight(self, content_id, tier="light"):
+        def preflight(self, content_id, tier="light", file_indexes="0"):
             calls["tier"] = tier
             return {"available": True, "infohash": "resolved-hash"}
 
-        def start_stream(self, infohash, mode="infohash"):
+        def start_stream(self, infohash, mode="infohash", stream_type="output_format=http", file_indexes="0"):
             return {
                 "url": "http%3A//127.0.0.1%3A19000/content/resolved-hash/0.1",
                 "playback_session_id": "legacy-1",

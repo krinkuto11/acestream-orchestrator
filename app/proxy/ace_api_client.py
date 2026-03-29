@@ -72,6 +72,12 @@ class AceLegacyApiClient:
         }
         return aliases.get(normalized, normalized)
 
+    @staticmethod
+    def _normalize_file_indexes(file_indexes: Optional[str]) -> str:
+        """Normalize optional file index selector used in START commands."""
+        normalized = str(file_indexes if file_indexes is not None else "0").strip()
+        return normalized or "0"
+
     @classmethod
     def _get_cached_canonical_infohash(cls, content_id: str) -> Optional[str]:
         now = time.time()
@@ -218,20 +224,27 @@ class AceLegacyApiClient:
         message = load_resp.get("message", "content unavailable")
         raise AceLegacyApiError(f"LOADASYNC failed for '{content_ref}': {message}")
 
-    def start_stream(self, content_id: str, mode: str, stream_type: str = "output_format=http") -> Dict[str, str]:
+    def start_stream(
+        self,
+        content_id: str,
+        mode: str,
+        stream_type: str = "output_format=http",
+        file_indexes: str = "0",
+    ) -> Dict[str, str]:
         """Start stream and return parsed START key/value response."""
         normalized_mode = self._normalize_input_mode(mode)
+        normalized_file_indexes = self._normalize_file_indexes(file_indexes)
 
         if normalized_mode == "content_id":
-            cmd = f"START PID {content_id} 0 {stream_type}"
+            cmd = f"START PID {content_id} {normalized_file_indexes} {stream_type}"
         elif normalized_mode == "infohash":
-            cmd = f"START INFOHASH {content_id} 0 0 0 0 {stream_type}"
+            cmd = f"START INFOHASH {content_id} {normalized_file_indexes} 0 0 0 {stream_type}"
         elif normalized_mode == "torrent_url":
-            cmd = f"START TORRENT {content_id} 0 0 0 0 {stream_type}"
+            cmd = f"START TORRENT {content_id} {normalized_file_indexes} 0 0 0 {stream_type}"
         elif normalized_mode == "direct_url":
-            cmd = f"START URL {content_id} 0 0 0 0 {stream_type}"
+            cmd = f"START URL {content_id} {normalized_file_indexes} 0 0 0 {stream_type}"
         elif normalized_mode == "raw_data":
-            cmd = f"START RAW {content_id} 0 0 0 0 {stream_type}"
+            cmd = f"START RAW {content_id} {normalized_file_indexes} 0 0 0 {stream_type}"
         else:
             raise AceLegacyApiError(f"Unsupported START mode: {mode}")
 
@@ -424,11 +437,13 @@ class AceLegacyApiClient:
 
         return _change_count(last_timestamps) >= 1
 
-    def preflight(self, content_id: str, tier: str = "light") -> Dict[str, Any]:
+    def preflight(self, content_id: str, tier: str = "light", file_indexes: str = "0") -> Dict[str, Any]:
         """Run light/deep availability checks and return canonicalized metadata."""
         tier_value = (tier or "light").strip().lower()
         if tier_value not in {"light", "deep"}:
             raise AceLegacyApiError("tier must be either 'light' or 'deep'")
+
+        normalized_file_indexes = self._normalize_file_indexes(file_indexes)
 
         logger.info("Legacy preflight started: content_id=%s tier=%s", content_id, tier_value)
 
@@ -442,6 +457,7 @@ class AceLegacyApiClient:
             "available": available,
             "status_code": status_code,
             "infohash": resolved_infohash,
+            "file_indexes": normalized_file_indexes,
             "loadresp": loadresp,
             "can_retry": True,
             "should_wait": bool(status_code == 2),
@@ -459,7 +475,7 @@ class AceLegacyApiClient:
             return payload
 
         if tier_value == "deep":
-            start_info = self.start_stream(resolved_infohash, mode="infohash")
+            start_info = self.start_stream(resolved_infohash, mode="infohash", file_indexes=normalized_file_indexes)
             status_probe = self.collect_status_samples(samples=4, interval_s=0.5, per_sample_timeout_s=2.0)
             payload["start"] = start_info
             payload["status_probe"] = status_probe

@@ -46,6 +46,7 @@ class StreamManager:
         existing_session=None,
         source_input=None,
         source_input_type="content_id",
+        file_indexes="0",
     ):
         # Basic properties
         self.content_id = content_id
@@ -82,6 +83,8 @@ class StreamManager:
 
         self.source_input_type = normalized_input_type
         self.source_input = str(source_input if source_input is not None else content_id)
+        normalized_file_indexes = str(file_indexes if file_indexes is not None else "0").strip()
+        self.file_indexes = normalized_file_indexes or "0"
         # Keep probe cadence aligned with collector interval so legacy mode
         # has comparable overhead to stat_url polling mode.
         try:
@@ -117,6 +120,7 @@ class StreamManager:
         params = {
             "format": "json",
             "pid": str(uuid.uuid4()),
+            "file_indexes": self.file_indexes,
         }
 
         if self.source_input_type in {"content_id", "infohash"}:
@@ -291,7 +295,11 @@ class StreamManager:
                     self.source_input_type,
                     preflight_tier,
                 )
-                preflight = client.preflight(self.source_input, tier=preflight_tier)
+                preflight = client.preflight(
+                    self.source_input,
+                    tier=preflight_tier,
+                    file_indexes=self.file_indexes,
+                )
                 if not preflight.get("available"):
                     message = preflight.get("message") or "content unavailable"
                     availability_checks = preflight.get("availability_checks") or {}
@@ -329,7 +337,11 @@ class StreamManager:
                 start_mode = resolved_mode
                 start_payload = self.source_input
 
-            start_info = client.start_stream(start_payload, mode=start_mode)
+            start_info = client.start_stream(
+                start_payload,
+                mode=start_mode,
+                file_indexes=self.file_indexes,
+            )
             self.legacy_status_probe = client.collect_status_samples(samples=1, interval_s=0.0, per_sample_timeout_s=1.0)
 
             playback_url = start_info.get("url")
@@ -408,7 +420,8 @@ class StreamManager:
                     ),
                     stream=StreamKey(
                         key_type=self.source_input_type,
-                        key=self.content_id
+                        key=self.content_id,
+                        file_indexes=self.file_indexes,
                     ),
                     session=SessionInfo(
                         playback_session_id=self.playback_session_id or f"fallback-{self.content_id[:16]}-{int(time.time())}",
@@ -421,6 +434,7 @@ class StreamManager:
                         "worker_id": self.worker_id or "unknown",
                         "proxy.control_mode": self.control_mode,
                         "stream.input_type": self.source_input_type,
+                        "stream.file_indexes": self.file_indexes,
                         "stream.resolved_infohash": str(self.resolved_infohash or ""),
                         "host.api_port": str(self.engine_api_port or "")
                     }
