@@ -60,6 +60,18 @@ class AceLegacyApiClient:
         normalized = str(session_id).strip()
         return normalized if normalized.isdigit() else "0"
 
+    @staticmethod
+    def _normalize_input_mode(mode: Optional[str]) -> str:
+        """Normalize user-facing aliases to protocol-level input modes."""
+        normalized = (mode or "auto").strip().lower()
+        aliases = {
+            "pid": "content_id",
+            "torrent": "torrent_url",
+            "url": "direct_url",
+            "raw": "raw_data",
+        }
+        return aliases.get(normalized, normalized)
+
     @classmethod
     def _get_cached_canonical_infohash(cls, content_id: str) -> Optional[str]:
         now = time.time()
@@ -129,43 +141,97 @@ class AceLegacyApiClient:
         if version_code >= 3003600:
             self._write("SETOPTIONS use_stop_notifications=1")
 
-    def resolve_content(self, content_id: str, session_id: Optional[str] = None) -> Tuple[Dict, str]:
+    def resolve_content(
+        self,
+        content_id: str,
+        session_id: Optional[str] = None,
+        mode: Optional[str] = None,
+    ) -> Tuple[Dict, str]:
         """
         Resolve metadata using LOADASYNC.
 
         Returns tuple of (load_response_json, mode) where mode is one of
-        {"content_id", "infohash"} and should be reused for START.
+        {"content_id", "infohash", "torrent_url", "raw_data", "direct_url"}
+        and should be reused for START.
+
+        For ``direct_url`` mode the protocol typically skips LOADASYNC, so this
+        method returns a synthetic successful response and ``direct_url`` mode.
         """
+        content_ref = (content_id or "").strip()
+        if not content_ref:
+            raise AceLegacyApiError("content reference is required")
+
+        normalized_mode = self._normalize_input_mode(mode)
         normalized_session_id = self._normalize_session_id(session_id)
 
-        cached_infohash = self._get_cached_canonical_infohash(content_id)
-        if cached_infohash and cached_infohash != content_id:
+        if normalized_mode == "direct_url":
+            return {
+                "status": 1,
+                "message": "direct_url mode bypasses LOADASYNC",
+                "direct_url": content_ref,
+            }, "direct_url"
+
+        if normalized_mode == "torrent_url":
+            load_resp = self._loadasync_torrent(content_ref, normalized_session_id)
+            if load_resp.get("status") in (1, 2):
+                return load_resp, "torrent_url"
+            message = load_resp.get("message", "content unavailable")
+            raise AceLegacyApiError(f"LOADASYNC TORRENT failed for '{content_ref}': {message}")
+
+        if normalized_mode == "raw_data":
+            load_resp = self._loadasync_raw(content_ref, normalized_session_id)
+            if load_resp.get("status") in (1, 2):
+                return load_resp, "raw_data"
+            message = load_resp.get("message", "content unavailable")
+            raise AceLegacyApiError(f"LOADASYNC RAW failed for '{content_ref}': {message}")
+
+        if normalized_mode == "infohash":
+            load_resp = self._loadasync_infohash(content_ref, normalized_session_id)
+            if load_resp.get("status") in (1, 2):
+                self._set_cached_canonical_infohash(content_ref, load_resp.get("infohash") or content_ref)
+                return load_resp, "infohash"
+            message = load_resp.get("message", "content unavailable")
+            raise AceLegacyApiError(f"LOADASYNC INFOHASH failed for '{content_ref}': {message}")
+
+        if normalized_mode not in {"auto", "content_id"}:
+            raise AceLegacyApiError(f"Unsupported resolve mode: {mode}")
+
+        cached_infohash = self._get_cached_canonical_infohash(content_ref)
+        if cached_infohash and cached_infohash != content_ref:
             cached_resp = self._loadasync_infohash(cached_infohash, normalized_session_id)
             if cached_resp.get("status") in (1, 2):
-                self._set_cached_canonical_infohash(content_id, cached_infohash)
+                self._set_cached_canonical_infohash(content_ref, cached_infohash)
                 return cached_resp, "infohash"
 
         # First try PID/content_id mode.
-        load_resp = self._loadasync_pid(content_id, normalized_session_id)
+        load_resp = self._loadasync_pid(content_ref, normalized_session_id)
         if load_resp.get("status") in (1, 2):
-            self._set_cached_canonical_infohash(content_id, load_resp.get("infohash") or content_id)
+            self._set_cached_canonical_infohash(content_ref, load_resp.get("infohash") or content_ref)
             return load_resp, "content_id"
 
         # Fallback to INFOHASH mode.
-        load_resp = self._loadasync_infohash(content_id, normalized_session_id)
+        load_resp = self._loadasync_infohash(content_ref, normalized_session_id)
         if load_resp.get("status") in (1, 2):
-            self._set_cached_canonical_infohash(content_id, load_resp.get("infohash") or content_id)
+            self._set_cached_canonical_infohash(content_ref, load_resp.get("infohash") or content_ref)
             return load_resp, "infohash"
 
         message = load_resp.get("message", "content unavailable")
-        raise AceLegacyApiError(f"LOADASYNC failed for '{content_id}': {message}")
+        raise AceLegacyApiError(f"LOADASYNC failed for '{content_ref}': {message}")
 
     def start_stream(self, content_id: str, mode: str, stream_type: str = "output_format=http") -> Dict[str, str]:
         """Start stream and return parsed START key/value response."""
-        if mode == "content_id":
+        normalized_mode = self._normalize_input_mode(mode)
+
+        if normalized_mode == "content_id":
             cmd = f"START PID {content_id} 0 {stream_type}"
-        elif mode == "infohash":
+        elif normalized_mode == "infohash":
             cmd = f"START INFOHASH {content_id} 0 0 0 0 {stream_type}"
+        elif normalized_mode == "torrent_url":
+            cmd = f"START TORRENT {content_id} 0 0 0 0 {stream_type}"
+        elif normalized_mode == "direct_url":
+            cmd = f"START URL {content_id} 0 0 0 0 {stream_type}"
+        elif normalized_mode == "raw_data":
+            cmd = f"START RAW {content_id} 0 0 0 0 {stream_type}"
         else:
             raise AceLegacyApiError(f"Unsupported START mode: {mode}")
 
@@ -456,6 +522,14 @@ class AceLegacyApiClient:
 
     def _loadasync_infohash(self, infohash: str, session_id: str) -> Dict:
         self._write(f"LOADASYNC {session_id} INFOHASH {infohash} 0 0 0")
+        return self._wait_for_loadresp()
+
+    def _loadasync_torrent(self, torrent_url: str, session_id: str) -> Dict:
+        self._write(f"LOADASYNC {session_id} TORRENT {torrent_url} 0 0 0")
+        return self._wait_for_loadresp()
+
+    def _loadasync_raw(self, raw_data: str, session_id: str) -> Dict:
+        self._write(f"LOADASYNC {session_id} RAW {raw_data} 0 0 0")
         return self._wait_for_loadresp()
 
     def _wait_for_loadresp(self) -> Dict:

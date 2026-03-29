@@ -282,3 +282,49 @@ def test_collect_status_samples_tolerates_timeouts(monkeypatch):
     assert probe["status"] is None
     assert probe["livepos"] is None
     assert probe["raw_status_lines"] == []
+
+
+def test_resolve_content_direct_url_bypasses_loadasync():
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    payload, mode = client.resolve_content("https://example.test/video.ts", mode="direct_url")
+
+    assert mode == "direct_url"
+    assert payload["status"] == 1
+    assert payload["direct_url"] == "https://example.test/video.ts"
+
+
+def test_resolve_content_torrent_url_uses_loadasync_torrent(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    called = {"value": False}
+
+    def fake_loadasync_torrent(torrent_url, session_id):
+        called["value"] = True
+        assert torrent_url == "https://example.test/file.torrent"
+        assert session_id == "0"
+        return {"status": 1, "infohash": "abc123"}
+
+    monkeypatch.setattr(client, "_loadasync_torrent", fake_loadasync_torrent)
+
+    payload, mode = client.resolve_content("https://example.test/file.torrent", mode="torrent_url")
+
+    assert called["value"] is True
+    assert mode == "torrent_url"
+    assert payload["status"] == 1
+
+
+def test_start_stream_supports_torrent_direct_raw(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+    commands = []
+
+    monkeypatch.setattr(client, "_write", lambda msg: commands.append(msg))
+    monkeypatch.setattr(client, "_wait_for", lambda *_args, **_kwargs: ("START", ["START", "url=http://x", "playback_session_id=s1"], {}))
+
+    client.start_stream("https://example.test/file.torrent", mode="torrent_url")
+    client.start_stream("magnet:?xt=urn:btih:abc", mode="direct_url")
+    client.start_stream("ZmFrZS1yYXctcGF5bG9hZA==", mode="raw_data")
+
+    assert commands[0].startswith("START TORRENT https://example.test/file.torrent")
+    assert commands[1].startswith("START URL magnet:?xt=urn:btih:abc")
+    assert commands[2].startswith("START RAW ZmFrZS1yYXctcGF5bG9hZA==")

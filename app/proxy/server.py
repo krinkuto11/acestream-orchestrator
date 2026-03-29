@@ -138,7 +138,17 @@ class ProxyServer:
         except Exception as e:
             logger.error(f"Error handling event: {e}")
     
-    def start_stream(self, content_id, engine_host, engine_port, engine_container_id=None, engine_api_port=None, existing_session=None):
+    def start_stream(
+        self,
+        content_id,
+        engine_host,
+        engine_port,
+        engine_container_id=None,
+        engine_api_port=None,
+        existing_session=None,
+        source_input=None,
+        source_input_type="content_id",
+    ):
         """Start a new stream session"""
         if content_id in self.stream_managers:
             logger.info(f"Stream already exists for content_id={content_id}")
@@ -172,6 +182,8 @@ class ProxyServer:
                 worker_id=self.worker_id,
                 api_key=api_key,
                 existing_session=existing_session,
+                source_input=source_input,
+                source_input_type=source_input_type,
             )
             self.stream_managers[content_id] = stream_manager
             

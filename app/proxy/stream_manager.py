@@ -32,7 +32,21 @@ STREAM_EVENT_HANDLER_TIMEOUT = 2.0
 class StreamManager:
     """Manages connection to AceStream engine and stream health"""
     
-    def __init__(self, content_id, engine_host, engine_port, engine_container_id, buffer, client_manager, engine_api_port=None, worker_id=None, api_key=None, existing_session=None):
+    def __init__(
+        self,
+        content_id,
+        engine_host,
+        engine_port,
+        engine_container_id,
+        buffer,
+        client_manager,
+        engine_api_port=None,
+        worker_id=None,
+        api_key=None,
+        existing_session=None,
+        source_input=None,
+        source_input_type="content_id",
+    ):
         # Basic properties
         self.content_id = content_id
         self.engine_host = engine_host
@@ -60,6 +74,14 @@ class StreamManager:
         self._last_request_failure_type = None
         self.existing_session = existing_session or {}
         self.owns_engine_session = True
+
+        normalized_input_type = str(source_input_type or "content_id").strip().lower()
+        allowed_input_types = {"content_id", "infohash", "torrent_url", "direct_url", "raw_data"}
+        if normalized_input_type not in allowed_input_types:
+            normalized_input_type = "content_id"
+
+        self.source_input_type = normalized_input_type
+        self.source_input = str(source_input if source_input is not None else content_id)
         # Keep probe cadence aligned with collector interval so legacy mode
         # has comparable overhead to stat_url polling mode.
         try:
@@ -89,6 +111,30 @@ class StreamManager:
         self._stream_exit_reason = None
         
         logger.info(f"StreamManager initialized for content_id={content_id}")
+
+    def _build_legacy_http_params(self):
+        """Build engine query params for LEGACY_HTTP mode based on source input type."""
+        params = {
+            "format": "json",
+            "pid": str(uuid.uuid4()),
+        }
+
+        if self.source_input_type in {"content_id", "infohash"}:
+            params["id"] = self.source_input
+            if self.source_input_type == "infohash":
+                params["infohash"] = self.source_input
+        elif self.source_input_type == "torrent_url":
+            params["torrent_url"] = self.source_input
+        elif self.source_input_type == "direct_url":
+            # Keep "url" as compatibility alias for engines expecting this key.
+            params["direct_url"] = self.source_input
+            params["url"] = self.source_input
+        elif self.source_input_type == "raw_data":
+            params["raw_data"] = self.source_input
+        else:
+            params["id"] = self.source_input
+
+        return params
 
     def _apply_existing_session(self):
         """Use a pre-existing monitoring session instead of starting a new engine session."""
@@ -139,23 +185,19 @@ class StreamManager:
             # TS mode (default) - use getstream endpoint
             url = f"http://{self.engine_host}:{self.engine_port}/ace/getstream"
         
-        # Generate unique PID to prevent errors when multiple streams access the same engine
-        pid = str(uuid.uuid4())
-        
-        params = {
-            "id": self.content_id,
-            "format": "json",
-            "pid": pid
-        }
-        
+        params = self._build_legacy_http_params()
+
         # Build full URL for logging (define early to avoid NameError in exception handlers)
-        full_url = f"{url}?id={self.content_id}&format=json&pid={pid}"
+        full_url = requests.Request("GET", url, params=params).prepare().url or url
         
         try:
             logger.info(f"Requesting stream from AceStream engine in {stream_mode} mode: {url}")
             logger.debug(f"Full request URL: {full_url}")
-            logger.debug(f"Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}, Container: {self.engine_container_id}")
-            logger.debug(f"Generated PID: {pid}")
+            logger.debug(
+                f"Engine: {self.engine_host}:{self.engine_port}, Stream key: {self.content_id}, "
+                f"Input type: {self.source_input_type}, Container: {self.engine_container_id}"
+            )
+            logger.debug(f"Generated PID: {params.get('pid')}")
             
             response = requests.get(url, params=params, timeout=10)
             
@@ -173,7 +215,11 @@ class StreamManager:
             if data.get("error"):
                 error_msg = data['error']
                 logger.error(f"AceStream engine returned error: {error_msg}")
-                logger.error(f"Error details - Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}, Container: {self.engine_container_id}")
+                logger.error(
+                    f"Error details - Engine: {self.engine_host}:{self.engine_port}, "
+                    f"Stream key: {self.content_id}, Input type: {self.source_input_type}, "
+                    f"Container: {self.engine_container_id}"
+                )
                 logger.debug(f"Full error response: {data}")
                 raise RuntimeError(f"AceStream engine returned error: {error_msg}")
             
@@ -186,7 +232,10 @@ class StreamManager:
             
             if not self.playback_url:
                 logger.error("No playback_url in AceStream response")
-                logger.error(f"Error details - Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}")
+                logger.error(
+                    f"Error details - Engine: {self.engine_host}:{self.engine_port}, "
+                    f"Stream key: {self.content_id}, Input type: {self.source_input_type}"
+                )
                 logger.debug(f"Response data: {resp_data}")
                 raise RuntimeError("No playback_url in AceStream response")
             
@@ -202,7 +251,10 @@ class StreamManager:
             self._last_request_failure_type = "request_failed"
             # Log detailed error information for both request and general exceptions
             logger.error(f"Failed to request stream from AceStream engine: {e}")
-            logger.error(f"Request details - URL: {full_url}, Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}")
+            logger.error(
+                f"Request details - URL: {full_url}, Engine: {self.engine_host}:{self.engine_port}, "
+                f"Stream key: {self.content_id}, Input type: {self.source_input_type}"
+            )
             logger.debug(f"Exception details: {e}", exc_info=True)
             return False
 
@@ -222,37 +274,62 @@ class StreamManager:
             client.connect()
             client.authenticate()
 
-            configured_tier = ConfigHelper.legacy_api_preflight_tier()
-            preflight_tier = "light"
-            if configured_tier != "light":
+            start_mode = self.source_input_type
+            start_payload = self.source_input
+
+            if self.source_input_type in {"content_id", "infohash"}:
+                configured_tier = ConfigHelper.legacy_api_preflight_tier()
+                preflight_tier = "light"
+                if configured_tier != "light":
+                    logger.info(
+                        "LEGACY_API proxy playback forces light preflight; configured tier '%s' is reserved for manual /ace/preflight checks",
+                        configured_tier,
+                    )
                 logger.info(
-                    "LEGACY_API proxy playback forces light preflight; configured tier '%s' is reserved for manual /ace/preflight checks",
-                    configured_tier,
+                    "Running LEGACY_API preflight: stream_key=%s, input_type=%s, tier=%s",
+                    self.content_id,
+                    self.source_input_type,
+                    preflight_tier,
                 )
-            logger.info(
-                f"Running LEGACY_API preflight: content_id={self.content_id}, tier={preflight_tier}"
-            )
-            preflight = client.preflight(self.content_id, tier=preflight_tier)
-            if not preflight.get("available"):
-                message = preflight.get("message") or "content unavailable"
-                availability_checks = preflight.get("availability_checks") or {}
-                logger.warning(
-                    "LEGACY_API preflight failed: "
-                    f"content_id={self.content_id}, tier={preflight_tier}, "
-                    f"status_code={preflight.get('status_code')}, message={message}, "
-                    f"checks={availability_checks}"
+                preflight = client.preflight(self.source_input, tier=preflight_tier)
+                if not preflight.get("available"):
+                    message = preflight.get("message") or "content unavailable"
+                    availability_checks = preflight.get("availability_checks") or {}
+                    logger.warning(
+                        "LEGACY_API preflight failed: "
+                        f"stream_key={self.content_id}, input_type={self.source_input_type}, tier={preflight_tier}, "
+                        f"status_code={preflight.get('status_code')}, message={message}, "
+                        f"checks={availability_checks}"
+                    )
+                    self._last_request_failure_type = "preflight_failed"
+                    raise AceLegacyApiError(f"Preflight failed: {message}")
+
+                logger.info(
+                    "LEGACY_API preflight passed: "
+                    f"stream_key={self.content_id}, input_type={self.source_input_type}, tier={preflight_tier}, "
+                    f"resolved_infohash={preflight.get('infohash')}"
                 )
-                self._last_request_failure_type = "preflight_failed"
-                raise AceLegacyApiError(f"Preflight failed: {message}")
 
-            logger.info(
-                "LEGACY_API preflight passed: "
-                f"content_id={self.content_id}, tier={preflight_tier}, "
-                f"resolved_infohash={preflight.get('infohash')}"
-            )
+                self.resolved_infohash = preflight.get("infohash") or self.source_input
+                start_payload = self.resolved_infohash
+                start_mode = "infohash"
+            else:
+                loadresp, resolved_mode = client.resolve_content(
+                    self.source_input,
+                    session_id="0",
+                    mode=self.source_input_type,
+                )
+                if resolved_mode != "direct_url":
+                    status_code = loadresp.get("status")
+                    if status_code not in (1, 2):
+                        message = loadresp.get("message") or "content unavailable"
+                        raise AceLegacyApiError(f"LOADASYNC status={status_code}: {message}")
+                    self.resolved_infohash = loadresp.get("infohash") or None
 
-            self.resolved_infohash = preflight.get("infohash") or self.content_id
-            start_info = client.start_stream(self.resolved_infohash, mode="infohash")
+                start_mode = resolved_mode
+                start_payload = self.source_input
+
+            start_info = client.start_stream(start_payload, mode=start_mode)
             self.legacy_status_probe = client.collect_status_samples(samples=1, interval_s=0.0, per_sample_timeout_s=1.0)
 
             playback_url = start_info.get("url")
@@ -274,7 +351,8 @@ class StreamManager:
                 self._last_request_failure_type = "request_failed"
             logger.error(f"Failed to request stream from AceStream legacy API: {e}")
             logger.error(
-                f"Request details - API: {self.engine_host}:{self.engine_api_port}, Content ID: {self.content_id}"
+                f"Request details - API: {self.engine_host}:{self.engine_api_port}, "
+                f"Stream key: {self.content_id}, Input type: {self.source_input_type}"
             )
             logger.debug(f"Exception details: {e}", exc_info=True)
             try:
@@ -329,7 +407,7 @@ class StreamManager:
                         port=self.engine_port
                     ),
                     stream=StreamKey(
-                        key_type="infohash",
+                        key_type=self.source_input_type,
                         key=self.content_id
                     ),
                     session=SessionInfo(
@@ -342,6 +420,7 @@ class StreamManager:
                         "source": "proxy",
                         "worker_id": self.worker_id or "unknown",
                         "proxy.control_mode": self.control_mode,
+                        "stream.input_type": self.source_input_type,
                         "stream.resolved_infohash": str(self.resolved_infohash or ""),
                         "host.api_port": str(self.engine_api_port or "")
                     }

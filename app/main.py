@@ -11,10 +11,12 @@ import io
 import os
 import json
 import logging
+import hashlib
 import httpx
 import threading
 from types import SimpleNamespace
 import time
+from urllib.parse import urlencode
 
 from .utils.logging import setup
 from .core.config import cfg
@@ -2312,14 +2314,92 @@ async def delete_legacy_stream_monitor(monitor_id: str):
         raise HTTPException(status_code=404, detail="legacy monitor not found")
     return {"deleted": True, "monitor_id": monitor_id}
 
+
+def _select_stream_input(
+    id: Optional[str],
+    infohash: Optional[str],
+    torrent_url: Optional[str],
+    direct_url: Optional[str],
+    raw_data: Optional[str],
+) -> tuple[str, str]:
+    choices = []
+    for input_type, raw_value in [
+        ("content_id", id),
+        ("infohash", infohash),
+        ("torrent_url", torrent_url),
+        ("direct_url", direct_url),
+        ("raw_data", raw_data),
+    ]:
+        text = (raw_value or "").strip()
+        if text:
+            choices.append((input_type, text))
+
+    if not choices:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide exactly one input: id, infohash, torrent_url, direct_url, or raw_data",
+        )
+
+    if len(choices) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Input parameters are mutually exclusive. Provide only one of: id, infohash, torrent_url, direct_url, raw_data",
+        )
+
+    return choices[0]
+
+
+def _build_stream_key(input_type: str, input_value: str) -> str:
+    if input_type in {"content_id", "infohash"}:
+        return input_value
+
+    digest = hashlib.sha1(input_value.encode("utf-8")).hexdigest()
+    return f"{input_type}:{digest}"
+
+
+def _build_engine_stream_params(input_type: str, input_value: str, pid: str) -> Dict[str, str]:
+    params: Dict[str, str] = {
+        "format": "json",
+        "pid": pid,
+    }
+
+    if input_type in {"content_id", "infohash"}:
+        params["id"] = input_value
+        if input_type == "infohash":
+            params["infohash"] = input_value
+    elif input_type == "torrent_url":
+        params["torrent_url"] = input_value
+    elif input_type == "direct_url":
+        params["direct_url"] = input_value
+        params["url"] = input_value
+    elif input_type == "raw_data":
+        params["raw_data"] = input_value
+    else:
+        params["id"] = input_value
+
+    return params
+
+
+def _build_stream_query_params(input_type: str, input_value: str) -> Dict[str, str]:
+    if input_type == "content_id":
+        return {"id": input_value}
+    return {input_type: input_value}
+
 @app.get("/ace/preflight")
 def ace_preflight(
-    id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+    id: Optional[str] = Query(None, description="AceStream content ID (PID/content_id)"),
+    infohash: Optional[str] = Query(None, description="AceStream infohash"),
+    torrent_url: Optional[str] = Query(None, description="Direct .torrent URL"),
+    direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
+    raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
     tier: str = Query("light", description="Availability probe tier: light or deep"),
 ):
     """Run a short availability probe and canonicalize content IDs before playback."""
     from .proxy.config_helper import Config as ProxyConfig
     import requests
+
+    input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
+    stream_key = _build_stream_key(input_type, input_value)
 
     normalized_tier = (tier or "light").strip().lower()
     if normalized_tier not in {"light", "deep"}:
@@ -2364,10 +2444,43 @@ def ace_preflight(
         try:
             client.connect()
             client.authenticate()
-            preflight_result = client.preflight(id, tier=normalized_tier)
+            if input_type in {"content_id", "infohash"}:
+                preflight_result = client.preflight(input_value, tier=normalized_tier)
+            else:
+                resolve_resp, resolved_mode = client.resolve_content(
+                    input_value,
+                    session_id="0",
+                    mode=input_type,
+                )
+                status_code = resolve_resp.get("status")
+                available = True if resolved_mode == "direct_url" else status_code in (1, 2)
+
+                preflight_result = {
+                    "tier": normalized_tier,
+                    "available": available,
+                    "status_code": 1 if resolved_mode == "direct_url" else status_code,
+                    "mode": resolved_mode,
+                    "infohash": resolve_resp.get("infohash"),
+                    "loadresp": resolve_resp,
+                    "can_retry": True,
+                    "should_wait": bool(status_code == 2),
+                }
+
+                if not preflight_result["available"]:
+                    preflight_result["message"] = resolve_resp.get("message", "content unavailable")
+
+                if normalized_tier == "deep" and preflight_result["available"]:
+                    start_info = client.start_stream(input_value, mode=resolved_mode)
+                    status_probe = client.collect_status_samples(samples=4, interval_s=0.5, per_sample_timeout_s=2.0)
+                    preflight_result["start"] = start_info
+                    preflight_result["status_probe"] = status_probe
+                    client.stop_stream()
+
             return {
                 "control_mode": control_mode,
                 "tier": normalized_tier,
+                "input_type": input_type,
+                "stream_key": stream_key,
                 "engine": {
                     "container_id": selected_engine.container_id,
                     "host": selected_engine.host,
@@ -2388,7 +2501,7 @@ def ace_preflight(
     # HTTP control fallback for compatibility in LEGACY_HTTP mode.
     url = f"http://{selected_engine.host}:{selected_engine.port}/ace/getstream"
     pid = f"preflight-{int(time.time())}"
-    params = {"id": id, "format": "json", "pid": pid}
+    params = _build_engine_stream_params(input_type, input_value, pid=pid)
     try:
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
@@ -2400,6 +2513,8 @@ def ace_preflight(
         return {
             "control_mode": control_mode,
             "tier": normalized_tier,
+            "input_type": input_type,
+            "stream_key": stream_key,
             "engine": {
                 "container_id": selected_engine.container_id,
                 "host": selected_engine.host,
@@ -2451,6 +2566,8 @@ def ace_preflight(
     return {
         "control_mode": control_mode,
         "tier": normalized_tier,
+        "input_type": input_type,
+        "stream_key": stream_key,
         "engine": {
             "container_id": selected_engine.container_id,
             "host": selected_engine.host,
@@ -2463,7 +2580,11 @@ def ace_preflight(
 
 @app.get("/ace/getstream")
 async def ace_getstream(
-    id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+    id: Optional[str] = Query(None, description="AceStream content ID (PID/content_id)"),
+    infohash: Optional[str] = Query(None, description="AceStream infohash"),
+    torrent_url: Optional[str] = Query(None, description="Direct .torrent URL"),
+    direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
+    raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
     request: Request = None,
 ):
     """Proxy endpoint for AceStream video streams with multiplexing.
@@ -2480,7 +2601,11 @@ async def ace_getstream(
     6. Sends events to orchestrator for panel visibility
     
     Args:
-        id: AceStream content ID (infohash or content_id)
+        id: AceStream content ID (PID/content_id)
+        infohash: AceStream infohash
+        torrent_url: Direct .torrent URL
+        direct_url: Direct media/magnet URL
+        raw_data: Raw torrent data payload
         request: FastAPI Request object for client info
         
     Returns:
@@ -2494,6 +2619,9 @@ async def ace_getstream(
     from .services.looping_streams import looping_streams_tracker
 
     request_started_at = time.perf_counter()
+
+    input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
+    stream_key = _build_stream_key(input_type, input_value)
     
     # Get current stream mode
     stream_mode = ProxyConfig.STREAM_MODE
@@ -2506,8 +2634,8 @@ async def ace_getstream(
         )
     
     # Check if stream is on the looping blacklist
-    if looping_streams_tracker.is_looping(id):
-        logger.warning(f"Stream request denied: {id} is on looping blacklist")
+    if looping_streams_tracker.is_looping(stream_key):
+        logger.warning(f"Stream request denied: {stream_key} is on looping blacklist")
         raise HTTPException(
             status_code=422,
             detail={
@@ -2524,13 +2652,15 @@ async def ace_getstream(
     client_ip = get_client_ip(request) if request else "unknown"
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
 
-    reusable_monitor_session = await legacy_stream_monitoring_service.get_reusable_session_for_content(id)
+    reusable_monitor_session = None
+    if input_type in {"content_id", "infohash"}:
+        reusable_monitor_session = await legacy_stream_monitoring_service.get_reusable_session_for_content(input_value)
     if reusable_monitor_session:
         monitor_engine = reusable_monitor_session.get("engine") or {}
         logger.info(
             "Reusing monitor session %s for stream %s on engine %s",
             reusable_monitor_session.get("monitor_id"),
-            id,
+            stream_key,
             str(monitor_engine.get("container_id") or "unknown")[:12],
         )
     
@@ -2577,17 +2707,17 @@ async def ace_getstream(
             
             # Check if channel already exists - do this BEFORE engine selection to avoid
             # unnecessary computation and logging on every manifest/segment request
-            if hls_proxy.has_channel(id):
+            if hls_proxy.has_channel(stream_key):
                 # Channel already exists - reuse existing session
                 # Skip engine selection and just serve the manifest
-                logger.debug(f"HLS channel {id} already exists, serving manifest to client {client_id} from {client_ip}")
+                logger.debug(f"HLS channel {stream_key} already exists, serving manifest to client {client_id} from {client_ip}")
                 
                 try:
                     # Track client activity for this request
-                    hls_proxy.record_client_activity(id, client_ip)
+                    hls_proxy.record_client_activity(stream_key, client_ip)
                     
                     # Use async version to avoid blocking the event loop
-                    manifest_content = await hls_proxy.get_manifest_async(id)
+                    manifest_content = await hls_proxy.get_manifest_async(stream_key)
                     
                     # Note: In HLS, clients make multiple requests (manifest + segments)
                     # Client activity is tracked on each request, not per connection
@@ -2630,12 +2760,12 @@ async def ace_getstream(
                 reservation_engine_id = selected_engine.container_id
             
             logger.info(
-                f"Selected engine {selected_engine.container_id[:12]} for new {stream_mode} stream {id} "
+                f"Selected engine {selected_engine.container_id[:12]} for new {stream_mode} stream {stream_key} "
                 f"(forwarded={selected_engine.forwarded}, current_load={current_load})"
             )
             
             logger.info(
-                f"Client {client_id} initializing new {stream_mode} stream {id} from {client_ip}"
+                f"Client {client_id} initializing new {stream_mode} stream {stream_key} from {client_ip}"
             )
             
             try:
@@ -2647,7 +2777,7 @@ async def ace_getstream(
                     monitor_session = reusable_monitor_session.get("session") or {}
                     monitor_playback_session_id = monitor_session.get('playback_session_id')
                     if not monitor_playback_session_id:
-                        monitor_playback_session_id = f"hls-reuse-{id[:16]}-{int(time.time())}"
+                        monitor_playback_session_id = f"hls-reuse-{stream_key[:16]}-{int(time.time())}"
                     session_info = {
                         'playback_session_id': monitor_playback_session_id,
                         'stat_url': monitor_session.get('stat_url') or '',
@@ -2659,11 +2789,7 @@ async def ace_getstream(
                     # Request new session from AceStream engine
                     hls_url = f"http://{selected_engine.host}:{selected_engine.port}/ace/manifest.m3u8"
                     pid = str(uuid4())
-                    params = {
-                        "id": id,
-                        "format": "json",
-                        "pid": pid
-                    }
+                    params = _build_engine_stream_params(input_type, input_value, pid=pid)
 
                     logger.info(f"Requesting HLS stream from engine: {hls_url}")
                     response = requests.get(hls_url, params=params, timeout=10)
@@ -2699,19 +2825,20 @@ async def ace_getstream(
 
                 # Initialize HLS proxy channel
                 hls_proxy.initialize_channel(
-                    channel_id=id,
+                    channel_id=stream_key,
                     playback_url=playback_url,
                     engine_host=selected_engine.host,
                     engine_port=selected_engine.port,
                     engine_container_id=selected_engine.container_id,
                     session_info=session_info,
-                    api_key=api_key
+                    api_key=api_key,
+                    stream_key_type=input_type,
                 )
                 
                 # Track client activity and get manifest for the newly created channel
                 # Use async version to avoid blocking the event loop
-                hls_proxy.record_client_activity(id, client_ip)
-                manifest_content = await hls_proxy.get_manifest_async(id)
+                hls_proxy.record_client_activity(stream_key, client_ip)
+                manifest_content = await hls_proxy.get_manifest_async(stream_key)
                 
                 elapsed = time.perf_counter() - request_started_at
                 observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
@@ -2750,12 +2877,12 @@ async def ace_getstream(
                 reservation_engine_id = selected_engine.container_id
             
             logger.info(
-                f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {id} "
+                f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {stream_key} "
                 f"(forwarded={selected_engine.forwarded}, current_load={current_load})"
             )
             
             logger.info(
-                f"Client {client_id} connecting to {stream_mode} stream {id} from {client_ip}"
+                f"Client {client_id} connecting to {stream_mode} stream {stream_key} from {client_ip}"
             )
             
             # Get proxy instance
@@ -2763,12 +2890,14 @@ async def ace_getstream(
             
             # Start stream if not exists (idempotent)
             success = proxy.start_stream(
-                content_id=id,
+                content_id=stream_key,
                 engine_host=selected_engine.host,
                 engine_port=selected_engine.port,
                 engine_api_port=selected_engine.api_port,
                 engine_container_id=selected_engine.container_id,
                 existing_session=reusable_monitor_session,
+                source_input=input_value,
+                source_input_type=input_type,
             )
             
             if not success:
@@ -2779,7 +2908,7 @@ async def ace_getstream(
             
             # Create stream generator
             generator = create_stream_generator(
-                content_id=id,
+                content_id=stream_key,
                 client_id=client_id,
                 client_ip=client_ip,
                 client_user_agent=user_agent,
@@ -2880,7 +3009,11 @@ async def ace_hls_segment(
 
 @app.get("/ace/manifest.m3u8")
 async def ace_manifest(
-    id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+    id: Optional[str] = Query(None, description="AceStream content ID (PID/content_id)"),
+    infohash: Optional[str] = Query(None, description="AceStream infohash"),
+    torrent_url: Optional[str] = Query(None, description="Direct .torrent URL"),
+    direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
+    raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
 ):
     """Proxy endpoint for AceStream HLS streams (M3U8).
     
@@ -2888,15 +3021,23 @@ async def ace_manifest(
     based on the proxy configuration.
     
     Args:
-        id: AceStream content ID (infohash or content_id)
+        id: AceStream content ID (PID/content_id)
+        infohash: AceStream infohash
+        torrent_url: Direct .torrent URL
+        direct_url: Direct media/magnet URL
+        raw_data: Raw torrent data payload
         
     Returns:
         Redirects to /ace/getstream
     """
+    input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
+    redirect_params = _build_stream_query_params(input_type, input_value)
+    redirect_query = urlencode(redirect_params)
+
     raise HTTPException(
         status_code=301,
         detail="This endpoint is deprecated. Use /ace/getstream which now supports both TS and HLS modes based on proxy settings.",
-        headers={"Location": f"/ace/getstream?id={id}"}
+        headers={"Location": f"/ace/getstream?{redirect_query}"}
     )
 
 

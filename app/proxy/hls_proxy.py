@@ -160,12 +160,14 @@ class StreamManager:
     
     def __init__(self, playback_url: str, channel_id: str, engine_host: str, engine_port: int, 
                  engine_container_id: str, session_info: Dict[str, Any], api_key: Optional[str] = None,
+                 stream_key_type: str = "content_id",
                  event_loop: Optional[asyncio.AbstractEventLoop] = None):
         self.playback_url = playback_url
         self.channel_id = channel_id
         self.engine_host = engine_host
         self.engine_port = engine_port
         self.engine_container_id = engine_container_id
+        self.stream_key_type = (stream_key_type or "content_id").strip().lower()
         self.running = True
         
         # Session info from AceStream API
@@ -277,7 +279,7 @@ class StreamManager:
                         port=self.engine_port
                     ),
                     stream=StreamKey(
-                        key_type="infohash",
+                        key_type=self.stream_key_type,
                         key=self.channel_id
                     ),
                     session=SessionInfo(
@@ -288,7 +290,8 @@ class StreamManager:
                     ),
                     labels={
                         "source": "hls_proxy",
-                        "stream_mode": "HLS"
+                        "stream_mode": "HLS",
+                        "stream.input_type": self.stream_key_type,
                     }
                 )
                 
@@ -614,7 +617,7 @@ class HLSProxyServer:
     
     def initialize_channel(self, channel_id: str, playback_url: str, engine_host: str, 
                           engine_port: int, engine_container_id: str, session_info: Dict[str, Any],
-                          api_key: Optional[str] = None):
+                          api_key: Optional[str] = None, stream_key_type: str = "content_id"):
         """Initialize a new HLS channel.
         
         This method should only be called for new channels. Existing channels should be
@@ -648,6 +651,7 @@ class HLSProxyServer:
                 engine_container_id=engine_container_id,
                 session_info=session_info,
                 api_key=api_key,
+                stream_key_type=stream_key_type,
                 event_loop=self._main_loop  # Pass event loop reference for thread-safe event sending
             )
             buffer = StreamBuffer()

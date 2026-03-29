@@ -8,7 +8,7 @@ class EngineAddress(BaseModel):
     port: int
 
 class StreamKey(BaseModel):
-    key_type: Literal["content_id", "infohash", "url", "magnet"]
+    key_type: Literal["content_id", "infohash", "torrent_url", "direct_url", "raw_data", "url", "magnet"]
     key: str
 
 class SessionInfo(BaseModel):
@@ -61,7 +61,7 @@ class LivePosData(BaseModel):
 
 class StreamState(BaseModel):
     id: str
-    key_type: Literal["content_id", "infohash", "url", "magnet"]
+    key_type: Literal["content_id", "infohash", "torrent_url", "direct_url", "raw_data", "url", "magnet"]
     key: str
     container_id: str
     container_name: Optional[str] = None

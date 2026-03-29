@@ -9,6 +9,33 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 // Constants
 const DEFAULT_MAX_STREAMS_PER_ENGINE = 3
 const LIVE_CACHE_TYPE_PARAM = '--live-cache-type'
+const PREFLIGHT_INPUT_OPTIONS = {
+  content_id: {
+    label: 'Content ID (PID/content_id)',
+    param: 'id',
+    placeholder: 'PID or acestream content_id',
+  },
+  infohash: {
+    label: 'Infohash',
+    param: 'infohash',
+    placeholder: '40-char infohash',
+  },
+  torrent_url: {
+    label: 'Torrent URL',
+    param: 'torrent_url',
+    placeholder: 'https://example.com/file.torrent',
+  },
+  direct_url: {
+    label: 'Direct URL',
+    param: 'direct_url',
+    placeholder: 'magnet:?xt=... or https://media.example/stream',
+  },
+  raw_data: {
+    label: 'Raw Torrent Data',
+    param: 'raw_data',
+    placeholder: 'Base64/raw torrent payload',
+  },
+}
 
 export function ProxySettings({ apiKey, orchUrl }) {
   const [loading, setLoading] = useState(false)
@@ -49,6 +76,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [variantDisplayName, setVariantDisplayName] = useState('')
 
   // Preflight diagnostics state
+  const [preflightInputType, setPreflightInputType] = useState('content_id')
   const [preflightContentId, setPreflightContentId] = useState('')
   const [preflightTier, setPreflightTier] = useState('light')
   const [preflightLoading, setPreflightLoading] = useState(false)
@@ -202,8 +230,9 @@ export function ProxySettings({ apiKey, orchUrl }) {
 
   const runPreflight = async () => {
     const contentId = preflightContentId.trim()
+    const selectedInput = PREFLIGHT_INPUT_OPTIONS[preflightInputType] || PREFLIGHT_INPUT_OPTIONS.content_id
     if (!contentId) {
-      setPreflightError('Content ID is required (infohash, PID, or magnet URI).')
+      setPreflightError(`${selectedInput.label} is required.`)
       setPreflightResult(null)
       return
     }
@@ -218,8 +247,9 @@ export function ProxySettings({ apiKey, orchUrl }) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
 
+      const queryParam = selectedInput.param
       const response = await fetch(
-        `${orchUrl}/ace/preflight?id=${encodeURIComponent(contentId)}&tier=${encodeURIComponent(preflightTier)}`,
+        `${orchUrl}/ace/preflight?${queryParam}=${encodeURIComponent(contentId)}&tier=${encodeURIComponent(preflightTier)}`,
         { headers }
       )
 
@@ -370,11 +400,27 @@ export function ProxySettings({ apiKey, orchUrl }) {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="preflight-content-id">Content ID</Label>
+            <Label htmlFor="preflight-input-type">Input Type</Label>
+            <Select value={preflightInputType} onValueChange={setPreflightInputType}>
+              <SelectTrigger id="preflight-input-type">
+                <SelectValue placeholder="Select input type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="content_id">Content ID</SelectItem>
+                <SelectItem value="infohash">Infohash</SelectItem>
+                <SelectItem value="torrent_url">Torrent URL</SelectItem>
+                <SelectItem value="direct_url">Direct URL</SelectItem>
+                <SelectItem value="raw_data">Raw Torrent Data</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="preflight-content-id">{(PREFLIGHT_INPUT_OPTIONS[preflightInputType] || PREFLIGHT_INPUT_OPTIONS.content_id).label}</Label>
             <Input
               id="preflight-content-id"
               type="text"
-              placeholder="infohash, PID, or magnet URI"
+              placeholder={(PREFLIGHT_INPUT_OPTIONS[preflightInputType] || PREFLIGHT_INPUT_OPTIONS.content_id).placeholder}
               value={preflightContentId}
               onChange={(e) => setPreflightContentId(e.target.value)}
             />
