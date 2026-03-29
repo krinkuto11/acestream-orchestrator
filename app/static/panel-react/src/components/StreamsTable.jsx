@@ -354,7 +354,13 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const streamLabels = stream.labels || {}
   const streamControlMode = streamLabels['proxy.control_mode'] || null
   const resolvedInfohash = streamLabels['stream.resolved_infohash'] || null
-  const isLegacyApiMode = typeof streamControlMode === 'string' && streamControlMode.toUpperCase().startsWith('LEGACY_API')
+  const normalizedControlMode = String(streamControlMode || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+  const hasLegacyApiLabel = normalizedControlMode.includes('LEGACY') && normalizedControlMode.includes('API')
+  const hasNoEngineControlLinks = !stream.stat_url && !stream.command_url
+  const isLegacyApiMode = hasLegacyApiLabel || hasNoEngineControlLinks
   const timelineFirstTs = Number.parseInt(String(stream.livepos?.first_ts ?? stream.livepos?.live_first ?? ''), 10)
   const timelineLastTs = Number.parseInt(String(stream.livepos?.last_ts ?? stream.livepos?.live_last ?? ''), 10)
   const timelinePos = Number.parseInt(String(stream.livepos?.pos ?? ''), 10)
@@ -756,7 +762,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                         }}
                         onMouseUp={handleSeekCommit}
                         onTouchEnd={handleSeekCommit}
-                        disabled={!isLegacyApiMode || seekLoading}
+                        disabled={seekLoading}
                         className="w-full"
                       />
                       <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
@@ -778,7 +784,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                     <p className="text-xs text-muted-foreground">Live timeline is unavailable for this stream.</p>
                   )}
 
-                  {!isLegacyApiMode && (
+                  {!hasLegacyApiLabel && !hasNoEngineControlLinks && (
                     <p className="text-xs text-muted-foreground">LIVESEEK requires LEGACY_API control mode.</p>
                   )}
                   {seekLoading && <p className="text-xs text-muted-foreground">Applying seek...</p>}

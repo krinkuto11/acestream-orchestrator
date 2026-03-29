@@ -277,7 +277,13 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
   const streamLabels = stream?.labels || {}
   const streamControlMode = streamLabels['proxy.control_mode'] || null
   const resolvedInfohash = streamLabels['stream.resolved_infohash'] || null
-  const isLegacyApiMode = typeof streamControlMode === 'string' && streamControlMode.toUpperCase().startsWith('LEGACY_API')
+  const normalizedControlMode = String(streamControlMode || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+  const hasLegacyApiLabel = normalizedControlMode.includes('LEGACY') && normalizedControlMode.includes('API')
+  const hasNoEngineControlLinks = !stream?.stat_url && !stream?.command_url
+  const isLegacyApiMode = hasLegacyApiLabel || hasNoEngineControlLinks
   const showMissingControlFlowHint = !isLegacyApiMode
   const showLinksBlock = Boolean(
     stream.stat_url
@@ -464,7 +470,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
                   onChange={(e) => setSeekValue(Number.parseInt(e.target.value, 10))}
                   onMouseUp={handleSeekCommit}
                   onTouchEnd={handleSeekCommit}
-                  disabled={!isLegacyApiMode || seekLoading}
+                  disabled={seekLoading}
                   className="w-full"
                 />
                 <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
@@ -486,7 +492,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
               <p className="text-xs text-muted-foreground">Live timeline is unavailable for this stream.</p>
             )}
 
-            {!isLegacyApiMode && (
+            {!hasLegacyApiLabel && !hasNoEngineControlLinks && (
               <p className="text-xs text-muted-foreground">LIVESEEK requires LEGACY_API control mode.</p>
             )}
             {seekLoading && <p className="text-xs text-muted-foreground">Applying seek...</p>}
