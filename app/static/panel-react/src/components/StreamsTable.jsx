@@ -431,8 +431,11 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
         throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
       }
 
-      const switchedUrl = payload?.result?.playback_url || payload?.result?.url || 'updated playback URL'
-      setSeekMessage(`Seek applied to ${formatTimelineTimestamp(selected)} (${switchedUrl})`)
+      if (payload?.status === 'seek_issued') {
+        setSeekMessage(`Seek issued for ${formatTimelineTimestamp(selected)}`)
+      } else {
+        setSeekMessage(`Seek applied to ${formatTimelineTimestamp(selected)}`)
+      }
     } catch (err) {
       setSeekError(err?.message || 'Seek failed')
     } finally {

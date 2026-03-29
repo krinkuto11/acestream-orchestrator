@@ -155,17 +155,12 @@ def test_stream_manager_seek_stream_schedules_switch():
     class _FakeLegacyClient:
         def seek_stream(self, target_timestamp):
             assert target_timestamp == 1700002000
-            return {
-                "url": "http%3A//127.0.0.1%3A19000/content/seeked/0.1",
-                "playback_session_id": "seek-session-1",
-                "stream": "1",
-            }
+            return True
 
     manager.ace_api_client = _FakeLegacyClient()
 
     result = manager.seek_stream(1700002000)
 
+    assert result["status"] == "seek_issued"
     assert result["target_timestamp"] == 1700002000
-    assert result["playback_session_id"] == "seek-session-1"
-    assert manager._pending_seek_start_info is not None
-    assert manager._pending_seek_start_info.get("url") == "http://127.0.0.1:19000/content/seeked/0.1"
+    assert manager._pending_seek_start_info is None

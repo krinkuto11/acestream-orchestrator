@@ -571,7 +571,7 @@ class StreamManager:
             return False
 
     def seek_stream(self, target_timestamp: int):
-        """Issue LIVESEEK for an active LEGACY_API stream and schedule reader URL switch."""
+        """Issue LIVESEEK for an active LEGACY_API stream."""
         if self.control_mode != "LEGACY_API":
             raise RuntimeError("LIVESEEK is only available when control_mode is LEGACY_API")
         if not self.running:
@@ -585,26 +585,18 @@ class StreamManager:
             if not self.ace_api_client:
                 raise RuntimeError("Legacy API session is not active")
 
-            start_info = self.ace_api_client.seek_stream(int(target_timestamp))
+            issued = self.ace_api_client.seek_stream(int(target_timestamp))
         finally:
             self._legacy_api_lock.release()
 
-        playback_url = start_info.get("url")
-        if not playback_url:
-            raise RuntimeError("LIVESEEK did not return a playback URL")
-
-        normalized_url = self._normalize_playback_url(playback_url)
-        with self._reader_lock:
-            self._pending_seek_start_info = dict(start_info)
-            self._pending_seek_start_info["url"] = normalized_url
+        if not issued:
+            raise RuntimeError("LIVESEEK command was not accepted")
 
         self._legacy_probe_cache = None
         self._legacy_probe_cache_ts = 0.0
 
         return {
-            "playback_url": normalized_url,
-            "playback_session_id": start_info.get("playback_session_id"),
-            "stream": start_info.get("stream"),
+            "status": "seek_issued",
             "target_timestamp": int(target_timestamp),
         }
 

@@ -3164,7 +3164,6 @@ async def seek_stream_live(monitor_id: str, req: StreamSeekRequest):
 
     stream = state.get_stream(monitor_id)
     stream_key = stream.key if stream else monitor_id
-    stream_id = stream.id if stream else None
 
     manager = proxy.stream_managers.get(stream_key)
 
@@ -3181,7 +3180,7 @@ async def seek_stream_live(monitor_id: str, req: StreamSeekRequest):
         raise HTTPException(status_code=404, detail="Active proxy stream not found for seek request")
 
     try:
-        seek_result = await asyncio.to_thread(manager.seek_stream, target_timestamp)
+        await asyncio.to_thread(manager.seek_stream, target_timestamp)
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
@@ -3190,14 +3189,7 @@ async def seek_stream_live(monitor_id: str, req: StreamSeekRequest):
         logger.error(f"Failed to seek stream {monitor_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Seek failed: {str(e)}")
 
-    return {
-        "ok": True,
-        "monitor_id": monitor_id,
-        "stream_id": stream_id,
-        "stream_key": stream_key,
-        "target_timestamp": target_timestamp,
-        "result": seek_result,
-    }
+    return {"status": "seek_issued"}
 
 
 @app.get("/proxy/status")
