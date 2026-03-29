@@ -46,6 +46,9 @@ class _FakeAceLegacyApiClient:
             },
         }
 
+    def consume_download_stopped_event(self):
+        return None
+
     def stop_stream(self):
         return None
 
@@ -82,6 +85,36 @@ class _FakeFailoverClient(_FakeAceLegacyApiClient):
         if int(self.port) == 62062:
             raise asyncio.TimeoutError("api timed out on primary engine")
         return super().collect_status_samples(samples=samples, interval_s=interval_s, per_sample_timeout_s=per_sample_timeout_s)
+
+
+class _FakeDownloadStoppedClient(_FakeAceLegacyApiClient):
+    def __init__(self, host, port, connect_timeout=10.0, response_timeout=10.0, product_key=None):
+        super().__init__(host, port, connect_timeout=connect_timeout, response_timeout=response_timeout, product_key=product_key)
+        self._download_stopped_sent = False
+
+    def consume_download_stopped_event(self):
+        if self._download_stopped_sent:
+            return None
+        self._download_stopped_sent = True
+        return {
+            "event": "download_stopped",
+            "reason": "No seeds available",
+        }
+
+
+class _FakeDownloadStoppedFailoverClient(_FakeAceLegacyApiClient):
+    def __init__(self, host, port, connect_timeout=10.0, response_timeout=10.0, product_key=None):
+        super().__init__(host, port, connect_timeout=connect_timeout, response_timeout=response_timeout, product_key=product_key)
+        self._emit_download_stopped = int(self.port) == 62062
+
+    def consume_download_stopped_event(self):
+        if not self._emit_download_stopped:
+            return None
+        self._emit_download_stopped = False
+        return {
+            "event": "download_stopped",
+            "reason": "Primary engine stopped download",
+        }
 
 
 @pytest.mark.asyncio
@@ -375,6 +408,75 @@ async def test_api_timeout_marks_stream_dead_and_stops(monkeypatch):
     assert current is not None
     assert current["status"] == "dead"
     assert current["dead_reason"] == "timeout_or_connect_error"
+
+
+@pytest.mark.asyncio
+async def test_download_stopped_marks_stream_dead_immediately(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeDownloadStoppedClient)
+
+    service = LegacyStreamMonitoringService()
+
+    monitor = await service.start_monitor(content_id="abc123", interval_s=2.0, run_seconds=0)
+    monitor_id = monitor["monitor_id"]
+
+    await asyncio.sleep(0.7)
+
+    current = await service.get_monitor(monitor_id)
+    assert current is not None
+    assert current["status"] == "dead"
+    assert current["dead_reason"] == "download_stopped"
+    assert current["last_error"] == "No seeds available"
+
+
+@pytest.mark.asyncio
+async def test_download_stopped_triggers_immediate_failover(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine_1 = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=True,
+    )
+    engine_2 = SimpleNamespace(
+        container_id="engine-2",
+        host="127.0.0.1",
+        port=6879,
+        api_port=62063,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine_1, engine_2])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeDownloadStoppedFailoverClient)
+
+    service = LegacyStreamMonitoringService()
+
+    monitor = await service.start_monitor(content_id="abc123", interval_s=2.0, run_seconds=0)
+    monitor_id = monitor["monitor_id"]
+
+    await asyncio.sleep(1.2)
+
+    current = await service.get_monitor(monitor_id)
+    assert current is not None
+    assert current["status"] in {"running", "stuck", "starting", "reconnecting"}
+    assert current["reconnect_attempts"] == 1
+    assert (current.get("engine") or {}).get("container_id") == "engine-2"
+
+    await service.stop_all()
 
 
 @pytest.mark.asyncio

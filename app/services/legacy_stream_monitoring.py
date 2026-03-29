@@ -526,6 +526,38 @@ class LegacyStreamMonitoringService:
                         0.0,
                         per_sample_timeout_s,
                     )
+                    download_stopped_event = await asyncio.to_thread(client.consume_download_stopped_event)
+
+                    if download_stopped_event:
+                        parsed_reason = (download_stopped_event.get("reason") or "").strip() or "download_stopped"
+                        did_failover = await self._failover_retry_dead_monitor(
+                            monitor_id,
+                            "download_stopped",
+                            parsed_reason,
+                        )
+                        await _shutdown_client()
+                        if did_failover:
+                            logger.warning(
+                                "Legacy monitor %s got EVENT download_stopped (%s); retrying on different engine",
+                                monitor_id,
+                                parsed_reason,
+                            )
+                            continue
+
+                        await self._update_session(
+                            monitor_id,
+                            status="dead",
+                            dead_reason="download_stopped",
+                            last_error=parsed_reason,
+                            ended_at=self._utc_iso(),
+                        )
+                        logger.warning(
+                            "Legacy monitor %s marked dead after EVENT download_stopped: %s",
+                            monitor_id,
+                            parsed_reason,
+                        )
+                        break
+
                     sample = {
                         "ts": self._utc_iso(),
                         "status_text": probe.get("status_text") or probe.get("status"),

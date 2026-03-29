@@ -50,6 +50,18 @@ def test_parse_event_line_livepos():
     assert parsed["buffer_pieces"] == "15"
 
 
+def test_handle_async_captures_download_stopped_reason():
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    client._handle_async("EVENT", ["EVENT", "download_stopped", "reason=No%20seeds%20available"])
+
+    event_payload = client.consume_download_stopped_event()
+    assert event_payload is not None
+    assert event_payload.get("event") == "download_stopped"
+    assert event_payload.get("reason") == "No seeds available"
+    assert client.consume_download_stopped_event() is None
+
+
 def test_preflight_deep_stops_stream(monkeypatch):
     client = AceLegacyApiClient("127.0.0.1", 62062)
     calls = {"start": 0, "stop": 0}

@@ -48,6 +48,8 @@ class AceLegacyApiClient:
         self._sock: Optional[socket.socket] = None
         self._recv_buffer = b""
         self._authenticated = False
+        self._download_stopped_event: Optional[Dict[str, str]] = None
+        self._async_event_lock = threading.Lock()
 
         # Default profile used when engine asks for USERDATA.
         self._gender = 1
@@ -388,8 +390,29 @@ class AceLegacyApiClient:
         for token in parts[2:]:
             if "=" in token:
                 key, value = token.split("=", 1)
-                parsed[key] = value
+                parsed[key] = unquote(value)
         return parsed
+
+    def consume_download_stopped_event(self) -> Optional[Dict[str, str]]:
+        """Return and clear the latest EVENT download_stopped payload, if any."""
+        with self._async_event_lock:
+            event_payload = dict(self._download_stopped_event) if self._download_stopped_event else None
+            self._download_stopped_event = None
+            return event_payload
+
+    def _capture_download_stopped_event(self, parts: list):
+        """Store latest download_stopped event so callers can react immediately."""
+        if len(parts) < 2 or parts[0] != "EVENT" or parts[1] != "download_stopped":
+            return
+
+        parsed_event = self.parse_event_line(" ".join(parts))
+        reason = (parsed_event.get("reason") or "").strip()
+        if not reason:
+            reason = "download_stopped"
+            parsed_event["reason"] = reason
+
+        with self._async_event_lock:
+            self._download_stopped_event = parsed_event
 
     def collect_status_samples(
         self,
@@ -659,6 +682,9 @@ class AceLegacyApiClient:
         raise AceLegacyApiError(f"Timeout waiting for {expected_cmd}")
 
     def _handle_async(self, cmd: str, parts: list):
+        if cmd == "EVENT" and len(parts) > 1 and parts[1] == "download_stopped":
+            self._capture_download_stopped_event(parts)
+
         # Answer data collection profile request; ignore other async signals.
         if cmd == "EVENT" and "getuserdata" in parts:
             self._write(f"USERDATA [{{\"gender\": {self._gender}}}, {{\"age\": {self._age}}}]")
@@ -696,6 +722,9 @@ class AceLegacyApiClient:
             if "=" in token:
                 key, value = token.split("=", 1)
                 kv[key] = value
+
+        if cmd == "EVENT" and len(parts) > 1 and parts[1] == "download_stopped":
+            self._capture_download_stopped_event(parts)
 
         logger.debug("[ACE API] <<< %s", line)
         return cmd, parts, kv

@@ -361,6 +361,17 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const hasLegacyApiLabel = normalizedControlMode.includes('LEGACY') && normalizedControlMode.includes('API')
   const hasNoEngineControlLinks = !stream.stat_url && !stream.command_url
   const isLegacyApiMode = hasLegacyApiLabel || hasNoEngineControlLinks
+  const rawDeadReason = [
+    stream.dead_reason,
+    stream.last_error,
+    streamLabels['stream.dead_reason'],
+    streamLabels['stream.last_error'],
+    streamLabels['stream.stop_reason'],
+    streamLabels['stream.end_reason'],
+  ].find((value) => typeof value === 'string' && value.trim().length > 0) || ''
+  const deadReasonText = String(rawDeadReason || '').trim()
+  const normalizedDeadReason = deadReasonText.toLowerCase()
+  const isDownloadStopped = normalizedDeadReason.includes('download_stopped') || normalizedDeadReason.includes('download stopped')
   const timelineFirstTs = Number.parseInt(String(stream.livepos?.first_ts ?? stream.livepos?.live_first ?? ''), 10)
   const timelineLastTs = Number.parseInt(String(stream.livepos?.last_ts ?? stream.livepos?.live_last ?? ''), 10)
   const timelinePos = Number.parseInt(String(stream.livepos?.pos ?? ''), 10)
@@ -476,7 +487,12 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           </Button>
         </TableCell>
         <TableCell className="text-center">
-          {isPrebuffering ? (
+          {isDownloadStopped ? (
+            <Badge variant="destructive" className="flex items-center gap-1 w-fit mx-auto">
+              <StopCircle className="h-3 w-3" />
+              <span className="text-white">DOWNLOAD STOPPED</span>
+            </Badge>
+          ) : isPrebuffering ? (
             <Badge className="flex items-center gap-1 w-fit mx-auto bg-orange-500 text-white hover:bg-orange-600 border-transparent">
               <Clock className="h-3 w-3" />
               <span className="text-white">PREBUF</span>
@@ -574,6 +590,18 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           {/* colspan: active streams have 13 cols (checkbox + expand + 11 data), ended streams have 7 cols (expand + 6 data) */}
           <TableCell colSpan={showSpeedColumns ? 13 : 7} className="p-6 bg-muted/50">
             <div className="space-y-6">
+              {isDownloadStopped && (
+                <div className="rounded-md border border-rose-300 bg-rose-50 p-3 dark:border-rose-800 dark:bg-rose-950/30">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="destructive">Download Stopped</Badge>
+                    <p className="text-sm font-medium text-rose-700 dark:text-rose-300">AceStream download stopped event detected</p>
+                  </div>
+                  {deadReasonText && (
+                    <p className="mt-2 text-xs text-rose-700 dark:text-rose-300">Reason: {deadReasonText}</p>
+                  )}
+                </div>
+              )}
+
               {/* Connected Clients - Moved to top */}
               {isActive && (
                 <div>
