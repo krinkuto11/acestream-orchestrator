@@ -3,6 +3,8 @@ from pydantic import BaseModel, HttpUrl, ConfigDict, RootModel
 from typing import Dict, Optional, Literal, List, Any
 from datetime import datetime
 
+ProxyControlMode = Literal["http", "api"]
+
 class EngineAddress(BaseModel):
     host: str
     port: int
@@ -13,6 +15,7 @@ class StreamKey(BaseModel):
     file_indexes: str = "0"
     seekback: int = 0
     live_delay: int = 0
+    control_mode: Optional[ProxyControlMode] = None
 
 class SessionInfo(BaseModel):
     playback_session_id: str
@@ -69,6 +72,7 @@ class StreamState(BaseModel):
     file_indexes: str = "0"
     seekback: int = 0
     live_delay: int = 0
+    control_mode: Optional[ProxyControlMode] = None
     container_id: str
     container_name: Optional[str] = None
     playback_session_id: str

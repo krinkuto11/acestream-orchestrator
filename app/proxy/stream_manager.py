@@ -13,11 +13,20 @@ import uuid
 from typing import Optional
 from urllib.parse import unquote, urlparse, urlunparse
 
+from ..core.config import cfg
 from .http_streamer import HTTPStreamReader
 from .stream_buffer import StreamBuffer
 from .client_manager import ClientManager
 from .redis_keys import RedisKeys
-from .constants import StreamState, EventType, StreamMetadataField, VLC_USER_AGENT
+from .constants import (
+    StreamState,
+    EventType,
+    StreamMetadataField,
+    VLC_USER_AGENT,
+    PROXY_MODE_API,
+    PROXY_MODE_HTTP,
+    normalize_proxy_mode,
+)
 from .config_helper import ConfigHelper, Config
 from .ace_api_client import AceLegacyApiClient, AceLegacyApiError
 from .utils import get_logger
@@ -66,7 +75,7 @@ class StreamManager:
         self.command_url = None
         self.playback_session_id = None
         self.is_live = None
-        self.control_mode = (ConfigHelper.control_mode() or "LEGACY_HTTP").upper()
+        self.control_mode = normalize_proxy_mode(ConfigHelper.control_mode(), default=PROXY_MODE_HTTP)
         self.ace_api_client = None
         self._legacy_api_lock = threading.Lock()
         self.resolved_infohash = None
@@ -125,7 +134,7 @@ class StreamManager:
         logger.info(f"StreamManager initialized for content_id={content_id}")
 
     def _build_legacy_http_params(self):
-        """Build engine query params for LEGACY_HTTP mode based on source input type."""
+        """Build engine query params for HTTP mode based on source input type."""
         params = {
             "format": "json",
             "pid": str(uuid.uuid4()),
@@ -185,12 +194,16 @@ class StreamManager:
     def request_stream_from_engine(self):
         """Request stream from AceStream engine according to selected control mode."""
         self._last_request_failure_type = None
-        if self.control_mode == "LEGACY_API":
+        if self._is_api_mode():
             return self._request_stream_legacy_api()
         return self._request_stream_legacy_http()
 
+    def _is_api_mode(self) -> bool:
+        self.control_mode = normalize_proxy_mode(self.control_mode, default=PROXY_MODE_HTTP)
+        return self.control_mode == PROXY_MODE_API
+
     def _request_stream_legacy_http(self):
-        """Current JSON-over-HTTP control flow (default)."""
+        """Current JSON-over-HTTP control flow (HTTP mode)."""
         # Check stream mode to determine which endpoint to use
         stream_mode = Config.STREAM_MODE
         
@@ -275,7 +288,7 @@ class StreamManager:
             return False
 
     def _request_stream_legacy_api(self):
-        """Optional telnet-style legacy API control flow."""
+        """Telnet-style AceStream API control flow (API mode)."""
         client = None
         try:
             logger.info(
@@ -298,11 +311,11 @@ class StreamManager:
                 preflight_tier = "light"
                 if configured_tier != "light":
                     logger.info(
-                        "LEGACY_API proxy playback forces light preflight; configured tier '%s' is reserved for manual /ace/preflight checks",
+                        "API mode playback forces light preflight; configured tier '%s' is reserved for manual /ace/preflight checks",
                         configured_tier,
                     )
                 logger.info(
-                    "Running LEGACY_API preflight: stream_key=%s, input_type=%s, tier=%s",
+                    "Running API mode preflight: stream_key=%s, input_type=%s, tier=%s",
                     self.content_id,
                     self.source_input_type,
                     preflight_tier,
@@ -316,7 +329,7 @@ class StreamManager:
                     message = preflight.get("message") or "content unavailable"
                     availability_checks = preflight.get("availability_checks") or {}
                     logger.warning(
-                        "LEGACY_API preflight failed: "
+                        "API mode preflight failed: "
                         f"stream_key={self.content_id}, input_type={self.source_input_type}, tier={preflight_tier}, "
                         f"status_code={preflight.get('status_code')}, message={message}, "
                         f"checks={availability_checks}"
@@ -325,7 +338,7 @@ class StreamManager:
                     raise AceLegacyApiError(f"Preflight failed: {message}")
 
                 logger.info(
-                    "LEGACY_API preflight passed: "
+                    "API mode preflight passed: "
                     f"stream_key={self.content_id}, input_type={self.source_input_type}, tier={preflight_tier}, "
                     f"resolved_infohash={preflight.get('infohash')}"
                 )
@@ -437,6 +450,7 @@ class StreamManager:
                         file_indexes=self.file_indexes,
                         seekback=self.seekback,
                         live_delay=self.seekback,
+                        control_mode=normalize_proxy_mode(self.control_mode, default=PROXY_MODE_HTTP),
                     ),
                     session=SessionInfo(
                         playback_session_id=self.playback_session_id or f"fallback-{self.content_id[:16]}-{int(time.time())}",
@@ -574,9 +588,9 @@ class StreamManager:
             return False
 
     def seek_stream(self, target_timestamp: int):
-        """Issue LIVESEEK for an active LEGACY_API stream."""
-        if self.control_mode != "LEGACY_API":
-            raise RuntimeError("LIVESEEK is only available when control_mode is LEGACY_API")
+        """Issue LIVESEEK for an active API-mode stream."""
+        if not self._is_api_mode():
+            raise RuntimeError("LIVESEEK is only available when control_mode is api")
         if not self.running:
             raise RuntimeError("Stream is not running")
 
@@ -617,9 +631,9 @@ class StreamManager:
             self._legacy_probe_cache["status_text"] = status_value
 
     def pause_stream(self):
-        """Issue PAUSE for an active LEGACY_API stream."""
-        if self.control_mode != "LEGACY_API":
-            raise RuntimeError("PAUSE is only available when control_mode is LEGACY_API")
+        """Issue PAUSE for an active API-mode stream."""
+        if not self._is_api_mode():
+            raise RuntimeError("PAUSE is only available when control_mode is api")
         if not self.running:
             raise RuntimeError("Stream is not running")
 
@@ -641,9 +655,9 @@ class StreamManager:
         return {"status": "paused"}
 
     def resume_stream(self):
-        """Issue RESUME for an active LEGACY_API stream."""
-        if self.control_mode != "LEGACY_API":
-            raise RuntimeError("RESUME is only available when control_mode is LEGACY_API")
+        """Issue RESUME for an active API-mode stream."""
+        if not self._is_api_mode():
+            raise RuntimeError("RESUME is only available when control_mode is api")
         if not self.running:
             raise RuntimeError("Stream is not running")
 
@@ -665,9 +679,9 @@ class StreamManager:
         return {"status": "resumed"}
 
     def save_stream(self, infohash: Optional[str] = None, index: int = 0, path: str = ""):
-        """Issue SAVE for an active LEGACY_API stream."""
-        if self.control_mode != "LEGACY_API":
-            raise RuntimeError("SAVE is only available when control_mode is LEGACY_API")
+        """Issue SAVE for an active API-mode stream."""
+        if not self._is_api_mode():
+            raise RuntimeError("SAVE is only available when control_mode is api")
         if not self.running:
             raise RuntimeError("Stream is not running")
 
@@ -908,7 +922,7 @@ class StreamManager:
 
     def collect_legacy_stats_probe(self, samples: int = 1, per_sample_timeout_s: float = 1.0, force: bool = False):
         """Return a status probe for the active legacy API session, if available."""
-        if self.control_mode != "LEGACY_API" or not self.ace_api_client or not self.running:
+        if not self._is_api_mode() or not self.ace_api_client or not self.running:
             return None
 
         now = time.monotonic()
@@ -979,7 +993,7 @@ class StreamManager:
                 "Skipping engine stop for content_id=%s because session is owned by monitoring",
                 self.content_id,
             )
-        elif self.control_mode == "LEGACY_API" and self.ace_api_client:
+        elif self._is_api_mode() and self.ace_api_client:
             try:
                 with self._legacy_api_lock:
                     if self.ace_api_client:

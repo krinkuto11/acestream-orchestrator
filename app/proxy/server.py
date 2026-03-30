@@ -224,7 +224,7 @@ class ProxyServer:
         self._stop_stream(content_id)
 
     def seek_stream_by_key(self, content_id: str, target_timestamp: int):
-        """Seek an active proxy session using LIVESEEK in LEGACY_API mode."""
+        """Seek an active proxy session using LIVESEEK in API mode."""
         stream_manager = self.stream_managers.get(content_id)
         if not stream_manager:
             raise RuntimeError(f"No active proxy session for stream key '{content_id}'")

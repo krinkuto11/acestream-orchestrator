@@ -5,6 +5,8 @@ Adapted from ts_proxy - uses environment variables instead of Django settings.
 
 import os
 
+from .constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mode
+
 
 class Config:
     """Configuration class using environment variables."""
@@ -60,11 +62,11 @@ class Config:
     STREAM_MODE = os.getenv('PROXY_STREAM_MODE', 'TS')  # Default to MPEG-TS for backwards compatibility
 
     # Engine control mode
-    # LEGACY_HTTP: current /ace/getstream JSON HTTP control flow
-    # LEGACY_API: telnet-style AceStream API control flow (optional)
-    CONTROL_MODE = os.getenv('PROXY_CONTROL_MODE', 'LEGACY_HTTP')
+    # http: JSON-over-HTTP control flow
+    # api: telnet-style AceStream API control flow (optional)
+    CONTROL_MODE = normalize_proxy_mode(os.getenv('PROXY_CONTROL_MODE', PROXY_MODE_HTTP), default=PROXY_MODE_HTTP)
 
-    # LEGACY_API preflight tier used before START when proxy control mode is LEGACY_API.
+    # API-mode preflight tier used before START when proxy control mode is api.
     # light: resolve/canonicalize only
     # deep: resolve + start + status/livepos sampling + stop
     LEGACY_API_PREFLIGHT_TIER = os.getenv('PROXY_LEGACY_API_PREFLIGHT_TIER', 'light')
@@ -202,12 +204,19 @@ class ConfigHelper:
 
     @staticmethod
     def control_mode():
-        """Get engine control mode (LEGACY_HTTP or LEGACY_API)."""
-        return Config.CONTROL_MODE
+        """Get engine control mode (http or api)."""
+        normalized = normalize_proxy_mode(Config.CONTROL_MODE, default=PROXY_MODE_HTTP)
+        Config.CONTROL_MODE = normalized
+        return normalized
+
+    @staticmethod
+    def is_api_mode():
+        """Return True when control mode uses AceStream API socket commands."""
+        return ConfigHelper.control_mode() == PROXY_MODE_API
 
     @staticmethod
     def legacy_api_preflight_tier():
-        """Get LEGACY_API preflight tier (light or deep)."""
+        """Get API-mode preflight tier (light or deep)."""
         tier = str(Config.LEGACY_API_PREFLIGHT_TIER or "light").strip().lower()
         return tier if tier in {"light", "deep"} else "light"
     

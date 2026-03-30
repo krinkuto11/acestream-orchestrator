@@ -37,6 +37,12 @@ const PREFLIGHT_INPUT_OPTIONS = {
   },
 }
 
+const normalizeControlMode = (value) => {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'legacy_api' || normalized === 'api') return 'api'
+  return 'http'
+}
+
 const extractLoadRespFiles = (payload) => {
   const files = payload?.result?.loadresp?.files
   if (!Array.isArray(files)) {
@@ -97,7 +103,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [channelShutdownDelay, setChannelShutdownDelay] = useState(5)
   const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(DEFAULT_MAX_STREAMS_PER_ENGINE)
   const [streamMode, setStreamMode] = useState('TS')
-  const [controlMode, setControlMode] = useState('LEGACY_HTTP')
+  const [controlMode, setControlMode] = useState('http')
   const [engineVariant, setEngineVariant] = useState('')
 
   // HLS-specific state
@@ -165,7 +171,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
         setChannelShutdownDelay(data.channel_shutdown_delay)
         setMaxStreamsPerEngine(data.max_streams_per_engine || DEFAULT_MAX_STREAMS_PER_ENGINE)
         setStreamMode(data.stream_mode || 'TS')
-        setControlMode(data.control_mode || 'LEGACY_HTTP')
+        setControlMode(normalizeControlMode(data.control_mode || 'http'))
         setEngineVariant(data.engine_variant || '')
         setVlcUserAgent(data.vlc_user_agent)
         setChunkSize(data.chunk_size)
@@ -362,10 +368,6 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   setError('HLS mode is not available with current engine configuration. Use an AceServe variant with disk or hybrid cache.')
                   return
                 }
-                if (value === 'HLS' && controlMode === 'LEGACY_API') {
-                  setError('HLS mode requires Legacy HTTP control mode.')
-                  return
-                }
                 setStreamMode(value)
                 setError(null)
               }}
@@ -415,11 +417,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
             <Select
               value={controlMode}
               onValueChange={(value) => {
-                if (value === 'LEGACY_API' && streamMode === 'HLS') {
-                  setError('Legacy API control mode is only supported with MPEG-TS stream mode.')
-                  return
-                }
-                setControlMode(value)
+                setControlMode(normalizeControlMode(value))
                 setError(null)
               }}
             >
@@ -427,20 +425,20 @@ export function ProxySettings({ apiKey, orchUrl }) {
                 <SelectValue placeholder="Select control mode" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="LEGACY_HTTP">Legacy HTTP (default)</SelectItem>
-                <SelectItem value="LEGACY_API">Legacy API (socket control)</SelectItem>
+                <SelectItem value="http">HTTP Mode (default)</SelectItem>
+                <SelectItem value="api">API Mode (socket control)</SelectItem>
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Legacy HTTP uses /ace/getstream JSON control flow. Legacy API uses the AceStream API port
-              for HELLOBG/READY/LOADASYNC/START control and remains optional.
+              HTTP mode uses /ace/getstream JSON control flow. API mode uses the AceStream API port
+              for HELLOBG/READY/LOADASYNC/START control. HLS playback is supported in both modes.
             </p>
           </div>
 
           <div className="space-y-2">
-            <Label>Legacy API Playback Preflight</Label>
+            <Label>API Mode Playback Preflight</Label>
             <p className="text-xs text-muted-foreground">
-              Proxy playback now always uses <strong>light</strong> preflight in LEGACY_API mode.
+              Proxy playback now always uses <strong>light</strong> preflight in API mode.
               Use the <strong>Preflight Diagnostics</strong> section below for manual deep checks.
             </p>
           </div>

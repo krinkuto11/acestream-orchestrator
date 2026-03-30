@@ -15,6 +15,7 @@ import asyncio
 from typing import Dict, Optional, Set, Any
 from urllib.parse import urljoin, urlparse
 from .config_helper import ConfigHelper
+from .constants import PROXY_MODE_HTTP
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,7 @@ class StreamManager:
         except (TypeError, ValueError):
             normalized_seekback = 0
         self.seekback = max(0, normalized_seekback)
+        self.control_mode = PROXY_MODE_HTTP
         self.running = True
         
         # Session info from AceStream API
@@ -293,6 +295,7 @@ class StreamManager:
                         file_indexes=self.file_indexes,
                         seekback=self.seekback,
                         live_delay=self.seekback,
+                        control_mode=self.control_mode,
                     ),
                     session=SessionInfo(
                         playback_session_id=self.playback_session_id,

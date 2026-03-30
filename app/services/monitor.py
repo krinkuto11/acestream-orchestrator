@@ -7,6 +7,7 @@ from .health import list_managed
 from .reindex import reindex_existing
 from .autoscaler import ensure_minimum
 from .gluetun import gluetun_monitor
+from .hls_segmenter import hls_segmenter_service
 from ..core.config import cfg
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,9 @@ class DockerMonitor:
                 # Also check for engines that can be cleaned up after grace period
                 if cfg.AUTO_DELETE:
                     await loop.run_in_executor(None, self._cleanup_empty_engines)
+
+                # Periodic cleanup of idle external HLS segmenters
+                await hls_segmenter_service.cleanup_idle_segmenters(max_idle_seconds=max(120, cfg.AUTOSCALE_INTERVAL_S * 3))
                 
             except Exception as e:
                 logger.error(f"Error in periodic autoscaling: {e}")

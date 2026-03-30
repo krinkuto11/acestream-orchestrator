@@ -12,6 +12,7 @@ This also removes old stream records from the database to prevent unbounded grow
 import asyncio
 import logging
 from .state import state
+from .hls_segmenter import hls_segmenter_service
 from ..core.config import cfg
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,12 @@ class StreamCleanup:
                     removed_count = state.cleanup_ended_streams(max_age_seconds=self._max_age_seconds)
                     if removed_count > 0:
                         logger.warning(f"Stream cleanup: removed {removed_count} stale ended streams (these should have been removed immediately - investigate why immediate removal failed)")
+
+                    cleaned_segmenters = await hls_segmenter_service.cleanup_idle_segmenters(
+                        max_idle_seconds=self._max_age_seconds
+                    )
+                    if cleaned_segmenters > 0:
+                        logger.info("Stream cleanup: removed %s idle external HLS segmenters", cleaned_segmenters)
                 except Exception:
                     logger.exception("Error during stream cleanup")
 

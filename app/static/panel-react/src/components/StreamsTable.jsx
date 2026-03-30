@@ -380,9 +380,14 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, '_')
-  const hasLegacyApiLabel = normalizedControlMode.includes('LEGACY') && normalizedControlMode.includes('API')
+  const hasApiControlLabel = normalizedControlMode.includes('API')
+  const formattedControlMode = hasApiControlLabel
+    ? 'API Mode'
+    : normalizedControlMode.includes('HTTP')
+      ? 'HTTP Mode'
+      : streamControlMode
   const hasNoEngineControlLinks = !stream.stat_url && !stream.command_url
-  const isLegacyApiMode = hasLegacyApiLabel || hasNoEngineControlLinks
+  const isApiMode = hasApiControlLabel || hasNoEngineControlLinks
   const rawDeadReason = [
     stream.dead_reason,
     stream.last_error,
@@ -577,7 +582,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     }
   }
 
-  const showMissingControlFlowHint = !isLegacyApiMode
+  const showMissingControlFlowHint = !isApiMode
   const showLinksBlock = Boolean(
     stream.stat_url
     || stream.command_url
@@ -815,7 +820,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                 {streamControlMode && (
                   <div>
                     <p className="text-xs text-muted-foreground">Control Mode</p>
-                    <p className="text-sm font-medium text-foreground">{streamControlMode}</p>
+                    <p className="text-sm font-medium text-foreground">{formattedControlMode}</p>
                   </div>
                 )}
                 {resolvedInfohash && (
@@ -943,8 +948,8 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                     <p className="text-xs text-muted-foreground">Live timeline is unavailable for this stream.</p>
                   )}
 
-                  {!hasLegacyApiLabel && !hasNoEngineControlLinks && (
-                    <p className="text-xs text-muted-foreground">LIVESEEK requires LEGACY_API control mode.</p>
+                  {!hasApiControlLabel && !hasNoEngineControlLinks && (
+                    <p className="text-xs text-muted-foreground">LIVESEEK requires API mode.</p>
                   )}
                   {seekLoading && <p className="text-xs text-muted-foreground">Applying seek...</p>}
                   {seekMessage && <p className="text-xs text-green-600 dark:text-green-400">{seekMessage}</p>}
@@ -1002,7 +1007,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
               {/* Actions */}
               {isActive && (
                 <div className="pt-4 border-t space-y-3">
-                  {isLegacyApiMode ? (
+                  {isApiMode ? (
                     <div className="flex flex-wrap gap-3">
                       <Button
                         variant="outline"
@@ -1024,7 +1029,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                       </Button>
                     </div>
                   ) : (
-                    <p className="text-xs text-muted-foreground">PAUSE/RESUME/SAVE require LEGACY_API control mode.</p>
+                    <p className="text-xs text-muted-foreground">PAUSE/RESUME/SAVE require API mode.</p>
                   )}
 
                   <div className="flex flex-wrap gap-3">

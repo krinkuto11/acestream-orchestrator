@@ -11,6 +11,7 @@ from ..proxy.ace_api_client import AceLegacyApiClient
 from .state import state
 from ..core.config import cfg
 from .engine_selection import select_best_engine
+from .hls_segmenter import hls_segmenter_service
 
 logger = logging.getLogger(__name__)
 
@@ -411,6 +412,9 @@ class LegacyStreamMonitoringService:
             session.update(kwargs)
             self._publish_session_state(monitor_id, session)
 
+        if session.get("status") in {"dead", "stopped", "deleted"}:
+            hls_segmenter_service.stop_segmenter_nowait(monitor_id)
+
     async def _append_sample(self, monitor_id: str, sample: Dict[str, Any]):
         async with self._lock:
             session = self._sessions.get(monitor_id)
@@ -710,6 +714,7 @@ class LegacyStreamMonitoringService:
             if session and not session.get("ended_at"):
                 session["ended_at"] = self._utc_iso()
                 session["status"] = "stopped"
+        hls_segmenter_service.stop_segmenter_nowait(monitor_id)
         return True
 
     async def stop_all(self) -> int:
@@ -735,6 +740,7 @@ class LegacyStreamMonitoringService:
             self._tasks.pop(monitor_id, None)
             self._stop_events.pop(monitor_id, None)
         state.remove_monitor_session(monitor_id)
+        hls_segmenter_service.stop_segmenter_nowait(monitor_id)
 
         return True
 

@@ -72,19 +72,20 @@ Response:
    - Runs short availability probing without opening a long-lived proxy client session.
    - Uses least-loaded engine selection (same balancing policy as stream startup).
    - Works in both control paths:
-     - `LEGACY_HTTP`: probes through `/ace/getstream` with optional short status check in `deep` tier.
-     - `LEGACY_API`: probes through API port (`HELLOBG/READY/LOADASYNC/START/STATUS/STOP`).
+     - `http`: probes through `/ace/getstream` with optional short status check in `deep` tier.
+     - `api`: probes through API port (`HELLOBG/READY/LOADASYNC/START/STATUS/STOP`).
    - Supports two tiers:
      - `light`: resolve/canonicalize only (fast)
      - `deep`: resolve + START + STATUS/livepos sampling + STOP (richer diagnostics)
-   - In `LEGACY_API` control mode:
+   - In `api` control mode:
      - Uses numeric `LOADASYNC` session IDs.
      - Canonicalizes aliases to resolved `infohash` before START.
      - Parses `STATUS` and `EVENT livepos` with HTTPAceProxy-compatible rules.
+   - Backward compatibility: legacy values (`LEGACY_HTTP`, `LEGACY_API`) are accepted and normalized.
    - Response shape:
    ```json
    {
-     "control_mode": "LEGACY_API",
+     "control_mode": "api",
      "tier": "deep",
      "engine": {
        "container_id": "...",
@@ -112,7 +113,7 @@ Response:
    ```
 
  - POST /ace/monitor/legacy/start (protected)
-   - Starts an async monitor session that uses `LEGACY_API` control flow only for telemetry.
+   - Starts an async monitor session that uses `api` control flow only for telemetry.
    - Flow: `HELLOBG/READY/LOADASYNC/START`, then `STATUS` probe once per `interval_s`.
    - No player clients are attached and no stream data is proxied to consumers.
    - Monitor session state is tracked in orchestrator state (including selected engine and latest status).
@@ -187,6 +188,17 @@ Response:
    - If the requested content is already being monitored (`/ace/monitor/legacy`), proxy reuses that monitor session playback URL.
    - Reused sessions inherit monitor engine assignment (no duplicate START for the same content).
    - Stream stats remain visible under `/streams` by using monitor telemetry when direct legacy stat probing is unavailable.
+   - In `HLS` mode:
+     - `http` control mode uses the in-proxy HLS channel manager.
+     - `api` control mode uses an external FFmpeg segmenter and returns rewritten manifests.
+
+ - GET /ace/manifest.m3u8
+   - HLS manifest entrypoint.
+   - Serves manifests for both `http` and `api` control modes.
+
+ - GET /api/v1/hls/{monitor_id}/{segment_filename}
+   - Serves local FFmpeg-generated `.ts` segments for API-mode HLS sessions.
+   - Returns `404` when segment/session is unavailable.
 
  - DELETE /streams/{stream_id} (protected) → Stop a single stream
    - Stops a stream by calling its command URL with method=stop
@@ -244,7 +256,7 @@ Response:
    - Can filter by `container_id` to get streams for a specific engine
    - **Note**: A backup cleanup routine runs every 5 minutes to catch any streams that failed immediate removal
    - `labels` may include legacy diagnostics fields when available:
-     - `proxy.control_mode`: control path used for stream startup (`LEGACY_HTTP` or `LEGACY_API`)
+     - `proxy.control_mode`: control path used for stream startup (`http` or `api`)
      - `stream.resolved_infohash`: canonical infohash used for START in legacy API flow
      - `stream.status_text`, `stream.peers`, `stream.http_peers`, `stream.progress`: best-effort probe values from startup sampling
 

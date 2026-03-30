@@ -10,6 +10,7 @@ import time
 import logging
 
 from .config_helper import ConfigHelper
+from .constants import PROXY_MODE_API, normalize_proxy_mode
 from .utils import get_logger, create_ts_packet
 from .redis_keys import RedisKeys
 from .constants import StreamMetadataField
@@ -139,13 +140,13 @@ class StreamGenerator:
                 logger.error(f"[{self.client_id}] Stream manager missing during initialization")
                 return False
 
-            manager_mode = str(getattr(manager, "control_mode", "LEGACY_HTTP") or "LEGACY_HTTP").upper()
-            # Non-LEGACY_API modes do not run preflight gating, so do not block startup here.
-            if manager_mode != "LEGACY_API":
+            manager_mode = normalize_proxy_mode(getattr(manager, "control_mode", None))
+            # Non-API modes do not run preflight gating, so do not block startup here.
+            if manager_mode != PROXY_MODE_API:
                 return True
 
             # Terminal rejection path: do not keep clients waiting for full timeout.
-            if manager_mode == "LEGACY_API" and getattr(manager, "_last_request_failure_type", None) == "preflight_failed":
+            if manager_mode == PROXY_MODE_API and getattr(manager, "_last_request_failure_type", None) == "preflight_failed":
                 logger.warning(f"[{self.client_id}] Stream initialization aborted: preflight rejected stream")
                 return False
 

@@ -2,7 +2,7 @@
 Minimal AceStream legacy API client.
 
 Implements the telnet-style control protocol used on the AceStream API port.
-This module is optional and only used when proxy control mode is LEGACY_API.
+This module is optional and only used when proxy control mode is api.
 """
 
 import hashlib

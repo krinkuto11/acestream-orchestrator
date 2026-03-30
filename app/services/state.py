@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Set
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..models.schemas import EngineState, StreamState, StreamStartedEvent, StreamEndedEvent, StreamStatSnapshot
+from ..proxy.constants import normalize_proxy_mode
 from ..services.db import SessionLocal
 from ..models.db_models import EngineRow, StreamRow, StatRow
 
@@ -129,6 +130,7 @@ class State:
                              file_indexes=evt.stream.file_indexes,
                              seekback=evt.stream.seekback,
                              live_delay=(evt.stream.live_delay if evt.stream.live_delay is not None else evt.stream.seekback),
+                             control_mode=normalize_proxy_mode((evt.labels or {}).get("proxy.control_mode"), default=None),
                              container_id=key, container_name=eng.container_name if eng else container_name,
                              playback_session_id=evt.session.playback_session_id,
                              stat_url=str(evt.session.stat_url or ""), command_url=str(evt.session.command_url or ""),
@@ -244,6 +246,13 @@ class State:
             except Exception as e:
                 # Don't fail stream ending if HLS proxy cleanup fails
                 logger.warning(f"Failed to synchronize HLS proxy cleanup for stream {st.key}: {e}")
+
+            try:
+                # Clean up external API-mode HLS segmenter if active.
+                from ..services.hls_segmenter import hls_segmenter_service
+                hls_segmenter_service.stop_segmenter_nowait(st.key)
+            except Exception as e:
+                logger.warning(f"Failed to schedule external HLS segmenter cleanup for stream {st.key}: {e}")
         
         return st
 
