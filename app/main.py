@@ -19,6 +19,7 @@ import httpx
 import threading
 from types import SimpleNamespace
 import time
+from docker.errors import NotFound
 
 from .utils.logging import setup
 from .core.config import cfg
@@ -66,6 +67,7 @@ from .services.looping_streams import looping_streams_tracker
 from .services.cache_monitoring_service import start_cache_monitoring
 from .services.legacy_stream_monitoring import legacy_stream_monitoring_service
 from .services.hls_segmenter import hls_segmenter_service
+from .services.docker_client import get_client
 from .proxy.manager import ProxyManager
 from .proxy.ace_api_client import AceLegacyApiClient, AceLegacyApiError
 from .proxy.constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mode
@@ -850,6 +852,55 @@ def get_container(container_id: str):
         return inspect_container(container_id)
     except ContainerNotFound:
         raise HTTPException(status_code=404, detail="container not found")
+
+
+@app.get("/containers/{container_id}/logs", dependencies=[Depends(require_api_key)])
+def get_container_logs(
+    container_id: str,
+    tail: int = Query(200, ge=1, le=2000, description="Maximum number of recent log lines"),
+    since_seconds: Optional[int] = Query(
+        None,
+        ge=1,
+        le=86400,
+        description="Return logs newer than this many seconds",
+    ),
+    timestamps: bool = Query(False, description="Include Docker timestamps in each log line"),
+):
+    """Get recent Docker logs for a container.
+
+    This endpoint is intended for live tailing in the panel by polling at short intervals.
+    """
+    try:
+        client = get_client(timeout=20)
+        container = client.containers.get(container_id)
+
+        since = None
+        if since_seconds is not None:
+            since = int(time.time()) - since_seconds
+
+        logs_raw = container.logs(
+            stdout=True,
+            stderr=True,
+            tail=tail,
+            since=since,
+            timestamps=timestamps,
+        )
+
+        logs_text = logs_raw.decode("utf-8", errors="replace") if isinstance(logs_raw, (bytes, bytearray)) else str(logs_raw)
+
+        return {
+            "container_id": container_id,
+            "tail": tail,
+            "since_seconds": since_seconds,
+            "timestamps": timestamps,
+            "logs": logs_text,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except NotFound:
+        raise HTTPException(status_code=404, detail="container not found")
+    except Exception as exc:
+        logger.error(f"Failed to fetch logs for container {container_id[:12]}: {exc}")
+        raise HTTPException(status_code=500, detail=f"failed_to_fetch_logs: {exc}")
 
 # Events
 @app.post("/events/stream_started", response_model=StreamState, dependencies=[Depends(require_api_key)])

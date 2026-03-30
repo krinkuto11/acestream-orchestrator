@@ -325,12 +325,12 @@ def get_variant_config(variant: str) -> dict:
             "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "52428800", "--live-buffer", "25", "--disable-sentry", "--log-stdout", "--disable-upnp"],
         },
         "AceServe-arm32": {
-            "image": "ghcr.io/krinkuto11/acestream:base-arm32",
+            "image": "ghcr.io/krinkuto11/acestream:latest-arm32",
             "config_type": "cmd",
             "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--live-buffer", "25", "--disable-sentry", "--log-stdout", "--disable-upnp"],
         },
         "AceServe-arm64": {
-            "image": "ghcr.io/krinkuto11/acestream:base-arm64",
+            "image": "ghcr.io/krinkuto11/acestream:latest-arm64",
             "config_type": "cmd",
             "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--live-buffer", "25", "--disable-sentry", "--log-stdout", "--disable-upnp"],
         }

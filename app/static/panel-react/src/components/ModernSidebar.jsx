@@ -9,6 +9,7 @@ import {
   Settings, 
   BarChart3, 
   ShieldCheck,
+  Network,
   ChevronLeft,
   ChevronRight,
   FileText
@@ -18,10 +19,12 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 
 const navigation = [
-  { name: 'Overview', href: '/', icon: LayoutDashboard },
+  { name: 'Streaming Central', href: '/', icon: LayoutDashboard },
+  { name: 'Overview (Legacy)', href: '/overview-legacy', icon: LayoutDashboard },
   { name: 'Engines', href: '/engines', icon: Server },
   { name: 'Streams', href: '/streams', icon: Activity },
   { name: 'Stream Monitoring', href: '/stream-monitoring', icon: Radio },
+  { name: 'Routing Topology', href: '/routing-topology', icon: Network },
   { name: 'Events', href: '/events', icon: FileText },
   { name: 'Health', href: '/health', icon: ShieldCheck },
   { name: 'VPN', href: '/vpn', icon: Wifi },

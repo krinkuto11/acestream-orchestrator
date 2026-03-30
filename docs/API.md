@@ -333,10 +333,19 @@ Response:
 
 ### Control
  - DELETE /containers/{container_id} (protected)
+ - GET /containers/{container_id}/logs (protected)
+   - Returns recent Docker logs for a container
+   - Query params:
+     - `tail` (optional, default: 200, max: 2000): number of log lines
+     - `since_seconds` (optional): return only logs newer than this age in seconds
+     - `timestamps` (optional, default: false): include Docker timestamps per line
  - POST /gc (protected)
  - POST /scale/{demand:int} (protected)
  - POST /health/circuit-breaker/reset?operation_type= (protected) → Reset circuit breakers for manual intervention
  - POST /cache/clear (protected) → Manually clear all cache entries
+
+Container inspect payload (`GET /containers/{container_id}`) includes:
+- `restart_count` - Docker restart count for container pedigree/diagnostics
 
 ### Metrics
  - GET /metrics Prometheus:

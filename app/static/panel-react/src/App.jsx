@@ -5,6 +5,7 @@ import { ModernHeader } from './components/ModernHeader'
 import { ThemeProvider, useTheme } from './components/ThemeProvider'
 import { NotificationProvider, useNotifications } from './context/NotificationContext'
 import { OverviewPage } from './pages/OverviewPage'
+import { StreamingCentralPage } from './pages/StreamingCentralPage'
 import { EnginesPage } from './pages/EnginesPage'
 import { StreamsPage } from './pages/StreamsPage'
 import { EventsPage } from './pages/EventsPage'
@@ -12,6 +13,7 @@ import { HealthPage } from './pages/HealthPage'
 import { VPNPage } from './pages/VPNPage'
 import { MetricsPage } from './pages/MetricsPage'
 import { StreamMonitoringPage } from './pages/StreamMonitoringPage'
+import { RoutingTopologyPage } from './pages/RoutingTopologyPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import { useFavicon } from './hooks/useFavicon'
@@ -145,7 +147,7 @@ function AppContent() {
               <Route 
                 path="/" 
                 element={
-                  <OverviewPage
+                  <StreamingCentralPage
                     engines={engines}
                     streams={streams}
                     vpnStatus={vpnStatus}
@@ -154,6 +156,19 @@ function AppContent() {
                     apiKey={apiKey}
                   />
                 } 
+              />
+              <Route
+                path="/overview-legacy"
+                element={
+                  <OverviewPage
+                    engines={engines}
+                    streams={streams}
+                    vpnStatus={vpnStatus}
+                    orchestratorStatus={orchestratorStatus}
+                    orchUrl={orchUrl}
+                    apiKey={apiKey}
+                  />
+                }
               />
               <Route 
                 path="/engines" 
@@ -223,6 +238,17 @@ function AppContent() {
                     orchUrl={orchUrl}
                   />
                 } 
+              />
+              <Route
+                path="/routing-topology"
+                element={
+                  <RoutingTopologyPage
+                    engines={engines}
+                    streams={streams}
+                    vpnStatus={vpnStatus}
+                    orchestratorStatus={orchestratorStatus}
+                  />
+                }
               />
               <Route 
                 path="/settings" 

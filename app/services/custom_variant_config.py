@@ -156,9 +156,9 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
     if platform_arch == 'amd64':
         image = "ghcr.io/krinkuto11/acestream:latest-amd64"
     elif platform_arch == 'arm32':
-        image = "ghcr.io/krinkuto11/acestream:AceServe-arm32"
+        image = "ghcr.io/krinkuto11/acestream:latest-arm32"
     elif platform_arch == 'arm64':
-        image = "ghcr.io/krinkuto11/acestream:AceServe-arm64"
+        image = "ghcr.io/krinkuto11/acestream:latest-arm64"
     else:
         image = "ghcr.io/krinkuto11/acestream:latest-amd64"
         
