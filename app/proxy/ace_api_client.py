@@ -377,6 +377,10 @@ class AceLegacyApiClient:
         for token in parts[1:]:
             if "=" in token:
                 key, value = token.split("=", 1)
+                if key in {"url", "stat_url", "command_url"} and "%" in value:
+                    decoded_value = unquote(value)
+                    if decoded_value.startswith(("http://", "https://")):
+                        value = decoded_value
                 params[key] = value
         return params
 

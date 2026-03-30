@@ -344,6 +344,33 @@ def test_start_stream_supports_torrent_direct_raw(monkeypatch):
     assert commands[2].startswith("START RAW ZmFrZS1yYXctcGF5bG9hZA==")
 
 
+def test_start_stream_decodes_percent_encoded_url(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    monkeypatch.setattr(client, "_write", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        client,
+        "_wait_for",
+        lambda *_args, **_kwargs: (
+            "START",
+            [
+                "START",
+                "url=http%3A//172.19.0.2%3A19000/content/hash/0.123",
+                "stat_url=http%3A//172.19.0.2%3A19000/stat/hash/0.123",
+                "command_url=http%3A//172.19.0.2%3A19000/command/hash/0.123",
+                "playback_session_id=s1",
+            ],
+            {},
+        ),
+    )
+
+    payload = client.start_stream("abc123", mode="infohash")
+
+    assert payload["url"] == "http://172.19.0.2:19000/content/hash/0.123"
+    assert payload["stat_url"] == "http://172.19.0.2:19000/stat/hash/0.123"
+    assert payload["command_url"] == "http://172.19.0.2:19000/command/hash/0.123"
+
+
 def test_seek_stream_sends_liveseek_and_returns_true(monkeypatch):
     client = AceLegacyApiClient("127.0.0.1", 62062)
     commands = []
