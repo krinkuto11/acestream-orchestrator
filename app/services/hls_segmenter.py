@@ -212,13 +212,20 @@ class HLSSegmenterService:
         chunks_sent: Optional[int] = None,
         now: Optional[float] = None,
     ) -> None:
+        from .metrics import observe_proxy_client_connect
+
         key = self._sanitize_monitor_id(monitor_id)
         session = self._sessions.get(key)
         if not session:
             return
 
         ts = now if now is not None else time.time()
-        self._prune_stale_clients(session, now=ts, max_idle_seconds=self._client_record_ttl_s)
+        self._prune_stale_clients(
+            session,
+            now=ts,
+            max_idle_seconds=self._client_record_ttl_s,
+            emit_disconnect_metric=True,
+        )
 
         normalized_client_id = str(client_id or client_ip or "unknown")
         normalized_ip = str(client_ip or "unknown")
@@ -266,11 +273,23 @@ class HLSSegmenterService:
             "chunks_sent": existing_chunks + chunks_delta,
             "stats_updated_at": ts,
         }
+        if not existing:
+            observe_proxy_client_connect("HLS")
         session.last_activity = ts
 
-    def _prune_stale_clients(self, session: SegmenterSession, now: float, max_idle_seconds: int) -> None:
+    def _prune_stale_clients(
+        self,
+        session: SegmenterSession,
+        now: float,
+        max_idle_seconds: int,
+        emit_disconnect_metric: bool = False,
+    ) -> None:
         if max_idle_seconds <= 0 or not session.clients:
             return
+
+        observe_proxy_client_disconnect = None
+        if emit_disconnect_metric:
+            from .metrics import observe_proxy_client_disconnect
 
         stale_ids: List[str] = []
         for client_id, details in session.clients.items():
@@ -286,6 +305,8 @@ class HLSSegmenterService:
 
         for client_id in stale_ids:
             session.clients.pop(client_id, None)
+            if observe_proxy_client_disconnect is not None:
+                observe_proxy_client_disconnect("HLS")
 
     def list_clients(self, monitor_id: str, max_idle_seconds: Optional[int] = None) -> List[Dict[str, Any]]:
         key = self._sanitize_monitor_id(monitor_id)
@@ -318,7 +339,12 @@ class HLSSegmenterService:
         now = time.time()
         total = 0
         for session in self._sessions.values():
-            self._prune_stale_clients(session, now=now, max_idle_seconds=idle_limit)
+            self._prune_stale_clients(
+                session,
+                now=now,
+                max_idle_seconds=idle_limit,
+                emit_disconnect_metric=True,
+            )
             total += len(session.clients)
         return total
 

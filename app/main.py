@@ -3552,30 +3552,47 @@ async def ace_hls_segment(
 async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: Request):
     from app.proxy.utils import get_client_ip
 
-    path = hls_segmenter_service.get_segment_file_path(monitor_id, segment_filename)
-    if not path or not path.exists() or not path.is_file():
-        raise HTTPException(status_code=404, detail="HLS segment not found")
+    request_started_at = time.perf_counter()
 
-    hls_segmenter_service.record_activity(monitor_id)
-    # Track clients for API-mode HLS streams so /proxy/streams/{key}/clients can report them.
-    client_ip = get_client_ip(request)
-    user_agent = request.headers.get('user-agent', 'unknown')
     try:
-        segment_size = int(path.stat().st_size)
-    except OSError:
-        segment_size = 0
-    client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
-    hls_segmenter_service.record_client_activity(
-        monitor_id,
-        client_identity,
-        client_ip,
-        user_agent,
-        request_kind="segment",
-        bytes_sent=segment_size,
-        chunks_sent=1,
-    )
+        path = hls_segmenter_service.get_segment_file_path(monitor_id, segment_filename)
+        if not path or not path.exists() or not path.is_file():
+            elapsed = time.perf_counter() - request_started_at
+            observe_proxy_request("HLS", "/api/v1/hls/segment", elapsed, success=False, status_code=404)
+            raise HTTPException(status_code=404, detail="HLS segment not found")
 
-    return FileResponse(path=str(path), media_type="video/MP2T")
+        hls_segmenter_service.record_activity(monitor_id)
+        # Track clients for API-mode HLS streams so /proxy/streams/{key}/clients can report them.
+        client_ip = get_client_ip(request)
+        user_agent = request.headers.get('user-agent', 'unknown')
+        try:
+            segment_size = int(path.stat().st_size)
+        except OSError:
+            segment_size = 0
+        client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
+        hls_segmenter_service.record_client_activity(
+            monitor_id,
+            client_identity,
+            client_ip,
+            user_agent,
+            request_kind="segment",
+            bytes_sent=segment_size,
+            chunks_sent=1,
+        )
+        observe_proxy_egress_bytes("HLS", segment_size)
+
+        elapsed = time.perf_counter() - request_started_at
+        observe_proxy_request("HLS", "/api/v1/hls/segment", elapsed, success=True, status_code=200)
+        observe_proxy_ttfb("HLS", "/api/v1/hls/segment", elapsed)
+
+        return FileResponse(path=str(path), media_type="video/MP2T")
+    except HTTPException:
+        raise
+    except Exception as e:
+        elapsed = time.perf_counter() - request_started_at
+        observe_proxy_request("HLS", "/api/v1/hls/segment", elapsed, success=False, status_code=500)
+        logger.error(f"Error serving API-mode HLS segment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"HLS segment error: {str(e)}")
 
 
 

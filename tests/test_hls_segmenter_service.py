@@ -464,3 +464,81 @@ async def test_api_hls_client_ttl_can_be_overridden(tmp_path, monkeypatch):
 
     assert len(clients) == 1
     assert clients[0]["client_id"] == "new-client"
+
+
+@pytest.mark.asyncio
+async def test_record_client_activity_emits_connect_metric_for_new_client(tmp_path, monkeypatch):
+    service = HLSSegmenterService(base_dir=str(tmp_path))
+    monitor_id = "stream-metrics-connect"
+    out_dir = tmp_path / monitor_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = out_dir / "index.m3u8"
+
+    service._sessions[monitor_id] = SegmenterSession(
+        monitor_id=monitor_id,
+        source_mpegts_url="http://source",
+        output_dir=out_dir,
+        manifest_path=manifest_path,
+        process=_DummyProcess(returncode=None),
+        started_at=time.time(),
+        last_activity=time.time(),
+    )
+
+    connect_calls = {"count": 0}
+
+    def _fake_connect(mode: str):
+        assert mode == "HLS"
+        connect_calls["count"] += 1
+
+    monkeypatch.setattr("app.services.metrics.observe_proxy_client_connect", _fake_connect)
+
+    service.record_client_activity(monitor_id, "client-1", "10.0.0.1", "UA/1.0", now=1000.0)
+    service.record_client_activity(monitor_id, "client-1", "10.0.0.1", "UA/1.0", now=1001.0)
+
+    assert connect_calls["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_count_active_clients_emits_disconnect_metrics_for_stale_clients(tmp_path, monkeypatch):
+    service = HLSSegmenterService(base_dir=str(tmp_path))
+    monitor_id = "stream-metrics-disconnect"
+    out_dir = tmp_path / monitor_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = out_dir / "index.m3u8"
+
+    session = SegmenterSession(
+        monitor_id=monitor_id,
+        source_mpegts_url="http://source",
+        output_dir=out_dir,
+        manifest_path=manifest_path,
+        process=_DummyProcess(returncode=None),
+        started_at=time.time(),
+        last_activity=time.time(),
+    )
+    now = time.time()
+    session.clients = {
+        "stale": {
+            "client_id": "stale",
+            "ip_address": "10.0.0.1",
+            "last_active": now - 30.0,
+        },
+        "active": {
+            "client_id": "active",
+            "ip_address": "10.0.0.2",
+            "last_active": now - 2.0,
+        },
+    }
+    service._sessions[monitor_id] = session
+
+    disconnect_calls = {"count": 0}
+
+    def _fake_disconnect(mode: str):
+        assert mode == "HLS"
+        disconnect_calls["count"] += 1
+
+    monkeypatch.setattr("app.services.metrics.observe_proxy_client_disconnect", _fake_disconnect)
+
+    total = service.count_active_clients(max_idle_seconds=10)
+
+    assert total == 1
+    assert disconnect_calls["count"] == 1
