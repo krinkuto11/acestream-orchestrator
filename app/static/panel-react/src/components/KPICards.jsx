@@ -32,7 +32,7 @@ function KPICards({ totalEngines, activeStreams, healthyEngines, vpnStatus, last
     ? (vpnStatus.connected ? 'Connected' : 'Disconnected')
     : 'Disabled'
 
-  const vpnStatus_ = !vpnStatus.enabled ? 'default' : vpnStatus.connected ? 'success' : 'error'
+  const vpnStatusVariant = !vpnStatus.enabled ? 'default' : vpnStatus.connected ? 'success' : 'error'
 
   return (
     <div className="grid grid-cols-12 gap-4">
@@ -46,7 +46,7 @@ function KPICards({ totalEngines, activeStreams, healthyEngines, vpnStatus, last
         <KPICard icon={CheckCircle} value={healthyEngines} label="Healthy Engines" status="success" />
       </div>
       <div className="col-span-12 sm:col-span-6 xl:col-span-2">
-        <KPICard icon={ShieldCheck} value={vpnStatusText} label="VPN Status" status={vpnStatus_} />
+        <KPICard icon={ShieldCheck} value={vpnStatusText} label="VPN Status" status={vpnStatusVariant} />
       </div>
       <div className="col-span-12 xl:col-span-2">
         <KPICard
