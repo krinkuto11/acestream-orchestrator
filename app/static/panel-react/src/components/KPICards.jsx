@@ -1,24 +1,25 @@
 import React from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Server, PlayCircle, CheckCircle, ShieldCheck, Clock } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
-function KPICard({ icon: Icon, value, label, variant = 'default' }) {
-  const variantClasses = {
-    default: 'text-primary',
-    secondary: 'text-green-600 dark:text-green-400',
-    success: 'text-emerald-600 dark:text-emerald-400',
-    warning: 'text-yellow-600 dark:text-yellow-400',
-    info: 'text-blue-600 dark:text-blue-400',
-  }
+const STATUS_ICON_COLOR = {
+  default: 'text-muted-foreground',
+  success: 'text-emerald-500',
+  warning: 'text-amber-500',
+  error:   'text-rose-500',
+  info:    'text-sky-500',
+}
 
+function KPICard({ icon: Icon, value, label, status = 'default' }) {
   return (
-    <Card>
-      <CardContent className="pt-6">
+    <Card className="shadow-sm">
+      <CardContent className="p-4">
         <div className="flex items-center gap-3">
-          <Icon className={`h-10 w-10 ${variantClasses[variant]}`} />
-          <div>
-            <div className="text-3xl font-bold">{value}</div>
-            <p className="text-sm text-muted-foreground">{label}</p>
+          <Icon className={cn('h-9 w-9 shrink-0', STATUS_ICON_COLOR[status])} />
+          <div className="min-w-0">
+            <div className="text-3xl font-bold tracking-tight text-foreground">{value}</div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
           </div>
         </div>
       </CardContent>
@@ -27,22 +28,34 @@ function KPICard({ icon: Icon, value, label, variant = 'default' }) {
 }
 
 function KPICards({ totalEngines, activeStreams, healthyEngines, vpnStatus, lastUpdate }) {
-  const vpnStatusText = vpnStatus.enabled 
+  const vpnStatusText = vpnStatus.enabled
     ? (vpnStatus.connected ? 'Connected' : 'Disconnected')
     : 'Disabled'
 
+  const vpnStatus_ = !vpnStatus.enabled ? 'default' : vpnStatus.connected ? 'success' : 'error'
+
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-      <KPICard icon={Server} value={totalEngines} label="Engines" variant="default" />
-      <KPICard icon={PlayCircle} value={activeStreams} label="Active Streams" variant="secondary" />
-      <KPICard icon={CheckCircle} value={healthyEngines} label="Healthy Engines" variant="success" />
-      <KPICard icon={ShieldCheck} value={vpnStatusText} label="VPN Status" variant={vpnStatus.connected ? "success" : "warning"} />
-      <KPICard 
-        icon={Clock} 
-        value={lastUpdate ? lastUpdate.toLocaleTimeString() : 'Never'} 
-        label="Last Update" 
-        variant="info" 
-      />
+    <div className="grid grid-cols-12 gap-4">
+      <div className="col-span-12 sm:col-span-6 xl:col-span-2">
+        <KPICard icon={Server} value={totalEngines} label="Engines" status="default" />
+      </div>
+      <div className="col-span-12 sm:col-span-6 xl:col-span-3">
+        <KPICard icon={PlayCircle} value={activeStreams} label="Active Streams" status="info" />
+      </div>
+      <div className="col-span-12 sm:col-span-6 xl:col-span-3">
+        <KPICard icon={CheckCircle} value={healthyEngines} label="Healthy Engines" status="success" />
+      </div>
+      <div className="col-span-12 sm:col-span-6 xl:col-span-2">
+        <KPICard icon={ShieldCheck} value={vpnStatusText} label="VPN Status" status={vpnStatus_} />
+      </div>
+      <div className="col-span-12 xl:col-span-2">
+        <KPICard
+          icon={Clock}
+          value={lastUpdate ? lastUpdate.toLocaleTimeString() : 'Never'}
+          label="Last Update"
+          status="default"
+        />
+      </div>
     </div>
   )
 }

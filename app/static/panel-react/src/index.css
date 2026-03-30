@@ -27,6 +27,10 @@
     --radius: 0.625rem;
     --success: oklch(0.5000 0.1500 145);
     --success-foreground: oklch(1 0 0);
+    --warning: oklch(0.6800 0.1600 60);
+    --warning-foreground: oklch(0.9850 0 0);
+    --info: oklch(0.5500 0.1500 220);
+    --info-foreground: oklch(0.9850 0 0);
   }
 
   .dark {
@@ -51,6 +55,10 @@
     --ring: oklch(0.5560 0 0);
     --success: oklch(0.6500 0.1600 145);
     --success-foreground: oklch(0.9850 0 0);
+    --warning: oklch(0.7800 0.1700 60);
+    --warning-foreground: oklch(0.1450 0 0);
+    --info: oklch(0.7000 0.1600 220);
+    --info-foreground: oklch(0.9850 0 0);
   }
 }
 

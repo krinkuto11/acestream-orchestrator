@@ -55,6 +55,14 @@ export default {
           DEFAULT: "var(--success)",
           foreground: "var(--success-foreground)",
         },
+        warning: {
+          DEFAULT: "var(--warning)",
+          foreground: "var(--warning-foreground)",
+        },
+        info: {
+          DEFAULT: "var(--info)",
+          foreground: "var(--info-foreground)",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
