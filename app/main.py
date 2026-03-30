@@ -2823,6 +2823,7 @@ async def ace_getstream(
     # Get client info
     client_ip = get_client_ip(request) if request else "unknown"
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
+    client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
 
     reusable_monitor_session = None
     if input_type in {"content_id", "infohash"} and normalized_file_indexes == "0" and normalized_seekback <= 0:
@@ -2865,6 +2866,79 @@ async def ace_getstream(
         Raises HTTPException if no engines available or all at capacity.
         """
         return select_best_engine_shared(reserve_pending=True)
+
+    def _find_active_api_hls_stream_id() -> Optional[str]:
+        for active_stream in state.list_streams(status="started"):
+            if active_stream.key != stream_key:
+                continue
+            if normalize_proxy_mode(active_stream.control_mode, default=PROXY_MODE_HTTP) == PROXY_MODE_API:
+                return active_stream.id
+        return None
+
+    def _safe_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    async def _register_api_hls_stream_if_missing(
+        *,
+        container_id: str,
+        engine_host: str,
+        engine_port: int,
+        engine_api_port: int,
+        playback_session_id: str,
+        stat_url: str,
+        command_url: str,
+        is_live: int,
+    ) -> Optional[str]:
+        existing_stream_id = _find_active_api_hls_stream_id()
+        if existing_stream_id:
+            return existing_stream_id
+
+        if not container_id or not engine_host or not engine_port or not playback_session_id:
+            return None
+
+        try:
+            from .services.internal_events import handle_stream_started
+
+            event = StreamStartedEvent(
+                container_id=container_id,
+                engine={"host": engine_host, "port": int(engine_port)},
+                stream={
+                    "key_type": input_type,
+                    "key": stream_key,
+                    "file_indexes": normalized_file_indexes,
+                    "seekback": normalized_seekback,
+                    "live_delay": normalized_seekback,
+                    "control_mode": PROXY_MODE_API,
+                },
+                session={
+                    "playback_session_id": playback_session_id,
+                    "stat_url": stat_url,
+                    "command_url": command_url,
+                    "is_live": int(is_live or 1),
+                },
+                labels={
+                    "source": "api_hls_segmenter",
+                    "stream_mode": "HLS",
+                    "proxy.control_mode": PROXY_MODE_API,
+                    "stream.input_type": input_type,
+                    "stream.file_indexes": normalized_file_indexes,
+                    "stream.seekback": str(normalized_seekback),
+                    "stream.live_delay": str(normalized_seekback),
+                    "host.api_port": str(engine_api_port or ""),
+                    "client.id": client_identity,
+                    "client.ip": client_ip,
+                    "client.user_agent": user_agent[:200],
+                },
+            )
+
+            result = await asyncio.to_thread(handle_stream_started, event)
+            return result.id if result else None
+        except Exception as e:
+            logger.warning("Failed to register API-mode HLS stream in state for %s: %s", stream_key, e)
+            return None
     
     try:
         # Handle HLS mode differently from TS mode
@@ -3015,10 +3089,25 @@ async def ace_getstream(
                     raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
             else:
                 # API mode: expose HLS by segmenting MPEG-TS playback with local FFmpeg.
-                existing_manifest = await hls_segmenter_service.get_or_wait_manifest(stream_key, timeout_s=8.0)
+                existing_manifest = await hls_segmenter_service.get_or_wait_manifest(stream_key, timeout_s=15.0)
                 if existing_manifest:
+                    session_meta = hls_segmenter_service.get_session_metadata(stream_key) or {}
+                    stream_id = await _register_api_hls_stream_if_missing(
+                        container_id=str(session_meta.get("container_id") or ""),
+                        engine_host=str(session_meta.get("engine_host") or ""),
+                        engine_port=_safe_int(session_meta.get("engine_port"), default=0),
+                        engine_api_port=_safe_int(session_meta.get("engine_api_port"), default=0),
+                        playback_session_id=str(session_meta.get("playback_session_id") or ""),
+                        stat_url=str(session_meta.get("stat_url") or ""),
+                        command_url=str(session_meta.get("command_url") or ""),
+                        is_live=_safe_int(session_meta.get("is_live"), default=1),
+                    )
+                    if stream_id:
+                        hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
+
                     logger.info("Reusing external HLS segmenter for stream %s", stream_key)
                     hls_segmenter_service.record_activity(stream_key)
+                    hls_segmenter_service.record_client_activity(stream_key, client_identity, client_ip, user_agent)
                     manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
 
                     elapsed = time.perf_counter() - request_started_at
@@ -3047,6 +3136,13 @@ async def ace_getstream(
                     playback_url = str(monitor_session.get("playback_url") or "").strip()
                     if not playback_url:
                         raise HTTPException(status_code=500, detail="Monitor session has no playback URL")
+                    start_info = {
+                        "playback_session_id": str(monitor_session.get("playback_session_id") or f"api-hls-reuse-{int(time.time())}"),
+                        "stat_url": str(monitor_session.get("stat_url") or ""),
+                        "command_url": str(monitor_session.get("command_url") or ""),
+                        "is_live": int(monitor_session.get("is_live") or 1),
+                    }
+                    legacy_api_client = None
                 else:
                     selected_engine, current_load = select_best_engine()
                     reservation_engine_id = selected_engine.container_id
@@ -3063,6 +3159,7 @@ async def ace_getstream(
                         connect_timeout=10,
                         response_timeout=10,
                     )
+                    legacy_api_client = client
 
                     try:
                         await asyncio.to_thread(client.connect)
@@ -3109,22 +3206,59 @@ async def ace_getstream(
                         if not playback_url:
                             raise HTTPException(status_code=500, detail="No playback URL returned by API START")
                     except HTTPException:
-                        raise
-                    except AceLegacyApiError as e:
-                        raise HTTPException(status_code=503, detail=str(e))
-                    finally:
                         try:
                             await asyncio.to_thread(client.shutdown)
                         except Exception:
                             pass
+                        raise
+                    except AceLegacyApiError as e:
+                        try:
+                            await asyncio.to_thread(client.shutdown)
+                        except Exception:
+                            pass
+                        raise HTTPException(status_code=503, detail=str(e))
 
                 logger.info("Starting external HLS segmenter for stream %s", stream_key)
+                segmenter_metadata = {
+                    "playback_session_id": str(start_info.get("playback_session_id") or f"api-hls-{int(time.time())}"),
+                    "stat_url": str(start_info.get("stat_url") or ""),
+                    "command_url": str(start_info.get("command_url") or ""),
+                    "is_live": int(start_info.get("is_live") or 1),
+                    "container_id": str(selected_engine.container_id or ""),
+                    "engine_host": str(selected_engine.host or ""),
+                    "engine_port": int(selected_engine.port or 0),
+                    "engine_api_port": int(selected_engine.api_port or 0),
+                    "stream_key_type": input_type,
+                    "file_indexes": normalized_file_indexes,
+                    "seekback": normalized_seekback,
+                    "control_client": legacy_api_client,
+                }
                 try:
-                    await hls_segmenter_service.start_segmenter(stream_key, playback_url)
+                    await hls_segmenter_service.start_segmenter(stream_key, playback_url, metadata=segmenter_metadata)
                 except (FileNotFoundError, RuntimeError, TimeoutError) as e:
+                    if legacy_api_client is not None:
+                        try:
+                            await asyncio.to_thread(legacy_api_client.shutdown)
+                        except Exception:
+                            pass
                     logger.error("Failed to initialize external HLS segmenter for stream %s: %s", stream_key, e)
                     raise HTTPException(status_code=503, detail=f"Failed to initialize HLS segmenter: {e}")
+
+                stream_id = await _register_api_hls_stream_if_missing(
+                    container_id=str(selected_engine.container_id or ""),
+                    engine_host=str(selected_engine.host or ""),
+                    engine_port=int(selected_engine.port or 0),
+                    engine_api_port=int(selected_engine.api_port or 0),
+                    playback_session_id=str(segmenter_metadata.get("playback_session_id") or ""),
+                    stat_url=str(segmenter_metadata.get("stat_url") or ""),
+                    command_url=str(segmenter_metadata.get("command_url") or ""),
+                    is_live=int(segmenter_metadata.get("is_live") or 1),
+                )
+                if stream_id:
+                    hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
+
                 hls_segmenter_service.record_activity(stream_key)
+                hls_segmenter_service.record_client_activity(stream_key, client_identity, client_ip, user_agent)
                 manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
 
                 elapsed = time.perf_counter() - request_started_at
@@ -3308,12 +3442,20 @@ async def ace_hls_segment(
         404: {"description": "Segment not found"},
     },
 )
-async def api_hls_segment_file(monitor_id: str, segment_filename: str):
+async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: Request):
+    from app.proxy.utils import get_client_ip
+
     path = hls_segmenter_service.get_segment_file_path(monitor_id, segment_filename)
     if not path or not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="HLS segment not found")
 
     hls_segmenter_service.record_activity(monitor_id)
+    # Track clients for API-mode HLS streams so /proxy/streams/{key}/clients can report them.
+    client_ip = get_client_ip(request)
+    user_agent = request.headers.get('user-agent', 'unknown')
+    client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
+    hls_segmenter_service.record_client_activity(monitor_id, client_identity, client_ip, user_agent)
+
     return FileResponse(path=str(path), media_type="video/MP2T")
 
 
@@ -3588,6 +3730,11 @@ async def get_stream_clients(stream_key: str):
                         "inactive_seconds": current_time - last_activity
                     })
                 return {"clients": clients}
+
+        # Fallback for API-mode external HLS segmenter sessions.
+        segmenter_clients = hls_segmenter_service.list_clients(stream_key)
+        if segmenter_clients or hls_segmenter_service.has_session(stream_key):
+            return {"clients": segmenter_clients}
         
         # Not an HLS stream, check TS proxy
         proxy_server = ProxyServer.get_instance()

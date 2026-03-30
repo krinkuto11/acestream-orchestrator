@@ -5,9 +5,9 @@ import logging
 import re
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,20 @@ class SegmenterSession:
     process: asyncio.subprocess.Process
     started_at: float
     last_activity: float
+    playback_session_id: str = ""
+    stat_url: str = ""
+    command_url: str = ""
+    is_live: int = 1
+    container_id: str = ""
+    engine_host: str = ""
+    engine_port: int = 0
+    engine_api_port: int = 0
+    stream_key_type: str = "content_id"
+    file_indexes: str = "0"
+    seekback: int = 0
+    stream_id: str = ""
+    control_client: Optional[object] = None
+    clients: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 class HLSSegmenterService:
@@ -41,6 +55,158 @@ class HLSSegmenterService:
 
     def _get_output_dir(self, monitor_id: str) -> Path:
         return self._base_dir / monitor_id
+
+    @staticmethod
+    def _to_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _apply_metadata(self, session: SegmenterSession, metadata: Optional[Dict[str, Any]]) -> None:
+        if not metadata:
+            return
+
+        if metadata.get("playback_session_id") is not None:
+            session.playback_session_id = str(metadata.get("playback_session_id") or "")
+        if metadata.get("stat_url") is not None:
+            session.stat_url = str(metadata.get("stat_url") or "")
+        if metadata.get("command_url") is not None:
+            session.command_url = str(metadata.get("command_url") or "")
+        if metadata.get("is_live") is not None:
+            session.is_live = self._to_int(metadata.get("is_live"), default=1)
+        if metadata.get("container_id") is not None:
+            session.container_id = str(metadata.get("container_id") or "")
+        if metadata.get("engine_host") is not None:
+            session.engine_host = str(metadata.get("engine_host") or "")
+        if metadata.get("engine_port") is not None:
+            session.engine_port = self._to_int(metadata.get("engine_port"), default=0)
+        if metadata.get("engine_api_port") is not None:
+            session.engine_api_port = self._to_int(metadata.get("engine_api_port"), default=0)
+        if metadata.get("stream_key_type") is not None:
+            session.stream_key_type = str(metadata.get("stream_key_type") or "content_id")
+        if metadata.get("file_indexes") is not None:
+            session.file_indexes = str(metadata.get("file_indexes") or "0")
+        if metadata.get("seekback") is not None:
+            session.seekback = self._to_int(metadata.get("seekback"), default=0)
+        if metadata.get("stream_id") is not None:
+            session.stream_id = str(metadata.get("stream_id") or "")
+        if metadata.get("control_client") is not None and session.control_client is None:
+            session.control_client = metadata.get("control_client")
+
+    async def _shutdown_control_client(self, control_client: object) -> None:
+        try:
+            stop_method = getattr(control_client, "stop_stream", None)
+            if callable(stop_method):
+                await asyncio.to_thread(stop_method)
+        except Exception:
+            logger.debug("Failed to stop legacy API stream during segmenter cleanup", exc_info=True)
+
+        try:
+            shutdown_method = getattr(control_client, "shutdown", None)
+            if callable(shutdown_method):
+                await asyncio.to_thread(shutdown_method)
+                return
+            close_method = getattr(control_client, "close", None)
+            if callable(close_method):
+                await asyncio.to_thread(close_method)
+        except Exception:
+            logger.debug("Failed to close legacy API client during segmenter cleanup", exc_info=True)
+
+    def has_session(self, monitor_id: str) -> bool:
+        key = self._sanitize_monitor_id(monitor_id)
+        return key in self._sessions
+
+    def get_session_metadata(self, monitor_id: str) -> Optional[Dict[str, Any]]:
+        key = self._sanitize_monitor_id(monitor_id)
+        session = self._sessions.get(key)
+        if not session:
+            return None
+        return {
+            "playback_session_id": session.playback_session_id,
+            "stat_url": session.stat_url,
+            "command_url": session.command_url,
+            "is_live": session.is_live,
+            "container_id": session.container_id,
+            "engine_host": session.engine_host,
+            "engine_port": session.engine_port,
+            "engine_api_port": session.engine_api_port,
+            "stream_key_type": session.stream_key_type,
+            "file_indexes": session.file_indexes,
+            "seekback": session.seekback,
+            "stream_id": session.stream_id,
+        }
+
+    def set_session_metadata(self, monitor_id: str, metadata: Dict[str, Any]) -> bool:
+        key = self._sanitize_monitor_id(monitor_id)
+        session = self._sessions.get(key)
+        if not session:
+            return False
+        self._apply_metadata(session, metadata)
+        session.last_activity = time.time()
+        return True
+
+    def record_client_activity(
+        self,
+        monitor_id: str,
+        client_id: str,
+        client_ip: str,
+        user_agent: str,
+        now: Optional[float] = None,
+    ) -> None:
+        key = self._sanitize_monitor_id(monitor_id)
+        session = self._sessions.get(key)
+        if not session:
+            return
+
+        ts = now if now is not None else time.time()
+        normalized_client_id = str(client_id or client_ip or "unknown")
+        normalized_ip = str(client_ip or "unknown")
+        normalized_ua = str(user_agent or "unknown")
+
+        existing = session.clients.get(normalized_client_id)
+        connected_at = existing.get("connected_at") if existing else ts
+        session.clients[normalized_client_id] = {
+            "client_id": normalized_client_id,
+            "ip_address": normalized_ip,
+            "user_agent": normalized_ua,
+            "connected_at": connected_at,
+            "last_active": ts,
+            "worker_id": "api_hls_segmenter",
+        }
+        session.last_activity = ts
+
+    def list_clients(self, monitor_id: str, max_idle_seconds: int = 180) -> List[Dict[str, Any]]:
+        key = self._sanitize_monitor_id(monitor_id)
+        session = self._sessions.get(key)
+        if not session:
+            return []
+
+        now = time.time()
+        clients: List[Dict[str, Any]] = []
+        stale_ids: List[str] = []
+
+        for client_id, details in session.clients.items():
+            last_active_raw = details.get("last_active")
+            try:
+                last_active = float(str(last_active_raw))
+            except (TypeError, ValueError):
+                last_active = now
+
+            inactive_seconds = max(0.0, now - last_active)
+            if max_idle_seconds > 0 and inactive_seconds > max_idle_seconds:
+                stale_ids.append(client_id)
+                continue
+
+            payload = dict(details)
+            payload["inactive_seconds"] = inactive_seconds
+            clients.append(payload)
+
+        for client_id in stale_ids:
+            session.clients.pop(client_id, None)
+
+        clients.sort(key=lambda item: float(item.get("last_active") or 0.0), reverse=True)
+        return clients
 
     async def get_or_wait_manifest(self, monitor_id: str, timeout_s: float = 15.0) -> Optional[Path]:
         """Return manifest for an existing session, waiting briefly if FFmpeg is still warming up."""
@@ -72,7 +238,7 @@ class HLSSegmenterService:
             return None
         return session.manifest_path
 
-    async def start_segmenter(self, monitor_id: str, source_mpegts_url: str) -> Path:
+    async def start_segmenter(self, monitor_id: str, source_mpegts_url: str, metadata: Optional[Dict[str, Any]] = None) -> Path:
         """Start FFmpeg HLS segmenter and wait until index.m3u8 exists."""
         key = self._sanitize_monitor_id(monitor_id)
         source = str(source_mpegts_url or "").strip()
@@ -90,15 +256,20 @@ class HLSSegmenterService:
 
             existing = self._sessions.get(key)
             if existing and existing.process.returncode is None:
-                # Keep in-flight segmenter startup stable across retry storms.
-                existing.last_activity = now
-                if existing.manifest_path.exists():
-                    return existing.manifest_path
-                logger.info("Reusing warming external HLS segmenter for stream %s", key)
-                wait_for_existing = True
+                if existing.source_mpegts_url != source:
+                    await self._stop_locked(key, emit_stream_ended=True)
+                    existing = None
+                else:
+                    # Keep in-flight segmenter startup stable across retry storms.
+                    existing.last_activity = now
+                    self._apply_metadata(existing, metadata)
+                    if existing.manifest_path.exists():
+                        return existing.manifest_path
+                    logger.info("Reusing warming external HLS segmenter for stream %s", key)
+                    wait_for_existing = True
 
             if existing and not wait_for_existing:
-                await self._stop_locked(key)
+                await self._stop_locked(key, emit_stream_ended=True)
 
             if not wait_for_existing:
                 out_dir = self._get_output_dir(key)
@@ -145,6 +316,7 @@ class HLSSegmenterService:
                     started_at=now,
                     last_activity=now,
                 )
+                self._apply_metadata(session, metadata)
                 self._sessions[key] = session
 
         await self._wait_for_manifest(key)
@@ -176,12 +348,12 @@ class HLSSegmenterService:
 
         raise TimeoutError(f"Timed out waiting for HLS manifest for {monitor_id}")
 
-    async def stop_segmenter(self, monitor_id: str) -> bool:
+    async def stop_segmenter(self, monitor_id: str, emit_stream_ended: bool = True) -> bool:
         key = self._sanitize_monitor_id(monitor_id)
         async with self._lock:
-            return await self._stop_locked(key)
+            return await self._stop_locked(key, emit_stream_ended=emit_stream_ended)
 
-    async def _stop_locked(self, key: str) -> bool:
+    async def _stop_locked(self, key: str, emit_stream_ended: bool = True) -> bool:
         session = self._sessions.pop(key, None)
         if not session:
             return False
@@ -199,21 +371,43 @@ class HLSSegmenterService:
                 except Exception:
                     pass
 
+        if session.control_client is not None:
+            await self._shutdown_control_client(session.control_client)
+
+        if emit_stream_ended and session.stream_id:
+            try:
+                from ..models.schemas import StreamEndedEvent
+                from ..services.internal_events import handle_stream_ended
+
+                await asyncio.to_thread(
+                    handle_stream_ended,
+                    StreamEndedEvent(
+                        container_id=session.container_id or None,
+                        stream_id=session.stream_id,
+                        reason="api_hls_segmenter_stopped",
+                    ),
+                )
+            except Exception:
+                logger.debug("Failed emitting stream ended event for API-mode HLS segmenter %s", key, exc_info=True)
+
         await asyncio.to_thread(shutil.rmtree, session.output_dir, True)
         return True
 
-    def stop_segmenter_nowait(self, monitor_id: str) -> None:
+    def stop_segmenter_nowait(self, monitor_id: str, emit_stream_ended: bool = True) -> None:
         """Best-effort non-blocking stop for sync call-sites."""
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self.stop_segmenter(monitor_id))
+            loop.create_task(self.stop_segmenter(monitor_id, emit_stream_ended=emit_stream_ended))
             return
         except RuntimeError:
             pass
 
         if self._loop and self._loop.is_running():
             try:
-                asyncio.run_coroutine_threadsafe(self.stop_segmenter(monitor_id), self._loop)
+                asyncio.run_coroutine_threadsafe(
+                    self.stop_segmenter(monitor_id, emit_stream_ended=emit_stream_ended),
+                    self._loop,
+                )
             except Exception:
                 logger.debug("Failed scheduling async segmenter stop for %s", monitor_id, exc_info=True)
 

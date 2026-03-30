@@ -250,7 +250,7 @@ class State:
             try:
                 # Clean up external API-mode HLS segmenter if active.
                 from ..services.hls_segmenter import hls_segmenter_service
-                hls_segmenter_service.stop_segmenter_nowait(st.key)
+                hls_segmenter_service.stop_segmenter_nowait(st.key, emit_stream_ended=False)
             except Exception as e:
                 logger.warning(f"Failed to schedule external HLS segmenter cleanup for stream {st.key}: {e}")
         
