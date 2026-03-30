@@ -244,7 +244,7 @@ class AceLegacyApiClient:
         mode: str,
         stream_type: str = "output_format=http",
         file_indexes: str = "0",
-        seekback: Optional[int] = None,
+        seekback: int = 0,
     ) -> Dict[str, str]:
         """Start stream and return parsed START key/value response."""
         normalized_mode = self._normalize_input_mode(mode)
@@ -266,41 +266,41 @@ class AceLegacyApiClient:
 
         self._write(cmd)
         _, parts, _ = self._wait_for("START", timeout=self.response_timeout * 3)
-        start_info = self._parse_start_params(parts)
+        first_start_info = self._parse_start_params(parts)
 
         if normalized_seekback <= 0:
-            return start_info
+            return first_start_info
 
-        # Initial catch-up bootstrap: wait for livepos and issue LIVESEEK.
-        # The engine shifts HTTP buffer internally and does not emit START.
+        # Startup catch-up bootstrap:
+        # START -> wait first livepos -> LIVESEEK -> wait second START.
         livepos_event = self._wait_for_livepos_event(timeout=self.response_timeout * 3)
         if not livepos_event:
-            logger.warning("seekback=%s requested but no livepos EVENT received after START", normalized_seekback)
-            return start_info
+            raise AceLegacyApiError(
+                f"seekback={normalized_seekback} requested but no livepos EVENT received after START"
+            )
 
-        last_ts_raw = livepos_event.get("last_ts") or livepos_event.get("live_last")
+        last_ts_raw = livepos_event.get("last") or livepos_event.get("last_ts") or livepos_event.get("live_last")
         last_ts = self._to_int(last_ts_raw)
         if last_ts is None:
-            logger.warning(
-                "seekback=%s requested but livepos had no usable last_ts/live_last: %s",
-                normalized_seekback,
-                livepos_event,
+            raise AceLegacyApiError(
+                "seekback=%s requested but livepos had no usable last/last_ts/live_last payload=%s"
+                % (normalized_seekback, livepos_event)
             )
-            return start_info
 
         target_timestamp = max(0, int(last_ts) - normalized_seekback)
         self.seek_stream(target_timestamp)
-        start_info["seek_target_timestamp"] = str(target_timestamp)
-        start_info["seekback"] = str(normalized_seekback)
-        start_info["seek_issued"] = "1"
-        return start_info
+        _, delayed_parts, _ = self._wait_for("START", timeout=self.response_timeout * 3)
+        delayed_start_info = self._parse_start_params(delayed_parts)
+        delayed_start_info["seek_target_timestamp"] = str(target_timestamp)
+        delayed_start_info["seekback"] = str(normalized_seekback)
+        delayed_start_info["seek_issued"] = "1"
+        return delayed_start_info
 
     def seek_stream(self, timestamp: int) -> bool:
         """
         Send LIVESEEK mid-stream.
 
-        Note: The engine shifts the HTTP buffer internally and does NOT send
-        a new START response.
+        Note: Some engine builds can emit a follow-up START after LIVESEEK.
         """
         try:
             target = int(timestamp)

@@ -305,6 +305,7 @@ async def lifespan(app: FastAPI):
                 'port_range_host': 'PORT_RANGE_HOST',
                 'ace_http_range': 'ACE_HTTP_RANGE',
                 'ace_https_range': 'ACE_HTTPS_RANGE',
+                'ace_live_edge_delay': 'ACE_LIVE_EDGE_DELAY',
                 'debug_mode': 'DEBUG_MODE',
             }
             for _json_key, _cfg_attr in _orch_field_map.items():
@@ -2254,6 +2255,7 @@ class LegacyStreamMonitorStartRequest(BaseModel):
     monitor_id: Optional[str] = None
     content_id: str
     stream_name: Optional[str] = None
+    live_delay: Optional[int] = None
     interval_s: float = 1.0
     run_seconds: int = 0
     per_sample_timeout_s: float = 1.0
@@ -2282,9 +2284,11 @@ async def start_legacy_stream_monitor(req: LegacyStreamMonitorStartRequest):
     STATUS/livepos telemetry only for observability.
     """
     try:
+        resolved_live_delay = _resolve_live_delay(None, req.live_delay)
         monitor = await legacy_stream_monitoring_service.start_monitor(
             content_id=req.content_id,
             stream_name=req.stream_name,
+            live_delay=resolved_live_delay,
             interval_s=req.interval_s,
             run_seconds=req.run_seconds,
             per_sample_timeout_s=req.per_sample_timeout_s,
@@ -2419,10 +2423,19 @@ def _normalize_seekback(seekback: Optional[int]) -> int:
     try:
         normalized = int(float(seekback))
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="seekback must be a non-negative integer")
+        raise HTTPException(status_code=400, detail="live_delay (or seekback) must be a non-negative integer")
     if normalized < 0:
-        raise HTTPException(status_code=400, detail="seekback must be a non-negative integer")
+        raise HTTPException(status_code=400, detail="live_delay (or seekback) must be a non-negative integer")
     return normalized
+
+
+def _resolve_live_delay(seekback: Optional[int], live_delay: Optional[int]) -> int:
+    """Resolve effective startup delay using query override, legacy alias, then global default."""
+    if live_delay is not None:
+        return _normalize_seekback(live_delay)
+    if seekback is not None:
+        return _normalize_seekback(seekback)
+    return _normalize_seekback(cfg.ACE_LIVE_EDGE_DELAY)
 
 
 def _build_stream_key(input_type: str, input_value: str, file_indexes: str = "0", seekback: int = 0) -> str:
@@ -2487,7 +2500,7 @@ def _build_stream_query_params(
         params["file_indexes"] = file_indexes
 
     if seekback > 0:
-        params["seekback"] = str(seekback)
+        params["live_delay"] = str(seekback)
 
     return params
 
@@ -2509,7 +2522,8 @@ def ace_preflight(
     direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
     raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
     file_indexes: Optional[str] = Query("0", description="Comma-separated torrent file indexes (for example: 0 or 0,2)"),
-    seekback: Optional[int] = Query(0, description="Optional catch-up offset in seconds for live streams"),
+    seekback: Optional[int] = Query(None, description="Deprecated alias for live_delay"),
+    live_delay: Optional[int] = Query(None, description="Optional startup delay in seconds behind live edge"),
     tier: str = Query("light", description="Availability probe tier: light or deep"),
 ):
     """Run a short availability probe and canonicalize content IDs before playback."""
@@ -2518,7 +2532,7 @@ def ace_preflight(
 
     input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
     normalized_file_indexes = _normalize_file_indexes(file_indexes)
-    normalized_seekback = _normalize_seekback(seekback)
+    normalized_seekback = _resolve_live_delay(seekback, live_delay)
     stream_key = _build_stream_key(input_type, input_value, normalized_file_indexes, normalized_seekback)
 
     normalized_tier = (tier or "light").strip().lower()
@@ -2738,7 +2752,8 @@ async def ace_getstream(
     direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
     raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
     file_indexes: Optional[str] = Query("0", description="Comma-separated torrent file indexes (for example: 0 or 0,2)"),
-    seekback: Optional[int] = Query(0, description="Optional catch-up offset in seconds for live streams"),
+    seekback: Optional[int] = Query(None, description="Deprecated alias for live_delay"),
+    live_delay: Optional[int] = Query(None, description="Optional startup delay in seconds behind live edge"),
     request: Request = None,
 ):
     """Proxy endpoint for AceStream video streams with multiplexing.
@@ -2761,7 +2776,8 @@ async def ace_getstream(
         direct_url: Direct media/magnet URL
         raw_data: Raw torrent data payload
         file_indexes: Comma-separated torrent file indexes
-        seekback: Optional catch-up offset in seconds for live streams
+        seekback: Deprecated alias for live_delay
+        live_delay: Optional startup delay in seconds behind live edge
         request: FastAPI Request object for client info
         
     Returns:
@@ -2778,7 +2794,7 @@ async def ace_getstream(
 
     input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
     normalized_file_indexes = _normalize_file_indexes(file_indexes)
-    normalized_seekback = _normalize_seekback(seekback)
+    normalized_seekback = _resolve_live_delay(seekback, live_delay)
     stream_key = _build_stream_key(input_type, input_value, normalized_file_indexes, normalized_seekback)
     
     # Get current stream mode
@@ -2998,6 +3014,7 @@ async def ace_getstream(
                     api_key=api_key,
                     stream_key_type=input_type,
                     file_indexes=normalized_file_indexes,
+                    seekback=normalized_seekback,
                 )
                 
                 # Track client activity and get manifest for the newly created channel
@@ -3201,7 +3218,8 @@ async def ace_manifest(
     direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
     raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
     file_indexes: Optional[str] = Query("0", description="Comma-separated torrent file indexes (for example: 0 or 0,2)"),
-    seekback: Optional[int] = Query(0, description="Optional catch-up offset in seconds for live streams"),
+    seekback: Optional[int] = Query(None, description="Deprecated alias for live_delay"),
+    live_delay: Optional[int] = Query(None, description="Optional startup delay in seconds behind live edge"),
 ):
     """Proxy endpoint for AceStream HLS streams (M3U8).
     
@@ -3215,14 +3233,15 @@ async def ace_manifest(
         direct_url: Direct media/magnet URL
         raw_data: Raw torrent data payload
         file_indexes: Comma-separated torrent file indexes
-        seekback: Optional catch-up offset in seconds for live streams
+        seekback: Deprecated alias for live_delay
+        live_delay: Optional startup delay in seconds behind live edge
         
     Returns:
         Redirects to /ace/getstream
     """
     input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
     normalized_file_indexes = _normalize_file_indexes(file_indexes)
-    normalized_seekback = _normalize_seekback(seekback)
+    normalized_seekback = _resolve_live_delay(seekback, live_delay)
     redirect_params = _build_stream_query_params(
         input_type,
         input_value,
@@ -3995,6 +4014,7 @@ class OrchestratorSettingsUpdate(BaseModel):
     port_range_host: Optional[str] = None
     ace_http_range: Optional[str] = None
     ace_https_range: Optional[str] = None
+    ace_live_edge_delay: Optional[int] = None
     debug_mode: Optional[bool] = None
 
 
@@ -4018,11 +4038,6 @@ def get_orchestrator_settings():
     """Get current orchestrator core configuration settings."""
     from .services.settings_persistence import SettingsPersistence
 
-    persisted = SettingsPersistence.load_orchestrator_config()
-    if persisted:
-        return persisted
-
-    # Return defaults from runtime cfg
     defaults = {
         "monitor_interval_s": cfg.MONITOR_INTERVAL_S,
         "engine_grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
@@ -4044,8 +4059,16 @@ def get_orchestrator_settings():
         "port_range_host": cfg.PORT_RANGE_HOST,
         "ace_http_range": cfg.ACE_HTTP_RANGE,
         "ace_https_range": cfg.ACE_HTTPS_RANGE,
+        "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         "debug_mode": cfg.DEBUG_MODE,
     }
+
+    persisted = SettingsPersistence.load_orchestrator_config()
+    if persisted:
+        merged = {**defaults, **persisted}
+        return merged
+
+    # Return defaults from runtime cfg
     # Persist defaults so they appear on next load
     try:
         SettingsPersistence.save_orchestrator_config(defaults)
@@ -4080,6 +4103,7 @@ async def update_orchestrator_settings(settings: OrchestratorSettingsUpdate):
         "port_range_host": cfg.PORT_RANGE_HOST,
         "ace_http_range": cfg.ACE_HTTP_RANGE,
         "ace_https_range": cfg.ACE_HTTPS_RANGE,
+        "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         "debug_mode": cfg.DEBUG_MODE,
     }
 
@@ -4210,6 +4234,12 @@ async def update_orchestrator_settings(settings: OrchestratorSettingsUpdate):
         _validate_port_range(settings.ace_https_range, "ace_https_range")
         current["ace_https_range"] = settings.ace_https_range
         cfg.ACE_HTTPS_RANGE = settings.ace_https_range
+
+    if settings.ace_live_edge_delay is not None:
+        if settings.ace_live_edge_delay < 0:
+            raise HTTPException(status_code=400, detail="ace_live_edge_delay must be >= 0")
+        current["ace_live_edge_delay"] = settings.ace_live_edge_delay
+        cfg.ACE_LIVE_EDGE_DELAY = settings.ace_live_edge_delay
 
     if settings.debug_mode is not None:
         current["debug_mode"] = settings.debug_mode

@@ -124,6 +124,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [preflightInputType, setPreflightInputType] = useState('content_id')
   const [preflightContentId, setPreflightContentId] = useState('')
   const [preflightFileIndexes, setPreflightFileIndexes] = useState('0')
+  const [preflightLiveDelay, setPreflightLiveDelay] = useState('')
   const [preflightTier, setPreflightTier] = useState('light')
   const [preflightLoading, setPreflightLoading] = useState(false)
   const [preflightResult, setPreflightResult] = useState(null)
@@ -295,10 +296,17 @@ export function ProxySettings({ apiKey, orchUrl }) {
       }
 
       const queryParam = selectedInput.param
-      const response = await fetch(
-        `${orchUrl}/api/v1/ace/preflight?${queryParam}=${encodeURIComponent(contentId)}&file_indexes=${encodeURIComponent(normalizedFileIndexes)}&tier=${encodeURIComponent(preflightTier)}`,
-        { headers }
-      )
+      const params = new URLSearchParams()
+      params.set(queryParam, contentId)
+      params.set('file_indexes', normalizedFileIndexes)
+      params.set('tier', preflightTier)
+
+      const parsedLiveDelay = parseInt(String(preflightLiveDelay || '').trim(), 10)
+      if (Number.isFinite(parsedLiveDelay) && parsedLiveDelay > 0) {
+        params.set('live_delay', String(parsedLiveDelay))
+      }
+
+      const response = await fetch(`${orchUrl}/api/v1/ace/preflight?${params.toString()}`, { headers })
 
       let payload = null
       try {
@@ -496,6 +504,25 @@ export function ProxySettings({ apiKey, orchUrl }) {
             <p className="text-xs text-muted-foreground">
               Choose which file inside a multi-file torrent to start. Default is index 0.
             </p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-1">
+              <Label htmlFor="preflight-live-delay">Optional Live Delay (seconds)</Label>
+              <Info
+                className="h-3.5 w-3.5 text-muted-foreground"
+                title="Starts live streams slightly behind the live edge to improve buffer stability. 0 disables this feature."
+              />
+            </div>
+            <Input
+              id="preflight-live-delay"
+              type="number"
+              min="0"
+              step="1"
+              placeholder="Uses global default when empty"
+              value={preflightLiveDelay}
+              onChange={(e) => setPreflightLiveDelay(e.target.value)}
+            />
           </div>
 
           <div className="space-y-2">

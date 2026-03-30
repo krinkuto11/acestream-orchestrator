@@ -162,6 +162,7 @@ class StreamManager:
                  engine_container_id: str, session_info: Dict[str, Any], api_key: Optional[str] = None,
                  stream_key_type: str = "content_id",
                  file_indexes: str = "0",
+                 seekback: int = 0,
                  event_loop: Optional[asyncio.AbstractEventLoop] = None):
         self.playback_url = playback_url
         self.channel_id = channel_id
@@ -171,6 +172,11 @@ class StreamManager:
         self.stream_key_type = (stream_key_type or "content_id").strip().lower()
         normalized_file_indexes = str(file_indexes if file_indexes is not None else "0").strip()
         self.file_indexes = normalized_file_indexes or "0"
+        try:
+            normalized_seekback = int(float(seekback))
+        except (TypeError, ValueError):
+            normalized_seekback = 0
+        self.seekback = max(0, normalized_seekback)
         self.running = True
         
         # Session info from AceStream API
@@ -285,6 +291,8 @@ class StreamManager:
                         key_type=self.stream_key_type,
                         key=self.channel_id,
                         file_indexes=self.file_indexes,
+                        seekback=self.seekback,
+                        live_delay=self.seekback,
                     ),
                     session=SessionInfo(
                         playback_session_id=self.playback_session_id,
@@ -297,6 +305,8 @@ class StreamManager:
                         "stream_mode": "HLS",
                         "stream.input_type": self.stream_key_type,
                         "stream.file_indexes": self.file_indexes,
+                        "stream.seekback": str(self.seekback),
+                        "stream.live_delay": str(self.seekback),
                     }
                 )
                 
@@ -623,7 +633,7 @@ class HLSProxyServer:
     def initialize_channel(self, channel_id: str, playback_url: str, engine_host: str, 
                           engine_port: int, engine_container_id: str, session_info: Dict[str, Any],
                           api_key: Optional[str] = None, stream_key_type: str = "content_id",
-                          file_indexes: str = "0"):
+                          file_indexes: str = "0", seekback: int = 0):
         """Initialize a new HLS channel.
         
         This method should only be called for new channels. Existing channels should be
@@ -659,6 +669,7 @@ class HLSProxyServer:
                 api_key=api_key,
                 stream_key_type=stream_key_type,
                 file_indexes=file_indexes,
+                seekback=seekback,
                 event_loop=self._main_loop  # Pass event loop reference for thread-safe event sending
             )
             buffer = StreamBuffer()

@@ -128,6 +128,7 @@ class State:
             st = StreamState(id=stream_id, key_type=evt.stream.key_type, key=evt.stream.key,
                              file_indexes=evt.stream.file_indexes,
                              seekback=evt.stream.seekback,
+                             live_delay=(evt.stream.live_delay if evt.stream.live_delay is not None else evt.stream.seekback),
                              container_id=key, container_name=eng.container_name if eng else container_name,
                              playback_session_id=evt.session.playback_session_id,
                              stat_url=str(evt.session.stat_url or ""), command_url=str(evt.session.command_url or ""),

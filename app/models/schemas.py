@@ -12,6 +12,7 @@ class StreamKey(BaseModel):
     key: str
     file_indexes: str = "0"
     seekback: int = 0
+    live_delay: int = 0
 
 class SessionInfo(BaseModel):
     playback_session_id: str
@@ -67,6 +68,7 @@ class StreamState(BaseModel):
     key: str
     file_indexes: str = "0"
     seekback: int = 0
+    live_delay: int = 0
     container_id: str
     container_name: Optional[str] = None
     playback_session_id: str

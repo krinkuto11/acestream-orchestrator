@@ -140,6 +140,7 @@ class LegacyStreamMonitoringService:
             "monitor_id": monitor_id,
             "content_id": raw.get("content_id"),
             "stream_name": raw.get("stream_name"),
+            "live_delay": raw.get("live_delay", 0),
             "status": raw.get("status"),
             "interval_s": raw.get("interval_s"),
             "run_seconds": raw.get("run_seconds"),
@@ -327,6 +328,7 @@ class LegacyStreamMonitoringService:
         self,
         content_id: str,
         stream_name: Optional[str] = None,
+        live_delay: int = 0,
         interval_s: float = 1.0,
         run_seconds: int = 0,
         per_sample_timeout_s: float = 1.0,
@@ -340,6 +342,10 @@ class LegacyStreamMonitoringService:
         interval_value = max(0.5, float(interval_s))
         timeout_value = max(0.2, float(per_sample_timeout_s))
         runtime_limit = max(0, int(run_seconds))
+        try:
+            live_delay_value = max(0, int(float(live_delay)))
+        except (TypeError, ValueError):
+            live_delay_value = 0
         normalized_stream_name = (stream_name or "").strip() or None
         requested_monitor_id = (monitor_id or "").strip() or None
 
@@ -366,6 +372,7 @@ class LegacyStreamMonitoringService:
             self._sessions[monitor_id] = {
                 "content_id": normalized_content_id,
                 "stream_name": normalized_stream_name,
+                "live_delay": live_delay_value,
                 "status": "starting",
                 "interval_s": interval_value,
                 "run_seconds": runtime_limit,
@@ -386,6 +393,7 @@ class LegacyStreamMonitoringService:
                 self._run_monitor(
                     monitor_id=monitor_id,
                     content_id=normalized_content_id,
+                    live_delay=live_delay_value,
                     interval_s=interval_value,
                     run_seconds=runtime_limit,
                     per_sample_timeout_s=timeout_value,
@@ -423,6 +431,7 @@ class LegacyStreamMonitoringService:
         self,
         monitor_id: str,
         content_id: str,
+        live_delay: int,
         interval_s: float,
         run_seconds: int,
         per_sample_timeout_s: float,
@@ -502,7 +511,14 @@ class LegacyStreamMonitoringService:
                             break
 
                         resolved_infohash = loadresp.get("infohash") or content_id
-                        start_info = await asyncio.to_thread(client.start_stream, resolved_infohash, "infohash")
+                        start_info = await asyncio.to_thread(
+                            client.start_stream,
+                            resolved_infohash,
+                            "infohash",
+                            "output_format=http",
+                            "0",
+                            live_delay,
+                        )
                         stream_started = True
 
                         playback_session_id = start_info.get("playback_session_id")

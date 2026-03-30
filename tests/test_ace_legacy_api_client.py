@@ -359,7 +359,10 @@ def test_seek_stream_sends_liveseek_and_returns_true(monkeypatch):
 def test_start_stream_seekback_waits_livepos_and_returns_second_start(monkeypatch):
     client = AceLegacyApiClient("127.0.0.1", 62062)
     commands = []
-    wait_for_responses = [("START", ["START", "url=http://first-url", "playback_session_id=s1"], {})]
+    wait_for_responses = [
+        ("START", ["START", "url=http://first-url", "playback_session_id=s1"], {}),
+        ("START", ["START", "url=http://delayed-url", "playback_session_id=s2"], {}),
+    ]
 
     monkeypatch.setattr(client, "_write", lambda msg: commands.append(msg))
     monkeypatch.setattr(client, "_wait_for", lambda *_args, **_kwargs: wait_for_responses.pop(0))
@@ -373,8 +376,8 @@ def test_start_stream_seekback_waits_livepos_and_returns_second_start(monkeypatc
 
     assert commands[0].startswith("START INFOHASH abc123")
     assert commands[1] == "LIVESEEK 1700000975"
-    assert payload["url"] == "http://first-url"
-    assert payload["playback_session_id"] == "s1"
+    assert payload["url"] == "http://delayed-url"
+    assert payload["playback_session_id"] == "s2"
     assert payload["seek_target_timestamp"] == "1700000975"
     assert payload["seek_issued"] == "1"
 

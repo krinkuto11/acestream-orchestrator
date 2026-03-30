@@ -77,6 +77,7 @@ class Cfg(BaseModel):
     ACE_HTTP_RANGE: str = os.getenv("ACE_HTTP_RANGE", "40000-44999")
     ACE_HTTPS_RANGE: str = os.getenv("ACE_HTTPS_RANGE", "45000-49999")
     ACE_MAP_HTTPS: bool = os.getenv("ACE_MAP_HTTPS", "false").lower() == "true"
+    ACE_LIVE_EDGE_DELAY: int = int(os.getenv("ACE_LIVE_EDGE_DELAY", "0"))
     
     # Engine resource limits
     ENGINE_MEMORY_LIMIT: str | None = os.getenv("ENGINE_MEMORY_LIMIT")
@@ -156,6 +157,12 @@ class Cfg(BaseModel):
     def validate_positive_timeouts(cls, v):
         if v <= 0:
             raise ValueError('Timeout values must be > 0')
+        return v
+
+    @validator('ACE_LIVE_EDGE_DELAY')
+    def validate_live_edge_delay(cls, v):
+        if v < 0:
+            raise ValueError('ACE_LIVE_EDGE_DELAY must be >= 0')
         return v
 
     @validator('STATS_HISTORY_MAX')

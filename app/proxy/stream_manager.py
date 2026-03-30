@@ -47,7 +47,7 @@ class StreamManager:
         source_input=None,
         source_input_type="content_id",
         file_indexes="0",
-        seekback=0,
+        seekback=None,
     ):
         # Basic properties
         self.content_id = content_id
@@ -86,8 +86,9 @@ class StreamManager:
         self.source_input = str(source_input if source_input is not None else content_id)
         normalized_file_indexes = str(file_indexes if file_indexes is not None else "0").strip()
         self.file_indexes = normalized_file_indexes or "0"
+        effective_seekback = cfg.ACE_LIVE_EDGE_DELAY if seekback is None else seekback
         try:
-            normalized_seekback = int(float(seekback))
+            normalized_seekback = int(float(effective_seekback))
         except (TypeError, ValueError):
             normalized_seekback = 0
         self.seekback = max(0, normalized_seekback)
@@ -435,6 +436,7 @@ class StreamManager:
                         key=self.content_id,
                         file_indexes=self.file_indexes,
                         seekback=self.seekback,
+                        live_delay=self.seekback,
                     ),
                     session=SessionInfo(
                         playback_session_id=self.playback_session_id or f"fallback-{self.content_id[:16]}-{int(time.time())}",
@@ -449,6 +451,7 @@ class StreamManager:
                         "stream.input_type": self.source_input_type,
                         "stream.file_indexes": self.file_indexes,
                         "stream.seekback": str(self.seekback),
+                        "stream.live_delay": str(self.seekback),
                         "stream.resolved_infohash": str(self.resolved_infohash or ""),
                         "host.api_port": str(self.engine_api_port or "")
                     }
