@@ -50,8 +50,17 @@ class HLSSegmenterService:
         self._lock = asyncio.Lock()
         self._sessions: Dict[str, SegmenterSession] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        # Mirror TS proxy TTL defaults so client visibility behaves consistently.
-        self._client_record_ttl_s = max(10, self._to_int(os.getenv("PROXY_CLIENT_TTL", "60"), default=60))
+        # API-mode HLS should detect disconnected clients faster than the generic TS Redis TTL.
+        # Default to min(PROXY_CLIENT_TTL, 20s) unless explicitly overridden.
+        proxy_client_ttl_s = max(10, self._to_int(os.getenv("PROXY_CLIENT_TTL", "60"), default=60))
+        default_api_hls_client_ttl_s = min(proxy_client_ttl_s, 20)
+        self._client_record_ttl_s = max(
+            6,
+            self._to_int(
+                os.getenv("API_HLS_CLIENT_TTL", str(default_api_hls_client_ttl_s)),
+                default=default_api_hls_client_ttl_s,
+            ),
+        )
         # Keep probe cadence aligned with collector interval as done in TS StreamManager.
         try:
             self._legacy_probe_cache_ttl_s = max(0.5, float(os.getenv("COLLECT_INTERVAL_S", "1")))
@@ -65,10 +74,11 @@ class HLSSegmenterService:
         self._hls_split_by_time = self._to_bool(os.getenv("API_HLS_SPLIT_BY_TIME", "1"), default=True)
 
         logger.debug(
-            "API-HLS segmenter config: segment_time=%.2fs list_size=%s split_by_time=%s",
+            "API-HLS segmenter config: segment_time=%.2fs list_size=%s split_by_time=%s client_ttl=%ss",
             self._hls_segment_time_s,
             self._hls_list_size,
             self._hls_split_by_time,
+            self._client_record_ttl_s,
         )
 
     @staticmethod

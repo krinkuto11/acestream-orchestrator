@@ -398,3 +398,69 @@ async def test_start_segmenter_respects_env_tuning(tmp_path, monkeypatch):
     assert cmd[cmd.index("-hls_list_size") + 1] == "7"
     assert "-hls_flags" in cmd
     assert "split_by_time" not in cmd[cmd.index("-hls_flags") + 1]
+
+
+@pytest.mark.asyncio
+async def test_api_hls_client_ttl_defaults_to_fast_detection(tmp_path, monkeypatch):
+    monkeypatch.setenv("PROXY_CLIENT_TTL", "60")
+    monkeypatch.delenv("API_HLS_CLIENT_TTL", raising=False)
+
+    service = HLSSegmenterService(base_dir=str(tmp_path))
+    monitor_id = "stream-client-ttl-default"
+    out_dir = tmp_path / monitor_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = out_dir / "index.m3u8"
+
+    service._sessions[monitor_id] = SegmenterSession(
+        monitor_id=monitor_id,
+        source_mpegts_url="http://source",
+        output_dir=out_dir,
+        manifest_path=manifest_path,
+        process=_DummyProcess(returncode=None),
+        started_at=time.time(),
+        last_activity=time.time(),
+    )
+
+    assert service._client_record_ttl_s == 20
+
+    now = time.time()
+    service.record_client_activity(monitor_id, "old-client", "10.0.0.1", "UA/1.0", now=now - 25.0)
+    service.record_client_activity(monitor_id, "new-client", "10.0.0.2", "UA/2.0", now=now - 5.0)
+
+    clients = service.list_clients(monitor_id)
+
+    assert len(clients) == 1
+    assert clients[0]["client_id"] == "new-client"
+
+
+@pytest.mark.asyncio
+async def test_api_hls_client_ttl_can_be_overridden(tmp_path, monkeypatch):
+    monkeypatch.setenv("PROXY_CLIENT_TTL", "60")
+    monkeypatch.setenv("API_HLS_CLIENT_TTL", "12")
+
+    service = HLSSegmenterService(base_dir=str(tmp_path))
+    monitor_id = "stream-client-ttl-override"
+    out_dir = tmp_path / monitor_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = out_dir / "index.m3u8"
+
+    service._sessions[monitor_id] = SegmenterSession(
+        monitor_id=monitor_id,
+        source_mpegts_url="http://source",
+        output_dir=out_dir,
+        manifest_path=manifest_path,
+        process=_DummyProcess(returncode=None),
+        started_at=time.time(),
+        last_activity=time.time(),
+    )
+
+    assert service._client_record_ttl_s == 12
+
+    now = time.time()
+    service.record_client_activity(monitor_id, "old-client", "10.0.0.1", "UA/1.0", now=now - 15.0)
+    service.record_client_activity(monitor_id, "new-client", "10.0.0.2", "UA/2.0", now=now - 3.0)
+
+    clients = service.list_clients(monitor_id)
+
+    assert len(clients) == 1
+    assert clients[0]["client_id"] == "new-client"
