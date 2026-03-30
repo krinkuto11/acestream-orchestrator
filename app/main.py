@@ -2976,15 +2976,23 @@ async def ace_getstream(
                     logger.debug(f"HLS channel {stream_key} already exists, serving manifest to client {client_id} from {client_ip}")
 
                     try:
-                        hls_proxy.record_client_activity(stream_key, client_ip)
                         manifest_content = await hls_proxy.get_manifest_async(stream_key)
+                        manifest_bytes = manifest_content.encode('utf-8')
+                        hls_proxy.record_client_activity(
+                            stream_key,
+                            client_ip,
+                            client_id=client_identity,
+                            user_agent=user_agent,
+                            request_kind="manifest",
+                            bytes_sent=len(manifest_bytes),
+                        )
 
                         elapsed = time.perf_counter() - request_started_at
                         observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
                         observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
 
                         return StreamingResponse(
-                            iter([manifest_content.encode('utf-8')]),
+                            iter([manifest_bytes]),
                             media_type="application/vnd.apple.mpegurl",
                             headers={
                                 "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -3086,15 +3094,23 @@ async def ace_getstream(
                         seekback=normalized_seekback,
                     )
 
-                    hls_proxy.record_client_activity(stream_key, client_ip)
                     manifest_content = await hls_proxy.get_manifest_async(stream_key)
+                    manifest_bytes = manifest_content.encode('utf-8')
+                    hls_proxy.record_client_activity(
+                        stream_key,
+                        client_ip,
+                        client_id=client_identity,
+                        user_agent=user_agent,
+                        request_kind="manifest",
+                        bytes_sent=len(manifest_bytes),
+                    )
 
                     elapsed = time.perf_counter() - request_started_at
                     observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
                     observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
 
                     return StreamingResponse(
-                        iter([manifest_content.encode('utf-8')]),
+                        iter([manifest_bytes]),
                         media_type="application/vnd.apple.mpegurl",
                         headers={
                             "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -3478,12 +3494,21 @@ async def ace_hls_segment(
     
     try:
         hls_proxy = HLSProxyServer.get_instance()
-        
-        # Track client activity for this segment request
+
         client_ip = get_client_ip(request)
-        hls_proxy.record_client_activity(content_id, client_ip)
+        user_agent = request.headers.get('user-agent', 'unknown')
+        client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
         
         segment_data = hls_proxy.get_segment(content_id, segment_path)
+        hls_proxy.record_client_activity(
+            content_id,
+            client_ip,
+            client_id=client_identity,
+            user_agent=user_agent,
+            request_kind="segment",
+            bytes_sent=len(segment_data),
+            chunks_sent=1,
+        )
         observe_proxy_egress_bytes("HLS", len(segment_data))
         
         # Return segment data directly
@@ -3805,23 +3830,8 @@ async def get_stream_clients(stream_key: str):
             client_manager = hls_proxy.client_managers.get(stream_key)
             if not client_manager:
                 return {"clients": []}
-            
-            # HLS proxy tracks clients by IP address
-            with client_manager.lock:
-                clients = []
-                import time
-                current_time = time.time()
-                for client_ip, last_activity in client_manager.last_activity.items():
-                    clients.append({
-                        "client_id": client_ip,
-                        "ip_address": client_ip,
-                        "last_active": last_activity,
-                        "connected_at": last_activity,  # We don't track connection time separately
-                        "user_agent": "HLS Client",
-                        "worker_id": "hls_proxy",
-                        "inactive_seconds": current_time - last_activity
-                    })
-                return {"clients": clients}
+
+            return {"clients": client_manager.list_clients()}
 
         # Fallback for API-mode external HLS segmenter sessions.
         segmenter_clients = hls_segmenter_service.list_clients(stream_key)

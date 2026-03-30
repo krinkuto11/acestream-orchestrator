@@ -254,8 +254,12 @@ def _compute_proxy_clients_snapshot() -> Dict[str, int]:
         managers = getattr(hls_proxy, "client_managers", {}) or {}
         for manager in managers.values():
             try:
-                with manager.lock:
-                    hls_clients += len(manager.last_activity)
+                counter = getattr(manager, "count_active_clients", None)
+                if callable(counter):
+                    hls_clients += int(counter())
+                else:
+                    with manager.lock:
+                        hls_clients += len(getattr(manager, "last_activity", {}) or {})
             except Exception:
                 continue
 
