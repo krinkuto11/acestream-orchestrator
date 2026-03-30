@@ -186,18 +186,29 @@ class Collector:
             # Legacy stats can only be queried on the same API session used for START,
             # so we read them from the in-process proxy stream manager.
             from ..proxy.server import ProxyServer
+            from .hls_segmenter import hls_segmenter_service
 
             proxy = ProxyServer.get_instance()
             manager = proxy.stream_managers.get(stream.key) if proxy else None
-            if not manager:
-                return
+            probe = None
 
-            async with self._legacy_probe_semaphore:
-                probe = await asyncio.to_thread(
-                    manager.collect_legacy_stats_probe,
-                    1,
-                    1.0,
-                )
+            if manager:
+                async with self._legacy_probe_semaphore:
+                    probe = await asyncio.to_thread(
+                        manager.collect_legacy_stats_probe,
+                        1,
+                        1.0,
+                    )
+
+            if not probe:
+                # API-mode HLS sessions are controlled by external segmenter service.
+                async with self._legacy_probe_semaphore:
+                    probe = await asyncio.to_thread(
+                        hls_segmenter_service.collect_legacy_stats_probe,
+                        stream.key,
+                        1,
+                        1.0,
+                    )
 
             if not probe:
                 # Stream may be reusing a monitoring session (no direct legacy socket on proxy side).

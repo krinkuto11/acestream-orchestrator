@@ -24,6 +24,20 @@ class _DummyControlClient:
         self.shutdown_called += 1
 
 
+class _DummyStatusProbeClient:
+    def __init__(self):
+        self.calls = 0
+
+    def collect_status_samples(self, samples=1, interval_s=0.0, per_sample_timeout_s=1.0):
+        self.calls += 1
+        return {
+            "status_text": "dl",
+            "peers": 3,
+            "speed_down": 4096,
+            "downloaded": 1234,
+        }
+
+
 @pytest.mark.asyncio
 async def test_start_segmenter_reuses_warming_session_without_restart(tmp_path, monkeypatch):
     service = HLSSegmenterService(base_dir=str(tmp_path))
@@ -232,3 +246,33 @@ async def test_stop_segmenter_closes_control_client_and_emits_stream_end(tmp_pat
     assert control_client.shutdown_called == 1
     assert captured["count"] == 1
     assert captured["stream_id"] == "stream-id-123"
+
+
+@pytest.mark.asyncio
+async def test_collect_legacy_stats_probe_uses_cache(tmp_path):
+    service = HLSSegmenterService(base_dir=str(tmp_path))
+    monitor_id = "stream-probe-cache"
+    out_dir = tmp_path / monitor_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = out_dir / "index.m3u8"
+    status_client = _DummyStatusProbeClient()
+
+    service._sessions[monitor_id] = SegmenterSession(
+        monitor_id=monitor_id,
+        source_mpegts_url="http://source",
+        output_dir=out_dir,
+        manifest_path=manifest_path,
+        process=_DummyProcess(returncode=None),
+        started_at=time.time(),
+        last_activity=time.time(),
+        control_client=status_client,
+    )
+
+    first = service.collect_legacy_stats_probe(monitor_id, samples=1, per_sample_timeout_s=1.0)
+    second = service.collect_legacy_stats_probe(monitor_id, samples=1, per_sample_timeout_s=1.0)
+    forced = service.collect_legacy_stats_probe(monitor_id, samples=1, per_sample_timeout_s=1.0, force=True)
+
+    assert first is not None
+    assert second is not None
+    assert forced is not None
+    assert status_client.calls == 2

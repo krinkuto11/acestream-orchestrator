@@ -1352,18 +1352,35 @@ async def get_stream_livepos(stream_id: str):
     # API mode path (no stat_url): ask active proxy stream manager for a probe.
     try:
         from .proxy.server import ProxyServer
+        from .services.hls_segmenter import hls_segmenter_service
+        from .services.legacy_stream_monitoring import legacy_stream_monitoring_service
 
         proxy = ProxyServer.get_instance()
         manager = proxy.stream_managers.get(stream.key) if proxy else None
-        if not manager:
-            raise HTTPException(status_code=400, detail="Legacy stream manager not available")
+        probe = None
 
-        probe = await asyncio.to_thread(
-            manager.collect_legacy_stats_probe,
-            1,
-            1.0,
-            True,
-        )
+        if manager:
+            probe = await asyncio.to_thread(
+                manager.collect_legacy_stats_probe,
+                1,
+                1.0,
+                True,
+            )
+
+        if not probe:
+            probe = await asyncio.to_thread(
+                hls_segmenter_service.collect_legacy_stats_probe,
+                stream.key,
+                1,
+                1.0,
+                True,
+            )
+
+        if not probe:
+            reusable = await legacy_stream_monitoring_service.get_reusable_session_for_content(stream.key)
+            if reusable:
+                probe = reusable.get("latest_status") or None
+
         if not probe:
             raise HTTPException(status_code=503, detail="No legacy probe data available")
 

@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +37,9 @@ class SegmenterSession:
     stream_id: str = ""
     control_client: Optional[object] = None
     clients: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    legacy_probe_cache: Optional[Dict[str, Any]] = None
+    legacy_probe_cache_ts: float = 0.0
+    legacy_probe_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class HLSSegmenterService:
@@ -48,6 +52,11 @@ class HLSSegmenterService:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         # Mirror TS proxy TTL defaults so client visibility behaves consistently.
         self._client_record_ttl_s = max(10, self._to_int(os.getenv("PROXY_CLIENT_TTL", "60"), default=60))
+        # Keep probe cadence aligned with collector interval as done in TS StreamManager.
+        try:
+            self._legacy_probe_cache_ttl_s = max(0.5, float(os.getenv("COLLECT_INTERVAL_S", "1")))
+        except Exception:
+            self._legacy_probe_cache_ttl_s = 1.0
 
     @staticmethod
     def _sanitize_monitor_id(monitor_id: str) -> str:
@@ -239,6 +248,60 @@ class HLSSegmenterService:
             self._prune_stale_clients(session, now=now, max_idle_seconds=idle_limit)
             total += len(session.clients)
         return total
+
+    def collect_legacy_stats_probe(
+        self,
+        monitor_id: str,
+        samples: int = 1,
+        per_sample_timeout_s: float = 1.0,
+        force: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Collect STATUS probe from API-mode HLS control client with TS-style caching semantics."""
+        key = self._sanitize_monitor_id(monitor_id)
+        session = self._sessions.get(key)
+        if not session:
+            return None
+
+        # Segmenter is active while process has no returncode.
+        if session.process.returncode is not None:
+            return session.legacy_probe_cache
+
+        if not session.control_client:
+            return session.legacy_probe_cache
+
+        now = time.monotonic()
+        if not force and session.legacy_probe_cache is not None:
+            if (now - session.legacy_probe_cache_ts) < self._legacy_probe_cache_ttl_s:
+                return session.legacy_probe_cache
+
+        locked = session.legacy_probe_lock.acquire(timeout=0.05)
+        if not locked:
+            return session.legacy_probe_cache
+
+        try:
+            control_client = session.control_client
+            if not control_client:
+                return session.legacy_probe_cache
+
+            collect_method = getattr(control_client, "collect_status_samples", None)
+            if not callable(collect_method):
+                return session.legacy_probe_cache
+
+            probe = collect_method(
+                samples=max(1, int(samples)),
+                interval_s=0.0,
+                per_sample_timeout_s=max(0.2, float(per_sample_timeout_s)),
+            )
+            if not isinstance(probe, dict):
+                return session.legacy_probe_cache
+            session.legacy_probe_cache = probe
+            session.legacy_probe_cache_ts = time.monotonic()
+            return probe
+        except Exception as e:
+            logger.debug("Legacy stats probe failed for API-mode HLS stream %s: %s", key, e)
+            return session.legacy_probe_cache
+        finally:
+            session.legacy_probe_lock.release()
 
     async def get_or_wait_manifest(self, monitor_id: str, timeout_s: float = 15.0) -> Optional[Path]:
         """Return manifest for an existing session, waiting briefly if FFmpeg is still warming up."""
