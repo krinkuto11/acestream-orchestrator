@@ -51,9 +51,9 @@ class HLSSegmenterService:
         self._sessions: Dict[str, SegmenterSession] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         # API-mode HLS should detect disconnected clients faster than the generic TS Redis TTL.
-        # Default to min(PROXY_CLIENT_TTL, 20s) unless explicitly overridden.
+        # Default to min(PROXY_CLIENT_TTL, 10s) unless explicitly overridden.
         proxy_client_ttl_s = max(10, self._to_int(os.getenv("PROXY_CLIENT_TTL", "60"), default=60))
-        default_api_hls_client_ttl_s = min(proxy_client_ttl_s, 20)
+        default_api_hls_client_ttl_s = min(proxy_client_ttl_s, 10)
         self._client_record_ttl_s = max(
             6,
             self._to_int(

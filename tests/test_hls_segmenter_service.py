@@ -421,7 +421,7 @@ async def test_api_hls_client_ttl_defaults_to_fast_detection(tmp_path, monkeypat
         last_activity=time.time(),
     )
 
-    assert service._client_record_ttl_s == 20
+    assert service._client_record_ttl_s == 10
 
     now = time.time()
     service.record_client_activity(monitor_id, "old-client", "10.0.0.1", "UA/1.0", now=now - 25.0)
