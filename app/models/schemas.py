@@ -129,7 +129,7 @@ class OrchestratorStatusResponse(BaseModel):
     
     Note: This is a documentation model. The actual endpoint returns a dict.
     """
-    pass  # Placeholder for documentation
+    model_config = ConfigDict(extra="allow")
 
 class ProvisioningBlockedReason(BaseModel):
     """Detailed reason why provisioning is blocked with recovery guidance."""

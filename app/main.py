@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.routing import APIRoute
@@ -507,6 +508,31 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan
 )
+
+
+@app.get("/api/v1/openapi.json", include_in_schema=False)
+def get_v1_openapi_spec():
+    """Serve OpenAPI spec under the versioned API namespace."""
+    return app.openapi()
+
+
+@app.get("/api/v1/docs", include_in_schema=False)
+def get_v1_swagger_docs():
+    """Serve Swagger UI under the versioned API namespace."""
+    return get_swagger_ui_html(
+        openapi_url="/api/v1/openapi.json",
+        title=f"{app.title} - Swagger UI (API v1)",
+    )
+
+
+@app.get("/api/v1/redoc", include_in_schema=False)
+def get_v1_redoc_docs():
+    """Serve ReDoc under the versioned API namespace."""
+    return get_redoc_html(
+        openapi_url="/api/v1/openapi.json",
+        title=f"{app.title} - ReDoc (API v1)",
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
