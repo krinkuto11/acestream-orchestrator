@@ -3015,6 +3015,25 @@ async def ace_getstream(
                     raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
             else:
                 # API mode: expose HLS by segmenting MPEG-TS playback with local FFmpeg.
+                existing_manifest = await hls_segmenter_service.get_or_wait_manifest(stream_key, timeout_s=8.0)
+                if existing_manifest:
+                    logger.info("Reusing external HLS segmenter for stream %s", stream_key)
+                    hls_segmenter_service.record_activity(stream_key)
+                    manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
+
+                    elapsed = time.perf_counter() - request_started_at
+                    observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
+                    observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
+
+                    return StreamingResponse(
+                        iter([manifest_content.encode('utf-8')]),
+                        media_type="application/vnd.apple.mpegurl",
+                        headers={
+                            "Cache-Control": "no-cache, no-store, must-revalidate",
+                            "Connection": "keep-alive",
+                        }
+                    )
+
                 if reusable_monitor_session:
                     monitor_engine = reusable_monitor_session.get("engine") or {}
                     monitor_session = reusable_monitor_session.get("session") or {}

@@ -42,6 +42,36 @@ class HLSSegmenterService:
     def _get_output_dir(self, monitor_id: str) -> Path:
         return self._base_dir / monitor_id
 
+    async def get_or_wait_manifest(self, monitor_id: str, timeout_s: float = 15.0) -> Optional[Path]:
+        """Return manifest for an existing session, waiting briefly if FFmpeg is still warming up."""
+        key = self._sanitize_monitor_id(monitor_id)
+
+        async with self._lock:
+            session = self._sessions.get(key)
+            if not session:
+                return None
+
+            session.last_activity = time.time()
+            if session.manifest_path.exists():
+                return session.manifest_path
+
+            process_is_running = session.process.returncode is None
+
+        if not process_is_running:
+            return None
+
+        try:
+            await self._wait_for_manifest(key, timeout_s=timeout_s)
+        except (TimeoutError, RuntimeError):
+            return None
+
+        session = self._sessions.get(key)
+        if not session:
+            return None
+        if not session.manifest_path.exists():
+            return None
+        return session.manifest_path
+
     async def start_segmenter(self, monitor_id: str, source_mpegts_url: str) -> Path:
         """Start FFmpeg HLS segmenter and wait until index.m3u8 exists."""
         key = self._sanitize_monitor_id(monitor_id)
@@ -50,6 +80,7 @@ class HLSSegmenterService:
             raise ValueError("source_mpegts_url is required")
 
         now = time.time()
+        wait_for_existing = False
         async with self._lock:
             if not self._loop:
                 try:
@@ -58,61 +89,69 @@ class HLSSegmenterService:
                     self._loop = None
 
             existing = self._sessions.get(key)
-            if existing and existing.process.returncode is None and existing.source_mpegts_url == source and existing.manifest_path.exists():
+            if existing and existing.process.returncode is None:
+                # Keep in-flight segmenter startup stable across retry storms.
                 existing.last_activity = now
-                return existing.manifest_path
+                if existing.manifest_path.exists():
+                    return existing.manifest_path
+                logger.info("Reusing warming external HLS segmenter for stream %s", key)
+                wait_for_existing = True
 
-            if existing:
+            if existing and not wait_for_existing:
                 await self._stop_locked(key)
 
-            out_dir = self._get_output_dir(key)
-            await asyncio.to_thread(shutil.rmtree, out_dir, True)
-            await asyncio.to_thread(out_dir.mkdir, parents=True, exist_ok=True)
-            manifest_path = out_dir / "index.m3u8"
+            if not wait_for_existing:
+                out_dir = self._get_output_dir(key)
+                await asyncio.to_thread(shutil.rmtree, out_dir, True)
+                await asyncio.to_thread(out_dir.mkdir, parents=True, exist_ok=True)
+                manifest_path = out_dir / "index.m3u8"
 
-            cmd = [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-i",
-                source,
-                "-c",
-                "copy",
-                "-f",
-                "hls",
-                "-hls_time",
-                "6",
-                "-hls_list_size",
-                "5",
-                "-hls_flags",
-                "delete_segments+append_list",
-                str(manifest_path),
-            ]
+                cmd = [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    source,
+                    "-c",
+                    "copy",
+                    "-f",
+                    "hls",
+                    "-hls_time",
+                    "6",
+                    "-hls_list_size",
+                    "5",
+                    "-hls_flags",
+                    "delete_segments+append_list",
+                    str(manifest_path),
+                ]
 
-            logger.info("Starting external HLS segmenter for stream %s", key)
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
+                logger.info("Starting external HLS segmenter for stream %s", key)
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                except FileNotFoundError as e:
+                    raise RuntimeError("ffmpeg binary not found in orchestrator runtime image") from e
+
+                session = SegmenterSession(
+                    monitor_id=key,
+                    source_mpegts_url=source,
+                    output_dir=out_dir,
+                    manifest_path=manifest_path,
+                    process=process,
+                    started_at=now,
+                    last_activity=now,
                 )
-            except FileNotFoundError as e:
-                raise RuntimeError("ffmpeg binary not found in orchestrator runtime image") from e
-
-            session = SegmenterSession(
-                monitor_id=key,
-                source_mpegts_url=source,
-                output_dir=out_dir,
-                manifest_path=manifest_path,
-                process=process,
-                started_at=now,
-                last_activity=now,
-            )
-            self._sessions[key] = session
+                self._sessions[key] = session
 
         await self._wait_for_manifest(key)
-        return manifest_path
+        session = self._sessions.get(key)
+        if not session:
+            raise RuntimeError(f"Segmenter session {key} not found")
+        return session.manifest_path
 
     async def _wait_for_manifest(self, monitor_id: str, timeout_s: float = 15.0) -> None:
         started = time.time()
