@@ -248,6 +248,7 @@ def _compute_proxy_clients_snapshot() -> Dict[str, int]:
 
     try:
         from ..proxy.hls_proxy import HLSProxyServer
+        from .hls_segmenter import hls_segmenter_service
 
         hls_proxy = HLSProxyServer.get_instance()
         managers = getattr(hls_proxy, "client_managers", {}) or {}
@@ -257,6 +258,12 @@ def _compute_proxy_clients_snapshot() -> Dict[str, int]:
                     hls_clients += len(manager.last_activity)
             except Exception:
                 continue
+
+        # API-mode HLS uses the external segmenter service, not HLSProxyServer manager maps.
+        try:
+            hls_clients += int(hls_segmenter_service.count_active_clients())
+        except Exception:
+            pass
     except Exception:
         pass
 

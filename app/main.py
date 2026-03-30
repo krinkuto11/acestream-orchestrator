@@ -2839,13 +2839,14 @@ async def ace_getstream(
     
     reservation_engine_id = None
     
-    def rollback_reservation():
-        if reservation_engine_id:
+    def rollback_reservation(target_engine_id: Optional[str] = None):
+        engine_id = target_engine_id or reservation_engine_id
+        if engine_id:
             try:
                 from app.proxy.manager import ProxyManager
                 redis = ProxyManager.get_instance().redis_client
                 if redis:
-                    pending_key = f"ace_proxy:engine:{reservation_engine_id}:pending"
+                    pending_key = f"ace_proxy:engine:{engine_id}:pending"
                     decr_script = """
                     local current = redis.call('GET', KEYS[1])
                     if current and tonumber(current) > 0 then
@@ -2855,17 +2856,20 @@ async def ace_getstream(
                     end
                     """
                     redis.eval(decr_script, 1, pending_key)
-                    logger.debug(f"Rolled back pending reservation for engine {reservation_engine_id[:12]}")
+                    logger.debug(f"Rolled back pending reservation for engine {engine_id[:12]}")
             except Exception as e:
-                logger.warning(f"Failed to rollback reservation for engine {reservation_engine_id[:12]}: {e}")
+                logger.warning(f"Failed to rollback reservation for engine {engine_id[:12]}: {e}")
     
-    def select_best_engine():
+    def select_best_engine(additional_load_by_engine: Optional[Dict[str, int]] = None):
         """Select the best available engine using layer-based load balancing.
         
         Returns tuple of (selected_engine, current_load)
         Raises HTTPException if no engines available or all at capacity.
         """
-        return select_best_engine_shared(reserve_pending=True)
+        return select_best_engine_shared(
+            reserve_pending=True,
+            additional_load_by_engine=additional_load_by_engine,
+        )
 
     def _find_active_api_hls_stream_id() -> Optional[str]:
         for active_stream in state.list_streams(status="started"):
@@ -3107,7 +3111,13 @@ async def ace_getstream(
 
                     logger.info("Reusing external HLS segmenter for stream %s", stream_key)
                     hls_segmenter_service.record_activity(stream_key)
-                    hls_segmenter_service.record_client_activity(stream_key, client_identity, client_ip, user_agent)
+                    hls_segmenter_service.record_client_activity(
+                        stream_key,
+                        client_identity,
+                        client_ip,
+                        user_agent,
+                        request_kind="manifest",
+                    )
                     manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
 
                     elapsed = time.perf_counter() - request_started_at
@@ -3144,79 +3154,122 @@ async def ace_getstream(
                     }
                     legacy_api_client = None
                 else:
-                    selected_engine, current_load = select_best_engine()
-                    reservation_engine_id = selected_engine.container_id
+                    engines_count = max(1, len(state.list_engines()))
+                    max_engine_attempts = min(2, engines_count)
+                    excluded_engine_penalties: Dict[str, int] = {}
+                    last_start_error: Optional[HTTPException] = None
+                    selected_engine = None
+                    legacy_api_client = None
+                    start_info = {}
+                    playback_url = ""
 
-                    logger.info(
-                        "Starting API-mode HLS session on engine %s for stream %s",
-                        selected_engine.container_id[:12],
-                        stream_key,
-                    )
-
-                    client = AceLegacyApiClient(
-                        host=selected_engine.host,
-                        port=selected_engine.api_port or 62062,
-                        connect_timeout=10,
-                        response_timeout=10,
-                    )
-                    legacy_api_client = client
-
-                    try:
-                        await asyncio.to_thread(client.connect)
-                        await asyncio.to_thread(client.authenticate)
-
-                        start_mode = input_type
-                        start_payload = input_value
-
-                        if input_type in {"content_id", "infohash"}:
-                            preflight = await asyncio.to_thread(
-                                client.preflight,
-                                input_value,
-                                "light",
-                                normalized_file_indexes,
-                            )
-                            if not preflight.get("available"):
-                                message = preflight.get("message") or "content unavailable"
-                                raise HTTPException(status_code=503, detail=f"API preflight failed: {message}")
-                            start_mode = "infohash"
-                            start_payload = preflight.get("infohash") or input_value
-                        else:
-                            loadresp, resolved_mode = await asyncio.to_thread(
-                                client.resolve_content,
-                                input_value,
-                                "0",
-                                input_type,
-                            )
-                            if resolved_mode != "direct_url":
-                                status_code = loadresp.get("status")
-                                if status_code not in (1, 2):
-                                    message = loadresp.get("message") or "content unavailable"
-                                    raise HTTPException(status_code=503, detail=f"LOADASYNC status={status_code}: {message}")
-                            start_mode = resolved_mode
-
-                        start_info = await asyncio.to_thread(
-                            client.start_stream,
-                            start_payload,
-                            start_mode,
-                            "output_format=http",
-                            normalized_file_indexes,
-                            normalized_seekback,
+                    for attempt_idx in range(max_engine_attempts):
+                        selected_engine, current_load = select_best_engine(
+                            additional_load_by_engine=excluded_engine_penalties,
                         )
-                        playback_url = str(start_info.get("url") or "").strip()
-                        if not playback_url:
-                            raise HTTPException(status_code=500, detail="No playback URL returned by API START")
-                    except HTTPException:
+                        reservation_engine_id = selected_engine.container_id
+
+                        logger.info(
+                            "Starting API-mode HLS session on engine %s for stream %s (attempt %s/%s)",
+                            selected_engine.container_id[:12],
+                            stream_key,
+                            attempt_idx + 1,
+                            max_engine_attempts,
+                        )
+
+                        client = AceLegacyApiClient(
+                            host=selected_engine.host,
+                            port=selected_engine.api_port or 62062,
+                            connect_timeout=10,
+                            response_timeout=10,
+                        )
+
                         try:
-                            await asyncio.to_thread(client.shutdown)
-                        except Exception:
-                            pass
-                        raise
-                    except AceLegacyApiError as e:
-                        try:
-                            await asyncio.to_thread(client.shutdown)
-                        except Exception:
-                            pass
-                        raise HTTPException(status_code=503, detail=str(e))
+                            await asyncio.to_thread(client.connect)
+                            await asyncio.to_thread(client.authenticate)
+
+                            start_mode = input_type
+                            start_payload = input_value
+
+                            if input_type in {"content_id", "infohash"}:
+                                preflight = await asyncio.to_thread(
+                                    client.preflight,
+                                    input_value,
+                                    "light",
+                                    normalized_file_indexes,
+                                )
+                                if not preflight.get("available"):
+                                    message = preflight.get("message") or "content unavailable"
+                                    raise HTTPException(status_code=503, detail=f"API preflight failed: {message}")
+                                start_mode = "infohash"
+                                start_payload = preflight.get("infohash") or input_value
+                            else:
+                                loadresp, resolved_mode = await asyncio.to_thread(
+                                    client.resolve_content,
+                                    input_value,
+                                    "0",
+                                    input_type,
+                                )
+                                if resolved_mode != "direct_url":
+                                    status_code = loadresp.get("status")
+                                    if status_code not in (1, 2):
+                                        message = loadresp.get("message") or "content unavailable"
+                                        raise HTTPException(status_code=503, detail=f"LOADASYNC status={status_code}: {message}")
+                                start_mode = resolved_mode
+
+                            start_info = await asyncio.to_thread(
+                                client.start_stream,
+                                start_payload,
+                                start_mode,
+                                "output_format=http",
+                                normalized_file_indexes,
+                                normalized_seekback,
+                            )
+                            playback_url = str(start_info.get("url") or "").strip()
+                            if not playback_url:
+                                raise HTTPException(status_code=500, detail="No playback URL returned by API START")
+
+                            legacy_api_client = client
+                            break
+                        except HTTPException as e:
+                            last_start_error = e
+                            excluded_engine_penalties[selected_engine.container_id] = cfg.MAX_STREAMS_PER_ENGINE
+                            rollback_reservation(selected_engine.container_id)
+                            try:
+                                await asyncio.to_thread(client.shutdown)
+                            except Exception:
+                                pass
+                            if attempt_idx + 1 >= max_engine_attempts:
+                                raise
+                            logger.warning(
+                                "API-mode HLS startup failed on engine %s (attempt %s/%s): %s. Retrying with another engine.",
+                                selected_engine.container_id[:12],
+                                attempt_idx + 1,
+                                max_engine_attempts,
+                                e.detail,
+                            )
+                        except AceLegacyApiError as e:
+                            last_start_error = HTTPException(status_code=503, detail=str(e))
+                            excluded_engine_penalties[selected_engine.container_id] = cfg.MAX_STREAMS_PER_ENGINE
+                            rollback_reservation(selected_engine.container_id)
+                            try:
+                                await asyncio.to_thread(client.shutdown)
+                            except Exception:
+                                pass
+                            if attempt_idx + 1 >= max_engine_attempts:
+                                raise last_start_error
+                            logger.warning(
+                                "API-mode HLS legacy API error on engine %s (attempt %s/%s): %s. Retrying with another engine.",
+                                selected_engine.container_id[:12],
+                                attempt_idx + 1,
+                                max_engine_attempts,
+                                e,
+                            )
+
+                    if not playback_url:
+                        if last_start_error:
+                            raise last_start_error
+                        raise HTTPException(status_code=503, detail="Unable to start API-mode HLS stream")
 
                 logger.info("Starting external HLS segmenter for stream %s", stream_key)
                 segmenter_metadata = {
@@ -3258,7 +3311,13 @@ async def ace_getstream(
                     hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
 
                 hls_segmenter_service.record_activity(stream_key)
-                hls_segmenter_service.record_client_activity(stream_key, client_identity, client_ip, user_agent)
+                hls_segmenter_service.record_client_activity(
+                    stream_key,
+                    client_identity,
+                    client_ip,
+                    user_agent,
+                    request_kind="manifest",
+                )
                 manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
 
                 elapsed = time.perf_counter() - request_started_at
@@ -3454,7 +3513,13 @@ async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: 
     client_ip = get_client_ip(request)
     user_agent = request.headers.get('user-agent', 'unknown')
     client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
-    hls_segmenter_service.record_client_activity(monitor_id, client_identity, client_ip, user_agent)
+    hls_segmenter_service.record_client_activity(
+        monitor_id,
+        client_identity,
+        client_ip,
+        user_agent,
+        request_kind="segment",
+    )
 
     return FileResponse(path=str(path), media_type="video/MP2T")
 

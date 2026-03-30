@@ -554,3 +554,32 @@ async def test_monitor_balancing_spreads_bulk_sessions_across_engines(monkeypatc
     assert first_engine != second_engine
 
     await service.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_reusable_session_skips_starting_monitor_state():
+    service = LegacyStreamMonitoringService()
+
+    service._sessions = {
+        "monitor-starting": {
+            "content_id": "abc123",
+            "status": "starting",
+            "last_collected_at": "2026-03-30T10:00:00+00:00",
+            "engine": {"container_id": "engine-1", "host": "127.0.0.1", "port": 6878, "api_port": 62062},
+            "session": {"playback_url": "http://127.0.0.1:6878/content/starting"},
+            "latest_status": {},
+        },
+        "monitor-running": {
+            "content_id": "abc123",
+            "status": "running",
+            "last_collected_at": "2026-03-30T10:00:01+00:00",
+            "engine": {"container_id": "engine-2", "host": "127.0.0.1", "port": 6879, "api_port": 62063},
+            "session": {"playback_url": "http://127.0.0.1:6879/content/running"},
+            "latest_status": {},
+        },
+    }
+
+    reusable = await service.get_reusable_session_for_content("abc123")
+
+    assert reusable is not None
+    assert reusable["monitor_id"] == "monitor-running"

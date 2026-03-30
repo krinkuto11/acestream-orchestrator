@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 import time
@@ -45,6 +46,8 @@ class HLSSegmenterService:
         self._lock = asyncio.Lock()
         self._sessions: Dict[str, SegmenterSession] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # Mirror TS proxy TTL defaults so client visibility behaves consistently.
+        self._client_record_ttl_s = max(10, self._to_int(os.getenv("PROXY_CLIENT_TTL", "60"), default=60))
 
     @staticmethod
     def _sanitize_monitor_id(monitor_id: str) -> str:
@@ -152,6 +155,7 @@ class HLSSegmenterService:
         client_id: str,
         client_ip: str,
         user_agent: str,
+        request_kind: str = "",
         now: Optional[float] = None,
     ) -> None:
         key = self._sanitize_monitor_id(monitor_id)
@@ -160,12 +164,16 @@ class HLSSegmenterService:
             return
 
         ts = now if now is not None else time.time()
+        self._prune_stale_clients(session, now=ts, max_idle_seconds=self._client_record_ttl_s)
+
         normalized_client_id = str(client_id or client_ip or "unknown")
         normalized_ip = str(client_ip or "unknown")
         normalized_ua = str(user_agent or "unknown")
+        normalized_request_kind = str(request_kind or "").strip().lower()
 
         existing = session.clients.get(normalized_client_id)
         connected_at = existing.get("connected_at") if existing else ts
+        request_count = int(existing.get("requests_total") or 0) + 1 if existing else 1
         session.clients[normalized_client_id] = {
             "client_id": normalized_client_id,
             "ip_address": normalized_ip,
@@ -173,20 +181,42 @@ class HLSSegmenterService:
             "connected_at": connected_at,
             "last_active": ts,
             "worker_id": "api_hls_segmenter",
+            "requests_total": request_count,
+            "last_request_kind": normalized_request_kind or (existing.get("last_request_kind") if existing else ""),
         }
         session.last_activity = ts
 
-    def list_clients(self, monitor_id: str, max_idle_seconds: int = 180) -> List[Dict[str, Any]]:
+    def _prune_stale_clients(self, session: SegmenterSession, now: float, max_idle_seconds: int) -> None:
+        if max_idle_seconds <= 0 or not session.clients:
+            return
+
+        stale_ids: List[str] = []
+        for client_id, details in session.clients.items():
+            last_active_raw = details.get("last_active")
+            try:
+                last_active = float(str(last_active_raw))
+            except (TypeError, ValueError):
+                stale_ids.append(client_id)
+                continue
+
+            if (now - last_active) > max_idle_seconds:
+                stale_ids.append(client_id)
+
+        for client_id in stale_ids:
+            session.clients.pop(client_id, None)
+
+    def list_clients(self, monitor_id: str, max_idle_seconds: Optional[int] = None) -> List[Dict[str, Any]]:
         key = self._sanitize_monitor_id(monitor_id)
         session = self._sessions.get(key)
         if not session:
             return []
 
+        idle_limit = self._client_record_ttl_s if max_idle_seconds is None else self._to_int(max_idle_seconds, default=self._client_record_ttl_s)
         now = time.time()
         clients: List[Dict[str, Any]] = []
-        stale_ids: List[str] = []
+        self._prune_stale_clients(session, now=now, max_idle_seconds=idle_limit)
 
-        for client_id, details in session.clients.items():
+        for details in session.clients.values():
             last_active_raw = details.get("last_active")
             try:
                 last_active = float(str(last_active_raw))
@@ -194,19 +224,21 @@ class HLSSegmenterService:
                 last_active = now
 
             inactive_seconds = max(0.0, now - last_active)
-            if max_idle_seconds > 0 and inactive_seconds > max_idle_seconds:
-                stale_ids.append(client_id)
-                continue
-
             payload = dict(details)
             payload["inactive_seconds"] = inactive_seconds
             clients.append(payload)
 
-        for client_id in stale_ids:
-            session.clients.pop(client_id, None)
-
         clients.sort(key=lambda item: float(item.get("last_active") or 0.0), reverse=True)
         return clients
+
+    def count_active_clients(self, max_idle_seconds: Optional[int] = None) -> int:
+        idle_limit = self._client_record_ttl_s if max_idle_seconds is None else self._to_int(max_idle_seconds, default=self._client_record_ttl_s)
+        now = time.time()
+        total = 0
+        for session in self._sessions.values():
+            self._prune_stale_clients(session, now=now, max_idle_seconds=idle_limit)
+            total += len(session.clients)
+        return total
 
     async def get_or_wait_manifest(self, monitor_id: str, timeout_s: float = 15.0) -> Optional[Path]:
         """Return manifest for an existing session, waiting briefly if FFmpeg is still warming up."""

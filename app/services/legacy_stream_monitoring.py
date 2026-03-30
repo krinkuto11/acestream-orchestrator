@@ -780,7 +780,7 @@ class LegacyStreamMonitoringService:
             for monitor_id, raw in self._sessions.items():
                 if (raw.get("content_id") or "").strip().lower() != normalized:
                     continue
-                if raw.get("status") not in {"running", "stuck", "starting"}:
+                if raw.get("status") not in {"running", "stuck"}:
                     continue
 
                 session = raw.get("session") or {}
