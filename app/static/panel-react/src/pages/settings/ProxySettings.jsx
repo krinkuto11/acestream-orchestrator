@@ -152,7 +152,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
 
   const fetchProxyConfig = async () => {
     try {
-      const response = await fetch(`${orchUrl}/proxy/config`)
+      const response = await fetch(`${orchUrl}/api/v1/proxy/config`)
       if (response.ok) {
         const data = await response.json()
         setInitialDataWaitTimeout(data.initial_data_wait_timeout)
@@ -186,7 +186,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
 
   const fetchCustomVariantInfo = async () => {
     try {
-      const response = await fetch(`${orchUrl}/custom-variant/config`)
+      const response = await fetch(`${orchUrl}/api/v1/custom-variant/config`)
       if (!response.ok) {
         console.error('Failed to fetch custom variant config, status:', response.status)
         setVariantDisplayName(engineVariant)
@@ -252,7 +252,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
       params.append('hls_max_initial_segments', hlsMaxInitialSegments)
       params.append('hls_segment_fetch_interval', hlsSegmentFetchInterval)
 
-      const response = await fetch(`${orchUrl}/proxy/config?${params}`, {
+      const response = await fetch(`${orchUrl}/api/v1/proxy/config?${params}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`
@@ -296,7 +296,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
 
       const queryParam = selectedInput.param
       const response = await fetch(
-        `${orchUrl}/ace/preflight?${queryParam}=${encodeURIComponent(contentId)}&file_indexes=${encodeURIComponent(normalizedFileIndexes)}&tier=${encodeURIComponent(preflightTier)}`,
+        `${orchUrl}/api/v1/ace/preflight?${queryParam}=${encodeURIComponent(contentId)}&file_indexes=${encodeURIComponent(normalizedFileIndexes)}&tier=${encodeURIComponent(preflightTier)}`,
         { headers }
       )
 

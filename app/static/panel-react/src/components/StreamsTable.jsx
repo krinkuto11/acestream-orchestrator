@@ -127,7 +127,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       }
 
       const response = await fetch(
-        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`,
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`,
         { headers }
       )
 
@@ -162,7 +162,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       }
 
       const response = await fetch(
-        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/extended-stats`,
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/extended-stats`,
         { headers }
       )
 
@@ -194,7 +194,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
 
     try {
       const response = await fetch(
-        `${orchUrl}/proxy/streams/${encodeURIComponent(stream.key)}/clients`
+        `${orchUrl}/api/v1/proxy/streams/${encodeURIComponent(stream.key)}/clients`
       )
 
       if (response.ok) {
@@ -1223,7 +1223,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
         headers['Authorization'] = `Bearer ${apiKey}`
       }
 
-      const response = await fetch(`${orchUrl}/streams/batch-stop`, {
+      const response = await fetch(`${orchUrl}/api/v1/streams/batch-stop`, {
         method: 'POST',
         headers,
         body: JSON.stringify(commandUrls)

@@ -18,7 +18,7 @@ export function HealthPage({ apiKey, orchUrl }) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
       
-      const response = await fetch(`${orchUrl}/health/status`, { headers })
+      const response = await fetch(`${orchUrl}/api/v1/health/status`, { headers })
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`)
       }
@@ -47,8 +47,8 @@ export function HealthPage({ apiKey, orchUrl }) {
       }
 
       const url = type 
-        ? `${orchUrl}/health/circuit-breaker/reset?operation_type=${type}`
-        : `${orchUrl}/health/circuit-breaker/reset`
+        ? `${orchUrl}/api/v1/health/circuit-breaker/reset?operation_type=${type}`
+        : `${orchUrl}/api/v1/health/circuit-breaker/reset`
 
       const response = await fetch(url, { method: 'POST', headers })
       if (!response.ok) {

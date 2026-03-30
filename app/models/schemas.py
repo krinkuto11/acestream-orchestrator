@@ -1,5 +1,5 @@
 from __future__ import annotations
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, ConfigDict, RootModel
 from typing import Dict, Optional, Literal, List, Any
 from datetime import datetime
 
@@ -95,6 +95,32 @@ class StreamStatSnapshot(BaseModel):
     uploaded: Optional[int] = None
     status: Optional[str] = None
     livepos: Optional[LivePosData] = None
+
+
+class EngineListResponse(BaseModel):
+    items: List[EngineState]
+
+
+class StreamListResponse(BaseModel):
+    items: List[StreamState]
+
+
+class HealthStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: Optional[str] = None
+    message: Optional[str] = None
+
+
+class MetricsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class GenericObjectResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class GenericListResponse(RootModel[List[Any]]):
+    pass
 
 class OrchestratorStatusResponse(BaseModel):
     """

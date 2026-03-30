@@ -247,12 +247,12 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
 
     try {
       const [monitorResponse, streamsResponse] = await Promise.all([
-        fetch(`${orchUrl}/ace/monitor/legacy`, {
+        fetch(`${orchUrl}/api/v1/ace/monitor/legacy`, {
           headers: {
             Authorization: `Bearer ${apiKey}`,
           },
         }),
-        fetch(`${orchUrl}/streams?status=started`, {
+        fetch(`${orchUrl}/api/v1/streams?status=started`, {
           headers: {
             Authorization: `Bearer ${apiKey}`,
           },
@@ -319,7 +319,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     setActionError(null)
 
     try {
-      const response = await fetch(`${orchUrl}/ace/monitor/legacy/start`, {
+      const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/start`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -364,7 +364,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     setActionError(null)
 
     try {
-      const response = await fetch(`${orchUrl}/ace/monitor/legacy/${encodeURIComponent(monitorId)}`, {
+      const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/${encodeURIComponent(monitorId)}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -400,7 +400,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     setActionError(null)
 
     try {
-      const response = await fetch(`${orchUrl}/ace/monitor/legacy/${encodeURIComponent(monitorId)}/entry`, {
+      const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/${encodeURIComponent(monitorId)}/entry`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -573,7 +573,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
       for (const monitor of targetMonitors) {
         setStoppingById((prev) => ({ ...prev, [monitor.monitor_id]: true }))
         try {
-          const response = await fetch(`${orchUrl}/ace/monitor/legacy/${encodeURIComponent(monitor.monitor_id)}`, {
+          const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/${encodeURIComponent(monitor.monitor_id)}`, {
             method: 'DELETE',
             headers: {
               Authorization: `Bearer ${apiKey}`,
@@ -617,7 +617,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
       for (const monitor of selectedMonitors) {
         setDeletingById((prev) => ({ ...prev, [monitor.monitor_id]: true }))
         try {
-          const response = await fetch(`${orchUrl}/ace/monitor/legacy/${encodeURIComponent(monitor.monitor_id)}/entry`, {
+          const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/${encodeURIComponent(monitor.monitor_id)}/entry`, {
             method: 'DELETE',
             headers: {
               Authorization: `Bearer ${apiKey}`,
@@ -673,7 +673,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     setM3uParsing(true)
     setActionError(null)
     try {
-      const response = await fetch(`${orchUrl}/ace/monitor/legacy/parse-m3u`, {
+      const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/parse-m3u`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -729,7 +729,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     try {
       for (const entry of selectedEntries) {
         try {
-          const response = await fetch(`${orchUrl}/ace/monitor/legacy/start`, {
+          const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/start`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

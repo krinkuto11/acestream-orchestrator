@@ -102,7 +102,7 @@ function ResourceUsage({ orchUrl }) {
   useEffect(() => {
     const fetchTotalStats = async () => {
       try {
-        const response = await fetch(`${orchUrl}/engines/stats/total`)
+        const response = await fetch(`${orchUrl}/api/v1/engines/stats/total`)
         if (response.ok) {
           const data = await response.json()
           setTotalStats(data)
@@ -273,7 +273,7 @@ function StreamCard({ stream, orchUrl, apiKey }) {
         }
         
         const response = await fetch(
-          `${orchUrl}/streams/${encodeURIComponent(stream.id)}/extended-stats`,
+          `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/extended-stats`,
           { headers }
         )
         

@@ -71,7 +71,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
       }
       
       const response = await fetch(
-        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`,
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`,
         { headers }
       )
       
@@ -97,7 +97,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
       }
       
       const response = await fetch(
-        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/extended-stats`,
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/extended-stats`,
         { headers }
       )
       
@@ -122,7 +122,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
       }
 
       const response = await fetch(
-        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/livepos`,
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/livepos`,
         { headers }
       )
 

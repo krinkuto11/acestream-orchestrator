@@ -50,17 +50,17 @@ function AppContent() {
   const fetchData = useCallback(async () => {
     try {
       const [enginesData, streamsData, vpnData, orchStatus] = await Promise.all([
-        fetchJSON(`${orchUrl}/engines`),
-        fetchJSON(`${orchUrl}/streams?status=started`),
-        fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false })),
-        fetchJSON(`${orchUrl}/orchestrator/status`).catch(() => null)
+        fetchJSON(`${orchUrl}/api/v1/engines`),
+        fetchJSON(`${orchUrl}/api/v1/streams?status=started`),
+        fetchJSON(`${orchUrl}/api/v1/vpn/status`).catch(() => ({ enabled: false })),
+        fetchJSON(`${orchUrl}/api/v1/orchestrator/status`).catch(() => null)
       ])
       
       // Fetch VPN public IP if VPN is enabled and connected
       let vpnDataWithIp = vpnData
       if (vpnData.enabled && vpnData.connected) {
         try {
-          const publicIpData = await fetchJSON(`${orchUrl}/vpn/publicip`)
+          const publicIpData = await fetchJSON(`${orchUrl}/api/v1/vpn/publicip`)
           vpnDataWithIp = { ...vpnData, public_ip: publicIpData.public_ip }
         } catch (err) {
           console.warn('Failed to fetch VPN public IP:', err)
@@ -95,7 +95,7 @@ function AppContent() {
     }
     
     try {
-      await fetchJSON(`${orchUrl}/containers/${encodeURIComponent(containerId)}`, {
+      await fetchJSON(`${orchUrl}/api/v1/containers/${encodeURIComponent(containerId)}`, {
         method: 'DELETE'
       })
       addNotification('Engine deleted successfully', 'success')
@@ -111,7 +111,7 @@ function AppContent() {
     }
     
     try {
-      await fetchJSON(`${orchUrl}/streams/${encodeURIComponent(streamId)}`, {
+      await fetchJSON(`${orchUrl}/api/v1/streams/${encodeURIComponent(streamId)}`, {
         method: 'DELETE'
       })
       addNotification('Stream stopped successfully', 'success')

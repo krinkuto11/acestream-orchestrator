@@ -30,7 +30,7 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
     const fetchConfig = async () => {
         try {
             setLoading(true)
-            const data = await fetchJSON(`${orchUrl}/custom-variant/config`)
+            const data = await fetchJSON(`${orchUrl}/api/v1/custom-variant/config`)
             setCustomConfig(data)
         } catch (err) {
             console.error('Failed to load custom config:', err)
@@ -74,7 +74,7 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
                 p2p_port: formData.p2p_port === '' ? null : parseInt(formData.p2p_port)
             }
 
-            await fetchJSON(`${orchUrl}/custom-variant/config`, {
+            await fetchJSON(`${orchUrl}/api/v1/custom-variant/config`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -99,7 +99,7 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
             if (!window.confirm('Delete custom engine configuration?')) return
 
             const updatedConfig = { ...customConfig, enabled: false }
-            await fetchJSON(`${orchUrl}/custom-variant/config`, {
+            await fetchJSON(`${orchUrl}/api/v1/custom-variant/config`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

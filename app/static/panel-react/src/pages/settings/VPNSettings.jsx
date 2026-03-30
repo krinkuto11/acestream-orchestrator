@@ -50,7 +50,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
 
   const fetchConfig = async () => {
     try {
-      const response = await fetch(`${orchUrl}/settings/vpn`)
+      const response = await fetch(`${orchUrl}/api/v1/settings/vpn`)
       if (response.ok) {
         const data = await response.json()
         setEnabled(data.enabled ?? DEFAULTS.enabled)
@@ -94,7 +94,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
     }
 
     try {
-      const response = await fetch(`${orchUrl}/settings/vpn`, {
+      const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

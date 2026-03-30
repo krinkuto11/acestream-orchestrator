@@ -67,7 +67,7 @@ export function OrchestratorSettings({ apiKey, orchUrl }) {
 
   const fetchConfig = async () => {
     try {
-      const response = await fetch(`${orchUrl}/settings/orchestrator`)
+      const response = await fetch(`${orchUrl}/api/v1/settings/orchestrator`)
       if (response.ok) {
         const data = await response.json()
         setEngineGracePeriodS(data.engine_grace_period_s ?? DEFAULTS.engine_grace_period_s)
@@ -131,7 +131,7 @@ export function OrchestratorSettings({ apiKey, orchUrl }) {
     }
 
     try {
-      const response = await fetch(`${orchUrl}/settings/orchestrator`, {
+      const response = await fetch(`${orchUrl}/api/v1/settings/orchestrator`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

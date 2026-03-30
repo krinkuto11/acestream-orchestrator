@@ -30,7 +30,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
       
-      const response = await fetch(`${orchUrl}/settings/export`, {
+      const response = await fetch(`${orchUrl}/api/v1/settings/export`, {
         method: 'GET',
         headers
       })
@@ -93,7 +93,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
         import_engine: importOptions.engine,
       })
       
-      const response = await fetch(`${orchUrl}/settings/import?${params}`, {
+      const response = await fetch(`${orchUrl}/api/v1/settings/import?${params}`, {
         method: 'POST',
         headers,
         body: file

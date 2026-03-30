@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.routing import APIRoute
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from pydantic import BaseModel
@@ -28,7 +29,19 @@ from .services.health_monitor import health_monitor
 from .services.health_manager import health_manager
 from .services.inspect import inspect_container, ContainerNotFound
 from .services.state import state, load_state_from_db, cleanup_on_shutdown
-from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot, EventLog
+from .models.schemas import (
+    StreamStartedEvent,
+    StreamEndedEvent,
+    EngineState,
+    StreamState,
+    StreamStatSnapshot,
+    EventLog,
+    HealthStatusResponse,
+    MetricsResponse,
+    OrchestratorStatusResponse,
+    GenericObjectResponse,
+    GenericListResponse,
+)
 from .services.collector import collector
 from .services.event_logger import event_logger
 from .services.stream_cleanup import stream_cleanup
@@ -2452,7 +2465,17 @@ def _build_stream_query_params(
 
     return params
 
-@app.get("/ace/preflight")
+@app.get(
+    "/ace/preflight",
+    tags=["Proxy"],
+    summary="Preflight AceStream input",
+    description="Runs availability checks and canonicalizes stream identifiers before playback.",
+    responses={
+        200: {"description": "Preflight result"},
+        400: {"description": "Invalid request parameters"},
+        503: {"description": "No available engine capacity"},
+    },
+)
 def ace_preflight(
     id: Optional[str] = Query(None, description="AceStream content ID (PID/content_id)"),
     infohash: Optional[str] = Query(None, description="AceStream infohash"),
@@ -2670,7 +2693,18 @@ def ace_preflight(
         "result": result,
     }
 
-@app.get("/ace/getstream")
+@app.get(
+    "/ace/getstream",
+    tags=["Proxy"],
+    summary="Start or join stream playback",
+    description="Starts or joins multiplexed stream playback and returns MPEG-TS or HLS depending on proxy mode.",
+    responses={
+        200: {"description": "Streaming response"},
+        400: {"description": "Invalid request or unsupported mode"},
+        422: {"description": "Stream blacklisted or unprocessable"},
+        500: {"description": "Internal streaming error"},
+    },
+)
 async def ace_getstream(
     id: Optional[str] = Query(None, description="AceStream content ID (PID/content_id)"),
     infohash: Optional[str] = Query(None, description="AceStream infohash"),
@@ -3051,7 +3085,17 @@ async def ace_getstream(
 
 
 
-@app.get("/ace/hls/{content_id}/segment/{segment_path:path}")
+@app.get(
+    "/ace/hls/{content_id}/segment/{segment_path:path}",
+    tags=["Proxy"],
+    summary="Fetch HLS segment",
+    description="Returns a buffered HLS segment for an active AceStream channel.",
+    responses={
+        200: {"description": "Segment data"},
+        404: {"description": "Segment not found"},
+        500: {"description": "Segment retrieval error"},
+    },
+)
 async def ace_hls_segment(
     content_id: str,
     segment_path: str,
@@ -3114,7 +3158,16 @@ async def ace_hls_segment(
 
 
 
-@app.get("/ace/manifest.m3u8")
+@app.get(
+    "/ace/manifest.m3u8",
+    tags=["Proxy"],
+    summary="Legacy HLS manifest entrypoint",
+    description="Deprecated compatibility endpoint that redirects manifest requests to /ace/getstream.",
+    responses={
+        301: {"description": "Redirect to /ace/getstream"},
+        400: {"description": "Invalid request parameters"},
+    },
+)
 async def ace_manifest(
     id: Optional[str] = Query(None, description="AceStream content ID (PID/content_id)"),
     infohash: Optional[str] = Query(None, description="AceStream infohash"),
@@ -4839,3 +4892,196 @@ async def modify_m3u(
         media_type="application/x-mpegURL",
         headers={"Content-Disposition": "attachment; filename=\"modified_playlist.m3u\""},
     )
+
+
+_MANAGEMENT_ROUTE_EXCLUDED_PREFIXES = (
+    "/panel",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/favicon",
+    "/apple-touch-icon.png",
+)
+_MANAGEMENT_ROUTE_EXCLUDED_EXACT = {
+    "/ace/getstream",
+    "/ace/manifest.m3u8",
+    "/ace/hls/{content_id}/segment/{segment_path:path}",
+}
+
+_TAG_BY_SEGMENT = {
+    "engines": "Engines",
+    "streams": "Streams",
+    "settings": "Settings",
+    "proxy": "Proxy",
+    "ace": "Proxy",
+    "health": "Health",
+    "orchestrator": "Health",
+    "vpn": "Health",
+    "events": "Events",
+    "metrics": "Metrics",
+    "cache": "Cache",
+    "engine-cache": "Cache",
+    "custom-variant": "Settings",
+    "stream-loop-detection": "Streams",
+    "looping-streams": "Streams",
+    "containers": "Orchestrator",
+    "provision": "Orchestrator",
+    "scale": "Orchestrator",
+    "gc": "Orchestrator",
+    "modify_m3u": "Proxy",
+    "by-label": "Orchestrator",
+    "version": "System",
+}
+
+
+def _is_management_route(path: str) -> bool:
+    if not path or not path.startswith("/"):
+        return False
+    if path.startswith("/api/v1"):
+        return False
+    if path in _MANAGEMENT_ROUTE_EXCLUDED_EXACT:
+        return False
+    for excluded_prefix in _MANAGEMENT_ROUTE_EXCLUDED_PREFIXES:
+        if path == excluded_prefix or path.startswith(f"{excluded_prefix}/"):
+            return False
+    return True
+
+
+def _infer_route_tag(path: str) -> str:
+    segment = path.strip("/").split("/", 1)[0] if path.strip("/") else "root"
+    return _TAG_BY_SEGMENT.get(segment, "Orchestrator")
+
+
+def _infer_route_summary(route: APIRoute) -> str:
+    if route.summary:
+        return route.summary
+    endpoint_name = (route.name or "route").replace("_", " ").strip()
+    return endpoint_name[:1].upper() + endpoint_name[1:]
+
+
+def _infer_route_description(route: APIRoute) -> str:
+    if route.description:
+        return route.description
+    doc = (route.endpoint.__doc__ or "").strip()
+    if doc:
+        return doc
+    method = sorted(route.methods or ["GET"])[0]
+    return f"{method} {route.path}"
+
+
+def _dedupe_preserve_order(values: List[str]) -> List[str]:
+    seen = set()
+    result: List[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _normalized_responses(route: APIRoute) -> Dict[int, Dict[str, str]]:
+    responses: Dict[int, Dict[str, str]] = {}
+    for key, value in (route.responses or {}).items():
+        try:
+            int_key = int(key)
+        except Exception:
+            continue
+        if isinstance(value, dict):
+            responses[int_key] = dict(value)
+
+    responses.setdefault(200, {"description": "Successful response"})
+    responses.setdefault(400, {"description": "Bad request"})
+    responses.setdefault(404, {"description": "Not found"})
+    responses.setdefault(500, {"description": "Internal server error"})
+    return responses
+
+
+def _infer_response_model(route: APIRoute):
+    if route.response_model is not None:
+        return route.response_model
+
+    overrides = {
+        "/health/status": HealthStatusResponse,
+        "/metrics/dashboard": MetricsResponse,
+        "/metrics/performance": MetricsResponse,
+        "/orchestrator/status": OrchestratorStatusResponse,
+        "/by-label": GenericListResponse,
+        "/engines/with-metrics": GenericListResponse,
+    }
+    if route.path in overrides:
+        return overrides[route.path]
+
+    # Binary/plaintext response endpoints should not be constrained to JSON object models.
+    if route.path in {"/metrics", "/settings/export", "/modify_m3u"}:
+        return Any
+
+    return GenericObjectResponse
+
+
+def _register_v1_management_routes():
+    v1_router = APIRouter(prefix="/api/v1")
+    grouped_routers: Dict[str, APIRouter] = {}
+
+    for route in list(app.routes):
+        if not isinstance(route, APIRoute):
+            continue
+
+        if not _is_management_route(route.path):
+            continue
+
+        normalized_path = route.path.strip("/")
+        segment = normalized_path.split("/", 1)[0] if normalized_path else "root"
+
+        if segment == "root":
+            segment_router = grouped_routers.get(segment)
+            if not segment_router:
+                segment_router = APIRouter(prefix="", tags=["Orchestrator"])
+                grouped_routers[segment] = segment_router
+            relative_path = route.path
+        else:
+            segment_router = grouped_routers.get(segment)
+            if not segment_router:
+                inferred_tag = _infer_route_tag(route.path)
+                segment_router = APIRouter(prefix=f"/{segment}", tags=[inferred_tag])
+                grouped_routers[segment] = segment_router
+
+            segment_prefix = f"/{segment}"
+            relative_path = route.path[len(segment_prefix):]
+            if not relative_path:
+                relative_path = ""
+
+        route_tags = _dedupe_preserve_order(list(route.tags or []))
+
+        response_model = _infer_response_model(route)
+        route_name = f"v1_{route.name}_{segment}" if route.name else None
+
+        segment_router.add_api_route(
+            relative_path,
+            endpoint=route.endpoint,
+            methods=sorted(route.methods or ["GET"]),
+            response_model=response_model,
+            status_code=route.status_code,
+            tags=route_tags,
+            dependencies=route.dependencies,
+            summary=_infer_route_summary(route),
+            description=_infer_route_description(route),
+            response_description=route.response_description,
+            responses=_normalized_responses(route),
+            deprecated=route.deprecated,
+            include_in_schema=True,
+            name=route_name,
+            response_class=route.response_class,
+            openapi_extra=route.openapi_extra,
+        )
+
+        # Keep legacy paths working for compatibility, but expose only /api/v1 in Swagger.
+        route.include_in_schema = False
+
+    for segment in sorted(grouped_routers.keys()):
+        v1_router.include_router(grouped_routers[segment])
+
+    app.include_router(v1_router)
+
+
+_register_v1_management_routes()

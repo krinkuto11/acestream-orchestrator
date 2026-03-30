@@ -59,12 +59,12 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
       
       // Fetch events with filter
       const eventsUrl = filterType === 'all' 
-        ? `${orchUrl}/events?limit=${displayLimit}`
-        : `${orchUrl}/events?event_type=${filterType}&limit=${displayLimit}`
+        ? `${orchUrl}/api/v1/events?limit=${displayLimit}`
+        : `${orchUrl}/api/v1/events?event_type=${filterType}&limit=${displayLimit}`
       
       const [eventsRes, statsRes] = await Promise.all([
         fetch(eventsUrl, { headers }),
-        fetch(`${orchUrl}/events/stats`, { headers })
+        fetch(`${orchUrl}/api/v1/events/stats`, { headers })
       ])
 
       if (!eventsRes.ok || !statsRes.ok) {
