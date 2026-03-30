@@ -209,6 +209,64 @@ async def test_record_client_activity_tracks_request_count(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_record_client_activity_accumulates_transfer_stats(tmp_path):
+    service = HLSSegmenterService(base_dir=str(tmp_path))
+    monitor_id = "stream-transfer-stats"
+    out_dir = tmp_path / monitor_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = out_dir / "index.m3u8"
+
+    service._sessions[monitor_id] = SegmenterSession(
+        monitor_id=monitor_id,
+        source_mpegts_url="http://source",
+        output_dir=out_dir,
+        manifest_path=manifest_path,
+        process=_DummyProcess(returncode=None),
+        started_at=time.time(),
+        last_activity=time.time(),
+    )
+
+    service.record_client_activity(
+        monitor_id,
+        "client-1",
+        "10.0.0.1",
+        "UA/1.0",
+        request_kind="manifest",
+        bytes_sent=220,
+        now=1000.0,
+    )
+    service.record_client_activity(
+        monitor_id,
+        "client-1",
+        "10.0.0.1",
+        "UA/1.0",
+        request_kind="segment",
+        bytes_sent=1200,
+        chunks_sent=1,
+        now=1001.0,
+    )
+    service.record_client_activity(
+        monitor_id,
+        "client-1",
+        "10.0.0.1",
+        "UA/1.0",
+        request_kind="segment",
+        bytes_sent=800,
+        chunks_sent=1,
+        now=1002.0,
+    )
+
+    clients = service.list_clients(monitor_id, max_idle_seconds=0)
+
+    assert len(clients) == 1
+    assert clients[0]["client_id"] == "client-1"
+    assert clients[0]["requests_total"] == 3
+    assert clients[0]["bytes_sent"] == 2220.0
+    assert clients[0]["chunks_sent"] == 2
+    assert clients[0]["stats_updated_at"] == 1002.0
+
+
+@pytest.mark.asyncio
 async def test_stop_segmenter_closes_control_client_and_emits_stream_end(tmp_path, monkeypatch):
     service = HLSSegmenterService(base_dir=str(tmp_path))
     monitor_id = "stream-4"

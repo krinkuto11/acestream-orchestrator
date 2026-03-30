@@ -165,6 +165,8 @@ class HLSSegmenterService:
         client_ip: str,
         user_agent: str,
         request_kind: str = "",
+        bytes_sent: Optional[float] = None,
+        chunks_sent: Optional[int] = None,
         now: Optional[float] = None,
     ) -> None:
         key = self._sanitize_monitor_id(monitor_id)
@@ -179,10 +181,35 @@ class HLSSegmenterService:
         normalized_ip = str(client_ip or "unknown")
         normalized_ua = str(user_agent or "unknown")
         normalized_request_kind = str(request_kind or "").strip().lower()
+        try:
+            bytes_delta = float(bytes_sent) if bytes_sent is not None else 0.0
+        except (TypeError, ValueError):
+            bytes_delta = 0.0
+        if bytes_delta < 0:
+            bytes_delta = 0.0
+
+        try:
+            chunks_delta = int(chunks_sent) if chunks_sent is not None else 0
+        except (TypeError, ValueError):
+            chunks_delta = 0
+        if chunks_delta < 0:
+            chunks_delta = 0
 
         existing = session.clients.get(normalized_client_id)
         connected_at = existing.get("connected_at") if existing else ts
         request_count = int(existing.get("requests_total") or 0) + 1 if existing else 1
+        existing_bytes = 0.0
+        existing_chunks = 0
+        if existing:
+            try:
+                existing_bytes = float(existing.get("bytes_sent") or 0.0)
+            except (TypeError, ValueError):
+                existing_bytes = 0.0
+            try:
+                existing_chunks = int(existing.get("chunks_sent") or 0)
+            except (TypeError, ValueError):
+                existing_chunks = 0
+
         session.clients[normalized_client_id] = {
             "client_id": normalized_client_id,
             "ip_address": normalized_ip,
@@ -192,6 +219,9 @@ class HLSSegmenterService:
             "worker_id": "api_hls_segmenter",
             "requests_total": request_count,
             "last_request_kind": normalized_request_kind or (existing.get("last_request_kind") if existing else ""),
+            "bytes_sent": existing_bytes + bytes_delta,
+            "chunks_sent": existing_chunks + chunks_delta,
+            "stats_updated_at": ts,
         }
         session.last_activity = ts
 

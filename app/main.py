@@ -3128,21 +3128,23 @@ async def ace_getstream(
 
                     logger.info("Reusing external HLS segmenter for stream %s", stream_key)
                     hls_segmenter_service.record_activity(stream_key)
+                    manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
+                    manifest_bytes = manifest_content.encode('utf-8')
                     hls_segmenter_service.record_client_activity(
                         stream_key,
                         client_identity,
                         client_ip,
                         user_agent,
                         request_kind="manifest",
+                        bytes_sent=len(manifest_bytes),
                     )
-                    manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
 
                     elapsed = time.perf_counter() - request_started_at
                     observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
                     observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
 
                     return StreamingResponse(
-                        iter([manifest_content.encode('utf-8')]),
+                        iter([manifest_bytes]),
                         media_type="application/vnd.apple.mpegurl",
                         headers={
                             "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -3328,21 +3330,23 @@ async def ace_getstream(
                     hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
 
                 hls_segmenter_service.record_activity(stream_key)
+                manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
+                manifest_bytes = manifest_content.encode('utf-8')
                 hls_segmenter_service.record_client_activity(
                     stream_key,
                     client_identity,
                     client_ip,
                     user_agent,
                     request_kind="manifest",
+                    bytes_sent=len(manifest_bytes),
                 )
-                manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
 
                 elapsed = time.perf_counter() - request_started_at
                 observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
                 observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
 
                 return StreamingResponse(
-                    iter([manifest_content.encode('utf-8')]),
+                    iter([manifest_bytes]),
                     media_type="application/vnd.apple.mpegurl",
                     headers={
                         "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -3529,6 +3533,10 @@ async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: 
     # Track clients for API-mode HLS streams so /proxy/streams/{key}/clients can report them.
     client_ip = get_client_ip(request)
     user_agent = request.headers.get('user-agent', 'unknown')
+    try:
+        segment_size = int(path.stat().st_size)
+    except OSError:
+        segment_size = 0
     client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
     hls_segmenter_service.record_client_activity(
         monitor_id,
@@ -3536,6 +3544,8 @@ async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: 
         client_ip,
         user_agent,
         request_kind="segment",
+        bytes_sent=segment_size,
+        chunks_sent=1,
     )
 
     return FileResponse(path=str(path), media_type="video/MP2T")
