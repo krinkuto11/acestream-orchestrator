@@ -3100,7 +3100,11 @@ async def ace_getstream(
                             pass
 
                 logger.info("Starting external HLS segmenter for stream %s", stream_key)
-                await hls_segmenter_service.start_segmenter(stream_key, playback_url)
+                try:
+                    await hls_segmenter_service.start_segmenter(stream_key, playback_url)
+                except (FileNotFoundError, RuntimeError, TimeoutError) as e:
+                    logger.error("Failed to initialize external HLS segmenter for stream %s: %s", stream_key, e)
+                    raise HTTPException(status_code=503, detail=f"Failed to initialize HLS segmenter: {e}")
                 hls_segmenter_service.record_activity(stream_key)
                 manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
 

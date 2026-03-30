@@ -91,11 +91,14 @@ class HLSSegmenterService:
             ]
 
             logger.info("Starting external HLS segmenter for stream %s", key)
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError as e:
+                raise RuntimeError("ffmpeg binary not found in orchestrator runtime image") from e
 
             session = SegmenterSession(
                 monitor_id=key,
