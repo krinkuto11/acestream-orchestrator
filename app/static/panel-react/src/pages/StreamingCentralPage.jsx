@@ -18,6 +18,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { RoutingTopologyPage } from '@/pages/RoutingTopologyPage'
 import { cn } from '@/lib/utils'
 import { useStreamingCentralStore } from '@/stores/streamingCentralStore'
+import { useTheme } from '@/components/ThemeProvider'
+import { CHART_SERIES, getChartTheme } from '@/lib/chartTheme'
 
 const sparklineOption = (points, color) => ({
   animation: false,
@@ -51,38 +53,47 @@ const sparklineOption = (points, color) => ({
   ],
 })
 
+// Status-color palette for KPI tiles: subdued bg + vibrant border
+const TONE_CARD = {
+  default: 'bg-card border-border',
+  sky:     'bg-sky-500/10 border-sky-500/20',
+  emerald: 'bg-emerald-500/10 border-emerald-500/20',
+  amber:   'bg-amber-500/10 border-amber-500/20',
+  rose:    'bg-rose-500/10 border-rose-500/20',
+}
+
+const TONE_ICON = {
+  default: 'text-muted-foreground',
+  sky:     'text-sky-500',
+  emerald: 'text-emerald-500',
+  amber:   'text-amber-500',
+  rose:    'text-rose-500',
+}
+
+const TONE_SPARKLINE = {
+  default: CHART_SERIES.blue,
+  sky:     CHART_SERIES.sky,
+  emerald: CHART_SERIES.emerald,
+  amber:   CHART_SERIES.amber,
+  rose:    CHART_SERIES.rose,
+}
+
 function KpiTile({ title, value, tone = 'default', points = [], suffix = '', icon: Icon }) {
-  const toneClass = {
-    default: 'border-slate-700/70 bg-slate-950/80 text-slate-50',
-    cyan: 'border-cyan-500/40 bg-cyan-950/30 text-cyan-100',
-    emerald: 'border-emerald-500/40 bg-emerald-950/30 text-emerald-100',
-    amber: 'border-amber-500/40 bg-amber-950/30 text-amber-100',
-    rose: 'border-rose-500/40 bg-rose-950/30 text-rose-100',
-  }
-
-  const sparklineColor = {
-    default: '#94a3b8',
-    cyan: '#22d3ee',
-    emerald: '#34d399',
-    amber: '#f59e0b',
-    rose: '#fb7185',
-  }
-
   return (
-    <Card className={cn('rounded-xl border shadow-sm', toneClass[tone])}>
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.14em]">
+    <Card className={cn('h-full shadow-sm border', TONE_CARD[tone])}>
+      <CardHeader className="p-4 pb-2">
+        <CardTitle className={cn('flex items-center justify-between text-xs font-semibold uppercase tracking-wider', TONE_ICON[tone])}>
           <span>{title}</span>
-          <Icon className="h-4 w-4 opacity-90" />
+          <Icon className="h-4 w-4" />
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-2 pt-0">
-        <p className="text-4xl font-black leading-none tracking-tight">
+      <CardContent className="p-4 pt-0 space-y-2">
+        <p className="text-4xl font-black leading-none tracking-tight text-foreground">
           {value}
-          {suffix ? <span className="ml-1 text-lg font-semibold opacity-75">{suffix}</span> : null}
+          {suffix ? <span className="ml-1 text-lg font-semibold text-muted-foreground">{suffix}</span> : null}
         </p>
-        <div className="h-11 w-full rounded bg-black/25 px-1 py-1">
-          <ReactECharts option={sparklineOption(points, sparklineColor[tone])} style={{ height: 32 }} />
+        <div className="h-10 w-full rounded bg-muted/40 px-1 py-1">
+          <ReactECharts option={sparklineOption(points, TONE_SPARKLINE[tone])} style={{ height: 28 }} />
         </div>
       </CardContent>
     </Card>
@@ -98,6 +109,8 @@ const formatTime = (iso) => {
   return date.toLocaleTimeString([], { hour12: false })
 }
 
+// Status-gradient palette for engine saturation tiles (fleet matrix).
+// White text is intentional: these tiles have saturated colored backgrounds.
 const engineToneClass = (score) => {
   if (score >= 88) return 'from-rose-600/70 to-rose-800/70 border-rose-500/70'
   if (score >= 70) return 'from-amber-500/60 to-amber-700/60 border-amber-400/70'
@@ -113,6 +126,7 @@ export function StreamingCentralPage({
   orchUrl,
   apiKey,
 }) {
+  const { resolvedTheme } = useTheme()
   const {
     kpiHistory,
     dashboardSnapshot,
@@ -181,6 +195,7 @@ export function StreamingCentralPage({
   }, [engineStartEvents])
 
   const latencyOverlayOption = useMemo(() => {
+    const ct = getChartTheme(resolvedTheme === 'dark')
     const timestamps = dashboardSnapshot?.history?.timestamps || []
     const labels = timestamps.map((ts) => formatTime(ts))
     const ttfb = dashboardSnapshot?.history?.ttfbP95Ms || []
@@ -196,28 +211,28 @@ export function StreamingCentralPage({
     return {
       animation: false,
       grid: { left: 42, right: 56, top: 30, bottom: 30 },
-      tooltip: { trigger: 'axis' },
+      tooltip: { trigger: 'axis', backgroundColor: ct.tooltipBg, borderColor: ct.tooltipBorder, textStyle: { color: ct.tooltipText } },
       legend: {
         data: ['TTFB p95 (ms)', 'Active Streams'],
-        textStyle: { color: '#cbd5e1' },
+        textStyle: { color: ct.legendText },
       },
       xAxis: {
         type: 'category',
         boundaryGap: false,
         data: labels,
-        axisLabel: { color: '#94a3b8' },
+        axisLabel: { color: ct.axisLabel },
       },
       yAxis: [
         {
           type: 'value',
           name: 'ms',
-          axisLabel: { color: '#fca5a5' },
-          splitLine: { lineStyle: { color: 'rgba(148,163,184,0.15)' } },
+          axisLabel: { color: ct.axisLabel },
+          splitLine: { lineStyle: { color: ct.splitLine } },
         },
         {
           type: 'value',
           name: 'streams',
-          axisLabel: { color: '#93c5fd' },
+          axisLabel: { color: ct.axisLabel },
           splitLine: { show: false },
         },
       ],
@@ -229,14 +244,14 @@ export function StreamingCentralPage({
           yAxisIndex: 0,
           symbol: 'none',
           data: ttfb,
-          lineStyle: { color: '#f87171', width: 2 },
-          areaStyle: { color: 'rgba(248,113,113,0.12)' },
+          lineStyle: { color: CHART_SERIES.rose, width: 2 },
+          areaStyle: { color: CHART_SERIES.rose, opacity: 0.12 },
           markLine: {
             symbol: ['none', 'none'],
             data: markLineData,
-            lineStyle: { color: '#f59e0b', width: 1.3, type: 'dashed' },
+            lineStyle: { color: CHART_SERIES.amber, width: 1.3, type: 'dashed' },
             label: {
-              color: '#fcd34d',
+              color: CHART_SERIES.amber,
               formatter: 'Engine Start',
               position: 'insideEndTop',
             },
@@ -249,14 +264,15 @@ export function StreamingCentralPage({
           yAxisIndex: 1,
           symbol: 'none',
           data: activeStreamsSeries,
-          lineStyle: { color: '#60a5fa', width: 2 },
-          areaStyle: { color: 'rgba(96,165,250,0.12)' },
+          lineStyle: { color: CHART_SERIES.blue, width: 2 },
+          areaStyle: { color: CHART_SERIES.blue, opacity: 0.12 },
         },
       ],
     }
-  }, [dashboardSnapshot, sortedEngineEvents])
+  }, [dashboardSnapshot, sortedEngineEvents, resolvedTheme])
 
   const heatmapOption = useMemo(() => {
+    const ct = getChartTheme(resolvedTheme === 'dark')
     const xBuckets = bufferBuckets || []
     const xLabels = xBuckets.map((bucket) => formatTime(bucket.ts))
 
@@ -274,19 +290,17 @@ export function StreamingCentralPage({
     return {
       animation: false,
       grid: { left: 90, right: 20, top: 16, bottom: 46 },
-      tooltip: {
-        position: 'top',
-      },
+      tooltip: { position: 'top', backgroundColor: ct.tooltipBg, borderColor: ct.tooltipBorder, textStyle: { color: ct.tooltipText } },
       xAxis: {
         type: 'category',
         data: xLabels,
-        axisLabel: { color: '#94a3b8', showMaxLabel: true, hideOverlap: true },
+        axisLabel: { color: ct.axisLabel, showMaxLabel: true, hideOverlap: true },
         splitArea: { show: false },
       },
       yAxis: {
         type: 'category',
         data: streamLabels,
-        axisLabel: { color: '#cbd5e1' },
+        axisLabel: { color: ct.axisLabel },
         splitArea: { show: false },
       },
       visualMap: {
@@ -296,8 +310,9 @@ export function StreamingCentralPage({
         left: 'center',
         bottom: 0,
         text: ['Healthy buffer', 'Stutter risk'],
+        textStyle: { color: ct.legendText },
         inRange: {
-          color: ['#7f1d1d', '#ea580c', '#facc15', '#22c55e'],
+          color: [CHART_SERIES.rose, CHART_SERIES.amber, '#facc15', CHART_SERIES.emerald],
         },
       },
       series: [
@@ -314,7 +329,7 @@ export function StreamingCentralPage({
         },
       ],
     }
-  }, [bufferBuckets, streams])
+  }, [bufferBuckets, streams, resolvedTheme])
 
   const activeStreamsValue = Number(orchestratorStatus?.streams?.active ?? streams?.length ?? 0)
   const healthyEnginesValue = Number(
@@ -337,7 +352,7 @@ export function StreamingCentralPage({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-black tracking-tight">Streaming Central</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Streaming Central</h1>
           <p className="text-sm text-muted-foreground">
             High-frequency NOC surface for routing stability, QoE telemetry, and container saturation.
           </p>
@@ -372,57 +387,67 @@ export function StreamingCentralPage({
         </TabsList>
 
         <TabsContent value="pulse" className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <KpiTile
-              title="Active Streams"
-              value={activeStreamsValue}
-              points={kpiHistory.activeStreams}
-              tone="cyan"
-              icon={Tv}
-            />
-            <KpiTile
-              title="Global Egress"
-              value={formatGbps(egressGbps)}
-              suffix="Gbps"
-              points={kpiHistory.egressGbps}
-              tone="emerald"
-              icon={Network}
-            />
-            <KpiTile
-              title="Healthy Engines"
-              value={healthyEnginesValue}
-              points={kpiHistory.healthyEngines}
-              tone="amber"
-              icon={Server}
-            />
-            <KpiTile
-              title="Success Rate"
-              value={formatPercent(successRate)}
-              suffix="%"
-              points={kpiHistory.successRate}
-              tone={successRate < 97 ? 'rose' : 'default'}
-              icon={GaugeCircle}
-            />
+          <div className="grid grid-cols-12 gap-4">
+            <div className="col-span-12 sm:col-span-6 xl:col-span-3">
+              <KpiTile
+                title="Active Streams"
+                value={activeStreamsValue}
+                points={kpiHistory.activeStreams}
+                tone="sky"
+                icon={Tv}
+              />
+            </div>
+            <div className="col-span-12 sm:col-span-6 xl:col-span-3">
+              <KpiTile
+                title="Global Egress"
+                value={formatGbps(egressGbps)}
+                suffix="Gbps"
+                points={kpiHistory.egressGbps}
+                tone="emerald"
+                icon={Network}
+              />
+            </div>
+            <div className="col-span-12 sm:col-span-6 xl:col-span-3">
+              <KpiTile
+                title="Healthy Engines"
+                value={healthyEnginesValue}
+                points={kpiHistory.healthyEngines}
+                tone="amber"
+                icon={Server}
+              />
+            </div>
+            <div className="col-span-12 sm:col-span-6 xl:col-span-3">
+              <KpiTile
+                title="Success Rate"
+                value={formatPercent(successRate)}
+                suffix="%"
+                points={kpiHistory.successRate}
+                tone={successRate < 97 ? 'rose' : 'default'}
+                icon={GaugeCircle}
+              />
+            </div>
           </div>
 
-          <Card className="border-slate-700/70 bg-slate-950/78">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-slate-100">Quick risk scan</CardTitle>
+          <Card className="shadow-sm">
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Quick risk scan
+              </CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-2 text-sm md:grid-cols-3">
-              <div className="rounded-md border border-slate-700 bg-slate-900/60 p-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">VPN mode</p>
-                <p className="font-semibold text-slate-100">{vpnStatus?.mode || 'unknown'}</p>
+            <CardContent className="grid gap-2 p-4 pt-0 text-sm md:grid-cols-3">
+              <div className="rounded-md border border-border bg-muted/40 p-3">
+                <p className="text-xs uppercase tracking-wider text-muted-foreground">VPN mode</p>
+                <p className="mt-0.5 font-semibold text-foreground">{vpnStatus?.mode || 'unknown'}</p>
               </div>
-              <div className="rounded-md border border-slate-700 bg-slate-900/60 p-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Capacity used</p>
-                <p className="font-semibold text-slate-100">
+              <div className="rounded-md border border-border bg-muted/40 p-3">
+                <p className="text-xs uppercase tracking-wider text-muted-foreground">Capacity used</p>
+                <p className="mt-0.5 font-semibold text-foreground">
                   {orchestratorStatus?.capacity?.used ?? 0} / {orchestratorStatus?.capacity?.total ?? 0}
                 </p>
               </div>
-              <div className="rounded-md border border-slate-700 bg-slate-900/60 p-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Circuit breaker</p>
-                <p className="font-semibold text-slate-100">
+              <div className="rounded-md border border-border bg-muted/40 p-3">
+                <p className="text-xs uppercase tracking-wider text-muted-foreground">Circuit breaker</p>
+                <p className="mt-0.5 font-semibold text-foreground">
                   {orchestratorStatus?.provisioning?.circuit_breaker_state || 'unknown'}
                 </p>
               </div>
@@ -441,31 +466,37 @@ export function StreamingCentralPage({
         </TabsContent>
 
         <TabsContent value="microscope" className="space-y-3">
-          <Card className="border-slate-700/70 bg-slate-950/80">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-slate-100">Buffer Heatmap (rolling 5m)</CardTitle>
+          <Card className="shadow-sm">
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Buffer Heatmap (rolling 5m)
+              </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-4 pt-0">
               <ReactECharts option={heatmapOption} style={{ height: 430 }} />
             </CardContent>
           </Card>
 
-          <Card className="border-slate-700/70 bg-slate-950/80">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-slate-100">Latency overlay + engine starts</CardTitle>
+          <Card className="shadow-sm">
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Latency overlay + engine starts
+              </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-4 pt-0">
               <ReactECharts option={latencyOverlayOption} style={{ height: 340 }} />
             </CardContent>
           </Card>
         </TabsContent>
 
         <TabsContent value="fleet" className="space-y-3">
-          <Card className="border-slate-700/70 bg-slate-950/80">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-slate-100">Container saturation map</CardTitle>
+          <Card className="shadow-sm">
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Container saturation map
+              </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-4 pt-0">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
                 {(engines || []).map((engine) => {
                   const stats = engineStatsById?.[engine.container_id] || {}
@@ -481,11 +512,11 @@ export function StreamingCentralPage({
                           type="button"
                           onClick={() => openEngineLogs(engine.container_id)}
                           className={cn(
-                            'group h-24 rounded-lg border bg-gradient-to-br p-2 text-left text-white shadow transition hover:scale-[1.01] hover:shadow-lg',
+                            'group h-24 rounded-lg border bg-gradient-to-br p-2 text-left text-white shadow-sm transition hover:scale-[1.01] hover:shadow-md',
                             engineToneClass(utilization),
                           )}
                         >
-                          <p className="truncate text-[11px] font-semibold uppercase tracking-[0.1em]">
+                          <p className="truncate text-[11px] font-semibold uppercase tracking-wider">
                             {engine.container_name || engine.container_id.slice(0, 12)}
                           </p>
                           <div className="mt-2 flex items-end justify-between text-xs">
@@ -500,14 +531,14 @@ export function StreamingCentralPage({
                           </div>
                         </button>
                       </HoverCardTrigger>
-                      <HoverCardContent className="w-80 border-slate-700 bg-slate-950 text-slate-100">
+                      <HoverCardContent className="w-80">
                         <div className="space-y-1 text-xs">
-                          <p className="text-sm font-semibold">{engine.container_name || engine.container_id}</p>
-                          <p className="text-slate-400">Host Port: {engine.port}</p>
-                          <p className="text-slate-400">VPN Tunnel: {engine.vpn_container || 'unassigned'}</p>
-                          <p className="text-slate-400">Uptime anchor: {formatTime(engine.first_seen || inspect.created)}</p>
-                          <p className="text-slate-400">Restart count: {inspect.restart_count ?? engine.restart_count ?? 0}</p>
-                          <p className="text-slate-400">Streams: {engine.stream_count ?? 0}</p>
+                          <p className="text-sm font-semibold text-foreground">{engine.container_name || engine.container_id}</p>
+                          <p className="text-muted-foreground">Host Port: {engine.port}</p>
+                          <p className="text-muted-foreground">VPN Tunnel: {engine.vpn_container || 'unassigned'}</p>
+                          <p className="text-muted-foreground">Uptime anchor: {formatTime(engine.first_seen || inspect.created)}</p>
+                          <p className="text-muted-foreground">Restart count: {inspect.restart_count ?? engine.restart_count ?? 0}</p>
+                          <p className="text-muted-foreground">Streams: {engine.stream_count ?? 0}</p>
                         </div>
                       </HoverCardContent>
                     </HoverCard>
@@ -520,7 +551,7 @@ export function StreamingCentralPage({
       </Tabs>
 
       <Sheet open={Boolean(selectedEngineId)} onOpenChange={(open) => (!open ? closeEngineLogs() : undefined)}>
-        <SheetContent side="right" className="w-[92vw] max-w-[720px] border-slate-700 bg-slate-950 text-slate-100">
+        <SheetContent side="right" className="w-[92vw] max-w-[720px]">
           <SheetHeader>
             <SheetTitle>{selectedEngine?.container_name || selectedEngineId || 'Engine logs'}</SheetTitle>
             <SheetDescription>
@@ -529,7 +560,7 @@ export function StreamingCentralPage({
           </SheetHeader>
 
           <div className="mt-4 flex items-center justify-between gap-2">
-            <div className="text-xs text-slate-400">
+            <div className="text-xs text-muted-foreground">
               Last fetch: {selectedEngineLogs?.fetchedAt ? formatTime(selectedEngineLogs.fetchedAt) : '-'}
             </div>
             <Button
@@ -552,9 +583,9 @@ export function StreamingCentralPage({
             </Alert>
           ) : null}
 
-          <div className="mt-3 rounded-md border border-slate-700 bg-black/30">
+          <div className="mt-3 rounded-md border border-border bg-muted/20">
             <ScrollArea className="h-[70vh]">
-              <pre className="px-4 py-3 font-mono text-[11px] leading-relaxed text-slate-200">
+              <pre className="px-4 py-3 font-mono text-[11px] leading-relaxed text-foreground">
                 {logsLoading ? 'Loading logs...' : (selectedEngineLogs?.lines || []).join('\n') || 'No logs available.'}
               </pre>
             </ScrollArea>
