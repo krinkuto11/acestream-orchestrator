@@ -3129,20 +3129,22 @@ async def ace_getstream(
                 existing_manifest = await hls_segmenter_service.get_or_wait_manifest(stream_key, timeout_s=15.0)
                 if existing_manifest:
                     session_meta = hls_segmenter_service.get_session_metadata(stream_key) or {}
-                    stream_id = await _register_api_hls_stream_if_missing(
-                        container_id=str(session_meta.get("container_id") or ""),
-                        engine_host=str(session_meta.get("engine_host") or ""),
-                        engine_port=_safe_int(session_meta.get("engine_port"), default=0),
-                        engine_api_port=_safe_int(session_meta.get("engine_api_port"), default=0),
-                        playback_session_id=str(session_meta.get("playback_session_id") or ""),
-                        stat_url=str(session_meta.get("stat_url") or ""),
-                        command_url=str(session_meta.get("command_url") or ""),
-                        is_live=_safe_int(session_meta.get("is_live"), default=1),
-                    )
-                    if stream_id:
-                        hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
+                    existing_stream_id = str(session_meta.get("stream_id") or "").strip()
+                    if not existing_stream_id:
+                        stream_id = await _register_api_hls_stream_if_missing(
+                            container_id=str(session_meta.get("container_id") or ""),
+                            engine_host=str(session_meta.get("engine_host") or ""),
+                            engine_port=_safe_int(session_meta.get("engine_port"), default=0),
+                            engine_api_port=_safe_int(session_meta.get("engine_api_port"), default=0),
+                            playback_session_id=str(session_meta.get("playback_session_id") or ""),
+                            stat_url=str(session_meta.get("stat_url") or ""),
+                            command_url=str(session_meta.get("command_url") or ""),
+                            is_live=_safe_int(session_meta.get("is_live"), default=1),
+                        )
+                        if stream_id:
+                            hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
 
-                    logger.info("Reusing external HLS segmenter for stream %s", stream_key)
+                    logger.debug("Reusing external HLS segmenter for stream %s", stream_key)
                     hls_segmenter_service.record_activity(stream_key)
                     manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
                     manifest_bytes = manifest_content.encode('utf-8')

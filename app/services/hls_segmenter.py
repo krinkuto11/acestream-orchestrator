@@ -58,6 +58,19 @@ class HLSSegmenterService:
         except Exception:
             self._legacy_probe_cache_ttl_s = 1.0
 
+        # API-mode HLS segmenter tuning. Lower defaults improve startup latency.
+        self._hls_segment_time_s = self._to_float(os.getenv("API_HLS_SEGMENT_TIME_S", "3.0"), default=3.0)
+        self._hls_segment_time_s = min(10.0, max(1.0, self._hls_segment_time_s))
+        self._hls_list_size = max(3, self._to_int(os.getenv("API_HLS_LIST_SIZE", "5"), default=5))
+        self._hls_split_by_time = self._to_bool(os.getenv("API_HLS_SPLIT_BY_TIME", "1"), default=True)
+
+        logger.debug(
+            "API-HLS segmenter config: segment_time=%.2fs list_size=%s split_by_time=%s",
+            self._hls_segment_time_s,
+            self._hls_list_size,
+            self._hls_split_by_time,
+        )
+
     @staticmethod
     def _sanitize_monitor_id(monitor_id: str) -> str:
         raw = str(monitor_id or "").strip()
@@ -74,6 +87,26 @@ class HLSSegmenterService:
             return int(value)
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _to_bool(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return default
 
     def _apply_metadata(self, session: SegmenterSession, metadata: Optional[Dict[str, Any]]) -> None:
         if not metadata:
@@ -402,6 +435,11 @@ class HLSSegmenterService:
                 await asyncio.to_thread(out_dir.mkdir, parents=True, exist_ok=True)
                 manifest_path = out_dir / "index.m3u8"
 
+                hls_flags = "delete_segments+append_list"
+                if self._hls_split_by_time:
+                    # Avoid waiting for long GOP keyframes before first segment emission.
+                    hls_flags += "+split_by_time"
+
                 cmd = [
                     "ffmpeg",
                     "-hide_banner",
@@ -414,11 +452,11 @@ class HLSSegmenterService:
                     "-f",
                     "hls",
                     "-hls_time",
-                    "6",
+                    str(self._hls_segment_time_s),
                     "-hls_list_size",
-                    "5",
+                    str(self._hls_list_size),
                     "-hls_flags",
-                    "delete_segments+append_list",
+                    hls_flags,
                     str(manifest_path),
                 ]
 

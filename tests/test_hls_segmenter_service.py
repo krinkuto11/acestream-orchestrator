@@ -334,3 +334,67 @@ async def test_collect_legacy_stats_probe_uses_cache(tmp_path):
     assert second is not None
     assert forced is not None
     assert status_client.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_start_segmenter_uses_low_latency_hls_defaults(tmp_path, monkeypatch):
+    service = HLSSegmenterService(base_dir=str(tmp_path))
+    monitor_id = "stream-cmd-defaults"
+
+    captured = {"cmd": []}
+
+    async def fake_spawn(*cmd, **_kwargs):
+        captured["cmd"] = list(cmd)
+        return _DummyProcess(returncode=None)
+
+    async def fake_wait(monitor_key: str, timeout_s: float = 15.0):
+        session = service._sessions[monitor_key]
+        session.manifest_path.write_text("#EXTM3U\n", encoding="utf-8")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_spawn)
+    monkeypatch.setattr(service, "_wait_for_manifest", fake_wait)
+
+    await service.start_segmenter(monitor_id, "http://source")
+
+    cmd = captured["cmd"]
+    assert cmd
+    assert "-hls_time" in cmd
+    assert cmd[cmd.index("-hls_time") + 1] == "3.0"
+    assert "-hls_list_size" in cmd
+    assert cmd[cmd.index("-hls_list_size") + 1] == "5"
+    assert "-hls_flags" in cmd
+    assert "split_by_time" in cmd[cmd.index("-hls_flags") + 1]
+
+
+@pytest.mark.asyncio
+async def test_start_segmenter_respects_env_tuning(tmp_path, monkeypatch):
+    monkeypatch.setenv("API_HLS_SEGMENT_TIME_S", "2.5")
+    monkeypatch.setenv("API_HLS_LIST_SIZE", "7")
+    monkeypatch.setenv("API_HLS_SPLIT_BY_TIME", "0")
+
+    service = HLSSegmenterService(base_dir=str(tmp_path))
+    monitor_id = "stream-cmd-env"
+
+    captured = {"cmd": []}
+
+    async def fake_spawn(*cmd, **_kwargs):
+        captured["cmd"] = list(cmd)
+        return _DummyProcess(returncode=None)
+
+    async def fake_wait(monitor_key: str, timeout_s: float = 15.0):
+        session = service._sessions[monitor_key]
+        session.manifest_path.write_text("#EXTM3U\n", encoding="utf-8")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_spawn)
+    monkeypatch.setattr(service, "_wait_for_manifest", fake_wait)
+
+    await service.start_segmenter(monitor_id, "http://source")
+
+    cmd = captured["cmd"]
+    assert cmd
+    assert "-hls_time" in cmd
+    assert cmd[cmd.index("-hls_time") + 1] == "2.5"
+    assert "-hls_list_size" in cmd
+    assert cmd[cmd.index("-hls_list_size") + 1] == "7"
+    assert "-hls_flags" in cmd
+    assert "split_by_time" not in cmd[cmd.index("-hls_flags") + 1]
