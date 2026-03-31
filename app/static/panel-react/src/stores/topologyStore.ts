@@ -206,10 +206,31 @@ const buildSnapshot = ({
 
   const failoverEngines: string[] = []
 
-  const engineStartX = 400
+  // 1. Sort engines so active ones are prioritized at the top
+  const engineStats = workingEngines.map((engine) => {
+    const engineStreams = streamMap.get(engine.container_id) || []
+    return {
+      engine,
+      streamCount: engineStreams.length,
+      measuredMbps: engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_down), 0),
+    }
+  }).sort((a, b) => {
+    if (b.streamCount !== a.streamCount) return b.streamCount - a.streamCount
+    if (b.measuredMbps !== a.measuredMbps) return b.measuredMbps - a.measuredMbps
+    return (a.engine.container_name || '').localeCompare(b.engine.container_name || '')
+  })
+
+  // 2. Define Staggered Grid properties
+  const NUM_COLUMNS = Math.max(1, Math.min(3, Math.ceil(engineStats.length / 6)))
+  const COLUMN_SPACING_X = 340   // 210px node width + 130px gap for pipes and labels
+  const STAGGERED_ROW_SPACING_Y = 140 // Enough vertical space for the node + a gap for horizontal pipes
+
+  const engineStartX = 350
   const engineStartY = 80
-  const engineSpacingY = 200
-  const centerY = engineStartY + Math.max(0, workingEngines.length - 1) * engineSpacingY / 2
+
+  // Center Y spans the entire height of the staggered list
+  const totalEngineHeight = Math.max(0, engineStats.length - 1) * STAGGERED_ROW_SPACING_Y
+  const centerY = engineStartY + totalEngineHeight / 2
 
   nodes.push({
     id: vpn1NodeId,
@@ -250,8 +271,17 @@ const buildSnapshot = ({
     },
   })
 
-  workingEngines.forEach((engine, index) => {
+  // 3. Process the nodes using the Zig-Zag Staggered Corridor pattern
+  engineStats.forEach(({ engine, streamCount, measuredMbps }, index) => {
     const engineStreams = streamMap.get(engine.container_id) || []
+
+    // Determine column (0, 1, 2, 0, 1, 2...)
+    const colIndex = index % NUM_COLUMNS
+
+    // Calculate positions — every index gets a unique Y, creating dedicated horizontal pipe corridors
+    const currentX = engineStartX + (colIndex * COLUMN_SPACING_X)
+    const currentY = engineStartY + (index * STAGGERED_ROW_SPACING_Y)
+
     const assignedTunnel = inferTunnelFromEngine(engine, index)
     const tunnelHealthy = tunnelConnectivity[assignedTunnel]
     const backupTunnel = assignedTunnel === 'vpn1' ? 'vpn2' : 'vpn1'
@@ -260,8 +290,6 @@ const buildSnapshot = ({
     const failoverActive = !tunnelHealthy && backupHealthy
     const sourceTunnel = failoverActive ? backupTunnel : assignedTunnel
 
-    const streamCount = engineStreams.length
-    const measuredMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_down), 0)
     const bandwidthMbps = measuredMbps > 0 ? measuredMbps : (isMockMode ? randomBetween(8, 72) : 0)
 
     let health: TopologyNodeHealth = 'healthy'
@@ -278,7 +306,7 @@ const buildSnapshot = ({
     nodes.push({
       id: engine.container_id,
       type: 'topologyNode',
-      position: { x: engineStartX, y: engineStartY + index * engineSpacingY },
+      position: { x: currentX, y: currentY },
       data: {
         kind: 'engine',
         title: engine.container_name || formatCompactId(engine.container_id),
@@ -335,7 +363,7 @@ const buildSnapshot = ({
     })
   })
 
-  const totalBandwidthMbps = workingEngines.reduce((sum, engine) => {
+  const totalBandwidthMbps = engineStats.reduce((sum, { engine }) => {
     const found = nodes.find((node) => node.id === engine.container_id)
     return sum + (found?.data?.bandwidthMbps || 0)
   }, 0)
@@ -350,10 +378,14 @@ const buildSnapshot = ({
   const activeStreams = orchestratorStatus?.streams?.active ?? workingStreams.length
   const activeClients = orchestratorStatus?.proxy?.active_clients?.total ?? Math.max(activeStreams, 1)
 
+  // Dynamically position downstream nodes based on the number of engine columns
+  const proxyNodeX = engineStartX + (NUM_COLUMNS * COLUMN_SPACING_X) + 120
+  const clientNodeX = proxyNodeX + 460
+
   nodes.push({
     id: proxyNodeId,
     type: 'topologyNode',
-    position: { x: 860, y: centerY },
+    position: { x: proxyNodeX, y: centerY },
     data: {
       kind: 'proxy',
       title: 'Mux and Proxy Core',
@@ -373,7 +405,7 @@ const buildSnapshot = ({
   nodes.push({
     id: clientNodeId,
     type: 'topologyNode',
-    position: { x: 1320, y: centerY },
+    position: { x: clientNodeX, y: centerY },
     data: {
       kind: 'client',
       title: 'Client Edge',
@@ -388,6 +420,7 @@ const buildSnapshot = ({
       },
     },
   })
+
 
   edges.push({
     id: `${proxyNodeId}->${clientNodeId}`,

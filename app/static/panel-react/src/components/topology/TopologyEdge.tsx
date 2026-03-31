@@ -65,18 +65,41 @@ export function TopologyEdge({
           className="nodrag nopan"
         >
           <div 
-            className={cn(
-              "px-2 py-0.5 rounded border shadow-sm text-[10px] font-bold transition-colors duration-300",
-              isFailover 
-                ? "border-amber-400 bg-amber-950 text-amber-50 shadow-[0_0_12px_rgba(245,158,11,0.35)]" 
-                : bandwidth > 0.1 
-                  ? "border-emerald-400 bg-emerald-950 text-emerald-50 shadow-[0_0_12px_rgba(16,185,129,0.4)]" 
-                  : data?.labelPosition === 'near-source' 
-                    ? "border-sky-500/50 bg-sky-900 text-sky-50 font-black px-1.5 shadow-sm" 
-                    : "border-slate-500 bg-slate-800 text-slate-100 font-bold px-1.5 shadow-sm"
-            )}
+            style={{
+              padding: '2px 8px',
+              borderRadius: '6px',
+              fontSize: '10px',
+              fontWeight: 800,
+              letterSpacing: '0.02em',
+              transition: 'all 0.3s ease',
+              ...(isFailover ? {
+                background: '#92400e',
+                borderColor: '#fbbf24',
+                color: '#fef3c7',
+                border: '1.5px solid #fbbf24',
+                boxShadow: '0 0 12px rgba(245,158,11,0.4)',
+              } : isActive ? {
+                background: '#065f46',
+                borderColor: '#34d399',
+                color: '#d1fae5',
+                border: '1.5px solid #34d399',
+                boxShadow: '0 0 12px rgba(16,185,129,0.45)',
+              } : data?.labelPosition === 'near-source' ? {
+                background: '#0c4a6e',
+                borderColor: '#38bdf8',
+                color: '#e0f2fe',
+                border: '1.5px solid rgba(56,189,248,0.5)',
+                boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+              } : {
+                background: '#334155',
+                borderColor: '#64748b',
+                color: '#e2e8f0',
+                border: '1.5px solid #64748b',
+                boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+              }),
+            }}
           >
-            {bandwidth.toFixed(1)} <span className="text-[8px] font-medium opacity-80">Mbps</span>
+            {bandwidth.toFixed(1)} <span style={{ fontSize: '8px', fontWeight: 500, opacity: 0.85 }}>Mbps</span>
           </div>
         </div>
       </EdgeLabelRenderer>
