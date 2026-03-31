@@ -75,12 +75,9 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
   // Automatically fit view when nodes are first populated or change significantly
   useEffect(() => {
     if (rfInstance && nodes.length > 0) {
-      // Multiple fit attempts to ensure correct framing after all nodes are sized and rendered
       const fit = () => rfInstance.fitView({ padding: 0.12, duration: 800 })
-      
       const timer1 = setTimeout(fit, 150)
       const timer2 = setTimeout(fit, 1000) 
-      
       return () => {
         clearTimeout(timer1)
         clearTimeout(timer2)
@@ -102,14 +99,11 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
 
   return (
     <div className={cn(
-      "relative w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-2xl transition-all duration-500 flex flex-col",
+      "relative w-full overflow-hidden rounded-xl border border-slate-800 bg-[#0f172a] shadow-inner flex flex-col",
       embedded ? "h-[740px]" : "h-screen"
     )}>
-      {/* Background Ambience Overlay */}
-      <div className="absolute inset-0 z-0 bg-[radial-gradient(circle_at_15%_10%,rgba(59,130,246,0.12),transparent_35%),radial-gradient(circle_at_85%_90%,rgba(16,185,129,0.14),transparent_40%),linear-gradient(180deg,rgba(15,23,42,0.75),rgba(2,6,23,0.9))] opacity-40 pointer-events-none" />
+      {/* Background Ambience Gradient removed for a clean enterprise feel */}
       
-      {/* HUD-style Header Overlay removed to maximize diagram space as per user request */}
-
       <div className="h-full w-full">
         <ReactFlow
           nodes={nodes}
@@ -131,20 +125,20 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
           elementsSelectable
         >
           <Controls 
-            className="!bg-slate-900/80 !border-slate-700/50 !shadow-lg" 
+            className="!bg-slate-900 !border-slate-700 !shadow-lg" 
             style={{ fill: '#94a3b8' }} 
           />
-          <Background gap={22} size={1} color="rgba(148,163,184,0.15)" />
+          <Background gap={22} size={1} color="rgba(148,163,184,0.1)" />
         </ReactFlow>
       </div>
 
-      {/* Floating Node Inspector Panel */}
+      {/* Professional Node Inspector Panel */}
       {selectedNode && (
-        <Card className="absolute right-6 top-6 bottom-6 z-20 w-80 overflow-hidden border-slate-700/60 bg-slate-950/90 shadow-2xl backdrop-blur-xl animate-in slide-in-from-right duration-500">
-          <CardHeader className="border-b border-slate-700/60 bg-slate-900/40 pb-4">
+        <Card className="absolute right-6 top-6 bottom-6 z-20 w-80 overflow-hidden border-slate-700/50 bg-[#0f172a]/95 shadow-2xl backdrop-blur-md animate-in slide-in-from-right duration-300">
+          <CardHeader className="border-b border-slate-800 bg-slate-900/50 pb-4">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-100">
-                Node Inspector
+              <CardTitle className="text-sm font-semibold tracking-tight text-slate-100">
+                Resource Details
               </CardTitle>
               <button 
                 onClick={() => setSelectedNode(null)} 
@@ -157,53 +151,59 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
           </CardHeader>
 
           <CardContent className="space-y-4 p-5">
-            <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-4 shadow-inner">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400/80">Resource identifier</p>
-              <p className="mt-1 text-lg font-bold text-slate-50">{selectedNode.data?.title}</p>
-              <p className="text-xs font-mono text-slate-400">{selectedNode.data?.subtitle}</p>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Resource Identifier</p>
+              <p className="mt-1 text-base font-semibold text-slate-100 leading-tight">{selectedNode.data?.title}</p>
+              <p className="mt-0.5 font-mono text-[11px] text-slate-400 line-clamp-1">{selectedNode.data?.subtitle}</p>
+              
               <div className="mt-3 flex flex-wrap gap-2">
                 <Badge 
-                  variant={selectedNode.data?.health === 'down' ? 'destructive' : selectedNode.data?.health === 'degraded' ? 'warning' : 'success'}
-                  className="font-bold border-none shadow-none uppercase text-[10px]"
+                  variant={selectedNode.data?.health === 'down' ? 'destructive' : selectedNode.data?.health === 'degraded' ? 'warning' : 'outline'}
+                  className={cn(
+                    "font-semibold uppercase text-[9px] px-1.5 py-0",
+                    selectedNode.data?.health === 'healthy' && "border-emerald-500/30 text-emerald-400 bg-emerald-500/5"
+                  )}
                 >
                   {selectedNode.data?.health}
                 </Badge>
                 {selectedNode.data?.failoverActive && (
-                  <Badge variant="warning" className="uppercase font-bold text-[10px] border-none shadow-none">Active Failover</Badge>
+                  <Badge variant="warning" className="uppercase font-semibold text-[9px] border-amber-500/40 bg-amber-500/10 text-amber-200">
+                    Active Failover
+                  </Badge>
                 )}
               </div>
             </div>
 
-            <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-4 shadow-inner">
-              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-400/80">
-                <Activity className="h-3.5 w-3.5 text-emerald-400" />
+            <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4">
+              <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-3">
+                <Activity className="h-3.5 w-3.5 text-blue-400" />
                 Live Telemetry
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-[10px] text-slate-400/70 uppercase tracking-tighter">Bitrate</p>
-                  <p className="text-xl font-black text-emerald-400 drop-shadow-sm">
-                    {selectedNode.data?.bandwidthMbps.toFixed(1)} <span className="text-xs text-emerald-600/80">Mbps</span>
+                  <p className="text-[10px] text-slate-500 uppercase font-medium">Throughput</p>
+                  <p className="text-xl font-semibold text-emerald-400 tabular-nums">
+                    {selectedNode.data?.bandwidthMbps.toFixed(1)} <span className="text-xs text-slate-500 font-normal ml-0.5">Mbps</span>
                   </p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-slate-400/70 uppercase tracking-tighter font-semibold">Engaged Streams</p>
-                  <p className="text-xl font-black text-slate-50">
+                  <p className="text-[10px] text-slate-500 uppercase font-medium">Active Streams</p>
+                  <p className="text-xl font-semibold text-slate-100 tabular-nums">
                     {selectedNode.data?.streamCount}
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-0 overflow-hidden">
-              <div className="bg-slate-900/80 px-4 py-2 border-b border-slate-700/70">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400/80">Internal Metadata</p>
+            <div className="rounded-lg border border-slate-800 bg-slate-900/30 overflow-hidden">
+              <div className="bg-slate-900/60 px-4 py-2 border-b border-slate-800">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Metadata Properties</p>
               </div>
-              <div className="p-4 space-y-1.5 font-mono text-[11px] text-slate-200">
+              <div className="p-4 space-y-2 font-mono text-[11px] text-slate-300">
                 {Object.entries(selectedNode.data?.metadata || {}).map(([key, value]) => (
-                  <div key={key} className="flex items-start justify-between gap-2 border-b border-white/5 pb-1 last:border-b-0">
-                    <span className="text-slate-400 lowercase">{key}</span>
-                    <span className="font-semibold text-right text-slate-300">{String(value)}</span>
+                  <div key={key} className="flex items-center justify-between gap-4 border-b border-white/5 pb-1.5 last:border-b-0 last:pb-0">
+                    <span className="text-slate-500">{key}</span>
+                    <span className="font-semibold text-right text-slate-300 truncate">{String(value)}</span>
                   </div>
                 ))}
               </div>

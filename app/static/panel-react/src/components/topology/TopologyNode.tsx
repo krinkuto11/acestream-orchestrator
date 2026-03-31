@@ -20,31 +20,31 @@ const iconByKind = {
   client: Users,
 }
 
-// Kind-based color themes (opaque hex backgrounds for full pipe occlusion)
+// Enterprise-style color themes (professional slates and muted accents)
 const kindTheme = {
   vpn: {
-    bg: '#1e1b4b',        // indigo-950
-    border: '#7c3aed',    // violet-500
-    iconBg: 'bg-violet-500/25',
-    iconText: 'text-violet-200',
+    bg: 'bg-slate-900',
+    border: 'border-indigo-500/30',
+    iconBg: 'bg-indigo-500/10',
+    iconText: 'text-indigo-400',
   },
   engine: {
-    bg: '#0c1a3d',        // custom deep blue
-    border: '#3b82f6',    // blue-500
-    iconBg: 'bg-blue-500/25',
-    iconText: 'text-blue-200',
+    bg: 'bg-slate-900',
+    border: 'border-blue-500/30',
+    iconBg: 'bg-blue-500/10',
+    iconText: 'text-blue-400',
   },
   proxy: {
-    bg: '#042f2e',        // teal-950
-    border: '#14b8a6',    // teal-500
-    iconBg: 'bg-teal-500/25',
-    iconText: 'text-teal-200',
+    bg: 'bg-slate-900',
+    border: 'border-teal-500/30',
+    iconBg: 'bg-teal-500/10',
+    iconText: 'text-teal-400',
   },
   client: {
-    bg: '#271505',        // custom deep orange
-    border: '#f59e0b',    // amber-500
-    iconBg: 'bg-amber-500/25',
-    iconText: 'text-amber-200',
+    bg: 'bg-slate-900',
+    border: 'border-amber-500/30',
+    iconBg: 'bg-amber-500/10',
+    iconText: 'text-amber-400',
   },
 }
 
@@ -58,7 +58,6 @@ const healthLabelByState = {
 const countryToFlag = (country: string | null | undefined): string | null => {
   if (!country) return null
   const c = country.trim().toLowerCase()
-  // Common country name -> ISO 3166-1 alpha-2, then to flag
   const nameToCode: Record<string, string> = {
     'united states': 'US', 'usa': 'US', 'us': 'US',
     'united kingdom': 'GB', 'uk': 'GB', 'gb': 'GB',
@@ -93,13 +92,11 @@ const countryToFlag = (country: string | null | undefined): string | null => {
     'hungary': 'HU', 'hu': 'HU',
     'bulgaria': 'BG', 'bg_country': 'BG',
   }
-  // Try direct match first
   let code = nameToCode[c]
   if (!code && c.length === 2) {
     code = c.toUpperCase()
   }
   if (!code) return null
-  // Convert ISO to flag emoji
   const codePoints = [...code.toUpperCase()].map(
     (char) => 0x1f1e6 + char.charCodeAt(0) - 65
   )
@@ -109,7 +106,6 @@ const countryToFlag = (country: string | null | undefined): string | null => {
 export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
   const Icon = iconByKind[data.kind]
   const theme = kindTheme[data.kind]
-  const showStreams = data.kind !== 'vpn'
 
   const vpnIp = data.kind === 'vpn' ? String(data.metadata?.publicIp || '') : null
   const vpnCountry = data.kind === 'vpn' ? String(data.metadata?.country || '') : null
@@ -119,141 +115,130 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
   return (
     <div
       className={cn(
-        'relative min-w-[210px] rounded-xl p-3 shadow-lg transition-all',
-        selected && 'ring-2 ring-sky-400/90',
+        'relative min-w-[220px] rounded-xl border p-4 shadow-xl transition-all duration-300',
+        theme.bg,
+        theme.border,
+        selected ? 'ring-2 ring-blue-500/50 scale-[1.02]' : 'hover:border-slate-400/40',
       )}
-      style={{
-        backgroundColor: theme.bg,
-        border: `1.5px solid ${theme.border}`,
-        borderLeftWidth: '4px',
-        borderLeftColor: theme.border,
-      }}
     >
       <Handle
         type="target"
         position={Position.Left}
-        className="!h-2.5 !w-2.5 !border-2 !border-slate-100 !bg-slate-900"
+        className="!h-2.5 !w-2.5 !border-2 !border-slate-800 !bg-slate-400"
       />
       
-      {/* Floating Entry Pipe Aggregate for Proxy node */}
+      {/* Professional Floating Aggregate Label for Proxy node */}
       {data.kind === 'proxy' && (
-        <div className="absolute -left-[145px] top-1/2 -translate-y-[calc(100%+4px)] flex flex-col items-center gap-0.5">
-          <div className="flex items-center h-7 overflow-hidden rounded-md border border-white/20 shadow-sm bg-black/80">
-            <div className="flex items-center px-2 h-full bg-white/5">
-              <span className="text-[13px] font-black text-white tabular-nums leading-none">
-                {data.bandwidthMbps.toFixed(1)}
-              </span>
-            </div>
-            <div className="flex items-center px-1.5 h-full border-l border-white/10 bg-white/10">
-              <span className="text-[9px] font-normal text-white/90 uppercase leading-none tracking-tighter">
-                MBPS
-              </span>
-            </div>
+        <div className="absolute -left-[145px] top-1/2 -translate-y-[calc(100%+8px)] flex flex-col items-center gap-1.5 nodrag nopan">
+          <div className="px-2 py-1 rounded-md border border-teal-500/30 bg-slate-900 shadow-lg flex items-center gap-2">
+            <span className="text-[12px] font-semibold text-teal-400 tabular-nums">
+              {data.bandwidthMbps.toFixed(1)}
+            </span>
+            <span className="text-[10px] text-slate-500 font-medium">Mbps</span>
           </div>
-          <span className="text-[8px] font-bold text-teal-400 uppercase tracking-widest bg-teal-500/10 px-1 rounded border border-teal-500/20">
+          <span className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider bg-slate-800/50 px-1.5 py-0.5 rounded border border-slate-700/50">
             Total Ingress
           </span>
         </div>
       )}
 
-      <div className="mb-2 flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
           <div className={cn(
-            "rounded-md p-1.5 shadow-sm",
+            "rounded-lg p-2 shadow-sm transition-colors",
             theme.iconBg,
+            theme.iconText
           )}>
-            <Icon className="h-4 w-4 text-white" />
+            <Icon className="h-4 w-4" />
           </div>
           <div>
-            <p className="text-sm font-black leading-tight text-white drop-shadow-sm">{data.title}</p>
-            <p className="text-[10px] font-bold text-slate-300 mt-0.5 tracking-tight">{data.subtitle}</p>
+            <p className="text-sm font-semibold text-slate-100">{data.title}</p>
+            <p className="text-[11px] font-medium text-slate-400 line-clamp-1">{data.subtitle}</p>
           </div>
         </div>
 
         <Badge
-          variant={data.health === 'down' ? 'destructive' : data.health === 'degraded' ? 'warning' : 'success'}
-          className="text-[10px] uppercase tracking-wide"
+          variant={data.health === 'down' ? 'destructive' : data.health === 'degraded' ? 'warning' : 'outline'}
+          className={cn(
+            "text-[10px] font-semibold px-1.5 py-0",
+            data.health === 'healthy' && "border-emerald-500/30 text-emerald-400 bg-emerald-500/5"
+          )}
         >
           {healthLabelByState[data.health]}
         </Badge>
       </div>
 
-      {/* VPN: Show IP + Country flag + Provider instead of Streams */}
+      {/* VPN Details */}
       {data.kind === 'vpn' && (
-        <div className="rounded-md border border-white/10 bg-white/5 p-2.5 space-y-2">
+        <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 p-3 space-y-2">
           {vpnIp && (
             <div className="flex items-center gap-2">
-              <span className="font-mono text-[12px] font-bold text-white leading-none">{vpnIp}</span>
-              {flag && <span className="text-xl ml-0.5 drop-shadow-md">{flag}</span>}
+              <span className="font-mono text-[12px] font-semibold text-slate-200">{vpnIp}</span>
+              {flag && <span className="text-lg">{flag}</span>}
             </div>
           )}
           {vpnProvider && (
-            <p className="font-mono text-[12px] font-bold text-white leading-none mt-0.5">
+            <p className="text-[11px] font-medium text-slate-400">
               {vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}
             </p>
           )}
 
-          <div className="flex items-center gap-6 pt-1.5 border-t border-white/5">
+          <div className="flex items-center gap-6 pt-2 border-t border-slate-700/50">
             <div className="flex items-baseline gap-1.5">
-              <span className="text-xs text-emerald-500 font-bold">↓</span>
-              <span className="text-xl font-black text-emerald-400 leading-none">{data.bandwidthMbps.toFixed(1)}</span>
-              <span className="text-[10px] font-normal text-slate-500 ml-0.5 uppercase">MBPS</span>
+              <span className="text-[10px] text-slate-500 font-bold">↓</span>
+              <span className="text-lg font-semibold text-emerald-400 tabular-nums">{data.bandwidthMbps.toFixed(1)}</span>
+              <span className="text-[10px] text-slate-500 font-medium">Mbps</span>
             </div>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-xs text-rose-500 font-bold">↑</span>
-              <span className="text-xl font-black text-rose-500 leading-none">{(data.uploadMbps || 0).toFixed(1)}</span>
-              <span className="text-[10px] font-normal text-slate-500 ml-0.5 uppercase">MBPS</span>
+              <span className="text-[10px] text-slate-500 font-bold">↑</span>
+              <span className="text-lg font-semibold text-rose-400 tabular-nums">{(data.uploadMbps || 0).toFixed(1)}</span>
+              <span className="text-[10px] text-slate-500 font-medium">Mbps</span>
             </div>
           </div>
         </div>
       )}
 
-      {/* Dedicated Client Render */}
+      {/* Client Details */}
       {data.kind === 'client' && (
-        <div className="rounded-md border border-white/10 bg-white/5 p-3 space-y-2.5">
+        <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 p-3 space-y-3">
           <div className="flex items-center justify-between">
-            <span className="font-mono text-xl font-black text-white tracking-tight">{data.title}</span>
-            <Badge variant="outline" className="border-amber-500/50 text-[10px] text-amber-200 uppercase px-1.5 py-0">
+            <span className="font-mono text-lg font-semibold text-slate-100">{data.title}</span>
+            <Badge variant="outline" className="border-slate-700 text-[10px] text-slate-400 bg-slate-800/50">
               {String(data.metadata?.type || 'TS')}
             </Badge>
           </div>
           
-
-          <div className="flex items-center justify-between pt-1 border-t border-white/5">
-            <div className="flex items-center gap-1.5">
-               <div className="bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
-                 <span className="text-sm font-black text-slate-100">{data.bandwidthMbps.toFixed(2)}</span>
-               </div>
-               <span className="text-[10px] font-normal text-slate-500 uppercase">MBPS</span>
+          <div className="flex items-center justify-between pt-2 border-t border-slate-700/50">
+            <div className="flex items-baseline gap-1.5">
+               <span className="text-sm font-semibold text-slate-100 tabular-nums">{data.bandwidthMbps.toFixed(2)}</span>
+               <span className="text-[10px] text-slate-500 font-medium tracking-tight">Mbps</span>
             </div>
-            <span className="text-[10px] font-bold text-slate-500 uppercase">{String(data.metadata?.connectedAt || '')}</span>
+            <span className="text-[10px] font-medium text-slate-500">
+              {String(data.metadata?.connectedAt || '')}
+            </span>
           </div>
         </div>
       )}
 
-      {/* Proxy & Engine: Show stream count */}
+      {/* Proxy & Engine Metrics */}
       {(data.kind === 'proxy' || data.kind === 'engine') && (
-        <div className="rounded-md border border-white/10 bg-white/5 p-2">
-          <p className="mb-0.5 text-[10px] uppercase text-slate-300 font-semibold tracking-tight">
-            Streams
-          </p>
-          <p className="font-bold text-slate-100">{data.streamCount}</p>
+        <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 p-2.5 flex items-center justify-between">
+          <span className="text-[11px] font-medium text-slate-400">Active Streams</span>
+          <span className="text-sm font-semibold text-slate-100">{data.streamCount}</span>
         </div>
       )}
 
-      {/* Proxy: Bandwidth - MOVED TO FLOATING ENTRY LABEL */}
-
       {data.failoverActive && (
-        <div className="mt-2 flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200">
-          <AlertTriangle className="h-3.5 w-3.5" />
-          <span>Failover route active</span>
+        <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-1.5 text-[11px] font-medium text-amber-200">
+          <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+          <span>Active Failover Route</span>
         </div>
       )}
 
       <Handle
         type="source"
         position={Position.Right}
-        className="!h-2.5 !w-2.5 !border-2 !border-slate-100 !bg-slate-900"
+        className="!h-2.5 !w-2.5 !border-2 !border-slate-800 !bg-slate-400"
       />
     </div>
   )
