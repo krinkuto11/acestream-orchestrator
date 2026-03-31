@@ -51,14 +51,14 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         <div className="flex items-center gap-2">
           <div className={cn(
             "rounded-md p-1.5 shadow-sm transition-colors",
-            data.health === 'healthy' ? "bg-emerald-500/20 text-emerald-300" : 
-            data.health === 'degraded' ? "bg-amber-500/20 text-amber-300" : "bg-rose-500/20 text-rose-300"
+            data.health === 'healthy' ? "bg-emerald-500/30 text-emerald-100" : 
+            data.health === 'degraded' ? "bg-amber-500/30 text-amber-100" : "bg-rose-500/30 text-rose-100"
           )}>
             <Icon className="h-4 w-4" />
           </div>
           <div>
-            <p className="text-sm font-bold leading-tight text-white">{data.title}</p>
-            <p className="text-[10px] font-medium text-slate-300">{data.subtitle}</p>
+            <p className="text-sm font-black leading-tight text-white drop-shadow-sm">{data.title}</p>
+            <p className="text-[10px] font-bold text-slate-50 tracking-tight">{data.subtitle}</p>
           </div>
         </div>
 
