@@ -101,8 +101,9 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
           ) : (
             <Badge variant="success" className="bg-emerald-900/30 text-emerald-300 font-bold border-emerald-500/20 shadow-none">Live core</Badge>
           )}
-          <div className="rounded border border-slate-700/50 bg-slate-900/80 px-2 py-0.5 font-mono text-slate-400">
-            SYNC: {formatLastUpdate(lastUpdated)}
+          <div className="rounded-md border border-white/10 bg-white/5 p-2">
+            <p className="mb-0.5 text-[10px] uppercase text-slate-300 font-semibold tracking-tight">Sync</p>
+            <p className="font-bold text-slate-100">{formatLastUpdate(lastUpdated)}</p>
           </div>
           {hasEmergency && (
             <Badge variant="destructive" className="bg-rose-900/40 text-rose-300 animate-pulse border-rose-500/30 shadow-none">
@@ -158,7 +159,7 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
 
           <CardContent className="space-y-4 p-5">
             <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-4 shadow-inner">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Resource identifier</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400/80">Resource identifier</p>
               <p className="mt-1 text-lg font-bold text-slate-50">{selectedNode.data?.title}</p>
               <p className="text-xs font-mono text-slate-400">{selectedNode.data?.subtitle}</p>
               <div className="mt-3 flex flex-wrap gap-2">
@@ -175,20 +176,20 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
             </div>
 
             <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-4 shadow-inner">
-              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                <Activity className="h-3.5 w-3.5 text-emerald-500" />
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-400/80">
+                <Activity className="h-3.5 w-3.5 text-emerald-400" />
                 Live Telemetry
               </div>
               <div className="mt-3 grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-tighter">Bitrate</p>
-                  <p className="text-xl font-black text-emerald-400">
-                    {selectedNode.data?.bandwidthMbps.toFixed(1)} <span className="text-xs text-emerald-600">Mbps</span>
+                  <p className="text-[10px] text-slate-400/70 uppercase tracking-tighter">Bitrate</p>
+                  <p className="text-xl font-black text-emerald-400 drop-shadow-sm">
+                    {selectedNode.data?.bandwidthMbps.toFixed(1)} <span className="text-xs text-emerald-600/80">Mbps</span>
                   </p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-tighter">Engaged Streams</p>
-                  <p className="text-xl font-black text-slate-100">
+                  <p className="text-[10px] text-slate-400/70 uppercase tracking-tighter font-semibold">Engaged Streams</p>
+                  <p className="text-xl font-black text-slate-50">
                     {selectedNode.data?.streamCount}
                   </p>
                 </div>
@@ -197,12 +198,12 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
 
             <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-0 overflow-hidden">
               <div className="bg-slate-900/80 px-4 py-2 border-b border-slate-700/70">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Internal Metadata</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400/80">Internal Metadata</p>
               </div>
               <div className="p-4 space-y-1.5 font-mono text-[11px] text-slate-200">
                 {Object.entries(selectedNode.data?.metadata || {}).map(([key, value]) => (
                   <div key={key} className="flex items-start justify-between gap-2 border-b border-white/5 pb-1 last:border-b-0">
-                    <span className="text-slate-500 lowercase">{key}</span>
+                    <span className="text-slate-400 lowercase">{key}</span>
                     <span className="font-semibold text-right text-slate-300">{String(value)}</span>
                   </div>
                 ))}

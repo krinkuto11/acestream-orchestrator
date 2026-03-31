@@ -66,10 +66,10 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         </Badge>
       </div>
 
-      <div className="rounded-md border border-white/10 bg-white/5 p-2">
-        <p className="mb-0.5 text-[10px] uppercase text-slate-300">Streams</p>
-        <p className="font-semibold">{data.streamCount}</p>
-      </div>
+        <div className="rounded-md border border-white/10 bg-white/5 p-2">
+          <p className="mb-0.5 text-[10px] uppercase text-slate-300 font-semibold tracking-tight">Streams</p>
+          <p className="font-bold text-slate-100">{data.streamCount}</p>
+        </div>
 
       {data.kind !== 'engine' && (
         <div className="mt-2 rounded-md border border-white/10 bg-slate-900/60 p-2">
