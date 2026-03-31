@@ -1,5 +1,6 @@
 import React from 'react'
 import { BaseEdge, EdgeLabelRenderer, EdgeProps, getSmoothStepPath } from 'reactflow'
+import { cn } from '@/lib/utils'
 
 export function TopologyEdge({
   id,
@@ -40,10 +41,20 @@ export function TopologyEdge({
 
   const isFailover = style.strokeDasharray != null
   const bandwidth = data?.bandwidthMbps || 0
+  const isActive = bandwidth > 0.1
+
+  // Dynamic stroke color: Emerald when active, unless it's a failover path (amber)
+  const finalStyle = {
+    ...style,
+    stroke: isActive 
+      ? (isFailover ? '#f59e0b' : '#10b981') 
+      : style.stroke,
+    transition: 'stroke 0.3s ease',
+  }
 
   return (
     <>
-      <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />
+      <BaseEdge path={edgePath} markerEnd={markerEnd} style={finalStyle} />
       <EdgeLabelRenderer>
         <div
           style={{
@@ -54,13 +65,16 @@ export function TopologyEdge({
           className="nodrag nopan"
         >
           <div 
-            className={`
-              px-2 py-0.5 rounded border shadow-sm text-[10px] font-bold 
-              ${data?.labelPosition === 'near-source' 
-                ? 'border-sky-500/40 bg-sky-950/90 text-sky-300' 
-                : 'border-slate-700 bg-slate-900/90 text-slate-300'}
-              ${isFailover ? 'border-amber-500/50 text-amber-200' : ''}
-            `}
+            className={cn(
+              "px-2 py-0.5 rounded border shadow-sm text-[10px] font-bold transition-colors duration-300",
+              isFailover 
+                ? "border-amber-500/50 bg-amber-950 text-amber-200" 
+                : bandwidth > 0.1 
+                  ? "border-emerald-500/60 bg-emerald-950 text-emerald-400" 
+                  : data?.labelPosition === 'near-source' 
+                    ? "border-sky-800 bg-slate-950 text-sky-500" 
+                    : "border-slate-800 bg-slate-950 text-slate-500"
+            )}
           >
             {bandwidth.toFixed(1)} <span className="text-[8px] font-medium opacity-70">Mbps</span>
           </div>
