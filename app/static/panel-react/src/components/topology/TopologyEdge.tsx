@@ -67,12 +67,16 @@ export function TopologyEdge({
         >
           <div 
             style={{
-              padding: '2px 8px',
-              borderRadius: '6px',
-              fontSize: '10px',
-              fontWeight: 800,
-              letterSpacing: '0.02em',
+              padding: '4px 10px',
+              borderRadius: '8px',
+              fontSize: '11px',
+              fontWeight: 900,
+              letterSpacing: '0.01em',
               transition: 'all 0.3s ease',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '1px',
               ...(isFailover ? {
                 background: '#92400e',
                 borderColor: '#fbbf24',
@@ -100,15 +104,19 @@ export function TopologyEdge({
               }),
             }}
           >
-            {bandwidth.toFixed(1)}
+            <div className="flex items-center gap-1.5 whitespace-nowrap">
+              {data?.uploadMbps !== undefined && <span className="text-[9px] opacity-70">↓</span>}
+              <span>{bandwidth.toFixed(1)}</span>
+              {data?.uploadMbps === undefined && <span className="text-[9px] font-medium opacity-70 uppercase ml-0.5">Mbps</span>}
+            </div>
+
             {data?.uploadMbps !== undefined && (
-              <>
-                <span style={{ margin: '0 4px', opacity: 0.5 }}>|</span>
-                <span style={{ fontSize: '8px', verticalAlign: 'middle', marginRight: '2px', color: '#fb7185' }}>↑</span>
-                <span style={{ color: '#fb7185' }}>{data.uploadMbps.toFixed(1)}</span>
-              </>
+              <div className="flex items-center gap-1.5 whitespace-nowrap pt-0.5 border-t border-white/10 mt-0.5 w-full justify-center" style={{ color: '#fb7185' }}>
+                <span className="text-[9px] opacity-80">↑</span>
+                <span>{data.uploadMbps.toFixed(1)}</span>
+                <span className="text-[8px] font-medium opacity-60 uppercase ml-0.5">Mbps</span>
+              </div>
             )}
-            <span style={{ fontSize: '8px', fontWeight: 500, opacity: 0.85, marginLeft: '4px' }}>Mbps</span>
           </div>
         </div>
       </EdgeLabelRenderer>

@@ -153,12 +153,12 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         <div className="rounded-md border border-white/10 bg-white/5 p-2 space-y-1.5">
           {vpnIp && (
             <div className="flex items-center gap-1.5">
-              <span className="font-mono text-xs font-bold text-slate-100">{vpnIp}</span>
-              {flag && <span className="text-sm ml-0.5">{flag}</span>}
+              <span className="font-mono text-sm font-black text-slate-50 tracking-tight">{vpnIp}</span>
+              {flag && <span className="text-base ml-0.5 drop-shadow-sm">{flag}</span>}
             </div>
           )}
           {vpnProvider && (
-            <p className="text-[10px] font-bold text-slate-200 uppercase tracking-widest">{vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}</p>
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">{vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}</p>
           )}
 
           <div className="mt-1 space-y-1.5 pt-1.5 border-t border-white/5">
@@ -170,13 +170,13 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
             </div>
             <div className="flex items-center gap-3">
               <div>
-                <span className="text-[9px] uppercase text-slate-400 font-black block leading-none mb-0.5">Down</span>
-                <span className="text-xs font-black text-emerald-400">{data.bandwidthMbps.toFixed(1)} <span className="text-[9px] font-normal text-emerald-500/70">Mbps</span></span>
+                <span className="text-[7px] uppercase text-slate-500 font-bold block leading-none mb-0.5 tracking-tighter">Downflow</span>
+                <span className="text-base font-black text-emerald-400 leading-none">{data.bandwidthMbps.toFixed(1)} <span className="text-[10px] font-normal text-emerald-500/70">Mbps</span></span>
               </div>
-              <div className="w-px h-6 bg-white/10" />
+              <div className="w-px h-8 bg-white/10" />
               <div>
-                <span className="text-[9px] uppercase text-slate-400 font-black block leading-none mb-0.5">Up</span>
-                <span className="text-xs font-black text-rose-500">{(data.uploadMbps || 0).toFixed(1)} <span className="text-[9px] font-normal text-rose-500/70">Mbps</span></span>
+                <span className="text-[7px] uppercase text-slate-500 font-bold block leading-none mb-0.5 tracking-tighter">Upflow</span>
+                <span className="text-base font-black text-rose-500 leading-none">{(data.uploadMbps || 0).toFixed(1)} <span className="text-[10px] font-normal text-rose-500/70">Mbps</span></span>
               </div>
             </div>
           </div>
