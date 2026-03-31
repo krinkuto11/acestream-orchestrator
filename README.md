@@ -8,6 +8,7 @@ On-demand AceStream engine orchestration with a built-in proxy, health managemen
 > **LEGAL DISCLAIMER: EDUCATIONAL USE ONLY**
 > 
 > This software is a proof-of-concept designed strictly for **educational and research purposes**. The primary intent of this project is to demonstrate the feasibility of a high availability scenario for the AceStream protocol and should not be used for illegal acts.
+<img width="1508" height="861" alt="Screenshot 2026-03-31 at 19 06 38" src="https://github.com/user-attachments/assets/bc024ddb-32f8-488f-9c9f-558d57e2660f" />
 
 ## Quick Start
 
