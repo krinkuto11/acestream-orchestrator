@@ -9,6 +9,7 @@ import { Separator } from '@/components/ui/separator'
 import { TopologyNode } from '@/components/topology/TopologyNode'
 import { TopologyEdge } from '@/components/topology/TopologyEdge'
 import { useTopologyStore } from '@/stores/topologyStore'
+import { cn } from '@/lib/utils'
 
 const nodeTypes = {
   topologyNode: TopologyNode,
