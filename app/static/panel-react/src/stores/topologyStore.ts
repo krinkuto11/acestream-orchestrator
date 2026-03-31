@@ -237,13 +237,10 @@ const buildSnapshot = ({
     : Math.max(1, Math.min(3, Math.ceil(engineStats.length / 6)))
   const COLUMN_SPACING_X = 340   // 210px node width + 130px gap for pipes and labels
   const STAGGERED_ROW_SPACING_Y = 140 // Enough vertical space for the node + a gap for horizontal pipes
+  const CLUSTER_GAP_Y = 220 // The vertical space between the bottom of VPN1 and top of VPN2
 
   const engineStartX = 350
   const engineStartY = 80
-
-  // Center Y spans the entire height of the staggered list
-  const totalEngineHeight = Math.max(0, engineStats.length - 1) * STAGGERED_ROW_SPACING_Y
-  const centerY = engineStartY + totalEngineHeight / 2
 
   const enginesPerTunnel = engineStatsWithTunnel.reduce(
     (acc, item) => {
@@ -253,20 +250,24 @@ const buildSnapshot = ({
     { vpn1: 0, vpn2: 0 } as Record<TunnelId, number>,
   )
 
-  const rowsPerTunnel = {
-    vpn1: Math.max(1, Math.ceil(enginesPerTunnel.vpn1 / NUM_COLUMNS)),
-    vpn2: Math.max(1, Math.ceil(enginesPerTunnel.vpn2 / NUM_COLUMNS)),
-  }
+  // Calculate bounding boxes for the clusters
+  const vpn1StartY = engineStartY
+  const vpn1Height = Math.max(0, enginesPerTunnel.vpn1 - 1) * STAGGERED_ROW_SPACING_Y
+  const vpn1CenterY = vpn1StartY + (vpn1Height / 2)
 
-  const tunnelClusterCenterY = {
-    vpn1: Math.max(80, centerY - 190),
-    vpn2: centerY + 190,
-  }
+  // VPN2 starts below VPN1
+  const vpn2StartY = vpn1StartY + vpn1Height + CLUSTER_GAP_Y
+  const vpn2Height = Math.max(0, enginesPerTunnel.vpn2 - 1) * STAGGERED_ROW_SPACING_Y
+  const vpn2CenterY = vpn2StartY + (vpn2Height / 2)
 
   const tunnelClusterStartY = {
-    vpn1: tunnelClusterCenterY.vpn1 - ((rowsPerTunnel.vpn1 - 1) * STAGGERED_ROW_SPACING_Y) / 2,
-    vpn2: tunnelClusterCenterY.vpn2 - ((rowsPerTunnel.vpn2 - 1) * STAGGERED_ROW_SPACING_Y) / 2,
+    vpn1: vpn1StartY,
+    vpn2: vpn2StartY,
   }
+
+  // Center Y for downstream nodes (Proxy, Clients) spans the entire height
+  const totalHeight = (vpn2StartY + vpn2Height) - engineStartY
+  const centerY = engineStartY + (totalHeight / 2)
 
   const tunnelLocalIndex: Record<TunnelId, number> = {
     vpn1: 0,
@@ -276,7 +277,7 @@ const buildSnapshot = ({
   nodes.push({
     id: vpn1NodeId,
     type: 'topologyNode',
-    position: { x: -240, y: Math.max(50, centerY - 150) },
+    position: { x: -240, y: vpn1CenterY },
     data: {
       kind: 'vpn',
       title: 'VPN Tunnel A',
@@ -296,7 +297,7 @@ const buildSnapshot = ({
   nodes.push({
     id: vpn2NodeId,
     type: 'topologyNode',
-    position: { x: -240, y: centerY + 150 },
+    position: { x: -240, y: vpn2CenterY },
     data: {
       kind: 'vpn',
       title: 'VPN Tunnel B',
@@ -324,12 +325,11 @@ const buildSnapshot = ({
     if (isVpnClusterMode) {
       const localIndex = tunnelLocalIndex[assignedTunnel]
       tunnelLocalIndex[assignedTunnel] += 1
+
       colIndex = localIndex % NUM_COLUMNS
-      const rowIndex = Math.floor(localIndex / NUM_COLUMNS)
-      const rowStaggerX = rowIndex % 2 === 0 ? 0 : 60
-      const colStaggerY = colIndex % 2 === 0 ? 0 : 18
-      currentX = engineStartX + (colIndex * COLUMN_SPACING_X) + rowStaggerX
-      currentY = tunnelClusterStartY[assignedTunnel] + (rowIndex * STAGGERED_ROW_SPACING_Y) + colStaggerY
+      currentX = engineStartX + (colIndex * COLUMN_SPACING_X)
+      // The magic trick: multiply by localIndex directly to guarantee unique Ys inside the cluster
+      currentY = tunnelClusterStartY[assignedTunnel] + (localIndex * STAGGERED_ROW_SPACING_Y)
     } else {
       // Determine column (0, 1, 2, 0, 1, 2...)
       colIndex = index % NUM_COLUMNS
