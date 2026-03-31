@@ -66,24 +66,20 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         </Badge>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 text-[11px]">
-        <div className="rounded-md border border-white/10 bg-white/5 p-2">
-          <p className="mb-0.5 text-[10px] uppercase text-slate-300">Kind</p>
-          <p className="font-semibold">{kindLabelByNode[data.kind]}</p>
-        </div>
-        <div className="rounded-md border border-white/10 bg-white/5 p-2">
-          <p className="mb-0.5 text-[10px] uppercase text-slate-300">Streams</p>
-          <p className="font-semibold">{data.streamCount}</p>
-        </div>
+      <div className="rounded-md border border-white/10 bg-white/5 p-2">
+        <p className="mb-0.5 text-[10px] uppercase text-slate-300">Streams</p>
+        <p className="font-semibold">{data.streamCount}</p>
       </div>
 
-      <div className="mt-2 rounded-md border border-white/10 bg-slate-900/60 p-2">
-        <div className="mb-1 flex items-center gap-1 text-[10px] uppercase text-slate-300">
-          <Activity className="h-3 w-3" />
-          <span>Bandwidth</span>
+      {data.kind !== 'engine' && (
+        <div className="mt-2 rounded-md border border-white/10 bg-slate-900/60 p-2">
+          <div className="mb-1 flex items-center gap-1 text-[10px] uppercase text-slate-300">
+            <Activity className="h-3 w-3" />
+            <span>Bandwidth</span>
+          </div>
+          <p className="text-sm font-semibold text-slate-50">{data.bandwidthMbps.toFixed(1)} Mbps</p>
         </div>
-        <p className="text-sm font-semibold text-slate-50">{data.bandwidthMbps.toFixed(1)} Mbps</p>
-      </div>
+      )}
 
       {data.failoverActive && (
         <div className="mt-2 flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200">

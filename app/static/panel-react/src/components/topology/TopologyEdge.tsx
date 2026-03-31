@@ -68,12 +68,12 @@ export function TopologyEdge({
             className={cn(
               "px-2 py-0.5 rounded border shadow-sm text-[10px] font-bold transition-colors duration-300",
               isFailover 
-                ? "border-amber-500/50 bg-amber-950 text-amber-200" 
+                ? "border-amber-600 bg-amber-950 text-amber-100" 
                 : bandwidth > 0.1 
-                  ? "border-emerald-500/60 bg-emerald-950 text-emerald-400" 
+                  ? "border-emerald-600 bg-emerald-950 text-emerald-50" 
                   : data?.labelPosition === 'near-source' 
-                    ? "border-sky-800 bg-slate-950 text-sky-500" 
-                    : "border-slate-800 bg-slate-950 text-slate-500"
+                    ? "border-sky-800 bg-slate-900 text-sky-100" 
+                    : "border-slate-800 bg-slate-900 text-slate-500"
             )}
           >
             {bandwidth.toFixed(1)} <span className="text-[8px] font-medium opacity-70">Mbps</span>

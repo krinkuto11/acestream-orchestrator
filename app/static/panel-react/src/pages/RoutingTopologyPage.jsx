@@ -81,186 +81,135 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
         orchestratorStatus.provisioning.circuit_breaker_state !== 'closed',
     )
 
-  const fallbackReason =
-    orchestratorStatus?.provisioning?.blocked_reason_details?.message ||
-    'Routing is currently in failover mode. Monitor tunnel health and stream delivery latency.'
-
   return (
-    <div className="space-y-4">
-      {!embedded && (
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight">Routing Topology</h2>
-            <p className="text-sm text-muted-foreground">
-              Live traffic graph for VPN tunnels, engines, proxy core, and client edge paths.
-            </p>
+    <div className={cn(
+      "relative w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-2xl transition-all duration-500",
+      embedded ? "h-[740px]" : "h-[calc(100vh-160px)]"
+    )}>
+      {/* Background Ambience Overlay */}
+      <div className="absolute inset-0 z-0 bg-[radial-gradient(circle_at_15%_10%,rgba(59,130,246,0.12),transparent_35%),radial-gradient(circle_at_85%_90%,rgba(16,185,129,0.14),transparent_40%),linear-gradient(180deg,rgba(15,23,42,0.75),rgba(2,6,23,0.9))] opacity-40 pointer-events-none" />
+      
+      {/* HUD-style Header Overlay */}
+      <div className="absolute left-6 top-6 z-10 pointer-events-none">
+        <h2 className="text-xl font-black uppercase tracking-widest text-slate-100">
+          Routing Topology
+        </h2>
+        <div className="mt-1 flex items-center gap-2 text-[10px]">
+          {isMockMode ? (
+            <Badge variant="warning" className="bg-amber-900/30 text-amber-300 font-bold border-amber-500/20 shadow-none">Simulation mode</Badge>
+          ) : (
+            <Badge variant="success" className="bg-emerald-900/30 text-emerald-300 font-bold border-emerald-500/20 shadow-none">Live core</Badge>
+          )}
+          <div className="rounded border border-slate-700/50 bg-slate-900/80 px-2 py-0.5 font-mono text-slate-400">
+            SYNC: {formatLastUpdate(lastUpdated)}
           </div>
-
-          <div className="flex items-center gap-2 text-xs">
-            {isMockMode ? (
-              <Badge variant="warning">Demo Signal</Badge>
-            ) : (
-              <Badge variant="success">Live Signal</Badge>
-            )}
-            <Badge variant={summary.vpnDown.length ? 'destructive' : 'success'}>
-              {summary.vpnDown.length ? 'VPN Incident' : 'VPN Stable'}
+          {hasEmergency && (
+            <Badge variant="destructive" className="bg-rose-900/40 text-rose-300 animate-pulse border-rose-500/30 shadow-none">
+               Emergency routing active
             </Badge>
-            <div className="rounded-md border border-border bg-card px-2 py-1 text-muted-foreground">
-              Updated {formatLastUpdate(lastUpdated)}
-            </div>
-          </div>
+          )}
         </div>
-      )}
-
-      {hasEmergency && (
-        <Alert variant={summary.vpnDown.length ? 'destructive' : 'warning'}>
-          <ShieldAlert className="h-4 w-4" />
-          <AlertTitle>Active emergency routing</AlertTitle>
-          <AlertDescription>
-            {fallbackReason}
-            {summary.vpnDown.length > 0 ? ` Down tunnel(s): ${summary.vpnDown.join(', ')}` : ''}
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <Card className="border-sky-500/30 bg-sky-500/5">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Global Egress</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between">
-            <p className="text-2xl font-bold">{summary.totalBandwidthMbps.toFixed(1)} Mbps</p>
-            <Activity className="h-5 w-5 text-sky-400" />
-          </CardContent>
-        </Card>
-
-        <Card className="border-cyan-500/30 bg-cyan-500/5">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Active Engines</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between">
-            <p className="text-2xl font-bold">{summary.activeEngines}</p>
-            <Network className="h-5 w-5 text-cyan-400" />
-          </CardContent>
-        </Card>
-
-        <Card className="border-emerald-500/30 bg-emerald-500/5">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Active Streams</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between">
-            <p className="text-2xl font-bold">{summary.activeStreams}</p>
-            <Users className="h-5 w-5 text-emerald-400" />
-          </CardContent>
-        </Card>
-
-        <Card className="border-amber-500/30 bg-amber-500/5">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Failover Paths</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between">
-            <p className="text-2xl font-bold">{summary.failoverEngines}</p>
-            <AlertTriangle className="h-5 w-5 text-amber-400" />
-          </CardContent>
-        </Card>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_300px]">
-        <Card className="overflow-hidden border-slate-700/60 bg-slate-950/70">
-          <CardHeader className="border-b border-slate-700/60 pb-4">
-            <CardTitle className="text-xl font-bold text-slate-100">
-              VPN to Engine to Proxy flow map
-            </CardTitle>
-          </CardHeader>
+      <div className="h-full w-full">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          minZoom={0.2}
+          maxZoom={1.5}
+          onNodeClick={(_, node) => setSelectedNode(node.id)}
+          onPaneClick={() => setSelectedNode(null)}
+          proOptions={{ hideAttribution: true }}
+          defaultEdgeOptions={{
+            markerEnd: { type: MarkerType.ArrowClosed },
+          }}
+          nodesDraggable={false}
+          elementsSelectable
+        >
+          <Controls 
+            className="!bg-slate-900/80 !border-slate-700/50 !shadow-lg" 
+            style={{ fill: '#94a3b8' }} 
+          />
+          <Background gap={22} size={1} color="rgba(148,163,184,0.15)" />
+        </ReactFlow>
+      </div>
 
-          <CardContent className="p-0">
-            <div className="h-[680px] w-full bg-[radial-gradient(circle_at_15%_10%,rgba(59,130,246,0.12),transparent_35%),radial-gradient(circle_at_85%_90%,rgba(16,185,129,0.14),transparent_40%),linear-gradient(180deg,rgba(15,23,42,0.75),rgba(2,6,23,0.9))]">
-              <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                fitView
-                fitViewOptions={{ padding: 0.2 }}
-                minZoom={0.3}
-                maxZoom={1.5}
-                onNodeClick={(_, node) => setSelectedNode(node.id)}
-                onPaneClick={() => setSelectedNode(null)}
-                proOptions={{ hideAttribution: true }}
-                defaultEdgeOptions={{
-                  markerEnd: { type: MarkerType.ArrowClosed },
-                }}
-                nodesDraggable={false}
-                elementsSelectable
+      {/* Floating Node Inspector Panel */}
+      {selectedNode && (
+        <Card className="absolute right-6 top-6 bottom-6 z-20 w-80 overflow-hidden border-slate-700/60 bg-slate-950/90 shadow-2xl backdrop-blur-xl animate-in slide-in-from-right duration-500">
+          <CardHeader className="border-b border-slate-700/60 bg-slate-900/40 pb-4">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-100">
+                Node Inspector
+              </CardTitle>
+              <button 
+                onClick={() => setSelectedNode(null)} 
+                className="rounded-full p-1 hover:bg-slate-800 text-slate-400"
               >
-                <Controls className="!bg-slate-950 !text-slate-200" />
-                <Background gap={22} size={1} color="rgba(148,163,184,0.2)" />
-              </ReactFlow>
+                <Clock3 className="h-4 w-4" /> {/* Swap with a proper close icon if needed, but keeping lucide imports */}
+              </button>
             </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-slate-700/60 bg-slate-950/75">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-slate-200">Node inspector</CardTitle>
           </CardHeader>
 
-          <CardContent className="space-y-3">
-            {!selectedNode ? (
-              <div className="space-y-2 rounded-md border border-slate-700/70 bg-slate-900/40 p-3 text-sm text-slate-300">
-                <p>Select a node to inspect path details, tunnel assignment, and live metrics.</p>
-                <Separator className="bg-slate-700" />
-                <div className="flex items-center gap-2 text-xs text-slate-400">
-                  <Clock3 className="h-3.5 w-3.5" />
-                  <span>Click any VPN, engine, proxy, or client node</span>
+          <CardContent className="space-y-4 p-5">
+            <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-4 shadow-inner">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Resource identifier</p>
+              <p className="mt-1 text-lg font-bold text-slate-50">{selectedNode.data?.title}</p>
+              <p className="text-xs font-mono text-slate-400">{selectedNode.data?.subtitle}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Badge 
+                  variant={selectedNode.data?.health === 'down' ? 'destructive' : selectedNode.data?.health === 'degraded' ? 'warning' : 'success'}
+                  className="font-bold border-none shadow-none uppercase text-[10px]"
+                >
+                  {selectedNode.data?.health}
+                </Badge>
+                {selectedNode.data?.failoverActive && (
+                  <Badge variant="warning" className="uppercase font-bold text-[10px] border-none shadow-none">Active Failover</Badge>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-4 shadow-inner">
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                <Activity className="h-3.5 w-3.5 text-emerald-500" />
+                Live Telemetry
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-tighter">Bitrate</p>
+                  <p className="text-xl font-black text-emerald-400">
+                    {selectedNode.data?.bandwidthMbps.toFixed(1)} <span className="text-xs text-emerald-600">Mbps</span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-tighter">Engaged Streams</p>
+                  <p className="text-xl font-black text-slate-100">
+                    {selectedNode.data?.streamCount}
+                  </p>
                 </div>
               </div>
-            ) : (
-              <>
-                <div className="rounded-md border border-slate-700/70 bg-slate-900/45 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-400">Node</p>
-                  <p className="text-base font-semibold text-slate-50">{selectedNode.data?.title}</p>
-                  <p className="text-xs text-slate-400">{selectedNode.data?.subtitle}</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Badge variant={selectedNode.data?.health === 'down' ? 'destructive' : selectedNode.data?.health === 'degraded' ? 'warning' : 'success'}>
-                      {selectedNode.data?.health}
-                    </Badge>
-                    {selectedNode.data?.failoverActive && <Badge variant="warning">Failover</Badge>}
-                  </div>
-                </div>
+            </div>
 
-                <div className="rounded-md border border-slate-700/70 bg-slate-900/45 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-400">Live metrics</p>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                      <p className="text-slate-400">Bandwidth</p>
-                      <p className="font-semibold text-slate-100">
-                        {selectedNode.data?.bandwidthMbps.toFixed(1)} Mbps
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-slate-400">Streams</p>
-                      <p className="font-semibold text-slate-100">{selectedNode.data?.streamCount}</p>
-                    </div>
+            <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-0 overflow-hidden">
+              <div className="bg-slate-900/80 px-4 py-2 border-b border-slate-700/70">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Internal Metadata</p>
+              </div>
+              <div className="p-4 space-y-1.5 font-mono text-[11px] text-slate-200">
+                {Object.entries(selectedNode.data?.metadata || {}).map(([key, value]) => (
+                  <div key={key} className="flex items-start justify-between gap-2 border-b border-white/5 pb-1 last:border-b-0">
+                    <span className="text-slate-500 lowercase">{key}</span>
+                    <span className="font-semibold text-right text-slate-300">{String(value)}</span>
                   </div>
-                </div>
-
-                <div className="rounded-md border border-slate-700/70 bg-slate-900/45 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-400">Metadata</p>
-                  <div className="mt-2 space-y-1 text-xs text-slate-200">
-                    {Object.entries(selectedNode.data?.metadata || {}).map(([key, value]) => (
-                      <div key={key} className="flex items-center justify-between gap-2">
-                        <span className="text-slate-400">{key}</span>
-                        <span className="font-medium text-right">{String(value)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
+                ))}
+              </div>
+            </div>
           </CardContent>
         </Card>
-      </div>
+      )}
     </div>
   )
 }
