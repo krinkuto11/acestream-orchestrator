@@ -85,7 +85,7 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
   return (
     <div className={cn(
       "relative w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-2xl transition-all duration-500 flex flex-col",
-      embedded ? "h-[740px]" : "flex-1"
+      embedded ? "h-[740px]" : "h-screen"
     )}>
       {/* Background Ambience Overlay */}
       <div className="absolute inset-0 z-0 bg-[radial-gradient(circle_at_15%_10%,rgba(59,130,246,0.12),transparent_35%),radial-gradient(circle_at_85%_90%,rgba(16,185,129,0.14),transparent_40%),linear-gradient(180deg,rgba(15,23,42,0.75),rgba(2,6,23,0.9))] opacity-40 pointer-events-none" />
