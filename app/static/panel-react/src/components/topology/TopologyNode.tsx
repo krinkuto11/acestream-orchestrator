@@ -100,7 +100,7 @@ const countryToFlag = (country: string | null | undefined): string | null => {
 export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
   const Icon = iconByKind[data.kind]
   const theme = kindTheme[data.kind]
-  const showStreams = data.kind !== 'vpn' && data.kind !== 'engine'
+  const showStreams = data.kind !== 'vpn'
 
   const vpnIp = data.kind === 'vpn' ? String(data.metadata?.publicIp || '') : null
   const vpnCountry = data.kind === 'vpn' ? String(data.metadata?.country || '') : null
@@ -137,7 +137,7 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
           </div>
           <div>
             <p className="text-sm font-black leading-tight text-white drop-shadow-sm">{data.title}</p>
-            <p className="text-[10px] font-bold text-slate-200 tracking-tight">{data.subtitle}</p>
+            <p className="text-[10px] font-bold text-slate-300 mt-0.5 tracking-tight">{data.subtitle}</p>
           </div>
         </div>
 
@@ -160,7 +160,7 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
             </div>
           )}
           {vpnProvider && (
-            <p className="text-[10px] font-semibold text-slate-300/80 uppercase tracking-wide">{vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}</p>
+            <p className="text-[10px] font-bold text-slate-200 uppercase tracking-widest">{vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}</p>
           )}
 
           <div className="mt-1 space-y-1.5 pt-1.5 border-t border-white/5">
@@ -172,13 +172,13 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
             </div>
             <div className="flex items-center gap-3">
               <div>
-                <span className="text-[9px] uppercase text-slate-500 font-bold block leading-none mb-0.5">Down</span>
-                <span className="text-xs font-black text-emerald-400">{data.bandwidthMbps.toFixed(1)} <span className="text-[9px] font-normal opacity-70">Mbps</span></span>
+                <span className="text-[9px] uppercase text-slate-400 font-black block leading-none mb-0.5">Down</span>
+                <span className="text-xs font-black text-emerald-400">{data.bandwidthMbps.toFixed(1)} <span className="text-[9px] font-normal text-emerald-500/70">Mbps</span></span>
               </div>
-              <div className="w-px h-6 bg-white/5" />
+              <div className="w-px h-6 bg-white/10" />
               <div>
-                <span className="text-[9px] uppercase text-slate-500 font-bold block leading-none mb-0.5">Up</span>
-                <span className="text-xs font-black text-sky-400">{(data.uploadMbps || 0).toFixed(1)} <span className="text-[9px] font-normal opacity-70">Mbps</span></span>
+                <span className="text-[9px] uppercase text-slate-400 font-black block leading-none mb-0.5">Up</span>
+                <span className="text-xs font-black text-sky-400">{(data.uploadMbps || 0).toFixed(1)} <span className="text-[9px] font-normal text-sky-500/70">Mbps</span></span>
               </div>
             </div>
           </div>
