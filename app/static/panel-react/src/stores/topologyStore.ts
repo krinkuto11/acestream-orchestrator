@@ -468,6 +468,25 @@ const buildSnapshot = ({
     },
   })
 
+  // 4. Final layering and store state update
+  // Sort edges so active pipes render on top of inactive ones
+  edges.sort((a, b) => {
+    const aBw = (a.data?.bandwidthMbps || 0) + (a.data?.uploadMbps || 0)
+    const bBw = (b.data?.bandwidthMbps || 0) + (b.data?.uploadMbps || 0)
+    return aBw - bBw
+  })
+
+  // Ensure nodes are on top of edges by default
+  nodes.forEach(n => {
+    n.zIndex = 100
+  })
+
+  // Ensure edges have zIndex for ReactFlow's internal ordering
+  edges.forEach((edge) => {
+    const bw = edge.data?.bandwidthMbps || 0
+    edge.zIndex = bw > 0.1 ? 10 : 0
+  })
+
   const summary: TopologySummary = {
     totalBandwidthMbps,
     activeEngines: workingEngines.length,
@@ -476,21 +495,6 @@ const buildSnapshot = ({
     failoverEngines: failoverEngines.length,
     vpnDown,
   }
-
-  // Sort edges so active pipes render on top of inactive ones
-  edges.sort((a, b) => {
-    const aBw = a.data?.bandwidthMbps || 0
-    const bBw = b.data?.bandwidthMbps || 0
-    const aActive = aBw > 0.1 ? 1 : 0
-    const bActive = bBw > 0.1 ? 1 : 0
-    return aActive - bActive
-  })
-
-  // Also set zIndex so ReactFlow's internal ordering respects active-on-top
-  edges.forEach((edge) => {
-    const bw = edge.data?.bandwidthMbps || 0
-    edge.zIndex = bw > 0.1 ? 10 : 0
-  })
 
   return {
     nodes,
@@ -639,9 +643,19 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
       (node) => node.data?.kind === 'engine' && node.data.failoverActive,
     ).length
 
+    // Sort edges so active pipes overlap non-active pipes
+    const sortedEdges = [...nextEdges].sort((a, b) => {
+      const aVal = (a.data?.bandwidthMbps || 0) + (a.data?.uploadMbps || 0)
+      const bVal = (b.data?.bandwidthMbps || 0) + (b.data?.uploadMbps || 0)
+      return aVal - bVal
+    })
+
+    // Layer nodes on top
+    const layeredNodes = nextNodes.map(n => ({ ...n, zIndex: 100 }))
+
     set((prev) => ({
-      nodes: nextNodes,
-      edges: nextEdges,
+      nodes: layeredNodes,
+      edges: sortedEdges,
       summary: {
         ...prev.summary,
         totalBandwidthMbps,

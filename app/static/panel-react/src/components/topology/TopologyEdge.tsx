@@ -61,6 +61,7 @@ export function TopologyEdge({
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${finalLabelX}px,${finalLabelY}px)`,
             pointerEvents: 'all',
+            zIndex: 50,
           }}
           className="nodrag nopan"
         >
