@@ -335,6 +335,39 @@ export function StreamingCentralPage({
   const healthyEnginesValue = Number(
     orchestratorStatus?.engines?.healthy ?? (engines || []).filter((engine) => engine.health_status === 'healthy').length,
   )
+  const unhealthyEnginesValue = Number(
+    orchestratorStatus?.engines?.unhealthy ?? (engines || []).filter((engine) => engine.health_status === 'unhealthy').length,
+  )
+  const breakerState = orchestratorStatus?.provisioning?.circuit_breaker_state || 'unknown'
+  const capacityUsed = orchestratorStatus?.capacity?.used ?? 0
+  const capacityTotal = orchestratorStatus?.capacity?.total ?? 0
+
+  const vpnEssentials = useMemo(() => {
+    if (!vpnStatus || vpnStatus.mode === 'disabled') {
+      return []
+    }
+
+    if (vpnStatus.mode === 'single') {
+      const tunnel = vpnStatus.vpn1 || vpnStatus
+      return [{
+        label: 'VPN',
+        connected: Boolean(tunnel?.connected),
+        container: tunnel?.container_name || tunnel?.container || 'N/A',
+        publicIp: tunnel?.public_ip || 'N/A',
+        provider: tunnel?.provider || null,
+      }]
+    }
+
+    return [vpnStatus.vpn1, vpnStatus.vpn2]
+      .filter(Boolean)
+      .map((tunnel, index) => ({
+        label: `VPN ${index + 1}`,
+        connected: Boolean(tunnel.connected),
+        container: tunnel.container_name || tunnel.container || 'N/A',
+        publicIp: tunnel.public_ip || 'N/A',
+        provider: tunnel.provider || null,
+      }))
+  }, [vpnStatus])
 
   const successRate = Number(
     dashboardSnapshot?.proxy?.request_window_1m?.success_rate_percent ??
@@ -428,31 +461,66 @@ export function StreamingCentralPage({
             </div>
           </div>
 
-          <Card className="shadow-sm">
-            <CardHeader className="p-4 pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Quick risk scan
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-2 p-4 pt-0 text-sm md:grid-cols-3">
-              <div className="rounded-md border border-border bg-muted/40 p-3">
-                <p className="text-xs uppercase tracking-wider text-muted-foreground">VPN mode</p>
-                <p className="mt-0.5 font-semibold text-foreground">{vpnStatus?.mode || 'unknown'}</p>
-              </div>
-              <div className="rounded-md border border-border bg-muted/40 p-3">
-                <p className="text-xs uppercase tracking-wider text-muted-foreground">Capacity used</p>
-                <p className="mt-0.5 font-semibold text-foreground">
-                  {orchestratorStatus?.capacity?.used ?? 0} / {orchestratorStatus?.capacity?.total ?? 0}
-                </p>
-              </div>
-              <div className="rounded-md border border-border bg-muted/40 p-3">
-                <p className="text-xs uppercase tracking-wider text-muted-foreground">Circuit breaker</p>
-                <p className="mt-0.5 font-semibold text-foreground">
-                  {orchestratorStatus?.provisioning?.circuit_breaker_state || 'unknown'}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Card className="shadow-sm">
+              <CardHeader className="p-4 pb-2">
+                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Health Essentials
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-2 p-4 pt-0 text-sm md:grid-cols-3">
+                <div className="rounded-md border border-border bg-muted/40 p-3">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground">Engine health</p>
+                  <p className="mt-0.5 font-semibold text-foreground">
+                    {healthyEnginesValue} healthy / {unhealthyEnginesValue} unhealthy
+                  </p>
+                </div>
+                <div className="rounded-md border border-border bg-muted/40 p-3">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground">Capacity</p>
+                  <p className="mt-0.5 font-semibold text-foreground">{capacityUsed} / {capacityTotal}</p>
+                </div>
+                <div className="rounded-md border border-border bg-muted/40 p-3">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground">Circuit breaker</p>
+                  <div className="mt-0.5">
+                    <Badge variant={breakerState === 'closed' ? 'success' : 'warning'}>{breakerState}</Badge>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm">
+              <CardHeader className="p-4 pb-2">
+                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  VPN Essentials
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 p-4 pt-0 text-sm">
+                <div className="rounded-md border border-border bg-muted/40 p-3">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground">Mode</p>
+                  <p className="mt-0.5 font-semibold text-foreground">{vpnStatus?.mode || 'disabled'}</p>
+                </div>
+                {vpnEssentials.length ? (
+                  vpnEssentials.map((vpn) => (
+                    <div key={vpn.label} className="rounded-md border border-border bg-muted/40 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-semibold text-foreground">{vpn.label}</p>
+                        <Badge variant={vpn.connected ? 'success' : 'destructive'}>
+                          {vpn.connected ? 'Connected' : 'Disconnected'}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{vpn.container}</p>
+                      <p className="mt-0.5 font-mono text-xs text-foreground">{vpn.publicIp}</p>
+                      {vpn.provider ? <p className="mt-0.5 text-xs text-muted-foreground">{vpn.provider}</p> : null}
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-md border border-border bg-muted/40 p-3">
+                    <p className="text-sm text-muted-foreground">VPN is disabled.</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="topology" className="space-y-3">

@@ -1,14 +1,12 @@
 import React from 'react'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, Server, Activity, Wifi, Settings, BarChart3, ShieldCheck } from 'lucide-react'
+import { LayoutDashboard, Server, Activity, Settings, BarChart3 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 
 const navigation = [
   { name: 'Overview', href: '/', icon: LayoutDashboard },
   { name: 'Engines', href: '/engines', icon: Server },
   { name: 'Streams', href: '/streams', icon: Activity },
-  { name: 'Health', href: '/health', icon: ShieldCheck },
-  { name: 'VPN', href: '/vpn', icon: Wifi },
   { name: 'Dashboard', href: '/metrics', icon: BarChart3 },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]

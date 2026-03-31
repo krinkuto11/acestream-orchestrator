@@ -9,8 +9,6 @@ import { StreamingCentralPage } from './pages/StreamingCentralPage'
 import { EnginesPage } from './pages/EnginesPage'
 import { StreamsPage } from './pages/StreamsPage'
 import { EventsPage } from './pages/EventsPage'
-import { HealthPage } from './pages/HealthPage'
-import { VPNPage } from './pages/VPNPage'
 import { MetricsPage } from './pages/MetricsPage'
 import { StreamMonitoringPage } from './pages/StreamMonitoringPage'
 import { RoutingTopologyPage } from './pages/RoutingTopologyPage'
@@ -177,10 +175,6 @@ function AppContent() {
               <Route path="/events" element={
                 <EventsPage orchUrl={orchUrl} apiKey={apiKey} maxEventsDisplay={maxEventsDisplay} />
               } />
-              <Route path="/health" element={
-                <HealthPage apiKey={apiKey} orchUrl={orchUrl} />
-              } />
-              <Route path="/vpn" element={<VPNPage vpnStatus={vpnStatus} />} />
               <Route path="/metrics" element={
                 <MetricsPage apiKey={apiKey} orchUrl={orchUrl} />
               } />
