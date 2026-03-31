@@ -240,7 +240,7 @@ const buildSnapshot = ({
   nodes.push({
     id: vpn1NodeId,
     type: 'topologyNode',
-    position: { x: -110, y: Math.max(50, centerY - 150) },
+    position: { x: -240, y: Math.max(50, centerY - 150) },
     data: {
       kind: 'vpn',
       title: 'VPN Tunnel A',
@@ -260,7 +260,7 @@ const buildSnapshot = ({
   nodes.push({
     id: vpn2NodeId,
     type: 'topologyNode',
-    position: { x: -110, y: centerY + 150 },
+    position: { x: -240, y: centerY + 150 },
     data: {
       kind: 'vpn',
       title: 'VPN Tunnel B',
@@ -493,6 +493,11 @@ const buildSnapshot = ({
   // 4. Final layering and store state update
   // Sort edges so active pipes render on top of inactive ones
   edges.sort((a, b) => {
+    const aActive = (((a.data?.bandwidthMbps || 0) + (a.data?.uploadMbps || 0)) > 0.1) ? 1 : 0
+    const bActive = (((b.data?.bandwidthMbps || 0) + (b.data?.uploadMbps || 0)) > 0.1) ? 1 : 0
+    if (aActive !== bActive) {
+      return aActive - bActive
+    }
     const aBw = (a.data?.bandwidthMbps || 0) + (a.data?.uploadMbps || 0)
     const bBw = (b.data?.bandwidthMbps || 0) + (b.data?.uploadMbps || 0)
     return aBw - bBw
@@ -505,8 +510,8 @@ const buildSnapshot = ({
 
   // Ensure edges have zIndex for ReactFlow's internal ordering
   edges.forEach((edge) => {
-    const bw = edge.data?.bandwidthMbps || 0
-    edge.zIndex = bw > 0.1 ? 10 : 0
+    const bw = (edge.data?.bandwidthMbps || 0) + (edge.data?.uploadMbps || 0)
+    edge.zIndex = bw > 0.1 ? 50 : 5
   })
 
   const summary: TopologySummary = {
@@ -687,9 +692,19 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
 
     // Sort edges so active pipes overlap non-active pipes
     const sortedEdges = [...nextEdges].sort((a, b) => {
+      const aActive = (((a.data?.bandwidthMbps || 0) + (a.data?.uploadMbps || 0)) > 0.1) ? 1 : 0
+      const bActive = (((b.data?.bandwidthMbps || 0) + (b.data?.uploadMbps || 0)) > 0.1) ? 1 : 0
+      if (aActive !== bActive) {
+        return aActive - bActive
+      }
       const aVal = (a.data?.bandwidthMbps || 0) + (a.data?.uploadMbps || 0)
       const bVal = (b.data?.bandwidthMbps || 0) + (b.data?.uploadMbps || 0)
       return aVal - bVal
+    })
+
+    sortedEdges.forEach((edge) => {
+      const bw = (edge.data?.bandwidthMbps || 0) + (edge.data?.uploadMbps || 0)
+      edge.zIndex = bw > 0.1 ? 50 : 5
     })
 
     // Layer nodes on top

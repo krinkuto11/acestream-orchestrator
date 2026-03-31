@@ -140,13 +140,6 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         className="!h-2.5 !w-2.5 !border-2 !border-slate-800 !bg-slate-300"
       />
 
-      {/* Floating Proxy/Mux Ingress Bitrate Block (Outside of Node) */}
-      {data.kind === 'proxy' && data.bandwidthMbps > 0 && (
-        <div className="absolute -top-6 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-md border border-slate-600 bg-slate-900 text-[11px] font-semibold text-slate-100 shadow-lg whitespace-nowrap z-10">
-          {data.bandwidthMbps.toFixed(1)} <span className="text-[10px] text-slate-400 font-normal ml-0.5">Mbps</span>
-        </div>
-      )}
-
       {/* Node Header */}
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">

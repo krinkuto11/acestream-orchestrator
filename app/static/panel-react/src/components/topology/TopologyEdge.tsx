@@ -44,7 +44,7 @@ export function TopologyEdge({
   // We ensure it's visible and high-contrast.
   const finalStyle = {
     ...style,
-    stroke: style.stroke || '#64748b',
+    stroke: isActive ? '#22c55e' : '#64748b',
     strokeWidth: (style.strokeWidth as number || 2.2) * 1.2, // Slightly thicker for better visibility
     strokeOpacity: isActive ? 1 : 0.4,
     transition: 'all 0.3s ease',
@@ -67,10 +67,10 @@ export function TopologyEdge({
             className={cn(
               "px-2 py-0.5 rounded-md border text-[11px] font-semibold transition-colors duration-300 shadow-md flex items-center gap-2",
               isFailover 
-                ? "border-amber-400 bg-slate-900 text-amber-400" 
+                ? "border-amber-400 bg-[#020617] text-amber-400" 
                 : isActive 
-                  ? "border-emerald-400 bg-slate-900 text-emerald-400" 
-                  : "border-slate-600 bg-slate-900 text-slate-400"
+                  ? "border-emerald-400 bg-[#020617] text-emerald-400" 
+                  : "border-slate-600 bg-[#020617] text-slate-400"
             )}
           >
             {data?.uploadMbps !== undefined ? (
