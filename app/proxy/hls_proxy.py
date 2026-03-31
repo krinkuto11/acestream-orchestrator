@@ -534,12 +534,15 @@ class StreamManager:
                         time.sleep(5)
                         continue
                     
-                    # Calculate timeout based on target duration (similar to reference implementation)
-                    # Use 3x target duration as timeout (configurable via CLIENT_TIMEOUT_FACTOR)
-                    timeout = self.target_duration * 3.0
+                    # Respect the globally configured Idle Stream Shutdown Delay (CHANNEL_SHUTDOWN_DELAY)
+                    # Use the configured delay as the inactivity timeout.
+                    # As a safety minimum for HLS (to account for client manifest polling intervals), 
+                    # we ensure it's at least 2x the target segment duration.
+                    configured_delay = float(ConfigHelper.channel_shutdown_delay())
+                    timeout = max(configured_delay, self.target_duration * 2.0)
                     
                     if self.client_manager and self.client_manager.cleanup_inactive(timeout):
-                        logger.info(f"Channel {self.channel_id}: All clients disconnected for {timeout:.1f}s")
+                        logger.info(f"Channel {self.channel_id}: All clients inactive for {timeout:.1f}s (respecting shutdown delay: {configured_delay}s)")
                         # Stop the channel via proxy server
                         proxy_server.stop_channel(self.channel_id)
                         break

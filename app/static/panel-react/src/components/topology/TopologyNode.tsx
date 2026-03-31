@@ -137,7 +137,7 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
       
       {/* Floating Entry Pipe Aggregate for Proxy node */}
       {data.kind === 'proxy' && (
-        <div className="absolute -left-[85px] top-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5">
+        <div className="absolute -left-[145px] top-1/2 -translate-y-[calc(100%+4px)] flex flex-col items-center gap-0.5">
           <div className="flex items-center h-7 overflow-hidden rounded-md border border-white/20 shadow-sm bg-black/80">
             <div className="flex items-center px-2 h-full bg-white/5">
               <span className="text-[13px] font-black text-white tabular-nums leading-none">
