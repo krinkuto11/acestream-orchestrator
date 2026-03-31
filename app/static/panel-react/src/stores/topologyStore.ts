@@ -348,7 +348,7 @@ const buildSnapshot = ({
   }
 
   const activeStreams = orchestratorStatus?.streams?.active ?? workingStreams.length
-  const activeClients = Math.max(activeStreams * 3, 9)
+  const activeClients = orchestratorStatus?.proxy?.active_clients?.total ?? Math.max(activeStreams, 1)
 
   nodes.push({
     id: proxyNodeId,
@@ -358,12 +358,14 @@ const buildSnapshot = ({
       kind: 'proxy',
       title: 'Mux and Proxy Core',
       subtitle: '/ace and /hls pipeline',
-      health: orchestratorStatus?.status === 'healthy' ? 'healthy' : 'degraded',
+      health: (orchestratorStatus?.status === 'healthy' || orchestratorStatus?.proxy?.request_window_1m?.success_rate_percent > 98) ? 'healthy' : 'degraded',
       streamCount: activeStreams,
       bandwidthMbps: totalBandwidthMbps,
       metadata: {
-        successRate: orchestratorStatus?.status === 'healthy' ? '99.6%' : '96.8%',
-        ttfbP95Ms: failoverEngines.length > 0 ? 860 : 410,
+        successRate: orchestratorStatus?.proxy?.request_window_1m?.success_rate_percent 
+          ? `${orchestratorStatus.proxy.request_window_1m.success_rate_percent}%`
+          : (orchestratorStatus?.status === 'healthy' ? '99.8%' : '96.2%'),
+        ttfbP95Ms: orchestratorStatus?.proxy?.ttfb?.p95_ms || (failoverEngines.length > 0 ? 860 : 410),
       },
     },
   })
@@ -381,8 +383,8 @@ const buildSnapshot = ({
       bandwidthMbps: isMockMode ? clamp(totalBandwidthMbps * 0.86, 32, 520) : totalBandwidthMbps * 0.86,
       metadata: {
         activeClients,
-        hlsSessions: Math.round(activeClients * 0.66),
-        tsSessions: Math.round(activeClients * 0.34),
+        hlsSessions: orchestratorStatus?.proxy?.active_clients?.hls ?? Math.round(activeClients * 0.6),
+        tsSessions: orchestratorStatus?.proxy?.active_clients?.ts ?? Math.round(activeClients * 0.4),
       },
     },
   })

@@ -280,7 +280,42 @@ export const orchestratorStatusSchema = z
       engine_variant: z.string(),
       debug_mode: z.boolean(),
     }),
-    timestamp: z.string(),
+    proxy: z
+      .object({
+        active_clients: z
+          .object({
+            total: z.number(),
+            ts: z.number(),
+            hls: z.number(),
+          })
+          .passthrough()
+          .nullish(),
+        request_window_1m: z
+          .object({
+            success_rate_percent: z.number(),
+            total_requests_1m: z.number(),
+          })
+          .passthrough()
+          .nullish(),
+        ttfb: z
+          .object({
+            avg_ms: z.number(),
+            p95_ms: z.number(),
+          })
+          .passthrough()
+          .nullish(),
+      })
+      .passthrough()
+      .nullish(),
+    north_star: z
+      .object({
+        proxy_active_clients: z.number(),
+        global_active_streams: z.number(),
+      })
+      .passthrough()
+      .nullish(),
+    docker: z.record(z.string(), z.any()).nullish(),
+    timestamp: z.string().or(z.number()),
   })
   .passthrough()
 export type OrchestratorStatusResponse = z.infer<typeof orchestratorStatusSchema>
