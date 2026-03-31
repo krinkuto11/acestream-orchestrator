@@ -32,11 +32,11 @@ export function TopologyEdge({
   if (data?.labelPosition === 'near-target') {
     // Keep closer to target side but detached from node body/handle.
     finalLabelX = sourceX + deltaX * 0.68
-    finalLabelY = labelY - 14
+    finalLabelY = targetY
   } else if (data?.labelPosition === 'near-source') {
     // Keep closer to source side while still inside the edge corridor.
     finalLabelX = sourceX + deltaX * 0.32
-    finalLabelY = labelY - 14
+    finalLabelY = sourceY
   }
 
   const isFailover = style.strokeDasharray != null
