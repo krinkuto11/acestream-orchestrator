@@ -206,10 +206,15 @@ const buildSnapshot = ({
 
   const failoverEngines: string[] = []
 
+  const engineStartX = 400
+  const engineStartY = 80
+  const engineSpacingY = 175
+  const centerY = engineStartY + Math.max(0, workingEngines.length - 1) * engineSpacingY / 2
+
   nodes.push({
     id: vpn1NodeId,
     type: 'topologyNode',
-    position: { x: 50, y: 150 },
+    position: { x: 40, y: Math.max(50, centerY - 150) },
     data: {
       kind: 'vpn',
       title: 'VPN Tunnel A',
@@ -228,7 +233,7 @@ const buildSnapshot = ({
   nodes.push({
     id: vpn2NodeId,
     type: 'topologyNode',
-    position: { x: 50, y: 380 },
+    position: { x: 40, y: centerY + 150 },
     data: {
       kind: 'vpn',
       title: 'VPN Tunnel B',
@@ -245,11 +250,6 @@ const buildSnapshot = ({
     },
   })
 
-  const columns = 4
-  const startX = 350
-  const startY = 80
-  const spacingX = 300
-  const spacingY = 220
   workingEngines.forEach((engine, index) => {
     const engineStreams = streamMap.get(engine.container_id) || []
     const assignedTunnel = inferTunnelFromEngine(engine, index)
@@ -275,13 +275,10 @@ const buildSnapshot = ({
       failoverEngines.push(engine.container_id)
     }
 
-    const row = Math.floor(index / columns)
-    const col = index % columns
-
     nodes.push({
       id: engine.container_id,
       type: 'topologyNode',
-      position: { x: startX + col * spacingX, y: startY + row * spacingY },
+      position: { x: engineStartX, y: engineStartY + index * engineSpacingY },
       data: {
         kind: 'engine',
         title: engine.container_name || formatCompactId(engine.container_id),
@@ -365,7 +362,7 @@ const buildSnapshot = ({
   nodes.push({
     id: proxyNodeId,
     type: 'topologyNode',
-    position: { x: 1700, y: 240 },
+    position: { x: 860, y: centerY },
     data: {
       kind: 'proxy',
       title: 'Mux and Proxy Core',
@@ -383,7 +380,7 @@ const buildSnapshot = ({
   nodes.push({
     id: clientNodeId,
     type: 'topologyNode',
-    position: { x: 2100, y: 240 },
+    position: { x: 1320, y: centerY },
     data: {
       kind: 'client',
       title: 'Client Edge',
