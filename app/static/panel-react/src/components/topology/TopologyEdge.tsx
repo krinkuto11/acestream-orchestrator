@@ -130,7 +130,7 @@ export function TopologyEdge({
                   <span className="text-[10px] text-rose-400 font-bold">↑</span>
                   <span className="text-[13px] font-black tabular-nums">{displayedUp.toFixed(1)}</span>
                 </div>
-                <div className="text-[9px] font-black text-white/90 text-center tracking-[0.2em] uppercase pt-0.5">
+                <div className="text-[9px] font-normal text-white/90 text-center tracking-[0.2em] uppercase pt-0.5">
                   MBPS
                 </div>
               </div>
@@ -143,8 +143,8 @@ export function TopologyEdge({
                       {displayedBw.toFixed(1)}
                     </span>
                   </div>
-                  <div className="flex items-center px-1.5 h-full border-l border-white/10 bg-white/10 italic">
-                    <span className="text-[9px] font-black text-white/90 uppercase leading-none tracking-tighter">
+                  <div className="flex items-center px-1.5 h-full border-l border-white/10 bg-white/10">
+                    <span className="text-[9px] font-normal text-white/90 uppercase leading-none tracking-tighter">
                       MBPS
                     </span>
                   </div>

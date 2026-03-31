@@ -418,7 +418,7 @@ const buildSnapshot = ({
   const activeClients = isMockMode ? clientList.length : (orchestratorStatus?.proxy?.active_clients?.total ?? clientList.length)
 
   // Dynamically position downstream nodes based on the number of engine columns
-  const proxyNodeX = engineStartX + (NUM_COLUMNS * COLUMN_SPACING_X) + 120
+  const proxyNodeX = engineStartX + (NUM_COLUMNS * COLUMN_SPACING_X) + 60
   const clientNodeX = proxyNodeX + 460
 
   nodes.push({
