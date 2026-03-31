@@ -18,6 +18,7 @@ export interface TopologyNodeData {
   health: TopologyNodeHealth
   bandwidthMbps: number
   uploadMbps?: number
+  proxyIngressMbps?: number
   streamCount: number
   vpnTunnel?: TunnelId
   failoverActive?: boolean
@@ -332,6 +333,7 @@ const buildSnapshot = ({
         streamCount,
         bandwidthMbps,
         uploadMbps: measuredUpMbps > 0 ? measuredUpMbps : (isMockMode ? randomBetween(2, 12) : 0),
+        proxyIngressMbps: uploadBwMbps,
         vpnTunnel: sourceTunnel,
         failoverActive,
         metadata: {
@@ -622,12 +624,32 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
 
     const nextEdges = state.edges.map((edge) => {
       const sourceNode = nodeMap.get(edge.source)
-      const nextBandwidth = sourceNode?.data?.bandwidthMbps || 0
-      const failover = edge.style?.strokeDasharray != null
+      const targetNode = nodeMap.get(edge.target)
+      
+      let baseBandwidth = 0
+      
+      // VPN -> Engine: use Engine's download speed (stored in bandwidthMbps)
+      if (sourceNode?.data?.kind === 'vpn' && targetNode?.data?.kind === 'engine') {
+        baseBandwidth = targetNode.data.bandwidthMbps || 0
+      } 
+      // Engine -> Proxy: use Engine's proxy ingress speed (stored in proxyIngressMbps)
+      else if (sourceNode?.data?.kind === 'engine' && targetNode?.data?.kind === 'proxy') {
+        baseBandwidth = sourceNode.data.proxyIngressMbps || 0
+      }
+      else {
+        baseBandwidth = sourceNode?.data?.bandwidthMbps || 0
+      }
+
+      const jitterVal = (Math.random() - 0.5) * (baseBandwidth * 0.05)
+      const nextBandwidth = Math.max(0, baseBandwidth + jitterVal)
+      const failover = edge.style?.strokeDasharray !== undefined
 
       return {
         ...edge,
-        label: `${nextBandwidth.toFixed(1)} Mbps`,
+        data: {
+          ...edge.data,
+          bandwidthMbps: nextBandwidth,
+        },
         style: {
           ...edge.style,
           strokeWidth: clamp(1.6 + nextBandwidth / (failover ? 58 : 46), 1.6, 8.6),

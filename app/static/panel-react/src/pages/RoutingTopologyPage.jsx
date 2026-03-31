@@ -1,7 +1,7 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import ReactFlow, { Background, Controls, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { Activity, AlertTriangle, Clock3, Network, ShieldAlert, Users } from 'lucide-react'
+import { Activity, AlertTriangle, Network, ShieldAlert, Users, X } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -40,6 +40,8 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
     setSelectedNode,
   } = useTopologyStore((state) => state)
 
+  const [rfInstance, setRfInstance] = useState(null)
+
   useEffect(() => {
     const hasBackendData =
       Boolean(engines && engines.length > 0) ||
@@ -69,6 +71,13 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
       window.clearInterval(interval)
     }
   }, [simulateTick])
+
+  // Automatically fit view when nodes are first populated
+  useEffect(() => {
+    if (rfInstance && nodes.length > 0) {
+      rfInstance.fitView({ padding: 0.2, duration: 400 })
+    }
+  }, [nodes.length, rfInstance])
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId) || null,
@@ -101,9 +110,9 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
           ) : (
             <Badge variant="success" className="bg-emerald-900/30 text-emerald-300 font-bold border-emerald-500/20 shadow-none">Live core</Badge>
           )}
-          <div className="rounded-md border border-white/10 bg-white/5 p-2">
-            <p className="mb-0.5 text-[10px] uppercase text-slate-300 font-semibold tracking-tight">Sync</p>
-            <p className="font-bold text-slate-100">{formatLastUpdate(lastUpdated)}</p>
+          <div className="rounded-md border border-white/10 bg-white/5 p-2 px-3 pointer-events-auto">
+            <p className="mb-0.5 text-[10px] uppercase text-slate-400 font-bold tracking-tight">System Sync</p>
+            <p className="font-bold text-slate-100 text-xs">{formatLastUpdate(lastUpdated)}</p>
           </div>
           {hasEmergency && (
             <Badge variant="destructive" className="bg-rose-900/40 text-rose-300 animate-pulse border-rose-500/30 shadow-none">
@@ -119,6 +128,7 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
+          onInit={setRfInstance}
           fitView
           fitViewOptions={{ padding: 0.2 }}
           minZoom={0.2}
@@ -150,9 +160,10 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
               </CardTitle>
               <button 
                 onClick={() => setSelectedNode(null)} 
-                className="rounded-full p-1 hover:bg-slate-800 text-slate-400"
+                className="rounded-full p-1 hover:bg-slate-800 text-slate-400 transition-colors"
+                aria-label="Close"
               >
-                <Clock3 className="h-4 w-4" /> {/* Swap with a proper close icon if needed, but keeping lucide imports */}
+                <X className="h-4 w-4" />
               </button>
             </div>
           </CardHeader>

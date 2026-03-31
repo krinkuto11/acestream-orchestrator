@@ -104,8 +104,8 @@ export function TopologyEdge({
             {data?.uploadMbps !== undefined && (
               <>
                 <span style={{ margin: '0 4px', opacity: 0.5 }}>|</span>
-                <span style={{ fontSize: '8px', verticalAlign: 'middle', marginRight: '2px', opacity: 0.8 }}>↑</span>
-                {data.uploadMbps.toFixed(1)}
+                <span style={{ fontSize: '8px', verticalAlign: 'middle', marginRight: '2px', color: '#fb7185' }}>↑</span>
+                <span style={{ color: '#fb7185' }}>{data.uploadMbps.toFixed(1)}</span>
               </>
             )}
             <span style={{ fontSize: '8px', fontWeight: 500, opacity: 0.85, marginLeft: '4px' }}>Mbps</span>
