@@ -325,14 +325,22 @@ def _get_proxy_stream_buffer_pieces(stream_key: str) -> Optional[int]:
             for cid in client_ids:
                 if isinstance(cid, bytes): cid = cid.decode("utf-8")
                 client_key = RedisKeys.client_metadata(stream_key, cid)
-                b_sent = rc.hget(client_key, "bytes_sent")
-                if b_sent is not None:
-                    c_idx = int(b_sent) // chunk_size
+                
+                # Fetch both bytes_sent and initial_index to calculate absolute chunk position
+                client_data = rc.hmget(client_key, ["bytes_sent", "initial_index"])
+                if client_data and any(v is not None for v in client_data):
+                    b_sent = int(client_data[0] or 0)
+                    initial_idx = int(client_data[1] or 0)
+                    
+                    # Absolute client position = start position + chunks consumed
+                    c_idx = initial_idx + (b_sent // chunk_size)
+                    
                     if c_idx < min_client_idx:
                         min_client_idx = c_idx
                     has_clients = True
 
             if has_clients:
+                # Buffer size is distance between last written chunk and furthest client
                 return max(0, latest_idx - min_client_idx)
             return 0
     except Exception as e:

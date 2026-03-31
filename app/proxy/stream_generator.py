@@ -206,8 +206,12 @@ class StreamGenerator:
             logger.error(f"[{self.client_id}] No client manager found")
             return False
         
-        # Add client
-        self.client_manager.add_client(self.client_id, self.client_ip, self.client_user_agent)
+        # Capture the current index before registering the client so we can
+        # track the client's absolute position in the buffer.
+        start_index = self.buffer.index
+        
+        # Add client with starting position
+        self.client_manager.add_client(self.client_id, self.client_ip, self.client_user_agent, initial_index=start_index)
 
         # Capture the current index before waiting so startup only accepts
         # fresh data for this session, not stale Redis chunks.
