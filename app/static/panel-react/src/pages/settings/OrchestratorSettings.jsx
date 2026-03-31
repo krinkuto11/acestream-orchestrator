@@ -27,7 +27,6 @@ const DEFAULTS = {
   port_range_host: '19000-19999',
   ace_http_range: '40000-44999',
   ace_https_range: '45000-49999',
-  ace_live_edge_delay: 0,
   debug_mode: false,
 }
 
@@ -42,7 +41,6 @@ export function OrchestratorSettings({ apiKey, orchUrl }) {
   const [startupTimeoutS, setStartupTimeoutS] = useState(DEFAULTS.startup_timeout_s)
   const [idleTtlS, setIdleTtlS] = useState(DEFAULTS.idle_ttl_s)
   const [autoscaleIntervalS, setAutoscaleIntervalS] = useState(DEFAULTS.autoscale_interval_s)
-  const [aceLiveEdgeDelay, setAceLiveEdgeDelay] = useState(DEFAULTS.ace_live_edge_delay)
   const [debugMode, setDebugMode] = useState(DEFAULTS.debug_mode)
 
   // Expert settings
@@ -76,7 +74,6 @@ export function OrchestratorSettings({ apiKey, orchUrl }) {
         setStartupTimeoutS(data.startup_timeout_s ?? DEFAULTS.startup_timeout_s)
         setIdleTtlS(data.idle_ttl_s ?? DEFAULTS.idle_ttl_s)
         setAutoscaleIntervalS(data.autoscale_interval_s ?? DEFAULTS.autoscale_interval_s)
-        setAceLiveEdgeDelay(data.ace_live_edge_delay ?? DEFAULTS.ace_live_edge_delay)
         setDebugMode(data.debug_mode ?? DEFAULTS.debug_mode)
         setMonitorIntervalS(data.monitor_interval_s ?? DEFAULTS.monitor_interval_s)
         setCollectIntervalS(data.collect_interval_s ?? DEFAULTS.collect_interval_s)
@@ -114,7 +111,6 @@ export function OrchestratorSettings({ apiKey, orchUrl }) {
       startup_timeout_s: startupTimeoutS,
       idle_ttl_s: idleTtlS,
       autoscale_interval_s: autoscaleIntervalS,
-      ace_live_edge_delay: aceLiveEdgeDelay,
       debug_mode: debugMode,
       monitor_interval_s: monitorIntervalS,
       collect_interval_s: collectIntervalS,
@@ -220,27 +216,6 @@ export function OrchestratorSettings({ apiKey, orchUrl }) {
               onChange={setAutoscaleIntervalS}
               min={5} max={300}
             />
-            <div className="space-y-1">
-              <div className="flex items-center gap-1">
-                <Label htmlFor="ace-live-edge-delay">Default Live Edge Delay (Seconds)</Label>
-                <Info
-                  className="h-3.5 w-3.5 text-muted-foreground"
-                  title="Starts live streams slightly behind the live edge to improve buffer stability. 0 disables this feature."
-                />
-              </div>
-              <Input
-                id="ace-live-edge-delay"
-                type="number"
-                min="0"
-                step="1"
-                value={aceLiveEdgeDelay}
-                onChange={(e) => setAceLiveEdgeDelay(parseInt(e.target.value, 10) || 0)}
-                className="max-w-xs"
-              />
-              <p className="text-xs text-muted-foreground">
-                Starts live streams slightly behind the live edge to improve buffer stability. 0 disables this feature.
-              </p>
-            </div>
           </div>
 
           <div className="flex items-center gap-3 pt-2">
