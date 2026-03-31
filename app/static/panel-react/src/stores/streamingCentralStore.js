@@ -6,6 +6,9 @@ const MAX_BUFFER_BUCKETS = 60
 const trim = (arr, max) => (arr.length <= max ? arr : arr.slice(arr.length - max))
 
 const parseBufferPieces = (stream) => {
+  const proxyPieces = stream?.proxy_buffer_pieces
+  if (proxyPieces != null) return Number(proxyPieces)
+
   const raw = stream?.livepos?.buffer_pieces
   if (raw == null || raw === '') return 0
   const value = Number(raw)

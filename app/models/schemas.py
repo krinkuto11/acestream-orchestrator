@@ -91,6 +91,8 @@ class StreamState(BaseModel):
     uploaded: Optional[int] = None
     # Live position data (for live streams)
     livepos: Optional[LivePosData] = None
+    # Proxy-level buffer calculation
+    proxy_buffer_pieces: Optional[int] = None
 
 class StreamStatSnapshot(BaseModel):
     ts: datetime
@@ -101,6 +103,7 @@ class StreamStatSnapshot(BaseModel):
     uploaded: Optional[int] = None
     status: Optional[str] = None
     livepos: Optional[LivePosData] = None
+    proxy_buffer_pieces: Optional[int] = None
 
 
 class EngineListResponse(BaseModel):

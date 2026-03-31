@@ -666,7 +666,14 @@ def get_dashboard_snapshot(window_seconds: int = 900, max_points: int = 360) -> 
             total_peers += int(stream.peers)
 
         livepos = getattr(stream, "livepos", None)
-        if livepos and getattr(livepos, "buffer_pieces", None) is not None:
+        proxy_buffer = getattr(stream, "proxy_buffer_pieces", None)
+        
+        if proxy_buffer is not None:
+            try:
+                buffer_pieces.append(int(proxy_buffer))
+            except Exception:
+                continue
+        elif livepos and getattr(livepos, "buffer_pieces", None) is not None:
             try:
                 buffer_pieces.append(int(livepos.buffer_pieces))
             except Exception:

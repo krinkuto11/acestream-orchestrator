@@ -407,6 +407,9 @@ class State:
                         enriched.downloaded = latest_stat.downloaded
                         enriched.uploaded = latest_stat.uploaded
                         enriched.livepos = latest_stat.livepos
+                        
+                        if hasattr(latest_stat, 'proxy_buffer_pieces'):
+                            enriched.proxy_buffer_pieces = latest_stat.proxy_buffer_pieces
                 else:
                     # For ended streams, clear speed/peer data as it's no longer relevant
                     enriched.peers = None

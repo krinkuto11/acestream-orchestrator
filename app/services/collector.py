@@ -145,6 +145,12 @@ class Collector:
                     buffer_pieces=livepos_raw.get("buffer_pieces")
                 )
 
+            # Get the stream key to query proxy metrics
+            proxy_pieces = None
+            stream = state.get_stream(stream_id)
+            if stream and stream.key:
+                proxy_pieces = _get_proxy_stream_buffer_pieces(stream.key)
+
             snap = StreamStatSnapshot(
                 ts=datetime.now(timezone.utc),
                 peers=payload.get("peers"),
@@ -154,9 +160,10 @@ class Collector:
                 uploaded=payload.get("uploaded"),
                 status=status,
                 livepos=livepos_data,
+                proxy_buffer_pieces=proxy_pieces,
             )
             state.append_stat(stream_id, snap)
-            logger.debug(f"Appended stat for {stream_id}: peers={snap.peers} speed_down={snap.speed_down} speed_up={snap.speed_up} downloaded={snap.downloaded} uploaded={snap.uploaded} status={snap.status} livepos={bool(livepos_data)}")
+            logger.debug(f"Appended stat for {stream_id}: peers={snap.peers} speed_down={snap.speed_down} speed_up={snap.speed_up} downloaded={snap.downloaded} uploaded={snap.uploaded} status={snap.status} livepos={bool(livepos_data)} proxy_buffer={proxy_pieces}")
 
             # Update cumulative byte metrics
             try:
@@ -251,6 +258,8 @@ class Collector:
                     buffer_pieces=str(livepos_raw.get("buffer_pieces")) if livepos_raw.get("buffer_pieces") is not None else None,
                 )
 
+            proxy_pieces = _get_proxy_stream_buffer_pieces(stream.key)
+
             snap = StreamStatSnapshot(
                 ts=datetime.now(timezone.utc),
                 peers=peers,
@@ -260,6 +269,7 @@ class Collector:
                 uploaded=uploaded,
                 status=probe.get("status_text") or probe.get("status"),
                 livepos=livepos,
+                proxy_buffer_pieces=proxy_pieces,
             )
             state.append_stat(stream_id, snap)
 
@@ -270,5 +280,64 @@ class Collector:
         except Exception:
             logger.exception(f"Unhandled exception while collecting legacy stats for {stream_id}")
             return
+
+def _get_proxy_stream_buffer_pieces(stream_key: str) -> Optional[int]:
+    try:
+        # Check HLS Segmenter
+        from .hls_segmenter import hls_segmenter_service
+        manager = hls_segmenter_service.get_manager(stream_key)
+        if manager:
+            with manager.lock:
+                return len(manager.segments)
+
+        # Check HLS Proxy
+        try:
+            from ..proxy.hls_proxy import HLSProxyServer
+            hls_proxy = HLSProxyServer.get_instance()
+            if hls_proxy and getattr(hls_proxy, "client_managers", None):
+                mgr = hls_proxy.client_managers.get(stream_key)
+                if mgr and hasattr(mgr, "segments"):
+                    with mgr.lock:
+                        return len(mgr.segments)
+        except Exception:
+            pass
+
+        # Check TS Proxy
+        from ..proxy.manager import ProxyManager
+        from ..proxy.redis_keys import RedisKeys
+        proxy = ProxyManager.get_instance()
+        rc = getattr(proxy, "redis_client", None)
+        if rc:
+            b_val = rc.get(RedisKeys.buffer_index(stream_key))
+            if not b_val:
+                return 0
+            latest_idx = int(b_val)
+
+            client_ids = rc.smembers(RedisKeys.clients(stream_key)) or []
+            if not client_ids:
+                return 0
+
+            min_client_idx = latest_idx
+            from ..proxy.config_helper import Config as ProxyConfig
+            chunk_size = int(getattr(ProxyConfig, "BUFFER_CHUNK_SIZE", 188 * 5644))
+
+            has_clients = False
+            for cid in client_ids:
+                if isinstance(cid, bytes): cid = cid.decode("utf-8")
+                client_key = RedisKeys.client_metadata(stream_key, cid)
+                b_sent = rc.hget(client_key, "bytes_sent")
+                if b_sent is not None:
+                    c_idx = int(b_sent) // chunk_size
+                    if c_idx < min_client_idx:
+                        min_client_idx = c_idx
+                    has_clients = True
+
+            if has_clients:
+                return max(0, latest_idx - min_client_idx)
+            return 0
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"Failed to get proxy buffer pieces for {stream_key}: {e}")
+    return None
 
 collector = Collector()
