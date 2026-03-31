@@ -69,39 +69,37 @@ const countryToFlag = (country: string | null | undefined): string | null => {
   return String.fromCodePoint(...codePoints)
 }
 
-// Enterprise color mapping per section. 
-// Uses a high-contrast background with sharp borders and highly readable text.
 const themeByKind = {
   vpn: {
-    wrapper: 'border-indigo-400 bg-indigo-950/90',
+    wrapper: 'border-indigo-500 bg-[#1e1b4b]', // solid indigo-950
     title: 'text-indigo-50',
     subtitle: 'text-indigo-200',
-    iconBg: 'bg-indigo-500/30 text-indigo-100',
-    box: 'border-indigo-500/30 bg-indigo-900/60 text-indigo-100',
+    iconBg: 'bg-indigo-600 text-indigo-100',
+    box: 'border-indigo-600 bg-[#312e81] text-indigo-100', // solid indigo-900
     label: 'text-indigo-300'
   },
   engine: {
-    wrapper: 'border-blue-400 bg-blue-900/90',
+    wrapper: 'border-blue-500 bg-[#172554]', // solid blue-950
     title: 'text-blue-50',
     subtitle: 'text-blue-200',
-    iconBg: 'bg-blue-500/30 text-blue-100',
-    box: 'border-blue-500/30 bg-blue-800/60 text-blue-100',
+    iconBg: 'bg-blue-600 text-blue-100',
+    box: 'border-blue-600 bg-[#1e3a8a] text-blue-100', // solid blue-900
     label: 'text-blue-300'
   },
   proxy: {
-    wrapper: 'border-fuchsia-400 bg-fuchsia-950/90',
+    wrapper: 'border-fuchsia-500 bg-[#4a044e]', // solid fuchsia-950
     title: 'text-fuchsia-50',
     subtitle: 'text-fuchsia-200',
-    iconBg: 'bg-fuchsia-500/30 text-fuchsia-100',
-    box: 'border-fuchsia-500/30 bg-fuchsia-900/60 text-fuchsia-100',
+    iconBg: 'bg-fuchsia-600 text-fuchsia-100',
+    box: 'border-fuchsia-600 bg-[#701a75] text-fuchsia-100', // solid fuchsia-900
     label: 'text-fuchsia-300'
   },
   client: {
-    wrapper: 'border-teal-400 bg-teal-950/90',
+    wrapper: 'border-teal-500 bg-[#042f2e]', // solid teal-950
     title: 'text-teal-50',
     subtitle: 'text-teal-200',
-    iconBg: 'bg-teal-500/30 text-teal-100',
-    box: 'border-teal-500/30 bg-teal-900/60 text-teal-100',
+    iconBg: 'bg-teal-600 text-teal-100',
+    box: 'border-teal-600 bg-[#134e4a] text-teal-100', // solid teal-900
     label: 'text-teal-300'
   },
 }
@@ -179,7 +177,7 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
       <div className="flex flex-col gap-1.5">
         {/* VPN Specific Details Restored */}
         {data.kind === 'vpn' && (
-          <div className="rounded-lg border border-indigo-500/30 bg-indigo-900/40 p-2 space-y-1.5 mb-1.5">
+          <div className="rounded-lg border border-indigo-600 bg-[#312e81] p-2 space-y-1.5 mb-1.5">
             {vpnIp && (
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[11px] font-semibold text-indigo-100">{vpnIp}</span>
@@ -187,14 +185,14 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
               </div>
             )}
             {vpnProvider && (
-              <p className="text-[10px] font-medium text-indigo-300/90 leading-none">
+              <p className="text-[10px] font-medium text-indigo-300 leading-none">
                 {vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}
               </p>
             )}
           </div>
         )}
 
-        {data.kind !== 'client' && (
+        {data.kind === 'engine' && (
           <div className={cn("flex items-center justify-between rounded-md border p-1.5 px-2 shadow-sm", theme.box)}>
             <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>Streams</span>
             <span className="text-xs font-semibold">{data.streamCount}</span>
@@ -204,20 +202,27 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         {/* Standard Bandwidth Block - Restored Upload/Download for VPN */}
         {data.kind === 'vpn' ? (
           <div className={cn("grid grid-cols-2 gap-1.5", theme.box)}>
-            <div className="flex flex-col p-1 px-1.5 rounded bg-black/20">
+            <div className="flex flex-col p-1 px-1.5 rounded bg-[#1e1b4b] border border-indigo-800">
               <span className="text-[8px] text-emerald-400 font-bold uppercase leading-none mb-1">Down</span>
-              <div className="flex items-baseline gap-0.5">
-                <span className="text-xs font-semibold">{data.bandwidthMbps.toFixed(1)}</span>
-                <span className="text-[8px] text-slate-400">Mbps</span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-base font-bold leading-none tracking-tight">{data.bandwidthMbps.toFixed(1)}</span>
+                <span className="text-[8px] font-medium text-indigo-300">Mbps</span>
               </div>
             </div>
-            <div className="flex flex-col p-1 px-1.5 rounded bg-black/20">
+            <div className="flex flex-col p-1 px-1.5 rounded bg-[#1e1b4b] border border-indigo-800">
               <span className="text-[8px] text-rose-400 font-bold uppercase leading-none mb-1">Up</span>
-              <div className="flex items-baseline gap-0.5">
-                <span className="text-xs font-semibold">{(data.uploadMbps || 0).toFixed(1)}</span>
-                <span className="text-[8px] text-slate-400">Mbps</span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-base font-bold leading-none tracking-tight">{(data.uploadMbps || 0).toFixed(1)}</span>
+                <span className="text-[8px] font-medium text-indigo-300">Mbps</span>
               </div>
             </div>
+          </div>
+        ) : data.kind === 'proxy' ? (
+          <div className={cn("flex items-center justify-between rounded-md border p-1.5 px-2 shadow-sm", theme.box)}>
+            <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>Throughput</span>
+            <span className="text-sm font-semibold">
+              {data.bandwidthMbps.toFixed(1)} <span className="text-[9px] font-normal text-fuchsia-300/80 ml-0.5">Mbps</span>
+            </span>
           </div>
         ) : data.kind === 'client' && (
           <div className={cn("flex items-center justify-between rounded-md border p-1.5 px-2 shadow-sm", theme.box)}>

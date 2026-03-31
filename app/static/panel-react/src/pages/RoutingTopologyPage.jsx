@@ -102,8 +102,15 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
       "relative w-full overflow-hidden rounded-xl border border-slate-800 bg-[#0f172a] shadow-inner flex flex-col",
       embedded ? "h-[740px]" : "h-screen"
     )}>
-      {/* Background Ambience Gradient removed for a clean enterprise feel */}
-      
+      {/* Title Header */}
+      <div className="absolute left-6 top-6 z-20 pointer-events-none">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-100 flex items-center gap-2">
+          <Network className="h-6 w-6 text-slate-400" />
+          Routing Topology
+        </h1>
+        <p className="text-sm font-medium text-slate-500 mt-1">Live streaming pipelines and proxy activity</p>
+      </div>
+
       <div className="h-full w-full">
         <ReactFlow
           nodes={nodes}
