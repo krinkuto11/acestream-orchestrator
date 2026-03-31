@@ -210,7 +210,7 @@ export function StreamingCentralPage({
 
     return {
       animation: false,
-      grid: { left: 42, right: 56, top: 30, bottom: 30 },
+      grid: { left: 42, right: 56, top: 45, bottom: 30 },
       tooltip: { trigger: 'axis', backgroundColor: ct.tooltipBg, borderColor: ct.tooltipBorder, textStyle: { color: ct.tooltipText } },
       legend: {
         data: ['TTFB p95 (ms)', 'Active Streams'],
@@ -289,7 +289,7 @@ export function StreamingCentralPage({
 
     return {
       animation: false,
-      grid: { left: 90, right: 20, top: 16, bottom: 46 },
+      grid: { left: 90, right: 20, top: 16, bottom: 65 },
       tooltip: { position: 'top', backgroundColor: ct.tooltipBg, borderColor: ct.tooltipBorder, textStyle: { color: ct.tooltipText } },
       xAxis: {
         type: 'category',
