@@ -20,7 +20,7 @@ import { Separator } from '@/components/ui/separator'
 
 const navigation = [
   { name: 'Streaming Central', href: '/', icon: LayoutDashboard },
-  { name: 'Overview (Legacy)', href: '/overview-legacy', icon: LayoutDashboard },
+
   { name: 'Engines', href: '/engines', icon: Server },
   { name: 'Streams', href: '/streams', icon: Activity },
   { name: 'Stream Monitoring', href: '/stream-monitoring', icon: Radio },

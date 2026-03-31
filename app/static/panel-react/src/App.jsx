@@ -4,7 +4,7 @@ import { ModernSidebar } from './components/ModernSidebar'
 import { ModernHeader } from './components/ModernHeader'
 import { ThemeProvider, useTheme } from './components/ThemeProvider'
 import { NotificationProvider, useNotifications } from './context/NotificationContext'
-import { OverviewPage } from './pages/OverviewPage'
+
 import { StreamingCentralPage } from './pages/StreamingCentralPage'
 import { EnginesPage } from './pages/EnginesPage'
 import { StreamsPage } from './pages/StreamsPage'
@@ -157,19 +157,7 @@ function AppContent() {
                   />
                 } 
               />
-              <Route
-                path="/overview-legacy"
-                element={
-                  <OverviewPage
-                    engines={engines}
-                    streams={streams}
-                    vpnStatus={vpnStatus}
-                    orchestratorStatus={orchestratorStatus}
-                    orchUrl={orchUrl}
-                    apiKey={apiKey}
-                  />
-                }
-              />
+
               <Route 
                 path="/engines" 
                 element={
