@@ -56,7 +56,13 @@ class StreamManager:
         source_input=None,
         source_input_type="content_id",
         file_indexes="0",
-        seekback=None,
+        seekback=0,
+        playback_url: Optional[str] = None,
+        playback_session_id: Optional[str] = None,
+        stat_url: Optional[str] = None,
+        command_url: Optional[str] = None,
+        is_live: Optional[int] = None,
+        ace_api_client: Optional[Any] = None,
     ):
         # Basic properties
         self.content_id = content_id
@@ -70,13 +76,13 @@ class StreamManager:
         self.api_key = api_key  # API key for orchestrator events
         
         # Stream session info (from AceStream API)
-        self.playback_url = None
-        self.stat_url = None
-        self.command_url = None
-        self.playback_session_id = None
-        self.is_live = None
+        self.playback_url = playback_url
+        self.playback_session_id = playback_session_id
+        self.stat_url = stat_url or ""
+        self.command_url = command_url or ""
+        self.is_live = is_live if is_live is not None else 1
         self.control_mode = normalize_proxy_mode(ConfigHelper.control_mode(), default=PROXY_MODE_HTTP)
-        self.ace_api_client = None
+        self.ace_api_client = ace_api_client
         self._legacy_api_lock = threading.Lock()
         self.resolved_infohash = None
         self.legacy_status_probe = None
@@ -194,6 +200,13 @@ class StreamManager:
     def request_stream_from_engine(self):
         """Request stream from AceStream engine according to selected control mode."""
         self._last_request_failure_type = None
+
+        # If we already have a playback_url, we don't need to request it again
+        if self.playback_url:
+            logger.info(f"Adopting pre-initialized stream session for content_id={self.content_id}")
+            self.connected = False  # Reader will set this to True
+            return True
+
         if self._is_api_mode():
             return self._request_stream_legacy_api()
         return self._request_stream_legacy_http()

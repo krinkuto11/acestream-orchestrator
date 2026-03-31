@@ -146,10 +146,15 @@ class ProxyServer:
         engine_container_id=None,
         engine_api_port=None,
         existing_session=None,
-        source_input=None,
         source_input_type="content_id",
         file_indexes="0",
         seekback=0,
+        playback_url=None,
+        playback_session_id=None,
+        stat_url=None,
+        command_url=None,
+        is_live=None,
+        ace_api_client=None,
     ):
         """Start a new stream session"""
         if content_id in self.stream_managers:
@@ -188,6 +193,12 @@ class ProxyServer:
                 source_input_type=source_input_type,
                 file_indexes=file_indexes,
                 seekback=seekback,
+                playback_url=playback_url,
+                playback_session_id=playback_session_id,
+                stat_url=stat_url,
+                command_url=command_url,
+                is_live=is_live,
+                ace_api_client=ace_api_client,
             )
             self.stream_managers[content_id] = stream_manager
             

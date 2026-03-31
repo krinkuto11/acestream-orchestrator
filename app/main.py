@@ -3282,19 +3282,18 @@ async def ace_getstream(
                             # Manual preflight logic removed as per user request to allow only UI-triggered checks.
                             # The engine START command will now use the raw input values.
 
-                            else:
-                                loadresp, resolved_mode = await asyncio.to_thread(
-                                    client.resolve_content,
-                                    input_value,
-                                    "0",
-                                    input_type,
-                                )
-                                if resolved_mode != "direct_url":
-                                    status_code = loadresp.get("status")
-                                    if status_code not in (1, 2):
-                                        message = loadresp.get("message") or "content unavailable"
-                                        raise HTTPException(status_code=503, detail=f"LOADASYNC status={status_code}: {message}")
-                                start_mode = resolved_mode
+                            loadresp, resolved_mode = await asyncio.to_thread(
+                                client.resolve_content,
+                                input_value,
+                                "0",
+                                input_type,
+                            )
+                            if resolved_mode != "direct_url":
+                                status_code = loadresp.get("status")
+                                if status_code not in (1, 2):
+                                    message = loadresp.get("message") or "content unavailable"
+                                    raise HTTPException(status_code=503, detail=f"LOADASYNC status={status_code}: {message}")
+                            start_mode = resolved_mode
 
                             start_info = await asyncio.to_thread(
                                 client.start_stream,
@@ -3417,6 +3416,7 @@ async def ace_getstream(
             # TS mode - use existing ts_proxy architecture
             if reusable_monitor_session:
                 monitor_engine = reusable_monitor_session.get("engine") or {}
+                monitor_session = reusable_monitor_session.get("session") or {}
                 selected_engine = SimpleNamespace(
                     container_id=monitor_engine.get("container_id"),
                     host=monitor_engine.get("host"),
@@ -3424,19 +3424,134 @@ async def ace_getstream(
                     api_port=monitor_engine.get("api_port") or 62062,
                     forwarded=bool(monitor_engine.get("forwarded")),
                 )
-                monitor_loads = state.get_active_monitor_load_by_engine()
-                current_load = len(state.list_streams(status="started", container_id=selected_engine.container_id)) + monitor_loads.get(selected_engine.container_id, 0)
+                start_info = {
+                    "playback_session_id": str(monitor_session.get("playback_session_id") or f"api-ts-reuse-{int(time.time())}"),
+                    "stat_url": str(monitor_session.get("stat_url") or ""),
+                    "command_url": str(monitor_session.get("command_url") or ""),
+                    "is_live": int(monitor_session.get("is_live") or 1),
+                }
+                playback_url = str(monitor_session.get("playback_url") or "").strip()
+                legacy_api_client = None
+            elif control_mode == PROXY_MODE_API:
+                engines_count = max(1, len(state.list_engines()))
+                max_engine_attempts = min(2, engines_count)
+                excluded_engine_penalties: Dict[str, int] = {}
+                last_start_error: Optional[HTTPException] = None
+                selected_engine = None
+                legacy_api_client = None
+                start_info = {}
+                playback_url = ""
+
+                for attempt_idx in range(max_engine_attempts):
+                    selected_engine, current_load = select_best_engine(
+                        additional_load_by_engine=excluded_engine_penalties,
+                    )
+                    reservation_engine_id = selected_engine.container_id
+
+                    logger.info(
+                        "Starting API-mode %s session on engine %s for stream %s (attempt %s/%s)",
+                        stream_mode,
+                        selected_engine.container_id[:12],
+                        stream_key,
+                        attempt_idx + 1,
+                        max_engine_attempts,
+                    )
+
+                    client = AceLegacyApiClient(
+                        host=selected_engine.host,
+                        port=selected_engine.api_port or 62062,
+                        connect_timeout=10,
+                        response_timeout=10,
+                    )
+
+                    try:
+                        await asyncio.to_thread(client.connect)
+                        await asyncio.to_thread(client.authenticate)
+
+                        loadresp, resolved_mode = await asyncio.to_thread(
+                            client.resolve_content,
+                            input_value,
+                            "0",
+                            input_type,
+                        )
+                        if resolved_mode != "direct_url":
+                            status_code = loadresp.get("status")
+                            if status_code not in (1, 2):
+                                message = loadresp.get("message") or "content unavailable"
+                                raise HTTPException(status_code=503, detail=f"LOADASYNC status={status_code}: {message}")
+                        
+                        start_mode = resolved_mode
+                        start_payload = input_value
+                        if loadresp.get("infohash"):
+                            start_mode = "infohash"
+                            start_payload = loadresp.get("infohash")
+
+                        start_info = await asyncio.to_thread(
+                            client.start_stream,
+                            start_payload,
+                            start_mode,
+                            "output_format=http",
+                            normalized_file_indexes,
+                            normalized_seekback,
+                        )
+                        playback_url = str(start_info.get("url") or "").strip()
+                        if not playback_url:
+                            raise HTTPException(status_code=500, detail="No playback URL returned by API START")
+
+                        legacy_api_client = client
+                        break
+                    except HTTPException as e:
+                        last_start_error = e
+                        excluded_engine_penalties[selected_engine.container_id] = cfg.MAX_STREAMS_PER_ENGINE
+                        rollback_reservation(selected_engine.container_id)
+                        try:
+                            await asyncio.to_thread(client.shutdown)
+                        except Exception:
+                            pass
+                        if attempt_idx + 1 >= max_engine_attempts:
+                            raise
+                        logger.warning(
+                            "API-mode %s startup failed on engine %s (attempt %s/%s): %s. Retrying.",
+                            stream_mode,
+                            selected_engine.container_id[:12],
+                            attempt_idx + 1,
+                            max_engine_attempts,
+                            e.detail,
+                        )
+                    except AceLegacyApiError as e:
+                        last_start_error = HTTPException(status_code=503, detail=str(e))
+                        excluded_engine_penalties[selected_engine.container_id] = cfg.MAX_STREAMS_PER_ENGINE
+                        rollback_reservation(selected_engine.container_id)
+                        try:
+                            await asyncio.to_thread(client.shutdown)
+                        except Exception:
+                            pass
+                        if attempt_idx + 1 >= max_engine_attempts:
+                            raise last_start_error
+                        logger.warning(
+                            "API-mode %s legacy API error on engine %s (attempt %s/%s): %s. Retrying.",
+                            stream_mode,
+                            selected_engine.container_id[:12],
+                            attempt_idx + 1,
+                            max_engine_attempts,
+                            e,
+                        )
+
+                if not playback_url:
+                    if last_start_error:
+                        raise last_start_error
+                    raise HTTPException(status_code=503, detail=f"Unable to start API-mode {stream_mode} stream")
             else:
+                # HTTP mode - simple engine selection
                 selected_engine, current_load = select_best_engine()
                 reservation_engine_id = selected_engine.container_id
-            
+                start_info = {}
+                playback_url = None
+                legacy_api_client = None
+
             logger.info(
-                f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {stream_key} "
-                f"(forwarded={selected_engine.forwarded}, current_load={current_load})"
-            )
-            
-            logger.info(
-                f"Client {client_id} connecting to {stream_mode} stream {stream_key} from {client_ip}"
+                f"Client {client_id} connecting to {stream_mode} stream {stream_key} from {client_ip} "
+                f"on engine {selected_engine.container_id[:12]}"
             )
             
             # Get proxy instance
@@ -3454,9 +3569,21 @@ async def ace_getstream(
                 source_input_type=input_type,
                 file_indexes=normalized_file_indexes,
                 seekback=normalized_seekback,
+                # New adoption parameters
+                playback_url=playback_url,
+                playback_session_id=start_info.get("playback_session_id"),
+                stat_url=start_info.get("stat_url"),
+                command_url=start_info.get("command_url"),
+                is_live=start_info.get("is_live"),
+                ace_api_client=legacy_api_client,
             )
             
             if not success:
+                if legacy_api_client:
+                    try:
+                        await asyncio.to_thread(legacy_api_client.shutdown)
+                    except Exception:
+                        pass
                 raise HTTPException(
                     status_code=500,
                     detail="Failed to start stream session"
