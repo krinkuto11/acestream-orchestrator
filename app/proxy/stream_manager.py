@@ -303,62 +303,24 @@ class StreamManager:
             client.connect()
             client.authenticate()
 
-            start_mode = self.source_input_type
-            start_payload = self.source_input
-
-            if self.source_input_type in {"content_id", "infohash"}:
-                configured_tier = ConfigHelper.legacy_api_preflight_tier()
-                preflight_tier = "light"
-                if configured_tier != "light":
-                    logger.info(
-                        "API mode playback forces light preflight; configured tier '%s' is reserved for manual /ace/preflight checks",
-                        configured_tier,
-                    )
-                logger.info(
-                    "Running API mode preflight: stream_key=%s, input_type=%s, tier=%s",
-                    self.content_id,
-                    self.source_input_type,
-                    preflight_tier,
-                )
-                preflight = client.preflight(
-                    self.source_input,
-                    tier=preflight_tier,
-                    file_indexes=self.file_indexes,
-                )
-                if not preflight.get("available"):
-                    message = preflight.get("message") or "content unavailable"
-                    availability_checks = preflight.get("availability_checks") or {}
-                    logger.warning(
-                        "API mode preflight failed: "
-                        f"stream_key={self.content_id}, input_type={self.source_input_type}, tier={preflight_tier}, "
-                        f"status_code={preflight.get('status_code')}, message={message}, "
-                        f"checks={availability_checks}"
-                    )
-                    self._last_request_failure_type = "preflight_failed"
-                    raise AceLegacyApiError(f"Preflight failed: {message}")
-
-                logger.info(
-                    "API mode preflight passed: "
-                    f"stream_key={self.content_id}, input_type={self.source_input_type}, tier={preflight_tier}, "
-                    f"resolved_infohash={preflight.get('infohash')}"
-                )
-
-                self.resolved_infohash = preflight.get("infohash") or self.source_input
-                start_payload = self.resolved_infohash
+            loadresp, resolved_mode = client.resolve_content(
+                self.source_input,
+                session_id="0",
+                mode=self.source_input_type,
+            )
+            
+            status_code = loadresp.get("status")
+            if status_code not in (1, 2) and resolved_mode != "direct_url":
+                message = loadresp.get("message") or "content unavailable"
+                raise AceLegacyApiError(f"LOADASYNC status={status_code}: {message}")
+            
+            self.resolved_infohash = loadresp.get("infohash") or None
+            
+            # If we have an infohash, always prefer it for START to skip engine-side resolution
+            if self.resolved_infohash:
                 start_mode = "infohash"
+                start_payload = self.resolved_infohash
             else:
-                loadresp, resolved_mode = client.resolve_content(
-                    self.source_input,
-                    session_id="0",
-                    mode=self.source_input_type,
-                )
-                if resolved_mode != "direct_url":
-                    status_code = loadresp.get("status")
-                    if status_code not in (1, 2):
-                        message = loadresp.get("message") or "content unavailable"
-                        raise AceLegacyApiError(f"LOADASYNC status={status_code}: {message}")
-                    self.resolved_infohash = loadresp.get("infohash") or None
-
                 start_mode = resolved_mode
                 start_payload = self.source_input
 

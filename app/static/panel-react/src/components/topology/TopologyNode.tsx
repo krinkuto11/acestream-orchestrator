@@ -176,7 +176,7 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
               <div className="w-px h-6 bg-white/10" />
               <div>
                 <span className="text-[9px] uppercase text-slate-400 font-black block leading-none mb-0.5">Up</span>
-                <span className="text-xs font-black text-sky-400">{(data.uploadMbps || 0).toFixed(1)} <span className="text-[9px] font-normal text-sky-500/70">Mbps</span></span>
+                <span className="text-xs font-black text-rose-500">{(data.uploadMbps || 0).toFixed(1)} <span className="text-[9px] font-normal text-rose-500/70">Mbps</span></span>
               </div>
             </div>
           </div>

@@ -131,13 +131,6 @@ function AppContent() {
       <ModernSidebar />
       
       <div className="flex flex-col min-h-screen transition-all duration-300" style={{ marginLeft: 'var(--sidebar-width, 16rem)' }}>
-        {!isTopologyPage && (
-          <ModernHeader 
-            isConnected={isConnected}
-            lastUpdate={lastUpdate}
-          />
-        )}
-        
         <main className={cn(
           "flex-1 flex flex-col min-h-0 overflow-y-auto",
           isTopologyPage ? "p-0" : "p-6 md:p-8"

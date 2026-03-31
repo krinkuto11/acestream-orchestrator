@@ -145,11 +145,6 @@ class StreamGenerator:
             if manager_mode != PROXY_MODE_API:
                 return True
 
-            # Terminal rejection path: do not keep clients waiting for full timeout.
-            if manager_mode == PROXY_MODE_API and getattr(manager, "_last_request_failure_type", None) == "preflight_failed":
-                logger.warning(f"[{self.client_id}] Stream initialization aborted: preflight rejected stream")
-                return False
-
             # Stream manager must complete session request before clients start normal streaming.
             if bool(getattr(manager, "connected", False)) and bool(getattr(manager, "playback_url", None)):
                 return True
