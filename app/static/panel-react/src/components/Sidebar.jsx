@@ -46,7 +46,7 @@ export function Sidebar() {
       {/* Footer */}
       <div className="border-t p-4">
         <p className="text-xs text-muted-foreground">
-          Version 1.7.0
+          Version 1.7.1
         </p>
       </div>
     </div>
