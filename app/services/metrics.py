@@ -136,6 +136,14 @@ _last_proxy_egress_rate_bps = 0.0
 _last_proxy_rate_ts: Optional[float] = None
 _dashboard_last_persist_ts: Optional[float] = None
 
+# Per-engine proxy ingress tracking
+_engine_ingress_lock = threading.Lock()
+_last_engine_ingress_bytes: Dict[str, int] = {}      # container_id -> total ingress bytes
+_last_engine_ingress_sample_ts: Optional[float] = None
+_engine_ingress_rate_bps: Dict[str, float] = {}       # container_id -> rate in bytes/s
+_last_engine_ingress_rate_bps: Dict[str, float] = {}  # held rates for zero-spike smoothing
+_last_engine_rate_ts: Optional[float] = None
+
 _docker_rate_lock = threading.Lock()
 _last_network_rx_bytes: Optional[int] = None
 _last_network_tx_bytes: Optional[int] = None
@@ -450,6 +458,115 @@ def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
         }
 
 
+def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
+    """Compute per-engine proxy ingress rates in bytes/s.
+
+    Maps each stream's buffer ingress to the engine (container_id) that owns it,
+    then computes delta-based rates per engine.
+    Returns: {container_id: ingress_rate_bps, ...}
+    """
+    from .state import state
+
+    now = time.time()
+    current_engine_bytes: Dict[str, int] = {}  # container_id -> total ingress bytes
+
+    try:
+        from ..proxy.manager import ProxyManager
+        from ..proxy.redis_keys import RedisKeys
+        from ..proxy.config_helper import Config as ProxyConfig
+
+        proxy = ProxyManager.get_instance()
+        redis_client = getattr(proxy, "redis_client", None)
+        if redis_client:
+            active_streams = state.list_streams(status="started")
+            if not active_streams:
+                active_streams = state.list_streams()
+            chunk_size = int(getattr(ProxyConfig, "BUFFER_CHUNK_SIZE", 188 * 5644))
+
+            # Build stream_key -> container_id mapping
+            stream_to_engine: Dict[str, str] = {}
+            for s in active_streams:
+                if s.key and s.container_id:
+                    stream_to_engine[s.key] = s.container_id
+
+            for stream_key, container_id in stream_to_engine.items():
+                try:
+                    buffer_index_raw = redis_client.get(RedisKeys.buffer_index(stream_key))
+                    buffer_index = int(buffer_index_raw or 0)
+                    ingress_bytes = max(0, buffer_index) * chunk_size
+                    current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + ingress_bytes
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    # Also attribute HLS ingress per-engine via HLS segmenter stream ownership
+    try:
+        from ..proxy.hls_proxy import HLSProxyServer
+
+        hls_proxy = HLSProxyServer.get_instance()
+        managers = getattr(hls_proxy, "client_managers", {}) or {}
+        active_streams = state.list_streams(status="started")
+        stream_to_engine: Dict[str, str] = {}
+        for s in active_streams:
+            if s.key and s.container_id:
+                stream_to_engine[s.key] = s.container_id
+
+        for stream_key, manager in managers.items():
+            container_id = stream_to_engine.get(stream_key)
+            if not container_id:
+                continue
+            try:
+                total_fetched = getattr(manager, "total_bytes_fetched", 0) or 0
+                if total_fetched > 0:
+                    current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + int(total_fetched)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    global _last_engine_ingress_bytes, _last_engine_ingress_sample_ts
+    global _engine_ingress_rate_bps, _last_engine_ingress_rate_bps, _last_engine_rate_ts
+
+    rate_hold_seconds = 10.0
+    result: Dict[str, float] = {}
+
+    with _engine_ingress_lock:
+        if _last_engine_ingress_sample_ts is not None and now > _last_engine_ingress_sample_ts:
+            elapsed = now - _last_engine_ingress_sample_ts
+            if elapsed > 0:
+                all_engine_ids = set(current_engine_bytes.keys()) | set(_last_engine_ingress_bytes.keys())
+                fresh_rates: Dict[str, float] = {}
+                has_any_positive = False
+
+                for cid in all_engine_ids:
+                    cur = current_engine_bytes.get(cid, 0)
+                    prev = _last_engine_ingress_bytes.get(cid, 0)
+                    if cur >= prev and prev > 0:
+                        rate = max(0.0, (cur - prev) / elapsed)
+                    else:
+                        rate = 0.0
+                    fresh_rates[cid] = rate
+                    if rate > 0:
+                        has_any_positive = True
+
+                if has_any_positive:
+                    _engine_ingress_rate_bps = fresh_rates
+                    _last_engine_ingress_rate_bps = dict(fresh_rates)
+                    _last_engine_rate_ts = now
+                elif _last_engine_rate_ts is not None and (now - _last_engine_rate_ts) <= rate_hold_seconds:
+                    _engine_ingress_rate_bps = dict(_last_engine_ingress_rate_bps)
+                else:
+                    _engine_ingress_rate_bps = {}
+                    _last_engine_ingress_rate_bps = {}
+                    _last_engine_rate_ts = None
+
+        _last_engine_ingress_bytes = current_engine_bytes
+        _last_engine_ingress_sample_ts = now
+        result = dict(_engine_ingress_rate_bps)
+
+    return result
+
 def _persist_dashboard_sample(snapshot: Dict[str, Any]):
     """Persist snapshot sample points for windowed dashboard history."""
     from .db import SessionLocal
@@ -698,6 +815,7 @@ def get_dashboard_snapshot(window_seconds: int = 900, max_points: int = 360) -> 
     proxy_clients = _compute_proxy_clients_snapshot()
     proxy_window = _compute_proxy_window_snapshot()
     proxy_throughput = _compute_proxy_throughput_snapshot()
+    proxy_engine_ingress = _compute_per_engine_ingress_snapshot()
     window_totals = _compute_window_throughput_totals(window_seconds=window_seconds)
     docker_metrics = _compute_docker_metrics_snapshot()
 
@@ -712,6 +830,7 @@ def get_dashboard_snapshot(window_seconds: int = 900, max_points: int = 360) -> 
         "proxy": {
             "active_clients": proxy_clients,
             "request_window_1m": proxy_window,
+            "engine_ingress_bps": proxy_engine_ingress,
             "throughput": {
                 "ingress_mbps": round((proxy_throughput["ingress_rate_bps"] * 8.0) / 1_000_000.0, 3),
                 "egress_mbps": round((proxy_throughput["egress_rate_bps"] * 8.0) / 1_000_000.0, 3),

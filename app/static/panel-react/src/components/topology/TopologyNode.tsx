@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, GitBranch, Server, ShieldCheck, Users } from 'lucide-react'
+import { Activity, AlertTriangle, GitBranch, Globe, Server, ShieldCheck, Users } from 'lucide-react'
 import { Handle, Position, type NodeProps } from 'reactflow'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
@@ -45,9 +45,67 @@ const healthLabelByState = {
   down: 'Down',
 }
 
+// Map country name/code to emoji flag
+const countryToFlag = (country: string | null | undefined): string | null => {
+  if (!country) return null
+  const c = country.trim().toLowerCase()
+  // Common country name -> ISO 3166-1 alpha-2, then to flag
+  const nameToCode: Record<string, string> = {
+    'united states': 'US', 'usa': 'US', 'us': 'US',
+    'united kingdom': 'GB', 'uk': 'GB', 'gb': 'GB',
+    'germany': 'DE', 'de': 'DE',
+    'france': 'FR', 'fr': 'FR',
+    'netherlands': 'NL', 'nl': 'NL',
+    'switzerland': 'CH', 'ch': 'CH',
+    'sweden': 'SE', 'se': 'SE',
+    'spain': 'ES', 'es': 'ES',
+    'italy': 'IT', 'it': 'IT',
+    'canada': 'CA', 'ca': 'CA',
+    'australia': 'AU', 'au': 'AU',
+    'japan': 'JP', 'jp': 'JP',
+    'singapore': 'SG', 'sg': 'SG',
+    'ireland': 'IE', 'ie': 'IE',
+    'romania': 'RO', 'ro': 'RO',
+    'iceland': 'IS', 'is': 'IS',
+    'norway': 'NO', 'no': 'NO',
+    'finland': 'FI', 'fi': 'FI',
+    'denmark': 'DK', 'dk': 'DK',
+    'portugal': 'PT', 'pt': 'PT',
+    'czech republic': 'CZ', 'czechia': 'CZ', 'cz': 'CZ',
+    'poland': 'PL', 'pl': 'PL',
+    'austria': 'AT', 'at': 'AT',
+    'belgium': 'BE', 'be': 'BE',
+    'brazil': 'BR', 'br': 'BR',
+    'hong kong': 'HK', 'hk': 'HK',
+    'india': 'IN', 'in': 'IN',
+    'mexico': 'MX', 'mx': 'MX',
+    'south korea': 'KR', 'kr': 'KR',
+    'luxembourg': 'LU', 'lu': 'LU',
+    'hungary': 'HU', 'hu': 'HU',
+    'bulgaria': 'BG', 'bg_country': 'BG',
+  }
+  // Try direct match first
+  let code = nameToCode[c]
+  if (!code && c.length === 2) {
+    code = c.toUpperCase()
+  }
+  if (!code) return null
+  // Convert ISO to flag emoji
+  const codePoints = [...code.toUpperCase()].map(
+    (char) => 0x1f1e6 + char.charCodeAt(0) - 65
+  )
+  return String.fromCodePoint(...codePoints)
+}
+
 export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
   const Icon = iconByKind[data.kind]
   const theme = kindTheme[data.kind]
+  const showStreams = data.kind !== 'vpn' && data.kind !== 'engine'
+
+  const vpnIp = data.kind === 'vpn' ? String(data.metadata?.publicIp || '') : null
+  const vpnCountry = data.kind === 'vpn' ? String(data.metadata?.country || '') : null
+  const vpnProvider = data.kind === 'vpn' ? String(data.metadata?.provider || '') : null
+  const flag = countryToFlag(vpnCountry)
 
   return (
     <div
@@ -91,12 +149,34 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         </Badge>
       </div>
 
-      <div className="rounded-md border border-white/10 bg-white/5 p-2">
-        <p className="mb-0.5 text-[10px] uppercase text-slate-300 font-semibold tracking-tight">Streams</p>
-        <p className="font-bold text-slate-100">{data.streamCount}</p>
-      </div>
+      {/* VPN: Show IP + Country flag + Provider instead of Streams */}
+      {data.kind === 'vpn' && (
+        <div className="rounded-md border border-white/10 bg-white/5 p-2 space-y-1.5">
+          {vpnIp && (
+            <div className="flex items-center gap-1.5">
+              <Globe className="h-3 w-3 text-violet-300/80" />
+              <span className="font-mono text-xs font-bold text-slate-100">{vpnIp}</span>
+              {flag && <span className="text-sm ml-0.5">{flag}</span>}
+            </div>
+          )}
+          {vpnProvider && (
+            <p className="text-[10px] font-semibold text-slate-300/80 uppercase tracking-wide">{vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}</p>
+          )}
+        </div>
+      )}
 
-      {data.kind !== 'engine' && (
+      {/* Proxy & Client: Show stream/client count */}
+      {showStreams && (
+        <div className="rounded-md border border-white/10 bg-white/5 p-2">
+          <p className="mb-0.5 text-[10px] uppercase text-slate-300 font-semibold tracking-tight">
+            {data.kind === 'client' ? 'Clients' : 'Streams'}
+          </p>
+          <p className="font-bold text-slate-100">{data.streamCount}</p>
+        </div>
+      )}
+
+      {/* Proxy & Client: Bandwidth */}
+      {data.kind !== 'engine' && data.kind !== 'vpn' && (
         <div className="mt-2 rounded-md border border-white/10 bg-black/20 p-2">
           <div className="mb-1 flex items-center gap-1 text-[10px] uppercase text-slate-300">
             <Activity className="h-3 w-3" />

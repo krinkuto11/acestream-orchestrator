@@ -282,6 +282,7 @@ export const orchestratorStatusSchema = z
     }),
     proxy: z
       .object({
+        engine_ingress_bps: z.record(z.string(), z.number()).nullish(),
         active_clients: z
           .object({
             total: z.number(),
@@ -301,6 +302,15 @@ export const orchestratorStatusSchema = z
           .object({
             avg_ms: z.number(),
             p95_ms: z.number(),
+          })
+          .passthrough()
+          .nullish(),
+        throughput: z
+          .object({
+            ingress_mbps: z.number(),
+            egress_mbps: z.number(),
+            ingress_bps: z.number(),
+            egress_bps: z.number(),
           })
           .passthrough()
           .nullish(),

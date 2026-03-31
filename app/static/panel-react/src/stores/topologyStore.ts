@@ -209,10 +209,14 @@ const buildSnapshot = ({
   // 1. Sort engines so active ones are prioritized at the top
   const engineStats = workingEngines.map((engine) => {
     const engineStreams = streamMap.get(engine.container_id) || []
+    const measuredDownMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_down), 0)
+    const measuredUpMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_up), 0)
     return {
       engine,
       streamCount: engineStreams.length,
-      measuredMbps: engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_down), 0),
+      measuredMbps: measuredDownMbps, // used for sorting
+      measuredDownMbps,
+      measuredUpMbps,
     }
   }).sort((a, b) => {
     if (b.streamCount !== a.streamCount) return b.streamCount - a.streamCount
@@ -247,6 +251,7 @@ const buildSnapshot = ({
         connected: tunnelConnectivity.vpn1,
         publicIp: vpnStatus?.vpn1?.public_ip || '185.102.112.44',
         provider: vpnStatus?.vpn1?.provider || 'ProtonVPN',
+        country: vpnStatus?.vpn1?.country || null,
       },
     },
   })
@@ -267,12 +272,13 @@ const buildSnapshot = ({
         connected: tunnelConnectivity.vpn2,
         publicIp: vpnStatus?.vpn2?.public_ip || '79.127.210.63',
         provider: vpnStatus?.vpn2?.provider || 'Mullvad',
+        country: vpnStatus?.vpn2?.country || null,
       },
     },
   })
 
   // 3. Process the nodes using the Zig-Zag Staggered Corridor pattern
-  engineStats.forEach(({ engine, streamCount, measuredMbps }, index) => {
+  engineStats.forEach(({ engine, streamCount, measuredMbps, measuredDownMbps, measuredUpMbps }, index) => {
     const engineStreams = streamMap.get(engine.container_id) || []
 
     // Determine column (0, 1, 2, 0, 1, 2...)
@@ -290,7 +296,17 @@ const buildSnapshot = ({
     const failoverActive = !tunnelHealthy && backupHealthy
     const sourceTunnel = failoverActive ? backupTunnel : assignedTunnel
 
-    const bandwidthMbps = measuredMbps > 0 ? measuredMbps : (isMockMode ? randomBetween(8, 72) : 0)
+    // VPN → Engine: P2P download speed (what the engine pulls through the VPN)
+    const downloadBwMbps = measuredDownMbps > 0 ? measuredDownMbps : (isMockMode ? randomBetween(8, 72) : 0)
+    
+    // Engine → Proxy: Actual per-engine ingress reported by proxy (bps -> Mbps)
+    const engineIngressBps = orchestratorStatus?.proxy?.engine_ingress_bps?.[engine.container_id] ?? 0
+    const uploadBwMbps = engineIngressBps > 0 
+      ? (engineIngressBps * 8) / 1_000_000 
+      : (streamCount > 0 ? downloadBwMbps : (isMockMode ? randomBetween(2, 18) : 0))
+    
+    // Overall bandwidth for the node
+    const bandwidthMbps = downloadBwMbps
 
     let health: TopologyNodeHealth = 'healthy'
     if (engine.health_status === 'unhealthy' || (!tunnelHealthy && !backupHealthy)) {
@@ -327,6 +343,7 @@ const buildSnapshot = ({
       },
     })
 
+    // VPN → Engine edge: shows download bandwidth
     edges.push({
       id: `${sourceTunnel}->${engine.container_id}`,
       type: 'topologyEdge',
@@ -335,16 +352,17 @@ const buildSnapshot = ({
       animated: true,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
-        bandwidthMbps,
+        bandwidthMbps: downloadBwMbps,
         labelPosition: 'near-target',
       },
       style: {
         stroke: failoverActive ? '#f59e0b' : '#64748b',
-        strokeWidth: clamp(1.6 + bandwidthMbps / 55, 1.6, 5.8),
+        strokeWidth: clamp(1.6 + downloadBwMbps / 55, 1.6, 5.8),
         strokeDasharray: failoverActive ? '8 5' : undefined,
       },
     })
 
+    // Engine → Proxy edge: shows upload bandwidth
     edges.push({
       id: `${engine.container_id}->${proxyNodeId}`,
       type: 'topologyEdge',
@@ -353,12 +371,12 @@ const buildSnapshot = ({
       animated: true,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
-        bandwidthMbps,
+        bandwidthMbps: uploadBwMbps,
         labelPosition: 'near-source',
       },
       style: {
         stroke: '#60a5fa',
-        strokeWidth: clamp(1.8 + bandwidthMbps / 48, 1.8, 6.4),
+        strokeWidth: clamp(1.8 + uploadBwMbps / 48, 1.8, 6.4),
       },
     })
   })
