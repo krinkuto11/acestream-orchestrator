@@ -115,6 +115,7 @@ export function ProxySettings({ apiKey, orchUrl, externalSaveSignal = 0, onSavin
   const [hlsInitialBufferSeconds, setHlsInitialBufferSeconds] = useState(10)
   const [hlsMaxInitialSegments, setHlsMaxInitialSegments] = useState(10)
   const [hlsSegmentFetchInterval, setHlsSegmentFetchInterval] = useState(0.5)
+  const [defaultLiveDelay, setDefaultLiveDelay] = useState(0)
 
   // Read-only config for display
   const [vlcUserAgent, setVlcUserAgent] = useState('')
@@ -130,7 +131,6 @@ export function ProxySettings({ apiKey, orchUrl, externalSaveSignal = 0, onSavin
   const [preflightInputType, setPreflightInputType] = useState('content_id')
   const [preflightContentId, setPreflightContentId] = useState('')
   const [preflightFileIndexes, setPreflightFileIndexes] = useState('0')
-  const [preflightLiveDelay, setPreflightLiveDelay] = useState('')
   const [preflightTier, setPreflightTier] = useState('light')
   const [preflightLoading, setPreflightLoading] = useState(false)
   const [preflightResult, setPreflightResult] = useState(null)
@@ -145,6 +145,7 @@ export function ProxySettings({ apiKey, orchUrl, externalSaveSignal = 0, onSavin
   useEffect(() => {
     fetchProxyConfig()
     fetchCustomVariantInfo()
+    fetchOrchestratorSettings()
   }, [orchUrl])
 
   // Poll for custom variant changes (e.g., after user changes settings in another tab/page)
@@ -202,6 +203,18 @@ export function ProxySettings({ apiKey, orchUrl, externalSaveSignal = 0, onSavin
       }
     } catch (err) {
       console.error('Failed to fetch proxy config:', err)
+    }
+  }
+
+  const fetchOrchestratorSettings = async () => {
+    try {
+      const response = await fetch(`${orchUrl}/api/v1/settings/orchestrator`)
+      if (response.ok) {
+        const data = await response.json()
+        setDefaultLiveDelay(Number(data.ace_live_edge_delay || 0))
+      }
+    } catch (err) {
+      console.error('Failed to fetch orchestrator settings:', err)
     }
   }
 
@@ -282,8 +295,37 @@ export function ProxySettings({ apiKey, orchUrl, externalSaveSignal = 0, onSavin
 
       if (response.ok) {
         const data = await response.json()
-        setMessage(data.message)
+
+        let liveDelayUpdateError = null
+        try {
+          const orchestratorResponse = await fetch(`${orchUrl}/api/v1/settings/orchestrator`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              ace_live_edge_delay: Math.max(0, parseInt(String(defaultLiveDelay), 10) || 0),
+            }),
+          })
+
+          if (!orchestratorResponse.ok) {
+            const orchestratorError = await orchestratorResponse.json().catch(() => ({}))
+            liveDelayUpdateError = orchestratorError.detail || `HTTP ${orchestratorResponse.status}`
+          }
+        } catch (orchestratorErr) {
+          liveDelayUpdateError = orchestratorErr.message || String(orchestratorErr)
+        }
+
+        if (liveDelayUpdateError) {
+          setMessage(data.message || 'Proxy configuration updated')
+          setError(`Proxy settings saved, but default live delay could not be updated: ${liveDelayUpdateError}`)
+        } else {
+          setMessage('Proxy and default live delay settings saved')
+        }
+
         await fetchProxyConfig()
+        await fetchOrchestratorSettings()
       } else {
         const errorData = await response.json()
         setError(errorData.detail || 'Failed to update configuration')
@@ -320,11 +362,6 @@ export function ProxySettings({ apiKey, orchUrl, externalSaveSignal = 0, onSavin
       params.set(queryParam, contentId)
       params.set('file_indexes', normalizedFileIndexes)
       params.set('tier', preflightTier)
-
-      const parsedLiveDelay = parseInt(String(preflightLiveDelay || '').trim(), 10)
-      if (Number.isFinite(parsedLiveDelay) && parsedLiveDelay > 0) {
-        params.set('live_delay', String(parsedLiveDelay))
-      }
 
       const response = await fetch(`${orchUrl}/api/v1/ace/preflight?${params.toString()}`, { headers })
 
@@ -500,25 +537,6 @@ export function ProxySettings({ apiKey, orchUrl, externalSaveSignal = 0, onSavin
             <p className="text-xs text-muted-foreground">
               Choose which file inside a multi-file torrent to start. Default is index 0.
             </p>
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center gap-1">
-              <Label htmlFor="preflight-live-delay">Optional Live Delay (seconds)</Label>
-              <Info
-                className="h-3.5 w-3.5 text-muted-foreground"
-                title="Starts live streams slightly behind the live edge to improve buffer stability. 0 disables this feature."
-              />
-            </div>
-            <Input
-              id="preflight-live-delay"
-              type="number"
-              min="0"
-              step="1"
-              placeholder="Uses global default when empty"
-              value={preflightLiveDelay}
-              onChange={(e) => setPreflightLiveDelay(e.target.value)}
-            />
           </div>
 
           <div className="space-y-2">
@@ -706,6 +724,28 @@ export function ProxySettings({ apiKey, orchUrl, externalSaveSignal = 0, onSavin
               Seconds between buffer checks when no data is available during streaming.
               For unstable streams, increase timeout checks or interval. Example: 100 checks × 1s = 100s tolerance.
               <br /><strong>Range:</strong> 0.01-1.0 seconds. <strong>Default:</strong> 1 second.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-1">
+              <Label htmlFor="default-live-delay">Default Live Delay (seconds)</Label>
+              <Info
+                className="h-3.5 w-3.5 text-muted-foreground"
+                title="Starts live streams slightly behind the live edge to improve buffer stability. 0 disables this feature."
+              />
+            </div>
+            <Input
+              id="default-live-delay"
+              type="number"
+              min="0"
+              step="1"
+              value={defaultLiveDelay}
+              onChange={(e) => setDefaultLiveDelay(parseInt(e.target.value, 10) || 0)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Global live stream startup delay used for normal playback sessions.
+              <br /><strong>Range:</strong> 0+ seconds. <strong>Default:</strong> 0 seconds.
             </p>
           </div>
         </CardContent>
