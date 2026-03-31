@@ -225,8 +225,16 @@ const buildSnapshot = ({
     return (a.engine.container_name || '').localeCompare(b.engine.container_name || '')
   })
 
+  const isVpnClusterMode = Boolean(vpnStatus && vpnStatus.mode !== 'disabled')
+  const engineStatsWithTunnel = engineStats.map((entry, index) => ({
+    ...entry,
+    assignedTunnel: vpnStatus?.mode === 'single' ? 'vpn1' : inferTunnelFromEngine(entry.engine, index),
+  }))
+
   // 2. Define Staggered Grid properties
-  const NUM_COLUMNS = Math.max(1, Math.min(3, Math.ceil(engineStats.length / 6)))
+  const NUM_COLUMNS = isVpnClusterMode
+    ? Math.max(1, Math.min(2, Math.ceil(engineStats.length / 8)))
+    : Math.max(1, Math.min(3, Math.ceil(engineStats.length / 6)))
   const COLUMN_SPACING_X = 340   // 210px node width + 130px gap for pipes and labels
   const STAGGERED_ROW_SPACING_Y = 140 // Enough vertical space for the node + a gap for horizontal pipes
 
@@ -236,6 +244,34 @@ const buildSnapshot = ({
   // Center Y spans the entire height of the staggered list
   const totalEngineHeight = Math.max(0, engineStats.length - 1) * STAGGERED_ROW_SPACING_Y
   const centerY = engineStartY + totalEngineHeight / 2
+
+  const enginesPerTunnel = engineStatsWithTunnel.reduce(
+    (acc, item) => {
+      acc[item.assignedTunnel] += 1
+      return acc
+    },
+    { vpn1: 0, vpn2: 0 } as Record<TunnelId, number>,
+  )
+
+  const rowsPerTunnel = {
+    vpn1: Math.max(1, Math.ceil(enginesPerTunnel.vpn1 / NUM_COLUMNS)),
+    vpn2: Math.max(1, Math.ceil(enginesPerTunnel.vpn2 / NUM_COLUMNS)),
+  }
+
+  const tunnelClusterCenterY = {
+    vpn1: Math.max(80, centerY - 190),
+    vpn2: centerY + 190,
+  }
+
+  const tunnelClusterStartY = {
+    vpn1: tunnelClusterCenterY.vpn1 - ((rowsPerTunnel.vpn1 - 1) * STAGGERED_ROW_SPACING_Y) / 2,
+    vpn2: tunnelClusterCenterY.vpn2 - ((rowsPerTunnel.vpn2 - 1) * STAGGERED_ROW_SPACING_Y) / 2,
+  }
+
+  const tunnelLocalIndex: Record<TunnelId, number> = {
+    vpn1: 0,
+    vpn2: 0,
+  }
 
   nodes.push({
     id: vpn1NodeId,
@@ -279,17 +315,29 @@ const buildSnapshot = ({
   })
 
   // 3. Process the nodes using the Zig-Zag Staggered Corridor pattern
-  engineStats.forEach(({ engine, streamCount, measuredMbps, measuredDownMbps, measuredUpMbps }, index) => {
+  engineStatsWithTunnel.forEach(({ engine, streamCount, measuredMbps, measuredDownMbps, measuredUpMbps, assignedTunnel }, index) => {
     const engineStreams = streamMap.get(engine.container_id) || []
 
-    // Determine column (0, 1, 2, 0, 1, 2...)
-    const colIndex = index % NUM_COLUMNS
+    let colIndex: number
+    let currentX: number
+    let currentY: number
+    if (isVpnClusterMode) {
+      const localIndex = tunnelLocalIndex[assignedTunnel]
+      tunnelLocalIndex[assignedTunnel] += 1
+      colIndex = localIndex % NUM_COLUMNS
+      const rowIndex = Math.floor(localIndex / NUM_COLUMNS)
+      const rowStaggerX = rowIndex % 2 === 0 ? 0 : 60
+      const colStaggerY = colIndex % 2 === 0 ? 0 : 18
+      currentX = engineStartX + (colIndex * COLUMN_SPACING_X) + rowStaggerX
+      currentY = tunnelClusterStartY[assignedTunnel] + (rowIndex * STAGGERED_ROW_SPACING_Y) + colStaggerY
+    } else {
+      // Determine column (0, 1, 2, 0, 1, 2...)
+      colIndex = index % NUM_COLUMNS
+      // Calculate positions — every index gets a unique Y, creating dedicated horizontal pipe corridors
+      currentX = engineStartX + (colIndex * COLUMN_SPACING_X)
+      currentY = engineStartY + (index * STAGGERED_ROW_SPACING_Y)
+    }
 
-    // Calculate positions — every index gets a unique Y, creating dedicated horizontal pipe corridors
-    const currentX = engineStartX + (colIndex * COLUMN_SPACING_X)
-    const currentY = engineStartY + (index * STAGGERED_ROW_SPACING_Y)
-
-    const assignedTunnel = inferTunnelFromEngine(engine, index)
     const tunnelHealthy = tunnelConnectivity[assignedTunnel]
     const backupTunnel = assignedTunnel === 'vpn1' ? 'vpn2' : 'vpn1'
     const backupHealthy = tunnelConnectivity[backupTunnel]

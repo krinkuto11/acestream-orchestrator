@@ -27,13 +27,16 @@ export function TopologyEdge({
   // Position label cleanly in the horizontal corridors
   let finalLabelX = labelX
   let finalLabelY = labelY
+  const deltaX = targetX - sourceX
 
   if (data?.labelPosition === 'near-target') {
-    finalLabelX = targetX - 55
-    finalLabelY = targetY
+    // Keep closer to target side but detached from node body/handle.
+    finalLabelX = sourceX + deltaX * 0.68
+    finalLabelY = labelY - 14
   } else if (data?.labelPosition === 'near-source') {
-    finalLabelX = sourceX + 55
-    finalLabelY = sourceY
+    // Keep closer to source side while still inside the edge corridor.
+    finalLabelX = sourceX + deltaX * 0.32
+    finalLabelY = labelY - 14
   }
 
   const isFailover = style.strokeDasharray != null
@@ -59,6 +62,7 @@ export function TopologyEdge({
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${finalLabelX}px,${finalLabelY}px)`,
             pointerEvents: 'all',
+            zIndex: 80,
           }}
           className="nodrag nopan"
         >
