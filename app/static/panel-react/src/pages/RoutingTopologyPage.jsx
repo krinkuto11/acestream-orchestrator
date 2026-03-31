@@ -162,8 +162,8 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
 
       <div className="grid gap-4 xl:grid-cols-[1fr_300px]">
         <Card className="overflow-hidden border-slate-700/60 bg-slate-950/70">
-          <CardHeader className="border-b border-slate-700/60 pb-3">
-            <CardTitle className="text-sm font-medium text-slate-200">
+          <CardHeader className="border-b border-slate-700/60 pb-4">
+            <CardTitle className="text-xl font-bold text-slate-100">
               VPN to Engine to Proxy flow map
             </CardTitle>
           </CardHeader>

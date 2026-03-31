@@ -77,18 +77,26 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         </div>
       </div>
 
-      <div className="mt-2 rounded-md border border-white/10 bg-slate-900/60 p-2">
-        <div className="mb-1 flex items-center gap-1 text-[10px] uppercase text-slate-300">
-          <Activity className="h-3 w-3" />
-          <span>Bandwidth</span>
+      {data.kind !== 'engine' && (
+        <div className="mt-2 rounded-md border border-white/10 bg-slate-900/60 p-2">
+          <div className="mb-1 flex items-center gap-1 text-[10px] uppercase text-slate-300">
+            <Activity className="h-3 w-3" />
+            <span>Bandwidth</span>
+          </div>
+          <p className="text-sm font-semibold text-slate-50">{data.bandwidthMbps.toFixed(1)} Mbps</p>
         </div>
-        <p className="text-sm font-semibold text-slate-50">{data.bandwidthMbps.toFixed(1)} Mbps</p>
-      </div>
+      )}
 
       {data.failoverActive && (
         <div className="mt-2 flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200">
           <AlertTriangle className="h-3.5 w-3.5" />
           <span>Failover route active</span>
+        </div>
+      )}
+
+      {data.kind === 'engine' && (
+        <div className="absolute -right-16 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded border border-sky-500/40 bg-sky-950/90 text-[10px] font-bold text-sky-300 shadow-sm">
+          {data.bandwidthMbps.toFixed(1)} <span className="text-[8px] font-medium opacity-70">Mbps</span>
         </div>
       )}
 

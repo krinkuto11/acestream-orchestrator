@@ -208,7 +208,7 @@ const buildSnapshot = ({
 
   const engineStartX = 400
   const engineStartY = 80
-  const engineSpacingY = 175
+  const engineSpacingY = 280
   const centerY = engineStartY + Math.max(0, workingEngines.length - 1) * engineSpacingY / 2
 
   nodes.push({
@@ -309,12 +309,6 @@ const buildSnapshot = ({
       data: {
         bandwidthMbps,
       },
-      label: `${bandwidthMbps.toFixed(1)} Mbps`,
-      labelStyle: {
-        fontSize: 10,
-        fill: failoverActive ? '#f59e0b' : '#94a3b8',
-        fontWeight: 600,
-      },
       style: {
         stroke: failoverActive ? '#f59e0b' : '#64748b',
         strokeWidth: clamp(1.6 + bandwidthMbps / 55, 1.6, 5.8),
@@ -331,11 +325,6 @@ const buildSnapshot = ({
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps,
-      },
-      label: `${bandwidthMbps.toFixed(1)} Mbps`,
-      labelStyle: {
-        fontSize: 10,
-        fill: '#60a5fa',
       },
       style: {
         stroke: '#60a5fa',
@@ -403,12 +392,6 @@ const buildSnapshot = ({
     target: clientNodeId,
     animated: true,
     markerEnd: { type: MarkerType.ArrowClosed },
-    label: `${Math.max(totalBandwidthMbps, 1).toFixed(1)} Mbps`,
-    labelStyle: {
-      fontSize: 10,
-      fill: '#22c55e',
-      fontWeight: 700,
-    },
     style: {
       stroke: '#22c55e',
       strokeWidth: clamp(2.4 + totalBandwidthMbps / 40, 2.4, 9),
@@ -455,14 +438,44 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
 
   hydrateFromBackend: (snapshot) => {
     const next = buildSnapshot(snapshot)
-    set((state) => ({
-      nodes: next.nodes,
-      edges: next.edges,
-      summary: next.summary,
-      lastUpdated: next.lastUpdated,
-      isMockMode: next.isMockMode,
-      selectedNodeId: state.selectedNodeId,
-    }))
+    
+    set((state) => {
+      // Stabilize nodes: reuse existing object if content is logically same
+      const stabilizedNodes = next.nodes.map((nextNode) => {
+        const existingNode = state.nodes.find((n) => n.id === nextNode.id)
+        if (!existingNode) return nextNode
+        
+        // Compare data fields and position
+        const dataChanged = JSON.stringify(existingNode.data) !== JSON.stringify(nextNode.data)
+        const posChanged = 
+          existingNode.position.x !== nextNode.position.x || 
+          existingNode.position.y !== nextNode.position.y
+          
+        if (!dataChanged && !posChanged) return existingNode
+        return nextNode
+      })
+
+      // Stabilize edges: reuse existing object if content is logically same
+      const stabilizedEdges = next.edges.map((nextEdge) => {
+        const existingEdge = state.edges.find((e) => e.id === nextEdge.id)
+        if (!existingEdge) return nextEdge
+        
+        const styleChanged = JSON.stringify(existingEdge.style) !== JSON.stringify(nextEdge.style)
+        const labelChanged = existingEdge.label !== nextEdge.label
+        
+        if (!styleChanged && !labelChanged) return existingEdge
+        return nextEdge
+      })
+
+      return {
+        nodes: stabilizedNodes,
+        edges: stabilizedEdges,
+        summary: next.summary,
+        lastUpdated: next.lastUpdated,
+        isMockMode: next.isMockMode,
+        selectedNodeId: state.selectedNodeId,
+      }
+    })
   },
 
   simulateTick: () => {
