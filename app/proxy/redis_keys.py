@@ -70,6 +70,11 @@ class RedisKeys:
         return f"ace_proxy:worker:{worker_id}:heartbeat"
     
     @staticmethod
+    def stream_init_time(content_id):
+        """Key for stream initialization timestamp"""
+        return f"ace_proxy:stream:{content_id}:init_time"
+
+    @staticmethod
     def client_metadata(content_id, client_id):
         """Key for client metadata hash"""
         return f"ace_proxy:stream:{content_id}:clients:{client_id}"

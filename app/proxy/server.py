@@ -203,9 +203,11 @@ class ProxyServer:
             )
             self.stream_managers[content_id] = stream_manager
             
-            # Set owner in Redis
+            # Set owner and init_time in Redis
             owner_key = RedisKeys.stream_owner(content_id)
+            init_key = RedisKeys.stream_init_time(content_id)
             self.redis_client.set(owner_key, self.worker_id, ex=300)
+            self.redis_client.setex(init_key, 3600, str(time.time()))
             
             # Start stream manager in background thread
             # Using threading.Thread instead of gevent.spawn because uvicorn doesn't use gevent worker
@@ -287,7 +289,7 @@ class ProxyServer:
             RedisKeys.connection_attempt(content_id),
             RedisKeys.last_data(content_id),
             f"ace_proxy:stream:{content_id}:activity",
-            f"ace_proxy:stream:{content_id}:init_time",
+            RedisKeys.stream_init_time(content_id),
         ]
 
         wildcard_patterns = [
@@ -346,6 +348,16 @@ class ProxyServer:
                             if idle_time > Config.CHANNEL_SHUTDOWN_DELAY:
                                 logger.info(f"Cleaning up idle stream {content_id} (idle for {idle_time:.1f}s)")
                                 self._stop_stream(content_id)
+                        else:
+                            # No clients EVER - check init_time
+                            init_key = RedisKeys.stream_init_time(content_id)
+                            init_time_raw = self.redis_client.get(init_key)
+                            if init_time_raw:
+                                init_time = float(init_time_raw.decode('utf-8'))
+                                idle_since_init = time.time() - init_time
+                                if idle_since_init > Config.CHANNEL_SHUTDOWN_DELAY:
+                                    logger.info(f"Cleaning up orphan stream {content_id} (never connected, initialized {idle_since_init:.1f}s ago)")
+                                    self._stop_stream(content_id)
             
             except Exception as e:
                 logger.error(f"Error cleaning up session {content_id}: {e}")

@@ -241,7 +241,7 @@ class ClientManager:
                     self.redis_client.expire(self.client_set_key, self.client_ttl)
                     
                     # Clear any initialization timer
-                    init_key = f"ace_proxy:stream:{self.content_id}:init_time"
+                    init_key = RedisKeys.stream_init_time(self.content_id)
                     self.redis_client.delete(init_key)
                     
                     # Clear last disconnect time since we now have a client
