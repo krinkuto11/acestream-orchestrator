@@ -43,27 +43,6 @@ export function ModernHeader({ isConnected, lastUpdate, onOpenSettings }) {
   return (
     <header className="sticky top-0 z-50 w-full border-b border-slate-200 bg-white/70 backdrop-blur-md supports-[backdrop-filter]:bg-white/55 dark:border-slate-700 dark:bg-slate-950/85 dark:supports-[backdrop-filter]:bg-slate-950/75">
       <div className="flex h-16 items-center gap-4 px-6">
-        {/* Connection Status */}
-        <div className="flex items-center gap-2">
-          {isConnected ? (
-            <Wifi className="h-4 w-4 text-green-600 dark:text-green-400" />
-          ) : (
-            <WifiOff className="h-4 w-4 text-red-600 dark:text-red-400" />
-          )}
-          <Badge variant={isConnected ? "success" : "destructive"} className="text-xs">
-            {isConnected ? 'Connected' : 'Disconnected'}
-          </Badge>
-        </div>
-        
-        <Separator orientation="vertical" className="h-6" />
-        
-        {/* Last Update */}
-        {lastUpdate && (
-          <span className="text-xs text-muted-foreground">
-            Last update: {lastUpdate.toLocaleTimeString()}
-          </span>
-        )}
-        
         {/* Spacer */}
         <div className="flex-1" />
         
