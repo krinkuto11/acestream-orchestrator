@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import ReactFlow, { Background, Controls, MarkerType, MiniMap } from 'reactflow'
+import ReactFlow, { Background, Controls, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { Activity, AlertTriangle, Clock3, Network, ShieldAlert, Users } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -187,18 +187,6 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
                 nodesDraggable={false}
                 elementsSelectable
               >
-                <MiniMap
-                  nodeStrokeWidth={2}
-                  pannable
-                  zoomable
-                  className="!bg-slate-950/90"
-                  nodeColor={(node) => {
-                    const health = node.data?.health
-                    if (health === 'down') return '#f43f5e'
-                    if (health === 'degraded') return '#f59e0b'
-                    return '#22c55e'
-                  }}
-                />
                 <Controls className="!bg-slate-950 !text-slate-200" />
                 <Background gap={22} size={1} color="rgba(148,163,184,0.2)" />
               </ReactFlow>

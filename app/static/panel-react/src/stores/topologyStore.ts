@@ -120,7 +120,7 @@ const deriveTunnelConnectivity = (
 
 const toMbps = (speedMaybe: number | null | undefined): number => {
   if (speedMaybe == null || Number.isNaN(speedMaybe)) return 0
-  return speedMaybe / 1024
+  return (speedMaybe * 8) / 1000
 }
 
 const buildSnapshot = ({
@@ -211,7 +211,7 @@ const buildSnapshot = ({
   nodes.push({
     id: vpn1NodeId,
     type: 'topologyNode',
-    position: { x: 80, y: 120 },
+    position: { x: 50, y: 150 },
     data: {
       kind: 'vpn',
       title: 'VPN Tunnel A',
@@ -230,7 +230,7 @@ const buildSnapshot = ({
   nodes.push({
     id: vpn2NodeId,
     type: 'topologyNode',
-    position: { x: 80, y: 360 },
+    position: { x: 50, y: 380 },
     data: {
       kind: 'vpn',
       title: 'VPN Tunnel B',
@@ -248,6 +248,10 @@ const buildSnapshot = ({
   })
 
   const columns = 4
+  const startX = 350
+  const startY = 80
+  const spacingX = 300
+  const spacingY = 220
   workingEngines.forEach((engine, index) => {
     const engineStreams = streamMap.get(engine.container_id) || []
     const assignedTunnel = inferTunnelFromEngine(engine, index)
@@ -279,7 +283,7 @@ const buildSnapshot = ({
     nodes.push({
       id: engine.container_id,
       type: 'topologyNode',
-      position: { x: 320 + col * 230, y: 60 + row * 150 },
+      position: { x: startX + col * spacingX, y: startY + row * spacingY },
       data: {
         kind: 'engine',
         title: engine.container_name || formatCompactId(engine.container_id),
@@ -302,6 +306,7 @@ const buildSnapshot = ({
 
     edges.push({
       id: `${sourceTunnel}->${engine.container_id}`,
+      type: 'smoothstep',
       source: sourceTunnel,
       target: engine.container_id,
       animated: true,
@@ -324,6 +329,7 @@ const buildSnapshot = ({
 
     edges.push({
       id: `${engine.container_id}->${proxyNodeId}`,
+      type: 'smoothstep',
       source: engine.container_id,
       target: proxyNodeId,
       animated: true,
@@ -354,7 +360,7 @@ const buildSnapshot = ({
   nodes.push({
     id: proxyNodeId,
     type: 'topologyNode',
-    position: { x: 1300, y: 200 },
+    position: { x: 1700, y: 240 },
     data: {
       kind: 'proxy',
       title: 'Mux and Proxy Core',
@@ -372,7 +378,7 @@ const buildSnapshot = ({
   nodes.push({
     id: clientNodeId,
     type: 'topologyNode',
-    position: { x: 1600, y: 200 },
+    position: { x: 2100, y: 240 },
     data: {
       kind: 'client',
       title: 'Client Edge',
@@ -390,6 +396,7 @@ const buildSnapshot = ({
 
   edges.push({
     id: `${proxyNodeId}->${clientNodeId}`,
+    type: 'smoothstep',
     source: proxyNodeId,
     target: clientNodeId,
     animated: true,
