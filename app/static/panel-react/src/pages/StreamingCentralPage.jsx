@@ -100,13 +100,31 @@ function KpiTile({ title, value, tone = 'default', points = [], suffix = '', ico
   )
 }
 
-const formatGbps = (value) => `${Number(value || 0).toFixed(3)}`
 const formatPercent = (value) => `${Number(value || 0).toFixed(2)}`
 const formatTime = (iso) => {
   if (!iso) return '-'
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return '-'
   return date.toLocaleTimeString([], { hour12: false })
+}
+
+const formatEgress = (egressGbps) => {
+  const normalized = Number(egressGbps || 0)
+  if (!Number.isFinite(normalized) || normalized <= 0) {
+    return { value: '0.0', suffix: 'Mbps' }
+  }
+
+  if (normalized >= 1) {
+    return {
+      value: normalized.toFixed(3),
+      suffix: 'Gbps',
+    }
+  }
+
+  return {
+    value: (normalized * 1000).toFixed(1),
+    suffix: 'Mbps',
+  }
 }
 
 // Status-gradient palette for engine saturation tiles (fleet matrix).
@@ -317,7 +335,7 @@ export function StreamingCentralPage({
       },
       series: [
         {
-          name: 'Buffer Avg Pieces',
+          name: 'Proxy Buffer Pieces',
           type: 'heatmap',
           data,
           emphasis: {
@@ -375,6 +393,7 @@ export function StreamingCentralPage({
   )
 
   const egressGbps = Number(dashboardSnapshot?.proxy?.throughput?.egress_mbps || 0) / 1000
+  const egressDisplay = formatEgress(egressGbps)
 
   const selectedEngine = (engines || []).find((engine) => engine.container_id === selectedEngineId)
   const selectedEngineLogs = selectedEngineId ? logsByContainerId[selectedEngineId] : null
@@ -433,8 +452,8 @@ export function StreamingCentralPage({
             <div className="col-span-12 sm:col-span-6 xl:col-span-3">
               <KpiTile
                 title="Global Egress"
-                value={formatGbps(egressGbps)}
-                suffix="Gbps"
+                value={egressDisplay.value}
+                suffix={egressDisplay.suffix}
                 points={kpiHistory.egressGbps}
                 tone="emerald"
                 icon={Network}
@@ -537,7 +556,7 @@ export function StreamingCentralPage({
           <Card className="shadow-sm">
             <CardHeader className="p-4 pb-2">
               <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Buffer Heatmap (rolling 5m)
+                Proxy Buffer Heatmap (rolling 5m)
               </CardTitle>
             </CardHeader>
             <CardContent className="p-4 pt-0">

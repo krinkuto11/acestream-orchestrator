@@ -251,8 +251,10 @@ const buildSnapshot = (
   const nodes: Node<TopologyNodeData>[] = []
   const edges: Edge[] = []
 
+  const isVpnDisabledMode = vpnStatus?.mode === 'disabled'
   const vpn1NodeId = 'vpn1'
   const vpn2NodeId = 'vpn2'
+  const internetNodeId = 'internet'
   const proxyNodeId = 'proxy-core'
 
   const failoverEngines: string[] = []
@@ -315,8 +317,11 @@ const buildSnapshot = (
     vpn2: vpn2StartY,
   }
 
-  // Center Y for downstream nodes (Proxy, Clients) spans the entire height
-  const totalHeight = (vpn2StartY + vpn2Height) - engineStartY
+  // Center Y for downstream nodes (Proxy, Clients) spans the entire height.
+  // In VPN-disabled mode we center against the single staggered engine corridor.
+  const totalHeight = isVpnClusterMode
+    ? (vpn2StartY + vpn2Height) - engineStartY
+    : Math.max(0, engineStats.length - 1) * STAGGERED_ROW_SPACING_Y
   const centerY = engineStartY + (totalHeight / 2)
 
   const tunnelLocalIndex: Record<TunnelId, number> = {
@@ -324,46 +329,68 @@ const buildSnapshot = (
     vpn2: 0,
   }
 
-  nodes.push({
-    id: vpn1NodeId,
-    type: 'topologyNode',
-    position: { x: -240, y: vpn1CenterY },
-    data: {
-      kind: 'vpn',
-      title: 'VPN Tunnel A',
-      subtitle: vpnStatus?.vpn1?.container_name || 'gluetun-primary',
-      health: tunnelConnectivity.vpn1 ? 'healthy' : 'down',
-      bandwidthMbps: isMockMode ? randomBetween(120, 210) : 0,
-      streamCount: 0,
-      metadata: {
-        connected: tunnelConnectivity.vpn1,
-        publicIp: vpnStatus?.vpn1?.public_ip || '185.102.112.44',
-        provider: vpnStatus?.vpn1?.provider || 'ProtonVPN',
-        country: vpnStatus?.vpn1?.country || null,
+  if (isVpnDisabledMode) {
+    nodes.push({
+      id: internetNodeId,
+      type: 'topologyNode',
+      position: { x: -240, y: centerY },
+      data: {
+        kind: 'vpn',
+        title: 'Internet',
+        subtitle: 'Direct egress (VPN disabled)',
+        health: 'healthy',
+        bandwidthMbps: isMockMode ? randomBetween(180, 260) : 0,
+        streamCount: 0,
+        metadata: {
+          connected: true,
+          publicIp: 'Direct route',
+          provider: 'WAN',
+          country: null,
+        },
       },
-    },
-  })
+    })
+  } else {
+    nodes.push({
+      id: vpn1NodeId,
+      type: 'topologyNode',
+      position: { x: -240, y: vpn1CenterY },
+      data: {
+        kind: 'vpn',
+        title: 'VPN Tunnel A',
+        subtitle: vpnStatus?.vpn1?.container_name || 'gluetun-primary',
+        health: tunnelConnectivity.vpn1 ? 'healthy' : 'down',
+        bandwidthMbps: isMockMode ? randomBetween(120, 210) : 0,
+        streamCount: 0,
+        metadata: {
+          connected: tunnelConnectivity.vpn1,
+          publicIp: vpnStatus?.vpn1?.public_ip || '185.102.112.44',
+          provider: vpnStatus?.vpn1?.provider || 'ProtonVPN',
+          country: vpnStatus?.vpn1?.country || null,
+        },
+      },
+    })
 
-  nodes.push({
-    id: vpn2NodeId,
-    type: 'topologyNode',
-    position: { x: -240, y: vpn2CenterY },
-    data: {
-      kind: 'vpn',
-      title: 'VPN Tunnel B',
-      subtitle: vpnStatus?.vpn2?.container_name || 'gluetun-secondary',
-      health: tunnelConnectivity.vpn2 ? 'healthy' : 'down',
-      bandwidthMbps: isMockMode ? randomBetween(90, 180) : 0,
-      streamCount: 0,
-      failoverActive: !tunnelConnectivity.vpn1 && tunnelConnectivity.vpn2,
-      metadata: {
-        connected: tunnelConnectivity.vpn2,
-        publicIp: vpnStatus?.vpn2?.public_ip || '79.127.210.63',
-        provider: vpnStatus?.vpn2?.provider || 'Mullvad',
-        country: vpnStatus?.vpn2?.country || null,
+    nodes.push({
+      id: vpn2NodeId,
+      type: 'topologyNode',
+      position: { x: -240, y: vpn2CenterY },
+      data: {
+        kind: 'vpn',
+        title: 'VPN Tunnel B',
+        subtitle: vpnStatus?.vpn2?.container_name || 'gluetun-secondary',
+        health: tunnelConnectivity.vpn2 ? 'healthy' : 'down',
+        bandwidthMbps: isMockMode ? randomBetween(90, 180) : 0,
+        streamCount: 0,
+        failoverActive: !tunnelConnectivity.vpn1 && tunnelConnectivity.vpn2,
+        metadata: {
+          connected: tunnelConnectivity.vpn2,
+          publicIp: vpnStatus?.vpn2?.public_ip || '79.127.210.63',
+          provider: vpnStatus?.vpn2?.provider || 'Mullvad',
+          country: vpnStatus?.vpn2?.country || null,
+        },
       },
-    },
-  })
+    })
+  }
 
   // 3. Process the nodes using the Zig-Zag Staggered Corridor pattern
   engineStatsWithTunnel.forEach(({ engine, streamCount, measuredMbps, measuredUpMbps, assignedTunnel }, index) => {
@@ -392,8 +419,10 @@ const buildSnapshot = (
     const backupTunnel = assignedTunnel === 'vpn1' ? 'vpn2' : 'vpn1'
     const backupHealthy = tunnelConnectivity[backupTunnel]
 
-    const failoverActive = !tunnelHealthy && backupHealthy
-    const sourceTunnel = failoverActive ? backupTunnel : assignedTunnel
+    const failoverActive = !isVpnDisabledMode && !tunnelHealthy && backupHealthy
+    const sourceNodeId: TunnelId | 'internet' = isVpnDisabledMode
+      ? internetNodeId
+      : (failoverActive ? backupTunnel : assignedTunnel)
 
     // VPN → Engine: smooth bursty traffic so active lanes do not flash to zero between chunks.
     const rawBandwidthMbps = measuredMbps > 0 ? measuredMbps : (isMockMode ? randomBetween(8, 72) : 0)
@@ -431,11 +460,11 @@ const buildSnapshot = (
         bandwidthMbps,
         uploadMbps: measuredUpMbps > 0 ? measuredUpMbps : (isMockMode ? randomBetween(2, 12) : 0),
         proxyIngressMbps: uploadBwMbps,
-        vpnTunnel: sourceTunnel,
+        vpnTunnel: isVpnDisabledMode ? undefined : (sourceNodeId as TunnelId),
         failoverActive,
         metadata: {
           assignedTunnel,
-          activeTunnel: sourceTunnel,
+          activeTunnel: sourceNodeId,
           peers: engineStreams.reduce((sum, stream) => sum + (stream.peers || 0), 0),
           variant: engine.engine_variant || 'default',
           forwarded: engine.forwarded,
@@ -447,9 +476,9 @@ const buildSnapshot = (
     // VPN → Engine edge: shows both download (P2P ingress) and upload (P2P seeding) bandwidth
     const edgeUploadBw = measuredUpMbps > 0 ? measuredUpMbps : (isMockMode ? randomBetween(2, 12) : 0)
     edges.push({
-      id: `${sourceTunnel}->${engine.container_id}`,
+      id: `${sourceNodeId}->${engine.container_id}`,
       type: 'topologyEdge',
-      source: sourceTunnel,
+      source: sourceNodeId,
       target: engine.container_id,
       animated: true,
       markerEnd: { type: MarkerType.ArrowClosed },
@@ -484,7 +513,7 @@ const buildSnapshot = (
     })
   })
 
-  if (!isMockMode) {
+  if (!isMockMode && !isVpnDisabledMode) {
     const vpn1Node = nodes.find(n => n.id === vpn1NodeId)
     const vpn2Node = nodes.find(n => n.id === vpn2NodeId)
     if (vpn1Node) {

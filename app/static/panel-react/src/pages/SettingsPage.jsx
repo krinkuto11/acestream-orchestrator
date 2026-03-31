@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '@/components/ui/button'
 import { GeneralSettings } from './settings/GeneralSettings'
 import { OrchestratorSettings } from './settings/OrchestratorSettings'
 import { VPNSettings } from './settings/VPNSettings'
@@ -16,6 +17,10 @@ export function SettingsPage({
   setMaxEventsDisplay,
   orchUrl
 }) {
+  const [activeTab, setActiveTab] = useState('general')
+  const [proxySaveSignal, setProxySaveSignal] = useState(0)
+  const [proxySaving, setProxySaving] = useState(false)
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -25,15 +30,26 @@ export function SettingsPage({
         </div>
       </div>
 
-      <Tabs defaultValue="general" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-6 border-slate-700 bg-slate-900/90 text-slate-300 lg:w-[960px]">
-          <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="general">General</TabsTrigger>
-          <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="orchestrator">Orchestrator</TabsTrigger>
-          <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="vpn">VPN</TabsTrigger>
-          <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="proxy">Proxy</TabsTrigger>
-          <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="loop-detection">Loop Detection</TabsTrigger>
-          <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="backup">Backup</TabsTrigger>
-        </TabsList>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <TabsList className="grid w-full grid-cols-6 border-slate-700 bg-slate-900/90 text-slate-300 lg:w-[960px]">
+            <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="general">General</TabsTrigger>
+            <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="orchestrator">Orchestrator</TabsTrigger>
+            <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="vpn">VPN</TabsTrigger>
+            <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="proxy">Proxy</TabsTrigger>
+            <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="loop-detection">Loop Detection</TabsTrigger>
+            <TabsTrigger className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50" value="backup">Backup</TabsTrigger>
+          </TabsList>
+
+          {activeTab === 'proxy' && (
+            <Button
+              onClick={() => setProxySaveSignal((value) => value + 1)}
+              disabled={!apiKey || proxySaving}
+            >
+              {proxySaving ? 'Saving...' : 'Save Settings'}
+            </Button>
+          )}
+        </div>
 
         <TabsContent value="general" className="space-y-6">
           <GeneralSettings
@@ -64,6 +80,8 @@ export function SettingsPage({
           <ProxySettings
             apiKey={apiKey}
             orchUrl={orchUrl}
+            externalSaveSignal={proxySaveSignal}
+            onSavingChange={setProxySaving}
           />
         </TabsContent>
 

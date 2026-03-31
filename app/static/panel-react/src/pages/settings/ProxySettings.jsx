@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -88,7 +88,7 @@ const extractLoadRespFiles = (payload) => {
   })
 }
 
-export function ProxySettings({ apiKey, orchUrl }) {
+export function ProxySettings({ apiKey, orchUrl, externalSaveSignal = 0, onSavingChange }) {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState(null)
   const [error, setError] = useState(null)
@@ -135,6 +135,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [preflightLoading, setPreflightLoading] = useState(false)
   const [preflightResult, setPreflightResult] = useState(null)
   const [preflightError, setPreflightError] = useState(null)
+  const lastExternalSaveSignal = useRef(0)
 
   // Check if HLS is supported - double check both variant and cache type
   const isAceServeVariant = engineVariant.startsWith('AceServe')
@@ -156,6 +157,19 @@ export function ProxySettings({ apiKey, orchUrl }) {
 
     return () => clearInterval(pollInterval)
   }, [orchUrl]) // Only restart polling when orchUrl changes
+
+  useEffect(() => {
+    if (typeof onSavingChange === 'function') {
+      onSavingChange(loading)
+    }
+  }, [loading, onSavingChange])
+
+  useEffect(() => {
+    if (externalSaveSignal > 0 && externalSaveSignal !== lastExternalSaveSignal.current) {
+      lastExternalSaveSignal.current = externalSaveSignal
+      saveProxyConfig()
+    }
+  }, [externalSaveSignal])
 
   const fetchProxyConfig = async () => {
     try {
@@ -401,14 +415,6 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   </span>
                 </>
               )}
-              {hlsSupported && (
-                <>
-                  <br />
-                  <span className="text-green-600 dark:text-green-500 font-semibold">
-                    ✓ HLS mode is supported (variant: {variantDisplayName || engineVariant}, cache: {customVariantCacheType || 'disk/hybrid'})
-                  </span>
-                </>
-              )}
             </p>
           </div>
 
@@ -432,14 +438,6 @@ export function ProxySettings({ apiKey, orchUrl }) {
             <p className="text-xs text-muted-foreground">
               HTTP mode uses /ace/getstream JSON control flow. API mode uses the AceStream API port
               for HELLOBG/READY/LOADASYNC/START control. HLS playback is supported in both modes.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label>API Mode Playback Preflight</Label>
-            <p className="text-xs text-muted-foreground">
-              Proxy playback now always uses <strong>light</strong> preflight in API mode.
-              Use the <strong>Preflight Diagnostics</strong> section below for manual deep checks.
             </p>
           </div>
 
