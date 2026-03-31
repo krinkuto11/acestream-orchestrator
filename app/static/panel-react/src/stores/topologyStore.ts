@@ -208,7 +208,7 @@ const buildSnapshot = ({
 
   const engineStartX = 400
   const engineStartY = 80
-  const engineSpacingY = 280
+  const engineSpacingY = 200
   const centerY = engineStartY + Math.max(0, workingEngines.length - 1) * engineSpacingY / 2
 
   nodes.push({

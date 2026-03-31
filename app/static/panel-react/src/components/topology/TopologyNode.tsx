@@ -49,12 +49,16 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
 
       <div className="mb-2 flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="rounded-md bg-black/35 p-1.5">
+          <div className={cn(
+            "rounded-md p-1.5 shadow-sm transition-colors",
+            data.health === 'healthy' ? "bg-emerald-500/20 text-emerald-300" : 
+            data.health === 'degraded' ? "bg-amber-500/20 text-amber-300" : "bg-rose-500/20 text-rose-300"
+          )}>
             <Icon className="h-4 w-4" />
           </div>
           <div>
-            <p className="text-sm font-semibold leading-tight">{data.title}</p>
-            <p className="text-xs text-slate-300">{data.subtitle}</p>
+            <p className="text-sm font-bold leading-tight text-white">{data.title}</p>
+            <p className="text-[10px] font-medium text-slate-300">{data.subtitle}</p>
           </div>
         </div>
 
