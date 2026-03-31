@@ -78,26 +78,6 @@ const jitter = (value: number, ratio = 0.16, floor = 0): number => {
   return Math.max(floor, value + randomBetween(-delta, delta))
 }
 
-const smoothBandwidth = (current: number, previous: number | undefined, streamCount: number): number => {
-  const prev = previous || 0
-
-  // If there are no active streams at all, the pipe should immediately drain to 0
-  if (streamCount === 0) return 0
-
-  // If we didn't have a previous value, just use current
-  if (prev === 0) return current
-
-  // If we have streams but the instantaneous burst is 0 (waiting for next chunk),
-  // decay the previous bandwidth smoothly by 15% instead of dropping instantly to 0.
-  if (current === 0) {
-    const decayed = prev * 0.85
-    return decayed < 0.2 ? 0 : decayed
-  }
-
-  // If data is flowing normally, use an Exponential Moving Average (40% new, 60% old)
-  // This smooths out wild spikes and creates a fluid visualization.
-  return current * 0.4 + prev * 0.6
-}
 
 const formatCompactId = (id: string): string => {
   if (!id) return 'unknown'
@@ -172,14 +152,26 @@ const toMbps = (speedMaybe: number | null | undefined): number => {
   return (speedMaybe * 8) / 1000
 }
 
+// EMA smoothing to prevent pipes from flashing to 0 during burst waits
+const smoothBandwidth = (current: number, previous: number | undefined, isActive: boolean): number => {
+  const prev = previous || 0
+
+  if (!isActive) return 0 // Instantly kill the pipe if the connection is dead
+  if (prev === 0) return current // Instantly jump up on first byte
+
+  if (current === 0) {
+    // If waiting for a burst, decay the speed by 15% per tick instead of dropping to 0
+    const decayed = prev * 0.85
+    return decayed < 0.1 ? 0 : decayed
+  }
+
+  // Standard EMA (30% new, 70% old) for fluid, non-jittery active speeds
+  return current * 0.3 + prev * 0.7
+}
+
 const buildSnapshot = (
-  {
-    engines,
-    streams,
-    vpnStatus,
-    orchestratorStatus,
-  }: TopologyInputSnapshot,
-  prevState?: TopologyState,
+  { engines, streams, vpnStatus, orchestratorStatus }: TopologyInputSnapshot,
+  prevState?: TopologyState
 ): {
   nodes: Node<TopologyNodeData>[]
   edges: Edge[]
@@ -393,7 +385,7 @@ const buildSnapshot = (
   }
 
   // 3. Process the nodes using the Zig-Zag Staggered Corridor pattern
-  engineStatsWithTunnel.forEach(({ engine, streamCount, measuredMbps, measuredUpMbps, assignedTunnel }, index) => {
+  engineStatsWithTunnel.forEach(({ engine, streamCount, measuredMbps, measuredDownMbps, measuredUpMbps, assignedTunnel }, index) => {
     const engineStreams = streamMap.get(engine.container_id) || []
 
     let colIndex: number
@@ -424,17 +416,22 @@ const buildSnapshot = (
       ? internetNodeId
       : (failoverActive ? backupTunnel : assignedTunnel)
 
-    // VPN → Engine: smooth bursty traffic so active lanes do not flash to zero between chunks.
-    const rawBandwidthMbps = measuredMbps > 0 ? measuredMbps : (isMockMode ? randomBetween(8, 72) : 0)
-    const prevEngineNode = prevState?.nodes.find(n => n.id === engine.container_id)
-    const bandwidthMbps = smoothBandwidth(rawBandwidthMbps, prevEngineNode?.data?.bandwidthMbps, streamCount)
-    const downloadBwMbps = bandwidthMbps
+    // VPN → Engine: P2P download speed
+    const rawDownloadBw = measuredDownMbps > 0 ? measuredDownMbps : (isMockMode ? randomBetween(8, 72) : 0)
     
-    // Engine → Proxy: Actual per-engine ingress reported by proxy (bps -> Mbps)
+    // Engine → Proxy: Actual per-engine ingress
     const engineIngressBps = orchestratorStatus?.proxy?.engine_ingress_bps?.[engine.container_id] ?? 0
-    const uploadBwMbps = engineIngressBps > 0 
+    const rawUploadBw = engineIngressBps > 0 
       ? (engineIngressBps * 8) / 1_000_000 
-      : (streamCount > 0 ? downloadBwMbps * 0.98 : (isMockMode ? randomBetween(2, 18) : 0))
+      : (streamCount > 0 ? rawDownloadBw * 0.98 : (isMockMode ? randomBetween(2, 18) : 0))
+
+    // Retrieve previous node to apply smoothing
+    const prevNode = prevState?.nodes.find(n => n.id === engine.container_id)
+    
+    const downloadBwMbps = smoothBandwidth(rawDownloadBw, prevNode?.data?.bandwidthMbps, streamCount > 0)
+    const uploadBwMbps = smoothBandwidth(rawUploadBw, prevNode?.data?.proxyIngressMbps, streamCount > 0)
+    
+    const bandwidthMbps = downloadBwMbps
     
     let health: TopologyNodeHealth = 'healthy'
     if (engine.health_status === 'unhealthy' || (!tunnelHealthy && !backupHealthy)) {
@@ -578,7 +575,13 @@ const buildSnapshot = (
     // Stagger nodes slightly for visual depth and to make them feel "alive"
     const nodeX = clientStartX + (index % 2 === 0 ? 0 : 45)
     const nodeY = clientStartY + (index * clientSpacingY)
-    const clientBwMbps = (client.bps * 8) / 1_000_000
+    const rawClientBw = (client.bps * 8) / 1_000_000
+    
+    // Retrieve previous client node state
+    const prevClientNode = prevState?.nodes.find(n => n.id === cNodeId)
+    
+    // Smooth it! (isActive is true simply because the client exists in the list)
+    const clientBwMbps = smoothBandwidth(rawClientBw, prevClientNode?.data?.bandwidthMbps, true)
 
     nodes.push({
       id: cNodeId,
@@ -680,8 +683,8 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
   },
 
   hydrateFromBackend: (snapshot) => {
-    const currentState = get()
-    const next = buildSnapshot(snapshot, currentState)
+    const currentState = get() // <--- Fetch current state
+    const next = buildSnapshot(snapshot, currentState) // <--- Pass it to the builder
     
     set((state) => {
       // Stabilize nodes: reuse existing object if content is logically same
