@@ -78,6 +78,27 @@ const jitter = (value: number, ratio = 0.16, floor = 0): number => {
   return Math.max(floor, value + randomBetween(-delta, delta))
 }
 
+const smoothBandwidth = (current: number, previous: number | undefined, streamCount: number): number => {
+  const prev = previous || 0
+
+  // If there are no active streams at all, the pipe should immediately drain to 0
+  if (streamCount === 0) return 0
+
+  // If we didn't have a previous value, just use current
+  if (prev === 0) return current
+
+  // If we have streams but the instantaneous burst is 0 (waiting for next chunk),
+  // decay the previous bandwidth smoothly by 15% instead of dropping instantly to 0.
+  if (current === 0) {
+    const decayed = prev * 0.85
+    return decayed < 0.2 ? 0 : decayed
+  }
+
+  // If data is flowing normally, use an Exponential Moving Average (40% new, 60% old)
+  // This smooths out wild spikes and creates a fluid visualization.
+  return current * 0.4 + prev * 0.6
+}
+
 const formatCompactId = (id: string): string => {
   if (!id) return 'unknown'
   return id.length > 12 ? id.slice(0, 12) : id
@@ -151,12 +172,15 @@ const toMbps = (speedMaybe: number | null | undefined): number => {
   return (speedMaybe * 8) / 1000
 }
 
-const buildSnapshot = ({
-  engines,
-  streams,
-  vpnStatus,
-  orchestratorStatus,
-}: TopologyInputSnapshot): {
+const buildSnapshot = (
+  {
+    engines,
+    streams,
+    vpnStatus,
+    orchestratorStatus,
+  }: TopologyInputSnapshot,
+  prevState?: TopologyState,
+): {
   nodes: Node<TopologyNodeData>[]
   edges: Edge[]
   summary: TopologySummary
@@ -342,7 +366,7 @@ const buildSnapshot = ({
   })
 
   // 3. Process the nodes using the Zig-Zag Staggered Corridor pattern
-  engineStatsWithTunnel.forEach(({ engine, streamCount, measuredMbps, measuredDownMbps, measuredUpMbps, assignedTunnel }, index) => {
+  engineStatsWithTunnel.forEach(({ engine, streamCount, measuredMbps, measuredUpMbps, assignedTunnel }, index) => {
     const engineStreams = streamMap.get(engine.container_id) || []
 
     let colIndex: number
@@ -371,8 +395,11 @@ const buildSnapshot = ({
     const failoverActive = !tunnelHealthy && backupHealthy
     const sourceTunnel = failoverActive ? backupTunnel : assignedTunnel
 
-    // VPN → Engine: P2P download speed (what the engine pulls through the VPN)
-    const downloadBwMbps = measuredDownMbps > 0 ? measuredDownMbps : (isMockMode ? randomBetween(8, 72) : 0)
+    // VPN → Engine: smooth bursty traffic so active lanes do not flash to zero between chunks.
+    const rawBandwidthMbps = measuredMbps > 0 ? measuredMbps : (isMockMode ? randomBetween(8, 72) : 0)
+    const prevEngineNode = prevState?.nodes.find(n => n.id === engine.container_id)
+    const bandwidthMbps = smoothBandwidth(rawBandwidthMbps, prevEngineNode?.data?.bandwidthMbps, streamCount)
+    const downloadBwMbps = bandwidthMbps
     
     // Engine → Proxy: Actual per-engine ingress reported by proxy (bps -> Mbps)
     const engineIngressBps = orchestratorStatus?.proxy?.engine_ingress_bps?.[engine.container_id] ?? 0
@@ -380,9 +407,6 @@ const buildSnapshot = ({
       ? (engineIngressBps * 8) / 1_000_000 
       : (streamCount > 0 ? downloadBwMbps * 0.98 : (isMockMode ? randomBetween(2, 18) : 0))
     
-    // Overall bandwidth for the node
-    const bandwidthMbps = downloadBwMbps
-
     let health: TopologyNodeHealth = 'healthy'
     if (engine.health_status === 'unhealthy' || (!tunnelHealthy && !backupHealthy)) {
       health = 'down'
@@ -627,7 +651,8 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
   },
 
   hydrateFromBackend: (snapshot) => {
-    const next = buildSnapshot(snapshot)
+    const currentState = get()
+    const next = buildSnapshot(snapshot, currentState)
     
     set((state) => {
       // Stabilize nodes: reuse existing object if content is logically same
