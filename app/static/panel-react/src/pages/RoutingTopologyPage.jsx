@@ -75,7 +75,11 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
   // Automatically fit view when nodes are first populated
   useEffect(() => {
     if (rfInstance && nodes.length > 0) {
-      rfInstance.fitView({ padding: 0.2, duration: 400 })
+      // Fit view with a longer delay for layout stabilization
+      const timer = setTimeout(() => {
+        rfInstance.fitView({ padding: 0.2, duration: 600 })
+      }, 350)
+      return () => clearTimeout(timer)
     }
   }, [nodes.length, rfInstance])
 

@@ -77,6 +77,7 @@ export function TopologyEdge({
               flexDirection: 'column',
               alignItems: 'center',
               gap: '1px',
+              minWidth: '45px',
               ...(isFailover ? {
                 background: '#92400e',
                 borderColor: '#fbbf24',
@@ -84,37 +85,46 @@ export function TopologyEdge({
                 border: '1.5px solid #fbbf24',
                 boxShadow: '0 0 12px rgba(245,158,11,0.4)',
               } : isActive ? {
-                background: '#065f46',
-                borderColor: '#34d399',
-                color: '#d1fae5',
-                border: '1.5px solid #34d399',
-                boxShadow: '0 0 12px rgba(16,185,129,0.45)',
+                background: '#064e3b',
+                borderColor: '#10b981',
+                color: '#ecfdf5',
+                border: '1.5px solid rgba(16,185,129,0.6)',
+                boxShadow: '0 2px 10px rgba(0,0,0,0.4)',
               } : data?.labelPosition === 'near-source' ? {
-                background: '#0c4a6e',
-                borderColor: '#38bdf8',
-                color: '#e0f2fe',
-                border: '1.5px solid rgba(56,189,248,0.5)',
-                boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+                background: '#082f49',
+                borderColor: '#0ea5e9',
+                color: '#f0f9ff',
+                border: '1.5px solid rgba(14,165,233,0.5)',
+                boxShadow: '0 2px 10px rgba(0,0,0,0.4)',
               } : {
-                background: '#334155',
-                borderColor: '#64748b',
-                color: '#e2e8f0',
-                border: '1.5px solid #64748b',
-                boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+                background: '#1e293b',
+                borderColor: '#475569',
+                color: '#f1f5f9',
+                border: '1.5px solid rgba(71,85,105,0.6)',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
               }),
             }}
           >
-            <div className="flex items-center gap-1.5 whitespace-nowrap">
-              {data?.uploadMbps !== undefined && <span className="text-[9px] opacity-70">↓</span>}
-              <span>{bandwidth.toFixed(1)}</span>
-              {data?.uploadMbps === undefined && <span className="text-[9px] font-medium opacity-70 uppercase ml-0.5">Mbps</span>}
-            </div>
-
-            {data?.uploadMbps !== undefined && (
-              <div className="flex items-center gap-1.5 whitespace-nowrap pt-0.5 border-t border-white/10 mt-0.5 w-full justify-center" style={{ color: '#fb7185' }}>
-                <span className="text-[9px] opacity-80">↑</span>
-                <span>{data.uploadMbps.toFixed(1)}</span>
-                <span className="text-[8px] font-medium opacity-60 uppercase ml-0.5">Mbps</span>
+            {data?.uploadMbps !== undefined ? (
+              // VPN 3-Row Layout
+              <div className="flex flex-col items-center gap-0.5">
+                <div className="flex items-center gap-1.5 whitespace-nowrap">
+                  <span className="text-[10px] opacity-70">↓</span>
+                  <span className="text-sm font-black">{bandwidth.toFixed(1)}</span>
+                </div>
+                <div className="flex items-center gap-1.5 whitespace-nowrap" style={{ color: '#fb7185' }}>
+                  <span className="text-[10px] opacity-80">↑</span>
+                  <span className="text-sm font-black">{data.uploadMbps.toFixed(1)}</span>
+                </div>
+                <div className="text-[8px] font-bold text-white tracking-widest mt-0.5 opacity-90">
+                  Mbps
+                </div>
+              </div>
+            ) : (
+              // Engine 2-Cell Layout
+              <div className="flex items-baseline gap-1.5 whitespace-nowrap">
+                <span className="text-sm font-black">{bandwidth.toFixed(1)}</span>
+                <span className="text-[9px] font-bold text-white opacity-90">Mbps</span>
               </div>
             )}
           </div>

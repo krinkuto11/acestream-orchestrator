@@ -152,32 +152,25 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
       {data.kind === 'vpn' && (
         <div className="rounded-md border border-white/10 bg-white/5 p-2 space-y-1.5">
           {vpnIp && (
-            <div className="flex items-center gap-1.5">
-              <span className="font-mono text-sm font-black text-slate-50 tracking-tight">{vpnIp}</span>
-              {flag && <span className="text-base ml-0.5 drop-shadow-sm">{flag}</span>}
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-lg font-black text-white tracking-tighter leading-none">{vpnIp}</span>
+              {flag && <span className="text-xl ml-0.5 drop-shadow-md">{flag}</span>}
             </div>
           )}
           {vpnProvider && (
-            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">{vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}</p>
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none mt-1">{vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}</p>
           )}
 
-          <div className="mt-1 space-y-1.5 pt-1.5 border-t border-white/5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1 text-[10px] uppercase text-slate-400">
-                <Activity className="h-3 w-3 text-white" />
-                <span>Bandwidth</span>
-              </div>
+          <div className="flex items-center gap-5 pt-1.5">
+            <div className="flex items-baseline gap-1">
+              <span className="text-[10px] text-emerald-500 font-black">↓</span>
+              <span className="text-xl font-black text-emerald-400 leading-none">{data.bandwidthMbps.toFixed(1)}</span>
+              <span className="text-[10px] font-normal text-slate-500 ml-0.5">Mbps</span>
             </div>
-            <div className="flex items-center gap-3">
-              <div>
-                <span className="text-[7px] uppercase text-slate-500 font-bold block leading-none mb-0.5 tracking-tighter">Downflow</span>
-                <span className="text-base font-black text-emerald-400 leading-none">{data.bandwidthMbps.toFixed(1)} <span className="text-[10px] font-normal text-emerald-500/70">Mbps</span></span>
-              </div>
-              <div className="w-px h-8 bg-white/10" />
-              <div>
-                <span className="text-[7px] uppercase text-slate-500 font-bold block leading-none mb-0.5 tracking-tighter">Upflow</span>
-                <span className="text-base font-black text-rose-500 leading-none">{(data.uploadMbps || 0).toFixed(1)} <span className="text-[10px] font-normal text-rose-500/70">Mbps</span></span>
-              </div>
+            <div className="flex items-baseline gap-1">
+              <span className="text-[10px] text-rose-500 font-black">↑</span>
+              <span className="text-xl font-black text-rose-500 leading-none">{(data.uploadMbps || 0).toFixed(1)}</span>
+              <span className="text-[10px] font-normal text-slate-500 ml-0.5">Mbps</span>
             </div>
           </div>
         </div>
