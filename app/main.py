@@ -1653,6 +1653,7 @@ def get_orchestrator_status():
     # Cache miss - compute orchestrator status
     from .services.replica_validator import replica_validator
     from .services.circuit_breaker import circuit_breaker_manager
+    from .services.metrics import get_dashboard_snapshot
     
     # Get engine and stream counts
     engines = state.list_engines()
@@ -1782,6 +1783,7 @@ def get_orchestrator_status():
             "engine_variant": cfg.ENGINE_VARIANT,
             "debug_mode": cfg.DEBUG_MODE
         },
+        "proxy": get_dashboard_snapshot().get("proxy", {}),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     

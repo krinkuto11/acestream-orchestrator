@@ -204,7 +204,6 @@ const buildSnapshot = ({
   const vpn1NodeId = 'vpn1'
   const vpn2NodeId = 'vpn2'
   const proxyNodeId = 'proxy-core'
-  const clientNodeId = 'clients-edge'
 
   const failoverEngines: string[] = []
 
@@ -408,7 +407,15 @@ const buildSnapshot = ({
   }, 0)
 
   const activeStreams = orchestratorStatus?.streams?.active ?? workingStreams.length
-  const activeClients = orchestratorStatus?.proxy?.active_clients?.total ?? Math.max(activeStreams, 1)
+  
+  // 3. Client Nodes and Egress Pipelines
+  const mockClients = [
+    { id: 'mock-1', ip: '192.168.1.45', ua: 'VLC/3.0.18', type: 'TS', connected_at: Date.now() / 1000 - 3600, bps: 4500000 },
+    { id: 'mock-2', ip: '172.16.5.12', ua: 'AppleCoreMedia/1.0.0', type: 'HLS', connected_at: Date.now() / 1000 - 1800, bps: 2800000 },
+    { id: 'mock-3', ip: '10.0.0.156', ua: 'ExoPlayerLib/2.18.5', type: 'TS', connected_at: Date.now() / 1000 - 600, bps: 6200000 },
+  ]
+  const clientList = isMockMode ? mockClients : (orchestratorStatus?.proxy?.active_clients?.list || [])
+  const activeClients = isMockMode ? clientList.length : (orchestratorStatus?.proxy?.active_clients?.total ?? clientList.length)
 
   // Dynamically position downstream nodes based on the number of engine columns
   const proxyNodeX = engineStartX + (NUM_COLUMNS * COLUMN_SPACING_X) + 120
@@ -434,93 +441,52 @@ const buildSnapshot = ({
     },
   })
 
-  const clientList = orchestratorStatus?.proxy?.active_clients?.list || []
-  const hasMultipleClients = clientList.length > 0
+  const clientSpacingY = 160
+  const clientStartX = clientNodeX
+  const clientTotalHeight = (clientList.length - 1) * clientSpacingY
+  const clientStartY = centerY - clientTotalHeight / 2
 
-  if (hasMultipleClients) {
-    const clientSpacingY = 160
-    const clientStartX = clientNodeX
-    const clientTotalHeight = (clientList.length - 1) * clientSpacingY
-    const clientStartY = centerY - clientTotalHeight / 2
+  clientList.forEach((client: any, index: number) => {
+    const cNodeId = `client-${client.id}`
+    // Stagger nodes slightly for visual depth and to make them feel "alive"
+    const nodeX = clientStartX + (index % 2 === 0 ? 0 : 45)
+    const nodeY = clientStartY + (index * clientSpacingY)
+    const clientBwMbps = (client.bps * 8) / 1_000_000
 
-    clientList.forEach((client: any, index: number) => {
-      const cNodeId = `client-${client.id}`
-      // Stagger nodes slightly for visual depth and to make them feel "alive"
-      const nodeX = clientStartX + (index % 2 === 0 ? 0 : 45)
-      const nodeY = clientStartY + (index * clientSpacingY)
-      const clientBwMbps = (client.bps * 8) / 1_000_000
-
-      nodes.push({
-        id: cNodeId,
-        type: 'topologyNode',
-        position: { x: nodeX, y: nodeY },
-        data: {
-          kind: 'client',
-          title: client.ip || 'Unknown IP',
-          subtitle: client.ua || 'Generic Player',
-          health: 'healthy',
-          streamCount: 1,
-          bandwidthMbps: clientBwMbps,
-          metadata: {
-            type: client.type,
-            connectedAt: new Date(client.connected_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-          },
-        },
-      })
-
-      edges.push({
-        id: `${proxyNodeId}->${cNodeId}`,
-        type: 'topologyEdge',
-        source: proxyNodeId,
-        target: cNodeId,
-        animated: true,
-        markerEnd: { type: MarkerType.ArrowClosed },
-        data: {
-          bandwidthMbps: clientBwMbps,
-        },
-        style: {
-          stroke: '#22c55e',
-          strokeWidth: clamp(2.2 + clientBwMbps / 35, 2.2, 8.5),
-        },
-      })
-    })
-  } else {
-    // Fallback: Single aggregate node for mock mode or when client list is unavailable
     nodes.push({
-      id: clientNodeId,
+      id: cNodeId,
       type: 'topologyNode',
-      position: { x: clientNodeX, y: centerY },
+      position: { x: nodeX, y: nodeY },
       data: {
         kind: 'client',
-        title: 'Client Edge',
-        subtitle: 'CDN and Player Sessions',
+        title: client.ip || 'Unknown IP',
+        subtitle: client.ua || 'Generic Player',
         health: 'healthy',
-        streamCount: activeClients,
-        bandwidthMbps: isMockMode ? clamp(totalBandwidthMbps * 0.86, 32, 520) : totalBandwidthMbps * 0.86,
+        streamCount: 1,
+        bandwidthMbps: clientBwMbps,
         metadata: {
-          activeClients,
-          hlsSessions: orchestratorStatus?.proxy?.active_clients?.hls ?? Math.round(activeClients * 0.6),
-          tsSessions: orchestratorStatus?.proxy?.active_clients?.ts ?? Math.round(activeClients * 0.4),
+          type: client.type,
+          connectedAt: new Date(client.connected_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         },
       },
     })
 
     edges.push({
-      id: `${proxyNodeId}->${clientNodeId}`,
+      id: `${proxyNodeId}->${cNodeId}`,
       type: 'topologyEdge',
       source: proxyNodeId,
-      target: clientNodeId,
+      target: cNodeId,
       animated: true,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
-        bandwidthMbps: totalBandwidthMbps,
+        bandwidthMbps: clientBwMbps,
       },
       style: {
         stroke: '#22c55e',
-        strokeWidth: clamp(2.4 + totalBandwidthMbps / 40, 2.4, 9),
+        strokeWidth: clamp(2.2 + clientBwMbps / 35, 2.2, 8.5),
       },
     })
-  }
+  })
 
   // 4. Final layering and store state update
   // Sort edges so active pipes render on top of inactive ones
