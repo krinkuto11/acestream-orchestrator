@@ -228,9 +228,11 @@ export function StreamingCentralPage({
 
     return {
       animation: false,
-      grid: { left: 42, right: 56, top: 45, bottom: 30 },
+      grid: { left: 42, right: 56, top: 25, bottom: 65 },
       tooltip: { trigger: 'axis', backgroundColor: ct.tooltipBg, borderColor: ct.tooltipBorder, textStyle: { color: ct.tooltipText } },
       legend: {
+        bottom: 0,
+        left: 'center',
         data: ['TTFB p95 (ms)', 'Active Streams'],
         textStyle: { color: ct.legendText },
       },
@@ -271,7 +273,9 @@ export function StreamingCentralPage({
             label: {
               color: CHART_SERIES.amber,
               formatter: 'Engine Start',
-              position: 'insideEndTop',
+              position: 'end',
+              verticalAlign: 'top',
+              padding: [0, 0, 0, 0],
             },
           },
         },
