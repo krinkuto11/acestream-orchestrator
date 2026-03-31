@@ -410,9 +410,9 @@ const buildSnapshot = ({
   
   // 3. Client Nodes and Egress Pipelines
   const mockClients = [
-    { id: 'mock-1', ip: '192.168.1.45', ua: 'VLC/3.0.18', type: 'TS', connected_at: Date.now() / 1000 - 3600, bps: 4500000 },
-    { id: 'mock-2', ip: '172.16.5.12', ua: 'AppleCoreMedia/1.0.0', type: 'HLS', connected_at: Date.now() / 1000 - 1800, bps: 2800000 },
-    { id: 'mock-3', ip: '10.0.0.156', ua: 'ExoPlayerLib/2.18.5', type: 'TS', connected_at: Date.now() / 1000 - 600, bps: 6200000 },
+    { id: 'mock-1', ip: '192.168.1.45', ua: 'VLC/3.0.18', type: 'TS', connected_at: Date.now() / 1000 - 3600, bps: 4500000, bytes_sent: 1.2 * 1024 * 1024 * 1024 },
+    { id: 'mock-2', ip: '172.16.5.12', ua: 'AppleCoreMedia/1.0.0', type: 'HLS', connected_at: Date.now() / 1000 - 1800, bps: 2800000, bytes_sent: 450 * 1024 * 1024 },
+    { id: 'mock-3', ip: '10.0.0.156', ua: 'ExoPlayerLib/2.18.5', type: 'TS', connected_at: Date.now() / 1000 - 600, bps: 6200000, bytes_sent: 2.8 * 1024 * 1024 * 1024 },
   ]
   const clientList = isMockMode ? mockClients : (orchestratorStatus?.proxy?.active_clients?.list || [])
   const activeClients = isMockMode ? clientList.length : (orchestratorStatus?.proxy?.active_clients?.total ?? clientList.length)
@@ -466,6 +466,7 @@ const buildSnapshot = ({
         bandwidthMbps: clientBwMbps,
         metadata: {
           type: client.type,
+          totalBytes: client.bytes_sent || 0,
           connectedAt: new Date(client.connected_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         },
       },
@@ -480,6 +481,7 @@ const buildSnapshot = ({
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: clientBwMbps,
+        protocol: client.type,
       },
       style: {
         stroke: '#22c55e',

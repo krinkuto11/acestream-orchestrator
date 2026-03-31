@@ -4,6 +4,15 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import type { TopologyNodeData } from '@/stores/topologyStore'
 
+const formatBytes = (bytes: number, decimals = 2) => {
+  if (bytes === 0) return '0 Bytes'
+  const k = 1024
+  const dm = decimals < 0 ? 0 : decimals
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i]
+}
+
 const iconByKind = {
   vpn: ShieldCheck,
   engine: Server,
@@ -153,8 +162,8 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         <div className="rounded-md border border-white/10 bg-white/5 p-2.5 space-y-2">
           {vpnIp && (
             <div className="flex items-center gap-2">
-              <span className="font-mono text-2xl font-black text-white tracking-tighter leading-none">{vpnIp}</span>
-              {flag && <span className="text-2xl ml-0.5 drop-shadow-md">{flag}</span>}
+              <span className="font-mono text-[12px] font-bold text-white leading-none">{vpnIp}</span>
+              {flag && <span className="text-xl ml-0.5 drop-shadow-md">{flag}</span>}
             </div>
           )}
           {vpnProvider && (
@@ -166,13 +175,17 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
           <div className="flex items-center gap-6 pt-1.5 border-t border-white/5">
             <div className="flex items-baseline gap-1.5">
               <span className="text-xs text-emerald-500 font-bold">↓</span>
-              <span className="text-2xl font-black text-emerald-400 leading-none">{data.bandwidthMbps.toFixed(1)}</span>
-              <span className="text-[10px] font-bold text-slate-500 ml-0.5 uppercase">Mbps</span>
+              <div className="bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                <span className="text-xl font-black text-emerald-400 leading-none">{data.bandwidthMbps.toFixed(1)}</span>
+              </div>
+              <span className="text-[10px] font-bold text-slate-500 ml-0.5 uppercase">MBPS</span>
             </div>
             <div className="flex items-baseline gap-1.5">
               <span className="text-xs text-rose-500 font-bold">↑</span>
-              <span className="text-2xl font-black text-rose-500 leading-none">{(data.uploadMbps || 0).toFixed(1)}</span>
-              <span className="text-[10px] font-bold text-slate-500 ml-0.5 uppercase">Mbps</span>
+              <div className="bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">
+                <span className="text-xl font-black text-rose-500 leading-none">{(data.uploadMbps || 0).toFixed(1)}</span>
+              </div>
+              <span className="text-[10px] font-bold text-slate-500 ml-0.5 uppercase">MBPS</span>
             </div>
           </div>
         </div>
@@ -189,17 +202,21 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
           </div>
           
           <div className="space-y-1">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">User Agent</p>
-            <p className="text-[11px] font-medium text-slate-200 leading-tight line-clamp-1 italic bg-black/30 p-1.5 rounded-sm border border-white/5">
-              {data.subtitle}
-            </p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Total Data Sent</p>
+            <div className="flex items-center gap-2 bg-black/30 p-2 rounded-md border border-white/10">
+              <Activity className="h-3.5 w-3.5 text-amber-500" />
+              <p className="text-lg font-black text-slate-100 leading-none">
+                {formatBytes(Number(data.metadata?.totalBytes || 0))}
+              </p>
+            </div>
           </div>
 
           <div className="flex items-center justify-between pt-1 border-t border-white/5">
             <div className="flex items-center gap-1.5">
-               <Activity className="h-3 w-3 text-amber-500" />
-               <span className="text-sm font-black text-slate-100">{data.bandwidthMbps.toFixed(2)}</span>
-               <span className="text-[10px] font-bold text-slate-500">Mbps</span>
+               <div className="bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                 <span className="text-sm font-black text-slate-100">{data.bandwidthMbps.toFixed(2)}</span>
+               </div>
+               <span className="text-[10px] font-bold text-slate-500 uppercase">MBPS</span>
             </div>
             <span className="text-[10px] font-bold text-slate-500 uppercase">{String(data.metadata?.connectedAt || '')}</span>
           </div>
@@ -223,7 +240,12 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
             <Activity className="h-3 w-3" />
             <span>Bandwidth</span>
           </div>
-          <p className="text-sm font-semibold text-slate-50">{data.bandwidthMbps.toFixed(1)} Mbps</p>
+          <div className="flex items-center gap-1.5">
+            <div className="bg-teal-500/10 px-2 py-0.5 rounded border border-teal-500/20">
+              <p className="text-sm font-black text-slate-50">{data.bandwidthMbps.toFixed(1)}</p>
+            </div>
+            <span className="text-[10px] font-bold text-slate-500 uppercase">MBPS</span>
+          </div>
         </div>
       )}
 

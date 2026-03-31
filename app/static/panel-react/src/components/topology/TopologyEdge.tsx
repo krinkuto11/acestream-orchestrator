@@ -14,6 +14,17 @@ export function TopologyEdge({
   markerEnd,
   data,
 }: EdgeProps) {
+  // Persistence for non-zero bandwidth to prevent flickering
+  const lastNonZeroBw = React.useRef(data?.bandwidthMbps || 0)
+  const lastNonZeroUp = React.useRef(data?.uploadMbps || 0)
+
+  if (data?.bandwidthMbps > 0.05) {
+    lastNonZeroBw.current = data.bandwidthMbps
+  }
+  if (data?.uploadMbps > 0.05) {
+    lastNonZeroUp.current = data.uploadMbps
+  }
+
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
@@ -41,7 +52,10 @@ export function TopologyEdge({
 
   const isFailover = style.strokeDasharray != null
   const bandwidth = data?.bandwidthMbps || 0
+  const displayedBw = bandwidth > 0.05 ? bandwidth : lastNonZeroBw.current
+  const displayedUp = (data?.uploadMbps || 0) > 0.05 ? data.uploadMbps : lastNonZeroUp.current
   const isActive = bandwidth > 0.1
+  const protocol = data?.protocol || (id.includes('client') ? 'TS' : null)
 
   // Dynamic stroke color: Emerald when active, unless it's a failover path (amber)
   const finalStyle = {
@@ -108,31 +122,38 @@ export function TopologyEdge({
             {data?.uploadMbps !== undefined ? (
               // VPN 3-Cell Stacked Layout
               <div className="flex flex-col gap-1 w-full">
-                <div className="flex items-center justify-between gap-3 px-1.5 py-0.5 bg-emerald-500/10 rounded-sm border border-emerald-500/20">
+                <div className="flex items-center justify-between gap-3 px-1.5 py-0.5 bg-emerald-500/10 rounded-md border border-emerald-500/20">
                   <span className="text-[10px] text-emerald-400 font-bold">↓</span>
-                  <span className="text-[13px] font-black tabular-nums">{bandwidth.toFixed(1)}</span>
+                  <span className="text-[13px] font-black tabular-nums">{displayedBw.toFixed(1)}</span>
                 </div>
-                <div className="flex items-center justify-between gap-3 px-1.5 py-0.5 bg-rose-500/10 rounded-sm border border-rose-500/20">
+                <div className="flex items-center justify-between gap-3 px-1.5 py-0.5 bg-rose-500/10 rounded-md border border-rose-500/20">
                   <span className="text-[10px] text-rose-400 font-bold">↑</span>
-                  <span className="text-[13px] font-black tabular-nums">{data.uploadMbps.toFixed(1)}</span>
+                  <span className="text-[13px] font-black tabular-nums">{displayedUp.toFixed(1)}</span>
                 </div>
                 <div className="text-[9px] font-black text-white/90 text-center tracking-[0.2em] uppercase pt-0.5">
-                  Mbps
+                  MBPS
                 </div>
               </div>
             ) : (
               // Engine/Client 2-Cell Horizontal Layout
-              <div className="flex items-center h-7 overflow-hidden rounded-[4px] border border-white/20 shadow-sm bg-black/40">
-                <div className="flex items-center px-2 h-full bg-slate-100/10">
-                  <span className="text-[13px] font-black text-white tabular-nums leading-none">
-                    {bandwidth.toFixed(1)}
-                  </span>
+              <div className="flex flex-col items-center gap-1">
+                <div className="flex items-center h-7 overflow-hidden rounded-md border border-white/20 shadow-sm bg-black/60">
+                  <div className="flex items-center px-2 h-full bg-white/5">
+                    <span className="text-[13px] font-black text-white tabular-nums leading-none">
+                      {displayedBw.toFixed(1)}
+                    </span>
+                  </div>
+                  <div className="flex items-center px-1.5 h-full border-l border-white/10 bg-white/10 italic">
+                    <span className="text-[9px] font-black text-white/90 uppercase leading-none tracking-tighter">
+                      MBPS
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center px-1.5 h-full border-l border-white/20 bg-white/5">
-                  <span className="text-[10px] font-bold text-white/80 lowercase leading-none">
-                    Mbps
-                  </span>
-                </div>
+                {protocol && (
+                   <div className="bg-white/10 text-[8px] font-bold text-white/60 px-1 rounded-[2px] uppercase tracking-tighter leading-none py-0.5 border border-white/5">
+                     {protocol}
+                   </div>
+                )}
               </div>
             )}
           </div>

@@ -307,6 +307,7 @@ def _compute_proxy_clients_snapshot() -> Dict[str, Any]:
                             "ua": d_meta.get("user_agent", "unknown"),
                             "type": "TS",
                             "bps": bps,
+                            "bytes_sent": bytes_sent,
                             "connected_at": float(d_meta.get("connected_at") or now)
                         })
                 except Exception:
@@ -337,6 +338,7 @@ def _compute_proxy_clients_snapshot() -> Dict[str, Any]:
                             "ua": payload.get("user_agent", "unknown"),
                             "type": "HLS",
                             "bps": bps,
+                            "bytes_sent": bytes_sent,
                             "connected_at": float(payload.get("connected_at") or now)
                         })
             except Exception:
@@ -358,6 +360,7 @@ def _compute_proxy_clients_snapshot() -> Dict[str, Any]:
                         "ua": payload.get("user_agent", "unknown"),
                         "type": "HLS",
                         "bps": bps,
+                        "bytes_sent": bytes_sent,
                         "connected_at": float(payload.get("connected_at") or now)
                     })
             except Exception:
