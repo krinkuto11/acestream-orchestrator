@@ -83,14 +83,40 @@ const formatCompactId = (id: string): string => {
   return id.length > 12 ? id.slice(0, 12) : id
 }
 
-const inferTunnelFromEngine = (engine: EngineState, index: number): TunnelId => {
-  const vpnName = String(engine.vpn_container || '').toLowerCase()
-  if (vpnName.includes('2') || vpnName.includes('secondary')) {
+const inferTunnelFromEngine = (
+  engine: EngineState,
+  index: number,
+  vpnStatus?: VpnStatusPayload | null,
+): TunnelId => {
+  const raw = String(engine.vpn_container || '').trim()
+  const vpnName = raw.toLowerCase()
+
+  const vpn1Candidates = [
+    vpnStatus?.vpn1?.container_name,
+    vpnStatus?.vpn1?.container,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.trim().toLowerCase())
+
+  const vpn2Candidates = [
+    vpnStatus?.vpn2?.container_name,
+    vpnStatus?.vpn2?.container,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.trim().toLowerCase())
+
+  // Prefer explicit backend identity over heuristic naming.
+  if (vpn1Candidates.includes(vpnName)) return 'vpn1'
+  if (vpn2Candidates.includes(vpnName)) return 'vpn2'
+
+  // Fallback heuristics for legacy/custom names.
+  if (vpnName.includes('secondary') || vpnName.includes('backup') || vpnName.includes('vpn2')) {
     return 'vpn2'
   }
-  if (vpnName.includes('1') || vpnName.includes('primary')) {
+  if (vpnName.includes('primary') || vpnName.includes('main') || vpnName.includes('vpn1')) {
     return 'vpn1'
   }
+
   return index % 2 === 0 ? 'vpn1' : 'vpn2'
 }
 
@@ -228,7 +254,7 @@ const buildSnapshot = ({
   const isVpnClusterMode = Boolean(vpnStatus && vpnStatus.mode !== 'disabled')
   const engineStatsWithTunnel = engineStats.map((entry, index) => ({
     ...entry,
-    assignedTunnel: vpnStatus?.mode === 'single' ? 'vpn1' : inferTunnelFromEngine(entry.engine, index),
+    assignedTunnel: vpnStatus?.mode === 'single' ? 'vpn1' : inferTunnelFromEngine(entry.engine, index, vpnStatus),
   }))
 
   // 2. Define Staggered Grid properties
