@@ -69,7 +69,7 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
       }
       
       try {
-        const response = await fetch(`${orchUrl}/engines/${engine.container_id}/stats`)
+        const response = await fetch(`${orchUrl}/api/v1/engines/${engine.container_id}/stats`)
         if (response.ok) {
           const data = await response.json()
           setStats(data)

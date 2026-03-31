@@ -1,27 +1,31 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { ModernSidebar } from './components/ModernSidebar'
 import { ModernHeader } from './components/ModernHeader'
 import { ThemeProvider, useTheme } from './components/ThemeProvider'
 import { NotificationProvider, useNotifications } from './context/NotificationContext'
-import { OverviewPage } from './pages/OverviewPage'
+
+import { StreamingCentralPage } from './pages/StreamingCentralPage'
 import { EnginesPage } from './pages/EnginesPage'
 import { StreamsPage } from './pages/StreamsPage'
 import { EventsPage } from './pages/EventsPage'
-import { HealthPage } from './pages/HealthPage'
-import { VPNPage } from './pages/VPNPage'
 import { MetricsPage } from './pages/MetricsPage'
 import { StreamMonitoringPage } from './pages/StreamMonitoringPage'
+import { RoutingTopologyPage } from './pages/RoutingTopologyPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { useLocalStorage } from './hooks/useLocalStorage'
 import { useFavicon } from './hooks/useFavicon'
+import { cn } from './lib/utils'
 
 function AppContent() {
   const { resolvedTheme } = useTheme()
   const { addNotification } = useNotifications()
+  const location = useLocation()
   useFavicon(resolvedTheme)
-  // Always use the current browser origin as URL so the UI works regardless of which IP/host is used to access it
+
+  // Always use the current browser origin as URL
   const orchUrl = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:8000'
+  
   const [apiKey, setApiKey] = useLocalStorage('orch_apikey', '')
   const [refreshInterval, setRefreshInterval] = useLocalStorage('refresh_interval', 1000)
   const [maxEventsDisplay, setMaxEventsDisplay] = useLocalStorage('max_events_display', 100)
@@ -33,6 +37,8 @@ function AppContent() {
   const [lastUpdate, setLastUpdate] = useState(null)
   const [isConnected, setIsConnected] = useState(false)
   const [isInitialLoad, setIsInitialLoad] = useState(true)
+
+  const isTopologyPage = location.pathname === '/routing-topology'
 
   const fetchJSON = useCallback(async (url, options = {}) => {
     const headers = { ...options.headers }
@@ -50,17 +56,16 @@ function AppContent() {
   const fetchData = useCallback(async () => {
     try {
       const [enginesData, streamsData, vpnData, orchStatus] = await Promise.all([
-        fetchJSON(`${orchUrl}/engines`),
-        fetchJSON(`${orchUrl}/streams?status=started`),
-        fetchJSON(`${orchUrl}/vpn/status`).catch(() => ({ enabled: false })),
-        fetchJSON(`${orchUrl}/orchestrator/status`).catch(() => null)
+        fetchJSON(`${orchUrl}/api/v1/engines`),
+        fetchJSON(`${orchUrl}/api/v1/streams?status=started`),
+        fetchJSON(`${orchUrl}/api/v1/vpn/status`).catch(() => ({ enabled: false })),
+        fetchJSON(`${orchUrl}/api/v1/orchestrator/status`).catch(() => null)
       ])
       
-      // Fetch VPN public IP if VPN is enabled and connected
       let vpnDataWithIp = vpnData
       if (vpnData.enabled && vpnData.connected) {
         try {
-          const publicIpData = await fetchJSON(`${orchUrl}/vpn/publicip`)
+          const publicIpData = await fetchJSON(`${orchUrl}/api/v1/vpn/publicip`)
           vpnDataWithIp = { ...vpnData, public_ip: publicIpData.public_ip }
         } catch (err) {
           console.warn('Failed to fetch VPN public IP:', err)
@@ -80,7 +85,7 @@ function AppContent() {
       setIsConnected(false)
       setIsInitialLoad(false)
     }
-  }, [orchUrl, fetchJSON])
+  }, [orchUrl, fetchJSON, addNotification])
 
   useEffect(() => {
     fetchData()
@@ -93,9 +98,8 @@ function AppContent() {
     if (!window.confirm('Are you sure you want to delete this engine?')) {
       return
     }
-    
     try {
-      await fetchJSON(`${orchUrl}/containers/${encodeURIComponent(containerId)}`, {
+      await fetchJSON(`${orchUrl}/api/v1/containers/${encodeURIComponent(containerId)}`, {
         method: 'DELETE'
       })
       addNotification('Engine deleted successfully', 'success')
@@ -103,15 +107,14 @@ function AppContent() {
     } catch (err) {
       addNotification(`Failed to delete engine: ${err.message}`, 'error')
     }
-  }, [orchUrl, fetchJSON, fetchData])
+  }, [orchUrl, fetchJSON, fetchData, addNotification])
 
-  const handleStopStream = useCallback(async (streamId, containerId) => {
+  const handleStopStream = useCallback(async (streamId) => {
     if (!window.confirm('Are you sure you want to stop this stream?')) {
       return
     }
-    
     try {
-      await fetchJSON(`${orchUrl}/streams/${encodeURIComponent(streamId)}`, {
+      await fetchJSON(`${orchUrl}/api/v1/streams/${encodeURIComponent(streamId)}`, {
         method: 'DELETE'
       })
       addNotification('Stream stopped successfully', 'success')
@@ -119,141 +122,101 @@ function AppContent() {
     } catch (err) {
       addNotification(`Failed to stop stream: ${err.message}`, 'error')
     }
-  }, [orchUrl, fetchJSON, fetchData])
+  }, [orchUrl, fetchJSON, fetchData, addNotification])
 
   return (
-    <BrowserRouter basename="/panel">
-      <div className="min-h-screen bg-slate-50 bg-[radial-gradient(80%_60%_at_20%_0%,rgba(148,163,184,0.10),transparent_60%),radial-gradient(70%_50%_at_100%_0%,rgba(148,163,184,0.12),transparent_60%)] dark:bg-slate-950 dark:bg-[radial-gradient(80%_60%_at_20%_0%,rgba(51,65,85,0.35),transparent_60%),radial-gradient(70%_50%_at_100%_0%,rgba(30,41,59,0.45),transparent_60%)]">
-        <ModernSidebar />
-        
-        <div className="flex flex-col min-h-screen transition-all duration-300" style={{ marginLeft: 'var(--sidebar-width, 16rem)' }}>
-          <ModernHeader 
-            isConnected={isConnected}
-            lastUpdate={lastUpdate}
-          />
-          
-          <main className="flex-1 overflow-y-auto p-6 md:p-8">
-            {isInitialLoad ? (
-              <div className="flex items-center justify-center h-full">
-                <div className="text-center">
-                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4"></div>
-                  <p className="text-muted-foreground">Loading...</p>
-                </div>
+    <div className="min-h-screen bg-white relative dark:bg-slate-950">
+      <ModernSidebar />
+      
+      <div className="flex flex-col min-h-screen transition-all duration-300" style={{ marginLeft: 'var(--sidebar-width, 16rem)' }}>
+        <main className={cn(
+          "flex-1 flex flex-col min-h-0 overflow-y-auto",
+          isTopologyPage ? "p-0" : "p-6 md:p-8"
+        )}>
+          {isInitialLoad ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4"></div>
+                <p className="text-muted-foreground">Loading...</p>
               </div>
-            ) : (
-              <Routes>
-              <Route 
-                path="/" 
-                element={
-                  <OverviewPage
-                    engines={engines}
-                    streams={streams}
-                    vpnStatus={vpnStatus}
-                    orchestratorStatus={orchestratorStatus}
-                    orchUrl={orchUrl}
-                    apiKey={apiKey}
-                  />
-                } 
-              />
-              <Route 
-                path="/engines" 
-                element={
-                  <EnginesPage
-                    engines={engines}
-                    onDeleteEngine={handleDeleteEngine}
-                    vpnStatus={vpnStatus}
-                    orchUrl={orchUrl}
-                    apiKey={apiKey}
-                    fetchJSON={fetchJSON}
-                  />
-                } 
-              />
-              <Route 
-                path="/streams" 
-                element={
-                  <StreamsPage
-                    streams={streams}
-                    orchUrl={orchUrl}
-                    apiKey={apiKey}
-                    onStopStream={handleStopStream}
-                    onDeleteEngine={handleDeleteEngine}
-                    debugMode={orchestratorStatus?.config?.debug_mode || false}
-                  />
-                } 
-              />
-              <Route 
-                path="/events" 
-                element={
-                  <EventsPage
-                    orchUrl={orchUrl}
-                    apiKey={apiKey}
-                    maxEventsDisplay={maxEventsDisplay}
-                  />
-                } 
-              />
-              <Route 
-                path="/health" 
-                element={
-                  <HealthPage
-                    apiKey={apiKey}
-                    orchUrl={orchUrl}
-                  />
-                } 
-              />
-              <Route 
-                path="/vpn" 
-                element={
-                  <VPNPage vpnStatus={vpnStatus} />
-                } 
-              />
-              <Route 
-                path="/metrics" 
-                element={
-                  <MetricsPage
-                    apiKey={apiKey}
-                    orchUrl={orchUrl}
-                  />
-                } 
-              />
-              <Route 
-                path="/stream-monitoring" 
-                element={
-                  <StreamMonitoringPage
-                    apiKey={apiKey}
-                    orchUrl={orchUrl}
-                  />
-                } 
-              />
-              <Route 
-                path="/settings" 
-                element={
-                  <SettingsPage
-                    apiKey={apiKey}
-                    setApiKey={setApiKey}
-                    refreshInterval={refreshInterval}
-                    setRefreshInterval={setRefreshInterval}
-                    maxEventsDisplay={maxEventsDisplay}
-                    setMaxEventsDisplay={setMaxEventsDisplay}
-                    orchUrl={orchUrl}
-                  />
-                } 
-              />
+            </div>
+          ) : (
+            <Routes>
+              <Route path="/" element={
+                <StreamingCentralPage
+                  engines={engines}
+                  streams={streams}
+                  vpnStatus={vpnStatus}
+                  orchestratorStatus={orchestratorStatus}
+                  orchUrl={orchUrl}
+                  apiKey={apiKey}
+                />
+              } />
+              <Route path="/engines" element={
+                <EnginesPage
+                  engines={engines}
+                  onDeleteEngine={handleDeleteEngine}
+                  vpnStatus={vpnStatus}
+                  orchUrl={orchUrl}
+                  apiKey={apiKey}
+                  fetchJSON={fetchJSON}
+                />
+              } />
+              <Route path="/streams" element={
+                <StreamsPage
+                  streams={streams}
+                  orchUrl={orchUrl}
+                  apiKey={apiKey}
+                  onStopStream={handleStopStream}
+                  onDeleteEngine={handleDeleteEngine}
+                  debugMode={orchestratorStatus?.config?.debug_mode || false}
+                />
+              } />
+              <Route path="/events" element={
+                <EventsPage orchUrl={orchUrl} apiKey={apiKey} maxEventsDisplay={maxEventsDisplay} />
+              } />
+              <Route path="/metrics" element={
+                <MetricsPage apiKey={apiKey} orchUrl={orchUrl} />
+              } />
+              <Route path="/stream-monitoring" element={
+                <StreamMonitoringPage apiKey={apiKey} orchUrl={orchUrl} />
+              } />
+              <Route path="/routing-topology" element={
+                <RoutingTopologyPage
+                  engines={engines}
+                  streams={streams}
+                  vpnStatus={vpnStatus}
+                  orchestratorStatus={orchestratorStatus}
+                />
+              } />
+              <Route path="/settings" element={
+                <SettingsPage
+                  apiKey={apiKey}
+                  setApiKey={setApiKey}
+                  refreshInterval={refreshInterval}
+                  setRefreshInterval={setRefreshInterval}
+                  maxEventsDisplay={maxEventsDisplay}
+                  setMaxEventsDisplay={setMaxEventsDisplay}
+                  orchUrl={orchUrl}
+                />
+              } />
             </Routes>
-            )}
-          </main>
-        </div>
+          )}
+        </main>
       </div>
-    </BrowserRouter>
+    </div>
   )
 }
 
 function App() {
   return (
-    <ThemeProvider defaultTheme="light">
-      <NotificationProvider>
-        <AppContent />
-      </NotificationProvider>
-    </ThemeProvider>
+    <BrowserRouter basename="/panel">
+      <ThemeProvider defaultTheme="dark">
+        <NotificationProvider>
+          <AppContent />
+        </NotificationProvider>
+      </ThemeProvider>
+    </BrowserRouter>
   )
 }
 

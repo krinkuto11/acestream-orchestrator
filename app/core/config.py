@@ -1,6 +1,7 @@
 import os
 from pydantic import BaseModel, validator, field_validator, model_validator
 from dotenv import load_dotenv
+from ..proxy.constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mode
 load_dotenv()
 
 import platform as _platform
@@ -77,6 +78,8 @@ class Cfg(BaseModel):
     ACE_HTTP_RANGE: str = os.getenv("ACE_HTTP_RANGE", "40000-44999")
     ACE_HTTPS_RANGE: str = os.getenv("ACE_HTTPS_RANGE", "45000-49999")
     ACE_MAP_HTTPS: bool = os.getenv("ACE_MAP_HTTPS", "false").lower() == "true"
+    PROXY_CONTROL_MODE: str = normalize_proxy_mode(os.getenv("PROXY_CONTROL_MODE", PROXY_MODE_HTTP), default=PROXY_MODE_HTTP)
+    ACE_LIVE_EDGE_DELAY: int = int(os.getenv("ACE_LIVE_EDGE_DELAY", "0"))
     
     # Engine resource limits
     ENGINE_MEMORY_LIMIT: str | None = os.getenv("ENGINE_MEMORY_LIMIT")
@@ -157,6 +160,19 @@ class Cfg(BaseModel):
         if v <= 0:
             raise ValueError('Timeout values must be > 0')
         return v
+
+    @validator('ACE_LIVE_EDGE_DELAY')
+    def validate_live_edge_delay(cls, v):
+        if v < 0:
+            raise ValueError('ACE_LIVE_EDGE_DELAY must be >= 0')
+        return v
+
+    @validator('PROXY_CONTROL_MODE')
+    def validate_proxy_control_mode(cls, v):
+        normalized = normalize_proxy_mode(v, default=None)
+        if normalized not in {PROXY_MODE_HTTP, PROXY_MODE_API}:
+            raise ValueError("PROXY_CONTROL_MODE must be either 'http' or 'api'")
+        return normalized
 
     @validator('STATS_HISTORY_MAX')
     def validate_stats_history_max(cls, v):

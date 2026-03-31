@@ -253,6 +253,70 @@ def test_collector_collects_missing_stat_url_via_legacy_proxy_session():
     print("✅ Collector gathers missing stat_url streams via legacy proxy session")
 
 
+def test_collector_collects_missing_stat_url_via_hls_segmenter_session():
+    """Collector should gather legacy stats via API-mode HLS segmenter control session when TS manager is absent."""
+    print("Testing collector legacy path for missing stat_url via API-mode HLS segmenter...")
+
+    test_state = State()
+    evt = StreamStartedEvent(
+        container_id="legacy_container_hls",
+        engine=EngineAddress(host="127.0.0.1", port=6878),
+        stream=StreamKey(key_type="content_id", key="legacy_content_hls", control_mode="api"),
+        session=SessionInfo(
+            playback_session_id="legacy_hls_session",
+            stat_url="",
+            command_url="",
+            is_live=1,
+        ),
+        labels={"stream_id": "legacy_stream_hls", "proxy.control_mode": "api", "stream_mode": "HLS"},
+    )
+    test_state.on_stream_started(evt)
+
+    collector = Collector()
+    mock_client = MagicMock()
+
+    mock_proxy = MagicMock()
+    mock_proxy.stream_managers = {}
+
+    segmenter_probe = {
+        "status_text": "dl",
+        "peers": 5,
+        "speed_down": 2048,
+        "speed_up": 512,
+        "downloaded": 54321,
+        "uploaded": 987,
+        "livepos": {
+            "pos": "1767630100",
+            "live_first": "1767629900",
+            "live_last": "1767630110",
+            "buffer_pieces": 9,
+        },
+    }
+
+    async def run_test():
+        with patch.object(mock_client, 'get', new_callable=AsyncMock) as mock_get:
+            with patch('app.services.collector.state', test_state):
+                with patch('app.proxy.server.ProxyServer.get_instance', return_value=mock_proxy):
+                    with patch('app.services.hls_segmenter.hls_segmenter_service.collect_legacy_stats_probe', return_value=segmenter_probe):
+                        await collector._collect_one(mock_client, "legacy_stream_hls", "")
+            mock_get.assert_not_awaited()
+
+    asyncio.run(run_test())
+
+    stats = test_state.get_stream_stats("legacy_stream_hls")
+    assert len(stats) == 1
+    assert stats[0].status == "dl"
+    assert stats[0].peers == 5
+    assert stats[0].speed_down == 2048
+    assert stats[0].speed_up == 512
+    assert stats[0].downloaded == 54321
+    assert stats[0].uploaded == 987
+    assert stats[0].livepos is not None
+    assert stats[0].livepos.pos == "1767630100"
+
+    print("✅ Collector gathers missing stat_url streams via API-mode HLS segmenter session")
+
+
 if __name__ == "__main__":
     print("🧪 Testing that collector no longer performs stale stream detection...\n")
     

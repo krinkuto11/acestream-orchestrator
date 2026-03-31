@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
+from fastapi.routing import APIRoute
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from pydantic import BaseModel
@@ -11,10 +13,13 @@ import io
 import os
 import json
 import logging
+import hashlib
+import re
 import httpx
 import threading
 from types import SimpleNamespace
 import time
+from docker.errors import NotFound
 
 from .utils.logging import setup
 from .core.config import cfg
@@ -25,7 +30,19 @@ from .services.health_monitor import health_monitor
 from .services.health_manager import health_manager
 from .services.inspect import inspect_container, ContainerNotFound
 from .services.state import state, load_state_from_db, cleanup_on_shutdown
-from .models.schemas import StreamStartedEvent, StreamEndedEvent, EngineState, StreamState, StreamStatSnapshot, EventLog
+from .models.schemas import (
+    StreamStartedEvent,
+    StreamEndedEvent,
+    EngineState,
+    StreamState,
+    StreamStatSnapshot,
+    EventLog,
+    HealthStatusResponse,
+    MetricsResponse,
+    OrchestratorStatusResponse,
+    GenericObjectResponse,
+    GenericListResponse,
+)
 from .services.collector import collector
 from .services.event_logger import event_logger
 from .services.stream_cleanup import stream_cleanup
@@ -49,8 +66,11 @@ from .services.stream_loop_detector import stream_loop_detector
 from .services.looping_streams import looping_streams_tracker
 from .services.cache_monitoring_service import start_cache_monitoring
 from .services.legacy_stream_monitoring import legacy_stream_monitoring_service
+from .services.hls_segmenter import hls_segmenter_service
+from .services.docker_client import get_client
 from .proxy.manager import ProxyManager
 from .proxy.ace_api_client import AceLegacyApiClient, AceLegacyApiError
+from .proxy.constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mode
 
 logger = logging.getLogger(__name__)
 
@@ -171,9 +191,7 @@ async def lifespan(app: FastAPI):
                 mode = proxy_settings['stream_mode']
                 ProxyConfig.STREAM_MODE = mode
             if 'control_mode' in proxy_settings:
-                mode = str(proxy_settings['control_mode']).upper()
-                if mode in ['LEGACY_HTTP', 'LEGACY_API']:
-                    ProxyConfig.CONTROL_MODE = mode
+                ProxyConfig.CONTROL_MODE = _resolve_control_mode(proxy_settings['control_mode'])
             if 'legacy_api_preflight_tier' in proxy_settings:
                 tier = str(proxy_settings['legacy_api_preflight_tier']).strip().lower()
                 if tier in ['light', 'deep']:
@@ -288,6 +306,7 @@ async def lifespan(app: FastAPI):
                 'port_range_host': 'PORT_RANGE_HOST',
                 'ace_http_range': 'ACE_HTTP_RANGE',
                 'ace_https_range': 'ACE_HTTPS_RANGE',
+                'ace_live_edge_delay': 'ACE_LIVE_EDGE_DELAY',
                 'debug_mode': 'DEBUG_MODE',
             }
             for _json_key, _cfg_attr in _orch_field_map.items():
@@ -491,12 +510,49 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan
 )
+
+
+@app.get("/api/v1/openapi.json", include_in_schema=False)
+def get_v1_openapi_spec():
+    """Serve OpenAPI spec under the versioned API namespace."""
+    return app.openapi()
+
+
+@app.get("/api/v1/docs", include_in_schema=False)
+def get_v1_swagger_docs():
+    """Serve Swagger UI under the versioned API namespace."""
+    return get_swagger_ui_html(
+        openapi_url="/api/v1/openapi.json",
+        title=f"{app.title} - Swagger UI (API v1)",
+    )
+
+
+@app.get("/api/v1/redoc", include_in_schema=False)
+def get_v1_redoc_docs():
+    """Serve ReDoc under the versioned API namespace."""
+    return get_redoc_html(
+        openapi_url="/api/v1/openapi.json",
+        title=f"{app.title} - ReDoc (API v1)",
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/", include_in_schema=False)
+async def serve_root():
+    """
+    Serve index.html at root level to present the panel directly.
+    Fall back to /panel redirect if the static panel directory isn't available.
+    """
+    panel_dir = "app/static/panel"
+    index_path = os.path.join(panel_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return RedirectResponse(url="/panel")
 
 # Mount static files with validation and SPA fallback
 panel_dir = "app/static/panel"
@@ -808,6 +864,55 @@ def get_container(container_id: str):
         return inspect_container(container_id)
     except ContainerNotFound:
         raise HTTPException(status_code=404, detail="container not found")
+
+
+@app.get("/containers/{container_id}/logs", dependencies=[Depends(require_api_key)])
+def get_container_logs(
+    container_id: str,
+    tail: int = Query(200, ge=1, le=2000, description="Maximum number of recent log lines"),
+    since_seconds: Optional[int] = Query(
+        None,
+        ge=1,
+        le=86400,
+        description="Return logs newer than this many seconds",
+    ),
+    timestamps: bool = Query(False, description="Include Docker timestamps in each log line"),
+):
+    """Get recent Docker logs for a container.
+
+    This endpoint is intended for live tailing in the panel by polling at short intervals.
+    """
+    try:
+        client = get_client(timeout=20)
+        container = client.containers.get(container_id)
+
+        since = None
+        if since_seconds is not None:
+            since = int(time.time()) - since_seconds
+
+        logs_raw = container.logs(
+            stdout=True,
+            stderr=True,
+            tail=tail,
+            since=since,
+            timestamps=timestamps,
+        )
+
+        logs_text = logs_raw.decode("utf-8", errors="replace") if isinstance(logs_raw, (bytes, bytearray)) else str(logs_raw)
+
+        return {
+            "container_id": container_id,
+            "tail": tail,
+            "since_seconds": since_seconds,
+            "timestamps": timestamps,
+            "logs": logs_text,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except NotFound:
+        raise HTTPException(status_code=404, detail="container not found")
+    except Exception as exc:
+        logger.error(f"Failed to fetch logs for container {container_id[:12]}: {exc}")
+        raise HTTPException(status_code=500, detail=f"failed_to_fetch_logs: {exc}")
 
 # Events
 @app.post("/events/stream_started", response_model=StreamState, dependencies=[Depends(require_api_key)])
@@ -1207,7 +1312,7 @@ async def get_stream_extended_stats(stream_id: str):
 @app.get("/streams/{stream_id}/livepos")
 async def get_stream_livepos(stream_id: str):
     """
-    Get live position data for a stream from stat URL or LEGACY_API probe.
+    Get live position data for a stream from stat URL or API-mode probe.
     This returns livepos details and derived live performance metrics.
     """
     import httpx
@@ -1284,7 +1389,7 @@ async def get_stream_livepos(stream_id: str):
         raise HTTPException(status_code=404, detail="Stream not found")
     
     if stream.stat_url:
-        # Fetch livepos data from stat URL (LEGACY_HTTP path)
+        # Fetch livepos data from stat URL (HTTP mode path)
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(stream.stat_url)
@@ -1307,21 +1412,38 @@ async def get_stream_livepos(stream_id: str):
             logger.error(f"Error processing livepos for stream {stream_id}: {e}")
             raise HTTPException(status_code=500, detail=f"Error processing livepos data: {str(e)}")
 
-    # LEGACY_API path (no stat_url): ask active proxy stream manager for a probe.
+    # API mode path (no stat_url): ask active proxy stream manager for a probe.
     try:
         from .proxy.server import ProxyServer
+        from .services.hls_segmenter import hls_segmenter_service
+        from .services.legacy_stream_monitoring import legacy_stream_monitoring_service
 
         proxy = ProxyServer.get_instance()
         manager = proxy.stream_managers.get(stream.key) if proxy else None
-        if not manager:
-            raise HTTPException(status_code=400, detail="Legacy stream manager not available")
+        probe = None
 
-        probe = await asyncio.to_thread(
-            manager.collect_legacy_stats_probe,
-            1,
-            1.0,
-            True,
-        )
+        if manager:
+            probe = await asyncio.to_thread(
+                manager.collect_legacy_stats_probe,
+                1,
+                1.0,
+                True,
+            )
+
+        if not probe:
+            probe = await asyncio.to_thread(
+                hls_segmenter_service.collect_legacy_stats_probe,
+                stream.key,
+                1,
+                1.0,
+                True,
+            )
+
+        if not probe:
+            reusable = await legacy_stream_monitoring_service.get_reusable_session_for_content(stream.key)
+            if reusable:
+                probe = reusable.get("latest_status") or None
+
         if not probe:
             raise HTTPException(status_code=503, detail="No legacy probe data available")
 
@@ -1543,6 +1665,7 @@ def get_orchestrator_status():
     # Cache miss - compute orchestrator status
     from .services.replica_validator import replica_validator
     from .services.circuit_breaker import circuit_breaker_manager
+    from .services.metrics import get_dashboard_snapshot
     
     # Get engine and stream counts
     engines = state.list_engines()
@@ -1672,6 +1795,7 @@ def get_orchestrator_status():
             "engine_variant": cfg.ENGINE_VARIANT,
             "debug_mode": cfg.DEBUG_MODE
         },
+        "proxy": get_dashboard_snapshot().get("proxy", {}),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     
@@ -2212,6 +2336,7 @@ class LegacyStreamMonitorStartRequest(BaseModel):
     monitor_id: Optional[str] = None
     content_id: str
     stream_name: Optional[str] = None
+    live_delay: Optional[int] = None
     interval_s: float = 1.0
     run_seconds: int = 0
     per_sample_timeout_s: float = 1.0
@@ -2222,6 +2347,16 @@ class LegacyStreamMonitorM3UParseRequest(BaseModel):
     m3u_content: str
 
 
+class StreamSeekRequest(BaseModel):
+    target_timestamp: int
+
+
+class StreamSaveRequest(BaseModel):
+    path: str
+    index: int = 0
+    infohash: Optional[str] = None
+
+
 @app.post("/ace/monitor/legacy/start", dependencies=[Depends(require_api_key)])
 async def start_legacy_stream_monitor(req: LegacyStreamMonitorStartRequest):
     """Start a background legacy API monitor that collects STATUS every interval.
@@ -2230,9 +2365,11 @@ async def start_legacy_stream_monitor(req: LegacyStreamMonitorStartRequest):
     STATUS/livepos telemetry only for observability.
     """
     try:
+        resolved_live_delay = _resolve_live_delay(None, req.live_delay)
         monitor = await legacy_stream_monitoring_service.start_monitor(
             content_id=req.content_id,
             stream_name=req.stream_name,
+            live_delay=resolved_live_delay,
             interval_s=req.interval_s,
             run_seconds=req.run_seconds,
             per_sample_timeout_s=req.per_sample_timeout_s,
@@ -2312,20 +2449,183 @@ async def delete_legacy_stream_monitor(monitor_id: str):
         raise HTTPException(status_code=404, detail="legacy monitor not found")
     return {"deleted": True, "monitor_id": monitor_id}
 
-@app.get("/ace/preflight")
+
+def _select_stream_input(
+    id: Optional[str],
+    infohash: Optional[str],
+    torrent_url: Optional[str],
+    direct_url: Optional[str],
+    raw_data: Optional[str],
+) -> tuple[str, str]:
+    choices = []
+    for input_type, raw_value in [
+        ("content_id", id),
+        ("infohash", infohash),
+        ("torrent_url", torrent_url),
+        ("direct_url", direct_url),
+        ("raw_data", raw_data),
+    ]:
+        text = (raw_value or "").strip()
+        if text:
+            choices.append((input_type, text))
+
+    if not choices:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide exactly one input: id, infohash, torrent_url, direct_url, or raw_data",
+        )
+
+    if len(choices) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Input parameters are mutually exclusive. Provide only one of: id, infohash, torrent_url, direct_url, raw_data",
+        )
+
+    return choices[0]
+
+
+def _normalize_file_indexes(file_indexes: Optional[str]) -> str:
+    normalized = str(file_indexes if file_indexes is not None else "0").strip()
+    if not normalized:
+        return "0"
+
+    # Keep query contract strict so stream identities are deterministic.
+    if not re.fullmatch(r"\d+(,\d+)*", normalized):
+        raise HTTPException(
+            status_code=400,
+            detail="file_indexes must be a comma-separated list of non-negative integers (for example: 0 or 0,2)",
+        )
+    return normalized
+
+
+def _normalize_seekback(seekback: Optional[int]) -> int:
+    if seekback is None:
+        return 0
+    try:
+        normalized = int(float(seekback))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="live_delay (or seekback) must be a non-negative integer")
+    if normalized < 0:
+        raise HTTPException(status_code=400, detail="live_delay (or seekback) must be a non-negative integer")
+    return normalized
+
+
+def _resolve_live_delay(seekback: Optional[int], live_delay: Optional[int]) -> int:
+    """Resolve effective startup delay using query override, legacy alias, then global default."""
+    if live_delay is not None:
+        return _normalize_seekback(live_delay)
+    if seekback is not None:
+        return _normalize_seekback(seekback)
+    return _normalize_seekback(cfg.ACE_LIVE_EDGE_DELAY)
+
+
+def _resolve_control_mode(mode: Optional[str]) -> str:
+    """Normalize control mode to canonical values (http/api) with legacy aliases."""
+    return normalize_proxy_mode(mode, default=PROXY_MODE_HTTP) or PROXY_MODE_HTTP
+
+
+def _build_stream_key(input_type: str, input_value: str, file_indexes: str = "0", seekback: int = 0) -> str:
+    if input_type in {"content_id", "infohash"} and file_indexes == "0" and seekback <= 0:
+        return input_value
+
+    # Preserve previous key format for non-id inputs when file index is default.
+    if input_type not in {"content_id", "infohash"} and file_indexes == "0" and seekback <= 0:
+        digest = hashlib.sha1(input_value.encode("utf-8")).hexdigest()
+        return f"{input_type}:{digest}"
+
+    keyed_payload = f"{input_type}:{input_value}|file_indexes={file_indexes}|seekback={seekback}"
+    digest = hashlib.sha1(keyed_payload.encode("utf-8")).hexdigest()
+    return f"{input_type}:{digest}"
+
+
+def _build_engine_stream_params(
+    input_type: str,
+    input_value: str,
+    pid: str,
+    file_indexes: str = "0",
+    seekback: int = 0,
+) -> Dict[str, str]:
+    params: Dict[str, str] = {
+        "format": "json",
+        "pid": pid,
+        "file_indexes": file_indexes,
+    }
+
+    if seekback > 0:
+        params["seekback"] = str(seekback)
+
+    if input_type in {"content_id", "infohash"}:
+        params["id"] = input_value
+        if input_type == "infohash":
+            params["infohash"] = input_value
+    elif input_type == "torrent_url":
+        params["torrent_url"] = input_value
+    elif input_type == "direct_url":
+        params["direct_url"] = input_value
+        params["url"] = input_value
+    elif input_type == "raw_data":
+        params["raw_data"] = input_value
+    else:
+        params["id"] = input_value
+
+    return params
+
+
+def _build_stream_query_params(
+    input_type: str,
+    input_value: str,
+    file_indexes: str = "0",
+    seekback: int = 0,
+) -> Dict[str, str]:
+    if input_type == "content_id":
+        params = {"id": input_value}
+    else:
+        params = {input_type: input_value}
+
+    if file_indexes != "0":
+        params["file_indexes"] = file_indexes
+
+    if seekback > 0:
+        params["live_delay"] = str(seekback)
+
+    return params
+
+@app.get(
+    "/ace/preflight",
+    tags=["Proxy"],
+    summary="Preflight AceStream input",
+    description="Runs availability checks and canonicalizes stream identifiers before playback.",
+    responses={
+        200: {"description": "Preflight result"},
+        400: {"description": "Invalid request parameters"},
+        503: {"description": "No available engine capacity"},
+    },
+)
 def ace_preflight(
-    id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+    id: Optional[str] = Query(None, description="AceStream content ID (PID/content_id)"),
+    infohash: Optional[str] = Query(None, description="AceStream infohash"),
+    torrent_url: Optional[str] = Query(None, description="Direct .torrent URL"),
+    direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
+    raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
+    file_indexes: Optional[str] = Query("0", description="Comma-separated torrent file indexes (for example: 0 or 0,2)"),
+    seekback: Optional[int] = Query(None, description="Deprecated alias for live_delay"),
+    live_delay: Optional[int] = Query(None, description="Optional startup delay in seconds behind live edge"),
     tier: str = Query("light", description="Availability probe tier: light or deep"),
 ):
     """Run a short availability probe and canonicalize content IDs before playback."""
     from .proxy.config_helper import Config as ProxyConfig
     import requests
 
+    input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
+    normalized_file_indexes = _normalize_file_indexes(file_indexes)
+    normalized_seekback = _resolve_live_delay(seekback, live_delay)
+    stream_key = _build_stream_key(input_type, input_value, normalized_file_indexes, normalized_seekback)
+
     normalized_tier = (tier or "light").strip().lower()
     if normalized_tier not in {"light", "deep"}:
         raise HTTPException(status_code=400, detail="tier must be 'light' or 'deep'")
 
-    control_mode = (ProxyConfig.CONTROL_MODE or "LEGACY_HTTP").upper()
+    control_mode = _resolve_control_mode(ProxyConfig.CONTROL_MODE)
 
     engines = state.list_engines()
     if not engines:
@@ -2353,7 +2653,7 @@ def ace_preflight(
         key=lambda e: (engine_loads.get(e.container_id, 0), not e.forwarded),
     )[0]
 
-    if control_mode == "LEGACY_API":
+    if control_mode == PROXY_MODE_API:
         api_port = selected_engine.api_port or 62062
         client = AceLegacyApiClient(
             host=selected_engine.host,
@@ -2364,10 +2664,54 @@ def ace_preflight(
         try:
             client.connect()
             client.authenticate()
-            preflight_result = client.preflight(id, tier=normalized_tier)
+            if input_type in {"content_id", "infohash"}:
+                preflight_result = client.preflight(
+                    input_value,
+                    tier=normalized_tier,
+                    file_indexes=normalized_file_indexes,
+                )
+            else:
+                resolve_resp, resolved_mode = client.resolve_content(
+                    input_value,
+                    session_id="0",
+                    mode=input_type,
+                )
+                status_code = resolve_resp.get("status")
+                available = True if resolved_mode == "direct_url" else status_code in (1, 2)
+
+                preflight_result = {
+                    "tier": normalized_tier,
+                    "available": available,
+                    "status_code": 1 if resolved_mode == "direct_url" else status_code,
+                    "mode": resolved_mode,
+                    "infohash": resolve_resp.get("infohash"),
+                    "loadresp": resolve_resp,
+                    "can_retry": True,
+                    "should_wait": bool(status_code == 2),
+                }
+
+                if not preflight_result["available"]:
+                    preflight_result["message"] = resolve_resp.get("message", "content unavailable")
+
+                if normalized_tier == "deep" and preflight_result["available"]:
+                    start_info = client.start_stream(
+                        input_value,
+                        mode=resolved_mode,
+                        file_indexes=normalized_file_indexes,
+                        seekback=normalized_seekback,
+                    )
+                    status_probe = client.collect_status_samples(samples=4, interval_s=0.5, per_sample_timeout_s=2.0)
+                    preflight_result["start"] = start_info
+                    preflight_result["status_probe"] = status_probe
+                    client.stop_stream()
+
             return {
                 "control_mode": control_mode,
                 "tier": normalized_tier,
+                "input_type": input_type,
+                "file_indexes": normalized_file_indexes,
+                "seekback": normalized_seekback,
+                "stream_key": stream_key,
                 "engine": {
                     "container_id": selected_engine.container_id,
                     "host": selected_engine.host,
@@ -2385,10 +2729,16 @@ def ace_preflight(
             except Exception:
                 pass
 
-    # HTTP control fallback for compatibility in LEGACY_HTTP mode.
+    # HTTP control fallback for compatibility in HTTP mode.
     url = f"http://{selected_engine.host}:{selected_engine.port}/ace/getstream"
     pid = f"preflight-{int(time.time())}"
-    params = {"id": id, "format": "json", "pid": pid}
+    params = _build_engine_stream_params(
+        input_type,
+        input_value,
+        pid=pid,
+        file_indexes=normalized_file_indexes,
+        seekback=normalized_seekback,
+    )
     try:
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
@@ -2400,6 +2750,10 @@ def ace_preflight(
         return {
             "control_mode": control_mode,
             "tier": normalized_tier,
+            "input_type": input_type,
+            "file_indexes": normalized_file_indexes,
+            "seekback": normalized_seekback,
+            "stream_key": stream_key,
             "engine": {
                 "container_id": selected_engine.container_id,
                 "host": selected_engine.host,
@@ -2451,6 +2805,10 @@ def ace_preflight(
     return {
         "control_mode": control_mode,
         "tier": normalized_tier,
+        "input_type": input_type,
+        "file_indexes": normalized_file_indexes,
+        "seekback": normalized_seekback,
+        "stream_key": stream_key,
         "engine": {
             "container_id": selected_engine.container_id,
             "host": selected_engine.host,
@@ -2461,9 +2819,27 @@ def ace_preflight(
         "result": result,
     }
 
-@app.get("/ace/getstream")
+@app.get(
+    "/ace/getstream",
+    tags=["Proxy"],
+    summary="Start or join stream playback",
+    description="Starts or joins multiplexed stream playback and returns MPEG-TS or HLS depending on proxy mode.",
+    responses={
+        200: {"description": "Streaming response"},
+        400: {"description": "Invalid request or unsupported mode"},
+        422: {"description": "Stream blacklisted or unprocessable"},
+        500: {"description": "Internal streaming error"},
+    },
+)
 async def ace_getstream(
-    id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+    id: Optional[str] = Query(None, description="AceStream content ID (PID/content_id)"),
+    infohash: Optional[str] = Query(None, description="AceStream infohash"),
+    torrent_url: Optional[str] = Query(None, description="Direct .torrent URL"),
+    direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
+    raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
+    file_indexes: Optional[str] = Query("0", description="Comma-separated torrent file indexes (for example: 0 or 0,2)"),
+    seekback: Optional[int] = Query(None, description="Deprecated alias for live_delay"),
+    live_delay: Optional[int] = Query(None, description="Optional startup delay in seconds behind live edge"),
     request: Request = None,
 ):
     """Proxy endpoint for AceStream video streams with multiplexing.
@@ -2480,7 +2856,14 @@ async def ace_getstream(
     6. Sends events to orchestrator for panel visibility
     
     Args:
-        id: AceStream content ID (infohash or content_id)
+        id: AceStream content ID (PID/content_id)
+        infohash: AceStream infohash
+        torrent_url: Direct .torrent URL
+        direct_url: Direct media/magnet URL
+        raw_data: Raw torrent data payload
+        file_indexes: Comma-separated torrent file indexes
+        seekback: Deprecated alias for live_delay
+        live_delay: Optional startup delay in seconds behind live edge
         request: FastAPI Request object for client info
         
     Returns:
@@ -2494,20 +2877,19 @@ async def ace_getstream(
     from .services.looping_streams import looping_streams_tracker
 
     request_started_at = time.perf_counter()
+
+    input_type, input_value = _select_stream_input(id, infohash, torrent_url, direct_url, raw_data)
+    normalized_file_indexes = _normalize_file_indexes(file_indexes)
+    normalized_seekback = _resolve_live_delay(seekback, live_delay)
+    stream_key = _build_stream_key(input_type, input_value, normalized_file_indexes, normalized_seekback)
     
     # Get current stream mode
     stream_mode = ProxyConfig.STREAM_MODE
-    control_mode = (ProxyConfig.CONTROL_MODE or 'LEGACY_HTTP').upper()
-
-    if stream_mode == 'HLS' and control_mode == 'LEGACY_API':
-        raise HTTPException(
-            status_code=400,
-            detail="HLS mode requires control_mode='LEGACY_HTTP'"
-        )
+    control_mode = _resolve_control_mode(ProxyConfig.CONTROL_MODE)
     
     # Check if stream is on the looping blacklist
-    if looping_streams_tracker.is_looping(id):
-        logger.warning(f"Stream request denied: {id} is on looping blacklist")
+    if looping_streams_tracker.is_looping(stream_key):
+        logger.warning(f"Stream request denied: {stream_key} is on looping blacklist")
         raise HTTPException(
             status_code=422,
             detail={
@@ -2523,26 +2905,30 @@ async def ace_getstream(
     # Get client info
     client_ip = get_client_ip(request) if request else "unknown"
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
+    client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
 
-    reusable_monitor_session = await legacy_stream_monitoring_service.get_reusable_session_for_content(id)
+    reusable_monitor_session = None
+    if input_type in {"content_id", "infohash"} and normalized_file_indexes == "0" and normalized_seekback <= 0:
+        reusable_monitor_session = await legacy_stream_monitoring_service.get_reusable_session_for_content(input_value)
     if reusable_monitor_session:
         monitor_engine = reusable_monitor_session.get("engine") or {}
         logger.info(
             "Reusing monitor session %s for stream %s on engine %s",
             reusable_monitor_session.get("monitor_id"),
-            id,
+            stream_key,
             str(monitor_engine.get("container_id") or "unknown")[:12],
         )
     
     reservation_engine_id = None
     
-    def rollback_reservation():
-        if reservation_engine_id:
+    def rollback_reservation(target_engine_id: Optional[str] = None):
+        engine_id = target_engine_id or reservation_engine_id
+        if engine_id:
             try:
                 from app.proxy.manager import ProxyManager
                 redis = ProxyManager.get_instance().redis_client
                 if redis:
-                    pending_key = f"ace_proxy:engine:{reservation_engine_id}:pending"
+                    pending_key = f"ace_proxy:engine:{engine_id}:pending"
                     decr_script = """
                     local current = redis.call('GET', KEYS[1])
                     if current and tonumber(current) > 0 then
@@ -2552,64 +2938,496 @@ async def ace_getstream(
                     end
                     """
                     redis.eval(decr_script, 1, pending_key)
-                    logger.debug(f"Rolled back pending reservation for engine {reservation_engine_id[:12]}")
+                    logger.debug(f"Rolled back pending reservation for engine {engine_id[:12]}")
             except Exception as e:
-                logger.warning(f"Failed to rollback reservation for engine {reservation_engine_id[:12]}: {e}")
+                logger.warning(f"Failed to rollback reservation for engine {engine_id[:12]}: {e}")
     
-    def select_best_engine():
+    def select_best_engine(additional_load_by_engine: Optional[Dict[str, int]] = None):
         """Select the best available engine using layer-based load balancing.
         
         Returns tuple of (selected_engine, current_load)
         Raises HTTPException if no engines available or all at capacity.
         """
-        return select_best_engine_shared(reserve_pending=True)
+        return select_best_engine_shared(
+            reserve_pending=True,
+            additional_load_by_engine=additional_load_by_engine,
+        )
+
+    def _find_active_api_hls_stream_id() -> Optional[str]:
+        for active_stream in state.list_streams(status="started"):
+            if active_stream.key != stream_key:
+                continue
+            if normalize_proxy_mode(active_stream.control_mode, default=PROXY_MODE_HTTP) == PROXY_MODE_API:
+                return active_stream.id
+        return None
+
+    def _safe_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    async def _register_api_hls_stream_if_missing(
+        *,
+        container_id: str,
+        engine_host: str,
+        engine_port: int,
+        engine_api_port: int,
+        playback_session_id: str,
+        stat_url: str,
+        command_url: str,
+        is_live: int,
+    ) -> Optional[str]:
+        existing_stream_id = _find_active_api_hls_stream_id()
+        if existing_stream_id:
+            return existing_stream_id
+
+        if not container_id or not engine_host or not engine_port or not playback_session_id:
+            return None
+
+        try:
+            from .services.internal_events import handle_stream_started
+
+            event = StreamStartedEvent(
+                container_id=container_id,
+                engine={"host": engine_host, "port": int(engine_port)},
+                stream={
+                    "key_type": input_type,
+                    "key": stream_key,
+                    "file_indexes": normalized_file_indexes,
+                    "seekback": normalized_seekback,
+                    "live_delay": normalized_seekback,
+                    "control_mode": PROXY_MODE_API,
+                },
+                session={
+                    "playback_session_id": playback_session_id,
+                    "stat_url": stat_url,
+                    "command_url": command_url,
+                    "is_live": int(is_live or 1),
+                },
+                labels={
+                    "source": "api_hls_segmenter",
+                    "stream_mode": "HLS",
+                    "proxy.control_mode": PROXY_MODE_API,
+                    "stream.input_type": input_type,
+                    "stream.file_indexes": normalized_file_indexes,
+                    "stream.seekback": str(normalized_seekback),
+                    "stream.live_delay": str(normalized_seekback),
+                    "host.api_port": str(engine_api_port or ""),
+                    "client.id": client_identity,
+                    "client.ip": client_ip,
+                    "client.user_agent": user_agent[:200],
+                },
+            )
+
+            result = await asyncio.to_thread(handle_stream_started, event)
+            return result.id if result else None
+        except Exception as e:
+            logger.warning("Failed to register API-mode HLS stream in state for %s: %s", stream_key, e)
+            return None
     
     try:
         # Handle HLS mode differently from TS mode
         if stream_mode == 'HLS':
-            # For HLS, use the FastAPI-based HLS proxy
-            from app.proxy.hls_proxy import HLSProxyServer
             import requests
-            from uuid import uuid4
-            
-            # Get HLS proxy instance
-            hls_proxy = HLSProxyServer.get_instance()
-            
-            # Check if channel already exists - do this BEFORE engine selection to avoid
-            # unnecessary computation and logging on every manifest/segment request
-            if hls_proxy.has_channel(id):
-                # Channel already exists - reuse existing session
-                # Skip engine selection and just serve the manifest
-                logger.debug(f"HLS channel {id} already exists, serving manifest to client {client_id} from {client_ip}")
-                
+            if control_mode == PROXY_MODE_HTTP:
+                # HTTP mode uses the existing FastAPI-based HLS proxy.
+                from app.proxy.hls_proxy import HLSProxyServer
+                from uuid import uuid4
+
+                hls_proxy = HLSProxyServer.get_instance()
+
+                if hls_proxy.has_channel(stream_key):
+                    logger.debug(f"HLS channel {stream_key} already exists, serving manifest to client {client_id} from {client_ip}")
+
+                    try:
+                        manifest_content = await hls_proxy.get_manifest_async(stream_key)
+                        manifest_bytes = manifest_content.encode('utf-8')
+                        hls_proxy.record_client_activity(
+                            stream_key,
+                            client_ip,
+                            client_id=client_identity,
+                            user_agent=user_agent,
+                            request_kind="manifest",
+                            bytes_sent=len(manifest_bytes),
+                        )
+
+                        elapsed = time.perf_counter() - request_started_at
+                        observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
+                        observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
+
+                        return StreamingResponse(
+                            iter([manifest_bytes]),
+                            media_type="application/vnd.apple.mpegurl",
+                            headers={
+                                "Cache-Control": "no-cache, no-store, must-revalidate",
+                                "Connection": "keep-alive",
+                            }
+                        )
+                    except TimeoutError as e:
+                        logger.error(f"Timeout getting HLS manifest: {e}")
+                        raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
+
+                if reusable_monitor_session:
+                    monitor_engine = reusable_monitor_session.get("engine") or {}
+                    monitor_session = reusable_monitor_session.get("session") or {}
+                    selected_engine = SimpleNamespace(
+                        container_id=monitor_engine.get("container_id"),
+                        host=monitor_engine.get("host"),
+                        port=monitor_engine.get("port"),
+                        api_port=monitor_engine.get("api_port") or 62062,
+                        forwarded=bool(monitor_engine.get("forwarded")),
+                    )
+                    monitor_loads = state.get_active_monitor_load_by_engine()
+                    current_load = len(state.list_streams(status="started", container_id=selected_engine.container_id)) + monitor_loads.get(selected_engine.container_id, 0)
+                    playback_url = monitor_session.get("playback_url")
+                    if not playback_url:
+                        raise HTTPException(status_code=500, detail="Monitor session has no playback URL")
+                else:
+                    selected_engine, current_load = select_best_engine()
+                    reservation_engine_id = selected_engine.container_id
+
+                logger.info(
+                    f"Selected engine {selected_engine.container_id[:12]} for new {stream_mode} stream {stream_key} "
+                    f"(forwarded={selected_engine.forwarded}, current_load={current_load})"
+                )
+                logger.info(f"Client {client_id} initializing new {stream_mode} stream {stream_key} from {client_ip}")
+
                 try:
-                    # Track client activity for this request
-                    hls_proxy.record_client_activity(id, client_ip)
-                    
-                    # Use async version to avoid blocking the event loop
-                    manifest_content = await hls_proxy.get_manifest_async(id)
-                    
-                    # Note: In HLS, clients make multiple requests (manifest + segments)
-                    # Client activity is tracked on each request, not per connection
-                    # DO NOT remove client here - let inactivity timeout handle cleanup
-                    
+                    if reusable_monitor_session:
+                        logger.info("Using playback URL from monitoring session for HLS stream")
+                        api_key = os.getenv('API_KEY')
+                        monitor_session = reusable_monitor_session.get("session") or {}
+                        monitor_playback_session_id = monitor_session.get('playback_session_id')
+                        if not monitor_playback_session_id:
+                            monitor_playback_session_id = f"hls-reuse-{stream_key[:16]}-{int(time.time())}"
+                        session_info = {
+                            'playback_session_id': monitor_playback_session_id,
+                            'stat_url': monitor_session.get('stat_url') or '',
+                            'command_url': monitor_session.get('command_url') or '',
+                            'is_live': 1,
+                            'owns_engine_session': False,
+                        }
+                    else:
+                        hls_url = f"http://{selected_engine.host}:{selected_engine.port}/ace/manifest.m3u8"
+                        pid = str(uuid4())
+                        params = _build_engine_stream_params(
+                            input_type,
+                            input_value,
+                            pid=pid,
+                            file_indexes=normalized_file_indexes,
+                            seekback=normalized_seekback,
+                        )
+
+                        logger.info(f"Requesting HLS stream from engine: {hls_url}")
+                        response = requests.get(hls_url, params=params, timeout=10)
+                        response.raise_for_status()
+                        data = response.json()
+
+                        if data.get("error"):
+                            error_msg = data['error']
+                            logger.error(f"AceStream engine returned error: {error_msg}")
+                            raise HTTPException(status_code=500, detail=f"AceStream engine error: {error_msg}")
+
+                        resp_data = data.get("response", {})
+                        playback_url = resp_data.get("playback_url")
+                        if not playback_url:
+                            logger.error("No playback_url in AceStream response")
+                            raise HTTPException(status_code=500, detail="No playback URL in engine response")
+
+                        logger.info(f"HLS playback URL: {playback_url}")
+
+                        api_key = os.getenv('API_KEY')
+                        session_info = {
+                            'playback_session_id': resp_data.get('playback_session_id'),
+                            'stat_url': resp_data.get('stat_url'),
+                            'command_url': resp_data.get('command_url'),
+                            'is_live': resp_data.get('is_live', 1),
+                            'owns_engine_session': True,
+                        }
+
+                    hls_proxy.initialize_channel(
+                        channel_id=stream_key,
+                        playback_url=playback_url,
+                        engine_host=selected_engine.host,
+                        engine_port=selected_engine.port,
+                        engine_container_id=selected_engine.container_id,
+                        session_info=session_info,
+                        api_key=api_key,
+                        stream_key_type=input_type,
+                        file_indexes=normalized_file_indexes,
+                        seekback=normalized_seekback,
+                    )
+
+                    manifest_content = await hls_proxy.get_manifest_async(stream_key)
+                    manifest_bytes = manifest_content.encode('utf-8')
+                    hls_proxy.record_client_activity(
+                        stream_key,
+                        client_ip,
+                        client_id=client_identity,
+                        user_agent=user_agent,
+                        request_kind="manifest",
+                        bytes_sent=len(manifest_bytes),
+                    )
+
                     elapsed = time.perf_counter() - request_started_at
                     observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
                     observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
 
                     return StreamingResponse(
-                        iter([manifest_content.encode('utf-8')]),
+                        iter([manifest_bytes]),
                         media_type="application/vnd.apple.mpegurl",
                         headers={
                             "Cache-Control": "no-cache, no-store, must-revalidate",
                             "Connection": "keep-alive",
                         }
                     )
+
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"Failed to request HLS stream from engine: {e}")
+                    raise HTTPException(status_code=503, detail=f"Engine communication error: {str(e)}")
                 except TimeoutError as e:
                     logger.error(f"Timeout getting HLS manifest: {e}")
                     raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
-            
-            # Channel doesn't exist - either reuse monitor session or select engine.
+            else:
+                # API mode: expose HLS by segmenting MPEG-TS playback with local FFmpeg.
+                existing_manifest = await hls_segmenter_service.get_or_wait_manifest(stream_key, timeout_s=15.0)
+                if existing_manifest:
+                    session_meta = hls_segmenter_service.get_session_metadata(stream_key) or {}
+                    existing_stream_id = str(session_meta.get("stream_id") or "").strip()
+                    if not existing_stream_id:
+                        stream_id = await _register_api_hls_stream_if_missing(
+                            container_id=str(session_meta.get("container_id") or ""),
+                            engine_host=str(session_meta.get("engine_host") or ""),
+                            engine_port=_safe_int(session_meta.get("engine_port"), default=0),
+                            engine_api_port=_safe_int(session_meta.get("engine_api_port"), default=0),
+                            playback_session_id=str(session_meta.get("playback_session_id") or ""),
+                            stat_url=str(session_meta.get("stat_url") or ""),
+                            command_url=str(session_meta.get("command_url") or ""),
+                            is_live=_safe_int(session_meta.get("is_live"), default=1),
+                        )
+                        if stream_id:
+                            hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
+
+                    logger.debug("Reusing external HLS segmenter for stream %s", stream_key)
+                    hls_segmenter_service.record_activity(stream_key)
+                    manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
+                    manifest_bytes = manifest_content.encode('utf-8')
+                    hls_segmenter_service.record_client_activity(
+                        stream_key,
+                        client_identity,
+                        client_ip,
+                        user_agent,
+                        request_kind="manifest",
+                        bytes_sent=len(manifest_bytes),
+                    )
+
+                    elapsed = time.perf_counter() - request_started_at
+                    observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
+                    observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
+
+                    return StreamingResponse(
+                        iter([manifest_bytes]),
+                        media_type="application/vnd.apple.mpegurl",
+                        headers={
+                            "Cache-Control": "no-cache, no-store, must-revalidate",
+                            "Connection": "keep-alive",
+                        }
+                    )
+
+                if reusable_monitor_session:
+                    monitor_engine = reusable_monitor_session.get("engine") or {}
+                    monitor_session = reusable_monitor_session.get("session") or {}
+                    selected_engine = SimpleNamespace(
+                        container_id=monitor_engine.get("container_id"),
+                        host=monitor_engine.get("host"),
+                        port=monitor_engine.get("port"),
+                        api_port=monitor_engine.get("api_port") or 62062,
+                        forwarded=bool(monitor_engine.get("forwarded")),
+                    )
+                    playback_url = str(monitor_session.get("playback_url") or "").strip()
+                    if not playback_url:
+                        raise HTTPException(status_code=500, detail="Monitor session has no playback URL")
+                    start_info = {
+                        "playback_session_id": str(monitor_session.get("playback_session_id") or f"api-hls-reuse-{int(time.time())}"),
+                        "stat_url": str(monitor_session.get("stat_url") or ""),
+                        "command_url": str(monitor_session.get("command_url") or ""),
+                        "is_live": int(monitor_session.get("is_live") or 1),
+                    }
+                    legacy_api_client = None
+                else:
+                    engines_count = max(1, len(state.list_engines()))
+                    max_engine_attempts = min(2, engines_count)
+                    excluded_engine_penalties: Dict[str, int] = {}
+                    last_start_error: Optional[HTTPException] = None
+                    selected_engine = None
+                    legacy_api_client = None
+                    start_info = {}
+                    playback_url = ""
+
+                    for attempt_idx in range(max_engine_attempts):
+                        selected_engine, current_load = select_best_engine(
+                            additional_load_by_engine=excluded_engine_penalties,
+                        )
+                        reservation_engine_id = selected_engine.container_id
+
+                        logger.info(
+                            "Starting API-mode HLS session on engine %s for stream %s (attempt %s/%s)",
+                            selected_engine.container_id[:12],
+                            stream_key,
+                            attempt_idx + 1,
+                            max_engine_attempts,
+                        )
+
+                        client = AceLegacyApiClient(
+                            host=selected_engine.host,
+                            port=selected_engine.api_port or 62062,
+                            connect_timeout=10,
+                            response_timeout=10,
+                        )
+
+                        try:
+                            await asyncio.to_thread(client.connect)
+                            await asyncio.to_thread(client.authenticate)
+
+                            start_mode = input_type
+                            start_payload = input_value
+
+                            # Manual preflight logic removed as per user request to allow only UI-triggered checks.
+                            # The engine START command will now use the raw input values.
+
+                            loadresp, resolved_mode = await asyncio.to_thread(
+                                client.resolve_content,
+                                input_value,
+                                "0",
+                                input_type,
+                            )
+                            if resolved_mode != "direct_url":
+                                status_code = loadresp.get("status")
+                                if status_code not in (1, 2):
+                                    message = loadresp.get("message") or "content unavailable"
+                                    raise HTTPException(status_code=503, detail=f"LOADASYNC status={status_code}: {message}")
+                            start_mode = resolved_mode
+
+                            start_info = await asyncio.to_thread(
+                                client.start_stream,
+                                start_payload,
+                                start_mode,
+                                "output_format=http",
+                                normalized_file_indexes,
+                                normalized_seekback,
+                            )
+                            playback_url = str(start_info.get("url") or "").strip()
+                            if not playback_url:
+                                raise HTTPException(status_code=500, detail="No playback URL returned by API START")
+
+                            legacy_api_client = client
+                            break
+                        except HTTPException as e:
+                            last_start_error = e
+                            excluded_engine_penalties[selected_engine.container_id] = cfg.MAX_STREAMS_PER_ENGINE
+                            rollback_reservation(selected_engine.container_id)
+                            try:
+                                await asyncio.to_thread(client.shutdown)
+                            except Exception:
+                                pass
+                            if attempt_idx + 1 >= max_engine_attempts:
+                                raise
+                            logger.warning(
+                                "API-mode HLS startup failed on engine %s (attempt %s/%s): %s. Retrying with another engine.",
+                                selected_engine.container_id[:12],
+                                attempt_idx + 1,
+                                max_engine_attempts,
+                                e.detail,
+                            )
+                        except AceLegacyApiError as e:
+                            last_start_error = HTTPException(status_code=503, detail=str(e))
+                            excluded_engine_penalties[selected_engine.container_id] = cfg.MAX_STREAMS_PER_ENGINE
+                            rollback_reservation(selected_engine.container_id)
+                            try:
+                                await asyncio.to_thread(client.shutdown)
+                            except Exception:
+                                pass
+                            if attempt_idx + 1 >= max_engine_attempts:
+                                raise last_start_error
+                            logger.warning(
+                                "API-mode HLS legacy API error on engine %s (attempt %s/%s): %s. Retrying with another engine.",
+                                selected_engine.container_id[:12],
+                                attempt_idx + 1,
+                                max_engine_attempts,
+                                e,
+                            )
+
+                    if not playback_url:
+                        if last_start_error:
+                            raise last_start_error
+                        raise HTTPException(status_code=503, detail="Unable to start API-mode HLS stream")
+
+                logger.info("Starting external HLS segmenter for stream %s", stream_key)
+                segmenter_metadata = {
+                    "playback_session_id": str(start_info.get("playback_session_id") or f"api-hls-{int(time.time())}"),
+                    "stat_url": str(start_info.get("stat_url") or ""),
+                    "command_url": str(start_info.get("command_url") or ""),
+                    "is_live": int(start_info.get("is_live") or 1),
+                    "container_id": str(selected_engine.container_id or ""),
+                    "engine_host": str(selected_engine.host or ""),
+                    "engine_port": int(selected_engine.port or 0),
+                    "engine_api_port": int(selected_engine.api_port or 0),
+                    "stream_key_type": input_type,
+                    "file_indexes": normalized_file_indexes,
+                    "seekback": normalized_seekback,
+                    "control_client": legacy_api_client,
+                }
+                try:
+                    await hls_segmenter_service.start_segmenter(stream_key, playback_url, metadata=segmenter_metadata)
+                except (FileNotFoundError, RuntimeError, TimeoutError) as e:
+                    if legacy_api_client is not None:
+                        try:
+                            await asyncio.to_thread(legacy_api_client.shutdown)
+                        except Exception:
+                            pass
+                    logger.error("Failed to initialize external HLS segmenter for stream %s: %s", stream_key, e)
+                    raise HTTPException(status_code=503, detail=f"Failed to initialize HLS segmenter: {e}")
+
+                stream_id = await _register_api_hls_stream_if_missing(
+                    container_id=str(selected_engine.container_id or ""),
+                    engine_host=str(selected_engine.host or ""),
+                    engine_port=int(selected_engine.port or 0),
+                    engine_api_port=int(selected_engine.api_port or 0),
+                    playback_session_id=str(segmenter_metadata.get("playback_session_id") or ""),
+                    stat_url=str(segmenter_metadata.get("stat_url") or ""),
+                    command_url=str(segmenter_metadata.get("command_url") or ""),
+                    is_live=int(segmenter_metadata.get("is_live") or 1),
+                )
+                if stream_id:
+                    hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
+
+                hls_segmenter_service.record_activity(stream_key)
+                manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
+                manifest_bytes = manifest_content.encode('utf-8')
+                hls_segmenter_service.record_client_activity(
+                    stream_key,
+                    client_identity,
+                    client_ip,
+                    user_agent,
+                    request_kind="manifest",
+                    bytes_sent=len(manifest_bytes),
+                )
+
+                elapsed = time.perf_counter() - request_started_at
+                observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
+                observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
+
+                return StreamingResponse(
+                    iter([manifest_bytes]),
+                    media_type="application/vnd.apple.mpegurl",
+                    headers={
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Connection": "keep-alive",
+                    }
+                )
+        else:
+            # TS mode - use existing ts_proxy architecture
             if reusable_monitor_session:
                 monitor_engine = reusable_monitor_session.get("engine") or {}
                 monitor_session = reusable_monitor_session.get("session") or {}
@@ -2620,142 +3438,134 @@ async def ace_getstream(
                     api_port=monitor_engine.get("api_port") or 62062,
                     forwarded=bool(monitor_engine.get("forwarded")),
                 )
-                monitor_loads = state.get_active_monitor_load_by_engine()
-                current_load = len(state.list_streams(status="started", container_id=selected_engine.container_id)) + monitor_loads.get(selected_engine.container_id, 0)
-                playback_url = monitor_session.get("playback_url")
+                start_info = {
+                    "playback_session_id": str(monitor_session.get("playback_session_id") or f"api-ts-reuse-{int(time.time())}"),
+                    "stat_url": str(monitor_session.get("stat_url") or ""),
+                    "command_url": str(monitor_session.get("command_url") or ""),
+                    "is_live": int(monitor_session.get("is_live") or 1),
+                }
+                playback_url = str(monitor_session.get("playback_url") or "").strip()
+                legacy_api_client = None
+            elif control_mode == PROXY_MODE_API:
+                engines_count = max(1, len(state.list_engines()))
+                max_engine_attempts = min(2, engines_count)
+                excluded_engine_penalties: Dict[str, int] = {}
+                last_start_error: Optional[HTTPException] = None
+                selected_engine = None
+                legacy_api_client = None
+                start_info = {}
+                playback_url = ""
+
+                for attempt_idx in range(max_engine_attempts):
+                    selected_engine, current_load = select_best_engine(
+                        additional_load_by_engine=excluded_engine_penalties,
+                    )
+                    reservation_engine_id = selected_engine.container_id
+
+                    logger.info(
+                        "Starting API-mode %s session on engine %s for stream %s (attempt %s/%s)",
+                        stream_mode,
+                        selected_engine.container_id[:12],
+                        stream_key,
+                        attempt_idx + 1,
+                        max_engine_attempts,
+                    )
+
+                    client = AceLegacyApiClient(
+                        host=selected_engine.host,
+                        port=selected_engine.api_port or 62062,
+                        connect_timeout=10,
+                        response_timeout=10,
+                    )
+
+                    try:
+                        await asyncio.to_thread(client.connect)
+                        await asyncio.to_thread(client.authenticate)
+
+                        loadresp, resolved_mode = await asyncio.to_thread(
+                            client.resolve_content,
+                            input_value,
+                            "0",
+                            input_type,
+                        )
+                        if resolved_mode != "direct_url":
+                            status_code = loadresp.get("status")
+                            if status_code not in (1, 2):
+                                message = loadresp.get("message") or "content unavailable"
+                                raise HTTPException(status_code=503, detail=f"LOADASYNC status={status_code}: {message}")
+                        
+                        start_mode = resolved_mode
+                        start_payload = input_value
+                        if loadresp.get("infohash"):
+                            start_mode = "infohash"
+                            start_payload = loadresp.get("infohash")
+
+                        start_info = await asyncio.to_thread(
+                            client.start_stream,
+                            start_payload,
+                            start_mode,
+                            "output_format=http",
+                            normalized_file_indexes,
+                            normalized_seekback,
+                        )
+                        playback_url = str(start_info.get("url") or "").strip()
+                        if not playback_url:
+                            raise HTTPException(status_code=500, detail="No playback URL returned by API START")
+
+                        legacy_api_client = client
+                        break
+                    except HTTPException as e:
+                        last_start_error = e
+                        excluded_engine_penalties[selected_engine.container_id] = cfg.MAX_STREAMS_PER_ENGINE
+                        rollback_reservation(selected_engine.container_id)
+                        try:
+                            await asyncio.to_thread(client.shutdown)
+                        except Exception:
+                            pass
+                        if attempt_idx + 1 >= max_engine_attempts:
+                            raise
+                        logger.warning(
+                            "API-mode %s startup failed on engine %s (attempt %s/%s): %s. Retrying.",
+                            stream_mode,
+                            selected_engine.container_id[:12],
+                            attempt_idx + 1,
+                            max_engine_attempts,
+                            e.detail,
+                        )
+                    except AceLegacyApiError as e:
+                        last_start_error = HTTPException(status_code=503, detail=str(e))
+                        excluded_engine_penalties[selected_engine.container_id] = cfg.MAX_STREAMS_PER_ENGINE
+                        rollback_reservation(selected_engine.container_id)
+                        try:
+                            await asyncio.to_thread(client.shutdown)
+                        except Exception:
+                            pass
+                        if attempt_idx + 1 >= max_engine_attempts:
+                            raise last_start_error
+                        logger.warning(
+                            "API-mode %s legacy API error on engine %s (attempt %s/%s): %s. Retrying.",
+                            stream_mode,
+                            selected_engine.container_id[:12],
+                            attempt_idx + 1,
+                            max_engine_attempts,
+                            e,
+                        )
+
                 if not playback_url:
-                    raise HTTPException(status_code=500, detail="Monitor session has no playback URL")
+                    if last_start_error:
+                        raise last_start_error
+                    raise HTTPException(status_code=503, detail=f"Unable to start API-mode {stream_mode} stream")
             else:
+                # HTTP mode - simple engine selection
                 selected_engine, current_load = select_best_engine()
                 reservation_engine_id = selected_engine.container_id
-            
+                start_info = {}
+                playback_url = None
+                legacy_api_client = None
+
             logger.info(
-                f"Selected engine {selected_engine.container_id[:12]} for new {stream_mode} stream {id} "
-                f"(forwarded={selected_engine.forwarded}, current_load={current_load})"
-            )
-            
-            logger.info(
-                f"Client {client_id} initializing new {stream_mode} stream {id} from {client_ip}"
-            )
-            
-            try:
-                if reusable_monitor_session:
-                    logger.info("Using playback URL from monitoring session for HLS stream")
-                    # Get API key from environment
-                    api_key = os.getenv('API_KEY')
-
-                    monitor_session = reusable_monitor_session.get("session") or {}
-                    monitor_playback_session_id = monitor_session.get('playback_session_id')
-                    if not monitor_playback_session_id:
-                        monitor_playback_session_id = f"hls-reuse-{id[:16]}-{int(time.time())}"
-                    session_info = {
-                        'playback_session_id': monitor_playback_session_id,
-                        'stat_url': monitor_session.get('stat_url') or '',
-                        'command_url': monitor_session.get('command_url') or '',
-                        'is_live': 1,
-                        'owns_engine_session': False,
-                    }
-                else:
-                    # Request new session from AceStream engine
-                    hls_url = f"http://{selected_engine.host}:{selected_engine.port}/ace/manifest.m3u8"
-                    pid = str(uuid4())
-                    params = {
-                        "id": id,
-                        "format": "json",
-                        "pid": pid
-                    }
-
-                    logger.info(f"Requesting HLS stream from engine: {hls_url}")
-                    response = requests.get(hls_url, params=params, timeout=10)
-                    response.raise_for_status()
-                    data = response.json()
-
-                    if data.get("error"):
-                        error_msg = data['error']
-                        logger.error(f"AceStream engine returned error: {error_msg}")
-                        raise HTTPException(status_code=500, detail=f"AceStream engine error: {error_msg}")
-
-                    # Get session info from response
-                    resp_data = data.get("response", {})
-                    playback_url = resp_data.get("playback_url")
-
-                    if not playback_url:
-                        logger.error("No playback_url in AceStream response")
-                        raise HTTPException(status_code=500, detail="No playback URL in engine response")
-
-                    logger.info(f"HLS playback URL: {playback_url}")
-
-                    # Get API key from environment
-                    api_key = os.getenv('API_KEY')
-
-                    # Prepare session info for event tracking
-                    session_info = {
-                        'playback_session_id': resp_data.get('playback_session_id'),
-                        'stat_url': resp_data.get('stat_url'),
-                        'command_url': resp_data.get('command_url'),
-                        'is_live': resp_data.get('is_live', 1),
-                        'owns_engine_session': True,
-                    }
-
-                # Initialize HLS proxy channel
-                hls_proxy.initialize_channel(
-                    channel_id=id,
-                    playback_url=playback_url,
-                    engine_host=selected_engine.host,
-                    engine_port=selected_engine.port,
-                    engine_container_id=selected_engine.container_id,
-                    session_info=session_info,
-                    api_key=api_key
-                )
-                
-                # Track client activity and get manifest for the newly created channel
-                # Use async version to avoid blocking the event loop
-                hls_proxy.record_client_activity(id, client_ip)
-                manifest_content = await hls_proxy.get_manifest_async(id)
-                
-                elapsed = time.perf_counter() - request_started_at
-                observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
-                observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
-
-                return StreamingResponse(
-                    iter([manifest_content.encode('utf-8')]),
-                    media_type="application/vnd.apple.mpegurl",
-                    headers={
-                        "Cache-Control": "no-cache, no-store, must-revalidate",
-                        "Connection": "keep-alive",
-                    }
-                )
-                
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Failed to request HLS stream from engine: {e}")
-                raise HTTPException(status_code=503, detail=f"Engine communication error: {str(e)}")
-            except TimeoutError as e:
-                logger.error(f"Timeout getting HLS manifest: {e}")
-                raise HTTPException(status_code=503, detail=f"Timeout waiting for stream buffer: {str(e)}")
-        else:
-            # TS mode - use existing ts_proxy architecture
-            if reusable_monitor_session:
-                monitor_engine = reusable_monitor_session.get("engine") or {}
-                selected_engine = SimpleNamespace(
-                    container_id=monitor_engine.get("container_id"),
-                    host=monitor_engine.get("host"),
-                    port=monitor_engine.get("port"),
-                    api_port=monitor_engine.get("api_port") or 62062,
-                    forwarded=bool(monitor_engine.get("forwarded")),
-                )
-                monitor_loads = state.get_active_monitor_load_by_engine()
-                current_load = len(state.list_streams(status="started", container_id=selected_engine.container_id)) + monitor_loads.get(selected_engine.container_id, 0)
-            else:
-                selected_engine, current_load = select_best_engine()
-                reservation_engine_id = selected_engine.container_id
-            
-            logger.info(
-                f"Selected engine {selected_engine.container_id[:12]} for {stream_mode} stream {id} "
-                f"(forwarded={selected_engine.forwarded}, current_load={current_load})"
-            )
-            
-            logger.info(
-                f"Client {client_id} connecting to {stream_mode} stream {id} from {client_ip}"
+                f"Client {client_id} connecting to {stream_mode} stream {stream_key} from {client_ip} "
+                f"on engine {selected_engine.container_id[:12]}"
             )
             
             # Get proxy instance
@@ -2763,15 +3573,31 @@ async def ace_getstream(
             
             # Start stream if not exists (idempotent)
             success = proxy.start_stream(
-                content_id=id,
+                content_id=stream_key,
                 engine_host=selected_engine.host,
                 engine_port=selected_engine.port,
                 engine_api_port=selected_engine.api_port,
                 engine_container_id=selected_engine.container_id,
                 existing_session=reusable_monitor_session,
+                source_input=input_value,
+                source_input_type=input_type,
+                file_indexes=normalized_file_indexes,
+                seekback=normalized_seekback,
+                # New adoption parameters
+                playback_url=playback_url,
+                playback_session_id=start_info.get("playback_session_id"),
+                stat_url=start_info.get("stat_url"),
+                command_url=start_info.get("command_url"),
+                is_live=start_info.get("is_live"),
+                ace_api_client=legacy_api_client,
             )
             
             if not success:
+                if legacy_api_client:
+                    try:
+                        await asyncio.to_thread(legacy_api_client.shutdown)
+                    except Exception:
+                        pass
                 raise HTTPException(
                     status_code=500,
                     detail="Failed to start stream session"
@@ -2779,11 +3605,11 @@ async def ace_getstream(
             
             # Create stream generator
             generator = create_stream_generator(
-                content_id=id,
+                content_id=stream_key,
                 client_id=client_id,
                 client_ip=client_ip,
                 client_user_agent=user_agent,
-                stream_initializing=(control_mode == 'LEGACY_API')
+                stream_initializing=(control_mode == PROXY_MODE_API)
             )
             
             # Return streaming response with TS data
@@ -2815,7 +3641,17 @@ async def ace_getstream(
 
 
 
-@app.get("/ace/hls/{content_id}/segment/{segment_path:path}")
+@app.get(
+    "/ace/hls/{content_id}/segment/{segment_path:path}",
+    tags=["Proxy"],
+    summary="Fetch HLS segment",
+    description="Returns a buffered HLS segment for an active AceStream channel.",
+    responses={
+        200: {"description": "Segment data"},
+        404: {"description": "Segment not found"},
+        500: {"description": "Segment retrieval error"},
+    },
+)
 async def ace_hls_segment(
     content_id: str,
     segment_path: str,
@@ -2843,12 +3679,32 @@ async def ace_hls_segment(
     
     try:
         hls_proxy = HLSProxyServer.get_instance()
-        
-        # Track client activity for this segment request
+
         client_ip = get_client_ip(request)
-        hls_proxy.record_client_activity(content_id, client_ip)
+        user_agent = request.headers.get('user-agent', 'unknown')
+        client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
         
+        # Parse sequence number from segment path (e.g. "123.ts" or "segment_123.ts")
+        sequence = None
+        try:
+            # Extract digits from the filename
+            seq_match = re.search(r'(\d+)', segment_path)
+            if seq_match:
+                sequence = int(seq_match.group(1))
+        except Exception:
+            pass
+
         segment_data = hls_proxy.get_segment(content_id, segment_path)
+        hls_proxy.record_client_activity(
+            content_id,
+            client_ip,
+            client_id=client_identity,
+            user_agent=user_agent,
+            request_kind="segment",
+            bytes_sent=len(segment_data),
+            chunks_sent=1,
+            sequence=sequence,
+        )
         observe_proxy_egress_bytes("HLS", len(segment_data))
         
         # Return segment data directly
@@ -2877,27 +3733,259 @@ async def ace_hls_segment(
 
 
 
+@app.get(
+    "/api/v1/hls/{monitor_id}/{segment_filename}",
+    tags=["Proxy"],
+    summary="Serve FFmpeg-generated HLS segment",
+    description="Serves local HLS .ts segments produced by the API-mode external segmenter.",
+    responses={
+        200: {"description": "Segment data"},
+        404: {"description": "Segment not found"},
+    },
+)
+async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: Request):
+    from app.proxy.utils import get_client_ip
 
-@app.get("/ace/manifest.m3u8")
+    request_started_at = time.perf_counter()
+
+    try:
+        path = hls_segmenter_service.get_segment_file_path(monitor_id, segment_filename)
+        if not path or not path.exists() or not path.is_file():
+            elapsed = time.perf_counter() - request_started_at
+            observe_proxy_request("HLS", "/api/v1/hls/segment", elapsed, success=False, status_code=404)
+            raise HTTPException(status_code=404, detail="HLS segment not found")
+
+        hls_segmenter_service.record_activity(monitor_id)
+        # Track clients for API-mode HLS streams so /proxy/streams/{key}/clients can report them.
+        client_ip = get_client_ip(request)
+        user_agent = request.headers.get('user-agent', 'unknown')
+        try:
+            segment_size = int(path.stat().st_size)
+        except OSError:
+            segment_size = 0
+        client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
+        
+        # Parse sequence number from segment filename (e.g. "index123.ts" or "123.ts")
+        sequence = None
+        try:
+            seq_match = re.search(r'(\d+)', segment_filename)
+            if seq_match:
+                sequence = int(seq_match.group(1))
+        except Exception:
+            pass
+
+        hls_segmenter_service.record_client_activity(
+            monitor_id,
+            client_identity,
+            client_ip,
+            user_agent,
+            request_kind="segment",
+            bytes_sent=segment_size,
+            chunks_sent=1,
+            sequence=sequence,
+        )
+        observe_proxy_egress_bytes("HLS", segment_size)
+
+        elapsed = time.perf_counter() - request_started_at
+        observe_proxy_request("HLS", "/api/v1/hls/segment", elapsed, success=True, status_code=200)
+        observe_proxy_ttfb("HLS", "/api/v1/hls/segment", elapsed)
+
+        return FileResponse(path=str(path), media_type="video/MP2T")
+    except HTTPException:
+        raise
+    except Exception as e:
+        elapsed = time.perf_counter() - request_started_at
+        observe_proxy_request("HLS", "/api/v1/hls/segment", elapsed, success=False, status_code=500)
+        logger.error(f"Error serving API-mode HLS segment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"HLS segment error: {str(e)}")
+
+
+
+
+@app.get(
+    "/ace/manifest.m3u8",
+    tags=["Proxy"],
+    summary="HLS manifest entrypoint",
+    description="Serves HLS manifests for both HTTP and API control modes.",
+    responses={
+        200: {"description": "HLS manifest"},
+        400: {"description": "Invalid request parameters"},
+    },
+)
 async def ace_manifest(
-    id: str = Query(..., description="AceStream content ID (infohash or content_id)"),
+    id: Optional[str] = Query(None, description="AceStream content ID (PID/content_id)"),
+    infohash: Optional[str] = Query(None, description="AceStream infohash"),
+    torrent_url: Optional[str] = Query(None, description="Direct .torrent URL"),
+    direct_url: Optional[str] = Query(None, description="Direct media/magnet URL"),
+    raw_data: Optional[str] = Query(None, description="Raw torrent file data"),
+    file_indexes: Optional[str] = Query("0", description="Comma-separated torrent file indexes (for example: 0 or 0,2)"),
+    seekback: Optional[int] = Query(None, description="Deprecated alias for live_delay"),
+    live_delay: Optional[int] = Query(None, description="Optional startup delay in seconds behind live edge"),
+    request: Request = None,
 ):
     """Proxy endpoint for AceStream HLS streams (M3U8).
-    
-    Note: This endpoint is deprecated. Use /ace/getstream which now supports both TS and HLS modes
-    based on the proxy configuration.
-    
+
     Args:
-        id: AceStream content ID (infohash or content_id)
-        
+        id: AceStream content ID (PID/content_id)
+        infohash: AceStream infohash
+        torrent_url: Direct .torrent URL
+        direct_url: Direct media/magnet URL
+        raw_data: Raw torrent data payload
+        file_indexes: Comma-separated torrent file indexes
+        seekback: Deprecated alias for live_delay
+        live_delay: Optional startup delay in seconds behind live edge
+
     Returns:
-        Redirects to /ace/getstream
+        HLS manifest content
     """
-    raise HTTPException(
-        status_code=301,
-        detail="This endpoint is deprecated. Use /ace/getstream which now supports both TS and HLS modes based on proxy settings.",
-        headers={"Location": f"/ace/getstream?id={id}"}
+    return await ace_getstream(
+        id=id,
+        infohash=infohash,
+        torrent_url=torrent_url,
+        direct_url=direct_url,
+        raw_data=raw_data,
+        file_indexes=file_indexes,
+        seekback=seekback,
+        live_delay=live_delay,
+        request=request,
     )
+
+
+@app.post("/api/v1/streams/{monitor_id}/seek", dependencies=[Depends(require_api_key)])
+async def seek_stream_live(monitor_id: str, req: StreamSeekRequest):
+    """Seek an active API-mode stream to the given live timestamp via LIVESEEK."""
+    target_timestamp = int(req.target_timestamp)
+    if target_timestamp < 0:
+        raise HTTPException(status_code=400, detail="target_timestamp must be non-negative")
+
+    manager, _, _ = await _resolve_proxy_stream_manager(monitor_id)
+
+    if not manager:
+        raise HTTPException(status_code=404, detail="Active proxy stream not found for seek request")
+
+    try:
+        await asyncio.to_thread(manager.seek_stream, target_timestamp)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to seek stream {monitor_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Seek failed: {str(e)}")
+
+    return {"status": "seek_issued"}
+
+
+async def _resolve_proxy_stream_manager(monitor_id: str):
+    """Resolve active StreamManager by stream id or monitor_id fallback."""
+    proxy = ProxyManager.get_instance()
+
+    stream = state.get_stream(monitor_id)
+    stream_key = stream.key if stream else monitor_id
+    manager = proxy.stream_managers.get(stream_key)
+
+    # Compatibility fallback when monitor_id points to a legacy monitor session.
+    if not manager:
+        monitor = await legacy_stream_monitoring_service.get_monitor(monitor_id, include_recent_status=False)
+        monitor_content_id = (monitor or {}).get("content_id") if monitor else None
+        normalized_monitor_content_id = (monitor_content_id or "").strip().lower()
+        if normalized_monitor_content_id:
+            manager = proxy.stream_managers.get(normalized_monitor_content_id)
+            stream_key = normalized_monitor_content_id
+
+    return manager, stream, stream_key
+
+
+def _set_stream_paused_runtime_state(monitor_id: str, stream: Optional[StreamState], paused: bool):
+    if stream:
+        state.set_stream_paused(stream.id, paused)
+
+    monitor_session = state.get_monitor_session(monitor_id)
+    if monitor_session:
+        monitor_session["paused"] = bool(paused)
+        monitor_session["status"] = "paused" if paused else "running"
+        state.upsert_monitor_session(monitor_id, monitor_session)
+
+
+@app.post("/api/v1/streams/{monitor_id}/pause", dependencies=[Depends(require_api_key)])
+async def pause_stream_live(monitor_id: str):
+    """Pause an active API-mode stream via PAUSE command."""
+    manager, stream, _ = await _resolve_proxy_stream_manager(monitor_id)
+    if not manager:
+        raise HTTPException(status_code=404, detail="Active proxy stream not found for pause request")
+
+    try:
+        await asyncio.to_thread(manager.pause_stream)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except AceLegacyApiError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to pause stream {monitor_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Pause failed: {str(e)}")
+
+    _set_stream_paused_runtime_state(monitor_id, stream, True)
+    return {"status": "paused"}
+
+
+@app.post("/api/v1/streams/{monitor_id}/resume", dependencies=[Depends(require_api_key)])
+async def resume_stream_live(monitor_id: str):
+    """Resume an active API-mode stream via RESUME command."""
+    manager, stream, _ = await _resolve_proxy_stream_manager(monitor_id)
+    if not manager:
+        raise HTTPException(status_code=404, detail="Active proxy stream not found for resume request")
+
+    try:
+        await asyncio.to_thread(manager.resume_stream)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except AceLegacyApiError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to resume stream {monitor_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Resume failed: {str(e)}")
+
+    _set_stream_paused_runtime_state(monitor_id, stream, False)
+    return {"status": "resumed"}
+
+
+@app.post("/api/v1/streams/{monitor_id}/save", dependencies=[Depends(require_api_key)])
+async def save_stream_live(monitor_id: str, req: StreamSaveRequest):
+    """Request SAVE for an active API-mode stream session."""
+    save_path = str(req.path or "").strip()
+    if not save_path:
+        raise HTTPException(status_code=400, detail="path is required")
+
+    file_index = int(req.index)
+    if file_index < 0:
+        raise HTTPException(status_code=400, detail="index must be non-negative")
+
+    manager, _, _ = await _resolve_proxy_stream_manager(monitor_id)
+    if not manager:
+        raise HTTPException(status_code=404, detail="Active proxy stream not found for save request")
+
+    try:
+        result = await asyncio.to_thread(
+            manager.save_stream,
+            infohash=req.infohash,
+            index=file_index,
+            path=save_path,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except AceLegacyApiError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to save stream {monitor_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Save failed: {str(e)}")
+
+    return result
 
 
 @app.get("/proxy/status")
@@ -2966,23 +4054,13 @@ async def get_stream_clients(stream_key: str):
             client_manager = hls_proxy.client_managers.get(stream_key)
             if not client_manager:
                 return {"clients": []}
-            
-            # HLS proxy tracks clients by IP address
-            with client_manager.lock:
-                clients = []
-                import time
-                current_time = time.time()
-                for client_ip, last_activity in client_manager.last_activity.items():
-                    clients.append({
-                        "client_id": client_ip,
-                        "ip_address": client_ip,
-                        "last_active": last_activity,
-                        "connected_at": last_activity,  # We don't track connection time separately
-                        "user_agent": "HLS Client",
-                        "worker_id": "hls_proxy",
-                        "inactive_seconds": current_time - last_activity
-                    })
-                return {"clients": clients}
+
+            return {"clients": client_manager.list_clients()}
+
+        # Fallback for API-mode external HLS segmenter sessions.
+        segmenter_clients = hls_segmenter_service.list_clients(stream_key)
+        if segmenter_clients or hls_segmenter_service.has_session(stream_key):
+            return {"clients": segmenter_clients}
         
         # Not an HLS stream, check TS proxy
         proxy_server = ProxyServer.get_instance()
@@ -3016,7 +4094,7 @@ async def get_stream_clients(stream_key: str):
                     value_str = value.decode('utf-8')
                     
                     # Convert numeric fields with appropriate type
-                    if key_str in ['chunks_sent']:
+                    if key_str in ['chunks_sent', 'initial_index', 'last_sequence']:
                         # Integer fields
                         try:
                             client_info[key_str] = int(value_str)
@@ -3251,7 +4329,7 @@ def get_proxy_config():
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
-        "control_mode": ProxyConfig.CONTROL_MODE,
+        "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
         "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
         "engine_variant": cfg.ENGINE_VARIANT,
         # HLS-specific settings
@@ -3301,7 +4379,7 @@ def update_proxy_config(
         channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
         max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
         stream_mode: Stream mode - 'TS' for MPEG-TS or 'HLS' for HLS streaming
-        control_mode: Engine control mode - 'LEGACY_HTTP' (default) or 'LEGACY_API' (optional)
+        control_mode: Engine control mode - 'http' (default) or 'api'
         legacy_api_preflight_tier: Legacy API preflight tier - 'light' or 'deep'
         hls_max_segments: Maximum HLS segments to buffer (min: 5, max: 100)
         hls_initial_segments: Minimum HLS segments before playback (min: 1, max: 10)
@@ -3362,20 +4440,13 @@ def update_proxy_config(
     if stream_mode is not None:
         if stream_mode not in ['TS', 'HLS']:
             raise HTTPException(status_code=400, detail="stream_mode must be either 'TS' or 'HLS'")
-
-        # Legacy API control currently supports TS flow only.
-        if stream_mode == 'HLS' and ProxyConfig.CONTROL_MODE == 'LEGACY_API':
-            raise HTTPException(status_code=400, detail="HLS mode is only supported with control_mode='LEGACY_HTTP'")
         
         ProxyConfig.STREAM_MODE = stream_mode
 
     if control_mode is not None:
-        normalized_control_mode = str(control_mode).upper()
-        if normalized_control_mode not in ['LEGACY_HTTP', 'LEGACY_API']:
-            raise HTTPException(status_code=400, detail="control_mode must be either 'LEGACY_HTTP' or 'LEGACY_API'")
-
-        if normalized_control_mode == 'LEGACY_API' and ProxyConfig.STREAM_MODE == 'HLS':
-            raise HTTPException(status_code=400, detail="control_mode='LEGACY_API' requires stream_mode='TS'")
+        normalized_control_mode = normalize_proxy_mode(control_mode, default=None)
+        if normalized_control_mode not in [PROXY_MODE_HTTP, PROXY_MODE_API]:
+            raise HTTPException(status_code=400, detail="control_mode must be either 'http' or 'api'")
 
         ProxyConfig.CONTROL_MODE = normalized_control_mode
 
@@ -3437,7 +4508,7 @@ def update_proxy_config(
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
         f"max_streams_per_engine={cfg.MAX_STREAMS_PER_ENGINE}, "
         f"stream_mode={ProxyConfig.STREAM_MODE}, "
-        f"control_mode={ProxyConfig.CONTROL_MODE}, "
+        f"control_mode={_resolve_control_mode(ProxyConfig.CONTROL_MODE)}, "
         f"legacy_api_preflight_tier={ConfigHelper.legacy_api_preflight_tier()}"
     )
     
@@ -3453,7 +4524,7 @@ def update_proxy_config(
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
-        "control_mode": ProxyConfig.CONTROL_MODE,
+        "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
         "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
@@ -3479,7 +4550,7 @@ def update_proxy_config(
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
-        "control_mode": ProxyConfig.CONTROL_MODE,
+        "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
         "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
@@ -3520,6 +4591,7 @@ class OrchestratorSettingsUpdate(BaseModel):
     port_range_host: Optional[str] = None
     ace_http_range: Optional[str] = None
     ace_https_range: Optional[str] = None
+    ace_live_edge_delay: Optional[int] = None
     debug_mode: Optional[bool] = None
 
 
@@ -3543,11 +4615,6 @@ def get_orchestrator_settings():
     """Get current orchestrator core configuration settings."""
     from .services.settings_persistence import SettingsPersistence
 
-    persisted = SettingsPersistence.load_orchestrator_config()
-    if persisted:
-        return persisted
-
-    # Return defaults from runtime cfg
     defaults = {
         "monitor_interval_s": cfg.MONITOR_INTERVAL_S,
         "engine_grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
@@ -3569,8 +4636,16 @@ def get_orchestrator_settings():
         "port_range_host": cfg.PORT_RANGE_HOST,
         "ace_http_range": cfg.ACE_HTTP_RANGE,
         "ace_https_range": cfg.ACE_HTTPS_RANGE,
+        "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         "debug_mode": cfg.DEBUG_MODE,
     }
+
+    persisted = SettingsPersistence.load_orchestrator_config()
+    if persisted:
+        merged = {**defaults, **persisted}
+        return merged
+
+    # Return defaults from runtime cfg
     # Persist defaults so they appear on next load
     try:
         SettingsPersistence.save_orchestrator_config(defaults)
@@ -3605,6 +4680,7 @@ async def update_orchestrator_settings(settings: OrchestratorSettingsUpdate):
         "port_range_host": cfg.PORT_RANGE_HOST,
         "ace_http_range": cfg.ACE_HTTP_RANGE,
         "ace_https_range": cfg.ACE_HTTPS_RANGE,
+        "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         "debug_mode": cfg.DEBUG_MODE,
     }
 
@@ -3735,6 +4811,12 @@ async def update_orchestrator_settings(settings: OrchestratorSettingsUpdate):
         _validate_port_range(settings.ace_https_range, "ace_https_range")
         current["ace_https_range"] = settings.ace_https_range
         cfg.ACE_HTTPS_RANGE = settings.ace_https_range
+
+    if settings.ace_live_edge_delay is not None:
+        if settings.ace_live_edge_delay < 0:
+            raise HTTPException(status_code=400, detail="ace_live_edge_delay must be >= 0")
+        current["ace_live_edge_delay"] = settings.ace_live_edge_delay
+        cfg.ACE_LIVE_EDGE_DELAY = settings.ace_live_edge_delay
 
     if settings.debug_mode is not None:
         current["debug_mode"] = settings.debug_mode
@@ -4443,3 +5525,196 @@ async def modify_m3u(
         media_type="application/x-mpegURL",
         headers={"Content-Disposition": "attachment; filename=\"modified_playlist.m3u\""},
     )
+
+
+_MANAGEMENT_ROUTE_EXCLUDED_PREFIXES = (
+    "/panel",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/favicon",
+    "/apple-touch-icon.png",
+)
+_MANAGEMENT_ROUTE_EXCLUDED_EXACT = {
+    "/ace/getstream",
+    "/ace/manifest.m3u8",
+    "/ace/hls/{content_id}/segment/{segment_path:path}",
+}
+
+_TAG_BY_SEGMENT = {
+    "engines": "Engines",
+    "streams": "Streams",
+    "settings": "Settings",
+    "proxy": "Proxy",
+    "ace": "Proxy",
+    "health": "Health",
+    "orchestrator": "Health",
+    "vpn": "Health",
+    "events": "Events",
+    "metrics": "Metrics",
+    "cache": "Cache",
+    "engine-cache": "Cache",
+    "custom-variant": "Settings",
+    "stream-loop-detection": "Streams",
+    "looping-streams": "Streams",
+    "containers": "Orchestrator",
+    "provision": "Orchestrator",
+    "scale": "Orchestrator",
+    "gc": "Orchestrator",
+    "modify_m3u": "Proxy",
+    "by-label": "Orchestrator",
+    "version": "System",
+}
+
+
+def _is_management_route(path: str) -> bool:
+    if not path or not path.startswith("/"):
+        return False
+    if path.startswith("/api/v1"):
+        return False
+    if path in _MANAGEMENT_ROUTE_EXCLUDED_EXACT:
+        return False
+    for excluded_prefix in _MANAGEMENT_ROUTE_EXCLUDED_PREFIXES:
+        if path == excluded_prefix or path.startswith(f"{excluded_prefix}/"):
+            return False
+    return True
+
+
+def _infer_route_tag(path: str) -> str:
+    segment = path.strip("/").split("/", 1)[0] if path.strip("/") else "root"
+    return _TAG_BY_SEGMENT.get(segment, "Orchestrator")
+
+
+def _infer_route_summary(route: APIRoute) -> str:
+    if route.summary:
+        return route.summary
+    endpoint_name = (route.name or "route").replace("_", " ").strip()
+    return endpoint_name[:1].upper() + endpoint_name[1:]
+
+
+def _infer_route_description(route: APIRoute) -> str:
+    if route.description:
+        return route.description
+    doc = (route.endpoint.__doc__ or "").strip()
+    if doc:
+        return doc
+    method = sorted(route.methods or ["GET"])[0]
+    return f"{method} {route.path}"
+
+
+def _dedupe_preserve_order(values: List[str]) -> List[str]:
+    seen = set()
+    result: List[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _normalized_responses(route: APIRoute) -> Dict[int, Dict[str, str]]:
+    responses: Dict[int, Dict[str, str]] = {}
+    for key, value in (route.responses or {}).items():
+        try:
+            int_key = int(key)
+        except Exception:
+            continue
+        if isinstance(value, dict):
+            responses[int_key] = dict(value)
+
+    responses.setdefault(200, {"description": "Successful response"})
+    responses.setdefault(400, {"description": "Bad request"})
+    responses.setdefault(404, {"description": "Not found"})
+    responses.setdefault(500, {"description": "Internal server error"})
+    return responses
+
+
+def _infer_response_model(route: APIRoute):
+    if route.response_model is not None:
+        return route.response_model
+
+    overrides = {
+        "/health/status": HealthStatusResponse,
+        "/metrics/dashboard": MetricsResponse,
+        "/metrics/performance": MetricsResponse,
+        "/orchestrator/status": OrchestratorStatusResponse,
+        "/by-label": GenericListResponse,
+        "/engines/with-metrics": GenericListResponse,
+    }
+    if route.path in overrides:
+        return overrides[route.path]
+
+    # Binary/plaintext response endpoints should not be constrained to JSON object models.
+    if route.path in {"/metrics", "/settings/export", "/modify_m3u"}:
+        return Any
+
+    return GenericObjectResponse
+
+
+def _register_v1_management_routes():
+    v1_router = APIRouter(prefix="/api/v1")
+    grouped_routers: Dict[str, APIRouter] = {}
+
+    for route in list(app.routes):
+        if not isinstance(route, APIRoute):
+            continue
+
+        if not _is_management_route(route.path):
+            continue
+
+        normalized_path = route.path.strip("/")
+        segment = normalized_path.split("/", 1)[0] if normalized_path else "root"
+
+        if segment == "root":
+            segment_router = grouped_routers.get(segment)
+            if not segment_router:
+                segment_router = APIRouter(prefix="", tags=["Orchestrator"])
+                grouped_routers[segment] = segment_router
+            relative_path = route.path
+        else:
+            segment_router = grouped_routers.get(segment)
+            if not segment_router:
+                inferred_tag = _infer_route_tag(route.path)
+                segment_router = APIRouter(prefix=f"/{segment}", tags=[inferred_tag])
+                grouped_routers[segment] = segment_router
+
+            segment_prefix = f"/{segment}"
+            relative_path = route.path[len(segment_prefix):]
+            if not relative_path:
+                relative_path = ""
+
+        route_tags = _dedupe_preserve_order(list(route.tags or []))
+
+        response_model = _infer_response_model(route)
+        route_name = f"v1_{route.name}_{segment}" if route.name else None
+
+        segment_router.add_api_route(
+            relative_path,
+            endpoint=route.endpoint,
+            methods=sorted(route.methods or ["GET"]),
+            response_model=response_model,
+            status_code=route.status_code,
+            tags=route_tags,
+            dependencies=route.dependencies,
+            summary=_infer_route_summary(route),
+            description=_infer_route_description(route),
+            response_description=route.response_description,
+            responses=_normalized_responses(route),
+            deprecated=route.deprecated,
+            include_in_schema=True,
+            name=route_name,
+            response_class=route.response_class,
+            openapi_extra=route.openapi_extra,
+        )
+
+        # Keep legacy paths working for compatibility, but expose only /api/v1 in Swagger.
+        route.include_in_schema = False
+
+    for segment in sorted(grouped_routers.keys()):
+        v1_router.include_router(grouped_routers[segment])
+
+    app.include_router(v1_router)
+
+
+_register_v1_management_routes()

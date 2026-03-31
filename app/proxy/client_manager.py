@@ -194,7 +194,7 @@ class ClientManager:
         except Exception as e:
             logger.error(f"Error notifying owner of client activity: {e}")
     
-    def add_client(self, client_id, client_ip, user_agent=None):
+    def add_client(self, client_id, client_ip, user_agent=None, initial_index=0):
         """Add a client with duplicate prevention and backpressure limits"""
         from ..services.metrics import observe_proxy_client_connect
         
@@ -222,6 +222,7 @@ class ClientManager:
             "ip_address": client_ip,
             "connected_at": current_time,
             "last_active": current_time,
+            "initial_index": str(initial_index),
             "worker_id": self.worker_id or "unknown"
         }
         

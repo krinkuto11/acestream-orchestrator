@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -9,8 +9,86 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 // Constants
 const DEFAULT_MAX_STREAMS_PER_ENGINE = 3
 const LIVE_CACHE_TYPE_PARAM = '--live-cache-type'
+const PREFLIGHT_INPUT_OPTIONS = {
+  content_id: {
+    label: 'Content ID (PID/content_id)',
+    param: 'id',
+    placeholder: 'PID or acestream content_id',
+  },
+  infohash: {
+    label: 'Infohash',
+    param: 'infohash',
+    placeholder: '40-char infohash',
+  },
+  torrent_url: {
+    label: 'Torrent URL',
+    param: 'torrent_url',
+    placeholder: 'https://example.com/file.torrent',
+  },
+  direct_url: {
+    label: 'Direct URL',
+    param: 'direct_url',
+    placeholder: 'magnet:?xt=... or https://media.example/stream',
+  },
+  raw_data: {
+    label: 'Raw Torrent Data',
+    param: 'raw_data',
+    placeholder: 'Base64/raw torrent payload',
+  },
+}
 
-export function ProxySettings({ apiKey, orchUrl }) {
+const normalizeControlMode = (value) => {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'legacy_api' || normalized === 'api') return 'api'
+  return 'http'
+}
+
+const extractLoadRespFiles = (payload) => {
+  const files = payload?.result?.loadresp?.files
+  if (!Array.isArray(files)) {
+    return []
+  }
+
+  return files.map((entry, idx) => {
+    let fileIndex = idx
+    if (entry && typeof entry === 'object') {
+      const candidates = [entry.index, entry.file_index, entry.i, entry.id]
+      for (const candidate of candidates) {
+        if (typeof candidate === 'number' && Number.isInteger(candidate) && candidate >= 0) {
+          fileIndex = candidate
+          break
+        }
+        if (typeof candidate === 'string' && /^\d+$/.test(candidate.trim())) {
+          fileIndex = Number(candidate.trim())
+          break
+        }
+      }
+    }
+
+    let label = ''
+    if (typeof entry === 'string') {
+      label = entry
+    } else if (entry && typeof entry === 'object') {
+      label = entry.filename || entry.name || entry.path || entry.title || entry.label || ''
+      if (!label) {
+        try {
+          label = JSON.stringify(entry)
+        } catch {
+          label = `File ${idx}`
+        }
+      }
+    } else {
+      label = `File ${idx}`
+    }
+
+    return {
+      index: fileIndex,
+      label,
+    }
+  })
+}
+
+export function ProxySettings({ apiKey, orchUrl, externalSaveSignal = 0, onSavingChange }) {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState(null)
   const [error, setError] = useState(null)
@@ -25,7 +103,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [channelShutdownDelay, setChannelShutdownDelay] = useState(5)
   const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(DEFAULT_MAX_STREAMS_PER_ENGINE)
   const [streamMode, setStreamMode] = useState('TS')
-  const [controlMode, setControlMode] = useState('LEGACY_HTTP')
+  const [controlMode, setControlMode] = useState('http')
   const [engineVariant, setEngineVariant] = useState('')
 
   // HLS-specific state
@@ -37,6 +115,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [hlsInitialBufferSeconds, setHlsInitialBufferSeconds] = useState(10)
   const [hlsMaxInitialSegments, setHlsMaxInitialSegments] = useState(10)
   const [hlsSegmentFetchInterval, setHlsSegmentFetchInterval] = useState(0.5)
+  const [defaultLiveDelay, setDefaultLiveDelay] = useState(0)
 
   // Read-only config for display
   const [vlcUserAgent, setVlcUserAgent] = useState('')
@@ -49,11 +128,14 @@ export function ProxySettings({ apiKey, orchUrl }) {
   const [variantDisplayName, setVariantDisplayName] = useState('')
 
   // Preflight diagnostics state
+  const [preflightInputType, setPreflightInputType] = useState('content_id')
   const [preflightContentId, setPreflightContentId] = useState('')
+  const [preflightFileIndexes, setPreflightFileIndexes] = useState('0')
   const [preflightTier, setPreflightTier] = useState('light')
   const [preflightLoading, setPreflightLoading] = useState(false)
   const [preflightResult, setPreflightResult] = useState(null)
   const [preflightError, setPreflightError] = useState(null)
+  const lastExternalSaveSignal = useRef(0)
 
   // Check if HLS is supported - double check both variant and cache type
   const isAceServeVariant = engineVariant.startsWith('AceServe')
@@ -63,6 +145,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
   useEffect(() => {
     fetchProxyConfig()
     fetchCustomVariantInfo()
+    fetchOrchestratorSettings()
   }, [orchUrl])
 
   // Poll for custom variant changes (e.g., after user changes settings in another tab/page)
@@ -76,9 +159,22 @@ export function ProxySettings({ apiKey, orchUrl }) {
     return () => clearInterval(pollInterval)
   }, [orchUrl]) // Only restart polling when orchUrl changes
 
+  useEffect(() => {
+    if (typeof onSavingChange === 'function') {
+      onSavingChange(loading)
+    }
+  }, [loading, onSavingChange])
+
+  useEffect(() => {
+    if (externalSaveSignal > 0 && externalSaveSignal !== lastExternalSaveSignal.current) {
+      lastExternalSaveSignal.current = externalSaveSignal
+      saveProxyConfig()
+    }
+  }, [externalSaveSignal])
+
   const fetchProxyConfig = async () => {
     try {
-      const response = await fetch(`${orchUrl}/proxy/config`)
+      const response = await fetch(`${orchUrl}/api/v1/proxy/config`)
       if (response.ok) {
         const data = await response.json()
         setInitialDataWaitTimeout(data.initial_data_wait_timeout)
@@ -90,7 +186,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
         setChannelShutdownDelay(data.channel_shutdown_delay)
         setMaxStreamsPerEngine(data.max_streams_per_engine || DEFAULT_MAX_STREAMS_PER_ENGINE)
         setStreamMode(data.stream_mode || 'TS')
-        setControlMode(data.control_mode || 'LEGACY_HTTP')
+        setControlMode(normalizeControlMode(data.control_mode || 'http'))
         setEngineVariant(data.engine_variant || '')
         setVlcUserAgent(data.vlc_user_agent)
         setChunkSize(data.chunk_size)
@@ -110,9 +206,21 @@ export function ProxySettings({ apiKey, orchUrl }) {
     }
   }
 
+  const fetchOrchestratorSettings = async () => {
+    try {
+      const response = await fetch(`${orchUrl}/api/v1/settings/orchestrator`)
+      if (response.ok) {
+        const data = await response.json()
+        setDefaultLiveDelay(Number(data.ace_live_edge_delay || 0))
+      }
+    } catch (err) {
+      console.error('Failed to fetch orchestrator settings:', err)
+    }
+  }
+
   const fetchCustomVariantInfo = async () => {
     try {
-      const response = await fetch(`${orchUrl}/custom-variant/config`)
+      const response = await fetch(`${orchUrl}/api/v1/custom-variant/config`)
       if (!response.ok) {
         console.error('Failed to fetch custom variant config, status:', response.status)
         setVariantDisplayName(engineVariant)
@@ -178,7 +286,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
       params.append('hls_max_initial_segments', hlsMaxInitialSegments)
       params.append('hls_segment_fetch_interval', hlsSegmentFetchInterval)
 
-      const response = await fetch(`${orchUrl}/proxy/config?${params}`, {
+      const response = await fetch(`${orchUrl}/api/v1/proxy/config?${params}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`
@@ -187,8 +295,37 @@ export function ProxySettings({ apiKey, orchUrl }) {
 
       if (response.ok) {
         const data = await response.json()
-        setMessage(data.message)
+
+        let liveDelayUpdateError = null
+        try {
+          const orchestratorResponse = await fetch(`${orchUrl}/api/v1/settings/orchestrator`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              ace_live_edge_delay: Math.max(0, parseInt(String(defaultLiveDelay), 10) || 0),
+            }),
+          })
+
+          if (!orchestratorResponse.ok) {
+            const orchestratorError = await orchestratorResponse.json().catch(() => ({}))
+            liveDelayUpdateError = orchestratorError.detail || `HTTP ${orchestratorResponse.status}`
+          }
+        } catch (orchestratorErr) {
+          liveDelayUpdateError = orchestratorErr.message || String(orchestratorErr)
+        }
+
+        if (liveDelayUpdateError) {
+          setMessage(data.message || 'Proxy configuration updated')
+          setError(`Proxy settings saved, but default live delay could not be updated: ${liveDelayUpdateError}`)
+        } else {
+          setMessage('Proxy and default live delay settings saved')
+        }
+
         await fetchProxyConfig()
+        await fetchOrchestratorSettings()
       } else {
         const errorData = await response.json()
         setError(errorData.detail || 'Failed to update configuration')
@@ -202,8 +339,10 @@ export function ProxySettings({ apiKey, orchUrl }) {
 
   const runPreflight = async () => {
     const contentId = preflightContentId.trim()
+    const normalizedFileIndexes = (preflightFileIndexes || '').trim() || '0'
+    const selectedInput = PREFLIGHT_INPUT_OPTIONS[preflightInputType] || PREFLIGHT_INPUT_OPTIONS.content_id
     if (!contentId) {
-      setPreflightError('Content ID is required (infohash, PID, or magnet URI).')
+      setPreflightError(`${selectedInput.label} is required.`)
       setPreflightResult(null)
       return
     }
@@ -218,10 +357,13 @@ export function ProxySettings({ apiKey, orchUrl }) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
 
-      const response = await fetch(
-        `${orchUrl}/ace/preflight?id=${encodeURIComponent(contentId)}&tier=${encodeURIComponent(preflightTier)}`,
-        { headers }
-      )
+      const queryParam = selectedInput.param
+      const params = new URLSearchParams()
+      params.set(queryParam, contentId)
+      params.set('file_indexes', normalizedFileIndexes)
+      params.set('tier', preflightTier)
+
+      const response = await fetch(`${orchUrl}/api/v1/ace/preflight?${params.toString()}`, { headers })
 
       let payload = null
       try {
@@ -255,6 +397,8 @@ export function ProxySettings({ apiKey, orchUrl }) {
     }
   }
 
+  const preflightFiles = extractLoadRespFiles(preflightResult)
+
   return (
     <div className="space-y-6">
       <Card>
@@ -273,10 +417,6 @@ export function ProxySettings({ apiKey, orchUrl }) {
                 // Prevent switching to HLS if not supported
                 if (value === 'HLS' && !hlsSupported) {
                   setError('HLS mode is not available with current engine configuration. Use an AceServe variant with disk or hybrid cache.')
-                  return
-                }
-                if (value === 'HLS' && controlMode === 'LEGACY_API') {
-                  setError('HLS mode requires Legacy HTTP control mode.')
                   return
                 }
                 setStreamMode(value)
@@ -312,14 +452,6 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   </span>
                 </>
               )}
-              {hlsSupported && (
-                <>
-                  <br />
-                  <span className="text-green-600 dark:text-green-500 font-semibold">
-                    ✓ HLS mode is supported (variant: {variantDisplayName || engineVariant}, cache: {customVariantCacheType || 'disk/hybrid'})
-                  </span>
-                </>
-              )}
             </p>
           </div>
 
@@ -328,11 +460,7 @@ export function ProxySettings({ apiKey, orchUrl }) {
             <Select
               value={controlMode}
               onValueChange={(value) => {
-                if (value === 'LEGACY_API' && streamMode === 'HLS') {
-                  setError('Legacy API control mode is only supported with MPEG-TS stream mode.')
-                  return
-                }
-                setControlMode(value)
+                setControlMode(normalizeControlMode(value))
                 setError(null)
               }}
             >
@@ -340,21 +468,13 @@ export function ProxySettings({ apiKey, orchUrl }) {
                 <SelectValue placeholder="Select control mode" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="LEGACY_HTTP">Legacy HTTP (default)</SelectItem>
-                <SelectItem value="LEGACY_API">Legacy API (socket control)</SelectItem>
+                <SelectItem value="http">HTTP Mode (default)</SelectItem>
+                <SelectItem value="api">API Mode (socket control)</SelectItem>
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Legacy HTTP uses /ace/getstream JSON control flow. Legacy API uses the AceStream API port
-              for HELLOBG/READY/LOADASYNC/START control and remains optional.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Legacy API Playback Preflight</Label>
-            <p className="text-xs text-muted-foreground">
-              Proxy playback now always uses <strong>light</strong> preflight in LEGACY_API mode.
-              Use the <strong>Preflight Diagnostics</strong> section below for manual deep checks.
+              HTTP mode uses /ace/getstream JSON control flow. API mode uses the AceStream API port
+              for HELLOBG/READY/LOADASYNC/START control. HLS playback is supported in both modes.
             </p>
           </div>
 
@@ -370,14 +490,53 @@ export function ProxySettings({ apiKey, orchUrl }) {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="preflight-content-id">Content ID</Label>
+            <Label htmlFor="preflight-input-type">Input Type</Label>
+            <Select value={preflightInputType} onValueChange={setPreflightInputType}>
+              <SelectTrigger id="preflight-input-type">
+                <SelectValue placeholder="Select input type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="content_id">Content ID</SelectItem>
+                <SelectItem value="infohash">Infohash</SelectItem>
+                <SelectItem value="torrent_url">Torrent URL</SelectItem>
+                <SelectItem value="direct_url">Direct URL</SelectItem>
+                <SelectItem value="raw_data">Raw Torrent Data</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="preflight-content-id">{(PREFLIGHT_INPUT_OPTIONS[preflightInputType] || PREFLIGHT_INPUT_OPTIONS.content_id).label}</Label>
             <Input
               id="preflight-content-id"
               type="text"
-              placeholder="infohash, PID, or magnet URI"
+              placeholder={(PREFLIGHT_INPUT_OPTIONS[preflightInputType] || PREFLIGHT_INPUT_OPTIONS.content_id).placeholder}
               value={preflightContentId}
               onChange={(e) => setPreflightContentId(e.target.value)}
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="preflight-file-indexes">File Index</Label>
+            <Input
+              id="preflight-file-indexes"
+              type="number"
+              min="0"
+              step="1"
+              value={preflightFileIndexes}
+              onChange={(e) => {
+                const rawValue = e.target.value
+                if (!rawValue) {
+                  setPreflightFileIndexes('0')
+                  return
+                }
+                const parsed = parseInt(rawValue, 10)
+                setPreflightFileIndexes(Number.isFinite(parsed) && parsed >= 0 ? String(parsed) : '0')
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              Choose which file inside a multi-file torrent to start. Default is index 0.
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -434,6 +593,10 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   <p className="font-mono break-all">{preflightResult?.result?.infohash || 'N/A'}</p>
                 </div>
                 <div>
+                  <p className="text-xs text-muted-foreground">Selected File Index</p>
+                  <p>{preflightResult?.file_indexes || preflightFileIndexes || '0'}</p>
+                </div>
+                <div>
                   <p className="text-xs text-muted-foreground">Control Mode</p>
                   <p>{preflightResult?.control_mode || controlMode}</p>
                 </div>
@@ -453,6 +616,24 @@ export function ProxySettings({ apiKey, orchUrl }) {
                   Copy Resolved Infohash
                 </Button>
               </div>
+              {preflightFiles.length > 0 && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-2">Files returned by LOADRESP (click to select)</p>
+                  <div className="space-y-1 max-h-56 overflow-y-auto rounded border bg-background p-2">
+                    {preflightFiles.map((file, idx) => (
+                      <button
+                        key={`${file.index}-${idx}`}
+                        type="button"
+                        onClick={() => setPreflightFileIndexes(String(file.index))}
+                        className="w-full rounded border px-2 py-1 text-left text-xs hover:bg-muted"
+                      >
+                        <span className="font-mono mr-2">#{file.index}</span>
+                        <span>{file.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Raw Response</p>
                 <pre className="text-xs overflow-x-auto rounded bg-background p-2 border">
@@ -543,6 +724,28 @@ export function ProxySettings({ apiKey, orchUrl }) {
               Seconds between buffer checks when no data is available during streaming.
               For unstable streams, increase timeout checks or interval. Example: 100 checks × 1s = 100s tolerance.
               <br /><strong>Range:</strong> 0.01-1.0 seconds. <strong>Default:</strong> 1 second.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-1">
+              <Label htmlFor="default-live-delay">Default Live Delay (seconds)</Label>
+              <Info
+                className="h-3.5 w-3.5 text-muted-foreground"
+                title="Starts live streams slightly behind the live edge to improve buffer stability. 0 disables this feature."
+              />
+            </div>
+            <Input
+              id="default-live-delay"
+              type="number"
+              min="0"
+              step="1"
+              value={defaultLiveDelay}
+              onChange={(e) => setDefaultLiveDelay(parseInt(e.target.value, 10) || 0)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Global live stream startup delay used for normal playback sessions.
+              <br /><strong>Range:</strong> 0+ seconds. <strong>Default:</strong> 0 seconds.
             </p>
           </div>
         </CardContent>

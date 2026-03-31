@@ -51,6 +51,7 @@ def inspect_container(container_id: str):
         "image": cfg.get("Image"),
         "created": attrs.get("Created"),
         "status": c.status,
+        "restart_count": attrs.get("RestartCount", 0),
         "labels": cfg.get("Labels") or {},
         "ports": ports,
     }

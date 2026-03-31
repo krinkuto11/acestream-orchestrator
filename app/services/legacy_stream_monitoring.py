@@ -11,6 +11,7 @@ from ..proxy.ace_api_client import AceLegacyApiClient
 from .state import state
 from ..core.config import cfg
 from .engine_selection import select_best_engine
+from .hls_segmenter import hls_segmenter_service
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,7 @@ class LegacyStreamMonitoringService:
             "monitor_id": monitor_id,
             "content_id": raw.get("content_id"),
             "stream_name": raw.get("stream_name"),
+            "live_delay": raw.get("live_delay", 0),
             "status": raw.get("status"),
             "interval_s": raw.get("interval_s"),
             "run_seconds": raw.get("run_seconds"),
@@ -327,6 +329,7 @@ class LegacyStreamMonitoringService:
         self,
         content_id: str,
         stream_name: Optional[str] = None,
+        live_delay: int = 0,
         interval_s: float = 1.0,
         run_seconds: int = 0,
         per_sample_timeout_s: float = 1.0,
@@ -340,6 +343,10 @@ class LegacyStreamMonitoringService:
         interval_value = max(0.5, float(interval_s))
         timeout_value = max(0.2, float(per_sample_timeout_s))
         runtime_limit = max(0, int(run_seconds))
+        try:
+            live_delay_value = max(0, int(float(live_delay)))
+        except (TypeError, ValueError):
+            live_delay_value = 0
         normalized_stream_name = (stream_name or "").strip() or None
         requested_monitor_id = (monitor_id or "").strip() or None
 
@@ -366,6 +373,7 @@ class LegacyStreamMonitoringService:
             self._sessions[monitor_id] = {
                 "content_id": normalized_content_id,
                 "stream_name": normalized_stream_name,
+                "live_delay": live_delay_value,
                 "status": "starting",
                 "interval_s": interval_value,
                 "run_seconds": runtime_limit,
@@ -386,6 +394,7 @@ class LegacyStreamMonitoringService:
                 self._run_monitor(
                     monitor_id=monitor_id,
                     content_id=normalized_content_id,
+                    live_delay=live_delay_value,
                     interval_s=interval_value,
                     run_seconds=runtime_limit,
                     per_sample_timeout_s=timeout_value,
@@ -402,6 +411,9 @@ class LegacyStreamMonitoringService:
                 return
             session.update(kwargs)
             self._publish_session_state(monitor_id, session)
+
+        if session.get("status") in {"dead", "stopped", "deleted"}:
+            hls_segmenter_service.stop_segmenter_nowait(monitor_id)
 
     async def _append_sample(self, monitor_id: str, sample: Dict[str, Any]):
         async with self._lock:
@@ -423,6 +435,7 @@ class LegacyStreamMonitoringService:
         self,
         monitor_id: str,
         content_id: str,
+        live_delay: int,
         interval_s: float,
         run_seconds: int,
         per_sample_timeout_s: float,
@@ -502,7 +515,14 @@ class LegacyStreamMonitoringService:
                             break
 
                         resolved_infohash = loadresp.get("infohash") or content_id
-                        start_info = await asyncio.to_thread(client.start_stream, resolved_infohash, "infohash")
+                        start_info = await asyncio.to_thread(
+                            client.start_stream,
+                            resolved_infohash,
+                            "infohash",
+                            "output_format=http",
+                            "0",
+                            live_delay,
+                        )
                         stream_started = True
 
                         playback_session_id = start_info.get("playback_session_id")
@@ -526,6 +546,38 @@ class LegacyStreamMonitoringService:
                         0.0,
                         per_sample_timeout_s,
                     )
+                    download_stopped_event = await asyncio.to_thread(client.consume_download_stopped_event)
+
+                    if download_stopped_event:
+                        parsed_reason = (download_stopped_event.get("reason") or "").strip() or "download_stopped"
+                        did_failover = await self._failover_retry_dead_monitor(
+                            monitor_id,
+                            "download_stopped",
+                            parsed_reason,
+                        )
+                        await _shutdown_client()
+                        if did_failover:
+                            logger.warning(
+                                "Legacy monitor %s got EVENT download_stopped (%s); retrying on different engine",
+                                monitor_id,
+                                parsed_reason,
+                            )
+                            continue
+
+                        await self._update_session(
+                            monitor_id,
+                            status="dead",
+                            dead_reason="download_stopped",
+                            last_error=parsed_reason,
+                            ended_at=self._utc_iso(),
+                        )
+                        logger.warning(
+                            "Legacy monitor %s marked dead after EVENT download_stopped: %s",
+                            monitor_id,
+                            parsed_reason,
+                        )
+                        break
+
                     sample = {
                         "ts": self._utc_iso(),
                         "status_text": probe.get("status_text") or probe.get("status"),
@@ -662,6 +714,7 @@ class LegacyStreamMonitoringService:
             if session and not session.get("ended_at"):
                 session["ended_at"] = self._utc_iso()
                 session["status"] = "stopped"
+        hls_segmenter_service.stop_segmenter_nowait(monitor_id)
         return True
 
     async def stop_all(self) -> int:
@@ -687,6 +740,7 @@ class LegacyStreamMonitoringService:
             self._tasks.pop(monitor_id, None)
             self._stop_events.pop(monitor_id, None)
         state.remove_monitor_session(monitor_id)
+        hls_segmenter_service.stop_segmenter_nowait(monitor_id)
 
         return True
 
@@ -726,7 +780,7 @@ class LegacyStreamMonitoringService:
             for monitor_id, raw in self._sessions.items():
                 if (raw.get("content_id") or "").strip().lower() != normalized:
                     continue
-                if raw.get("status") not in {"running", "stuck", "starting"}:
+                if raw.get("status") not in {"running", "stuck"}:
                     continue
 
                 session = raw.get("session") or {}

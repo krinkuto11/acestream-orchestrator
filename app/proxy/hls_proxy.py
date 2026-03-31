@@ -12,9 +12,10 @@ import httpx
 import m3u8
 import os
 import asyncio
-from typing import Dict, Optional, Set, Any
+from typing import Dict, Optional, Set, Any, List
 from urllib.parse import urljoin, urlparse
 from .config_helper import ConfigHelper
+from .constants import PROXY_MODE_HTTP
 
 logger = logging.getLogger(__name__)
 
@@ -69,50 +70,187 @@ class ClientManager:
     
     def __init__(self):
         self.last_activity: Dict[str, float] = {}  # Maps client IPs to last activity timestamp
+        self.clients: Dict[str, Dict[str, Any]] = {}
         self.lock = threading.Lock()
         
-    def record_activity(self, client_ip: str):
-        """Record client activity timestamp"""
+    def _prune_inactive_locked(self, timeout: Optional[float], now: float, emit_disconnect_metric: bool) -> List[Dict[str, Any]]:
+        """Prune stale clients and rebuild per-IP activity map.
+
+        Must be called with self.lock held.
+        """
+        from ..services.metrics import observe_proxy_client_disconnect
+
+        if timeout is None:
+            timeout = 0.0
+
+        stale_client_ids: List[str] = []
+        stale_payloads: List[Dict[str, Any]] = []
+
+        for client_id, payload in self.clients.items():
+            last_active_raw = payload.get("last_active")
+            try:
+                last_active = float(last_active_raw)
+            except (TypeError, ValueError):
+                stale_client_ids.append(client_id)
+                stale_payloads.append(payload)
+                continue
+
+            if timeout <= 0 or (now - last_active) >= timeout:
+                stale_client_ids.append(client_id)
+                stale_payloads.append(payload)
+
+        for client_id in stale_client_ids:
+            self.clients.pop(client_id, None)
+
+        rebuilt_activity: Dict[str, float] = {}
+        for payload in self.clients.values():
+            ip = str(payload.get("ip_address") or "unknown")
+            try:
+                ts = float(payload.get("last_active") or 0.0)
+            except (TypeError, ValueError):
+                ts = now
+            previous = rebuilt_activity.get(ip)
+            if previous is None or ts > previous:
+                rebuilt_activity[ip] = ts
+        self.last_activity = rebuilt_activity
+
+        if stale_payloads:
+            for payload in stale_payloads:
+                ip = str(payload.get("ip_address") or "unknown")
+                try:
+                    inactive_time = now - float(payload.get("last_active") or now)
+                except (TypeError, ValueError):
+                    inactive_time = 0.0
+                logger.warning(f"Client {ip} inactive for {inactive_time:.1f}s, removing")
+                if emit_disconnect_metric:
+                    observe_proxy_client_disconnect("HLS")
+
+        return stale_payloads
+
+    def record_activity(
+        self,
+        client_ip: str,
+        client_id: str = "",
+        user_agent: str = "unknown",
+        request_kind: str = "",
+        bytes_sent: Optional[float] = None,
+        chunks_sent: Optional[int] = None,
+        sequence: Optional[int] = None,
+        now: Optional[float] = None,
+    ):
+        """Record client activity and transfer counters."""
         from ..services.metrics import observe_proxy_client_connect
+
+        ts = now if now is not None else time.time()
+        normalized_ip = str(client_ip or "unknown")
+        normalized_client_id = str(client_id or normalized_ip)
+        normalized_ua = str(user_agent or "unknown")
+        normalized_request_kind = str(request_kind or "").strip().lower()
+
+        try:
+            bytes_delta = float(bytes_sent) if bytes_sent is not None else 0.0
+        except (TypeError, ValueError):
+            bytes_delta = 0.0
+        if bytes_delta < 0:
+            bytes_delta = 0.0
+
+        try:
+            chunks_delta = int(chunks_sent) if chunks_sent is not None else 0
+        except (TypeError, ValueError):
+            chunks_delta = 0
+        if chunks_delta < 0:
+            chunks_delta = 0
+
         with self.lock:
-            prev_time = self.last_activity.get(client_ip)
-            current_time = time.time()
-            self.last_activity[client_ip] = current_time
-            if not prev_time:
-                logger.info(f"New client connected: {client_ip}")
+            existing = self.clients.get(normalized_client_id)
+            connected_at = existing.get("connected_at") if existing else ts
+            requests_total = int(existing.get("requests_total") or 0) + 1 if existing else 1
+
+            existing_bytes = 0.0
+            existing_chunks = 0
+            existing_sequence = existing.get("last_sequence") if existing else None
+            
+            # Update sequence only if it's greater than before (absolute progress)
+            last_sequence = existing_sequence
+            if sequence is not None:
+                if existing_sequence is None:
+                    last_sequence = sequence
+                else:
+                    last_sequence = max(existing_sequence, sequence)
+            
+            if existing:
+                try:
+                    existing_bytes = float(existing.get("bytes_sent") or 0.0)
+                except (TypeError, ValueError):
+                    existing_bytes = 0.0
+                try:
+                    existing_chunks = int(existing.get("chunks_sent") or 0)
+                except (TypeError, ValueError):
+                    existing_chunks = 0
+
+            self.clients[normalized_client_id] = {
+                "client_id": normalized_client_id,
+                "ip_address": normalized_ip,
+                "user_agent": normalized_ua,
+                "connected_at": connected_at,
+                "last_active": ts,
+                "worker_id": "hls_proxy",
+                "requests_total": requests_total,
+                "last_request_kind": normalized_request_kind or (existing.get("last_request_kind") if existing else ""),
+                "bytes_sent": existing_bytes + bytes_delta,
+                "chunks_sent": existing_chunks + chunks_delta,
+                "last_sequence": last_sequence,
+                "stats_updated_at": ts,
+            }
+
+            previous_ip_activity = self.last_activity.get(normalized_ip)
+            self.last_activity[normalized_ip] = ts if previous_ip_activity is None else max(previous_ip_activity, ts)
+
+            if not existing:
+                logger.info(f"New client connected: {normalized_ip} ({normalized_client_id})")
                 observe_proxy_client_connect("HLS")
             else:
-                logger.debug(f"Client activity: {client_ip}")
+                logger.debug(f"Client activity: {normalized_ip} ({normalized_client_id})")
                 
     def cleanup_inactive(self, timeout: float) -> bool:
         """Remove inactive clients and return True if no clients remain"""
-        from ..services.metrics import observe_proxy_client_disconnect
         now = time.time()
         with self.lock:
-            active_clients = {
-                ip: last_time 
-                for ip, last_time in self.last_activity.items()
-                if (now - last_time) < timeout
-            }
-            
-            removed = set(self.last_activity.keys()) - set(active_clients.keys())
-            if removed:
-                for ip in removed:
-                    inactive_time = now - self.last_activity[ip]
-                    logger.warning(f"Client {ip} inactive for {inactive_time:.1f}s, removing")
-                    observe_proxy_client_disconnect("HLS")
-            
-            self.last_activity = active_clients
-            if active_clients:
-                oldest = min(now - t for t in active_clients.values())
-                logger.debug(f"Active clients: {len(active_clients)}, oldest activity: {oldest:.1f}s ago")
-            
-            return len(active_clients) == 0
+            self._prune_inactive_locked(timeout=timeout, now=now, emit_disconnect_metric=True)
+            if self.clients:
+                oldest = min(now - float(p.get("last_active") or now) for p in self.clients.values())
+                logger.debug(f"Active clients: {len(self.clients)}, oldest activity: {oldest:.1f}s ago")
+
+            return len(self.clients) == 0
+
+    def list_clients(self, max_idle_seconds: Optional[float] = None) -> List[Dict[str, Any]]:
+        """Return active clients enriched with transfer counters."""
+        now = time.time()
+        with self.lock:
+            if max_idle_seconds is not None:
+                self._prune_inactive_locked(timeout=max_idle_seconds, now=now, emit_disconnect_metric=False)
+
+            clients: List[Dict[str, Any]] = []
+            for payload in self.clients.values():
+                row = dict(payload)
+                try:
+                    last_active = float(row.get("last_active") or now)
+                except (TypeError, ValueError):
+                    last_active = now
+                row["inactive_seconds"] = max(0.0, now - last_active)
+                clients.append(row)
+
+            clients.sort(key=lambda item: float(item.get("last_active") or 0.0), reverse=True)
+            return clients
+
+    def count_active_clients(self) -> int:
+        with self.lock:
+            return len(self.clients)
     
     def has_clients(self) -> bool:
         """Check if there are any active clients"""
         with self.lock:
-            return len(self.last_activity) > 0
+            return len(self.clients) > 0
 
 
 class StreamBuffer:
@@ -160,12 +298,24 @@ class StreamManager:
     
     def __init__(self, playback_url: str, channel_id: str, engine_host: str, engine_port: int, 
                  engine_container_id: str, session_info: Dict[str, Any], api_key: Optional[str] = None,
+                 stream_key_type: str = "content_id",
+                 file_indexes: str = "0",
+                 seekback: int = 0,
                  event_loop: Optional[asyncio.AbstractEventLoop] = None):
         self.playback_url = playback_url
         self.channel_id = channel_id
         self.engine_host = engine_host
         self.engine_port = engine_port
         self.engine_container_id = engine_container_id
+        self.stream_key_type = (stream_key_type or "content_id").strip().lower()
+        normalized_file_indexes = str(file_indexes if file_indexes is not None else "0").strip()
+        self.file_indexes = normalized_file_indexes or "0"
+        try:
+            normalized_seekback = int(float(seekback))
+        except (TypeError, ValueError):
+            normalized_seekback = 0
+        self.seekback = max(0, normalized_seekback)
+        self.control_mode = PROXY_MODE_HTTP
         self.running = True
         
         # Session info from AceStream API
@@ -277,8 +427,12 @@ class StreamManager:
                         port=self.engine_port
                     ),
                     stream=StreamKey(
-                        key_type="infohash",
-                        key=self.channel_id
+                        key_type=self.stream_key_type,
+                        key=self.channel_id,
+                        file_indexes=self.file_indexes,
+                        seekback=self.seekback,
+                        live_delay=self.seekback,
+                        control_mode=self.control_mode,
                     ),
                     session=SessionInfo(
                         playback_session_id=self.playback_session_id,
@@ -288,7 +442,11 @@ class StreamManager:
                     ),
                     labels={
                         "source": "hls_proxy",
-                        "stream_mode": "HLS"
+                        "stream_mode": "HLS",
+                        "stream.input_type": self.stream_key_type,
+                        "stream.file_indexes": self.file_indexes,
+                        "stream.seekback": str(self.seekback),
+                        "stream.live_delay": str(self.seekback),
                     }
                 )
                 
@@ -388,12 +546,15 @@ class StreamManager:
                         time.sleep(5)
                         continue
                     
-                    # Calculate timeout based on target duration (similar to reference implementation)
-                    # Use 3x target duration as timeout (configurable via CLIENT_TIMEOUT_FACTOR)
-                    timeout = self.target_duration * 3.0
+                    # Respect the globally configured Idle Stream Shutdown Delay (CHANNEL_SHUTDOWN_DELAY)
+                    # Use the configured delay as the inactivity timeout.
+                    # As a safety minimum for HLS (to account for client manifest polling intervals), 
+                    # we ensure it's at least 2x the target segment duration.
+                    configured_delay = float(ConfigHelper.channel_shutdown_delay())
+                    timeout = max(configured_delay, self.target_duration * 2.0)
                     
                     if self.client_manager and self.client_manager.cleanup_inactive(timeout):
-                        logger.info(f"Channel {self.channel_id}: All clients disconnected for {timeout:.1f}s")
+                        logger.info(f"Channel {self.channel_id}: All clients inactive for {timeout:.1f}s (respecting shutdown delay: {configured_delay}s)")
                         # Stop the channel via proxy server
                         proxy_server.stop_channel(self.channel_id)
                         break
@@ -614,7 +775,8 @@ class HLSProxyServer:
     
     def initialize_channel(self, channel_id: str, playback_url: str, engine_host: str, 
                           engine_port: int, engine_container_id: str, session_info: Dict[str, Any],
-                          api_key: Optional[str] = None):
+                          api_key: Optional[str] = None, stream_key_type: str = "content_id",
+                          file_indexes: str = "0", seekback: int = 0):
         """Initialize a new HLS channel.
         
         This method should only be called for new channels. Existing channels should be
@@ -648,6 +810,9 @@ class HLSProxyServer:
                 engine_container_id=engine_container_id,
                 session_info=session_info,
                 api_key=api_key,
+                stream_key_type=stream_key_type,
+                file_indexes=file_indexes,
+                seekback=seekback,
                 event_loop=self._main_loop  # Pass event loop reference for thread-safe event sending
             )
             buffer = StreamBuffer()
@@ -676,10 +841,28 @@ class HLSProxyServer:
             
             logger.info(f"HLS channel {channel_id} initialized")
     
-    def record_client_activity(self, channel_id: str, client_ip: str):
+    def record_client_activity(
+        self,
+        channel_id: str,
+        client_ip: str,
+        client_id: str = "",
+        user_agent: str = "unknown",
+        request_kind: str = "",
+        bytes_sent: Optional[float] = None,
+        chunks_sent: Optional[int] = None,
+        sequence: Optional[int] = None,
+    ):
         """Record client activity for a channel (called on each manifest/segment request)"""
         if channel_id in self.client_managers:
-            self.client_managers[channel_id].record_activity(client_ip)
+            self.client_managers[channel_id].record_activity(
+                client_ip=client_ip,
+                client_id=client_id,
+                user_agent=user_agent,
+                request_kind=request_kind,
+                bytes_sent=bytes_sent,
+                chunks_sent=chunks_sent,
+                sequence=sequence,
+            )
     
     def stop_stream_by_key(self, channel_id: str):
         """

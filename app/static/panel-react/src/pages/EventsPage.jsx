@@ -56,15 +56,15 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
     try {
       setLoading(true)
       const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
-      
+
       // Fetch events with filter
-      const eventsUrl = filterType === 'all' 
-        ? `${orchUrl}/events?limit=${displayLimit}`
-        : `${orchUrl}/events?event_type=${filterType}&limit=${displayLimit}`
-      
+      const eventsUrl = filterType === 'all'
+        ? `${orchUrl}/api/v1/events?limit=${displayLimit}`
+        : `${orchUrl}/api/v1/events?event_type=${filterType}&limit=${displayLimit}`
+
       const [eventsRes, statsRes] = await Promise.all([
         fetch(eventsUrl, { headers }),
-        fetch(`${orchUrl}/events/stats`, { headers })
+        fetch(`${orchUrl}/api/v1/events/stats`, { headers })
       ])
 
       if (!eventsRes.ok || !statsRes.ok) {
@@ -194,7 +194,7 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div className="flex-1 min-w-[200px]">
               <Label htmlFor="display-limit">Display Limit</Label>
               <Select value={displayLimit.toString()} onValueChange={(val) => setDisplayLimit(Number(val))}>
@@ -224,13 +224,13 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
               Loading events...
             </div>
           )}
-          
+
           {error && (
             <div className="text-center py-8 text-destructive">
               Error: {error}
             </div>
           )}
-          
+
           {!loading && !error && events.length === 0 && (
             <div className="text-center py-8 text-muted-foreground">
               No events found
@@ -253,45 +253,45 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
                       </div>
                     </div>
 
-                  {/* Event Details */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Badge variant={getCategoryBadgeVariant(event.category)}>
-                        {event.category}
-                      </Badge>
-                      <Badge variant="outline">
-                        {EVENT_TYPE_LABELS[event.event_type]}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground ml-auto">
-                        {formatTimestamp(event.timestamp)}
-                      </span>
-                    </div>
-                    
-                    <p className="text-sm font-medium mb-1">{event.message}</p>
-                    
-                    {/* Additional Details */}
-                    {event.details && Object.keys(event.details).length > 0 && (
-                      <details className="text-xs text-muted-foreground mt-2">
-                        <summary className="cursor-pointer hover:text-foreground">
-                          Show details
-                        </summary>
-                        <pre className="mt-2 p-2 bg-muted rounded text-xs overflow-x-auto">
-                          {JSON.stringify(event.details, null, 2)}
-                        </pre>
-                      </details>
-                    )}
-                    
-                    {/* Container/Stream IDs */}
-                    <div className="flex gap-3 mt-2 text-xs text-muted-foreground">
-                      {event.container_id && (
-                        <span>Container: {event.container_id.substring(0, 12)}</span>
+                    {/* Event Details */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge variant={getCategoryBadgeVariant(event.category)}>
+                          {event.category}
+                        </Badge>
+                        <Badge variant="outline">
+                          {EVENT_TYPE_LABELS[event.event_type]}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground ml-auto">
+                          {formatTimestamp(event.timestamp)}
+                        </span>
+                      </div>
+
+                      <p className="text-sm font-medium mb-1">{event.message}</p>
+
+                      {/* Additional Details */}
+                      {event.details && Object.keys(event.details).length > 0 && (
+                        <details className="text-xs text-muted-foreground mt-2">
+                          <summary className="cursor-pointer hover:text-foreground">
+                            Show details
+                          </summary>
+                          <pre className="mt-2 p-2 bg-muted rounded text-xs overflow-x-auto">
+                            {JSON.stringify(event.details, null, 2)}
+                          </pre>
+                        </details>
                       )}
-                      {event.stream_id && (
-                        <span>Stream: {event.stream_id.substring(0, 16)}...</span>
-                      )}
+
+                      {/* Container/Stream IDs */}
+                      <div className="flex gap-3 mt-2 text-xs text-muted-foreground">
+                        {event.container_id && (
+                          <span>Container: {event.container_id.substring(0, 12)}</span>
+                        )}
+                        {event.stream_id && (
+                          <span>Stream: {event.stream_id.substring(0, 16)}...</span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
                 )
               })}
             </div>

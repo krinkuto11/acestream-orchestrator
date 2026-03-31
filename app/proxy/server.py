@@ -138,7 +138,25 @@ class ProxyServer:
         except Exception as e:
             logger.error(f"Error handling event: {e}")
     
-    def start_stream(self, content_id, engine_host, engine_port, engine_container_id=None, engine_api_port=None, existing_session=None):
+    def start_stream(
+        self,
+        content_id,
+        engine_host,
+        engine_port,
+        engine_container_id=None,
+        engine_api_port=None,
+        existing_session=None,
+        source_input=None,
+        source_input_type="content_id",
+        file_indexes="0",
+        seekback=0,
+        playback_url=None,
+        playback_session_id=None,
+        stat_url=None,
+        command_url=None,
+        is_live=None,
+        ace_api_client=None,
+    ):
         """Start a new stream session"""
         if content_id in self.stream_managers:
             logger.info(f"Stream already exists for content_id={content_id}")
@@ -172,6 +190,16 @@ class ProxyServer:
                 worker_id=self.worker_id,
                 api_key=api_key,
                 existing_session=existing_session,
+                source_input=source_input,
+                source_input_type=source_input_type,
+                file_indexes=file_indexes,
+                seekback=seekback,
+                playback_url=playback_url,
+                playback_session_id=playback_session_id,
+                stat_url=stat_url,
+                command_url=command_url,
+                is_live=is_live,
+                ace_api_client=ace_api_client,
             )
             self.stream_managers[content_id] = stream_manager
             
@@ -206,6 +234,13 @@ class ProxyServer:
         
         logger.info(f"Stopping proxy session for content_id={content_id} (called from state synchronization)")
         self._stop_stream(content_id)
+
+    def seek_stream_by_key(self, content_id: str, target_timestamp: int):
+        """Seek an active proxy session using LIVESEEK in API mode."""
+        stream_manager = self.stream_managers.get(content_id)
+        if not stream_manager:
+            raise RuntimeError(f"No active proxy session for stream key '{content_id}'")
+        return stream_manager.seek_stream(target_timestamp)
     
     def _stop_stream(self, content_id):
         """Stop a stream session (internal method)"""

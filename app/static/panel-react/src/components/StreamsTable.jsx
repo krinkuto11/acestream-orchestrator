@@ -2,6 +2,15 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Table,
   TableBody,
@@ -22,6 +31,8 @@ import {
   ExternalLink,
   Clock,
   Activity,
+  Pause,
+  Save,
   ArrowUpDown,
   ArrowUp,
   ArrowDown
@@ -73,6 +84,17 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const [clients, setClients] = useState([])
   const [clientsLoading, setClientsLoading] = useState(false)
   const [streamStatus, setStreamStatus] = useState(null) // For tracking AceStream stat URL status
+  const [seekValue, setSeekValue] = useState(null)
+  const [seekLoading, setSeekLoading] = useState(false)
+  const [seekError, setSeekError] = useState(null)
+  const [seekMessage, setSeekMessage] = useState(null)
+  const [isPaused, setIsPaused] = useState(Boolean(stream.paused))
+  const [controlLoading, setControlLoading] = useState(false)
+  const [controlError, setControlError] = useState(null)
+  const [controlMessage, setControlMessage] = useState(null)
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false)
+  const [savePath, setSavePath] = useState('')
+  const [saveIndex, setSaveIndex] = useState('0')
 
   // Track if we have fetched data at least once to prevent loading flicker on refreshes
   const hasClientsDataRef = useRef(false)
@@ -81,6 +103,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
 
   const isActive = stream.status === 'started'
   const isEnded = stream.status === 'ended'
+
+  useEffect(() => {
+    setIsPaused(Boolean(stream.paused))
+  }, [stream.paused])
 
   // Determine if stream is prebuffering based on stat URL response
   const isPrebuffering = streamStatus === 'prebuf'
@@ -101,7 +127,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       }
 
       const response = await fetch(
-        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`,
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/stats?since=${encodeURIComponent(since)}`,
         { headers }
       )
 
@@ -136,7 +162,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
       }
 
       const response = await fetch(
-        `${orchUrl}/streams/${encodeURIComponent(stream.id)}/extended-stats`,
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/extended-stats`,
         { headers }
       )
 
@@ -168,7 +194,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
 
     try {
       const response = await fetch(
-        `${orchUrl}/proxy/streams/${encodeURIComponent(stream.key)}/clients`
+        `${orchUrl}/api/v1/proxy/streams/${encodeURIComponent(stream.key)}/clients`
       )
 
       if (response.ok) {
@@ -350,6 +376,218 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const streamLabels = stream.labels || {}
   const streamControlMode = streamLabels['proxy.control_mode'] || null
   const resolvedInfohash = streamLabels['stream.resolved_infohash'] || null
+  const normalizedControlMode = String(streamControlMode || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+  const hasApiControlLabel = normalizedControlMode.includes('API')
+  const formattedControlMode = hasApiControlLabel
+    ? 'API Mode'
+    : normalizedControlMode.includes('HTTP')
+      ? 'HTTP Mode'
+      : streamControlMode
+  const hasNoEngineControlLinks = !stream.stat_url && !stream.command_url
+  const isApiMode = hasApiControlLabel || hasNoEngineControlLinks
+  const rawDeadReason = [
+    stream.dead_reason,
+    stream.last_error,
+    streamLabels['stream.dead_reason'],
+    streamLabels['stream.last_error'],
+    streamLabels['stream.stop_reason'],
+    streamLabels['stream.end_reason'],
+  ].find((value) => typeof value === 'string' && value.trim().length > 0) || ''
+  const deadReasonText = String(rawDeadReason || '').trim()
+  const normalizedDeadReason = deadReasonText.toLowerCase()
+  const isDownloadStopped = normalizedDeadReason.includes('download_stopped') || normalizedDeadReason.includes('download stopped')
+  const timelineFirstTs = Number.parseInt(String(stream.livepos?.first_ts ?? stream.livepos?.live_first ?? ''), 10)
+  const timelineLastTs = Number.parseInt(String(stream.livepos?.last_ts ?? stream.livepos?.live_last ?? ''), 10)
+  const timelinePos = Number.parseInt(String(stream.livepos?.pos ?? ''), 10)
+  const canSeekTimeline = Boolean(
+    isActive
+    && Number.isFinite(timelineFirstTs)
+    && Number.isFinite(timelineLastTs)
+    && timelineLastTs > timelineFirstTs
+  )
+
+  useEffect(() => {
+    if (Number.isFinite(timelinePos)) {
+      setSeekValue(timelinePos)
+    }
+  }, [timelinePos])
+
+  const formatTimelineTimestamp = (value) => {
+    const parsed = Number.parseInt(String(value ?? ''), 10)
+    if (!Number.isFinite(parsed)) return 'N/A'
+    try {
+      return new Date(parsed * 1000).toLocaleTimeString()
+    } catch {
+      return String(parsed)
+    }
+  }
+
+  const handleSeekCommit = async () => {
+    const selected = Number.parseInt(String(seekValue ?? ''), 10)
+    if (!canSeekTimeline || !Number.isFinite(selected)) {
+      return
+    }
+
+    if (selected >= timelineLastTs) {
+      setSeekError('Move the slider left of the live edge to seek.')
+      return
+    }
+
+    if (!apiKey) {
+      setSeekError('Set API key in Settings to seek this stream.')
+      return
+    }
+
+    setSeekLoading(true)
+    setSeekError(null)
+    setSeekMessage(null)
+
+    try {
+      const response = await fetch(
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/seek`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ target_timestamp: selected }),
+        },
+      )
+
+      let payload = null
+      try {
+        payload = await response.json()
+      } catch {
+        payload = null
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      if (payload?.status === 'seek_issued') {
+        setSeekMessage(`Seek issued for ${formatTimelineTimestamp(selected)}`)
+      } else {
+        setSeekMessage(`Seek applied to ${formatTimelineTimestamp(selected)}`)
+      }
+    } catch (err) {
+      setSeekError(err?.message || 'Seek failed')
+    } finally {
+      setSeekLoading(false)
+    }
+  }
+
+  const handlePauseResume = async (shouldPause) => {
+    if (!apiKey) {
+      setControlError('Set API key in Settings to use media controls.')
+      return
+    }
+
+    setControlLoading(true)
+    setControlError(null)
+    setControlMessage(null)
+
+    try {
+      const action = shouldPause ? 'pause' : 'resume'
+      const response = await fetch(
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/${action}`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+        },
+      )
+
+      let payload = null
+      try {
+        payload = await response.json()
+      } catch {
+        payload = null
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      setIsPaused(shouldPause)
+      setControlMessage(shouldPause ? 'Stream paused.' : 'Stream resumed.')
+    } catch (err) {
+      setControlError(err?.message || 'Failed to update playback state')
+    } finally {
+      setControlLoading(false)
+    }
+  }
+
+  const handleSaveStream = async () => {
+    if (!apiKey) {
+      setControlError('Set API key in Settings to use media controls.')
+      return
+    }
+
+    const normalizedPath = String(savePath || '').trim()
+    if (!normalizedPath) {
+      setControlError('Save path is required.')
+      return
+    }
+
+    const parsedIndex = Number.parseInt(String(saveIndex || '0'), 10)
+    if (!Number.isFinite(parsedIndex) || parsedIndex < 0) {
+      setControlError('Save index must be a non-negative integer.')
+      return
+    }
+
+    setControlLoading(true)
+    setControlError(null)
+    setControlMessage(null)
+
+    try {
+      const response = await fetch(
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/save`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            path: normalizedPath,
+            index: parsedIndex,
+            infohash: resolvedInfohash || undefined,
+          }),
+        },
+      )
+
+      let payload = null
+      try {
+        payload = await response.json()
+      } catch {
+        payload = null
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      setControlMessage(`Save command issued for index ${parsedIndex}.`)
+      setSaveDialogOpen(false)
+    } catch (err) {
+      setControlError(err?.message || 'Failed to issue save command')
+    } finally {
+      setControlLoading(false)
+    }
+  }
+
+  const showMissingControlFlowHint = !isApiMode
+  const showLinksBlock = Boolean(
+    stream.stat_url
+    || stream.command_url
+    || showMissingControlFlowHint,
+  )
 
   return (
     <>
@@ -377,7 +615,17 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           </Button>
         </TableCell>
         <TableCell className="text-center">
-          {isPrebuffering ? (
+          {isDownloadStopped ? (
+            <Badge variant="destructive" className="flex items-center gap-1 w-fit mx-auto">
+              <StopCircle className="h-3 w-3" />
+              <span className="text-white">DOWNLOAD STOPPED</span>
+            </Badge>
+          ) : isActive && isPaused ? (
+            <Badge className="flex items-center gap-1 w-fit mx-auto bg-amber-500 text-white hover:bg-amber-600 border-transparent">
+              <Pause className="h-3 w-3" />
+              <span className="text-white">PAUSED</span>
+            </Badge>
+          ) : isPrebuffering ? (
             <Badge className="flex items-center gap-1 w-fit mx-auto bg-orange-500 text-white hover:bg-orange-600 border-transparent">
               <Clock className="h-3 w-3" />
               <span className="text-white">PREBUF</span>
@@ -475,6 +723,18 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
           {/* colspan: active streams have 13 cols (checkbox + expand + 11 data), ended streams have 7 cols (expand + 6 data) */}
           <TableCell colSpan={showSpeedColumns ? 13 : 7} className="p-6 bg-muted/50">
             <div className="space-y-6">
+              {isDownloadStopped && (
+                <div className="rounded-md border border-rose-300 bg-rose-50 p-3 dark:border-rose-800 dark:bg-rose-950/30">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="destructive">Download Stopped</Badge>
+                    <p className="text-sm font-medium text-rose-700 dark:text-rose-300">AceStream download stopped event detected</p>
+                  </div>
+                  {deadReasonText && (
+                    <p className="mt-2 text-xs text-rose-700 dark:text-rose-300">Reason: {deadReasonText}</p>
+                  )}
+                </div>
+              )}
+
               {/* Connected Clients - Moved to top */}
               {isActive && (
                 <div>
@@ -560,7 +820,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                 {streamControlMode && (
                   <div>
                     <p className="text-xs text-muted-foreground">Control Mode</p>
-                    <p className="text-sm font-medium text-foreground">{streamControlMode}</p>
+                    <p className="text-sm font-medium text-foreground">{formattedControlMode}</p>
                   </div>
                 )}
                 {resolvedInfohash && (
@@ -642,33 +902,90 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                 )}
               </div>
 
+              {isActive && (
+                <div className="rounded-md border p-3 bg-muted/30 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-foreground">Live Timeline (Catch-up)</p>
+                    <Badge variant={isActive ? 'success' : 'secondary'}>
+                      {isActive ? 'Live' : 'Not live'}
+                    </Badge>
+                  </div>
+
+                  {canSeekTimeline ? (
+                    <>
+                      <input
+                        type="range"
+                        min={timelineFirstTs}
+                        max={timelineLastTs}
+                        step={1}
+                        value={seekValue ?? timelinePos ?? timelineLastTs}
+                        onChange={(e) => {
+                          setSeekValue(Number.parseInt(e.target.value, 10))
+                          setSeekError(null)
+                          setSeekMessage(null)
+                        }}
+                        onMouseUp={handleSeekCommit}
+                        onTouchEnd={handleSeekCommit}
+                        disabled={seekLoading}
+                        className="w-full"
+                      />
+                      <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+                        <div>
+                          <p>Window Start</p>
+                          <p className="font-medium text-foreground">{formatTimelineTimestamp(timelineFirstTs)}</p>
+                        </div>
+                        <div>
+                          <p>Selected</p>
+                          <p className="font-medium text-foreground">{formatTimelineTimestamp(seekValue)}</p>
+                        </div>
+                        <div>
+                          <p>Live Edge</p>
+                          <p className="font-medium text-foreground">{formatTimelineTimestamp(timelineLastTs)}</p>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Live timeline is unavailable for this stream.</p>
+                  )}
+
+                  {!hasApiControlLabel && !hasNoEngineControlLinks && (
+                    <p className="text-xs text-muted-foreground">LIVESEEK requires API mode.</p>
+                  )}
+                  {seekLoading && <p className="text-xs text-muted-foreground">Applying seek...</p>}
+                  {seekMessage && <p className="text-xs text-green-600 dark:text-green-400">{seekMessage}</p>}
+                  {seekError && <p className="text-xs text-destructive">{seekError}</p>}
+                </div>
+              )}
+
               {/* Links */}
-              <div className="flex flex-wrap gap-4">
-                {stream.stat_url ? (
-                  <a
-                    href={stream.stat_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-primary hover:underline flex items-center gap-1"
-                  >
-                    Statistics URL <ExternalLink className="h-3 w-3" />
-                  </a>
-                ) : (
-                  <span className="text-sm text-muted-foreground">Statistics URL not available in this control flow</span>
-                )}
-                {stream.command_url ? (
-                  <a
-                    href={stream.command_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-primary hover:underline flex items-center gap-1"
-                  >
-                    Command URL <ExternalLink className="h-3 w-3" />
-                  </a>
-                ) : (
-                  <span className="text-sm text-muted-foreground">Command URL not available in this control flow</span>
-                )}
-              </div>
+              {showLinksBlock && (
+                <div className="flex flex-wrap gap-4">
+                  {stream.stat_url ? (
+                    <a
+                      href={stream.stat_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-primary hover:underline flex items-center gap-1"
+                    >
+                      Statistics URL <ExternalLink className="h-3 w-3" />
+                    </a>
+                  ) : showMissingControlFlowHint ? (
+                    <span className="text-sm text-muted-foreground">Statistics URL not available in this control flow</span>
+                  ) : null}
+                  {stream.command_url ? (
+                    <a
+                      href={stream.command_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-primary hover:underline flex items-center gap-1"
+                    >
+                      Command URL <ExternalLink className="h-3 w-3" />
+                    </a>
+                  ) : showMissingControlFlowHint ? (
+                    <span className="text-sm text-muted-foreground">Command URL not available in this control flow</span>
+                  ) : null}
+                </div>
+              )}
 
               {/* Chart */}
               {isActive && (
@@ -689,29 +1006,100 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
 
               {/* Actions */}
               {isActive && (
-                <div className="flex gap-3 pt-4 border-t">
-                  <Button
-                    variant="destructive"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onStopStream(stream.id, stream.container_id)
-                    }}
-                    className="flex items-center gap-2"
-                  >
-                    <StopCircle className="h-4 w-4" />
-                    Stop Stream
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onDeleteEngine(stream.container_id)
-                    }}
-                    className="flex items-center gap-2 text-destructive hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Delete Engine
-                  </Button>
+                <div className="pt-4 border-t space-y-3">
+                  {isApiMode ? (
+                    <div className="flex flex-wrap gap-3">
+                      <Button
+                        variant="outline"
+                        disabled={controlLoading || !apiKey}
+                        onClick={() => handlePauseResume(!isPaused)}
+                        className="flex items-center gap-2"
+                      >
+                        {isPaused ? <PlayCircle className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                        {isPaused ? 'Resume' : 'Pause'}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        disabled={controlLoading || !apiKey}
+                        onClick={() => setSaveDialogOpen(true)}
+                        className="flex items-center gap-2"
+                      >
+                        <Save className="h-4 w-4" />
+                        Save
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">PAUSE/RESUME/SAVE require API mode.</p>
+                  )}
+
+                  <div className="flex flex-wrap gap-3">
+                    <Button
+                      variant="destructive"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onStopStream(stream.id, stream.container_id)
+                      }}
+                      className="flex items-center gap-2"
+                    >
+                      <StopCircle className="h-4 w-4" />
+                      Stop Stream
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDeleteEngine(stream.container_id)
+                      }}
+                      className="flex items-center gap-2 text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete Engine
+                    </Button>
+                  </div>
+
+                  {controlLoading && <p className="text-xs text-muted-foreground">Sending control command...</p>}
+                  {controlMessage && <p className="text-xs text-green-600 dark:text-green-400">{controlMessage}</p>}
+                  {controlError && <p className="text-xs text-destructive">{controlError}</p>}
+
+                  <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Save Stream File</DialogTitle>
+                        <DialogDescription>
+                          Issue SAVE for this stream to store a file on disk from the active AceStream session.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-3">
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground">Destination path</p>
+                          <Input
+                            value={savePath}
+                            onChange={(e) => setSavePath(e.target.value)}
+                            placeholder="/downloads"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground">File index</p>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={saveIndex}
+                            onChange={(e) => setSaveIndex(e.target.value)}
+                            placeholder="0"
+                          />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>
+                          Cancel
+                        </Button>
+                        <Button onClick={handleSaveStream} disabled={controlLoading}>
+                          Save Now
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
                 </div>
               )}
             </div>
@@ -840,7 +1228,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, 
         headers['Authorization'] = `Bearer ${apiKey}`
       }
 
-      const response = await fetch(`${orchUrl}/streams/batch-stop`, {
+      const response = await fetch(`${orchUrl}/api/v1/streams/batch-stop`, {
         method: 'POST',
         headers,
         body: JSON.stringify(commandUrls)

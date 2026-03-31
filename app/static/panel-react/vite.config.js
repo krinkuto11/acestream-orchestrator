@@ -22,9 +22,9 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/engines': 'http://localhost:8000',
-      '/streams': 'http://localhost:8000',
-      '/vpn': 'http://localhost:8000'
+      '/api/v1': 'http://localhost:8000',
+      '/ace': 'http://localhost:8000',
+      '/metrics': 'http://localhost:8000'
     }
   }
 })

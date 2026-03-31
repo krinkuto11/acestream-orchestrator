@@ -126,11 +126,11 @@ def test_legacy_api_proxy_playback_forces_light_preflight(monkeypatch):
         def authenticate(self):
             return None
 
-        def preflight(self, content_id, tier="light"):
+        def preflight(self, content_id, tier="light", file_indexes="0"):
             calls["tier"] = tier
             return {"available": True, "infohash": "resolved-hash"}
 
-        def start_stream(self, infohash, mode="infohash"):
+        def start_stream(self, infohash, mode="infohash", stream_type="output_format=http", file_indexes="0", seekback=None):
             return {
                 "url": "http%3A//127.0.0.1%3A19000/content/resolved-hash/0.1",
                 "playback_session_id": "legacy-1",
@@ -145,3 +145,78 @@ def test_legacy_api_proxy_playback_forces_light_preflight(monkeypatch):
 
     assert manager._request_stream_legacy_api() is True
     assert calls["tier"] == "light"
+
+
+def test_stream_manager_seek_stream_schedules_switch():
+    manager = _build_manager()
+    manager.control_mode = "LEGACY_API"
+    manager.running = True
+
+    class _FakeLegacyClient:
+        def seek_stream(self, target_timestamp):
+            assert target_timestamp == 1700002000
+            return True
+
+    manager.ace_api_client = _FakeLegacyClient()
+
+    result = manager.seek_stream(1700002000)
+
+    assert result["status"] == "seek_issued"
+    assert result["target_timestamp"] == 1700002000
+    assert manager._pending_seek_start_info is None
+
+
+def test_stream_manager_pause_resume_updates_runtime_probe_state():
+    manager = _build_manager()
+    manager.control_mode = "LEGACY_API"
+    manager.running = True
+    manager.legacy_status_probe = {"status": "dl", "status_text": "dl"}
+    manager._legacy_probe_cache = {"status": "dl", "status_text": "dl"}
+
+    class _FakeLegacyClient:
+        def pause_stream(self):
+            return True
+
+        def resume_stream(self):
+            return True
+
+    manager.ace_api_client = _FakeLegacyClient()
+
+    paused = manager.pause_stream()
+    resumed = manager.resume_stream()
+
+    assert paused["status"] == "paused"
+    assert resumed["status"] == "resumed"
+    assert manager.legacy_status_probe["paused"] is False
+    assert manager.legacy_status_probe["status"] == "dl"
+    assert manager._legacy_probe_cache["paused"] is False
+
+
+def test_stream_manager_save_stream_uses_resolved_infohash():
+    manager = _build_manager()
+    manager.control_mode = "LEGACY_API"
+    manager.running = True
+    manager.resolved_infohash = "resolved-hash"
+
+    calls = {}
+
+    class _FakeLegacyClient:
+        def save_stream(self, infohash, index=0, path=""):
+            calls["infohash"] = infohash
+            calls["index"] = index
+            calls["path"] = path
+            return True
+
+    manager.ace_api_client = _FakeLegacyClient()
+
+    result = manager.save_stream(index=3, path="/downloads")
+
+    assert result["status"] == "save_issued"
+    assert result["infohash"] == "resolved-hash"
+    assert result["index"] == 3
+    assert result["path"] == "/downloads"
+    assert calls == {
+        "infohash": "resolved-hash",
+        "index": 3,
+        "path": "/downloads",
+    }

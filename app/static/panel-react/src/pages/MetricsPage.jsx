@@ -103,7 +103,7 @@ export function MetricsPage({ apiKey, orchUrl }) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
 
-      const response = await fetch(`${orchUrl}/metrics/dashboard?window_seconds=${windowSeconds}&max_points=360`, { headers })
+      const response = await fetch(`${orchUrl}/api/v1/metrics/dashboard?window_seconds=${windowSeconds}&max_points=360`, { headers })
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`)
       }

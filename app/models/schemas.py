@@ -1,15 +1,21 @@
 from __future__ import annotations
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, ConfigDict, RootModel
 from typing import Dict, Optional, Literal, List, Any
 from datetime import datetime
+
+ProxyControlMode = Literal["http", "api"]
 
 class EngineAddress(BaseModel):
     host: str
     port: int
 
 class StreamKey(BaseModel):
-    key_type: Literal["content_id", "infohash", "url", "magnet"]
+    key_type: Literal["content_id", "infohash", "torrent_url", "direct_url", "raw_data", "url", "magnet"]
     key: str
+    file_indexes: str = "0"
+    seekback: int = 0
+    live_delay: int = 0
+    control_mode: Optional[ProxyControlMode] = None
 
 class SessionInfo(BaseModel):
     playback_session_id: str
@@ -61,8 +67,12 @@ class LivePosData(BaseModel):
 
 class StreamState(BaseModel):
     id: str
-    key_type: Literal["content_id", "infohash", "url", "magnet"]
+    key_type: Literal["content_id", "infohash", "torrent_url", "direct_url", "raw_data", "url", "magnet"]
     key: str
+    file_indexes: str = "0"
+    seekback: int = 0
+    live_delay: int = 0
+    control_mode: Optional[ProxyControlMode] = None
     container_id: str
     container_name: Optional[str] = None
     playback_session_id: str
@@ -72,6 +82,7 @@ class StreamState(BaseModel):
     started_at: datetime
     ended_at: Optional[datetime] = None
     status: Literal["started", "ended"] = "started"
+    paused: bool = False
     # Latest stats from the most recent snapshot
     peers: Optional[int] = None
     speed_down: Optional[int] = None
@@ -80,6 +91,8 @@ class StreamState(BaseModel):
     uploaded: Optional[int] = None
     # Live position data (for live streams)
     livepos: Optional[LivePosData] = None
+    # Proxy-level buffer calculation
+    proxy_buffer_pieces: Optional[int] = None
 
 class StreamStatSnapshot(BaseModel):
     ts: datetime
@@ -90,6 +103,33 @@ class StreamStatSnapshot(BaseModel):
     uploaded: Optional[int] = None
     status: Optional[str] = None
     livepos: Optional[LivePosData] = None
+    proxy_buffer_pieces: Optional[int] = None
+
+
+class EngineListResponse(BaseModel):
+    items: List[EngineState]
+
+
+class StreamListResponse(BaseModel):
+    items: List[StreamState]
+
+
+class HealthStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: Optional[str] = None
+    message: Optional[str] = None
+
+
+class MetricsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class GenericObjectResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class GenericListResponse(RootModel[List[Any]]):
+    pass
 
 class OrchestratorStatusResponse(BaseModel):
     """
@@ -98,7 +138,7 @@ class OrchestratorStatusResponse(BaseModel):
     
     Note: This is a documentation model. The actual endpoint returns a dict.
     """
-    pass  # Placeholder for documentation
+    model_config = ConfigDict(extra="allow")
 
 class ProvisioningBlockedReason(BaseModel):
     """Detailed reason why provisioning is blocked with recovery guidance."""

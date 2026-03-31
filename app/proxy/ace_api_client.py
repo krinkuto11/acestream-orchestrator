@@ -2,17 +2,18 @@
 Minimal AceStream legacy API client.
 
 Implements the telnet-style control protocol used on the AceStream API port.
-This module is optional and only used when proxy control mode is LEGACY_API.
+This module is optional and only used when proxy control mode is api.
 """
 
 import hashlib
 import json
 import logging
+import math
 import socket
 import threading
 import time
 from typing import Any, Dict, Optional, Tuple
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,8 @@ class AceLegacyApiClient:
         self._sock: Optional[socket.socket] = None
         self._recv_buffer = b""
         self._authenticated = False
+        self._download_stopped_event: Optional[Dict[str, str]] = None
+        self._async_event_lock = threading.Lock()
 
         # Default profile used when engine asks for USERDATA.
         self._gender = 1
@@ -59,6 +62,35 @@ class AceLegacyApiClient:
             return "0"
         normalized = str(session_id).strip()
         return normalized if normalized.isdigit() else "0"
+
+    @staticmethod
+    def _normalize_input_mode(mode: Optional[str]) -> str:
+        """Normalize user-facing aliases to protocol-level input modes."""
+        normalized = (mode or "auto").strip().lower()
+        aliases = {
+            "pid": "content_id",
+            "torrent": "torrent_url",
+            "url": "direct_url",
+            "raw": "raw_data",
+        }
+        return aliases.get(normalized, normalized)
+
+    @staticmethod
+    def _normalize_file_indexes(file_indexes: Optional[str]) -> str:
+        """Normalize optional file index selector used in START commands."""
+        normalized = str(file_indexes if file_indexes is not None else "0").strip()
+        return normalized or "0"
+
+    @staticmethod
+    def _normalize_seekback(seekback: Optional[int]) -> int:
+        """Normalize optional startup seekback (seconds)."""
+        if seekback is None:
+            return 0
+        try:
+            value = int(math.floor(float(seekback)))
+        except (TypeError, ValueError):
+            return 0
+        return max(0, value)
 
     @classmethod
     def _get_cached_canonical_infohash(cls, content_id: str) -> Optional[str]:
@@ -129,50 +161,213 @@ class AceLegacyApiClient:
         if version_code >= 3003600:
             self._write("SETOPTIONS use_stop_notifications=1")
 
-    def resolve_content(self, content_id: str, session_id: Optional[str] = None) -> Tuple[Dict, str]:
+    def resolve_content(
+        self,
+        content_id: str,
+        session_id: Optional[str] = None,
+        mode: Optional[str] = None,
+    ) -> Tuple[Dict, str]:
         """
         Resolve metadata using LOADASYNC.
 
         Returns tuple of (load_response_json, mode) where mode is one of
-        {"content_id", "infohash"} and should be reused for START.
+        {"content_id", "infohash", "torrent_url", "raw_data", "direct_url"}
+        and should be reused for START.
+
+        For ``direct_url`` mode the protocol typically skips LOADASYNC, so this
+        method returns a synthetic successful response and ``direct_url`` mode.
         """
+        content_ref = (content_id or "").strip()
+        if not content_ref:
+            raise AceLegacyApiError("content reference is required")
+
+        normalized_mode = self._normalize_input_mode(mode)
         normalized_session_id = self._normalize_session_id(session_id)
 
-        cached_infohash = self._get_cached_canonical_infohash(content_id)
-        if cached_infohash and cached_infohash != content_id:
+        if normalized_mode == "direct_url":
+            return {
+                "status": 1,
+                "message": "direct_url mode bypasses LOADASYNC",
+                "direct_url": content_ref,
+            }, "direct_url"
+
+        if normalized_mode == "torrent_url":
+            load_resp = self._loadasync_torrent(content_ref, normalized_session_id)
+            if load_resp.get("status") in (1, 2):
+                return load_resp, "torrent_url"
+            message = load_resp.get("message", "content unavailable")
+            raise AceLegacyApiError(f"LOADASYNC TORRENT failed for '{content_ref}': {message}")
+
+        if normalized_mode == "raw_data":
+            load_resp = self._loadasync_raw(content_ref, normalized_session_id)
+            if load_resp.get("status") in (1, 2):
+                return load_resp, "raw_data"
+            message = load_resp.get("message", "content unavailable")
+            raise AceLegacyApiError(f"LOADASYNC RAW failed for '{content_ref}': {message}")
+
+        if normalized_mode == "infohash":
+            load_resp = self._loadasync_infohash(content_ref, normalized_session_id)
+            if load_resp.get("status") in (1, 2):
+                self._set_cached_canonical_infohash(content_ref, load_resp.get("infohash") or content_ref)
+                return load_resp, "infohash"
+            message = load_resp.get("message", "content unavailable")
+            raise AceLegacyApiError(f"LOADASYNC INFOHASH failed for '{content_ref}': {message}")
+
+        if normalized_mode not in {"auto", "content_id"}:
+            raise AceLegacyApiError(f"Unsupported resolve mode: {mode}")
+
+        cached_infohash = self._get_cached_canonical_infohash(content_ref)
+        if cached_infohash and cached_infohash != content_ref:
             cached_resp = self._loadasync_infohash(cached_infohash, normalized_session_id)
             if cached_resp.get("status") in (1, 2):
-                self._set_cached_canonical_infohash(content_id, cached_infohash)
+                self._set_cached_canonical_infohash(content_ref, cached_infohash)
                 return cached_resp, "infohash"
 
         # First try PID/content_id mode.
-        load_resp = self._loadasync_pid(content_id, normalized_session_id)
+        load_resp = self._loadasync_pid(content_ref, normalized_session_id)
         if load_resp.get("status") in (1, 2):
-            self._set_cached_canonical_infohash(content_id, load_resp.get("infohash") or content_id)
+            self._set_cached_canonical_infohash(content_ref, load_resp.get("infohash") or content_ref)
             return load_resp, "content_id"
 
         # Fallback to INFOHASH mode.
-        load_resp = self._loadasync_infohash(content_id, normalized_session_id)
+        load_resp = self._loadasync_infohash(content_ref, normalized_session_id)
         if load_resp.get("status") in (1, 2):
-            self._set_cached_canonical_infohash(content_id, load_resp.get("infohash") or content_id)
+            self._set_cached_canonical_infohash(content_ref, load_resp.get("infohash") or content_ref)
             return load_resp, "infohash"
 
         message = load_resp.get("message", "content unavailable")
-        raise AceLegacyApiError(f"LOADASYNC failed for '{content_id}': {message}")
+        raise AceLegacyApiError(f"LOADASYNC failed for '{content_ref}': {message}")
 
-    def start_stream(self, content_id: str, mode: str, stream_type: str = "output_format=http") -> Dict[str, str]:
+    def start_stream(
+        self,
+        content_id: str,
+        mode: str,
+        stream_type: str = "output_format=http",
+        file_indexes: str = "0",
+        seekback: int = 0,
+    ) -> Dict[str, str]:
         """Start stream and return parsed START key/value response."""
-        if mode == "content_id":
-            cmd = f"START PID {content_id} 0 {stream_type}"
-        elif mode == "infohash":
-            cmd = f"START INFOHASH {content_id} 0 0 0 0 {stream_type}"
+        normalized_mode = self._normalize_input_mode(mode)
+        normalized_file_indexes = self._normalize_file_indexes(file_indexes)
+        normalized_seekback = self._normalize_seekback(seekback)
+
+        if normalized_mode == "content_id":
+            cmd = f"START PID {content_id} {normalized_file_indexes} {stream_type}"
+        elif normalized_mode == "infohash":
+            cmd = f"START INFOHASH {content_id} {normalized_file_indexes} 0 0 0 {stream_type}"
+        elif normalized_mode == "torrent_url":
+            cmd = f"START TORRENT {content_id} {normalized_file_indexes} 0 0 0 {stream_type}"
+        elif normalized_mode == "direct_url":
+            cmd = f"START URL {content_id} {normalized_file_indexes} 0 0 0 {stream_type}"
+        elif normalized_mode == "raw_data":
+            cmd = f"START RAW {content_id} {normalized_file_indexes} 0 0 0 {stream_type}"
         else:
             raise AceLegacyApiError(f"Unsupported START mode: {mode}")
 
         self._write(cmd)
         _, parts, _ = self._wait_for("START", timeout=self.response_timeout * 3)
+        first_start_info = self._parse_start_params(parts)
 
-        return self._parse_start_params(parts)
+        if normalized_seekback <= 0:
+            return first_start_info
+
+        # Startup catch-up bootstrap:
+        # START -> wait first livepos -> LIVESEEK -> wait second START.
+        livepos_event = self._wait_for_livepos_event(timeout=self.response_timeout * 3)
+        if not livepos_event:
+            raise AceLegacyApiError(
+                f"seekback={normalized_seekback} requested but no livepos EVENT received after START"
+            )
+
+        last_ts_raw = livepos_event.get("last") or livepos_event.get("last_ts") or livepos_event.get("live_last")
+        last_ts = self._to_int(last_ts_raw)
+        if last_ts is None:
+            raise AceLegacyApiError(
+                "seekback=%s requested but livepos had no usable last/last_ts/live_last payload=%s"
+                % (normalized_seekback, livepos_event)
+            )
+
+        target_timestamp = max(0, int(last_ts) - normalized_seekback)
+        self.seek_stream(target_timestamp)
+        _, delayed_parts, _ = self._wait_for("START", timeout=self.response_timeout * 3)
+        delayed_start_info = self._parse_start_params(delayed_parts)
+        delayed_start_info["seek_target_timestamp"] = str(target_timestamp)
+        delayed_start_info["seekback"] = str(normalized_seekback)
+        delayed_start_info["seek_issued"] = "1"
+        return delayed_start_info
+
+    def seek_stream(self, timestamp: int) -> bool:
+        """
+        Send LIVESEEK mid-stream.
+
+        Note: Some engine builds can emit a follow-up START after LIVESEEK.
+        """
+        try:
+            target = int(timestamp)
+        except (TypeError, ValueError) as exc:
+            raise AceLegacyApiError(f"Invalid LIVESEEK timestamp: {timestamp}") from exc
+
+        target = max(0, target)
+        self._write(f"LIVESEEK {target}")
+        return True
+
+    def pause_stream(self) -> bool:
+        """Pause active playback session on this API connection."""
+        self._write("PAUSE")
+        return True
+
+    def resume_stream(self) -> bool:
+        """Resume paused playback session on this API connection."""
+        self._write("RESUME")
+        return True
+
+    def save_stream(self, infohash: str, index: int = 0, path: str = "") -> bool:
+        """Request SAVE for a content file to a target path."""
+        normalized_infohash = str(infohash or "").strip()
+        if not normalized_infohash:
+            raise AceLegacyApiError("SAVE requires a non-empty infohash")
+
+        normalized_path = str(path or "").strip()
+        if not normalized_path:
+            raise AceLegacyApiError("SAVE requires a non-empty path")
+
+        try:
+            normalized_index = int(index)
+        except (TypeError, ValueError) as exc:
+            raise AceLegacyApiError(f"Invalid SAVE index: {index}") from exc
+
+        if normalized_index < 0:
+            raise AceLegacyApiError("SAVE index must be non-negative")
+
+        encoded_path = quote(normalized_path, safe="/._-~")
+        self._write(
+            f"SAVE infohash={normalized_infohash} index={normalized_index} path={encoded_path}"
+        )
+        return True
+
+    @staticmethod
+    def _to_int(value: Optional[str]) -> Optional[int]:
+        if value is None or value == "":
+            return None
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
+    def _wait_for_livepos_event(self, timeout: float) -> Dict[str, str]:
+        """Wait until an EVENT livepos payload is observed."""
+        deadline = time.time() + max(0.2, timeout)
+        while time.time() < deadline:
+            cmd, parts, _ = self._read_message(timeout=max(0.05, deadline - time.time()))
+
+            if cmd == "EVENT":
+                parsed_event = self.parse_event_line(" ".join(parts))
+                if parsed_event.get("event") == "livepos":
+                    return parsed_event
+
+            self._handle_async(cmd, parts)
+
+        return {}
 
     @staticmethod
     def _parse_start_params(parts: list) -> Dict[str, str]:
@@ -182,6 +377,10 @@ class AceLegacyApiClient:
         for token in parts[1:]:
             if "=" in token:
                 key, value = token.split("=", 1)
+                if key in {"url", "stat_url", "command_url"} and "%" in value:
+                    decoded_value = unquote(value)
+                    if decoded_value.startswith(("http://", "https://")):
+                        value = decoded_value
                 params[key] = value
         return params
 
@@ -229,8 +428,29 @@ class AceLegacyApiClient:
         for token in parts[2:]:
             if "=" in token:
                 key, value = token.split("=", 1)
-                parsed[key] = value
+                parsed[key] = unquote(value)
         return parsed
+
+    def consume_download_stopped_event(self) -> Optional[Dict[str, str]]:
+        """Return and clear the latest EVENT download_stopped payload, if any."""
+        with self._async_event_lock:
+            event_payload = dict(self._download_stopped_event) if self._download_stopped_event else None
+            self._download_stopped_event = None
+            return event_payload
+
+    def _capture_download_stopped_event(self, parts: list):
+        """Store latest download_stopped event so callers can react immediately."""
+        if len(parts) < 2 or parts[0] != "EVENT" or parts[1] != "download_stopped":
+            return
+
+        parsed_event = self.parse_event_line(" ".join(parts))
+        reason = (parsed_event.get("reason") or "").strip()
+        if not reason:
+            reason = "download_stopped"
+            parsed_event["reason"] = reason
+
+        with self._async_event_lock:
+            self._download_stopped_event = parsed_event
 
     def collect_status_samples(
         self,
@@ -358,11 +578,13 @@ class AceLegacyApiClient:
 
         return _change_count(last_timestamps) >= 1
 
-    def preflight(self, content_id: str, tier: str = "light") -> Dict[str, Any]:
+    def preflight(self, content_id: str, tier: str = "light", file_indexes: str = "0") -> Dict[str, Any]:
         """Run light/deep availability checks and return canonicalized metadata."""
         tier_value = (tier or "light").strip().lower()
         if tier_value not in {"light", "deep"}:
             raise AceLegacyApiError("tier must be either 'light' or 'deep'")
+
+        normalized_file_indexes = self._normalize_file_indexes(file_indexes)
 
         logger.info("Legacy preflight started: content_id=%s tier=%s", content_id, tier_value)
 
@@ -376,6 +598,7 @@ class AceLegacyApiClient:
             "available": available,
             "status_code": status_code,
             "infohash": resolved_infohash,
+            "file_indexes": normalized_file_indexes,
             "loadresp": loadresp,
             "can_retry": True,
             "should_wait": bool(status_code == 2),
@@ -393,7 +616,7 @@ class AceLegacyApiClient:
             return payload
 
         if tier_value == "deep":
-            start_info = self.start_stream(resolved_infohash, mode="infohash")
+            start_info = self.start_stream(resolved_infohash, mode="infohash", file_indexes=normalized_file_indexes)
             status_probe = self.collect_status_samples(samples=4, interval_s=0.5, per_sample_timeout_s=2.0)
             payload["start"] = start_info
             payload["status_probe"] = status_probe
@@ -458,6 +681,14 @@ class AceLegacyApiClient:
         self._write(f"LOADASYNC {session_id} INFOHASH {infohash} 0 0 0")
         return self._wait_for_loadresp()
 
+    def _loadasync_torrent(self, torrent_url: str, session_id: str) -> Dict:
+        self._write(f"LOADASYNC {session_id} TORRENT {torrent_url} 0 0 0")
+        return self._wait_for_loadresp()
+
+    def _loadasync_raw(self, raw_data: str, session_id: str) -> Dict:
+        self._write(f"LOADASYNC {session_id} RAW {raw_data} 0 0 0")
+        return self._wait_for_loadresp()
+
     def _wait_for_loadresp(self) -> Dict:
         _, parts, _ = self._wait_for("LOADRESP", timeout=self.response_timeout * 2)
         if len(parts) < 3:
@@ -489,6 +720,9 @@ class AceLegacyApiClient:
         raise AceLegacyApiError(f"Timeout waiting for {expected_cmd}")
 
     def _handle_async(self, cmd: str, parts: list):
+        if cmd == "EVENT" and len(parts) > 1 and parts[1] == "download_stopped":
+            self._capture_download_stopped_event(parts)
+
         # Answer data collection profile request; ignore other async signals.
         if cmd == "EVENT" and "getuserdata" in parts:
             self._write(f"USERDATA [{{\"gender\": {self._gender}}}, {{\"age\": {self._age}}}]")
@@ -526,6 +760,9 @@ class AceLegacyApiClient:
             if "=" in token:
                 key, value = token.split("=", 1)
                 kv[key] = value
+
+        if cmd == "EVENT" and len(parts) > 1 and parts[1] == "download_stopped":
+            self._capture_download_stopped_event(parts)
 
         logger.debug("[ACE API] <<< %s", line)
         return cmd, parts, kv

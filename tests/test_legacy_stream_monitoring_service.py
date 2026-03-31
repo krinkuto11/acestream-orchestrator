@@ -23,7 +23,7 @@ class _FakeAceLegacyApiClient:
     def resolve_content(self, content_id, session_id=None):
         return ({"status": 1, "infohash": content_id}, "infohash")
 
-    def start_stream(self, content_id, mode, stream_type="output_format=http"):
+    def start_stream(self, content_id, mode, stream_type="output_format=http", file_indexes="0"):
         return {
             "playback_session_id": "test-session",
             "url": "http://127.0.0.1:6878/content/test/0.0",
@@ -45,6 +45,9 @@ class _FakeAceLegacyApiClient:
                 "last_ts": str(1000 + self._sample_idx),
             },
         }
+
+    def consume_download_stopped_event(self):
+        return None
 
     def stop_stream(self):
         return None
@@ -82,6 +85,36 @@ class _FakeFailoverClient(_FakeAceLegacyApiClient):
         if int(self.port) == 62062:
             raise asyncio.TimeoutError("api timed out on primary engine")
         return super().collect_status_samples(samples=samples, interval_s=interval_s, per_sample_timeout_s=per_sample_timeout_s)
+
+
+class _FakeDownloadStoppedClient(_FakeAceLegacyApiClient):
+    def __init__(self, host, port, connect_timeout=10.0, response_timeout=10.0, product_key=None):
+        super().__init__(host, port, connect_timeout=connect_timeout, response_timeout=response_timeout, product_key=product_key)
+        self._download_stopped_sent = False
+
+    def consume_download_stopped_event(self):
+        if self._download_stopped_sent:
+            return None
+        self._download_stopped_sent = True
+        return {
+            "event": "download_stopped",
+            "reason": "No seeds available",
+        }
+
+
+class _FakeDownloadStoppedFailoverClient(_FakeAceLegacyApiClient):
+    def __init__(self, host, port, connect_timeout=10.0, response_timeout=10.0, product_key=None):
+        super().__init__(host, port, connect_timeout=connect_timeout, response_timeout=response_timeout, product_key=product_key)
+        self._emit_download_stopped = int(self.port) == 62062
+
+    def consume_download_stopped_event(self):
+        if not self._emit_download_stopped:
+            return None
+        self._emit_download_stopped = False
+        return {
+            "event": "download_stopped",
+            "reason": "Primary engine stopped download",
+        }
 
 
 @pytest.mark.asyncio
@@ -378,6 +411,75 @@ async def test_api_timeout_marks_stream_dead_and_stops(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_download_stopped_marks_stream_dead_immediately(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeDownloadStoppedClient)
+
+    service = LegacyStreamMonitoringService()
+
+    monitor = await service.start_monitor(content_id="abc123", interval_s=2.0, run_seconds=0)
+    monitor_id = monitor["monitor_id"]
+
+    await asyncio.sleep(0.7)
+
+    current = await service.get_monitor(monitor_id)
+    assert current is not None
+    assert current["status"] == "dead"
+    assert current["dead_reason"] == "download_stopped"
+    assert current["last_error"] == "No seeds available"
+
+
+@pytest.mark.asyncio
+async def test_download_stopped_triggers_immediate_failover(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine_1 = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=True,
+    )
+    engine_2 = SimpleNamespace(
+        container_id="engine-2",
+        host="127.0.0.1",
+        port=6879,
+        api_port=62063,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine_1, engine_2])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeDownloadStoppedFailoverClient)
+
+    service = LegacyStreamMonitoringService()
+
+    monitor = await service.start_monitor(content_id="abc123", interval_s=2.0, run_seconds=0)
+    monitor_id = monitor["monitor_id"]
+
+    await asyncio.sleep(1.2)
+
+    current = await service.get_monitor(monitor_id)
+    assert current is not None
+    assert current["status"] in {"running", "stuck", "starting", "reconnecting"}
+    assert current["reconnect_attempts"] == 1
+    assert (current.get("engine") or {}).get("container_id") == "engine-2"
+
+    await service.stop_all()
+
+
+@pytest.mark.asyncio
 async def test_dead_monitor_retries_once_on_different_engine(monkeypatch):
     from app.services import legacy_stream_monitoring as module
 
@@ -452,3 +554,32 @@ async def test_monitor_balancing_spreads_bulk_sessions_across_engines(monkeypatc
     assert first_engine != second_engine
 
     await service.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_reusable_session_skips_starting_monitor_state():
+    service = LegacyStreamMonitoringService()
+
+    service._sessions = {
+        "monitor-starting": {
+            "content_id": "abc123",
+            "status": "starting",
+            "last_collected_at": "2026-03-30T10:00:00+00:00",
+            "engine": {"container_id": "engine-1", "host": "127.0.0.1", "port": 6878, "api_port": 62062},
+            "session": {"playback_url": "http://127.0.0.1:6878/content/starting"},
+            "latest_status": {},
+        },
+        "monitor-running": {
+            "content_id": "abc123",
+            "status": "running",
+            "last_collected_at": "2026-03-30T10:00:01+00:00",
+            "engine": {"container_id": "engine-2", "host": "127.0.0.1", "port": 6879, "api_port": 62063},
+            "session": {"playback_url": "http://127.0.0.1:6879/content/running"},
+            "latest_status": {},
+        },
+    }
+
+    reusable = await service.get_reusable_session_for_content("abc123")
+
+    assert reusable is not None
+    assert reusable["monitor_id"] == "monitor-running"

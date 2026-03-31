@@ -50,6 +50,18 @@ def test_parse_event_line_livepos():
     assert parsed["buffer_pieces"] == "15"
 
 
+def test_handle_async_captures_download_stopped_reason():
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    client._handle_async("EVENT", ["EVENT", "download_stopped", "reason=No%20seeds%20available"])
+
+    event_payload = client.consume_download_stopped_event()
+    assert event_payload is not None
+    assert event_payload.get("event") == "download_stopped"
+    assert event_payload.get("reason") == "No seeds available"
+    assert client.consume_download_stopped_event() is None
+
+
 def test_preflight_deep_stops_stream(monkeypatch):
     client = AceLegacyApiClient("127.0.0.1", 62062)
     calls = {"start": 0, "stop": 0}
@@ -57,10 +69,11 @@ def test_preflight_deep_stops_stream(monkeypatch):
     def fake_resolve(content_id, session_id=None):
         return {"status": 1, "infohash": "abc123"}, "content_id"
 
-    def fake_start(content_id, mode, stream_type="output_format=http"):
+    def fake_start(content_id, mode, stream_type="output_format=http", file_indexes="0"):
         calls["start"] += 1
         assert content_id == "abc123"
         assert mode == "infohash"
+        assert file_indexes == "0"
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
     def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
@@ -100,7 +113,7 @@ def test_preflight_deep_rejects_false_positive_without_progression(monkeypatch):
     def fake_resolve(content_id, session_id=None):
         return {"status": 1, "infohash": "abc123"}, "content_id"
 
-    def fake_start(content_id, mode, stream_type="output_format=http"):
+    def fake_start(content_id, mode, stream_type="output_format=http", file_indexes="0"):
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
     def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
@@ -134,7 +147,7 @@ def test_preflight_deep_accepts_moving_stream_with_fluctuating_downloaded(monkey
     def fake_resolve(content_id, session_id=None):
         return {"status": 1, "infohash": "abc123"}, "content_id"
 
-    def fake_start(content_id, mode, stream_type="output_format=http"):
+    def fake_start(content_id, mode, stream_type="output_format=http", file_indexes="0"):
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
     def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
@@ -169,7 +182,7 @@ def test_preflight_deep_accepts_early_progression_with_tail_plateau(monkeypatch)
     def fake_resolve(content_id, session_id=None):
         return {"status": 1, "infohash": "abc123"}, "content_id"
 
-    def fake_start(content_id, mode, stream_type="output_format=http"):
+    def fake_start(content_id, mode, stream_type="output_format=http", file_indexes="0"):
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
     def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
@@ -205,7 +218,7 @@ def test_preflight_deep_accepts_when_pos_plateaus_but_last_ts_moves(monkeypatch)
     def fake_resolve(content_id, session_id=None):
         return {"status": 1, "infohash": "abc123"}, "content_id"
 
-    def fake_start(content_id, mode, stream_type="output_format=http"):
+    def fake_start(content_id, mode, stream_type="output_format=http", file_indexes="0"):
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
     def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
@@ -239,7 +252,7 @@ def test_preflight_deep_rejects_when_last_ts_static_even_if_pos_moves(monkeypatc
     def fake_resolve(content_id, session_id=None):
         return {"status": 1, "infohash": "abc123"}, "content_id"
 
-    def fake_start(content_id, mode, stream_type="output_format=http"):
+    def fake_start(content_id, mode, stream_type="output_format=http", file_indexes="0"):
         return {"url": "http://127.0.0.1:6878/content/abc123/0.1"}
 
     def fake_collect(samples=4, interval_s=0.5, per_sample_timeout_s=2.0):
@@ -282,3 +295,161 @@ def test_collect_status_samples_tolerates_timeouts(monkeypatch):
     assert probe["status"] is None
     assert probe["livepos"] is None
     assert probe["raw_status_lines"] == []
+
+
+def test_resolve_content_direct_url_bypasses_loadasync():
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    payload, mode = client.resolve_content("https://example.test/video.ts", mode="direct_url")
+
+    assert mode == "direct_url"
+    assert payload["status"] == 1
+    assert payload["direct_url"] == "https://example.test/video.ts"
+
+
+def test_resolve_content_torrent_url_uses_loadasync_torrent(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    called = {"value": False}
+
+    def fake_loadasync_torrent(torrent_url, session_id):
+        called["value"] = True
+        assert torrent_url == "https://example.test/file.torrent"
+        assert session_id == "0"
+        return {"status": 1, "infohash": "abc123"}
+
+    monkeypatch.setattr(client, "_loadasync_torrent", fake_loadasync_torrent)
+
+    payload, mode = client.resolve_content("https://example.test/file.torrent", mode="torrent_url")
+
+    assert called["value"] is True
+    assert mode == "torrent_url"
+    assert payload["status"] == 1
+
+
+def test_start_stream_supports_torrent_direct_raw(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+    commands = []
+
+    monkeypatch.setattr(client, "_write", lambda msg: commands.append(msg))
+    monkeypatch.setattr(client, "_wait_for", lambda *_args, **_kwargs: ("START", ["START", "url=http://x", "playback_session_id=s1"], {}))
+
+    client.start_stream("https://example.test/file.torrent", mode="torrent_url", file_indexes="2")
+    client.start_stream("magnet:?xt=urn:btih:abc", mode="direct_url")
+    client.start_stream("ZmFrZS1yYXctcGF5bG9hZA==", mode="raw_data")
+
+    assert commands[0].startswith("START TORRENT https://example.test/file.torrent")
+    assert "START TORRENT https://example.test/file.torrent 2" in commands[0]
+    assert commands[1].startswith("START URL magnet:?xt=urn:btih:abc")
+    assert commands[2].startswith("START RAW ZmFrZS1yYXctcGF5bG9hZA==")
+
+
+def test_start_stream_decodes_percent_encoded_url(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    monkeypatch.setattr(client, "_write", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        client,
+        "_wait_for",
+        lambda *_args, **_kwargs: (
+            "START",
+            [
+                "START",
+                "url=http%3A//172.19.0.2%3A19000/content/hash/0.123",
+                "stat_url=http%3A//172.19.0.2%3A19000/stat/hash/0.123",
+                "command_url=http%3A//172.19.0.2%3A19000/command/hash/0.123",
+                "playback_session_id=s1",
+            ],
+            {},
+        ),
+    )
+
+    payload = client.start_stream("abc123", mode="infohash")
+
+    assert payload["url"] == "http://172.19.0.2:19000/content/hash/0.123"
+    assert payload["stat_url"] == "http://172.19.0.2:19000/stat/hash/0.123"
+    assert payload["command_url"] == "http://172.19.0.2:19000/command/hash/0.123"
+
+
+def test_seek_stream_sends_liveseek_and_returns_true(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+    commands = []
+
+    monkeypatch.setattr(client, "_write", lambda msg: commands.append(msg))
+
+    payload = client.seek_stream(1700001200)
+
+    assert commands == ["LIVESEEK 1700001200"]
+    assert payload is True
+
+
+def test_start_stream_seekback_waits_livepos_and_returns_second_start(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+    commands = []
+    wait_for_responses = [
+        ("START", ["START", "url=http://first-url", "playback_session_id=s1"], {}),
+        ("START", ["START", "url=http://delayed-url", "playback_session_id=s2"], {}),
+    ]
+
+    monkeypatch.setattr(client, "_write", lambda msg: commands.append(msg))
+    monkeypatch.setattr(client, "_wait_for", lambda *_args, **_kwargs: wait_for_responses.pop(0))
+    monkeypatch.setattr(
+        client,
+        "_read_message",
+        lambda timeout=0: ("EVENT", ["EVENT", "livepos", "last_ts=1700001000", "pos=1700000990"], {}),
+    )
+
+    payload = client.start_stream("abc123", mode="infohash", seekback=25)
+
+    assert commands[0].startswith("START INFOHASH abc123")
+    assert commands[1] == "LIVESEEK 1700000975"
+    assert payload["url"] == "http://delayed-url"
+    assert payload["playback_session_id"] == "s2"
+    assert payload["seek_target_timestamp"] == "1700000975"
+    assert payload["seek_issued"] == "1"
+
+
+def test_pause_resume_stream_send_expected_commands(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+    commands = []
+
+    monkeypatch.setattr(client, "_write", lambda msg: commands.append(msg))
+
+    assert client.pause_stream() is True
+    assert client.resume_stream() is True
+    assert commands == ["PAUSE", "RESUME"]
+
+
+def test_save_stream_sends_encoded_command(monkeypatch):
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+    commands = []
+
+    monkeypatch.setattr(client, "_write", lambda msg: commands.append(msg))
+
+    assert client.save_stream("abcd1234", index=2, path="/tmp/media files") is True
+    assert commands == ["SAVE infohash=abcd1234 index=2 path=/tmp/media%20files"]
+
+
+def test_save_stream_validates_inputs():
+    client = AceLegacyApiClient("127.0.0.1", 62062)
+
+    try:
+        client.save_stream("", index=0, path="/tmp")
+    except AceLegacyApiError as exc:
+        assert "infohash" in str(exc)
+    else:
+        raise AssertionError("Expected AceLegacyApiError for empty infohash")
+
+    try:
+        client.save_stream("abcd1234", index=0, path="")
+    except AceLegacyApiError as exc:
+        assert "path" in str(exc)
+    else:
+        raise AssertionError("Expected AceLegacyApiError for empty path")
+
+    try:
+        client.save_stream("abcd1234", index=-1, path="/tmp")
+    except AceLegacyApiError as exc:
+        assert "non-negative" in str(exc)
+    else:
+        raise AssertionError("Expected AceLegacyApiError for negative index")

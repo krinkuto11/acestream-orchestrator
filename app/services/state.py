@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Set
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..models.schemas import EngineState, StreamState, StreamStartedEvent, StreamEndedEvent, StreamStatSnapshot
+from ..proxy.constants import normalize_proxy_mode
 from ..services.db import SessionLocal
 from ..models.db_models import EngineRow, StreamRow, StatRow
 
@@ -126,6 +127,10 @@ class State:
 
             stream_id = (evt.labels.get("stream_id") if evt.labels else None) or f"{evt.stream.key}|{evt.session.playback_session_id}"
             st = StreamState(id=stream_id, key_type=evt.stream.key_type, key=evt.stream.key,
+                             file_indexes=evt.stream.file_indexes,
+                             seekback=evt.stream.seekback,
+                             live_delay=(evt.stream.live_delay if evt.stream.live_delay is not None else evt.stream.seekback),
+                             control_mode=normalize_proxy_mode((evt.labels or {}).get("proxy.control_mode"), default=None),
                              container_id=key, container_name=eng.container_name if eng else container_name,
                              playback_session_id=evt.session.playback_session_id,
                              stat_url=str(evt.session.stat_url or ""), command_url=str(evt.session.command_url or ""),
@@ -241,6 +246,13 @@ class State:
             except Exception as e:
                 # Don't fail stream ending if HLS proxy cleanup fails
                 logger.warning(f"Failed to synchronize HLS proxy cleanup for stream {st.key}: {e}")
+
+            try:
+                # Clean up external API-mode HLS segmenter if active.
+                from ..services.hls_segmenter import hls_segmenter_service
+                hls_segmenter_service.stop_segmenter_nowait(st.key, emit_stream_ended=False)
+            except Exception as e:
+                logger.warning(f"Failed to schedule external HLS segmenter cleanup for stream {st.key}: {e}")
         
         return st
 
@@ -318,6 +330,14 @@ class State:
     def get_stream(self, stream_id: str) -> Optional[StreamState]:
         with self._lock:
             return self.streams.get(stream_id)
+
+    def set_stream_paused(self, stream_id: str, paused: bool) -> Optional[StreamState]:
+        with self._lock:
+            stream = self.streams.get(stream_id)
+            if not stream:
+                return None
+            stream.paused = bool(paused)
+            return stream.model_copy()
     
     def update_stream_metadata(
         self, 
@@ -387,6 +407,9 @@ class State:
                         enriched.downloaded = latest_stat.downloaded
                         enriched.uploaded = latest_stat.uploaded
                         enriched.livepos = latest_stat.livepos
+                        
+                        if hasattr(latest_stat, 'proxy_buffer_pieces'):
+                            enriched.proxy_buffer_pieces = latest_stat.proxy_buffer_pieces
                 else:
                     # For ended streams, clear speed/peer data as it's no longer relevant
                     enriched.peers = None

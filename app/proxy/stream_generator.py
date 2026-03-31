@@ -10,6 +10,7 @@ import time
 import logging
 
 from .config_helper import ConfigHelper
+from .constants import PROXY_MODE_API, normalize_proxy_mode
 from .utils import get_logger, create_ts_packet
 from .redis_keys import RedisKeys
 from .constants import StreamMetadataField
@@ -139,15 +140,10 @@ class StreamGenerator:
                 logger.error(f"[{self.client_id}] Stream manager missing during initialization")
                 return False
 
-            manager_mode = str(getattr(manager, "control_mode", "LEGACY_HTTP") or "LEGACY_HTTP").upper()
-            # Non-LEGACY_API modes do not run preflight gating, so do not block startup here.
-            if manager_mode != "LEGACY_API":
+            manager_mode = normalize_proxy_mode(getattr(manager, "control_mode", None))
+            # Non-API modes do not run preflight gating, so do not block startup here.
+            if manager_mode != PROXY_MODE_API:
                 return True
-
-            # Terminal rejection path: do not keep clients waiting for full timeout.
-            if manager_mode == "LEGACY_API" and getattr(manager, "_last_request_failure_type", None) == "preflight_failed":
-                logger.warning(f"[{self.client_id}] Stream initialization aborted: preflight rejected stream")
-                return False
 
             # Stream manager must complete session request before clients start normal streaming.
             if bool(getattr(manager, "connected", False)) and bool(getattr(manager, "playback_url", None)):
@@ -210,8 +206,12 @@ class StreamGenerator:
             logger.error(f"[{self.client_id}] No client manager found")
             return False
         
-        # Add client
-        self.client_manager.add_client(self.client_id, self.client_ip, self.client_user_agent)
+        # Capture the current index before registering the client so we can
+        # track the client's absolute position in the buffer.
+        start_index = self.buffer.index
+        
+        # Add client with starting position
+        self.client_manager.add_client(self.client_id, self.client_ip, self.client_user_agent, initial_index=start_index)
 
         # Capture the current index before waiting so startup only accepts
         # fresh data for this session, not stale Redis chunks.

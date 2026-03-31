@@ -5,10 +5,9 @@ import {
   Server, 
   Activity, 
   Radio,
-  Wifi, 
   Settings, 
   BarChart3, 
-  ShieldCheck,
+  Network,
   ChevronLeft,
   ChevronRight,
   FileText
@@ -16,15 +15,16 @@ import {
 import { Link, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import { useLocalStorage } from '@/hooks/useLocalStorage'
 
 const navigation = [
-  { name: 'Overview', href: '/', icon: LayoutDashboard },
+  { name: 'Streaming Central', href: '/', icon: LayoutDashboard },
+
   { name: 'Engines', href: '/engines', icon: Server },
   { name: 'Streams', href: '/streams', icon: Activity },
   { name: 'Stream Monitoring', href: '/stream-monitoring', icon: Radio },
+  { name: 'Routing Topology', href: '/routing-topology', icon: Network },
   { name: 'Events', href: '/events', icon: FileText },
-  { name: 'Health', href: '/health', icon: ShieldCheck },
-  { name: 'VPN', href: '/vpn', icon: Wifi },
   { name: 'Dashboard', href: '/metrics', icon: BarChart3 },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]
@@ -35,7 +35,7 @@ const SIDEBAR_WIDTH_COLLAPSED = '4rem' // w-16 in Tailwind
 
 export function ModernSidebar() {
   const location = useLocation()
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useLocalStorage('sidebar-collapsed', false)
   const [version, setVersion] = useState('1.6.2')
 
   useEffect(() => {

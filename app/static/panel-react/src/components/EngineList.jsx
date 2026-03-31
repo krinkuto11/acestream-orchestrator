@@ -45,7 +45,7 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
       }
       
       try {
-        const response = await fetch(`${orchUrl}/engines/${engine.container_id}/stats`)
+        const response = await fetch(`${orchUrl}/api/v1/engines/${engine.container_id}/stats`)
         if (response.ok) {
           const data = await response.json()
           setStats(data)
@@ -328,7 +328,7 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
     
     const fetchEnginesWithMetrics = async () => {
       try {
-        const response = await fetch(`${orchUrl}/engines/with-metrics`)
+        const response = await fetch(`${orchUrl}/api/v1/engines/with-metrics`)
         if (response.ok) {
           const data = await response.json()
           setEnginesWithMetrics(data)

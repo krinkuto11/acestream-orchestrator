@@ -10,14 +10,23 @@ import time
 import requests
 import os
 import uuid
-from typing import Optional
+from typing import Optional, Any
 from urllib.parse import unquote, urlparse, urlunparse
 
+from ..core.config import cfg
 from .http_streamer import HTTPStreamReader
 from .stream_buffer import StreamBuffer
 from .client_manager import ClientManager
 from .redis_keys import RedisKeys
-from .constants import StreamState, EventType, StreamMetadataField, VLC_USER_AGENT
+from .constants import (
+    StreamState,
+    EventType,
+    StreamMetadataField,
+    VLC_USER_AGENT,
+    PROXY_MODE_API,
+    PROXY_MODE_HTTP,
+    normalize_proxy_mode,
+)
 from .config_helper import ConfigHelper, Config
 from .ace_api_client import AceLegacyApiClient, AceLegacyApiError
 from .utils import get_logger
@@ -32,7 +41,29 @@ STREAM_EVENT_HANDLER_TIMEOUT = 2.0
 class StreamManager:
     """Manages connection to AceStream engine and stream health"""
     
-    def __init__(self, content_id, engine_host, engine_port, engine_container_id, buffer, client_manager, engine_api_port=None, worker_id=None, api_key=None, existing_session=None):
+    def __init__(
+        self,
+        content_id,
+        engine_host,
+        engine_port,
+        engine_container_id,
+        buffer,
+        client_manager,
+        engine_api_port=None,
+        worker_id=None,
+        api_key=None,
+        existing_session=None,
+        source_input=None,
+        source_input_type="content_id",
+        file_indexes="0",
+        seekback=0,
+        playback_url: Optional[str] = None,
+        playback_session_id: Optional[str] = None,
+        stat_url: Optional[str] = None,
+        command_url: Optional[str] = None,
+        is_live: Optional[int] = None,
+        ace_api_client: Optional[Any] = None,
+    ):
         # Basic properties
         self.content_id = content_id
         self.engine_host = engine_host
@@ -45,13 +76,13 @@ class StreamManager:
         self.api_key = api_key  # API key for orchestrator events
         
         # Stream session info (from AceStream API)
-        self.playback_url = None
-        self.stat_url = None
-        self.command_url = None
-        self.playback_session_id = None
-        self.is_live = None
-        self.control_mode = (ConfigHelper.control_mode() or "LEGACY_HTTP").upper()
-        self.ace_api_client = None
+        self.playback_url = playback_url
+        self.playback_session_id = playback_session_id
+        self.stat_url = stat_url or ""
+        self.command_url = command_url or ""
+        self.is_live = is_live if is_live is not None else 1
+        self.control_mode = normalize_proxy_mode(ConfigHelper.control_mode(), default=PROXY_MODE_HTTP)
+        self.ace_api_client = ace_api_client
         self._legacy_api_lock = threading.Lock()
         self.resolved_infohash = None
         self.legacy_status_probe = None
@@ -60,6 +91,22 @@ class StreamManager:
         self._last_request_failure_type = None
         self.existing_session = existing_session or {}
         self.owns_engine_session = True
+
+        normalized_input_type = str(source_input_type or "content_id").strip().lower()
+        allowed_input_types = {"content_id", "infohash", "torrent_url", "direct_url", "raw_data"}
+        if normalized_input_type not in allowed_input_types:
+            normalized_input_type = "content_id"
+
+        self.source_input_type = normalized_input_type
+        self.source_input = str(source_input if source_input is not None else content_id)
+        normalized_file_indexes = str(file_indexes if file_indexes is not None else "0").strip()
+        self.file_indexes = normalized_file_indexes or "0"
+        effective_seekback = cfg.ACE_LIVE_EDGE_DELAY if seekback is None else seekback
+        try:
+            normalized_seekback = int(float(effective_seekback))
+        except (TypeError, ValueError):
+            normalized_seekback = 0
+        self.seekback = max(0, normalized_seekback)
         # Keep probe cadence aligned with collector interval so legacy mode
         # has comparable overhead to stat_url polling mode.
         try:
@@ -77,6 +124,8 @@ class StreamManager:
         # HTTP stream reader
         self.http_reader = None
         self.socket = None  # Read end of pipe from http_reader
+        self._reader_lock = threading.RLock()
+        self._pending_seek_start_info = None
         
         # Health monitoring
         self.last_data_time = time.time()
@@ -89,6 +138,34 @@ class StreamManager:
         self._stream_exit_reason = None
         
         logger.info(f"StreamManager initialized for content_id={content_id}")
+
+    def _build_legacy_http_params(self):
+        """Build engine query params for HTTP mode based on source input type."""
+        params = {
+            "format": "json",
+            "pid": str(uuid.uuid4()),
+            "file_indexes": self.file_indexes,
+        }
+
+        if self.seekback > 0:
+            params["seekback"] = str(self.seekback)
+
+        if self.source_input_type in {"content_id", "infohash"}:
+            params["id"] = self.source_input
+            if self.source_input_type == "infohash":
+                params["infohash"] = self.source_input
+        elif self.source_input_type == "torrent_url":
+            params["torrent_url"] = self.source_input
+        elif self.source_input_type == "direct_url":
+            # Keep "url" as compatibility alias for engines expecting this key.
+            params["direct_url"] = self.source_input
+            params["url"] = self.source_input
+        elif self.source_input_type == "raw_data":
+            params["raw_data"] = self.source_input
+        else:
+            params["id"] = self.source_input
+
+        return params
 
     def _apply_existing_session(self):
         """Use a pre-existing monitoring session instead of starting a new engine session."""
@@ -123,12 +200,23 @@ class StreamManager:
     def request_stream_from_engine(self):
         """Request stream from AceStream engine according to selected control mode."""
         self._last_request_failure_type = None
-        if self.control_mode == "LEGACY_API":
+
+        # If we already have a playback_url, we don't need to request it again
+        if self.playback_url:
+            logger.info(f"Adopting pre-initialized stream session for content_id={self.content_id}")
+            self.connected = False  # Reader will set this to True
+            return True
+
+        if self._is_api_mode():
             return self._request_stream_legacy_api()
         return self._request_stream_legacy_http()
 
+    def _is_api_mode(self) -> bool:
+        self.control_mode = normalize_proxy_mode(self.control_mode, default=PROXY_MODE_HTTP)
+        return self.control_mode == PROXY_MODE_API
+
     def _request_stream_legacy_http(self):
-        """Current JSON-over-HTTP control flow (default)."""
+        """Current JSON-over-HTTP control flow (HTTP mode)."""
         # Check stream mode to determine which endpoint to use
         stream_mode = Config.STREAM_MODE
         
@@ -139,23 +227,19 @@ class StreamManager:
             # TS mode (default) - use getstream endpoint
             url = f"http://{self.engine_host}:{self.engine_port}/ace/getstream"
         
-        # Generate unique PID to prevent errors when multiple streams access the same engine
-        pid = str(uuid.uuid4())
-        
-        params = {
-            "id": self.content_id,
-            "format": "json",
-            "pid": pid
-        }
-        
+        params = self._build_legacy_http_params()
+
         # Build full URL for logging (define early to avoid NameError in exception handlers)
-        full_url = f"{url}?id={self.content_id}&format=json&pid={pid}"
+        full_url = requests.Request("GET", url, params=params).prepare().url or url
         
         try:
             logger.info(f"Requesting stream from AceStream engine in {stream_mode} mode: {url}")
             logger.debug(f"Full request URL: {full_url}")
-            logger.debug(f"Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}, Container: {self.engine_container_id}")
-            logger.debug(f"Generated PID: {pid}")
+            logger.debug(
+                f"Engine: {self.engine_host}:{self.engine_port}, Stream key: {self.content_id}, "
+                f"Input type: {self.source_input_type}, Container: {self.engine_container_id}"
+            )
+            logger.debug(f"Generated PID: {params.get('pid')}")
             
             response = requests.get(url, params=params, timeout=10)
             
@@ -173,7 +257,11 @@ class StreamManager:
             if data.get("error"):
                 error_msg = data['error']
                 logger.error(f"AceStream engine returned error: {error_msg}")
-                logger.error(f"Error details - Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}, Container: {self.engine_container_id}")
+                logger.error(
+                    f"Error details - Engine: {self.engine_host}:{self.engine_port}, "
+                    f"Stream key: {self.content_id}, Input type: {self.source_input_type}, "
+                    f"Container: {self.engine_container_id}"
+                )
                 logger.debug(f"Full error response: {data}")
                 raise RuntimeError(f"AceStream engine returned error: {error_msg}")
             
@@ -186,7 +274,10 @@ class StreamManager:
             
             if not self.playback_url:
                 logger.error("No playback_url in AceStream response")
-                logger.error(f"Error details - Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}")
+                logger.error(
+                    f"Error details - Engine: {self.engine_host}:{self.engine_port}, "
+                    f"Stream key: {self.content_id}, Input type: {self.source_input_type}"
+                )
                 logger.debug(f"Response data: {resp_data}")
                 raise RuntimeError("No playback_url in AceStream response")
             
@@ -202,12 +293,15 @@ class StreamManager:
             self._last_request_failure_type = "request_failed"
             # Log detailed error information for both request and general exceptions
             logger.error(f"Failed to request stream from AceStream engine: {e}")
-            logger.error(f"Request details - URL: {full_url}, Engine: {self.engine_host}:{self.engine_port}, Content ID: {self.content_id}")
+            logger.error(
+                f"Request details - URL: {full_url}, Engine: {self.engine_host}:{self.engine_port}, "
+                f"Stream key: {self.content_id}, Input type: {self.source_input_type}"
+            )
             logger.debug(f"Exception details: {e}", exc_info=True)
             return False
 
     def _request_stream_legacy_api(self):
-        """Optional telnet-style legacy API control flow."""
+        """Telnet-style AceStream API control flow (API mode)."""
         client = None
         try:
             logger.info(
@@ -222,37 +316,33 @@ class StreamManager:
             client.connect()
             client.authenticate()
 
-            configured_tier = ConfigHelper.legacy_api_preflight_tier()
-            preflight_tier = "light"
-            if configured_tier != "light":
-                logger.info(
-                    "LEGACY_API proxy playback forces light preflight; configured tier '%s' is reserved for manual /ace/preflight checks",
-                    configured_tier,
-                )
-            logger.info(
-                f"Running LEGACY_API preflight: content_id={self.content_id}, tier={preflight_tier}"
+            loadresp, resolved_mode = client.resolve_content(
+                self.source_input,
+                session_id="0",
+                mode=self.source_input_type,
             )
-            preflight = client.preflight(self.content_id, tier=preflight_tier)
-            if not preflight.get("available"):
-                message = preflight.get("message") or "content unavailable"
-                availability_checks = preflight.get("availability_checks") or {}
-                logger.warning(
-                    "LEGACY_API preflight failed: "
-                    f"content_id={self.content_id}, tier={preflight_tier}, "
-                    f"status_code={preflight.get('status_code')}, message={message}, "
-                    f"checks={availability_checks}"
-                )
-                self._last_request_failure_type = "preflight_failed"
-                raise AceLegacyApiError(f"Preflight failed: {message}")
+            
+            status_code = loadresp.get("status")
+            if status_code not in (1, 2) and resolved_mode != "direct_url":
+                message = loadresp.get("message") or "content unavailable"
+                raise AceLegacyApiError(f"LOADASYNC status={status_code}: {message}")
+            
+            self.resolved_infohash = loadresp.get("infohash") or None
+            
+            # If we have an infohash, always prefer it for START to skip engine-side resolution
+            if self.resolved_infohash:
+                start_mode = "infohash"
+                start_payload = self.resolved_infohash
+            else:
+                start_mode = resolved_mode
+                start_payload = self.source_input
 
-            logger.info(
-                "LEGACY_API preflight passed: "
-                f"content_id={self.content_id}, tier={preflight_tier}, "
-                f"resolved_infohash={preflight.get('infohash')}"
+            start_info = client.start_stream(
+                start_payload,
+                mode=start_mode,
+                file_indexes=self.file_indexes,
+                seekback=self.seekback,
             )
-
-            self.resolved_infohash = preflight.get("infohash") or self.content_id
-            start_info = client.start_stream(self.resolved_infohash, mode="infohash")
             self.legacy_status_probe = client.collect_status_samples(samples=1, interval_s=0.0, per_sample_timeout_s=1.0)
 
             playback_url = start_info.get("url")
@@ -274,7 +364,8 @@ class StreamManager:
                 self._last_request_failure_type = "request_failed"
             logger.error(f"Failed to request stream from AceStream legacy API: {e}")
             logger.error(
-                f"Request details - API: {self.engine_host}:{self.engine_api_port}, Content ID: {self.content_id}"
+                f"Request details - API: {self.engine_host}:{self.engine_api_port}, "
+                f"Stream key: {self.content_id}, Input type: {self.source_input_type}"
             )
             logger.debug(f"Exception details: {e}", exc_info=True)
             try:
@@ -329,8 +420,12 @@ class StreamManager:
                         port=self.engine_port
                     ),
                     stream=StreamKey(
-                        key_type="infohash",
-                        key=self.content_id
+                        key_type=self.source_input_type,
+                        key=self.content_id,
+                        file_indexes=self.file_indexes,
+                        seekback=self.seekback,
+                        live_delay=self.seekback,
+                        control_mode=normalize_proxy_mode(self.control_mode, default=PROXY_MODE_HTTP),
                     ),
                     session=SessionInfo(
                         playback_session_id=self.playback_session_id or f"fallback-{self.content_id[:16]}-{int(time.time())}",
@@ -342,6 +437,10 @@ class StreamManager:
                         "source": "proxy",
                         "worker_id": self.worker_id or "unknown",
                         "proxy.control_mode": self.control_mode,
+                        "stream.input_type": self.source_input_type,
+                        "stream.file_indexes": self.file_indexes,
+                        "stream.seekback": str(self.seekback),
+                        "stream.live_delay": str(self.seekback),
                         "stream.resolved_infohash": str(self.resolved_infohash or ""),
                         "host.api_port": str(self.engine_api_port or "")
                     }
@@ -439,11 +538,12 @@ class StreamManager:
             
             # Create HTTP stream reader with VLC user agent for better compatibility
             # Some AceStream engines may behave differently based on the user agent
-            self.http_reader = HTTPStreamReader(
-                url=self.playback_url,
-                user_agent=VLC_USER_AGENT,
-                chunk_size=ConfigHelper.chunk_size()
-            )
+            with self._reader_lock:
+                self.http_reader = HTTPStreamReader(
+                    url=self.playback_url,
+                    user_agent=VLC_USER_AGENT,
+                    chunk_size=ConfigHelper.chunk_size()
+                )
             
             # Start reader and get pipe
             self.socket = self.http_reader.start()
@@ -461,6 +561,182 @@ class StreamManager:
             logger.error(f"Details - Playback URL: {self.playback_url}, Content ID: {self.content_id}")
             logger.debug(f"Exception details: {e}", exc_info=True)
             return False
+
+    def seek_stream(self, target_timestamp: int):
+        """Issue LIVESEEK for an active API-mode stream."""
+        if not self._is_api_mode():
+            raise RuntimeError("LIVESEEK is only available when control_mode is api")
+        if not self.running:
+            raise RuntimeError("Stream is not running")
+
+        locked = self._legacy_api_lock.acquire(timeout=2.0)
+        if not locked:
+            raise RuntimeError("Legacy API client is busy, please retry")
+
+        try:
+            if not self.ace_api_client:
+                raise RuntimeError("Legacy API session is not active")
+
+            issued = self.ace_api_client.seek_stream(int(target_timestamp))
+        finally:
+            self._legacy_api_lock.release()
+
+        if not issued:
+            raise RuntimeError("LIVESEEK command was not accepted")
+
+        self._legacy_probe_cache = None
+        self._legacy_probe_cache_ts = 0.0
+
+        return {
+            "status": "seek_issued",
+            "target_timestamp": int(target_timestamp),
+        }
+
+    def _set_runtime_pause_state(self, paused: bool):
+        status_value = "pause" if paused else "dl"
+
+        if isinstance(self.legacy_status_probe, dict):
+            self.legacy_status_probe["paused"] = bool(paused)
+            self.legacy_status_probe["status"] = status_value
+            self.legacy_status_probe["status_text"] = status_value
+
+        if isinstance(self._legacy_probe_cache, dict):
+            self._legacy_probe_cache["paused"] = bool(paused)
+            self._legacy_probe_cache["status"] = status_value
+            self._legacy_probe_cache["status_text"] = status_value
+
+    def pause_stream(self):
+        """Issue PAUSE for an active API-mode stream."""
+        if not self._is_api_mode():
+            raise RuntimeError("PAUSE is only available when control_mode is api")
+        if not self.running:
+            raise RuntimeError("Stream is not running")
+
+        locked = self._legacy_api_lock.acquire(timeout=2.0)
+        if not locked:
+            raise RuntimeError("Legacy API client is busy, please retry")
+
+        try:
+            if not self.ace_api_client:
+                raise RuntimeError("Legacy API session is not active")
+            issued = self.ace_api_client.pause_stream()
+        finally:
+            self._legacy_api_lock.release()
+
+        if not issued:
+            raise RuntimeError("PAUSE command was not accepted")
+
+        self._set_runtime_pause_state(True)
+        return {"status": "paused"}
+
+    def resume_stream(self):
+        """Issue RESUME for an active API-mode stream."""
+        if not self._is_api_mode():
+            raise RuntimeError("RESUME is only available when control_mode is api")
+        if not self.running:
+            raise RuntimeError("Stream is not running")
+
+        locked = self._legacy_api_lock.acquire(timeout=2.0)
+        if not locked:
+            raise RuntimeError("Legacy API client is busy, please retry")
+
+        try:
+            if not self.ace_api_client:
+                raise RuntimeError("Legacy API session is not active")
+            issued = self.ace_api_client.resume_stream()
+        finally:
+            self._legacy_api_lock.release()
+
+        if not issued:
+            raise RuntimeError("RESUME command was not accepted")
+
+        self._set_runtime_pause_state(False)
+        return {"status": "resumed"}
+
+    def save_stream(self, infohash: Optional[str] = None, index: int = 0, path: str = ""):
+        """Issue SAVE for an active API-mode stream."""
+        if not self._is_api_mode():
+            raise RuntimeError("SAVE is only available when control_mode is api")
+        if not self.running:
+            raise RuntimeError("Stream is not running")
+
+        target_infohash = str(infohash or "").strip()
+        if not target_infohash:
+            target_infohash = str(self.resolved_infohash or "").strip()
+        if not target_infohash and self.source_input_type == "infohash":
+            target_infohash = str(self.source_input or "").strip()
+        if not target_infohash:
+            raise RuntimeError("No resolved infohash available for SAVE")
+
+        locked = self._legacy_api_lock.acquire(timeout=2.0)
+        if not locked:
+            raise RuntimeError("Legacy API client is busy, please retry")
+
+        try:
+            if not self.ace_api_client:
+                raise RuntimeError("Legacy API session is not active")
+            issued = self.ace_api_client.save_stream(target_infohash, index=index, path=path)
+        finally:
+            self._legacy_api_lock.release()
+
+        if not issued:
+            raise RuntimeError("SAVE command was not accepted")
+
+        return {
+            "status": "save_issued",
+            "infohash": target_infohash,
+            "index": int(index),
+            "path": str(path),
+        }
+
+    def _apply_pending_seek_switch(self):
+        """Switch HTTP reader to a newly-seeked playback URL without tearing down stream state."""
+        pending = None
+        with self._reader_lock:
+            if self._pending_seek_start_info:
+                pending = dict(self._pending_seek_start_info)
+                self._pending_seek_start_info = None
+
+        if not pending:
+            return False
+
+        next_url = pending.get("url")
+        if not next_url:
+            return False
+
+        logger.info(
+            "Applying LIVESEEK playback switch for content_id=%s target_url=%s",
+            self.content_id,
+            next_url,
+        )
+
+        with self._reader_lock:
+            old_reader = self.http_reader
+            old_socket = self.socket
+
+            self.connected = False
+
+            if old_reader:
+                try:
+                    old_reader.stop()
+                except Exception as e:
+                    logger.debug("Failed to stop previous HTTP reader during LIVESEEK switch: %s", e)
+
+            if old_socket:
+                try:
+                    old_socket.close()
+                except Exception:
+                    pass
+
+            self.playback_url = next_url
+            if pending.get("playback_session_id"):
+                self.playback_session_id = pending.get("playback_session_id")
+
+        if not self.start_stream():
+            raise RuntimeError("Failed to restart HTTP stream reader after LIVESEEK")
+
+        self.last_data_time = time.time()
+        return True
     
     def run(self):
         """Main execution loop with resilient hot-failover support"""
@@ -557,21 +833,26 @@ class StreamManager:
         from ..services.performance_metrics import Timer, performance_metrics
         
         chunk_count = 0
-        
-        # Set socket to non-blocking mode for better performance
-        # This allows us to check for data availability without long blocking waits
-        try:
-            import fcntl
-            import os as os_module
-            fd = self.socket.fileno()
-            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-            fcntl.fcntl(fd, fcntl.F_SETFL, flags | os_module.O_NONBLOCK)
-            logger.debug(f"Set socket to non-blocking mode for content_id={self.content_id}")
-        except Exception as e:
-            logger.warning(f"Could not set socket to non-blocking mode: {e}, using blocking mode with short timeout")
+
+        def _set_socket_non_blocking(sock_obj):
+            # Set socket to non-blocking mode for better performance.
+            try:
+                import fcntl
+                import os as os_module
+                fd = sock_obj.fileno()
+                flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+                fcntl.fcntl(fd, fcntl.F_SETFL, flags | os_module.O_NONBLOCK)
+                logger.debug(f"Set socket to non-blocking mode for content_id={self.content_id}")
+            except Exception as e:
+                logger.warning(f"Could not set socket to non-blocking mode: {e}, using blocking mode with short timeout")
+
+        _set_socket_non_blocking(self.socket)
         
         while self.running and self.connected:
             try:
+                if self._apply_pending_seek_switch():
+                    _set_socket_non_blocking(self.socket)
+
                 # Use select with short timeout for responsive shutdown and health checks
                 # Reduced from 5.0s to 0.5s for better responsiveness
                 import select
@@ -616,7 +897,7 @@ class StreamManager:
 
     def collect_legacy_stats_probe(self, samples: int = 1, per_sample_timeout_s: float = 1.0, force: bool = False):
         """Return a status probe for the active legacy API session, if available."""
-        if self.control_mode != "LEGACY_API" or not self.ace_api_client or not self.running:
+        if not self._is_api_mode() or not self.ace_api_client or not self.running:
             return None
 
         now = time.monotonic()
@@ -687,7 +968,7 @@ class StreamManager:
                 "Skipping engine stop for content_id=%s because session is owned by monitoring",
                 self.content_id,
             )
-        elif self.control_mode == "LEGACY_API" and self.ace_api_client:
+        elif self._is_api_mode() and self.ace_api_client:
             try:
                 with self._legacy_api_lock:
                     if self.ace_api_client:
@@ -738,6 +1019,7 @@ class StreamManager:
         self.legacy_status_probe = None
         self._legacy_probe_cache = None
         self._legacy_probe_cache_ts = 0.0
+        self._pending_seek_start_info = None
 
     def _cleanup(self):
         """Cleanup resources"""

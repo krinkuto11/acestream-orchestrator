@@ -21,23 +21,14 @@ def test_stats_endpoints_use_optimized_functions():
     assert main.get_total_stats == get_total_stats
 
 
-@patch('app.main.get_multiple_container_stats')
-@patch('app.services.state.state')
-def test_get_all_engine_stats_endpoint(mock_state, mock_stats):
+@patch('app.main.docker_stats_collector.get_all_stats')
+def test_get_all_engine_stats_endpoint(mock_get_all_stats):
     """Test /engines/stats/all endpoint uses the optimized stats function."""
     from app.main import app
     from fastapi.testclient import TestClient
-    
-    # Mock state to return some engines
-    mock_engine1 = MagicMock()
-    mock_engine1.container_id = 'container1'
-    mock_engine2 = MagicMock()
-    mock_engine2.container_id = 'container2'
-    
-    mock_state.list_engines.return_value = [mock_engine1, mock_engine2]
-    
+
     # Mock the stats function
-    mock_stats.return_value = {
+    mock_get_all_stats.return_value = {
         'container1': {
             'container_id': 'container1',
             'cpu_percent': 1.0,
@@ -66,7 +57,7 @@ def test_get_all_engine_stats_endpoint(mock_state, mock_stats):
     response = client.get('/engines/stats/all')
     
     # Verify the function was called
-    mock_stats.assert_called_once()
+    mock_get_all_stats.assert_called_once()
     
     # Verify response
     assert response.status_code == 200
@@ -75,29 +66,14 @@ def test_get_all_engine_stats_endpoint(mock_state, mock_stats):
     assert 'container2' in data
 
 
-@patch('app.main.get_total_stats')
-@patch('app.services.state.state')
-@patch('app.services.cache.get_cache')
-def test_get_total_engine_stats_endpoint(mock_cache, mock_state, mock_stats):
+@patch('app.main.docker_stats_collector.get_total_stats')
+def test_get_total_engine_stats_endpoint(mock_get_total_stats):
     """Test /engines/stats/total endpoint uses the optimized stats function."""
     from app.main import app
     from fastapi.testclient import TestClient
-    
-    # Mock cache to always miss
-    mock_cache_instance = MagicMock()
-    mock_cache_instance.get.return_value = None
-    mock_cache.return_value = mock_cache_instance
-    
-    # Mock state to return some engines
-    mock_engine1 = MagicMock()
-    mock_engine1.container_id = 'container1'
-    mock_engine2 = MagicMock()
-    mock_engine2.container_id = 'container2'
-    
-    mock_state.list_engines.return_value = [mock_engine1, mock_engine2]
-    
+
     # Mock total stats
-    mock_stats.return_value = {
+    mock_get_total_stats.return_value = {
         'total_cpu_percent': 4.0,
         'total_memory_usage': 3000000,
         'total_network_rx_bytes': 4000,
@@ -111,7 +87,7 @@ def test_get_total_engine_stats_endpoint(mock_cache, mock_state, mock_stats):
     response = client.get('/engines/stats/total')
     
     # Verify the function was called
-    mock_stats.assert_called_once()
+    mock_get_total_stats.assert_called_once()
     
     # Verify response
     assert response.status_code == 200

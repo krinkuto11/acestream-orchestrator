@@ -35,7 +35,19 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Stage 4: Final runtime image with Distroless
+# Stage 4: Install FFmpeg and collect binary + shared libraries (Debian 12 for ABI match)
+FROM debian:12-slim AS ffmpeg-builder
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg && \
+    mkdir -p /ffmpeg-bundle && \
+    # Preserve original paths for binaries and their shared libraries
+    cp --parents /usr/bin/ffmpeg /ffmpeg-bundle/ && \
+    cp --parents /usr/bin/ffprobe /ffmpeg-bundle/ && \
+    ldd /usr/bin/ffmpeg | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp --parents '{}' /ffmpeg-bundle/ && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Stage 5: Final runtime image with Distroless
 FROM gcr.io/distroless/python3-debian12:latest
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
@@ -52,6 +64,9 @@ COPY --from=panel-builder /build/panel ./app/static/panel
 
 # Copy Redis binaries and libraries (preserves original architecture-specific paths)
 COPY --from=redis-builder /redis-bundle/ /
+
+# Copy FFmpeg binaries and libraries for API-mode HLS segmenting
+COPY --from=ffmpeg-builder /ffmpeg-bundle/ /
 
 # Create a startup script for handling Redis + app
 COPY --chmod=755 <<'EOF' /app/start.py

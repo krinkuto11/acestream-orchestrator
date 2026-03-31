@@ -46,16 +46,16 @@ The AceStream Orchestrator uses a UI-driven configuration system. All settings a
 
 ## Proxy Settings
 - **Stream Mode**: `TS` (MPEG-TS) or `HLS`.
-- **Engine Control Mode**: `LEGACY_HTTP` (default) or `LEGACY_API` (socket control).
+- **Engine Control Mode**: `http` (default) or `api` (socket control).
 - **Connection Timeouts**: Timeouts for client/stream/chunk handling.
 - **Buffer Settings**: Initial chunk buffer and chunk sizes.
 
 ### Proxy Mode Compatibility
 
-- `HLS` requires `LEGACY_HTTP` control mode.
-- `LEGACY_API` requires `TS` stream mode.
+- `HLS` is supported in both control modes.
+- Legacy aliases (`LEGACY_HTTP`, `LEGACY_API`) are accepted and normalized to canonical values.
 
-The API enforces these constraints and the panel prevents unsupported combinations.
+The API validates control mode values and normalizes legacy aliases for backward compatibility.
 
 ### Preflight Diagnostics
 
@@ -68,7 +68,7 @@ Tier behavior:
 - `light`: resolve and canonicalize only
 - `deep`: resolve + start + short status/livepos sampling + stop
 
-Use preflight to validate content before opening client sessions, especially when tuning `LEGACY_API` behavior.
+Use preflight to validate content before opening client sessions, especially when tuning `api` behavior.
 
 ---
 
@@ -172,7 +172,7 @@ A ready-to-use template with all variables is provided in [`.env.example`](../.e
 | `DASHBOARD_DEFAULT_WINDOW_S` | `900` | Default dashboard time window in seconds. |
 | `DASHBOARD_PERSIST_INTERVAL_S` | `5` | Seconds between dashboard metric persistence flushes. |
 | `DASHBOARD_METRICS_RETENTION_HOURS` | `168` | Hours to retain dashboard metric history in the database. |
-| `LEGACY_STATS_PROBE_WORKERS` | `8` | Concurrent workers for LEGACY_API stats probing. |
+| `LEGACY_STATS_PROBE_WORKERS` | `8` | Concurrent workers for API-mode stats probing. |
 
 ### Stream Loop Detection
 
@@ -188,7 +188,7 @@ A ready-to-use template with all variables is provided in [`.env.example`](../.e
 | Variable | Default | Description |
 |---|---|---|
 | `PROXY_STREAM_MODE` | `TS` | **[UI]** Stream delivery mode: `TS` (MPEG-TS) or `HLS`. |
-| `PROXY_CONTROL_MODE` | `LEGACY_HTTP` | **[UI]** Stream control path: `LEGACY_HTTP` or `LEGACY_API`. Note: `HLS` requires `LEGACY_HTTP`; `LEGACY_API` requires `TS`. |
+| `PROXY_CONTROL_MODE` | `http` | **[UI]** Stream control path: `http` or `api`. Legacy aliases (`LEGACY_HTTP`, `LEGACY_API`) are accepted and normalized. |
 | `PROXY_LEGACY_API_PREFLIGHT_TIER` | `light` | **[UI]** Preflight depth: `light` (resolve only) or `deep` (resolve + probe + stop). |
 | `PROXY_CONNECTION_TIMEOUT` | `10` | Seconds before a connection attempt to an engine times out. |
 | `PROXY_CLIENT_WAIT_TIMEOUT` | `30` | Seconds a client waits for an engine to accept the stream. |

@@ -67,7 +67,7 @@ function StreamProgressBar({ streamId, orchUrl, apiKey }) {
       }
 
       const response = await fetch(
-        `${orchUrl}/streams/${encodeURIComponent(streamId)}/livepos`,
+        `${orchUrl}/api/v1/streams/${encodeURIComponent(streamId)}/livepos`,
         { headers }
       )
 

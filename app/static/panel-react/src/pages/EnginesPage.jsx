@@ -59,7 +59,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const loadEngineSettings = useCallback(async () => {
     try {
       setLoadingSettings(true)
-      const settings = await fetchJSON(`${orchUrl}/settings/engine`)
+      const settings = await fetchJSON(`${orchUrl}/api/v1/settings/engine`)
       setEngineSettings(settings)
       setSettingsChanged(false)
     } catch (err) {
@@ -73,7 +73,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   // Load cache statistics
   const loadCacheStats = useCallback(async () => {
     try {
-      const stats = await fetchJSON(`${orchUrl}/engine-cache/stats`)
+      const stats = await fetchJSON(`${orchUrl}/api/v1/engine-cache/stats`)
       setCacheStats(stats)
     } catch (err) {
       console.error('Failed to load cache stats:', err)
@@ -101,7 +101,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   useEffect(() => {
     const checkReprovisionStatus = async () => {
       try {
-        const status = await fetchJSON(`${orchUrl}/custom-variant/reprovision/status`)
+        const status = await fetchJSON(`${orchUrl}/api/v1/custom-variant/reprovision/status`)
         const wasReprovisioning = isReprovisioning
 
         setReprovisionStatus(status)
@@ -154,7 +154,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     try {
       setSavingSettings(true)
 
-      await fetchJSON(`${orchUrl}/settings/engine`, {
+      await fetchJSON(`${orchUrl}/api/v1/settings/engine`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -422,7 +422,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                       const savePromise = settingsChanged ? handleSaveSettings() : Promise.resolve()
                       savePromise.then(() => {
                         // Trigger reprovision after saving
-                        fetchJSON(`${orchUrl}/custom-variant/reprovision`, {
+                        fetchJSON(`${orchUrl}/api/v1/custom-variant/reprovision`, {
                           method: 'POST',
                           headers: {
                             'Authorization': `Bearer ${apiKey}`

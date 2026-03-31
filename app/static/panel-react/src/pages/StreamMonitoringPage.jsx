@@ -201,6 +201,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
   const [m3uStarting, setM3uStarting] = useState(false)
   const [newMonitor, setNewMonitor] = useState({
     content_id: '',
+    live_delay: '',
     interval_s: '1.0',
     run_seconds: '0',
   })
@@ -247,12 +248,12 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
 
     try {
       const [monitorResponse, streamsResponse] = await Promise.all([
-        fetch(`${orchUrl}/ace/monitor/legacy`, {
+        fetch(`${orchUrl}/api/v1/ace/monitor/legacy`, {
           headers: {
             Authorization: `Bearer ${apiKey}`,
           },
         }),
-        fetch(`${orchUrl}/streams?status=started`, {
+        fetch(`${orchUrl}/api/v1/streams?status=started`, {
           headers: {
             Authorization: `Bearer ${apiKey}`,
           },
@@ -319,7 +320,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     setActionError(null)
 
     try {
-      const response = await fetch(`${orchUrl}/ace/monitor/legacy/start`, {
+      const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/start`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -328,6 +329,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
         body: JSON.stringify({
           content_id: contentId,
           stream_name: null,
+          live_delay: Number(newMonitor.live_delay || 0),
           interval_s: Number(newMonitor.interval_s || 1),
           run_seconds: Number(newMonitor.run_seconds || 0),
         }),
@@ -364,7 +366,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     setActionError(null)
 
     try {
-      const response = await fetch(`${orchUrl}/ace/monitor/legacy/${encodeURIComponent(monitorId)}`, {
+      const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/${encodeURIComponent(monitorId)}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -400,7 +402,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     setActionError(null)
 
     try {
-      const response = await fetch(`${orchUrl}/ace/monitor/legacy/${encodeURIComponent(monitorId)}/entry`, {
+      const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/${encodeURIComponent(monitorId)}/entry`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -573,7 +575,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
       for (const monitor of targetMonitors) {
         setStoppingById((prev) => ({ ...prev, [monitor.monitor_id]: true }))
         try {
-          const response = await fetch(`${orchUrl}/ace/monitor/legacy/${encodeURIComponent(monitor.monitor_id)}`, {
+          const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/${encodeURIComponent(monitor.monitor_id)}`, {
             method: 'DELETE',
             headers: {
               Authorization: `Bearer ${apiKey}`,
@@ -617,7 +619,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
       for (const monitor of selectedMonitors) {
         setDeletingById((prev) => ({ ...prev, [monitor.monitor_id]: true }))
         try {
-          const response = await fetch(`${orchUrl}/ace/monitor/legacy/${encodeURIComponent(monitor.monitor_id)}/entry`, {
+          const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/${encodeURIComponent(monitor.monitor_id)}/entry`, {
             method: 'DELETE',
             headers: {
               Authorization: `Bearer ${apiKey}`,
@@ -673,7 +675,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     setM3uParsing(true)
     setActionError(null)
     try {
-      const response = await fetch(`${orchUrl}/ace/monitor/legacy/parse-m3u`, {
+      const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/parse-m3u`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -729,7 +731,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     try {
       for (const entry of selectedEntries) {
         try {
-          const response = await fetch(`${orchUrl}/ace/monitor/legacy/start`, {
+          const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/start`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -738,6 +740,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
             body: JSON.stringify({
               content_id: entry.content_id,
               stream_name: entry.name || null,
+              live_delay: Number(newMonitor.live_delay || 0),
               interval_s: Number(newMonitor.interval_s || 1),
               run_seconds: Number(newMonitor.run_seconds || 0),
             }),
@@ -779,12 +782,21 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-2 md:grid-cols-5">
+          <div className="grid gap-2 md:grid-cols-6">
             <Input
               className="md:col-span-3"
               placeholder="content_id / infohash"
               value={newMonitor.content_id}
               onChange={(e) => setNewMonitor((prev) => ({ ...prev, content_id: e.target.value }))}
+            />
+            <Input
+              type="number"
+              min="0"
+              step="1"
+              placeholder="live_delay"
+              title="Starts live streams slightly behind the live edge to improve buffer stability. 0 disables this feature."
+              value={newMonitor.live_delay}
+              onChange={(e) => setNewMonitor((prev) => ({ ...prev, live_delay: e.target.value }))}
             />
             <Input
               type="number"
@@ -808,7 +820,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
               <PlayCircle className="mr-1 h-4 w-4" />
               {starting ? 'Starting...' : 'Start Monitor'}
             </Button>
-            <span className="text-xs text-muted-foreground">interval default 1s, run_seconds 0 means continuous</span>
+            <span className="text-xs text-muted-foreground">live_delay 0 disables seekback, interval default 1s, run_seconds 0 means continuous</span>
           </div>
 
           <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900/50">

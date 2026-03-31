@@ -32,12 +32,12 @@ Route:
 	- `TS`: MPEG-TS output
 	- `HLS`: HLS manifest + segments
 3. Choose Engine Control Mode:
-	- `LEGACY_HTTP`: default `/ace/getstream` control flow
-	- `LEGACY_API`: socket control flow (`HELLOBG/READY/LOADASYNC/START`)
+	- `http`: default `/ace/getstream` control flow
+	- `api`: socket control flow (`HELLOBG/READY/LOADASYNC/START`)
 
 Notes:
-- `HLS` requires `LEGACY_HTTP`.
-- `LEGACY_API` is supported only with `TS`.
+- `HLS` is supported in both control modes.
+- Legacy values (`LEGACY_HTTP`, `LEGACY_API`) are still accepted and normalized.
 
 ### Run preflight diagnostics from GUI
 
@@ -61,7 +61,7 @@ Expanded stream details now include:
 - Resolved canonical infohash (`stream.resolved_infohash`) when available
 - Conditional action links for `stat_url` and `command_url`
 
-In `LEGACY_API` mode, direct `stat_url` or `command_url` can be unavailable for some sessions. The panel now renders this as informational text instead of broken links.
+In `api` mode, direct `stat_url` or `command_url` can be unavailable for some sessions. The panel now renders this as informational text instead of broken links.
 
 ## Common Tasks
 
@@ -104,7 +104,7 @@ In `LEGACY_API` mode, direct `stat_url` or `command_url` can be unavailable for 
 
 ### Streams show unavailable command/stat URLs
 
-- This is expected in some `LEGACY_API` flows.
+- This is expected in some `api` flows.
 - Use labels and diagnostics fields in expanded stream view.
 
 ## Build The Panel Locally

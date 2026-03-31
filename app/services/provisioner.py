@@ -180,6 +180,18 @@ def stop_container(container_id: str):
             
         cont.remove()
 
+
+def clear_acestream_cache(container_id: Optional[str] = None) -> bool:
+    """Backward-compatible cache cleanup hook used by legacy tests and scripts."""
+    try:
+        from .engine_cache_manager import engine_cache_manager
+        if container_id:
+            engine_cache_manager.cleanup_cache(container_id)
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to clear AceStream cache for {container_id or 'all'}: {e}")
+        return False
+
 def _parse_conf_port(conf_string, port_type="http"):
     """
     Parse a CONF string to extract port number for given type.
@@ -313,12 +325,12 @@ def get_variant_config(variant: str) -> dict:
             "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "52428800", "--live-buffer", "25", "--disable-sentry", "--log-stdout", "--disable-upnp"],
         },
         "AceServe-arm32": {
-            "image": "ghcr.io/krinkuto11/acestream:base-arm32",
+            "image": "ghcr.io/krinkuto11/acestream:latest-arm32",
             "config_type": "cmd",
             "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--live-buffer", "25", "--disable-sentry", "--log-stdout", "--disable-upnp"],
         },
         "AceServe-arm64": {
-            "image": "ghcr.io/krinkuto11/acestream:base-arm64",
+            "image": "ghcr.io/krinkuto11/acestream:latest-arm64",
             "config_type": "cmd",
             "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--live-buffer", "25", "--disable-sentry", "--log-stdout", "--disable-upnp"],
         }

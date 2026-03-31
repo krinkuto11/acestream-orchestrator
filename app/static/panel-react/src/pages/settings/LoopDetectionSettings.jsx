@@ -24,7 +24,7 @@ export function LoopDetectionSettings({ apiKey, orchUrl }) {
 
   const fetchLoopDetectionConfig = async () => {
     try {
-      const response = await fetch(`${orchUrl}/stream-loop-detection/config`)
+      const response = await fetch(`${orchUrl}/api/v1/stream-loop-detection/config`)
       if (response.ok) {
         const data = await response.json()
         setLoopDetectionEnabled(data.enabled)
@@ -40,7 +40,7 @@ export function LoopDetectionSettings({ apiKey, orchUrl }) {
   const fetchLoopingStreams = async () => {
     setLoopingStreamsLoading(true)
     try {
-      const response = await fetch(`${orchUrl}/looping-streams`)
+      const response = await fetch(`${orchUrl}/api/v1/looping-streams`)
       if (response.ok) {
         const data = await response.json()
         setLoopingStreams(Object.entries(data.streams || {}).map(([id, time]) => ({ id, time })))
@@ -59,7 +59,7 @@ export function LoopDetectionSettings({ apiKey, orchUrl }) {
     }
 
     try {
-      const response = await fetch(`${orchUrl}/looping-streams/${streamId}`, {
+      const response = await fetch(`${orchUrl}/api/v1/looping-streams/${streamId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${apiKey}`
@@ -85,7 +85,7 @@ export function LoopDetectionSettings({ apiKey, orchUrl }) {
     }
 
     try {
-      const response = await fetch(`${orchUrl}/looping-streams/clear`, {
+      const response = await fetch(`${orchUrl}/api/v1/looping-streams/clear`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`
@@ -117,7 +117,7 @@ export function LoopDetectionSettings({ apiKey, orchUrl }) {
     try {
       const thresholdSeconds = loopDetectionThresholdMinutes * 60
       const response = await fetch(
-        `${orchUrl}/stream-loop-detection/config?enabled=${loopDetectionEnabled}&threshold_seconds=${thresholdSeconds}&check_interval_seconds=${loopDetectionCheckIntervalSeconds}&retention_minutes=${loopDetectionRetentionMinutes}`,
+        `${orchUrl}/api/v1/stream-loop-detection/config?enabled=${loopDetectionEnabled}&threshold_seconds=${thresholdSeconds}&check_interval_seconds=${loopDetectionCheckIntervalSeconds}&retention_minutes=${loopDetectionRetentionMinutes}`,
         {
           method: 'POST',
           headers: {

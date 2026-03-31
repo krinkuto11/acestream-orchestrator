@@ -136,6 +136,14 @@ _last_proxy_egress_rate_bps = 0.0
 _last_proxy_rate_ts: Optional[float] = None
 _dashboard_last_persist_ts: Optional[float] = None
 
+# Per-engine proxy ingress tracking
+_engine_ingress_lock = threading.Lock()
+_last_engine_ingress_bytes: Dict[str, int] = {}      # container_id -> total ingress bytes
+_last_engine_ingress_sample_ts: Optional[float] = None
+_engine_ingress_rate_bps: Dict[str, float] = {}       # container_id -> rate in bytes/s
+_last_engine_ingress_rate_bps: Dict[str, float] = {}  # held rates for zero-spike smoothing
+_last_engine_rate_ts: Optional[float] = None
+
 _docker_rate_lock = threading.Lock()
 _last_network_rx_bytes: Optional[int] = None
 _last_network_tx_bytes: Optional[int] = None
@@ -223,24 +231,85 @@ def observe_proxy_egress_bytes(mode: str, byte_count: int):
         _proxy_egress_observed_bytes += int(byte_count)
 
 
-def _compute_proxy_clients_snapshot() -> Dict[str, int]:
-    """Best-effort snapshot of active clients for TS and HLS proxies."""
-    ts_clients = 0
-    hls_clients = 0
+class ClientRateTracker:
+    def __init__(self):
+        self._last_stats = {}  # (client_id, stream_id) -> (last_bytes, last_ts)
+        self._lock = threading.Lock()
+
+    def update_and_get_rate(self, client_id: str, stream_id: str, current_bytes: float, current_ts: float) -> float:
+        key = (client_id, stream_id)
+        with self._lock:
+            last = self._last_stats.get(key)
+            self._last_stats[key] = (current_bytes, current_ts)
+            if last is None:
+                return 0.0
+            last_bytes, last_ts = last
+            delta_bytes = current_bytes - last_bytes
+            delta_time = current_ts - last_ts
+            if delta_time <= 0 or delta_bytes < 0:
+                return 0.0
+            return delta_bytes / delta_time
+
+    def cleanup(self, active_keys: Set[tuple]):
+        with self._lock:
+            self._last_stats = {k: v for k, v in self._last_stats.items() if k in active_keys}
+
+
+_client_rate_tracker = ClientRateTracker()
+
+
+def _compute_proxy_clients_snapshot() -> Dict[str, Any]:
+    """Best-effort snapshot of active clients for TS and HLS proxies with detailed metadata."""
+    ts_clients_count = 0
+    hls_clients_count = 0
+    client_list = []
+    active_tracker_keys = set()
+    now = time.time()
 
     try:
         from ..proxy.manager import ProxyManager
+        from ..proxy.redis_keys import RedisKeys
+        from .state import state
 
         proxy = ProxyManager.get_instance()
         redis_client = getattr(proxy, "redis_client", None)
         if redis_client:
-            from .state import state
-            from ..proxy.redis_keys import RedisKeys
-
             stream_keys = [s.key for s in state.list_streams(status="started") if s.key]
             for stream_key in stream_keys:
                 try:
-                    ts_clients += int(redis_client.scard(RedisKeys.clients(stream_key)) or 0)
+                    client_ids = redis_client.smembers(RedisKeys.clients(stream_key))
+                    if not client_ids:
+                        continue
+                    
+                    for cid_bytes in client_ids:
+                        client_id = cid_bytes.decode('utf-8') if isinstance(cid_bytes, bytes) else str(cid_bytes)
+                        ts_clients_count += 1
+                        
+                        # Fetch metadata
+                        meta_key = RedisKeys.client_metadata(stream_key, client_id)
+                        meta = redis_client.hgetall(meta_key)
+                        if not meta:
+                            continue
+                            
+                        # Decode meta
+                        d_meta = {k.decode('utf-8') if isinstance(k, bytes) else k: 
+                                 v.decode('utf-8') if isinstance(v, bytes) else v 
+                                 for k, v in meta.items()}
+                        
+                        bytes_sent = float(d_meta.get("bytes_sent") or 0.0)
+                        bps = _client_rate_tracker.update_and_get_rate(client_id, stream_key, bytes_sent, now)
+                        active_tracker_keys.add((client_id, stream_key))
+                        
+                        client_list.append({
+                            "id": client_id,
+                            "stream_id": stream_key,
+                            "ip": d_meta.get("ip_address", "unknown"),
+                            "ua": d_meta.get("user_agent", "unknown"),
+                            "type": "TS",
+                            "bps": bps,
+                            "bytes_sent": bytes_sent,
+                            "connected_at": float(d_meta.get("connected_at") or now)
+                        })
                 except Exception:
                     continue
     except Exception:
@@ -248,22 +317,64 @@ def _compute_proxy_clients_snapshot() -> Dict[str, int]:
 
     try:
         from ..proxy.hls_proxy import HLSProxyServer
+        from .hls_segmenter import hls_segmenter_service
 
         hls_proxy = HLSProxyServer.get_instance()
+        # Non-API HLS clients (from HLSProxyServer managers)
         managers = getattr(hls_proxy, "client_managers", {}) or {}
-        for manager in managers.values():
+        for channel_id, manager in managers.items():
             try:
                 with manager.lock:
-                    hls_clients += len(manager.last_activity)
+                    for client_id, payload in manager.clients.items():
+                        hls_clients_count += 1
+                        bytes_sent = float(payload.get("bytes_sent") or 0.0)
+                        bps = _client_rate_tracker.update_and_get_rate(client_id, channel_id, bytes_sent, now)
+                        active_tracker_keys.add((client_id, channel_id))
+                        
+                        client_list.append({
+                            "id": client_id,
+                            "stream_id": channel_id,
+                            "ip": payload.get("ip_address", "unknown"),
+                            "ua": payload.get("user_agent", "unknown"),
+                            "type": "HLS",
+                            "bps": bps,
+                            "bytes_sent": bytes_sent,
+                            "connected_at": float(payload.get("connected_at") or now)
+                        })
+            except Exception:
+                continue
+
+        # API-mode HLS clients (from segmenter sessions)
+        for monitor_id, session in getattr(hls_segmenter_service, "_sessions", {}).items():
+            try:
+                for client_id, payload in session.clients.items():
+                    hls_clients_count += 1
+                    bytes_sent = float(payload.get("bytes_sent") or 0.0)
+                    bps = _client_rate_tracker.update_and_get_rate(client_id, monitor_id, bytes_sent, now)
+                    active_tracker_keys.add((client_id, monitor_id))
+                    
+                    client_list.append({
+                        "id": client_id,
+                        "stream_id": monitor_id,
+                        "ip": payload.get("ip_address", "unknown"),
+                        "ua": payload.get("user_agent", "unknown"),
+                        "type": "HLS",
+                        "bps": bps,
+                        "bytes_sent": bytes_sent,
+                        "connected_at": float(payload.get("connected_at") or now)
+                    })
             except Exception:
                 continue
     except Exception:
         pass
 
+    _client_rate_tracker.cleanup(active_tracker_keys)
+
     return {
-        "ts": ts_clients,
-        "hls": hls_clients,
-        "total": ts_clients + hls_clients,
+        "ts": ts_clients_count,
+        "hls": hls_clients_count,
+        "total": ts_clients_count + hls_clients_count,
+        "list": client_list,
     }
 
 
@@ -438,6 +549,115 @@ def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
             "egress_rate_bps": round(max(0.0, egress_rate_bps), 2),
         }
 
+
+def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
+    """Compute per-engine proxy ingress rates in bytes/s.
+
+    Maps each stream's buffer ingress to the engine (container_id) that owns it,
+    then computes delta-based rates per engine.
+    Returns: {container_id: ingress_rate_bps, ...}
+    """
+    from .state import state
+
+    now = time.time()
+    current_engine_bytes: Dict[str, int] = {}  # container_id -> total ingress bytes
+
+    try:
+        from ..proxy.manager import ProxyManager
+        from ..proxy.redis_keys import RedisKeys
+        from ..proxy.config_helper import Config as ProxyConfig
+
+        proxy = ProxyManager.get_instance()
+        redis_client = getattr(proxy, "redis_client", None)
+        if redis_client:
+            active_streams = state.list_streams(status="started")
+            if not active_streams:
+                active_streams = state.list_streams()
+            chunk_size = int(getattr(ProxyConfig, "BUFFER_CHUNK_SIZE", 188 * 5644))
+
+            # Build stream_key -> container_id mapping
+            stream_to_engine: Dict[str, str] = {}
+            for s in active_streams:
+                if s.key and s.container_id:
+                    stream_to_engine[s.key] = s.container_id
+
+            for stream_key, container_id in stream_to_engine.items():
+                try:
+                    buffer_index_raw = redis_client.get(RedisKeys.buffer_index(stream_key))
+                    buffer_index = int(buffer_index_raw or 0)
+                    ingress_bytes = max(0, buffer_index) * chunk_size
+                    current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + ingress_bytes
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    # Also attribute HLS ingress per-engine via HLS segmenter stream ownership
+    try:
+        from ..proxy.hls_proxy import HLSProxyServer
+
+        hls_proxy = HLSProxyServer.get_instance()
+        managers = getattr(hls_proxy, "client_managers", {}) or {}
+        active_streams = state.list_streams(status="started")
+        stream_to_engine: Dict[str, str] = {}
+        for s in active_streams:
+            if s.key and s.container_id:
+                stream_to_engine[s.key] = s.container_id
+
+        for stream_key, manager in managers.items():
+            container_id = stream_to_engine.get(stream_key)
+            if not container_id:
+                continue
+            try:
+                total_fetched = getattr(manager, "total_bytes_fetched", 0) or 0
+                if total_fetched > 0:
+                    current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + int(total_fetched)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    global _last_engine_ingress_bytes, _last_engine_ingress_sample_ts
+    global _engine_ingress_rate_bps, _last_engine_ingress_rate_bps, _last_engine_rate_ts
+
+    rate_hold_seconds = 10.0
+    result: Dict[str, float] = {}
+
+    with _engine_ingress_lock:
+        if _last_engine_ingress_sample_ts is not None and now > _last_engine_ingress_sample_ts:
+            elapsed = now - _last_engine_ingress_sample_ts
+            if elapsed > 0:
+                all_engine_ids = set(current_engine_bytes.keys()) | set(_last_engine_ingress_bytes.keys())
+                fresh_rates: Dict[str, float] = {}
+                has_any_positive = False
+
+                for cid in all_engine_ids:
+                    cur = current_engine_bytes.get(cid, 0)
+                    prev = _last_engine_ingress_bytes.get(cid, 0)
+                    if cur >= prev and prev > 0:
+                        rate = max(0.0, (cur - prev) / elapsed)
+                    else:
+                        rate = 0.0
+                    fresh_rates[cid] = rate
+                    if rate > 0:
+                        has_any_positive = True
+
+                if has_any_positive:
+                    _engine_ingress_rate_bps = fresh_rates
+                    _last_engine_ingress_rate_bps = dict(fresh_rates)
+                    _last_engine_rate_ts = now
+                elif _last_engine_rate_ts is not None and (now - _last_engine_rate_ts) <= rate_hold_seconds:
+                    _engine_ingress_rate_bps = dict(_last_engine_ingress_rate_bps)
+                else:
+                    _engine_ingress_rate_bps = {}
+                    _last_engine_ingress_rate_bps = {}
+                    _last_engine_rate_ts = None
+
+        _last_engine_ingress_bytes = current_engine_bytes
+        _last_engine_ingress_sample_ts = now
+        result = dict(_engine_ingress_rate_bps)
+
+    return result
 
 def _persist_dashboard_sample(snapshot: Dict[str, Any]):
     """Persist snapshot sample points for windowed dashboard history."""
@@ -655,7 +875,14 @@ def get_dashboard_snapshot(window_seconds: int = 900, max_points: int = 360) -> 
             total_peers += int(stream.peers)
 
         livepos = getattr(stream, "livepos", None)
-        if livepos and getattr(livepos, "buffer_pieces", None) is not None:
+        proxy_buffer = getattr(stream, "proxy_buffer_pieces", None)
+        
+        if proxy_buffer is not None:
+            try:
+                buffer_pieces.append(int(proxy_buffer))
+            except Exception:
+                continue
+        elif livepos and getattr(livepos, "buffer_pieces", None) is not None:
             try:
                 buffer_pieces.append(int(livepos.buffer_pieces))
             except Exception:
@@ -680,6 +907,7 @@ def get_dashboard_snapshot(window_seconds: int = 900, max_points: int = 360) -> 
     proxy_clients = _compute_proxy_clients_snapshot()
     proxy_window = _compute_proxy_window_snapshot()
     proxy_throughput = _compute_proxy_throughput_snapshot()
+    proxy_engine_ingress = _compute_per_engine_ingress_snapshot()
     window_totals = _compute_window_throughput_totals(window_seconds=window_seconds)
     docker_metrics = _compute_docker_metrics_snapshot()
 
@@ -694,6 +922,7 @@ def get_dashboard_snapshot(window_seconds: int = 900, max_points: int = 360) -> 
         "proxy": {
             "active_clients": proxy_clients,
             "request_window_1m": proxy_window,
+            "engine_ingress_bps": proxy_engine_ingress,
             "throughput": {
                 "ingress_mbps": round((proxy_throughput["ingress_rate_bps"] * 8.0) / 1_000_000.0, 3),
                 "egress_mbps": round((proxy_throughput["egress_rate_bps"] * 8.0) / 1_000_000.0, 3),
