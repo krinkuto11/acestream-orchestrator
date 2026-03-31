@@ -7,10 +7,15 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { TopologyNode } from '@/components/topology/TopologyNode'
+import { TopologyEdge } from '@/components/topology/TopologyEdge'
 import { useTopologyStore } from '@/stores/topologyStore'
 
 const nodeTypes = {
   topologyNode: TopologyNode,
+}
+
+const edgeTypes = {
+  topologyEdge: TopologyEdge,
 }
 
 const formatLastUpdate = (iso) => {
@@ -174,6 +179,7 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
                 fitView
                 fitViewOptions={{ padding: 0.2 }}
                 minZoom={0.3}

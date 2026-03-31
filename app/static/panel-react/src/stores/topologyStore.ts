@@ -301,13 +301,14 @@ const buildSnapshot = ({
 
     edges.push({
       id: `${sourceTunnel}->${engine.container_id}`,
-      type: 'smoothstep',
+      type: 'topologyEdge',
       source: sourceTunnel,
       target: engine.container_id,
       animated: true,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps,
+        labelPosition: 'near-target',
       },
       style: {
         stroke: failoverActive ? '#f59e0b' : '#64748b',
@@ -318,13 +319,14 @@ const buildSnapshot = ({
 
     edges.push({
       id: `${engine.container_id}->${proxyNodeId}`,
-      type: 'smoothstep',
+      type: 'topologyEdge',
       source: engine.container_id,
       target: proxyNodeId,
       animated: true,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps,
+        labelPosition: 'near-source',
       },
       style: {
         stroke: '#60a5fa',
@@ -387,11 +389,14 @@ const buildSnapshot = ({
 
   edges.push({
     id: `${proxyNodeId}->${clientNodeId}`,
-    type: 'smoothstep',
+    type: 'topologyEdge',
     source: proxyNodeId,
     target: clientNodeId,
     animated: true,
     markerEnd: { type: MarkerType.ArrowClosed },
+    data: {
+      bandwidthMbps: totalBandwidthMbps,
+    },
     style: {
       stroke: '#22c55e',
       strokeWidth: clamp(2.4 + totalBandwidthMbps / 40, 2.4, 9),
