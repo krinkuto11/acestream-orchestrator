@@ -135,11 +135,9 @@ const buildSnapshot = ({
   lastUpdated: string
   isMockMode: boolean
 } => {
-  const hasRealEngines = Boolean(engines && engines.length)
-  const hasRealStreams = Boolean(streams && streams.length)
-  const isMockMode = !hasRealEngines
+  const isMockMode = !Boolean(engines && engines.length)
 
-  const workingEngines: EngineState[] = hasRealEngines
+  const workingEngines: EngineState[] = !isMockMode
     ? engines || []
     : Array.from({ length: 8 }).map((_, idx) => {
         const tunnel = idx % 2 === 0 ? 'vpn1' : 'vpn2'
@@ -158,7 +156,7 @@ const buildSnapshot = ({
         }
       })
 
-  const workingStreams: StreamState[] = hasRealStreams
+  const workingStreams: StreamState[] = !isMockMode
     ? streams || []
     : workingEngines.flatMap((engine, idx) => {
         const streamCount = idx % 3 === 0 ? 2 : 1
@@ -193,7 +191,7 @@ const buildSnapshot = ({
     streamMap.set(stream.container_id, entry)
   }
 
-  const tunnelConnectivity = deriveTunnelConnectivity(vpnStatus, hasRealEngines)
+  const tunnelConnectivity = deriveTunnelConnectivity(vpnStatus, !isMockMode)
   const vpnDown = (Object.entries(tunnelConnectivity)
     .filter(([, connected]) => !connected)
     .map(([id]) => id)) as TunnelId[]
@@ -217,7 +215,7 @@ const buildSnapshot = ({
       title: 'VPN Tunnel A',
       subtitle: vpnStatus?.vpn1?.container_name || 'gluetun-primary',
       health: tunnelConnectivity.vpn1 ? 'healthy' : 'down',
-      bandwidthMbps: randomBetween(120, 210),
+      bandwidthMbps: isMockMode ? randomBetween(120, 210) : 0,
       streamCount: 0,
       metadata: {
         connected: tunnelConnectivity.vpn1,
@@ -236,7 +234,7 @@ const buildSnapshot = ({
       title: 'VPN Tunnel B',
       subtitle: vpnStatus?.vpn2?.container_name || 'gluetun-secondary',
       health: tunnelConnectivity.vpn2 ? 'healthy' : 'down',
-      bandwidthMbps: randomBetween(90, 180),
+      bandwidthMbps: isMockMode ? randomBetween(90, 180) : 0,
       streamCount: 0,
       failoverActive: !tunnelConnectivity.vpn1 && tunnelConnectivity.vpn2,
       metadata: {
@@ -264,7 +262,7 @@ const buildSnapshot = ({
 
     const streamCount = engineStreams.length
     const measuredMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_down), 0)
-    const bandwidthMbps = measuredMbps > 0 ? measuredMbps : randomBetween(8, 72)
+    const bandwidthMbps = measuredMbps > 0 ? measuredMbps : (isMockMode ? randomBetween(8, 72) : 0)
 
     let health: TopologyNodeHealth = 'healthy'
     if (engine.health_status === 'unhealthy' || (!tunnelHealthy && !backupHealthy)) {
@@ -354,6 +352,13 @@ const buildSnapshot = ({
     return sum + (found?.data?.bandwidthMbps || 0)
   }, 0)
 
+  if (!isMockMode) {
+    const vpn1Node = nodes.find(n => n.id === vpn1NodeId)
+    const vpn2Node = nodes.find(n => n.id === vpn2NodeId)
+    if (vpn1Node) vpn1Node.data.bandwidthMbps = nodes.filter(n => n.data.kind === 'engine' && n.data.vpnTunnel === 'vpn1').reduce((s, n) => s + (n.data.bandwidthMbps || 0), 0)
+    if (vpn2Node) vpn2Node.data.bandwidthMbps = nodes.filter(n => n.data.kind === 'engine' && n.data.vpnTunnel === 'vpn2').reduce((s, n) => s + (n.data.bandwidthMbps || 0), 0)
+  }
+
   const activeStreams = orchestratorStatus?.streams?.active ?? workingStreams.length
   const activeClients = Math.max(activeStreams * 3, 9)
 
@@ -385,7 +390,7 @@ const buildSnapshot = ({
       subtitle: 'CDN and Player Sessions',
       health: 'healthy',
       streamCount: activeClients,
-      bandwidthMbps: clamp(totalBandwidthMbps * 0.86, 32, 520),
+      bandwidthMbps: isMockMode ? clamp(totalBandwidthMbps * 0.86, 32, 520) : totalBandwidthMbps * 0.86,
       metadata: {
         activeClients,
         hlsSessions: Math.round(activeClients * 0.66),
@@ -467,6 +472,10 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
     const state = get()
 
     if (!state.nodes.length || !state.edges.length) {
+      return
+    }
+
+    if (!state.isMockMode) {
       return
     }
 
