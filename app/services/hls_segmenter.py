@@ -210,6 +210,7 @@ class HLSSegmenterService:
         request_kind: str = "",
         bytes_sent: Optional[float] = None,
         chunks_sent: Optional[int] = None,
+        sequence: Optional[int] = None,
         now: Optional[float] = None,
     ) -> None:
         from .metrics import observe_proxy_client_connect
@@ -250,6 +251,8 @@ class HLSSegmenterService:
         request_count = int(existing.get("requests_total") or 0) + 1 if existing else 1
         existing_bytes = 0.0
         existing_chunks = 0
+        existing_sequence = existing.get("last_sequence") if existing else None
+        
         if existing:
             try:
                 existing_bytes = float(existing.get("bytes_sent") or 0.0)
@@ -259,6 +262,14 @@ class HLSSegmenterService:
                 existing_chunks = int(existing.get("chunks_sent") or 0)
             except (TypeError, ValueError):
                 existing_chunks = 0
+
+        # Update sequence only if it's greater than before (absolute progress)
+        last_sequence = existing_sequence
+        if sequence is not None:
+            if existing_sequence is None:
+                last_sequence = sequence
+            else:
+                last_sequence = max(existing_sequence, sequence)
 
         session.clients[normalized_client_id] = {
             "client_id": normalized_client_id,
@@ -271,6 +282,7 @@ class HLSSegmenterService:
             "last_request_kind": normalized_request_kind or (existing.get("last_request_kind") if existing else ""),
             "bytes_sent": existing_bytes + bytes_delta,
             "chunks_sent": existing_chunks + chunks_delta,
+            "last_sequence": last_sequence,
             "stats_updated_at": ts,
         }
         if not existing:

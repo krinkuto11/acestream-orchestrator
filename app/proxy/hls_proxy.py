@@ -135,6 +135,7 @@ class ClientManager:
         request_kind: str = "",
         bytes_sent: Optional[float] = None,
         chunks_sent: Optional[int] = None,
+        sequence: Optional[int] = None,
         now: Optional[float] = None,
     ):
         """Record client activity and transfer counters."""
@@ -167,6 +168,16 @@ class ClientManager:
 
             existing_bytes = 0.0
             existing_chunks = 0
+            existing_sequence = existing.get("last_sequence") if existing else None
+            
+            # Update sequence only if it's greater than before (absolute progress)
+            last_sequence = existing_sequence
+            if sequence is not None:
+                if existing_sequence is None:
+                    last_sequence = sequence
+                else:
+                    last_sequence = max(existing_sequence, sequence)
+            
             if existing:
                 try:
                     existing_bytes = float(existing.get("bytes_sent") or 0.0)
@@ -188,6 +199,7 @@ class ClientManager:
                 "last_request_kind": normalized_request_kind or (existing.get("last_request_kind") if existing else ""),
                 "bytes_sent": existing_bytes + bytes_delta,
                 "chunks_sent": existing_chunks + chunks_delta,
+                "last_sequence": last_sequence,
                 "stats_updated_at": ts,
             }
 
@@ -838,6 +850,7 @@ class HLSProxyServer:
         request_kind: str = "",
         bytes_sent: Optional[float] = None,
         chunks_sent: Optional[int] = None,
+        sequence: Optional[int] = None,
     ):
         """Record client activity for a channel (called on each manifest/segment request)"""
         if channel_id in self.client_managers:
@@ -848,6 +861,7 @@ class HLSProxyServer:
                 request_kind=request_kind,
                 bytes_sent=bytes_sent,
                 chunks_sent=chunks_sent,
+                sequence=sequence,
             )
     
     def stop_stream_by_key(self, channel_id: str):

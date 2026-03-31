@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Req
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
 from fastapi.routing import APIRoute
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
@@ -541,6 +541,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/", include_in_schema=False)
+async def serve_root():
+    """
+    Serve index.html at root level to present the panel directly.
+    Fall back to /panel redirect if the static panel directory isn't available.
+    """
+    panel_dir = "app/static/panel"
+    index_path = os.path.join(panel_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return RedirectResponse(url="/panel")
 
 # Mount static files with validation and SPA fallback
 panel_dir = "app/static/panel"
@@ -3672,6 +3684,16 @@ async def ace_hls_segment(
         user_agent = request.headers.get('user-agent', 'unknown')
         client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
         
+        # Parse sequence number from segment path (e.g. "123.ts" or "segment_123.ts")
+        sequence = None
+        try:
+            # Extract digits from the filename
+            seq_match = re.search(r'(\d+)', segment_path)
+            if seq_match:
+                sequence = int(seq_match.group(1))
+        except Exception:
+            pass
+
         segment_data = hls_proxy.get_segment(content_id, segment_path)
         hls_proxy.record_client_activity(
             content_id,
@@ -3681,6 +3703,7 @@ async def ace_hls_segment(
             request_kind="segment",
             bytes_sent=len(segment_data),
             chunks_sent=1,
+            sequence=sequence,
         )
         observe_proxy_egress_bytes("HLS", len(segment_data))
         
@@ -3741,6 +3764,16 @@ async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: 
         except OSError:
             segment_size = 0
         client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
+        
+        # Parse sequence number from segment filename (e.g. "index123.ts" or "123.ts")
+        sequence = None
+        try:
+            seq_match = re.search(r'(\d+)', segment_filename)
+            if seq_match:
+                sequence = int(seq_match.group(1))
+        except Exception:
+            pass
+
         hls_segmenter_service.record_client_activity(
             monitor_id,
             client_identity,
@@ -3749,6 +3782,7 @@ async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: 
             request_kind="segment",
             bytes_sent=segment_size,
             chunks_sent=1,
+            sequence=sequence,
         )
         observe_proxy_egress_bytes("HLS", segment_size)
 
@@ -4060,7 +4094,7 @@ async def get_stream_clients(stream_key: str):
                     value_str = value.decode('utf-8')
                     
                     # Convert numeric fields with appropriate type
-                    if key_str in ['chunks_sent']:
+                    if key_str in ['chunks_sent', 'initial_index', 'last_sequence']:
                         # Integer fields
                         try:
                             client_info[key_str] = int(value_str)
