@@ -99,7 +99,15 @@ export function TopologyEdge({
               }),
             }}
           >
-            {bandwidth.toFixed(1)} <span style={{ fontSize: '8px', fontWeight: 500, opacity: 0.85 }}>Mbps</span>
+            {bandwidth.toFixed(1)}
+            {data?.uploadMbps !== undefined && (
+              <>
+                <span style={{ margin: '0 4px', opacity: 0.5 }}>|</span>
+                <span style={{ fontSize: '8px', verticalAlign: 'middle', marginRight: '2px', opacity: 0.8 }}>↑</span>
+                {data.uploadMbps.toFixed(1)}
+              </>
+            )}
+            <span style={{ fontSize: '8px', fontWeight: 500, opacity: 0.85, marginLeft: '4px' }}>Mbps</span>
           </div>
         </div>
       </EdgeLabelRenderer>

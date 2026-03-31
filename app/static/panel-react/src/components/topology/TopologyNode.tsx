@@ -162,6 +162,26 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
           {vpnProvider && (
             <p className="text-[10px] font-semibold text-slate-300/80 uppercase tracking-wide">{vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}</p>
           )}
+
+          <div className="mt-1 space-y-1.5 pt-1.5 border-t border-white/5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1 text-[10px] uppercase text-slate-400">
+                <Activity className="h-3 w-3" />
+                <span>Bandwidth</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div>
+                <span className="text-[9px] uppercase text-slate-500 font-bold block leading-none mb-0.5">Down</span>
+                <span className="text-xs font-black text-emerald-400">{data.bandwidthMbps.toFixed(1)} <span className="text-[9px] font-normal opacity-70">Mbps</span></span>
+              </div>
+              <div className="w-px h-6 bg-white/5" />
+              <div>
+                <span className="text-[9px] uppercase text-slate-500 font-bold block leading-none mb-0.5">Up</span>
+                <span className="text-xs font-black text-sky-400">{(data.uploadMbps || 0).toFixed(1)} <span className="text-[9px] font-normal opacity-70">Mbps</span></span>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

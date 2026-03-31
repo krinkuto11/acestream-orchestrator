@@ -17,6 +17,7 @@ export interface TopologyNodeData {
   subtitle: string
   health: TopologyNodeHealth
   bandwidthMbps: number
+  uploadMbps?: number
   streamCount: number
   vpnTunnel?: TunnelId
   failoverActive?: boolean
@@ -239,7 +240,7 @@ const buildSnapshot = ({
   nodes.push({
     id: vpn1NodeId,
     type: 'topologyNode',
-    position: { x: 40, y: Math.max(50, centerY - 150) },
+    position: { x: -110, y: Math.max(50, centerY - 150) },
     data: {
       kind: 'vpn',
       title: 'VPN Tunnel A',
@@ -259,7 +260,7 @@ const buildSnapshot = ({
   nodes.push({
     id: vpn2NodeId,
     type: 'topologyNode',
-    position: { x: 40, y: centerY + 150 },
+    position: { x: -110, y: centerY + 150 },
     data: {
       kind: 'vpn',
       title: 'VPN Tunnel B',
@@ -330,6 +331,7 @@ const buildSnapshot = ({
         health,
         streamCount,
         bandwidthMbps,
+        uploadMbps: measuredUpMbps > 0 ? measuredUpMbps : (isMockMode ? randomBetween(2, 12) : 0),
         vpnTunnel: sourceTunnel,
         failoverActive,
         metadata: {
@@ -343,7 +345,8 @@ const buildSnapshot = ({
       },
     })
 
-    // VPN → Engine edge: shows download bandwidth
+    // VPN → Engine edge: shows both download (P2P ingress) and upload (P2P seeding) bandwidth
+    const edgeUploadBw = measuredUpMbps > 0 ? measuredUpMbps : (isMockMode ? randomBetween(2, 12) : 0)
     edges.push({
       id: `${sourceTunnel}->${engine.container_id}`,
       type: 'topologyEdge',
@@ -353,6 +356,7 @@ const buildSnapshot = ({
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: downloadBwMbps,
+        uploadMbps: edgeUploadBw,
         labelPosition: 'near-target',
       },
       style: {
@@ -362,7 +366,7 @@ const buildSnapshot = ({
       },
     })
 
-    // Engine → Proxy edge: shows upload bandwidth
+    // Engine → Proxy edge: shows upload bandwidth (proxy ingress)
     edges.push({
       id: `${engine.container_id}->${proxyNodeId}`,
       type: 'topologyEdge',
@@ -381,17 +385,25 @@ const buildSnapshot = ({
     })
   })
 
+  if (!isMockMode) {
+    const vpn1Node = nodes.find(n => n.id === vpn1NodeId)
+    const vpn2Node = nodes.find(n => n.id === vpn2NodeId)
+    if (vpn1Node) {
+      const vpn1Engines = nodes.filter(n => n.data.kind === 'engine' && n.data.vpnTunnel === 'vpn1')
+      vpn1Node.data.bandwidthMbps = vpn1Engines.reduce((s, n) => s + (n.data.bandwidthMbps || 0), 0)
+      vpn1Node.data.uploadMbps = vpn1Engines.reduce((s, n) => s + (n.data.uploadMbps || 0), 0)
+    }
+    if (vpn2Node) {
+      const vpn2Engines = nodes.filter(n => n.data.kind === 'engine' && n.data.vpnTunnel === 'vpn2')
+      vpn2Node.data.bandwidthMbps = vpn2Engines.reduce((s, n) => s + (n.data.bandwidthMbps || 0), 0)
+      vpn2Node.data.uploadMbps = vpn2Engines.reduce((s, n) => s + (n.data.uploadMbps || 0), 0)
+    }
+  }
+
   const totalBandwidthMbps = engineStats.reduce((sum, { engine }) => {
     const found = nodes.find((node) => node.id === engine.container_id)
     return sum + (found?.data?.bandwidthMbps || 0)
   }, 0)
-
-  if (!isMockMode) {
-    const vpn1Node = nodes.find(n => n.id === vpn1NodeId)
-    const vpn2Node = nodes.find(n => n.id === vpn2NodeId)
-    if (vpn1Node) vpn1Node.data.bandwidthMbps = nodes.filter(n => n.data.kind === 'engine' && n.data.vpnTunnel === 'vpn1').reduce((s, n) => s + (n.data.bandwidthMbps || 0), 0)
-    if (vpn2Node) vpn2Node.data.bandwidthMbps = nodes.filter(n => n.data.kind === 'engine' && n.data.vpnTunnel === 'vpn2').reduce((s, n) => s + (n.data.bandwidthMbps || 0), 0)
-  }
 
   const activeStreams = orchestratorStatus?.streams?.active ?? workingStreams.length
   const activeClients = orchestratorStatus?.proxy?.active_clients?.total ?? Math.max(activeStreams, 1)
