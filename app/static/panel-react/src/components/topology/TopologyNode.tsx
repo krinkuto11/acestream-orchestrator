@@ -107,7 +107,7 @@ const themeByKind = {
 const healthClassByState = {
   healthy: '',
   degraded: 'ring-1 ring-amber-400',
-  down: 'opacity-70 grayscale-[30%] ring-1 ring-rose-500',
+  down: 'brightness-90 grayscale-[30%] ring-1 ring-rose-500',
 }
 
 const healthLabelByState = {
