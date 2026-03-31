@@ -131,9 +131,8 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
           <div className={cn(
             "rounded-md p-1.5 shadow-sm",
             theme.iconBg,
-            theme.iconText,
           )}>
-            <Icon className="h-4 w-4" />
+            <Icon className="h-4 w-4 text-white" />
           </div>
           <div>
             <p className="text-sm font-black leading-tight text-white drop-shadow-sm">{data.title}</p>
@@ -154,7 +153,6 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         <div className="rounded-md border border-white/10 bg-white/5 p-2 space-y-1.5">
           {vpnIp && (
             <div className="flex items-center gap-1.5">
-              <Globe className="h-3 w-3 text-violet-300/80" />
               <span className="font-mono text-xs font-bold text-slate-100">{vpnIp}</span>
               {flag && <span className="text-sm ml-0.5">{flag}</span>}
             </div>
@@ -166,7 +164,7 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
           <div className="mt-1 space-y-1.5 pt-1.5 border-t border-white/5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1 text-[10px] uppercase text-slate-400">
-                <Activity className="h-3 w-3" />
+                <Activity className="h-3 w-3 text-white" />
                 <span>Bandwidth</span>
               </div>
             </div>
