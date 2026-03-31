@@ -146,6 +146,7 @@ class ProxyServer:
         engine_container_id=None,
         engine_api_port=None,
         existing_session=None,
+        source_input=None,
         source_input_type="content_id",
         file_indexes="0",
         seekback=0,
