@@ -1,8 +1,8 @@
 import React from 'react'
 import StreamsTable from '@/components/StreamsTable'
 
-export function StreamsPage({ 
-  streams, 
+export function StreamsPage({
+  streams,
   orchUrl,
   apiKey,
   onStopStream,

@@ -72,14 +72,19 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
     }
   }, [simulateTick])
 
-  // Automatically fit view when nodes are first populated
+  // Automatically fit view when nodes are first populated or change significantly
   useEffect(() => {
     if (rfInstance && nodes.length > 0) {
-      // Fit view with a longer delay for layout stabilization
-      const timer = setTimeout(() => {
-        rfInstance.fitView({ padding: 0.2, duration: 600 })
-      }, 350)
-      return () => clearTimeout(timer)
+      // Multiple fit attempts to ensure correct framing after all nodes are sized and rendered
+      const fit = () => rfInstance.fitView({ padding: 0.12, duration: 800 })
+      
+      const timer1 = setTimeout(fit, 150)
+      const timer2 = setTimeout(fit, 1000) 
+      
+      return () => {
+        clearTimeout(timer1)
+        clearTimeout(timer2)
+      }
     }
   }, [nodes.length, rfInstance])
 
@@ -103,28 +108,7 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
       {/* Background Ambience Overlay */}
       <div className="absolute inset-0 z-0 bg-[radial-gradient(circle_at_15%_10%,rgba(59,130,246,0.12),transparent_35%),radial-gradient(circle_at_85%_90%,rgba(16,185,129,0.14),transparent_40%),linear-gradient(180deg,rgba(15,23,42,0.75),rgba(2,6,23,0.9))] opacity-40 pointer-events-none" />
       
-      {/* HUD-style Header Overlay */}
-      <div className="absolute left-6 top-6 z-10 pointer-events-none">
-        <h2 className="text-xl font-black uppercase tracking-widest text-slate-100">
-          Routing Topology
-        </h2>
-        <div className="mt-1 flex items-center gap-2 text-[10px]">
-          {isMockMode ? (
-            <Badge variant="warning" className="bg-amber-900/30 text-amber-300 font-bold border-amber-500/20 shadow-none">Simulation mode</Badge>
-          ) : (
-            <Badge variant="success" className="bg-emerald-900/30 text-emerald-300 font-bold border-emerald-500/20 shadow-none">Live core</Badge>
-          )}
-          <div className="rounded-md border border-white/10 bg-white/5 p-2 px-3 pointer-events-auto">
-            <p className="mb-0.5 text-[10px] uppercase text-slate-400 font-bold tracking-tight">System Sync</p>
-            <p className="font-bold text-slate-100 text-xs">{formatLastUpdate(lastUpdated)}</p>
-          </div>
-          {hasEmergency && (
-            <Badge variant="destructive" className="bg-rose-900/40 text-rose-300 animate-pulse border-rose-500/30 shadow-none">
-               Emergency routing active
-            </Badge>
-          )}
-        </div>
-      </div>
+      {/* HUD-style Header Overlay removed to maximize diagram space as per user request */}
 
       <div className="h-full w-full">
         <ReactFlow

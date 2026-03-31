@@ -17,12 +17,12 @@ export function HealthPage({ apiKey, orchUrl }) {
       if (apiKey) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
-      
+
       const response = await fetch(`${orchUrl}/api/v1/health/status`, { headers })
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`)
       }
-      
+
       const data = await response.json()
       setHealthStatus(data)
       setError(null)
@@ -46,7 +46,7 @@ export function HealthPage({ apiKey, orchUrl }) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
 
-      const url = type 
+      const url = type
         ? `${orchUrl}/api/v1/health/circuit-breaker/reset?operation_type=${type}`
         : `${orchUrl}/api/v1/health/circuit-breaker/reset`
 
@@ -138,8 +138,8 @@ export function HealthPage({ apiKey, orchUrl }) {
           <div className="flex items-center justify-between">
             <CardTitle>Circuit Breaker</CardTitle>
             {circuitBreakerState !== 'closed' && (
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 size="sm"
                 onClick={() => resetCircuitBreaker()}
               >
@@ -159,10 +159,10 @@ export function HealthPage({ apiKey, orchUrl }) {
                     Failures: {healthStatus.circuit_breakers.general.failure_count} / {healthStatus.circuit_breakers.general.failure_threshold}
                   </p>
                 </div>
-                <Badge 
+                <Badge
                   variant={
-                    healthStatus.circuit_breakers.general.state === 'closed' 
-                      ? 'success' 
+                    healthStatus.circuit_breakers.general.state === 'closed'
+                      ? 'success'
                       : healthStatus.circuit_breakers.general.state === 'half_open'
                         ? 'warning'
                         : 'destructive'
@@ -182,10 +182,10 @@ export function HealthPage({ apiKey, orchUrl }) {
                     Failures: {status.failure_count} / {status.failure_threshold}
                   </p>
                 </div>
-                <Badge 
+                <Badge
                   variant={
-                    status.state === 'closed' 
-                      ? 'success' 
+                    status.state === 'closed'
+                      ? 'success'
                       : status.state === 'half_open'
                         ? 'warning'
                         : 'destructive'

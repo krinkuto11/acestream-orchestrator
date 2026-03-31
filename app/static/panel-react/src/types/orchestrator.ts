@@ -288,6 +288,19 @@ export const orchestratorStatusSchema = z
             total: z.number(),
             ts: z.number(),
             hls: z.number(),
+            list: z
+              .array(
+                z.object({
+                  id: z.string(),
+                  stream_id: z.string(),
+                  ip: z.string(),
+                  ua: z.string(),
+                  type: z.enum(['TS', 'HLS']),
+                  bps: z.number(),
+                  connected_at: z.number(),
+                })
+              )
+              .nullish(),
           })
           .passthrough()
           .nullish(),

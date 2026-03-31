@@ -305,7 +305,7 @@ const buildSnapshot = ({
     const engineIngressBps = orchestratorStatus?.proxy?.engine_ingress_bps?.[engine.container_id] ?? 0
     const uploadBwMbps = engineIngressBps > 0 
       ? (engineIngressBps * 8) / 1_000_000 
-      : (streamCount > 0 ? downloadBwMbps : (isMockMode ? randomBetween(2, 18) : 0))
+      : (streamCount > 0 ? downloadBwMbps * 0.98 : (isMockMode ? randomBetween(2, 18) : 0))
     
     // Overall bandwidth for the node
     const bandwidthMbps = downloadBwMbps
@@ -434,41 +434,93 @@ const buildSnapshot = ({
     },
   })
 
-  nodes.push({
-    id: clientNodeId,
-    type: 'topologyNode',
-    position: { x: clientNodeX, y: centerY },
-    data: {
-      kind: 'client',
-      title: 'Client Edge',
-      subtitle: 'CDN and Player Sessions',
-      health: 'healthy',
-      streamCount: activeClients,
-      bandwidthMbps: isMockMode ? clamp(totalBandwidthMbps * 0.86, 32, 520) : totalBandwidthMbps * 0.86,
-      metadata: {
-        activeClients,
-        hlsSessions: orchestratorStatus?.proxy?.active_clients?.hls ?? Math.round(activeClients * 0.6),
-        tsSessions: orchestratorStatus?.proxy?.active_clients?.ts ?? Math.round(activeClients * 0.4),
+  const clientList = orchestratorStatus?.proxy?.active_clients?.list || []
+  const hasMultipleClients = clientList.length > 0
+
+  if (hasMultipleClients) {
+    const clientSpacingY = 160
+    const clientStartX = clientNodeX
+    const clientTotalHeight = (clientList.length - 1) * clientSpacingY
+    const clientStartY = centerY - clientTotalHeight / 2
+
+    clientList.forEach((client: any, index: number) => {
+      const cNodeId = `client-${client.id}`
+      // Stagger nodes slightly for visual depth and to make them feel "alive"
+      const nodeX = clientStartX + (index % 2 === 0 ? 0 : 45)
+      const nodeY = clientStartY + (index * clientSpacingY)
+      const clientBwMbps = (client.bps * 8) / 1_000_000
+
+      nodes.push({
+        id: cNodeId,
+        type: 'topologyNode',
+        position: { x: nodeX, y: nodeY },
+        data: {
+          kind: 'client',
+          title: client.ip || 'Unknown IP',
+          subtitle: client.ua || 'Generic Player',
+          health: 'healthy',
+          streamCount: 1,
+          bandwidthMbps: clientBwMbps,
+          metadata: {
+            type: client.type,
+            connectedAt: new Date(client.connected_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          },
+        },
+      })
+
+      edges.push({
+        id: `${proxyNodeId}->${cNodeId}`,
+        type: 'topologyEdge',
+        source: proxyNodeId,
+        target: cNodeId,
+        animated: true,
+        markerEnd: { type: MarkerType.ArrowClosed },
+        data: {
+          bandwidthMbps: clientBwMbps,
+        },
+        style: {
+          stroke: '#22c55e',
+          strokeWidth: clamp(2.2 + clientBwMbps / 35, 2.2, 8.5),
+        },
+      })
+    })
+  } else {
+    // Fallback: Single aggregate node for mock mode or when client list is unavailable
+    nodes.push({
+      id: clientNodeId,
+      type: 'topologyNode',
+      position: { x: clientNodeX, y: centerY },
+      data: {
+        kind: 'client',
+        title: 'Client Edge',
+        subtitle: 'CDN and Player Sessions',
+        health: 'healthy',
+        streamCount: activeClients,
+        bandwidthMbps: isMockMode ? clamp(totalBandwidthMbps * 0.86, 32, 520) : totalBandwidthMbps * 0.86,
+        metadata: {
+          activeClients,
+          hlsSessions: orchestratorStatus?.proxy?.active_clients?.hls ?? Math.round(activeClients * 0.6),
+          tsSessions: orchestratorStatus?.proxy?.active_clients?.ts ?? Math.round(activeClients * 0.4),
+        },
       },
-    },
-  })
+    })
 
-
-  edges.push({
-    id: `${proxyNodeId}->${clientNodeId}`,
-    type: 'topologyEdge',
-    source: proxyNodeId,
-    target: clientNodeId,
-    animated: true,
-    markerEnd: { type: MarkerType.ArrowClosed },
-    data: {
-      bandwidthMbps: totalBandwidthMbps,
-    },
-    style: {
-      stroke: '#22c55e',
-      strokeWidth: clamp(2.4 + totalBandwidthMbps / 40, 2.4, 9),
-    },
-  })
+    edges.push({
+      id: `${proxyNodeId}->${clientNodeId}`,
+      type: 'topologyEdge',
+      source: proxyNodeId,
+      target: clientNodeId,
+      animated: true,
+      markerEnd: { type: MarkerType.ArrowClosed },
+      data: {
+        bandwidthMbps: totalBandwidthMbps,
+      },
+      style: {
+        stroke: '#22c55e',
+        strokeWidth: clamp(2.4 + totalBandwidthMbps / 40, 2.4, 9),
+      },
+    })
+  }
 
   // 4. Final layering and store state update
   // Sort edges so active pipes render on top of inactive ones

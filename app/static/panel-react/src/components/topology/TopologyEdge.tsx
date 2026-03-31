@@ -106,25 +106,33 @@ export function TopologyEdge({
             }}
           >
             {data?.uploadMbps !== undefined ? (
-              // VPN 3-Row Layout
-              <div className="flex flex-col items-center gap-0.5">
-                <div className="flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="text-[10px] opacity-70">↓</span>
-                  <span className="text-sm font-black">{bandwidth.toFixed(1)}</span>
+              // VPN 3-Cell Stacked Layout
+              <div className="flex flex-col gap-1 w-full">
+                <div className="flex items-center justify-between gap-3 px-1.5 py-0.5 bg-emerald-500/10 rounded-sm border border-emerald-500/20">
+                  <span className="text-[10px] text-emerald-400 font-bold">↓</span>
+                  <span className="text-[13px] font-black tabular-nums">{bandwidth.toFixed(1)}</span>
                 </div>
-                <div className="flex items-center gap-1.5 whitespace-nowrap" style={{ color: '#fb7185' }}>
-                  <span className="text-[10px] opacity-80">↑</span>
-                  <span className="text-sm font-black">{data.uploadMbps.toFixed(1)}</span>
+                <div className="flex items-center justify-between gap-3 px-1.5 py-0.5 bg-rose-500/10 rounded-sm border border-rose-500/20">
+                  <span className="text-[10px] text-rose-400 font-bold">↑</span>
+                  <span className="text-[13px] font-black tabular-nums">{data.uploadMbps.toFixed(1)}</span>
                 </div>
-                <div className="text-[8px] font-bold text-white tracking-widest mt-0.5 opacity-90">
+                <div className="text-[9px] font-black text-white/90 text-center tracking-[0.2em] uppercase pt-0.5">
                   Mbps
                 </div>
               </div>
             ) : (
-              // Engine 2-Cell Layout
-              <div className="flex items-baseline gap-1.5 whitespace-nowrap">
-                <span className="text-sm font-black">{bandwidth.toFixed(1)}</span>
-                <span className="text-[9px] font-bold text-white opacity-90">Mbps</span>
+              // Engine/Client 2-Cell Horizontal Layout
+              <div className="flex items-center h-7 overflow-hidden rounded-[4px] border border-white/20 shadow-sm bg-black/40">
+                <div className="flex items-center px-2 h-full bg-slate-100/10">
+                  <span className="text-[13px] font-black text-white tabular-nums leading-none">
+                    {bandwidth.toFixed(1)}
+                  </span>
+                </div>
+                <div className="flex items-center px-1.5 h-full border-l border-white/20 bg-white/5">
+                  <span className="text-[10px] font-bold text-white/80 lowercase leading-none">
+                    Mbps
+                  </span>
+                </div>
               </div>
             )}
           </div>

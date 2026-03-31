@@ -56,26 +56,26 @@ const sparklineOption = (points, color) => ({
 // Status-color palette for KPI tiles: subdued bg + vibrant border
 const TONE_CARD = {
   default: 'bg-card border-border',
-  sky:     'bg-sky-500/10 border-sky-500/20',
+  sky: 'bg-sky-500/10 border-sky-500/20',
   emerald: 'bg-emerald-500/10 border-emerald-500/20',
-  amber:   'bg-amber-500/10 border-amber-500/20',
-  rose:    'bg-rose-500/10 border-rose-500/20',
+  amber: 'bg-amber-500/10 border-amber-500/20',
+  rose: 'bg-rose-500/10 border-rose-500/20',
 }
 
 const TONE_ICON = {
   default: 'text-muted-foreground',
-  sky:     'text-sky-500',
+  sky: 'text-sky-500',
   emerald: 'text-emerald-500',
-  amber:   'text-amber-500',
-  rose:    'text-rose-500',
+  amber: 'text-amber-500',
+  rose: 'text-rose-500',
 }
 
 const TONE_SPARKLINE = {
   default: CHART_SERIES.blue,
-  sky:     CHART_SERIES.sky,
+  sky: CHART_SERIES.sky,
   emerald: CHART_SERIES.emerald,
-  amber:   CHART_SERIES.amber,
-  rose:    CHART_SERIES.rose,
+  amber: CHART_SERIES.amber,
+  rose: CHART_SERIES.rose,
 }
 
 function KpiTile({ title, value, tone = 'default', points = [], suffix = '', icon: Icon }) {
@@ -338,7 +338,7 @@ export function StreamingCentralPage({
 
   const successRate = Number(
     dashboardSnapshot?.proxy?.request_window_1m?.success_rate_percent ??
-      (orchestratorStatus?.status === 'healthy' ? 99.5 : 95),
+    (orchestratorStatus?.status === 'healthy' ? 99.5 : 95),
   )
 
   const egressGbps = Number(dashboardSnapshot?.proxy?.throughput?.egress_mbps || 0) / 1000

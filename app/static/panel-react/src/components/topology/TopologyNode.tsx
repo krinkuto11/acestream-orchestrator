@@ -150,44 +150,74 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
 
       {/* VPN: Show IP + Country flag + Provider instead of Streams */}
       {data.kind === 'vpn' && (
-        <div className="rounded-md border border-white/10 bg-white/5 p-2 space-y-1.5">
+        <div className="rounded-md border border-white/10 bg-white/5 p-2.5 space-y-2">
           {vpnIp && (
             <div className="flex items-center gap-2">
-              <span className="font-mono text-lg font-black text-white tracking-tighter leading-none">{vpnIp}</span>
-              {flag && <span className="text-xl ml-0.5 drop-shadow-md">{flag}</span>}
+              <span className="font-mono text-2xl font-black text-white tracking-tighter leading-none">{vpnIp}</span>
+              {flag && <span className="text-2xl ml-0.5 drop-shadow-md">{flag}</span>}
             </div>
           )}
           {vpnProvider && (
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none mt-1">{vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}</p>
+            <p className="text-[12px] font-bold text-slate-300 uppercase tracking-widest leading-none mt-1">
+              {vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}
+            </p>
           )}
 
-          <div className="flex items-center gap-5 pt-1.5">
-            <div className="flex items-baseline gap-1">
-              <span className="text-[10px] text-emerald-500 font-black">↓</span>
-              <span className="text-xl font-black text-emerald-400 leading-none">{data.bandwidthMbps.toFixed(1)}</span>
-              <span className="text-[10px] font-normal text-slate-500 ml-0.5">Mbps</span>
+          <div className="flex items-center gap-6 pt-1.5 border-t border-white/5">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-xs text-emerald-500 font-bold">↓</span>
+              <span className="text-2xl font-black text-emerald-400 leading-none">{data.bandwidthMbps.toFixed(1)}</span>
+              <span className="text-[10px] font-bold text-slate-500 ml-0.5 uppercase">Mbps</span>
             </div>
-            <div className="flex items-baseline gap-1">
-              <span className="text-[10px] text-rose-500 font-black">↑</span>
-              <span className="text-xl font-black text-rose-500 leading-none">{(data.uploadMbps || 0).toFixed(1)}</span>
-              <span className="text-[10px] font-normal text-slate-500 ml-0.5">Mbps</span>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-xs text-rose-500 font-bold">↑</span>
+              <span className="text-2xl font-black text-rose-500 leading-none">{(data.uploadMbps || 0).toFixed(1)}</span>
+              <span className="text-[10px] font-bold text-slate-500 ml-0.5 uppercase">Mbps</span>
             </div>
           </div>
         </div>
       )}
 
-      {/* Proxy & Client: Show stream/client count */}
-      {showStreams && (
+      {/* Dedicated Client Render */}
+      {data.kind === 'client' && (
+        <div className="rounded-md border border-white/10 bg-white/5 p-3 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-xl font-black text-white tracking-tight">{data.title}</span>
+            <Badge variant="outline" className="border-amber-500/50 text-[10px] text-amber-200 uppercase px-1.5 py-0">
+              {String(data.metadata?.type || 'TS')}
+            </Badge>
+          </div>
+          
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">User Agent</p>
+            <p className="text-[11px] font-medium text-slate-200 leading-tight line-clamp-1 italic bg-black/30 p-1.5 rounded-sm border border-white/5">
+              {data.subtitle}
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between pt-1 border-t border-white/5">
+            <div className="flex items-center gap-1.5">
+               <Activity className="h-3 w-3 text-amber-500" />
+               <span className="text-sm font-black text-slate-100">{data.bandwidthMbps.toFixed(2)}</span>
+               <span className="text-[10px] font-bold text-slate-500">Mbps</span>
+            </div>
+            <span className="text-[10px] font-bold text-slate-500 uppercase">{String(data.metadata?.connectedAt || '')}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Proxy & Engine: Show stream count */}
+      {(data.kind === 'proxy' || data.kind === 'engine') && (
         <div className="rounded-md border border-white/10 bg-white/5 p-2">
           <p className="mb-0.5 text-[10px] uppercase text-slate-300 font-semibold tracking-tight">
-            {data.kind === 'client' ? 'Clients' : 'Streams'}
+            Streams
           </p>
           <p className="font-bold text-slate-100">{data.streamCount}</p>
         </div>
       )}
 
-      {/* Proxy & Client: Bandwidth */}
-      {data.kind !== 'engine' && data.kind !== 'vpn' && (
+      {/* Proxy: Bandwidth */}
+      {data.kind === 'proxy' && (
         <div className="mt-2 rounded-md border border-white/10 bg-black/20 p-2">
           <div className="mb-1 flex items-center gap-1 text-[10px] uppercase text-slate-300">
             <Activity className="h-3 w-3" />

@@ -3279,18 +3279,9 @@ async def ace_getstream(
                             start_mode = input_type
                             start_payload = input_value
 
-                            if input_type in {"content_id", "infohash"}:
-                                preflight = await asyncio.to_thread(
-                                    client.preflight,
-                                    input_value,
-                                    "light",
-                                    normalized_file_indexes,
-                                )
-                                if not preflight.get("available"):
-                                    message = preflight.get("message") or "content unavailable"
-                                    raise HTTPException(status_code=503, detail=f"API preflight failed: {message}")
-                                start_mode = "infohash"
-                                start_payload = preflight.get("infohash") or input_value
+                            # Manual preflight logic removed as per user request to allow only UI-triggered checks.
+                            # The engine START command will now use the raw input values.
+
                             else:
                                 loadresp, resolved_mode = await asyncio.to_thread(
                                     client.resolve_content,
