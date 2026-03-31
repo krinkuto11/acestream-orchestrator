@@ -11,10 +11,32 @@ const iconByKind = {
   client: Users,
 }
 
-const healthClassByState = {
-  healthy: 'border-emerald-500/60 bg-emerald-500/10 text-emerald-100',
-  degraded: 'border-amber-500/60 bg-amber-500/15 text-amber-100',
-  down: 'border-rose-500/70 bg-rose-500/15 text-rose-100',
+// Kind-based color themes (opaque hex backgrounds for full pipe occlusion)
+const kindTheme = {
+  vpn: {
+    bg: '#1e1b4b',        // indigo-950
+    border: '#7c3aed',    // violet-500
+    iconBg: 'bg-violet-500/25',
+    iconText: 'text-violet-200',
+  },
+  engine: {
+    bg: '#0c1a3d',        // custom deep blue
+    border: '#3b82f6',    // blue-500
+    iconBg: 'bg-blue-500/25',
+    iconText: 'text-blue-200',
+  },
+  proxy: {
+    bg: '#042f2e',        // teal-950
+    border: '#14b8a6',    // teal-500
+    iconBg: 'bg-teal-500/25',
+    iconText: 'text-teal-200',
+  },
+  client: {
+    bg: '#271505',        // custom deep orange
+    border: '#f59e0b',    // amber-500
+    iconBg: 'bg-amber-500/25',
+    iconText: 'text-amber-200',
+  },
 }
 
 const healthLabelByState = {
@@ -23,23 +45,22 @@ const healthLabelByState = {
   down: 'Down',
 }
 
-const kindLabelByNode = {
-  vpn: 'VPN',
-  engine: 'Engine',
-  proxy: 'Proxy',
-  client: 'Client',
-}
-
 export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
   const Icon = iconByKind[data.kind]
+  const theme = kindTheme[data.kind]
 
   return (
     <div
       className={cn(
-        'relative min-w-[210px] rounded-xl border bg-slate-950 p-3 shadow-lg transition-all',
-        healthClassByState[data.health],
+        'relative min-w-[210px] rounded-xl p-3 shadow-lg transition-all',
         selected && 'ring-2 ring-sky-400/90',
       )}
+      style={{
+        backgroundColor: theme.bg,
+        border: `1.5px solid ${theme.border}`,
+        borderLeftWidth: '4px',
+        borderLeftColor: theme.border,
+      }}
     >
       <Handle
         type="target"
@@ -50,15 +71,15 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
       <div className="mb-2 flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">
           <div className={cn(
-            "rounded-md p-1.5 shadow-sm transition-colors",
-            data.health === 'healthy' ? "bg-emerald-500/30 text-emerald-100" : 
-            data.health === 'degraded' ? "bg-amber-500/30 text-amber-100" : "bg-rose-500/30 text-rose-100"
+            "rounded-md p-1.5 shadow-sm",
+            theme.iconBg,
+            theme.iconText,
           )}>
             <Icon className="h-4 w-4" />
           </div>
           <div>
             <p className="text-sm font-black leading-tight text-white drop-shadow-sm">{data.title}</p>
-            <p className="text-[10px] font-bold text-slate-50 tracking-tight">{data.subtitle}</p>
+            <p className="text-[10px] font-bold text-slate-200 tracking-tight">{data.subtitle}</p>
           </div>
         </div>
 
@@ -70,13 +91,13 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         </Badge>
       </div>
 
-        <div className="rounded-md border border-white/10 bg-white/5 p-2">
-          <p className="mb-0.5 text-[10px] uppercase text-slate-300 font-semibold tracking-tight">Streams</p>
-          <p className="font-bold text-slate-100">{data.streamCount}</p>
-        </div>
+      <div className="rounded-md border border-white/10 bg-white/5 p-2">
+        <p className="mb-0.5 text-[10px] uppercase text-slate-300 font-semibold tracking-tight">Streams</p>
+        <p className="font-bold text-slate-100">{data.streamCount}</p>
+      </div>
 
       {data.kind !== 'engine' && (
-        <div className="mt-2 rounded-md border border-white/10 bg-slate-900/60 p-2">
+        <div className="mt-2 rounded-md border border-white/10 bg-black/20 p-2">
           <div className="mb-1 flex items-center gap-1 text-[10px] uppercase text-slate-300">
             <Activity className="h-3 w-3" />
             <span>Bandwidth</span>
