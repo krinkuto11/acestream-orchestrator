@@ -17,6 +17,7 @@ import {
 import { Link, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import { useLocalStorage } from '@/hooks/useLocalStorage'
 
 const navigation = [
   { name: 'Streaming Central', href: '/', icon: LayoutDashboard },
@@ -38,7 +39,7 @@ const SIDEBAR_WIDTH_COLLAPSED = '4rem' // w-16 in Tailwind
 
 export function ModernSidebar() {
   const location = useLocation()
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useLocalStorage('sidebar-collapsed', false)
   const [version, setVersion] = useState('1.6.2')
 
   useEffect(() => {
