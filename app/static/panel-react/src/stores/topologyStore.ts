@@ -311,8 +311,9 @@ const buildSnapshot = (
 
   // Center Y for downstream nodes (Proxy, Clients) spans the entire height.
   // In VPN-disabled mode we center against the single staggered engine corridor.
+  const isSingleVpn = vpnStatus?.mode === 'single'
   const totalHeight = isVpnClusterMode
-    ? (vpn2StartY + vpn2Height) - engineStartY
+    ? (isSingleVpn ? vpn1Height : (vpn2StartY + vpn2Height) - engineStartY)
     : Math.max(0, engineStats.length - 1) * STAGGERED_ROW_SPACING_Y
   const centerY = engineStartY + (totalHeight / 2)
 
@@ -362,26 +363,28 @@ const buildSnapshot = (
       },
     })
 
-    nodes.push({
-      id: vpn2NodeId,
-      type: 'topologyNode',
-      position: { x: -240, y: vpn2CenterY },
-      data: {
-        kind: 'vpn',
-        title: 'VPN Tunnel B',
-        subtitle: vpnStatus?.vpn2?.container_name || 'gluetun-secondary',
-        health: tunnelConnectivity.vpn2 ? 'healthy' : 'down',
-        bandwidthMbps: isMockMode ? randomBetween(90, 180) : 0,
-        streamCount: 0,
-        failoverActive: !tunnelConnectivity.vpn1 && tunnelConnectivity.vpn2,
-        metadata: {
-          connected: tunnelConnectivity.vpn2,
-          publicIp: vpnStatus?.vpn2?.public_ip || '79.127.210.63',
-          provider: vpnStatus?.vpn2?.provider || 'Mullvad',
-          country: vpnStatus?.vpn2?.country || null,
+    if (vpnStatus?.mode !== 'single') {
+      nodes.push({
+        id: vpn2NodeId,
+        type: 'topologyNode',
+        position: { x: -240, y: vpn2CenterY },
+        data: {
+          kind: 'vpn',
+          title: 'VPN Tunnel B',
+          subtitle: vpnStatus?.vpn2?.container_name || 'gluetun-secondary',
+          health: tunnelConnectivity.vpn2 ? 'healthy' : 'down',
+          bandwidthMbps: isMockMode ? randomBetween(90, 180) : 0,
+          streamCount: 0,
+          failoverActive: !tunnelConnectivity.vpn1 && tunnelConnectivity.vpn2,
+          metadata: {
+            connected: tunnelConnectivity.vpn2,
+            publicIp: vpnStatus?.vpn2?.public_ip || '79.127.210.63',
+            provider: vpnStatus?.vpn2?.provider || 'Mullvad',
+            country: vpnStatus?.vpn2?.country || null,
+          },
         },
-      },
-    })
+      })
+    }
   }
 
   // 3. Process the nodes using the Zig-Zag Staggered Corridor pattern
@@ -417,21 +420,13 @@ const buildSnapshot = (
       : (failoverActive ? backupTunnel : assignedTunnel)
 
     // VPN → Engine: P2P download speed
-    const rawDownloadBw = measuredDownMbps > 0 ? measuredDownMbps : (isMockMode ? randomBetween(8, 72) : 0)
+    const bandwidthMbps = measuredDownMbps > 0 ? measuredDownMbps : (isMockMode ? randomBetween(8, 72) : 0)
     
     // Engine → Proxy: Actual per-engine ingress
     const engineIngressBps = orchestratorStatus?.proxy?.engine_ingress_bps?.[engine.container_id] ?? 0
-    const rawUploadBw = engineIngressBps > 0 
+    const proxyIngressMbps = engineIngressBps > 0 
       ? (engineIngressBps * 8) / 1_000_000 
-      : (streamCount > 0 ? rawDownloadBw * 0.98 : (isMockMode ? randomBetween(2, 18) : 0))
-
-    // Retrieve previous node to apply smoothing
-    const prevNode = prevState?.nodes.find(n => n.id === engine.container_id)
-    
-    const downloadBwMbps = smoothBandwidth(rawDownloadBw, prevNode?.data?.bandwidthMbps, streamCount > 0)
-    const uploadBwMbps = smoothBandwidth(rawUploadBw, prevNode?.data?.proxyIngressMbps, streamCount > 0)
-    
-    const bandwidthMbps = downloadBwMbps
+      : (streamCount > 0 ? bandwidthMbps * 0.98 : (isMockMode ? randomBetween(2, 18) : 0))
     
     let health: TopologyNodeHealth = 'healthy'
     if (engine.health_status === 'unhealthy' || (!tunnelHealthy && !backupHealthy)) {
@@ -456,7 +451,7 @@ const buildSnapshot = (
         streamCount,
         bandwidthMbps,
         uploadMbps: measuredUpMbps > 0 ? measuredUpMbps : (isMockMode ? randomBetween(2, 12) : 0),
-        proxyIngressMbps: uploadBwMbps,
+        proxyIngressMbps: proxyIngressMbps,
         vpnTunnel: isVpnDisabledMode ? undefined : (sourceNodeId as TunnelId),
         failoverActive,
         metadata: {
@@ -480,13 +475,13 @@ const buildSnapshot = (
       animated: true,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
-        bandwidthMbps: downloadBwMbps,
+        bandwidthMbps: bandwidthMbps,
         uploadMbps: edgeUploadBw,
         labelPosition: 'near-target',
       },
       style: {
         stroke: failoverActive ? '#f59e0b' : '#64748b',
-        strokeWidth: clamp(1.6 + downloadBwMbps / 55, 1.6, 5.8),
+        strokeWidth: clamp(1.6 + bandwidthMbps / 55, 1.6, 5.8),
         strokeDasharray: failoverActive ? '8 5' : undefined,
       },
     })
@@ -500,12 +495,12 @@ const buildSnapshot = (
       animated: true,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
-        bandwidthMbps: uploadBwMbps,
+        bandwidthMbps: proxyIngressMbps,
         labelPosition: 'near-source',
       },
       style: {
         stroke: '#60a5fa',
-        strokeWidth: clamp(1.8 + uploadBwMbps / 48, 1.8, 6.4),
+        strokeWidth: clamp(1.8 + proxyIngressMbps / 48, 1.8, 6.4),
       },
     })
   })
