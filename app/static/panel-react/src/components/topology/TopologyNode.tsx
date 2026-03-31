@@ -36,7 +36,7 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
   return (
     <div
       className={cn(
-        'relative min-w-[210px] rounded-xl border bg-slate-950/80 p-3 shadow-lg backdrop-blur-sm transition-all',
+        'relative min-w-[210px] rounded-xl border bg-slate-950 p-3 shadow-lg transition-all',
         healthClassByState[data.health],
         selected && 'ring-2 ring-sky-400/90',
       )}

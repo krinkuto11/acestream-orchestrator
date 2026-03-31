@@ -447,6 +447,21 @@ const buildSnapshot = ({
     vpnDown,
   }
 
+  // Sort edges so active pipes render on top of inactive ones
+  edges.sort((a, b) => {
+    const aBw = a.data?.bandwidthMbps || 0
+    const bBw = b.data?.bandwidthMbps || 0
+    const aActive = aBw > 0.1 ? 1 : 0
+    const bActive = bBw > 0.1 ? 1 : 0
+    return aActive - bActive
+  })
+
+  // Also set zIndex so ReactFlow's internal ordering respects active-on-top
+  edges.forEach((edge) => {
+    const bw = edge.data?.bandwidthMbps || 0
+    edge.zIndex = bw > 0.1 ? 10 : 0
+  })
+
   return {
     nodes,
     edges,
