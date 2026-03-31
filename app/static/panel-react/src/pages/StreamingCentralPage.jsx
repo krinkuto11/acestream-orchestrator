@@ -379,11 +379,11 @@ export function StreamingCentralPage({
       )}
 
       <Tabs defaultValue="pulse" className="space-y-3">
-        <TabsList>
-          <TabsTrigger value="pulse">Global Pulse</TabsTrigger>
-          <TabsTrigger value="topology">Routing Topology</TabsTrigger>
-          <TabsTrigger value="microscope">Stream Microscope</TabsTrigger>
-          <TabsTrigger value="fleet">Fleet Matrix</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-4 border-slate-700 bg-slate-900/90 text-slate-300">
+          <TabsTrigger value="pulse" className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50">Global Pulse</TabsTrigger>
+          <TabsTrigger value="topology" className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50">Routing Topology</TabsTrigger>
+          <TabsTrigger value="microscope" className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50">Stream Microscope</TabsTrigger>
+          <TabsTrigger value="fleet" className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50">Fleet Matrix</TabsTrigger>
         </TabsList>
 
         <TabsContent value="pulse" className="space-y-3">
