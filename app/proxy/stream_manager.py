@@ -10,7 +10,7 @@ import time
 import requests
 import os
 import uuid
-from typing import Optional
+from typing import Optional, Any
 from urllib.parse import unquote, urlparse, urlunparse
 
 from ..core.config import cfg
