@@ -254,8 +254,14 @@ const buildSnapshot = (
   // 1. Sort engines so active ones are prioritized at the top
   const engineStats = workingEngines.map((engine) => {
     const engineStreams = streamMap.get(engine.container_id) || []
-    const measuredDownMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_down), 0)
-    const measuredUpMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_up), 0)
+    const streamMeasuredDownMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_down), 0)
+    const streamMeasuredUpMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_up), 0)
+    const reportedTotalDownMbps = toMbps(engine.total_speed_down)
+    const reportedTotalUpMbps = toMbps(engine.total_speed_up)
+
+    // Prefer backend aggregates when available: they include monitor-session STATUS traffic.
+    const measuredDownMbps = Math.max(streamMeasuredDownMbps, reportedTotalDownMbps)
+    const measuredUpMbps = Math.max(streamMeasuredUpMbps, reportedTotalUpMbps)
     return {
       engine,
       streamCount: engineStreams.length,
@@ -390,6 +396,14 @@ const buildSnapshot = (
   // 3. Process the nodes using the Zig-Zag Staggered Corridor pattern
   engineStatsWithTunnel.forEach(({ engine, streamCount, measuredMbps, measuredDownMbps, measuredUpMbps, assignedTunnel }, index) => {
     const engineStreams = streamMap.get(engine.container_id) || []
+    const monitorStreamCount = Math.max(
+      0,
+      Number(
+        engine.monitor_stream_count ??
+          ((engine.stream_count ?? engineStreams.length) - engineStreams.length),
+      ),
+    )
+    const hasMonitoringSession = monitorStreamCount > 0
 
     let colIndex: number
     let currentX: number
@@ -419,8 +433,14 @@ const buildSnapshot = (
       ? internetNodeId
       : (failoverActive ? backupTunnel : assignedTunnel)
 
-    // VPN → Engine: P2P download speed
-    const bandwidthMbps = measuredDownMbps > 0 ? measuredDownMbps : (isMockMode ? randomBetween(8, 72) : 0)
+    // VPN → Engine: P2P download speed.
+    // Keep the route visibly active during monitor-only sessions even if Ace reports 0 throughput.
+    const monitoringFloorMbps = hasMonitoringSession && measuredDownMbps <= 0
+      ? Math.max(0.3, monitorStreamCount * 0.3)
+      : 0
+    const bandwidthMbps = measuredDownMbps > 0
+      ? measuredDownMbps
+      : (monitoringFloorMbps > 0 ? monitoringFloorMbps : (isMockMode ? randomBetween(8, 72) : 0))
     
     // Engine → Proxy: Actual per-engine ingress
     const engineIngressBps = orchestratorStatus?.proxy?.engine_ingress_bps?.[engine.container_id] ?? 0
@@ -458,6 +478,7 @@ const buildSnapshot = (
           assignedTunnel,
           activeTunnel: sourceNodeId,
           peers: engineStreams.reduce((sum, stream) => sum + (stream.peers || 0), 0),
+          monitorStreamCount,
           variant: engine.engine_variant || 'default',
           forwarded: engine.forwarded,
           forwardedPort: engine.forwarded_port || null,
@@ -478,9 +499,10 @@ const buildSnapshot = (
         bandwidthMbps: bandwidthMbps,
         uploadMbps: edgeUploadBw,
         labelPosition: 'near-target',
+        monitoringActive: hasMonitoringSession,
       },
       style: {
-        stroke: failoverActive ? '#f59e0b' : '#64748b',
+        stroke: (failoverActive || hasMonitoringSession) ? '#f59e0b' : '#64748b',
         strokeWidth: clamp(1.6 + bandwidthMbps / 55, 1.6, 5.8),
         strokeDasharray: failoverActive ? '8 5' : undefined,
       },
