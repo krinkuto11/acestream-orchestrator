@@ -1089,8 +1089,8 @@ def get_vpn_status() -> dict:
             "forwarded_port": None,
             "last_check": None,
             "last_check_at": None,
-            "vpn1": None,
-            "vpn2": None,
+            "vpn1": {},
+            "vpn2": {},
             "emergency_mode": emergency_info
         }
     
@@ -1102,12 +1102,12 @@ def get_vpn_status() -> dict:
         result = vpn1_status.copy()
         result["mode"] = "single"
         result["vpn1"] = vpn1_status
-        result["vpn2"] = None
+        result["vpn2"] = {}
         result["emergency_mode"] = emergency_info
         return result
     
     # In redundant mode, get both VPN statuses
-    vpn2_status = None
+    vpn2_status = {}
     if cfg.GLUETUN_CONTAINER_NAME_2:
         vpn2_status = _get_single_vpn_status(cfg.GLUETUN_CONTAINER_NAME_2)
     

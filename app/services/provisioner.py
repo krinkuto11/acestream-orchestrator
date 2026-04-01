@@ -239,7 +239,14 @@ def _get_network_config(vpn_container: Optional[str] = None):
             "network": cfg.DOCKER_NETWORK
         }
     else:
-        # Use default network
+        # Detect orchestrator network if no explicit network or VPN is configured
+        # This ensuring engines can reach each other and the orchestrator in "no VPN" mode
+        from .docker_client import get_orchestrator_network
+        orch_network = get_orchestrator_network()
+        if orch_network:
+            return {"network": orch_network}
+            
+        # Fallback to default bridge network
         return {
             "network": None
         }
