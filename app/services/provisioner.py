@@ -155,30 +155,62 @@ def _release_ports_from_labels(labels: dict):
                 alloc.free_gluetun_port(int(ap), vpn_container)
         except Exception: pass
 
-def stop_container(container_id: str):
+def stop_container(container_id: str, force: bool = False):
+    """
+    Stop and remove a container.
+    
+    Args:
+        container_id: Docker container ID or name
+        force: If True, uses 'docker rm -f' to kill and remove immediately. 
+               Should be used during shutdown for speed and reliability.
+    """
     cli = get_client()
-    cont = cli.containers.get(container_id)
-    labels = cont.labels or {}
-    cont.stop(timeout=10)
     try:
-        _release_ports_from_labels(labels)
-    finally:
-        # Cleanup disk cache if using host mount
-        # We use container ID or Name?
-        # If we used Name for creation, we must use Name for cleanup.
-        # `cont` object has name.
+        cont = cli.containers.get(container_id)
+        labels = cont.labels or {}
+        
+        # Get name for cache cleanup BEFORE removal
+        c_name = cont.attrs.get("Name", "").lstrip("/")
+        
+        if force:
+            logger.info(f"Forcibly destroying container {container_id[:12]}")
+            # docker-py's remove(force=True) is equivalent to docker rm -f
+            cont.remove(force=True)
+        else:
+            logger.info(f"Stopping container {container_id[:12]}")
+            try:
+                # Try graceful stop first
+                cont.stop(timeout=10)
+            except Exception as e:
+                logger.warning(f"Graceful stop failed for {container_id[:12]}: {e}")
+            
+            try:
+                # Remove after stopping
+                cont.remove(force=True)
+            except Exception as e:
+                logger.error(f"Failed to remove container {container_id[:12]}: {e}")
+
+        # Resource cleanup (ports and disk cache)
+        # We do this after removal attempt to ensure we don't block removal if cleanup fails
         try:
-             # Try to get name from container attributes
-             # name starts with / usually
-             c_name = cont.attrs.get("Name", "").lstrip("/")
-             # Also try ID just in case we switch strategies or fallback
+            _release_ports_from_labels(labels)
+        except Exception as e:
+            logger.warning(f"Failed to release ports for {container_id}: {e}")
+            
+        try:
+             # Use the captured name
              from .engine_cache_manager import engine_cache_manager
              engine_cache_manager.cleanup_cache(c_name)
         except Exception as e:
-            logger.warning(f"Failed to cleanup cache for {container_id}: {e}")
-            pass
+            logger.warning(f"Failed to cleanup cache for {container_id[:12]}: {e}")
+
             
-        cont.remove()
+    except NotFound:
+        # Container already gone, nothing to do but maybe log it
+        logger.debug(f"Container {container_id[:12]} already removed or not found")
+    except Exception as e:
+        logger.error(f"Unexpected error during stop_container for {container_id}: {e}")
+
 
 
 def clear_acestream_cache(container_id: Optional[str] = None) -> bool:

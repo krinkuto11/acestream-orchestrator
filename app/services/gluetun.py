@@ -548,8 +548,8 @@ class GluetunMonitor:
             
             # Then stop the container
             try:
-                stop_container(forwarded_engine.container_id)
-                logger.info(f"Successfully stopped forwarded engine {forwarded_engine.container_id[:12]}")
+                stop_container(forwarded_engine.container_id, force=True)
+                logger.info(f"Successfully destroyed forwarded engine {forwarded_engine.container_id[:12]}")
             except Exception as e:
                 logger.error(f"Error stopping forwarded engine {forwarded_engine.container_id[:12]}: {e}")
             
@@ -588,15 +588,14 @@ class GluetunMonitor:
                 return
             
             logger.info(f"Restarting {len(engines_for_vpn)} engines assigned to VPN '{container_name}'")
-            
             # Stop all engines for this VPN
             for engine in engines_for_vpn:
                 try:
-                    logger.info(f"Stopping engine {engine.container_id[:12]} for VPN restart")
-                    stop_container(engine.container_id)
+                    logger.info(f"Forcibly destroying engine {engine.container_id[:12]} for VPN restart")
+                    stop_container(engine.container_id, force=True)
                     state.remove_engine(engine.container_id)
                 except Exception as e:
-                    logger.error(f"Error stopping engine {engine.container_id[:12]}: {e}")
+                    logger.error(f"Error destroying engine {engine.container_id[:12]}: {e}")
             
             # The autoscaler will automatically start new engines to maintain MIN_REPLICAS
             logger.info("Engine restart completed - autoscaler will provision new engines")

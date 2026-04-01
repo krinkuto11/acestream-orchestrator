@@ -619,9 +619,9 @@ class State:
                 def stop_single_container(container):
                     """Helper function to stop a single container."""
                     try:
-                        logger.info(f"Stopping container {container.id[:12]}")
-                        stop_container(container.id)
-                        logger.info(f"Successfully stopped container {container.id[:12]}")
+                        logger.info(f"Forcibly destroying container {container.id[:12]}")
+                        stop_container(container.id, force=True)
+                        logger.info(f"Successfully destroyed container {container.id[:12]}")
                         return True
                     except Exception as e:
                         # Log error but continue cleanup
@@ -795,11 +795,10 @@ class State:
                 logger.warning(f"Removing {len(engines_to_remove)} engines from failed VPN '{failed_vpn}'")
                 for container_id in engines_to_remove:
                     self.remove_engine(container_id)
-                    # Also stop the container
                     try:
                         from .provisioner import stop_container
-                        stop_container(container_id)
-                        logger.info(f"Stopped engine {container_id[:12]} from failed VPN")
+                        stop_container(container_id, force=True)
+                        logger.info(f"Forcibly destroyed engine {container_id[:12]} from failed VPN")
                     except Exception as e:
                         logger.error(f"Failed to stop engine {container_id[:12]}: {e}")
             
