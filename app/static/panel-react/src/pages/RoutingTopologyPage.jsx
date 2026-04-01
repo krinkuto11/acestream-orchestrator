@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import ReactFlow, { Background, Controls, MarkerType } from 'reactflow'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
+import ReactFlow, { Background, Controls, MarkerType, ReactFlowProvider, useReactFlow } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { Activity, AlertTriangle, Network, ShieldAlert, Users, X } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -26,7 +26,16 @@ const formatLastUpdate = (iso) => {
   return date.toLocaleTimeString([], { hour12: false })
 }
 
-export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorStatus, embedded = false }) {
+export function RoutingTopologyPage(props) {
+  return (
+    <ReactFlowProvider>
+      <RoutingTopologyInner {...props} />
+    </ReactFlowProvider>
+  )
+}
+
+function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus, embedded = false }) {
+  const { fitView } = useReactFlow()
   const {
     nodes,
     edges,
@@ -40,7 +49,28 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
     setSelectedNode,
   } = useTopologyStore((state) => state)
 
-  const [rfInstance, setRfInstance] = useState(null)
+  const containerRef = useRef(null)
+  const fitDebounceRef = useRef(null)
+
+  // Debounced fitView — called after the sidebar CSS transition finishes
+  const debouncedFitView = useCallback(() => {
+    if (fitDebounceRef.current) clearTimeout(fitDebounceRef.current)
+    fitDebounceRef.current = setTimeout(() => {
+      fitView({ padding: 0.12, duration: 400 })
+    }, 50)
+  }, [fitView])
+
+  // Watch container size changes (triggered by sidebar expand/collapse)
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const observer = new ResizeObserver(debouncedFitView)
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+      if (fitDebounceRef.current) clearTimeout(fitDebounceRef.current)
+    }
+  }, [debouncedFitView])
 
   useEffect(() => {
     const hasBackendData =
@@ -74,16 +104,15 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
 
   // Automatically fit view when nodes are first populated or change significantly
   useEffect(() => {
-    if (rfInstance && nodes.length > 0) {
-      const fit = () => rfInstance.fitView({ padding: 0.12, duration: 800 })
-      const timer1 = setTimeout(fit, 150)
-      const timer2 = setTimeout(fit, 1000) 
+    if (nodes.length > 0) {
+      const timer1 = setTimeout(() => fitView({ padding: 0.12, duration: 800 }), 150)
+      const timer2 = setTimeout(() => fitView({ padding: 0.12, duration: 800 }), 1000)
       return () => {
         clearTimeout(timer1)
         clearTimeout(timer2)
       }
     }
-  }, [nodes.length, rfInstance])
+  }, [nodes.length, fitView])
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId) || null,
@@ -98,7 +127,7 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
     )
 
   return (
-    <div className={cn(
+    <div ref={containerRef} className={cn(
       "relative w-full overflow-hidden rounded-xl border border-slate-800 bg-[#0f172a] shadow-inner flex flex-col",
       embedded ? "h-[740px]" : "h-screen"
     )}>
@@ -117,7 +146,6 @@ export function RoutingTopologyPage({ engines, streams, vpnStatus, orchestratorS
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
-          onInit={setRfInstance}
           fitView
           fitViewOptions={{ padding: 0.2 }}
           minZoom={0.2}
