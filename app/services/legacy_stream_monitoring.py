@@ -606,7 +606,9 @@ class LegacyStreamMonitoringService:
                                         engine_writer = None
                                         try:
                                             engine_reader, engine_writer = await asyncio.open_connection(host, port)
-                                            request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: VLC/3.0.16\r\nConnection: close\r\n\r\n"
+
+                                            # FIX 1: Use HTTP/1.0 to disable chunked encoding and prevent TS corruption!
+                                            request = f"GET {path} HTTP/1.0\r\nHost: {host}\r\nUser-Agent: VLC/3.0.16\r\nConnection: close\r\n\r\n"
                                             engine_writer.write(request.encode('utf-8'))
                                             await engine_writer.drain()
 
@@ -620,21 +622,18 @@ class LegacyStreamMonitoringService:
                                                     break # EOF
 
                                                 # Broadcast the chunk to any connected StreamManagers
-                                                dead_clients = set()
-                                                for client_writer in proxy_clients:
+                                                # FIX 2: Iterate over a copy of the set using list() to allow safe removals
+                                                for client_writer in list(proxy_clients):
                                                     try:
                                                         client_writer.write(chunk)
-                                                        await client_writer.drain()
+                                                        # FIX 3: Timeout the drain so a lagging client doesn't choke the P2P swarm
+                                                        await asyncio.wait_for(client_writer.drain(), timeout=2.0)
                                                     except Exception:
-                                                        dead_clients.add(client_writer)
-
-                                                # Clean up disconnected clients
-                                                for dead in dead_clients:
-                                                    proxy_clients.discard(dead)
-                                                    try:
-                                                        dead.close()
-                                                    except Exception:
-                                                        pass
+                                                        proxy_clients.discard(client_writer)
+                                                        try:
+                                                            client_writer.close()
+                                                        except Exception:
+                                                            pass
                                         except Exception:
                                             if not stop_event.is_set():
                                                 await asyncio.sleep(2.0)
