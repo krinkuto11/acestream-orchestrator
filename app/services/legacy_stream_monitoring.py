@@ -6,9 +6,12 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+import os
 from urllib.parse import urlparse
 
 from ..proxy.ace_api_client import AceLegacyApiClient
+from ..proxy.http_streamer import HTTPStreamReader
+from ..proxy.constants import VLC_USER_AGENT
 from .state import state
 from ..core.config import cfg
 from .engine_selection import select_best_engine
@@ -594,54 +597,58 @@ class LegacyStreamMonitoringService:
                                 },
                             )
 
-                            # 4. The Engine Consumer: Reads from engine, writes to proxy clients
+                            # 4. The Engine Consumer: Uses the proxy's native HTTPStreamReader!
                             async def _engine_consumer(url: str):
-                                parsed = urlparse(url)
-                                host = parsed.hostname
-                                port = parsed.port or 80
-                                path = parsed.path + ("?" + parsed.query if parsed.query else "")
-
                                 try:
                                     while not stop_event.is_set():
-                                        engine_writer = None
+                                        http_reader = None
+                                        fd = None
                                         try:
-                                            engine_reader, engine_writer = await asyncio.open_connection(host, port)
-
-                                            # FIX 1: Use HTTP/1.0 to disable chunked encoding and prevent TS corruption!
-                                            request = f"GET {path} HTTP/1.0\r\nHost: {host}\r\nUser-Agent: VLC/3.0.16\r\nConnection: close\r\n\r\n"
-                                            engine_writer.write(request.encode('utf-8'))
-                                            await engine_writer.drain()
-
-                                            # Strip the HTTP headers sent by the AceStream engine
-                                            await engine_reader.readuntil(b'\r\n\r\n')
+                                            # Use the exact same reader the proxy uses to decode chunks!
+                                            http_reader = HTTPStreamReader(
+                                                url=url,
+                                                user_agent=VLC_USER_AGENT,
+                                                chunk_size=65536
+                                            )
+                                            # start() returns a pipe file descriptor
+                                            pipe_fd = await asyncio.to_thread(http_reader.start)
+                                            fd = os.fdopen(pipe_fd, 'rb', buffering=0)
 
                                             while not stop_event.is_set():
-                                                # Read the pure video payload from the engine
-                                                chunk = await asyncio.wait_for(engine_reader.read(65536), timeout=30.0)
+                                                # Read pure, decoded video bytes from the pipe
+                                                chunk = await asyncio.to_thread(fd.read, 65536)
                                                 if not chunk:
-                                                    break # EOF
+                                                    break # EOF, engine dropped connection
 
-                                                # Broadcast the chunk to any connected StreamManagers
-                                                # FIX 2: Iterate over a copy of the set using list() to allow safe removals
+                                                # Broadcast the clean chunk to connected proxy clients
+                                                dead_clients = set()
                                                 for client_writer in list(proxy_clients):
                                                     try:
                                                         client_writer.write(chunk)
-                                                        # FIX 3: Timeout the drain so a lagging client doesn't choke the P2P swarm
+                                                        # Timeout prevents a lagging client from freezing the relay
                                                         await asyncio.wait_for(client_writer.drain(), timeout=2.0)
                                                     except Exception:
-                                                        proxy_clients.discard(client_writer)
-                                                        try:
-                                                            client_writer.close()
-                                                        except Exception:
-                                                            pass
-                                        except Exception:
+                                                        dead_clients.add(client_writer)
+
+                                                for dead in dead_clients:
+                                                    proxy_clients.discard(dead)
+                                                    try:
+                                                        dead.close()
+                                                    except Exception:
+                                                        pass
+                                        except Exception as e:
+                                            logger.debug(f"Relay engine consumer error: {e}")
                                             if not stop_event.is_set():
                                                 await asyncio.sleep(2.0)
                                         finally:
-                                            if engine_writer:
+                                            if fd:
                                                 try:
-                                                    engine_writer.close()
-                                                    await engine_writer.wait_closed()
+                                                    fd.close()
+                                                except Exception:
+                                                    pass
+                                            if http_reader:
+                                                try:
+                                                    http_reader.stop()
                                                 except Exception:
                                                     pass
                                 except asyncio.CancelledError:
