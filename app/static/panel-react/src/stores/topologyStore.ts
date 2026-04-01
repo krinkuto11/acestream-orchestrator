@@ -266,6 +266,8 @@ const buildSnapshot = (
       engine,
       streamCount: engineStreams.length,
       measuredMbps: measuredDownMbps, // used for sorting
+      streamMeasuredDownMbps,
+      streamMeasuredUpMbps,
       measuredDownMbps,
       measuredUpMbps,
     }
@@ -394,7 +396,7 @@ const buildSnapshot = (
   }
 
   // 3. Process the nodes using the Zig-Zag Staggered Corridor pattern
-  engineStatsWithTunnel.forEach(({ engine, streamCount, measuredMbps, measuredDownMbps, measuredUpMbps, assignedTunnel }, index) => {
+  engineStatsWithTunnel.forEach(({ engine, streamCount, measuredMbps, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, assignedTunnel }, index) => {
     const engineStreams = streamMap.get(engine.container_id) || []
     const monitorStreamCount = Math.max(
       0,
@@ -446,7 +448,7 @@ const buildSnapshot = (
     const engineIngressBps = orchestratorStatus?.proxy?.engine_ingress_bps?.[engine.container_id] ?? 0
     const proxyIngressMbps = engineIngressBps > 0 
       ? (engineIngressBps * 8) / 1_000_000 
-      : (streamCount > 0 ? bandwidthMbps * 0.98 : (isMockMode ? randomBetween(2, 18) : 0))
+      : (streamCount > 0 ? streamMeasuredDownMbps * 0.98 : (isMockMode ? randomBetween(2, 18) : 0))
     
     let health: TopologyNodeHealth = 'healthy'
     if (engine.health_status === 'unhealthy' || (!tunnelHealthy && !backupHealthy)) {
@@ -547,6 +549,13 @@ const buildSnapshot = (
     return sum + (found?.data?.bandwidthMbps || 0)
   }, 0)
 
+  // Proxy bandwidth should reflect proxy ingress only, not monitor-side engine traffic.
+  const totalProxyIngressMbps = engineStats.reduce((sum, { engine }) => {
+    const found = nodes.find((node) => node.id === engine.container_id)
+    return sum + (found?.data?.proxyIngressMbps || 0)
+  }, 0)
+  const proxyNodeBandwidthMbps = orchestratorStatus?.proxy?.throughput?.ingress_mbps ?? totalProxyIngressMbps
+
   const activeStreams = orchestratorStatus?.streams?.active ?? workingStreams.length
   
   // 3. Client Nodes and Egress Pipelines
@@ -572,7 +581,7 @@ const buildSnapshot = (
       subtitle: '/ace and /hls pipeline',
       health: (orchestratorStatus?.status === 'healthy' || orchestratorStatus?.proxy?.request_window_1m?.success_rate_percent > 98) ? 'healthy' : 'degraded',
       streamCount: activeStreams,
-      bandwidthMbps: totalBandwidthMbps,
+      bandwidthMbps: proxyNodeBandwidthMbps,
       metadata: {
         successRate: orchestratorStatus?.proxy?.request_window_1m?.success_rate_percent 
           ? `${orchestratorStatus.proxy.request_window_1m.success_rate_percent}%`
