@@ -567,6 +567,19 @@ class LegacyStreamMonitoringService:
 
                                 try:
                                     while not stop_event.is_set():
+                                        # 1. Check if a real client is already consuming this stream
+                                        is_real_client_active = False
+                                        for st in state.list_streams(status="started"):
+                                            # Match against the requested ID or the resolved engine hash
+                                            if st.key in (content_id, resolved_infohash):
+                                                is_real_client_active = True
+                                                break
+
+                                        # 2. If a real client is watching, yield the connection and sleep
+                                        if is_real_client_active:
+                                            await asyncio.sleep(5.0)
+                                            continue
+
                                         writer = None
                                         try:
                                             # Connect to AceStream's HTTP endpoint
@@ -576,14 +589,24 @@ class LegacyStreamMonitoringService:
                                             writer.write(request.encode('utf-8'))
                                             await writer.drain()
 
+                                            read_loops = 0
                                             while not stop_event.is_set():
+                                                # Periodically check if a real client joined while we were reading
+                                                # 50 chunks of 64KB is roughly every few seconds depending on bitrate
+                                                read_loops += 1
+                                                if read_loops % 50 == 0:
+                                                    for st in state.list_streams(status="started"):
+                                                        if st.key in (content_id, resolved_infohash):
+                                                            raise ConnectionAbortedError("Yielding to real client")
+
                                                 # Read 64KB chunks and discard them instantly
                                                 chunk = await asyncio.wait_for(reader.read(65536), timeout=30.0)
                                                 if not chunk:
-                                                    break # EOF, engine dropped connection. Reconnect.
+                                                    break # EOF, engine dropped connection.
                                         except Exception:
+                                            # Catch timeouts, connection drops, or our deliberate yield abort
                                             if not stop_event.is_set():
-                                                await asyncio.sleep(2)
+                                                await asyncio.sleep(2.0)
                                         finally:
                                             if writer:
                                                 try:
