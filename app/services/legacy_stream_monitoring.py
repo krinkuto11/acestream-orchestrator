@@ -577,10 +577,10 @@ class LegacyStreamMonitoringService:
                                     except Exception:
                                         pass
 
-                            # 2. Start the local server on a random available port (port 0)
-                            dummy_server = await asyncio.start_server(handle_proxy_client, '127.0.0.1', 0)
+                            # 2. Start the local server on 127.0.0.2 (bypasses URL normalizer)
+                            dummy_server = await asyncio.start_server(handle_proxy_client, '127.0.0.2', 0)
                             dummy_port = dummy_server.sockets[0].getsockname()[1]
-                            relay_url = f"http://127.0.0.1:{dummy_port}/"
+                            relay_url = f"http://127.0.0.2:{dummy_port}/"
 
                             # 3. Trick the Orchestrator into connecting to our Relay instead of the Engine
                             await self._update_session(

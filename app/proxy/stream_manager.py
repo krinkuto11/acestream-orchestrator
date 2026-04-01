@@ -392,11 +392,6 @@ class StreamManager:
 
             parsed = urlparse(normalized_url)
             if parsed.hostname in {"127.0.0.1", "localhost"}:
-                # If we don't own the session (it's a monitor session), the monitor has already 
-                # either normalized the URL or provided its own local relay. Don't rewrite it.
-                if not self.owns_engine_session:
-                    return normalized_url
-
                 netloc = f"{self.engine_host}:{parsed.port}" if parsed.port else self.engine_host
                 return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
             if parsed.scheme and parsed.netloc:
