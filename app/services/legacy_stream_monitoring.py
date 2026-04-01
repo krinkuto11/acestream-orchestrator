@@ -6,6 +6,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from ..proxy.ace_api_client import AceLegacyApiClient
 from .state import state
@@ -445,8 +446,21 @@ class LegacyStreamMonitoringService:
         stop_event = self._stop_events[monitor_id]
         stream_started = False
 
+        # NEW: Track our background dummy reader
+        dummy_reader_task: Optional[asyncio.Task] = None
+
         async def _shutdown_client():
-            nonlocal client, stream_started
+            nonlocal client, stream_started, dummy_reader_task
+
+            # NEW: Clean up the dummy reader on shutdown
+            if dummy_reader_task:
+                dummy_reader_task.cancel()
+                try:
+                    await dummy_reader_task
+                except asyncio.CancelledError:
+                    pass
+                dummy_reader_task = None
+
             if not client:
                 return
             try:
@@ -529,16 +543,58 @@ class LegacyStreamMonitoringService:
                         if not playback_session_id:
                             playback_session_id = f"legacy-monitor-{monitor_id[:8]}-{int(time.time())}"
 
+                        # Extract the URL to be consumed
+                        playback_url = start_info.get("url")
+
                         await self._update_session(
                             monitor_id,
                             status="running",
                             last_error=None,
                             session={
                                 "playback_session_id": playback_session_id,
-                                "playback_url": start_info.get("url"),
+                                "playback_url": playback_url,
                                 "resolved_infohash": resolved_infohash,
                             },
                         )
+
+                        # NEW: Start the dummy reader to keep the P2P swarm hot!
+                        if playback_url and not dummy_reader_task:
+                            async def _dummy_consumer(url: str):
+                                parsed = urlparse(url)
+                                host = parsed.hostname
+                                port = parsed.port or 80
+                                path = parsed.path + ("?" + parsed.query if parsed.query else "")
+
+                                try:
+                                    while not stop_event.is_set():
+                                        writer = None
+                                        try:
+                                            # Connect to AceStream's HTTP endpoint
+                                            reader, writer = await asyncio.open_connection(host, port)
+                                            # Spoof VLC to ensure standard serving behavior
+                                            request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: VLC/3.0.16 LibVLC/3.0.16\r\nConnection: close\r\n\r\n"
+                                            writer.write(request.encode('utf-8'))
+                                            await writer.drain()
+
+                                            while not stop_event.is_set():
+                                                # Read 64KB chunks and discard them instantly
+                                                chunk = await asyncio.wait_for(reader.read(65536), timeout=30.0)
+                                                if not chunk:
+                                                    break # EOF, engine dropped connection. Reconnect.
+                                        except Exception:
+                                            if not stop_event.is_set():
+                                                await asyncio.sleep(2)
+                                        finally:
+                                            if writer:
+                                                try:
+                                                    writer.close()
+                                                    await writer.wait_closed()
+                                                except Exception:
+                                                    pass
+                                except asyncio.CancelledError:
+                                    pass
+
+                            dummy_reader_task = asyncio.create_task(_dummy_consumer(playback_url))
 
                     probe = await asyncio.to_thread(
                         client.collect_status_samples,
