@@ -548,8 +548,8 @@ class GluetunMonitor:
             
             # Then stop the container
             try:
-                stop_container(forwarded_engine.container_id)
-                logger.info(f"Successfully stopped forwarded engine {forwarded_engine.container_id[:12]}")
+                stop_container(forwarded_engine.container_id, force=True)
+                logger.info(f"Successfully destroyed forwarded engine {forwarded_engine.container_id[:12]}")
             except Exception as e:
                 logger.error(f"Error stopping forwarded engine {forwarded_engine.container_id[:12]}: {e}")
             
@@ -588,15 +588,14 @@ class GluetunMonitor:
                 return
             
             logger.info(f"Restarting {len(engines_for_vpn)} engines assigned to VPN '{container_name}'")
-            
             # Stop all engines for this VPN
             for engine in engines_for_vpn:
                 try:
-                    logger.info(f"Stopping engine {engine.container_id[:12]} for VPN restart")
-                    stop_container(engine.container_id)
+                    logger.info(f"Forcibly destroying engine {engine.container_id[:12]} for VPN restart")
+                    stop_container(engine.container_id, force=True)
                     state.remove_engine(engine.container_id)
                 except Exception as e:
-                    logger.error(f"Error stopping engine {engine.container_id[:12]}: {e}")
+                    logger.error(f"Error destroying engine {engine.container_id[:12]}: {e}")
             
             # The autoscaler will automatically start new engines to maintain MIN_REPLICAS
             logger.info("Engine restart completed - autoscaler will provision new engines")
@@ -1089,8 +1088,8 @@ def get_vpn_status() -> dict:
             "forwarded_port": None,
             "last_check": None,
             "last_check_at": None,
-            "vpn1": None,
-            "vpn2": None,
+            "vpn1": {},
+            "vpn2": {},
             "emergency_mode": emergency_info
         }
     
@@ -1102,12 +1101,12 @@ def get_vpn_status() -> dict:
         result = vpn1_status.copy()
         result["mode"] = "single"
         result["vpn1"] = vpn1_status
-        result["vpn2"] = None
+        result["vpn2"] = {}
         result["emergency_mode"] = emergency_info
         return result
     
     # In redundant mode, get both VPN statuses
-    vpn2_status = None
+    vpn2_status = {}
     if cfg.GLUETUN_CONTAINER_NAME_2:
         vpn2_status = _get_single_vpn_status(cfg.GLUETUN_CONTAINER_NAME_2)
     

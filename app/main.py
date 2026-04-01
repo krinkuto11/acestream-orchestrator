@@ -498,12 +498,16 @@ async def lifespan(app: FastAPI):
     await legacy_stream_monitoring_service.stop_all()  # Stop legacy monitor sessions
     await stop_cleanup_task()  # Stop cache cleanup
     
+    # Final cleanup: stop engines and clear state
+    cleanup_on_shutdown()
+    logger.info("Orchestrator shutdown complete")
+    
     # Give a small delay to ensure any pending operations complete
     await asyncio.sleep(0.1)
     
     cleanup_on_shutdown()
 
-__version__ = "1.7.1"
+__version__ = "1.7.2"
 
 app = FastAPI(
     title="On-Demand Orchestrator",

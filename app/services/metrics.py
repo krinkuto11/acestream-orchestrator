@@ -1125,8 +1125,8 @@ def update_custom_metrics(window_seconds: int = 900, max_points: int = 360) -> D
     # Update VPN-specific metrics for redundant mode
     if cfg.VPN_MODE == 'redundant':
         # Get individual VPN statuses
-        vpn1_status = vpn_status.get("vpn1", {})
-        vpn2_status = vpn_status.get("vpn2", {})
+        vpn1_status = vpn_status.get("vpn1") or {}
+        vpn2_status = vpn_status.get("vpn2") or {}
         
         vpn1_health = vpn1_status.get("health", "unknown")
         vpn2_health = vpn2_status.get("health", "unknown")

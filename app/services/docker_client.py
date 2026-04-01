@@ -2,8 +2,13 @@ import docker
 from docker.errors import APIError, DockerException
 import time
 import logging
+import socket
+import os
 
 logger = logging.getLogger(__name__)
+
+# Cache for detected orchestrator network
+_orchestrator_network = None
 
 def get_client(timeout: int = 30):
     """
@@ -35,3 +40,36 @@ def safe(container_call, *args, **kwargs):
         return container_call(*args, **kwargs)
     except APIError as e:
         raise RuntimeError(str(e)) from e
+
+def get_orchestrator_network() -> str | None:
+    """Detect the Docker network the orchestrator is running on."""
+    global _orchestrator_network
+    if _orchestrator_network:
+        return _orchestrator_network
+        
+    # Check if we are running in Docker
+    if not os.path.exists('/.dockerenv'):
+        # Not in Docker, skip detection
+        return None
+        
+    try:
+        client = get_client()
+        # Default Docker behavior: hostname matches container ID or name
+        hostname = socket.gethostname()
+        container = client.containers.get(hostname)
+        networks = container.attrs.get("NetworkSettings", {}).get("Networks", {})
+        if networks:
+            network_names = list(networks.keys())
+            # If in multiple networks and "bridge" is one of them, prioritize others
+            # as they are likely user-defined bridge networks from docker-compose.
+            if len(network_names) > 1 and "bridge" in network_names:
+                _orchestrator_network = [n for n in network_names if n != "bridge"][0]
+            else:
+                _orchestrator_network = network_names[0]
+                
+            logger.info(f"Detected orchestrator network: '{_orchestrator_network}'. Engines will be provisioned in this network by default.")
+            return _orchestrator_network
+    except Exception as e:
+        logger.debug(f"Failed to detect orchestrator Docker network: {e}")
+        
+    return None
