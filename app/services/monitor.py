@@ -5,7 +5,7 @@ from typing import Set
 from .state import state
 from .health import list_managed
 from .reindex import reindex_existing
-from .autoscaler import ensure_minimum
+from .autoscaler import ensure_minimum, engine_controller
 from .gluetun import gluetun_monitor
 from .hls_segmenter import hls_segmenter_service
 from ..core.config import cfg
@@ -32,6 +32,7 @@ class DockerMonitor:
         # Start both monitoring and autoscaling tasks
         self._task = asyncio.create_task(self._monitor_docker())
         self._autoscale_task = asyncio.create_task(self._periodic_autoscale())
+        await engine_controller.start()
         
         # Gluetun monitoring is now started earlier in main.py to avoid race condition
         # with ensure_minimum() during startup
@@ -45,6 +46,7 @@ class DockerMonitor:
             await self._task
         if self._autoscale_task:
             await self._autoscale_task
+        await engine_controller.stop()
         
         # Gluetun monitoring is now stopped in main.py
 

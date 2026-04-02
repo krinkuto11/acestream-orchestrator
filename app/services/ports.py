@@ -111,6 +111,106 @@ class PortAllocator:
         with self._lock:
             self._used_https.discard(p)
 
+    def allocate_engine_ports(
+        self,
+        *,
+        use_gluetun: bool,
+        vpn_container: Optional[str],
+        requested_host_port: Optional[int],
+        user_http_port: Optional[int],
+        user_https_port: Optional[int],
+        user_api_port: Optional[int],
+        map_https: bool,
+    ) -> Dict[str, Optional[int]]:
+        """Atomically reserve all ports required for a new engine.
+
+        Returns a dictionary with container and host ports.
+        If any allocation fails, all partial reservations are rolled back.
+        """
+
+        with self._lock:
+            reservations: list[tuple[str, int, Optional[str]]] = []
+
+            def _track(kind: str, port: int, vpn: Optional[str] = None):
+                reservations.append((kind, port, vpn))
+
+            def _rollback():
+                for kind, port, vpn in reversed(reservations):
+                    if kind == "host":
+                        self.free_host(port)
+                    elif kind == "http":
+                        self.free_http(port)
+                    elif kind == "https":
+                        self.free_https(port)
+                    elif kind == "gluetun":
+                        self.free_gluetun_port(port, vpn)
+
+            try:
+                if user_http_port is not None:
+                    c_http = user_http_port
+                    host_http = requested_host_port or user_http_port
+                    if use_gluetun:
+                        self.reserve_gluetun_port(c_http, vpn_container)
+                        _track("gluetun", c_http, vpn_container)
+                    else:
+                        self.reserve_http(c_http)
+                        _track("http", c_http)
+                else:
+                    if use_gluetun:
+                        host_http = self.alloc_gluetun_port(vpn_container)
+                        _track("gluetun", host_http, vpn_container)
+                        c_http = host_http
+                    else:
+                        host_http = requested_host_port or self.alloc_host()
+                        if requested_host_port is None:
+                            _track("host", host_http)
+                        c_http = host_http
+                        self.reserve_http(c_http)
+                        _track("http", c_http)
+
+                if user_https_port is not None:
+                    c_https = user_https_port
+                    self.reserve_https(c_https)
+                    _track("https", c_https)
+                else:
+                    c_https = self.alloc_https(avoid=c_http)
+                    _track("https", c_https)
+
+                if user_api_port is not None:
+                    c_api = user_api_port
+                    host_api = user_api_port
+                    if use_gluetun:
+                        self.reserve_gluetun_port(host_api, vpn_container)
+                        _track("gluetun", host_api, vpn_container)
+                    else:
+                        self.reserve_host(host_api)
+                        _track("host", host_api)
+                else:
+                    if use_gluetun:
+                        host_api = self.alloc_gluetun_port(vpn_container)
+                        _track("gluetun", host_api, vpn_container)
+                    else:
+                        host_api = self.alloc_host()
+                        _track("host", host_api)
+                    c_api = host_api
+
+                host_https = None
+                if not use_gluetun and map_https:
+                    host_https = self.alloc_host()
+                    _track("host", host_https)
+
+                return {
+                    "container_http_port": c_http,
+                    "container_https_port": c_https,
+                    "container_api_port": c_api,
+                    "host_http_port": host_http,
+                    "host_api_port": host_api,
+                    "host_https_port": host_https,
+                }
+            except Exception:
+                _rollback()
+                raise
+
     def alloc_gluetun_port(self, vpn_container: Optional[str] = None) -> int:
         """
         Allocate a port for Gluetun from the appropriate range.

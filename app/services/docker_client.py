@@ -4,11 +4,206 @@ import time
 import logging
 import socket
 import os
+import threading
+from contextlib import suppress
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
 # Cache for detected orchestrator network
 _orchestrator_network = None
+
+_DOCKER_EVENT_FILTERS = {
+    "type": "container",
+    "event": [
+        "start",
+        "die",
+        "destroy",
+        "health_status: healthy",
+        "health_status: unhealthy",
+    ],
+}
+
+
+def _resolve_docker_socket_path() -> Optional[str]:
+    docker_host = os.getenv("DOCKER_HOST", "").strip()
+    if docker_host.startswith("unix://"):
+        return docker_host.replace("unix://", "", 1)
+    if docker_host:
+        # Non-unix transports (tcp/ssh/etc.) should keep retry behavior.
+        return None
+    return "/var/run/docker.sock"
+
+
+def _normalize_docker_event_action(event: dict) -> str:
+    action = (
+        event.get("Action")
+        or event.get("status")
+        or event.get("action")
+        or ""
+    )
+    return str(action).strip().lower()
+
+
+class DockerEventWatcher:
+    """Watches Docker container lifecycle events and updates orchestrator state in real-time."""
+
+    def __init__(self, reconnect_delay_s: float = 2.0):
+        self._thread: Optional[threading.Thread] = None
+        self._stop_sync = threading.Event()
+        self._reconnect_delay_s = reconnect_delay_s
+        self._event_stream = None
+        self._event_stream_lock = threading.RLock()
+        self._subscribers: list[Callable[[dict], None]] = []
+
+    def subscribe(self, callback: Callable[[dict], None]):
+        """Register a callback invoked after each processed Docker event."""
+        self._subscribers.append(callback)
+
+    async def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+
+        self._stop_sync.clear()
+        self._thread = threading.Thread(target=self._run_sync, name="docker-event-watcher", daemon=True)
+        self._thread.start()
+        logger.info("Docker event watcher started")
+
+    async def stop(self):
+        self._stop_sync.set()
+        self._close_event_stream()
+
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+            if self._thread.is_alive():
+                logger.warning("Docker event watcher thread did not stop cleanly within timeout")
+
+        self._thread = None
+        logger.info("Docker event watcher stopped")
+
+    def _run_sync(self):
+        while not self._stop_sync.is_set():
+            try:
+                self._consume_events_blocking()
+            except Exception as e:
+                if self._stop_sync.is_set():
+                    break
+                logger.warning(f"Docker event stream disconnected: {e}")
+
+            if self._stop_sync.is_set():
+                break
+
+            self._stop_sync.wait(timeout=self._reconnect_delay_s)
+
+    def _consume_events_blocking(self):
+        # Use a single fast connection attempt so shutdown remains responsive
+        # when Docker is unavailable (tests/local offline scenarios).
+        cli = docker.from_env(timeout=10)
+        cli.ping()
+        stream = None
+
+        try:
+            stream = cli.events(decode=True, filters=_DOCKER_EVENT_FILTERS)
+            with self._event_stream_lock:
+                self._event_stream = stream
+
+            for event in stream:
+                if self._stop_sync.is_set():
+                    break
+                if not isinstance(event, dict):
+                    continue
+
+                action = _normalize_docker_event_action(event)
+                if not action:
+                    continue
+
+                self._handle_event(event, action)
+        finally:
+            with self._event_stream_lock:
+                if self._event_stream is stream:
+                    self._event_stream = None
+
+            if stream is not None:
+                with suppress(Exception):
+                    stream.close()
+            with suppress(Exception):
+                cli.close()
+
+    def _close_event_stream(self):
+        with self._event_stream_lock:
+            stream = self._event_stream
+            self._event_stream = None
+
+        if stream is not None:
+            with suppress(Exception):
+                stream.close()
+
+    def _handle_event(self, event: dict, action: str):
+        actor = event.get("Actor") or {}
+        attrs = actor.get("Attributes") or {}
+        container_id = event.get("id") or actor.get("ID")
+        container_name = attrs.get("name")
+
+        if not container_id:
+            return
+
+        try:
+            self._apply_state_update(container_id=container_id, container_name=container_name, action=action, attrs=attrs)
+        except Exception as e:
+            logger.warning(f"Failed to apply Docker event to state ({container_id[:12]} {action}): {e}")
+
+        for subscriber in self._subscribers:
+            try:
+                subscriber(event)
+            except Exception as e:
+                logger.warning(f"Docker event subscriber failed: {e}")
+
+    @staticmethod
+    def _is_managed_engine(attrs: dict) -> bool:
+        from ..core.config import cfg
+
+        label_key, label_value = cfg.CONTAINER_LABEL.split("=", 1)
+        return attrs.get(label_key) == label_value
+
+    @staticmethod
+    def _match_vpn_name(container_name: Optional[str]) -> Optional[str]:
+        if not container_name:
+            return None
+
+        from ..core.config import cfg
+
+        candidates = [cfg.GLUETUN_CONTAINER_NAME, cfg.GLUETUN_CONTAINER_NAME_2]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            if container_name == candidate or container_name.endswith(candidate):
+                return candidate
+        return None
+
+    def _apply_state_update(self, container_id: str, container_name: Optional[str], action: str, attrs: dict):
+        from .state import state
+
+        vpn_name = self._match_vpn_name(container_name)
+        if vpn_name:
+            if action in ("die", "destroy"):
+                state.update_vpn_node_status(vpn_name, "down")
+            elif action == "start":
+                state.update_vpn_node_status(vpn_name, "running")
+            elif action == "health_status: healthy":
+                state.update_vpn_node_status(vpn_name, "healthy")
+            elif action == "health_status: unhealthy":
+                state.update_vpn_node_status(vpn_name, "unhealthy")
+
+        if not self._is_managed_engine(attrs):
+            return
+
+        labels = {k: str(v) for k, v in attrs.items() if k != "name" and v is not None}
+        state.apply_engine_docker_event(
+            container_id=container_id,
+            container_name=container_name,
+            action=action,
+            labels=labels,
+        )
 
 def get_client(timeout: int = 30):
     """
@@ -20,6 +215,12 @@ def get_client(timeout: int = 30):
     """
     max_retries = 10
     retry_delay = 2
+
+    # Fast-fail when Docker uses a unix socket that does not exist.
+    # This avoids multi-minute retry delays in test/dev environments without Docker.
+    socket_path = _resolve_docker_socket_path()
+    if socket_path and not os.path.exists(socket_path):
+        raise DockerException(f"Docker socket not found: {socket_path}")
     
     for attempt in range(max_retries):
         try:
@@ -34,6 +235,8 @@ def get_client(timeout: int = 30):
             logger.warning(f"Docker connection attempt {attempt + 1} failed: {e}. Retrying in {retry_delay}s...")
             time.sleep(retry_delay)
             retry_delay = min(retry_delay * 1.5, 10)  # Exponential backoff, max 10s
+
+    raise RuntimeError("Failed to obtain Docker client")
 
 def safe(container_call, *args, **kwargs):
     try:

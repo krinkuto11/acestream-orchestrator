@@ -1,6 +1,7 @@
 from __future__ import annotations
 import threading
 import logging
+import uuid
 from typing import Dict, List, Optional, Set
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +21,10 @@ class State:
         self.streams: Dict[str, StreamState] = {}
         self.stream_stats: Dict[str, List[StreamStatSnapshot]] = {}
         self.monitor_sessions: Dict[str, Dict[str, object]] = {}
+        self._desired_replica_count = 0
+        self._vpn_nodes: Dict[str, Dict[str, object]] = {}
+        self._scaling_intents: List[Dict[str, object]] = []
+        self._max_scaling_intents = 300
         
         # Emergency mode state for redundant VPN failure handling
         self._emergency_mode = False
@@ -47,6 +52,12 @@ class State:
             "volume_count": 0,
             "last_updated": None
         }
+
+        try:
+            from ..core.config import cfg
+            self._desired_replica_count = cfg.MIN_REPLICAS
+        except Exception:
+            self._desired_replica_count = 0
 
     @staticmethod
     def now():
@@ -576,6 +587,13 @@ class State:
             self.streams.clear()
             self.stream_stats.clear()
             self.monitor_sessions.clear()
+            self._scaling_intents.clear()
+
+            try:
+                from ..core.config import cfg
+                self._desired_replica_count = cfg.MIN_REPLICAS
+            except Exception:
+                self._desired_replica_count = 0
         
         # Also clear cumulative metrics tracking
         try:
@@ -680,6 +698,180 @@ class State:
                 health_status = check_acestream_health(engine.host, engine.port)
                 engine.health_status = health_status
                 engine.last_health_check = self.now()
+
+    def set_desired_replica_count(self, desired: int):
+        with self._lock:
+            self._desired_replica_count = max(0, int(desired))
+
+    def get_desired_replica_count(self) -> int:
+        with self._lock:
+            return self._desired_replica_count
+
+    def emit_scaling_intent(self, intent_type: str, details: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+        """Record declarative scaling intents produced by the reconciliation loop."""
+        now = self.now()
+        intent = {
+            "id": str(uuid.uuid4()),
+            "intent_type": intent_type,
+            "details": dict(details or {}),
+            "status": "pending",
+            "created_at": now,
+            "updated_at": now,
+            "result": None,
+        }
+
+        with self._lock:
+            self._scaling_intents.append(intent)
+            if len(self._scaling_intents) > self._max_scaling_intents:
+                self._scaling_intents = self._scaling_intents[-self._max_scaling_intents :]
+
+            return dict(intent)
+
+    def resolve_scaling_intent(self, intent_id: str, status: str, result: Optional[Dict[str, object]] = None):
+        with self._lock:
+            for intent in reversed(self._scaling_intents):
+                if intent.get("id") != intent_id:
+                    continue
+                intent["status"] = status
+                intent["result"] = dict(result or {})
+                intent["updated_at"] = self.now()
+                break
+
+    def list_scaling_intents(self, limit: int = 50) -> List[Dict[str, object]]:
+        with self._lock:
+            items = self._scaling_intents[-max(1, int(limit)) :]
+            return [dict(item) for item in items]
+
+    def update_vpn_node_status(self, vpn_container: str, status: str):
+        """Track VPN node health/runtime status from Docker events."""
+        now = self.now()
+        normalized = status.strip().lower()
+        healthy = normalized in {"healthy", "running"}
+
+        with self._lock:
+            self._vpn_nodes[vpn_container] = {
+                "container_name": vpn_container,
+                "status": normalized,
+                "healthy": healthy,
+                "last_event_at": now,
+            }
+
+    def list_vpn_nodes(self) -> List[Dict[str, object]]:
+        with self._lock:
+            return [dict(v) for v in self._vpn_nodes.values()]
+
+    def get_healthy_vpn_nodes(self) -> List[str]:
+        with self._lock:
+            return [name for name, node in self._vpn_nodes.items() if bool(node.get("healthy"))]
+
+    @staticmethod
+    def _safe_int(value: Optional[str], default: Optional[int]) -> Optional[int]:
+        if value is None:
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def apply_engine_docker_event(self, container_id: str, container_name: Optional[str], action: str, labels: Optional[Dict[str, str]] = None):
+        """Apply Docker lifecycle events to in-memory engine state immediately."""
+        normalized_action = action.strip().lower()
+
+        if normalized_action == "destroy":
+            self.remove_engine(container_id)
+            return
+
+        labels = labels or {}
+        engine_snapshot = None
+
+        with self._lock:
+            engine = self.engines.get(container_id)
+            now = self.now()
+
+            if normalized_action == "start":
+                host_http = self._safe_int(labels.get("host.http_port"), 0) or 0
+                host_api = self._safe_int(labels.get("host.api_port"), None)
+                vpn_container = labels.get("acestream.vpn_container")
+                forwarded = str(labels.get("acestream.forwarded", "false")).lower() == "true"
+                engine_variant = labels.get("acestream.engine_variant")
+
+                if not engine:
+                    engine = EngineState(
+                        container_id=container_id,
+                        container_name=container_name,
+                        host=vpn_container or container_name or "127.0.0.1",
+                        port=host_http,
+                        api_port=host_api,
+                        labels=dict(labels),
+                        forwarded=forwarded,
+                        first_seen=now,
+                        last_seen=now,
+                        streams=[],
+                        health_status="unknown",
+                        last_health_check=None,
+                        last_stream_usage=None,
+                        vpn_container=vpn_container,
+                        engine_variant=engine_variant,
+                    )
+                    self.engines[container_id] = engine
+                else:
+                    engine.container_name = container_name or engine.container_name
+                    if host_http:
+                        engine.port = host_http
+                    if host_api is not None:
+                        engine.api_port = host_api
+                    if labels:
+                        engine.labels.update(labels)
+                    if vpn_container:
+                        engine.vpn_container = vpn_container
+                    if engine_variant:
+                        engine.engine_variant = engine_variant
+                    engine.forwarded = forwarded or engine.forwarded
+                    engine.last_seen = now
+
+            elif normalized_action == "die":
+                if engine:
+                    engine.health_status = "unhealthy"
+                    engine.last_health_check = now
+                    engine.last_seen = now
+
+            elif normalized_action == "health_status: healthy":
+                if engine:
+                    engine.health_status = "healthy"
+                    engine.last_health_check = now
+                    engine.last_seen = now
+
+            elif normalized_action == "health_status: unhealthy":
+                if engine:
+                    engine.health_status = "unhealthy"
+                    engine.last_health_check = now
+                    engine.last_seen = now
+
+            if engine:
+                engine_snapshot = engine.model_copy(deep=True)
+
+        if not engine_snapshot:
+            return
+
+        try:
+            with SessionLocal() as s:
+                s.merge(
+                    EngineRow(
+                        engine_key=engine_snapshot.container_id,
+                        container_id=engine_snapshot.container_id,
+                        container_name=engine_snapshot.container_name,
+                        host=engine_snapshot.host,
+                        port=engine_snapshot.port,
+                        labels=engine_snapshot.labels,
+                        forwarded=engine_snapshot.forwarded,
+                        first_seen=engine_snapshot.first_seen,
+                        last_seen=engine_snapshot.last_seen,
+                        vpn_container=engine_snapshot.vpn_container,
+                    )
+                )
+                s.commit()
+        except Exception as e:
+            logger.debug(f"Failed to persist Docker event update for {container_id[:12]}: {e}")
     
     def set_forwarded_engine(self, container_id: str):
         """Mark an engine as the forwarded engine and clear forwarded flag from others.

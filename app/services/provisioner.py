@@ -1,8 +1,9 @@
 import time
 import logging
 import docker
+from docker.errors import NotFound
 import threading
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 from pydantic import BaseModel
 from .docker_client import get_client, safe
 from ..core.config import cfg
@@ -56,6 +57,202 @@ class AceProvisionResponse(BaseModel):
     container_https_port: int
     host_api_port: Optional[int] = None
     container_api_port: Optional[int] = None
+
+
+class EngineSpec(BaseModel):
+    vpn_container: Optional[str] = None
+    forwarded: bool = False
+    p2p_port: Optional[int] = None
+    host_http_port: int
+    container_http_port: int
+    container_https_port: int
+    host_api_port: int
+    container_api_port: int
+    host_https_port: Optional[int] = None
+    labels: Dict[str, str] = {}
+    ports: Optional[Dict[str, int]] = None
+    volumes: Dict[str, Any] = {}
+    network_config: Dict[str, Any] = {}
+
+
+class ResourceScheduler:
+    """Atomically resolves VPN node, forwarding role, and port reservations for new engines."""
+
+    def __init__(self):
+        self._lock = _vpn_assignment_lock
+
+    def schedule(self, req: "AceProvisionRequest", engine_variant_name: str, base_volumes: Optional[Dict[str, Any]] = None) -> EngineSpec:
+        user_conf = req.env.get("CONF")
+        user_http_port = _parse_conf_port(user_conf, "http") if user_conf else None
+        user_https_port = _parse_conf_port(user_conf, "https") if user_conf else None
+        user_api_port = _parse_conf_port(user_conf, "api") if user_conf else None
+
+        vpn_container = None
+        pending_incremented = False
+
+        try:
+            with self._lock:
+                vpn_container = self._select_vpn_container_locked()
+                if cfg.VPN_MODE == 'redundant' and vpn_container:
+                    _vpn_pending_engines[vpn_container] = _vpn_pending_engines.get(vpn_container, 0) + 1
+                    pending_incremented = True
+
+                self._validate_vpn_health_locked(vpn_container)
+
+                ports_info = alloc.allocate_engine_ports(
+                    use_gluetun=bool(cfg.GLUETUN_CONTAINER_NAME),
+                    vpn_container=vpn_container,
+                    requested_host_port=req.host_port,
+                    user_http_port=user_http_port,
+                    user_https_port=user_https_port,
+                    user_api_port=user_api_port,
+                    map_https=bool(cfg.ACE_MAP_HTTPS),
+                )
+
+                forwarded, p2p_port = self._elect_forwarded_engine_locked(vpn_container)
+
+                key, val = cfg.CONTAINER_LABEL.split("=", 1)
+                labels = {
+                    **req.labels,
+                    key: val,
+                    ACESTREAM_LABEL_HTTP: str(ports_info["container_http_port"]),
+                    ACESTREAM_LABEL_HTTPS: str(ports_info["container_https_port"]),
+                    ACESTREAM_LABEL_API: str(ports_info["container_api_port"]),
+                    HOST_LABEL_HTTP: str(ports_info["host_http_port"]),
+                    HOST_LABEL_API: str(ports_info["host_api_port"]),
+                    ENGINE_VARIANT_LABEL: engine_variant_name,
+                }
+
+                if vpn_container:
+                    labels[VPN_CONTAINER_LABEL] = vpn_container
+                if forwarded:
+                    labels[FORWARDED_LABEL] = "true"
+                if ports_info.get("host_https_port") is not None:
+                    labels[HOST_LABEL_HTTPS] = str(ports_info["host_https_port"])
+
+                docker_ports = None
+                if not cfg.GLUETUN_CONTAINER_NAME:
+                    docker_ports = {
+                        f"{ports_info['container_http_port']}/tcp": ports_info["host_http_port"],
+                        f"{ports_info['container_api_port']}/tcp": ports_info["host_api_port"],
+                    }
+                    if ports_info.get("host_https_port") is not None:
+                        docker_ports[f"{ports_info['container_https_port']}/tcp"] = ports_info["host_https_port"]
+
+                return EngineSpec(
+                    vpn_container=vpn_container,
+                    forwarded=forwarded,
+                    p2p_port=p2p_port,
+                    host_http_port=ports_info["host_http_port"],
+                    container_http_port=ports_info["container_http_port"],
+                    container_https_port=ports_info["container_https_port"],
+                    host_api_port=ports_info["host_api_port"],
+                    container_api_port=ports_info["container_api_port"],
+                    host_https_port=ports_info.get("host_https_port"),
+                    labels=labels,
+                    ports=docker_ports,
+                    volumes=dict(base_volumes or {}),
+                    network_config=_get_network_config(vpn_container),
+                )
+        except Exception:
+            if pending_incremented:
+                _decrement_vpn_pending_counter(vpn_container)
+            raise
+
+    def _select_vpn_container_locked(self) -> Optional[str]:
+        if not cfg.GLUETUN_CONTAINER_NAME:
+            return None
+
+        from .state import state
+
+        if cfg.VPN_MODE != 'redundant' or not cfg.GLUETUN_CONTAINER_NAME_2:
+            return cfg.GLUETUN_CONTAINER_NAME
+
+        recovery_target = state.get_vpn_recovery_target()
+        if recovery_target:
+            logger.info(f"VPN recovery mode active: assigning engine to recovery target VPN '{recovery_target}'")
+            return recovery_target
+
+        if state.is_emergency_mode():
+            emergency_info = state.get_emergency_mode_info()
+            healthy_vpn = emergency_info['healthy_vpn']
+            logger.info(f"Emergency mode active: assigning engine to healthy VPN '{healthy_vpn}'")
+            return healthy_vpn
+
+        vpn1_name = cfg.GLUETUN_CONTAINER_NAME
+        vpn2_name = cfg.GLUETUN_CONTAINER_NAME_2
+
+        vpn1_engines = len(state.get_engines_by_vpn(vpn1_name)) + _vpn_pending_engines.get(vpn1_name, 0)
+        vpn2_engines = len(state.get_engines_by_vpn(vpn2_name)) + _vpn_pending_engines.get(vpn2_name, 0)
+
+        vpn1_healthy = self._vpn_is_healthy(vpn1_name)
+        vpn2_healthy = self._vpn_is_healthy(vpn2_name)
+
+        if vpn1_healthy and vpn2_healthy:
+            selected = vpn1_name if vpn1_engines <= vpn2_engines else vpn2_name
+        elif vpn1_healthy and not vpn2_healthy:
+            selected = vpn1_name
+        elif vpn2_healthy and not vpn1_healthy:
+            selected = vpn2_name
+        else:
+            raise RuntimeError("Both VPN containers are unhealthy - cannot schedule AceStream engine")
+
+        logger.info(f"Scheduling new engine on VPN '{selected}' (VPN1: {vpn1_engines} engines, VPN2: {vpn2_engines} engines)")
+        return selected
+
+    def _validate_vpn_health_locked(self, vpn_container: Optional[str]):
+        if not vpn_container:
+            return
+
+        if not self._vpn_is_healthy(vpn_container):
+            raise RuntimeError(f"VPN container '{vpn_container}' is not healthy - cannot schedule AceStream engine")
+
+    @staticmethod
+    def _vpn_is_healthy(vpn_container: str) -> bool:
+        from .state import state
+        from .gluetun import gluetun_monitor
+
+        # Prefer immediate informer state when available.
+        vpn_nodes = {node.get("container_name"): node for node in state.list_vpn_nodes()}
+        node = vpn_nodes.get(vpn_container)
+        if node and not bool(node.get("healthy")):
+            return False
+
+        health = gluetun_monitor.is_healthy(vpn_container)
+        if health is True:
+            return True
+        if health is False:
+            return _check_gluetun_health_sync(vpn_container)
+        return _check_gluetun_health_sync(vpn_container)
+
+    @staticmethod
+    def _elect_forwarded_engine_locked(vpn_container: Optional[str]) -> tuple[bool, Optional[int]]:
+        if not cfg.GLUETUN_CONTAINER_NAME:
+            return False, None
+
+        from .state import state
+        from .gluetun import get_forwarded_port_sync
+
+        is_forwarded = False
+        p2p_port = None
+
+        if cfg.VPN_MODE == 'redundant' and vpn_container:
+            if not state.has_forwarded_engine_for_vpn(vpn_container):
+                p2p_port = get_forwarded_port_sync(vpn_container)
+                is_forwarded = p2p_port is not None
+                if is_forwarded:
+                    logger.info(f"Scheduled forwarded engine for VPN '{vpn_container}' with P2P port {p2p_port}")
+        else:
+            if not state.has_forwarded_engine():
+                p2p_port = get_forwarded_port_sync(vpn_container)
+                is_forwarded = p2p_port is not None
+                if is_forwarded:
+                    logger.info(f"Scheduled forwarded engine with P2P port {p2p_port}")
+
+        return is_forwarded, p2p_port
+
+
+resource_scheduler = ResourceScheduler()
 
 def start_container(req: StartRequest) -> dict:
     from .naming import generate_container_name
@@ -407,160 +604,13 @@ def get_variant_config(variant: str) -> dict:
 # (test_engine_variants.py, demo_engine_variants.py, test_p2p_port_variants.py)
 _get_variant_config = get_variant_config
 
-def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
+def start_acestream(req: AceProvisionRequest, engine_spec: Optional[EngineSpec] = None) -> AceProvisionResponse:
     from .naming import generate_container_name
     import time
     
     provision_start = time.time()
     
     logger.debug(f"Starting AceStream engine: labels={req.labels}, custom_env={bool(req.env)}")
-    
-    # Determine VPN assignment and check health
-    # Use lock to prevent race conditions during concurrent provisioning in redundant mode
-    vpn_container = None
-    if cfg.GLUETUN_CONTAINER_NAME:
-        from .gluetun import gluetun_monitor
-        from .state import state
-        
-        # In redundant mode, assign engine to VPN with round-robin load balancing
-        # Lock ensures VPN selection and pending counter update are atomic
-        with _vpn_assignment_lock:
-            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
-                # Check if in VPN recovery mode - force assign to recovery target
-                recovery_target = state.get_vpn_recovery_target()
-                if recovery_target:
-                    vpn_container = recovery_target
-                    logger.info(f"VPN recovery mode active: assigning engine to recovery target VPN '{vpn_container}'")
-                # Check if in emergency mode - only assign to healthy VPN
-                elif state.is_emergency_mode():
-                    emergency_info = state.get_emergency_mode_info()
-                    vpn_container = emergency_info['healthy_vpn']
-                    logger.info(f"Emergency mode active: assigning engine to healthy VPN '{vpn_container}'")
-                else:
-                    # Normal redundant mode: Count engines per VPN (including pending ones being provisioned)
-                    vpn1_name = cfg.GLUETUN_CONTAINER_NAME
-                    vpn2_name = cfg.GLUETUN_CONTAINER_NAME_2
-                    
-                    # Count engines already in state
-                    vpn1_engines = len(state.get_engines_by_vpn(vpn1_name))
-                    vpn2_engines = len(state.get_engines_by_vpn(vpn2_name))
-                    
-                    # Add pending engines currently being provisioned
-                    vpn1_pending = _vpn_pending_engines.get(vpn1_name, 0)
-                    vpn2_pending = _vpn_pending_engines.get(vpn2_name, 0)
-                    vpn1_engines += vpn1_pending
-                    vpn2_engines += vpn2_pending
-                    
-                    # Check health of both VPNs
-                    vpn1_healthy = gluetun_monitor.is_healthy(vpn1_name)
-                    vpn2_healthy = gluetun_monitor.is_healthy(vpn2_name)
-                    
-                    # Determine VPN assignment based on health and load
-                    if vpn1_healthy and vpn2_healthy:
-                        # Both healthy: use round-robin to balance load
-                        vpn_container = vpn1_name if vpn1_engines <= vpn2_engines else vpn2_name
-                    elif vpn1_healthy and not vpn2_healthy:
-                        # Only VPN1 healthy: use it
-                        vpn_container = vpn1_name
-                    elif vpn2_healthy and not vpn1_healthy:
-                        # Only VPN2 healthy: use it
-                        vpn_container = vpn2_name
-                    else:
-                        # Both unhealthy: fail provisioning
-                        raise RuntimeError("Both VPN containers are unhealthy - cannot start AceStream engine")
-                    
-                    logger.info(f"Assigning new engine to VPN '{vpn_container}' (VPN1: {vpn1_engines} engines, VPN2: {vpn2_engines} engines)")
-                
-                # Atomically increment pending counter for selected VPN (applies to all modes)
-                _vpn_pending_engines[vpn_container] = _vpn_pending_engines.get(vpn_container, 0) + 1
-            else:
-                # Single VPN mode
-                vpn_container = cfg.GLUETUN_CONTAINER_NAME
-        
-        # Check if assigned VPN is healthy
-        try:
-            timeout = 5
-            start_time = time.time()
-            
-            while (time.time() - start_time) < timeout:
-                current_health = gluetun_monitor.is_healthy(vpn_container)
-                if current_health is True:
-                    break
-                elif current_health is False:
-                    # Force a fresh health check
-                    import asyncio
-                    try:
-                        if _check_gluetun_health_sync(vpn_container):
-                            break
-                    except Exception:
-                        pass
-                
-                time.sleep(0.5)
-            else:
-                # Timeout reached without becoming healthy
-                raise RuntimeError(f"VPN container '{vpn_container}' is not healthy - cannot start AceStream engine")
-                
-        except Exception as e:
-            raise RuntimeError(f"Failed to verify VPN health for '{vpn_container}': {e}")
-    
-    # Check if user provided CONF and extract ports from it
-    user_conf = req.env.get("CONF")
-    user_http_port = _parse_conf_port(user_conf, "http") if user_conf else None
-    user_https_port = _parse_conf_port(user_conf, "https") if user_conf else None
-    user_api_port = _parse_conf_port(user_conf, "api") if user_conf else None
-    
-    # Determine ports to use
-    if user_http_port is not None:
-        # User specified http port in CONF - use it for both container and host binding
-        c_http = user_http_port
-        host_http = req.host_port or user_http_port  # Use same port for host binding
-        # Reserve this port to avoid conflicts
-        if cfg.GLUETUN_CONTAINER_NAME:
-            alloc.reserve_gluetun_port(c_http, vpn_container)
-        else:
-            alloc.reserve_http(c_http)
-    else:
-        # No user http port - use orchestrator allocation
-        if cfg.GLUETUN_CONTAINER_NAME:
-            # When using Gluetun, allocate from the VPN-specific port range
-            host_http = alloc.alloc_gluetun_port(vpn_container)
-            c_http = host_http  # Same port for container and host
-        else:
-            # Normal allocation
-            host_http = req.host_port or alloc.alloc_host()
-            c_http = host_http  # Use same port for internal container to match acestream-http-proxy expectations
-            # Reserve this port to avoid conflicts
-            alloc.reserve_http(c_http)
-    
-    if user_https_port is not None:
-        # User specified https port in CONF - use it
-        c_https = user_https_port
-        # Reserve this port to avoid conflicts
-        # HTTPS ports always use the regular HTTPS range, not Gluetun ports
-        # HTTPS ports don't count against MAX_REPLICAS
-        alloc.reserve_https(c_https)
-    else:
-        # No user https port - use orchestrator allocation
-        # HTTPS ports always use the regular HTTPS range, regardless of Gluetun
-        # HTTPS ports don't count against MAX_REPLICAS
-        c_https = alloc.alloc_https(avoid=c_http)
-
-    # Determine API port to expose for legacy AceStream API control channel
-    if user_api_port is not None:
-        c_api = user_api_port
-        host_api = user_api_port
-        if cfg.GLUETUN_CONTAINER_NAME:
-            alloc.reserve_gluetun_port(host_api, vpn_container)
-        else:
-            alloc.reserve_host(host_api)
-    else:
-        if cfg.GLUETUN_CONTAINER_NAME:
-            # Keep legacy API control port in the same VPN-specific published range
-            # as the engine's HTTP port to ensure it is reachable in redundant mode.
-            host_api = alloc.alloc_gluetun_port(vpn_container)
-        else:
-            host_api = alloc.alloc_host()
-        c_api = host_api
 
     # Get variant configuration
     variant_config = get_variant_config(cfg.ENGINE_VARIANT)
@@ -583,43 +633,61 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     else:
         # Use the configured variant name
         engine_variant_name = cfg.ENGINE_VARIANT
-    
-    # Determine if this engine should be the forwarded engine
-    # Only one engine should have the forwarded port per VPN when using Gluetun
-    is_forwarded = False
-    p2p_port = None
-    if cfg.GLUETUN_CONTAINER_NAME:
-        from .state import state
-        
-        # In redundant mode, check if this VPN already has a forwarded engine
-        # In single mode, check if any forwarded engine exists
-        if cfg.VPN_MODE == 'redundant' and vpn_container:
-            if not state.has_forwarded_engine_for_vpn(vpn_container):
-                # This VPN doesn't have a forwarded engine yet
-                is_forwarded = True
-                from .gluetun import get_forwarded_port_sync
-                p2p_port = get_forwarded_port_sync(vpn_container)
-                if p2p_port:
-                    logger.info(f"Provisioning new forwarded engine for VPN '{vpn_container}' with P2P port {p2p_port}")
-                else:
-                    logger.warning(f"VPN '{vpn_container}' has no forwarded port available, provisioning non-forwarded engine")
-                    is_forwarded = False
+
+    # Determine memory limit to apply
+    # Priority: custom variant config > global env config
+    memory_limit = None
+    if variant_config.get("is_custom"):
+        from .custom_variant_config import get_config as get_custom_config
+        custom_config = get_custom_config()
+        if custom_config and custom_config.memory_limit:
+            memory_limit = custom_config.memory_limit
+            logger.info(f"Applying custom variant memory limit: {memory_limit}")
+
+    if not memory_limit and cfg.ENGINE_MEMORY_LIMIT:
+        memory_limit = cfg.ENGINE_MEMORY_LIMIT
+        logger.info(f"Applying global memory limit: {memory_limit}")
+
+    # Resolve base volumes from variant settings before scheduling.
+    volumes = None
+    if variant_config.get("is_custom"):
+        from .custom_variant_config import get_config as get_custom_config, DEFAULT_TORRENT_FOLDER_PATH
+        custom_config = get_custom_config()
+        if custom_config and custom_config.torrent_folder_mount_enabled:
+            if custom_config.torrent_folder_host_path:
+                container_path = custom_config.torrent_folder_container_path or DEFAULT_TORRENT_FOLDER_PATH
+                for param in custom_config.parameters:
+                    if param.name == "--cache-dir" and param.enabled and param.value:
+                        cache_dir = param.value.replace("~", "/dev/shm")
+                        container_path = f"{cache_dir}/collected_torrent_files"
+                        break
+                volumes = {
+                    custom_config.torrent_folder_host_path: {
+                        'bind': container_path,
+                        'mode': 'rw'
+                    }
+                }
+                logger.info(f"Mounting torrent folder: {custom_config.torrent_folder_host_path} -> {container_path}")
             else:
-                logger.info(f"Forwarded engine already exists for VPN '{vpn_container}', provisioning non-forwarded engine")
-        else:
-            # Single VPN mode - only one forwarded engine total
-            if not state.has_forwarded_engine():
-                # This will be the forwarded engine
-                is_forwarded = True
-                from .gluetun import get_forwarded_port_sync
-                p2p_port = get_forwarded_port_sync(vpn_container)
-                if p2p_port:
-                    logger.info(f"Provisioning new forwarded engine with P2P port {p2p_port}")
-                else:
-                    logger.warning("No forwarded port available, provisioning non-forwarded engine")
-                    is_forwarded = False
-            else:
-                logger.info("Forwarded engine already exists, provisioning non-forwarded engine")
+                logger.warning("Torrent folder mount enabled but host path not configured")
+
+    # Phase 4: accept a fully resolved EngineSpec from the scheduler when provided.
+    if engine_spec is None:
+        engine_spec = resource_scheduler.schedule(req, engine_variant_name, base_volumes=volumes)
+    elif volumes and not engine_spec.volumes:
+        engine_spec.volumes = dict(volumes)
+
+    vpn_container = engine_spec.vpn_container
+    is_forwarded = engine_spec.forwarded
+    p2p_port = engine_spec.p2p_port
+    c_http = engine_spec.container_http_port
+    c_https = engine_spec.container_https_port
+    c_api = engine_spec.container_api_port
+    host_http = engine_spec.host_http_port
+    host_api = engine_spec.host_api_port
+    labels = dict(engine_spec.labels)
+    ports = engine_spec.ports
+    network_config = dict(engine_spec.network_config)
     
     # Prepare environment variables and command based on variant type
     env = {**req.env}
@@ -658,88 +726,10 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
             
         cmd = base_cmd + port_args
 
-    key, val = cfg.CONTAINER_LABEL.split("=")
-    labels = {**req.labels, key: val,
-              ACESTREAM_LABEL_HTTP: str(c_http),
-              ACESTREAM_LABEL_HTTPS: str(c_https),
-              ACESTREAM_LABEL_API: str(c_api),
-              HOST_LABEL_HTTP: str(host_http),
-              HOST_LABEL_API: str(host_api),
-              ENGINE_VARIANT_LABEL: engine_variant_name}
-    
-    # Add VPN container label if using VPN
-    if vpn_container:
-        labels[VPN_CONTAINER_LABEL] = vpn_container
-    
-    # Add forwarded label if this is the forwarded engine
-    if is_forwarded:
-        labels[FORWARDED_LABEL] = "true"
-
-    # Skip port mappings when using Gluetun - ports are already mapped through Gluetun container
-    if cfg.GLUETUN_CONTAINER_NAME:
-        ports = None
-    else:
-        ports = {f"{c_http}/tcp": host_http}
-        ports[f"{c_api}/tcp"] = host_api
-        if cfg.ACE_MAP_HTTPS:
-            host_https = alloc.alloc_host()
-            ports[f"{c_https}/tcp"] = host_https
-            labels[HOST_LABEL_HTTPS] = str(host_https)
-
     # Generate a meaningful container name with retry logic for conflicts
     container_name = generate_container_name("acestream")
 
-    # Determine network configuration based on VPN setup
-    network_config = _get_network_config(vpn_container)
-
     cli = get_client()
-    
-    # Determine memory limit to apply
-    # Priority: custom variant config > global env config
-    memory_limit = None
-    if variant_config.get("is_custom"):
-        # Check if custom variant has memory limit configured
-        from .custom_variant_config import get_config as get_custom_config
-        custom_config = get_custom_config()
-        if custom_config and custom_config.memory_limit:
-            memory_limit = custom_config.memory_limit
-            logger.info(f"Applying custom variant memory limit: {memory_limit}")
-    
-    # Fall back to global config if no custom limit
-    if not memory_limit and cfg.ENGINE_MEMORY_LIMIT:
-        memory_limit = cfg.ENGINE_MEMORY_LIMIT
-        logger.info(f"Applying global memory limit: {memory_limit}")
-    
-    # Configure volume mounts for custom variants
-    volumes = None
-    if variant_config.get("is_custom"):
-        from .custom_variant_config import get_config as get_custom_config, DEFAULT_TORRENT_FOLDER_PATH
-        custom_config = get_custom_config()
-        
-        # Check if torrent folder mount is enabled
-        if custom_config and custom_config.torrent_folder_mount_enabled:
-            if custom_config.torrent_folder_host_path:
-                # Get the container path - use user-specified if set, otherwise use default
-                container_path = custom_config.torrent_folder_container_path or DEFAULT_TORRENT_FOLDER_PATH
-                
-                # Check if user has overridden the cache-dir parameter
-                # If they have, we should use that path + /collected_torrent_files
-                # Note: ~ is expanded to /dev/shm because AceStream is configured with that base
-                for param in custom_config.parameters:
-                    if param.name == "--cache-dir" and param.enabled and param.value:
-                        cache_dir = param.value.replace("~", "/dev/shm")
-                        container_path = f"{cache_dir}/collected_torrent_files"
-                        break
-                
-                volumes = {
-                    custom_config.torrent_folder_host_path: {
-                        'bind': container_path,
-                        'mode': 'rw'
-                    }
-                }
-                logger.info(f"Mounting torrent folder: {custom_config.torrent_folder_host_path} -> {container_path}")
-            else:
-                logger.warning("Torrent folder mount enabled but host path not configured")
     
     # Build container arguments, conditionally including ports
     container_args = {
@@ -756,9 +746,8 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     if memory_limit:
         container_args["mem_limit"] = memory_limit
     
-    # Add volumes if configured
-    if volumes:
-        container_args["volumes"] = volumes
+    if engine_spec.volumes:
+        container_args["volumes"] = dict(engine_spec.volumes)
 
     # Add command for CMD-based variants
     if cmd is not None:
@@ -768,136 +757,68 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
     if ports is not None:
         container_args["ports"] = ports
     
-    # Capture base volumes (e.g. torrent folders) before adding retry-specific cache mounts
+    # Capture base volumes before adding retry-specific cache mounts.
     base_volumes = container_args.get("volumes", {}).copy()
-    
-    # Retry container creation with different names if there are conflicts
     max_retries = 5
-    for attempt in range(max_retries):
-        # Reset volumes to base for this attempt
-        current_volumes = base_volumes.copy()
-        
-        # Setup and mount disk cache for the current container name
-        from .engine_cache_manager import engine_cache_manager
-        if engine_cache_manager.is_enabled():
-            if engine_cache_manager.setup_cache(container_name):
-                cache_mount = engine_cache_manager.get_mount_config(container_name)
-                if cache_mount:
-                    current_volumes.update(cache_mount)
-                    logger.info(f"Mounted disk cache for {container_name}")
-        
-        # Apply volumes to container args
-        if current_volumes:
-            container_args["volumes"] = current_volumes
-        elif "volumes" in container_args:
-            del container_args["volumes"]
+    cont = None
+    try:
+        for attempt in range(max_retries):
+            current_volumes = base_volumes.copy()
+            from .engine_cache_manager import engine_cache_manager
+            if engine_cache_manager.is_enabled():
+                if engine_cache_manager.setup_cache(container_name):
+                    cache_mount = engine_cache_manager.get_mount_config(container_name)
+                    if cache_mount:
+                        current_volumes.update(cache_mount)
+                        logger.info(f"Mounted disk cache for {container_name}")
 
-        try:
-            cont = safe(cli.containers.run, **container_args)
-            break
-        except RuntimeError as e:
-            # Check if this is a naming conflict
-            if "Conflict" in str(e) and "name" in str(e).lower() and attempt < max_retries - 1:
-                # Generate a new name and try again
-                import time
-                time.sleep(0.1)  # Small delay to avoid rapid conflicts
-                container_name = generate_container_name("acestream")
-                container_args["name"] = container_name
-                continue
-            else:
-                # Not a naming conflict or max retries reached, re-raise
+            if current_volumes:
+                container_args["volumes"] = current_volumes
+            elif "volumes" in container_args:
+                del container_args["volumes"]
+
+            try:
+                cont = safe(cli.containers.run, **container_args)
+                break
+            except RuntimeError as e:
+                if "Conflict" in str(e) and "name" in str(e).lower() and attempt < max_retries - 1:
+                    old_name = container_name
+                    time.sleep(0.1)
+                    container_name = generate_container_name("acestream")
+                    container_args["name"] = container_name
+                    try:
+                        if engine_cache_manager.is_enabled():
+                            engine_cache_manager.cleanup_cache(old_name)
+                    except Exception:
+                        pass
+                    continue
                 raise
-    deadline = time.time() + cfg.STARTUP_TIMEOUT_S
-    cont.reload()
-    while cont.status not in ("running",) and time.time() < deadline:
-        time.sleep(0.5); cont.reload()
-    if cont.status != "running":
-        duration = time.time() - provision_start
-        logger.error(f"AceStream engine {cont.id[:12]} failed to start (status: {cont.status}, duration: {duration:.2f}s)")
-        _release_ports_from_labels(labels)
-        cont.remove(force=True)
-        raise RuntimeError("Arranque AceStream fallido")
 
-    
-    # Get container name - should match what we set
-    cont.reload()
-    actual_container_name = cont.attrs.get("Name", "").lstrip("/")
+        if cont is None:
+            raise RuntimeError("Unable to create AceStream container after retry attempts")
+    except Exception:
+        _release_ports_from_labels(labels)
+        _decrement_vpn_pending_counter(vpn_container)
+        raise
+
+    # Do not poll for running status; lifecycle confirmation is informer-driven.
+    attrs_name = str((cont.attrs or {}).get("Name", "")).lstrip("/") if getattr(cont, "attrs", None) else ""
+    raw_name = attrs_name or getattr(cont, "name", "") or ""
+    actual_container_name = str(raw_name).lstrip("/")
     
     duration = time.time() - provision_start
-    logger.info(f"AceStream engine started successfully: {actual_container_name} ({cont.id[:12]}, HTTP port: {host_http}, duration: {duration:.2f}s)")
+    logger.info(
+        f"AceStream engine create submitted: {actual_container_name} "
+        f"({cont.id[:12]}, HTTP port: {host_http}, duration: {duration:.2f}s). "
+        "Running state will be confirmed via Docker events."
+    )
     
     # Check for slow provisioning (stress indicator)
     if duration > cfg.STARTUP_TIMEOUT_S * 0.7:
         logger.warning(f"Slow AceStream provisioning detected: {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.7}s threshold) for {cont.id[:12]}")
     
-    # Add engine to state immediately to prevent race conditions during sequential provisioning
-    # This ensures that subsequent calls to has_forwarded_engine() will see this engine
-    from .state import state
-    from ..models.schemas import EngineState
-    from ..models.db_models import EngineRow
-    from .db import SessionLocal
-    
-    # Determine host based on VPN configuration
-    if vpn_container:
-        # Use the assigned VPN container as the host
-        engine_host = vpn_container
-    elif cfg.GLUETUN_CONTAINER_NAME:
-        # Backwards compatibility for single VPN mode
-        engine_host = cfg.GLUETUN_CONTAINER_NAME
-    else:
-        engine_host = actual_container_name or "127.0.0.1"
-    
-    # Create engine state immediately
-    now = state.now()
-    engine = EngineState(
-        container_id=cont.id,
-        container_name=actual_container_name,
-        host=engine_host,
-        port=host_http,
-        api_port=host_api,
-        labels=labels,
-        forwarded=is_forwarded,
-        first_seen=now,
-        last_seen=now,
-        streams=[],
-        health_status="unknown",
-        last_health_check=None,
-        last_stream_usage=None,
-        vpn_container=vpn_container,
-        engine_variant=engine_variant_name
-    )
-    
-    # Add to in-memory state
-    state.engines[cont.id] = engine
-    
-    # Decrement pending counter now that engine is in state (in redundant VPN mode)
+    # Decrement pending counter now that create request has succeeded.
     _decrement_vpn_pending_counter(vpn_container)
-    
-    # Persist to database
-    try:
-        with SessionLocal() as s:
-            s.merge(EngineRow(
-                engine_key=cont.id,
-                container_id=cont.id,
-                container_name=actual_container_name,
-                host=engine_host,
-                port=host_http,
-                labels=labels,
-                forwarded=is_forwarded,
-                first_seen=now,
-                last_seen=now,
-                vpn_container=vpn_container
-            ))
-            s.commit()
-    except Exception as e:
-        # Log but don't fail provisioning if database write fails
-        logger.warning(f"Failed to persist engine to database: {e}")
-    
-    # Mark this engine as forwarded in state if it was designated as such
-    # This must be done AFTER adding to state so set_forwarded_engine can find it
-    if is_forwarded:
-        state.set_forwarded_engine(cont.id)
-        logger.info(f"Engine {cont.id[:12]} provisioned as forwarded engine")
     
     return AceProvisionResponse(
         container_id=cont.id, 

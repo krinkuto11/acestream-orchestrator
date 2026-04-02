@@ -4,6 +4,21 @@
 
 The AceStream Orchestrator uses a **layer-based filling strategy with lookahead provisioning** to efficiently manage engine capacity and ensure high availability. This document explains how streams are assigned to engines and when new engines are provisioned.
 
+## Provisioning Architecture (Current)
+
+Provisioning is now split into declarative and execution phases:
+
+1. **Desired state computation**: autoscaler computes desired replicas.
+2. **Reconciliation**: engine controller creates or terminates engines to match desired state.
+3. **Scheduling**: resource scheduler atomically selects VPN node, forwarded role, and host/container ports, producing an `EngineSpec`.
+4. **Execution**: provisioner performs Docker create using `EngineSpec`.
+5. **Lifecycle confirmation**: Docker informer updates engine state on lifecycle events (`start`, `die`, `destroy`, health changes).
+
+Important behavior:
+- Provisioner no longer blocks waiting for running status.
+- Runtime truth comes from Docker events, not post-create polling loops.
+- Port reservations and VPN pending counters are rolled back on create failure.
+
 ## Key Concepts
 
 ### Layer-Based Filling (Round-Robin)
@@ -153,7 +168,7 @@ T+76   New stream → engine_3 (back to layer 1)
 
 ## Implementation Details
 
-### Engine Selection Logic (`app/main.py`)
+### Engine Selection Logic
 
 ```python
 # Filter out engines at max capacity
@@ -171,7 +186,7 @@ engines_sorted = sorted(available_engines, key=lambda e: (
 selected_engine = engines_sorted[0]
 ```
 
-### Autoscaler Lookahead Logic (`app/services/autoscaler.py`)
+### Autoscaler Lookahead Logic
 
 ```python
 # Check if ANY engine has reached threshold (lookahead trigger)
@@ -187,6 +202,25 @@ if any_engine_near_capacity:
     provision_new_engine()
 ```
 
+### Scheduler and Provisioner Split
+
+```python
+# Scheduler resolves a complete spec before runtime execution
+engine_spec = resource_scheduler.schedule(req, engine_variant_name)
+
+# Provisioner executes container creation only
+response = start_acestream(req, engine_spec=engine_spec)
+
+# Running state is confirmed asynchronously by Docker events
+```
+
+### Atomic Port and VPN Decisions
+
+Scheduling performs these decisions atomically under lock:
+- VPN target selection (including redundant-mode balancing and health checks)
+- forwarded-engine election per VPN
+- HTTP/HTTPS/API container and host port reservation with rollback on failure
+
 ## Monitoring
 
 ### Key Metrics
@@ -197,6 +231,9 @@ Track these metrics to monitor the provisioning strategy:
 - **Provisioning lag**: Time between trigger and new engine ready
 - **Overflow events**: Count of times layer MAX was used
 - **Engine utilization**: Percentage of time at each layer
+- **Desired vs actual replicas**: Controller convergence health
+- **Scaling intent outcomes**: applied/failed/blocked counts
+- **Event convergence delay**: time between create and start event
 
 ### API Endpoints
 
@@ -234,6 +271,17 @@ GET /events?type=system&category=scaling
 - Decrease `MAX_STREAMS_PER_ENGINE` for earlier triggers
 - Increase `MIN_FREE_REPLICAS` to keep idle engines ready
 - Optimize container startup time
+
+### Problem: Provision API returns quickly but engine not immediately visible
+
+This is expected in the event-driven model:
+- Container create succeeds first
+- Engine appears in runtime state after Docker `start` event is processed
+
+If delay is prolonged:
+- Check Docker event watcher logs
+- Verify Docker socket availability
+- Check for blocked/restarting Docker daemon
 
 ### Problem: Too many idle engines
 

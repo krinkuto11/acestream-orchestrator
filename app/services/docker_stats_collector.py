@@ -5,10 +5,12 @@ Similar to the collector service for stream stats, but for Docker engine stats.
 
 import asyncio
 import logging
+import threading
 from typing import Dict, Optional
 from datetime import datetime, timezone
 from .state import state
 from .docker_stats import get_multiple_container_stats
+from .docker_client import DockerEventWatcher
 from ..core.config import cfg
 
 logger = logging.getLogger(__name__)
@@ -23,15 +25,19 @@ class DockerStatsCollector:
     def __init__(self):
         self._task = None
         self._stop = asyncio.Event()
+        self._cache_lock = threading.RLock()
         self._stats_cache: Dict[str, Dict] = {}  # container_id -> stats
         self._total_stats_cache: Optional[Dict] = None
         self._last_update: Optional[datetime] = None
+        self._event_watcher = DockerEventWatcher()
+        self._event_watcher.subscribe(self._on_docker_event)
         
         # Dynamic collection interval based on engine count
         # UI typically polls every 5s, so we adapt:
         # - 0 engines: 10s (low priority when idle)
         # - 1-5 engines: 3s (responsive for small deployments)
         # - 6+ engines: 2s (keep up with high load)
+        self._collection_interval: Optional[float] = None
         self._min_collection_interval = 2.0
         self._max_collection_interval = 10.0
         self._default_collection_interval = 3.0
@@ -60,6 +66,7 @@ class DockerStatsCollector:
         if self._task and not self._task.done():
             return
         self._stop.clear()
+        await self._event_watcher.start()
         self._task = asyncio.create_task(self._run())
         logger.info(f"Docker stats collector started with dynamic interval ({self._min_collection_interval}s-{self._max_collection_interval}s)")
     
@@ -68,7 +75,24 @@ class DockerStatsCollector:
         self._stop.set()
         if self._task:
             await self._task
+        await self._event_watcher.stop()
         logger.info("Docker stats collector stopped")
+
+    def _on_docker_event(self, event: Dict):
+        """Trim stale cache entries immediately after lifecycle events."""
+        action = str(event.get("Action") or event.get("status") or "").strip().lower()
+        if action not in {"die", "destroy"}:
+            return
+
+        actor = event.get("Actor") or {}
+        container_id = event.get("id") or actor.get("ID")
+        if not container_id:
+            return
+
+        with self._cache_lock:
+            self._stats_cache.pop(container_id, None)
+            if self._total_stats_cache is not None:
+                self._total_stats_cache["container_count"] = len(self._stats_cache)
     
     async def _run(self):
         """Main collection loop with dynamic interval."""
@@ -80,7 +104,7 @@ class DockerStatsCollector:
                 
                 # Calculate next interval based on current engine count
                 engines = state.list_engines()
-                interval = self._get_dynamic_interval(len(engines))
+                interval = self._collection_interval if self._collection_interval is not None else self._get_dynamic_interval(len(engines))
                 
                 logger.debug(f"Next stats collection in {interval}s ({len(engines)} engines)")
             except Exception as e:
@@ -106,17 +130,18 @@ class DockerStatsCollector:
                 engines = state.list_engines()
                 if not engines:
                     # No engines, clear caches
-                    self._stats_cache = {}
-                    self._total_stats_cache = {
-                        'total_cpu_percent': 0.0,
-                        'total_memory_usage': 0,
-                        'total_network_rx_bytes': 0,
-                        'total_network_tx_bytes': 0,
-                        'total_block_read_bytes': 0,
-                        'total_block_write_bytes': 0,
-                        'container_count': 0
-                    }
-                    self._last_update = datetime.now(timezone.utc)
+                    with self._cache_lock:
+                        self._stats_cache = {}
+                        self._total_stats_cache = {
+                            'total_cpu_percent': 0.0,
+                            'total_memory_usage': 0,
+                            'total_network_rx_bytes': 0,
+                            'total_network_tx_bytes': 0,
+                            'total_block_read_bytes': 0,
+                            'total_block_write_bytes': 0,
+                            'container_count': 0
+                        }
+                        self._last_update = datetime.now(timezone.utc)
                     logger.debug("No engines to collect stats for")
                     return
                 
@@ -126,7 +151,8 @@ class DockerStatsCollector:
                 stats_dict = get_multiple_container_stats(container_ids)
                 
                 # Update cache with new stats
-                self._stats_cache = stats_dict
+                with self._cache_lock:
+                    self._stats_cache = stats_dict
                 
                 # Calculate total stats from cached individual stats
                 # This is more efficient than calling get_total_stats separately
@@ -152,8 +178,9 @@ class DockerStatsCollector:
                 # Round CPU percent
                 total['total_cpu_percent'] = round(total['total_cpu_percent'], 2)
                 
-                self._total_stats_cache = total
-                self._last_update = datetime.now(timezone.utc)
+                with self._cache_lock:
+                    self._total_stats_cache = total
+                    self._last_update = datetime.now(timezone.utc)
                 
                 logger.debug(f"Collected stats for {len(stats_dict)} engines")
                 
@@ -170,7 +197,8 @@ class DockerStatsCollector:
         Returns:
             Stats dictionary or None if not available
         """
-        return self._stats_cache.get(container_id)
+        with self._cache_lock:
+            return self._stats_cache.get(container_id)
     
     def get_total_stats(self) -> Dict:
         """
@@ -179,18 +207,19 @@ class DockerStatsCollector:
         Returns:
             Total stats dictionary
         """
-        if self._total_stats_cache is None:
-            # No stats collected yet, return zeros
-            return {
-                'total_cpu_percent': 0.0,
-                'total_memory_usage': 0,
-                'total_network_rx_bytes': 0,
-                'total_network_tx_bytes': 0,
-                'total_block_read_bytes': 0,
-                'total_block_write_bytes': 0,
-                'container_count': 0
-            }
-        return self._total_stats_cache
+        with self._cache_lock:
+            if self._total_stats_cache is None:
+                # No stats collected yet, return zeros
+                return {
+                    'total_cpu_percent': 0.0,
+                    'total_memory_usage': 0,
+                    'total_network_rx_bytes': 0,
+                    'total_network_tx_bytes': 0,
+                    'total_block_read_bytes': 0,
+                    'total_block_write_bytes': 0,
+                    'container_count': 0
+                }
+            return dict(self._total_stats_cache)
     
     def get_all_stats(self) -> Dict[str, Dict]:
         """
@@ -199,7 +228,8 @@ class DockerStatsCollector:
         Returns:
             Dictionary mapping container_id to stats
         """
-        return self._stats_cache.copy()
+        with self._cache_lock:
+            return self._stats_cache.copy()
     
     def get_last_update(self) -> Optional[datetime]:
         """
@@ -208,7 +238,8 @@ class DockerStatsCollector:
         Returns:
             Datetime of last update or None
         """
-        return self._last_update
+        with self._cache_lock:
+            return self._last_update
 
 
 # Global collector instance

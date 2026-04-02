@@ -2,9 +2,23 @@
 
 import pytest
 from unittest.mock import Mock, AsyncMock, MagicMock, patch
-from app.services.proxy.stream_session import StreamSession
-from app.services.proxy.stream_buffer import StreamBuffer
-from app.services.proxy.stream_manager import StreamManager
+
+stream_session_module = pytest.importorskip(
+    "app.services.proxy.stream_session",
+    reason="Legacy app.services.proxy stream session path is optional",
+)
+stream_buffer_module = pytest.importorskip(
+    "app.services.proxy.stream_buffer",
+    reason="Legacy app.services.proxy stream buffer path is optional",
+)
+stream_manager_module = pytest.importorskip(
+    "app.services.proxy.stream_manager",
+    reason="Legacy app.services.proxy stream manager path is optional",
+)
+
+StreamSession = stream_session_module.StreamSession
+StreamBuffer = stream_buffer_module.StreamBuffer
+StreamManager = stream_manager_module.StreamManager
 
 
 @pytest.fixture

@@ -6,6 +6,7 @@ This document describes the internal architecture, operations, and data structur
 
 - [System Overview](#system-overview)
 - [Architecture Components](#architecture-components)
+- [Control Plane Architecture](#control-plane-architecture)
 - [Typical Workflow](#typical-workflow)
 - [Operations](#operations)
 - [Database Schema](#database-schema)
@@ -33,6 +34,16 @@ The orchestrator:
 - **Exposes dashboard** with modern UI and real-time monitoring
 - **Integrates VPN** monitoring with Gluetun support
 - **Provides metrics** via Prometheus endpoints
+
+## Control Plane Architecture
+
+### Current Control Model
+
+The orchestrator now uses a declarative control model inspired by Kubernetes controllers:
+- **Informer**: Docker events update runtime state immediately
+- **Controller**: desired replica count is reconciled against actual engines
+- **Scheduler**: placement and port resources are resolved atomically before create
+- **Provisioner**: executes container create only; lifecycle confirmation is event-driven
 
 ---
 
@@ -133,12 +144,49 @@ The orchestrator:
 **Technology**: Background service
 
 **Responsibilities**:
-- Maintains minimum replica count (`MIN_REPLICAS`)
-- Provisions new engines when needed
-- Distributes engines across VPNs (redundant mode)
-- Cleans up idle engines (if `AUTO_DELETE=true`)
+- Computes and persists desired replica target
+- Triggers reconciliation requests instead of imperative bulk create loops
+- Emits scaling intents for create/terminate actions
 
-### 8. Proxy Service
+### 8. Engine Controller
+
+**Technology**: Async reconciliation loop
+
+**Responsibilities**:
+- Compares desired replicas with actual engines in state
+- Executes create and terminate intents safely
+- Records intent outcomes (applied/failed/blocked)
+
+### 9. Docker Event Informer
+
+**Technology**: Docker event watcher (dedicated background thread)
+
+**Responsibilities**:
+- Subscribes to container events: `start`, `die`, `destroy`, `health_status: healthy`, `health_status: unhealthy`
+- Applies engine state transitions immediately
+- Tracks VPN node health transitions
+- Avoids aggressive polling for lifecycle confirmation
+
+### 10. Resource Scheduler
+
+**Technology**: Atomic scheduler in provisioning pipeline
+
+**Responsibilities**:
+- Selects healthy VPN node (single or redundant mode)
+- Elects forwarded engine role where required
+- Allocates all ports atomically (with rollback on failure)
+- Produces a fully-resolved `EngineSpec`
+
+### 11. Provisioner
+
+**Technology**: Runtime execution service
+
+**Responsibilities**:
+- Accepts an `EngineSpec` and issues Docker container create
+- Releases reservations on failure
+- Defers running-state confirmation to the Docker informer
+
+### 12. Proxy Service
 
 **External Component** (communicates with orchestrator)
 
@@ -156,10 +204,10 @@ The orchestrator:
 
 ```
 1. Proxy → POST /provision/acestream (no engine available)
-2. Orchestrator allocates ports
-3. Orchestrator checks VPN health (if configured)
-4. Orchestrator starts container with proper configuration
-5. Health monitor begins checking engine every 30s
+2. Scheduler resolves `EngineSpec` (VPN, forwarded role, host/container ports, labels, networking)
+3. Provisioner submits Docker container create
+4. Docker emits lifecycle events
+5. Informer applies state and persistence updates from events
 6. Orchestrator → Response with engine details
 ```
 
@@ -220,8 +268,9 @@ The orchestrator:
 3. **Service Startup**: Launches background services
    - Collector service
    - Health monitor
+   - Docker event informer
    - VPN monitor (if configured)
-   - Autoscaler
+   - Autoscaler + engine controller
 4. **Initial Provisioning**: Ensures `MIN_REPLICAS` are running
 
 ### Autoscaling
@@ -229,16 +278,19 @@ The orchestrator:
 **Trigger**: Runs every `AUTOSCALE_INTERVAL_S` seconds
 
 **Process**:
-1. Check current engine count
-2. Compare with `MIN_REPLICAS`
-3. If below minimum:
-   - Provision new engines
-   - Distribute across VPNs (redundant mode)
-   - Assign forwarded status if needed
-4. If `AUTO_DELETE=true`:
-   - Identify idle engines past grace period
-   - Stop and remove containers
-   - Free allocated ports
+1. Compute desired replicas from load and guardrails (`MIN_REPLICAS`, `MAX_REPLICAS`, lookahead logic)
+2. Persist desired replicas in state
+3. Engine controller reconciles desired vs actual
+4. Reconciliation emits and resolves create/terminate intents
+5. Runtime lifecycle confirmation comes from Docker events
+
+### Provisioning Path (Declarative)
+
+**Process**:
+1. Scheduler generates `EngineSpec`
+2. Provisioner executes container create using the resolved spec only
+3. On create failure, release reserved resources and decrement pending counters
+4. On create success, wait for Docker events to confirm running state and populate engine runtime state
 
 ### Stats Collection
 
@@ -384,6 +436,9 @@ class State:
     forwarded_engine_id: Optional[str]        # Current forwarded engine
     port_allocator: PortAllocator             # Port allocation manager
     vpn_state: Optional[VPNState]             # VPN status (if configured)
+   desired_replica_count: int                # Declarative scaling target
+   vpn_nodes: Dict[str, Dict[str, object]]   # VPN node runtime health from Docker events
+   scaling_intents: List[Dict[str, object]]  # Controller intents and outcomes
 ```
 
 ### Engine State
@@ -411,10 +466,10 @@ class EngineState:
 - **Docker Labels**: Container metadata for reindex on restart
 
 **Write Flow**:
-1. Update in-memory state
-2. Apply changes to Docker (if needed)
-3. Persist to database
-4. Return response to client
+1. Controller/provisioner schedules and executes Docker actions
+2. Docker lifecycle events are received by informer
+3. Informer updates in-memory state and persists authoritative runtime transitions
+4. API responses read current state (eventual consistency within event propagation window)
 
 **Read Flow**:
 1. Read from in-memory state (fast)

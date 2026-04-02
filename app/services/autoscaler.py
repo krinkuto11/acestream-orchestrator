@@ -1,11 +1,13 @@
 import os
 import time
+import threading
 from ..core.config import cfg
 from .provisioner import StartRequest, start_container, AceProvisionRequest, start_acestream, stop_container
 from .health import list_managed
 from .state import state
 from .circuit_breaker import circuit_breaker_manager
 from .event_logger import event_logger
+from .replica_validator import replica_validator
 import logging
 import asyncio
 from datetime import datetime, timedelta
@@ -33,15 +35,63 @@ def _count_healthy_engines() -> int:
         # Fallback to total engine count if health check fails
         return len(state.list_engines())
 
-def ensure_minimum():
+
+def _compute_desired_replicas(total_running: int, free_count: int) -> tuple[int, str]:
+    """Compute desired replica count declaratively based on current stream pressure."""
+    all_engines = state.list_engines()
+    if not all_engines:
+        return 1, "1 minimum engine container (no engines exist)"
+
+    monitor_loads = state.get_active_monitor_load_by_engine()
+    stream_counts = []
+    for engine in all_engines:
+        active_stream_count = len(state.list_streams(status="started", container_id=engine.container_id))
+        monitor_stream_count = monitor_loads.get(engine.container_id, 0)
+        stream_counts.append(active_stream_count + monitor_stream_count)
+
+    min_streams = min(stream_counts)
+    max_streams_threshold = cfg.MAX_STREAMS_PER_ENGINE - 1
+    any_engine_near_capacity = any(count >= max_streams_threshold for count in stream_counts)
+    all_engines_near_capacity = all(count >= max_streams_threshold for count in stream_counts)
+
+    lookahead_layer = state.get_lookahead_layer()
+    all_at_lookahead_layer = lookahead_layer is None or min_streams >= lookahead_layer
+
+    desired = total_running
+    target_description = f"no engines at layer {max_streams_threshold} yet (lookahead not triggered)"
+
+    if any_engine_near_capacity:
+        if all_engines_near_capacity:
+            if all_at_lookahead_layer:
+                desired = total_running + 1
+                target_description = f"all engines at layer {max_streams_threshold} (LOOKAHEAD: preparing for overflow)"
+                state.set_lookahead_layer(min_streams)
+            else:
+                target_description = f"waiting for all engines to reach layer {lookahead_layer}"
+        else:
+            if free_count >= cfg.MIN_FREE_REPLICAS:
+                target_description = f"lookahead buffer satisfied (free engines: {free_count})"
+            elif all_at_lookahead_layer:
+                desired = total_running + 1
+                target_description = f"lookahead triggered (first engine at layer {max_streams_threshold})"
+                state.set_lookahead_layer(min_streams)
+            else:
+                target_description = f"waiting for all engines to reach layer {lookahead_layer}"
+    else:
+        if lookahead_layer is not None and min_streams < lookahead_layer:
+            state.reset_lookahead_layer()
+
+    if cfg.GLUETUN_CONTAINER_NAME:
+        desired = min(desired, cfg.MAX_REPLICAS)
+
+    return max(0, desired), target_description
+
+def ensure_minimum(*_args, **_kwargs):
     """Ensure minimum number of replicas are available.
     
-    Uses layer-based lookahead provisioning - provisions new engine
-    when ANY engine reaches (MAX_STREAMS_PER_ENGINE - 1) streams.
+    Uses layer-based lookahead provisioning to update desired replicas.
     """
     try:
-        from .replica_validator import replica_validator
-        
         # Skip autoscaling if in emergency mode
         if state.is_emergency_mode():
             emergency_info = state.get_emergency_mode_info()
@@ -59,216 +109,217 @@ def ensure_minimum():
         if state.is_reprovisioning_mode():
             logger.debug("Autoscaler paused: in reprovisioning mode")
             return
-        
-        # Check circuit breaker before attempting provisioning
-        if not circuit_breaker_manager.can_provision("general"):
-            logger.warning("Circuit breaker is OPEN - skipping provisioning attempt")
-            return
+
+        # Keep explicit check for compatibility and observability.
+        can_provision_now = circuit_breaker_manager.can_provision("general")
+        if not can_provision_now:
+            logger.warning("Circuit breaker is OPEN - provisioning will be blocked until recovery")
         
         # Use replica_validator to get accurate counts including free engines
-        total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
-        
-        # During runtime: check if we need to provision based on MAX_STREAMS_PER_ENGINE
-        # LOOKAHEAD PROVISIONING: Start provisioning when FIRST engine reaches (MAX-1)
-        # This gives time for the new engine to spin up before capacity is exhausted
+        try:
+            total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
+        except Exception:
+            docker_status = replica_validator.get_docker_container_status() if hasattr(replica_validator, "get_docker_container_status") else {}
+            total_running = int(docker_status.get("total_running", len(state.list_engines())))
+            free_count = 0
+            used_engines = total_running
 
-        all_engines = state.list_engines()
-        if all_engines:
-            # Get stream counts per engine
-            monitor_loads = state.get_active_monitor_load_by_engine()
-            engines_with_stream_counts = []
-            for engine in all_engines:
-                active_stream_count = len(state.list_streams(status="started", container_id=engine.container_id))
-                monitor_stream_count = monitor_loads.get(engine.container_id, 0)
-                stream_count = active_stream_count + monitor_stream_count
-                engines_with_stream_counts.append((engine.container_id, stream_count))
-            
-            # Calculate min and max stream counts
-            stream_counts = [count for _, count in engines_with_stream_counts]
-            min_streams = min(stream_counts)
-            max_streams = max(stream_counts)
-            
-            # LOOKAHEAD TRIGGER: Check if ANY engine has reached (MAX_STREAMS - 1)
-            # This provides early warning and provisioning buffer
-            max_streams_threshold = cfg.MAX_STREAMS_PER_ENGINE - 1
-            any_engine_near_capacity = any(count >= max_streams_threshold for _, count in engines_with_stream_counts)
-            
-            # Check if all engines have at least (MAX_STREAMS - 1) streams
-            all_engines_near_capacity = all(count >= max_streams_threshold for _, count in engines_with_stream_counts)
-            
-            # Get the current lookahead layer
-            lookahead_layer = state.get_lookahead_layer()
-            
-            # Check if all engines have reached the previous lookahead layer
-            # This prevents repeated provisioning until ALL engines (including newly provisioned ones)
-            # reach the layer that triggered the last provisioning
-            all_at_lookahead_layer = lookahead_layer is None or min_streams >= lookahead_layer
-            
-            if any_engine_near_capacity:
-                # At least one engine has reached threshold - use lookahead provisioning
-                # Provision new engine to be ready before overflow occurs
-                if all_engines_near_capacity:
-                    # All engines at threshold - this is the critical moment
-                    # Only provision if all engines have reached the previous lookahead layer
-                    if all_at_lookahead_layer:
-                        deficit = 1
-                        target = total_running + 1
-                        target_description = f"all engines at layer {max_streams_threshold} (LOOKAHEAD: preparing for overflow)"
-                        logger.info(f"All {len(all_engines)} engines at layer {max_streams_threshold}, provisioning new engine (lookahead)")
-                        # Set lookahead layer to current minimum to prevent re-triggering
-                        # until the new engine also reaches this layer
-                        state.set_lookahead_layer(min_streams)
-                    else:
-                        # All engines are near capacity but haven't reached lookahead layer yet
-                        deficit = 0
-                        target = total_running
-                        target_description = f"waiting for all engines to reach layer {lookahead_layer}"
-                        logger.debug(f"Lookahead blocked: min_streams={min_streams}, lookahead_layer={lookahead_layer}")
-                else:
-                    # Only some engines at threshold - check if we already have a free engine ready
-                    # If we have MIN_FREE_REPLICAS free engines, don't provision yet
-                    if free_count >= cfg.MIN_FREE_REPLICAS:
-                        # We have free engines ready for when needed
-                        deficit = 0
-                        target = total_running
-                        target_description = f"lookahead buffer satisfied (free engines: {free_count})"
-                        logger.debug(f"Some engines at layer {max_streams_threshold}, but {free_count} free engines available")
-                    else:
-                        # Start provisioning to have engine ready when needed
-                        # Only provision if all engines have reached the previous lookahead layer
-                        if all_at_lookahead_layer:
-                            deficit = 1
-                            target = total_running + 1
-                            target_description = f"lookahead triggered (first engine at layer {max_streams_threshold})"
-                            logger.info(f"Lookahead provisioning: first engine reached layer {max_streams_threshold}, preparing new engine")
-                            # Set lookahead layer to current minimum to prevent re-triggering
-                            state.set_lookahead_layer(min_streams)
-                        else:
-                            # Some engines near capacity but haven't reached lookahead layer yet
-                            deficit = 0
-                            target = total_running
-                            target_description = f"waiting for all engines to reach layer {lookahead_layer}"
-                            logger.debug(f"Lookahead blocked: min_streams={min_streams}, lookahead_layer={lookahead_layer}")
-            else:
-                # No engines at threshold yet - reset lookahead layer if it was set
-                # This allows fresh provisioning when load increases again
-                if lookahead_layer is not None and min_streams < lookahead_layer:
-                    # Engines have dropped below the lookahead layer, reset it
-                    state.reset_lookahead_layer()
-                    logger.debug(f"Reset lookahead layer: engines dropped below previous threshold")
-                
-                # No provisioning needed
-                deficit = 0
-                target = total_running
-                target_description = f"no engines at layer {max_streams_threshold} yet (lookahead not triggered)"
-        else:
-            # No engines exist - tentatively provision one single replica 
-            # (although typically isolated via app main startup)
-            target = 1
-            deficit = target - total_running
-            target_description = f"1 minimum engine container (no engines exist)"
-        
-        # When using Gluetun, respect MAX_REPLICAS as a hard limit
-        if cfg.GLUETUN_CONTAINER_NAME:
-            max_new_containers = cfg.MAX_REPLICAS - total_running
-            if deficit > max_new_containers:
-                deficit = max_new_containers
-        
-        if deficit <= 0:
-            logger.debug(f"Sufficient replicas available for {target_description} (total: {total_running}, used: {used_engines}, free: {free_count})")
-            return  # Already have enough
-        
-        # Check if already at MAX_REPLICAS limit (when using Gluetun)
-        if cfg.GLUETUN_CONTAINER_NAME and deficit > 0:
-            max_new_containers = cfg.MAX_REPLICAS - total_running
-            if max_new_containers <= 0:
-                logger.warning(
-                    f"Cannot start containers - already at MAX_REPLICAS limit ({cfg.MAX_REPLICAS}). "
-                    f"Current state: total={total_running}, used={used_engines}, free={free_count}. "
-                    f"To maintain {target_description}, increase MAX_REPLICAS."
-                )
-                return
-            # Adjust deficit to not exceed the limit
-            if deficit > max_new_containers:
-                logger.info(
-                    f"Reducing planned containers from {deficit} to {max_new_containers} to stay within "
-                    f"MAX_REPLICAS limit ({cfg.MAX_REPLICAS}). "
-                    f"Current state: total={total_running}, used={used_engines}, free={free_count}"
-                )
-                deficit = max_new_containers
-        
-        logger.info(f"Starting {deficit} AceStream containers to maintain {target_description} (currently: total={total_running}, used={used_engines}, free={free_count})")
-        
-        if deficit > 0:
-            # Log autoscaling event
+        desired, target_description = _compute_desired_replicas(total_running=total_running, free_count=free_count)
+        previous_desired = state.get_desired_replica_count()
+        state.set_desired_replica_count(desired)
+
+        if desired != previous_desired:
             event_logger.log_event(
                 event_type="system",
                 category="scaling",
-                message=f"Auto-scaling: provisioning {deficit} engines to meet {target_description}",
+                message=f"Desired replicas updated to {desired}",
                 details={
-                    "deficit": deficit,
-                    "total_running": total_running,
+                    "previous_desired": previous_desired,
+                    "new_desired": desired,
+                    "actual": total_running,
                     "free_count": free_count,
-                    "target": target
-                }
+                    "reason": target_description,
+                },
             )
-            # Use simple synchronous provisioning for reliability
-            success_count = 0
-            failure_count = 0
-            
-            for i in range(deficit):
-                try:
-                    logger.debug(f"Attempting to start container {i+1}/{deficit}")
-                    response = start_acestream(AceProvisionRequest())
-                    
-                    if response and response.container_id:
-                        success_count += 1
-                        circuit_breaker_manager.record_provisioning_success("general")
-                        logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({success_count}/{deficit})")
-                        
-                        # Immediately verify the container is running
-                        time.sleep(1)  # Brief pause to let container start
-                        
-                        # Get updated Docker status to verify the container is actually running
-                        updated_status = replica_validator.get_docker_container_status()
-                        if updated_status['total_running'] > total_running + success_count - 1:
-                            logger.debug(f"Container {response.container_id[:12]} verified as running")
-                        else:
-                            logger.warning(f"Container {response.container_id[:12]} may not be running yet")
-                    else:
-                        failure_count += 1
-                        circuit_breaker_manager.record_provisioning_failure("general")
-                        logger.error(f"Failed to start AceStream container {i+1}/{deficit}: No response or container ID")
-                        
-                except Exception as e:
-                    failure_count += 1
-                    circuit_breaker_manager.record_provisioning_failure("general")
-                    logger.error(f"Failed to start AceStream container {i+1}/{deficit}: {e}")
-                    # Continue with next container instead of failing completely
-                    continue
-            
-            if success_count > 0:
-                logger.info(f"Successfully started {success_count}/{deficit} containers")
-                
-                # Reindex after provisioning to ensure state consistency
-                logger.info("Reindexing after provisioning to pick up new containers")
-                try:
-                    from .reindex import reindex_existing
-                    reindex_existing()
-                except Exception as e:
-                    logger.error(f"Failed to reindex after provisioning: {e}")
-            else:
-                logger.error(f"Failed to start any containers out of {deficit} needed")
-                
-            # Log circuit breaker status if there were failures
-            if failure_count > 0:
-                breaker_status = circuit_breaker_manager.get_status()
-                logger.debug(f"Circuit breaker status after {failure_count} failures: {breaker_status['general']['state']}")
+
+        logger.debug(
+            "Autoscaler desired state updated "
+            f"(actual={total_running}, desired={desired}, used={used_engines}, free={free_count}, reason={target_description})"
+        )
+        engine_controller.request_reconcile(reason="ensure_minimum")
+        if not engine_controller.is_running():
+            try:
+                asyncio.run(engine_controller.reconcile_once())
+            except RuntimeError:
+                pass
                 
     except Exception as e:
         logger.error(f"Error in ensure_minimum: {e}")
         import traceback
         logger.debug(f"Traceback: {traceback.format_exc()}")
+
+
+class EngineController:
+    """Controller loop that reconciles desired and actual engine replicas."""
+
+    def __init__(self):
+        self._task: Optional[asyncio.Task] = None
+        self._stop = asyncio.Event()
+        self._reconcile_signal = asyncio.Event()
+        self._thread_signal = threading.Event()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._interval_s = max(1, int(cfg.AUTOSCALE_INTERVAL_S))
+
+    async def start(self):
+        if self._task and not self._task.done():
+            return
+
+        self._stop.clear()
+        self._reconcile_signal.clear()
+        self._thread_signal.clear()
+        self._loop = asyncio.get_running_loop()
+        self._task = asyncio.create_task(self._run())
+        logger.info(f"Engine controller started (interval={self._interval_s}s)")
+
+    async def stop(self):
+        self._stop.set()
+        self._reconcile_signal.set()
+        self._thread_signal.set()
+        if self._task:
+            await self._task
+        logger.info("Engine controller stopped")
+
+    def is_running(self) -> bool:
+        return bool(self._task and not self._task.done())
+
+    async def reconcile_once(self):
+        await self._reconcile_once()
+
+    def request_reconcile(self, reason: str = "manual"):
+        logger.debug(f"Engine controller reconcile requested: {reason}")
+        self._thread_signal.set()
+        if self._loop and self._loop.is_running():
+            try:
+                self._loop.call_soon_threadsafe(self._reconcile_signal.set)
+            except RuntimeError:
+                pass
+
+    async def _run(self):
+        # Trigger an initial reconcile shortly after startup.
+        self.request_reconcile(reason="startup")
+
+        while not self._stop.is_set():
+            if self._thread_signal.is_set():
+                self._thread_signal.clear()
+
+            await self._reconcile_once()
+
+            stop_task = asyncio.create_task(self._stop.wait())
+            signal_task = asyncio.create_task(self._reconcile_signal.wait())
+            done, pending = await asyncio.wait(
+                {stop_task, signal_task},
+                timeout=self._interval_s,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in pending:
+                task.cancel()
+
+            if stop_task in done:
+                break
+
+            self._reconcile_signal.clear()
+
+    async def _reconcile_once(self):
+        desired = state.get_desired_replica_count()
+        engines = state.list_engines()
+        actual = len(engines)
+
+        if actual < desired:
+            deficit = desired - actual
+            for _ in range(deficit):
+                intent = state.emit_scaling_intent(
+                    intent_type="create_request",
+                    details={
+                        "requested_by": "engine_controller",
+                        "scheduler_request": True,
+                        "desired": desired,
+                        "actual": actual,
+                    },
+                )
+                await self._execute_create_intent(intent)
+                actual += 1
+
+        elif actual > desired:
+            excess = actual - desired
+            candidates = self._build_termination_candidates(engines)
+            removed = 0
+
+            for engine in candidates:
+                if removed >= excess:
+                    break
+
+                if not can_stop_engine(engine.container_id, bypass_grace_period=False):
+                    continue
+
+                intent = state.emit_scaling_intent(
+                    intent_type="terminate_request",
+                    details={
+                        "requested_by": "engine_controller",
+                        "desired": desired,
+                        "actual": actual,
+                        "container_id": engine.container_id,
+                    },
+                )
+                await self._execute_terminate_intent(intent, engine.container_id)
+                removed += 1
+                actual -= 1
+
+    def _build_termination_candidates(self, engines):
+        active_streams = state.list_streams(status="started")
+        used_container_ids = {stream.container_id for stream in active_streams}
+        used_container_ids.update(state.get_active_monitor_container_ids())
+
+        # Prefer terminating idle non-forwarded engines first.
+        return sorted(
+            engines,
+            key=lambda e: (
+                e.container_id in used_container_ids,
+                bool(e.forwarded),
+                e.last_seen or datetime.min,
+            ),
+        )
+
+    async def _execute_create_intent(self, intent: dict):
+        intent_id = intent.get("id")
+
+        if not circuit_breaker_manager.can_provision("general"):
+            state.resolve_scaling_intent(intent_id, "blocked", {"reason": "circuit_breaker_open"})
+            return
+
+        try:
+            response = await asyncio.to_thread(start_acestream, AceProvisionRequest())
+            circuit_breaker_manager.record_provisioning_success("general")
+            state.resolve_scaling_intent(
+                intent_id,
+                "applied",
+                {"container_id": response.container_id, "container_name": response.container_name},
+            )
+        except Exception as e:
+            circuit_breaker_manager.record_provisioning_failure("general")
+            state.resolve_scaling_intent(intent_id, "failed", {"error": str(e)})
+
+    async def _execute_terminate_intent(self, intent: dict, container_id: str):
+        intent_id = intent.get("id")
+        try:
+            await asyncio.to_thread(stop_container, container_id)
+            state.remove_engine(container_id)
+            state.resolve_scaling_intent(intent_id, "applied", {"container_id": container_id})
+        except Exception as e:
+            state.resolve_scaling_intent(intent_id, "failed", {"container_id": container_id, "error": str(e)})
+
+
+engine_controller = EngineController()
 
 def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> bool:
     """Check if an engine can be safely stopped based on grace period and minimum free replicas."""
@@ -290,7 +341,6 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
     
     # Check if stopping this engine would violate replica constraints
     try:
-        from .replica_validator import replica_validator
         # Get accurate counts including free engines
         total_running, used_engines, free_count = replica_validator.validate_and_sync_state()
         
@@ -393,62 +443,39 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
     return False
 
 def scale_to(demand: int):
-    from .replica_validator import replica_validator
-    
     # Skip autoscaling if manual mode is enabled
     from .settings_persistence import SettingsPersistence
     engine_settings = SettingsPersistence.load_engine_settings() or {}
     if engine_settings.get('manual_mode'):
         logger.debug("Manual mode is enabled, skipping scale_to")
         return
-        
+
     desired = min(max(cfg.MIN_REPLICAS, demand), cfg.MAX_REPLICAS)
-    
-    # When using Gluetun, MAX_REPLICAS already serves as the hard limit
-    # No need for additional capping since desired is already capped at MAX_REPLICAS above
-    
-    # Use reliable Docker count
+
+    # Keep validator call for state/docker consistency before updating desired state.
     docker_status = replica_validator.get_docker_container_status()
     running_count = docker_status['total_running']
-    running_containers = docker_status['containers']
-    
-    if running_count < desired:
-        deficit = desired - running_count
-        logger.info(f"Scaling up: starting {deficit} AceStream containers (current: {running_count}, desired: {desired})")
-        for i in range(deficit):
-            try:
-                # Use AceStream provisioning to ensure containers are AceStream-ready with proper ports
-                response = start_acestream(AceProvisionRequest())
-                logger.info(f"Started AceStream container {response.container_id[:12]} for scale-up ({i+1}/{deficit})")
-            except Exception as e:
-                logger.error(f"Failed to start AceStream container for scale-up: {e}")
-        
-        # Reindex after scaling up to pick up new containers
-        if deficit > 0:
-            logger.info("Reindexing after scale-up to pick up new containers")
-            try:
-                from .reindex import reindex_existing
-                reindex_existing()
-            except Exception as e:
-                logger.error(f"Failed to reindex after scale-up: {e}")
-                
-    elif running_count > desired:
-        excess = running_count - desired
-        logger.info(f"Scaling down: checking {excess} containers for safe removal (current: {running_count}, desired: {desired})")
-        
-        # Only stop containers that can be safely stopped (respecting grace period)
-        stopped_count = 0
-        for c in running_containers:
-            if stopped_count >= excess:
-                break
-            
-            if can_stop_engine(c.id, bypass_grace_period=False):
-                try:
-                    stop_container(c.id)
-                    stopped_count += 1
-                    logger.info(f"Stopped and removed container {c.id[:12]} ({stopped_count}/{excess})")
-                except Exception as e:
-                    logger.error(f"Failed to stop container {c.id[:12]}: {e}")
-        
-        if stopped_count < excess:
-            logger.info(f"Only stopped {stopped_count}/{excess} containers due to grace period restrictions")
+    previous_desired = state.get_desired_replica_count()
+    state.set_desired_replica_count(desired)
+
+    logger.info(
+        f"Scale target updated (actual={running_count}, previous_desired={previous_desired}, desired={desired})"
+    )
+
+    event_logger.log_event(
+        event_type="system",
+        category="scaling",
+        message=f"Manual scale request updated desired replicas to {desired}",
+        details={
+            "actual": running_count,
+            "previous_desired": previous_desired,
+            "new_desired": desired,
+        },
+    )
+
+    engine_controller.request_reconcile(reason="scale_to")
+    if not engine_controller.is_running():
+        try:
+            asyncio.run(engine_controller.reconcile_once())
+        except RuntimeError:
+            pass
