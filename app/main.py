@@ -23,8 +23,8 @@ from docker.errors import NotFound
 
 from .utils.logging import setup
 from .core.config import cfg
-from .services.autoscaler import ensure_minimum, scale_to, can_stop_engine
-from .services.provisioner import StartRequest, start_container, stop_container, AceProvisionRequest, AceProvisionResponse, start_acestream, HOST_LABEL_HTTP
+from .services.autoscaler import ensure_minimum, scale_to, can_stop_engine, engine_controller
+from .services.provisioner import StartRequest, start_container, stop_container, AceProvisionRequest, AceProvisionResponse, start_acestream, HOST_LABEL_HTTP, compute_current_engine_config_hash
 from .services.health import sweep_idle
 from .services.health_monitor import health_monitor
 from .services.health_manager import health_manager
@@ -67,7 +67,7 @@ from .services.looping_streams import looping_streams_tracker
 from .services.cache_monitoring_service import start_cache_monitoring
 from .services.legacy_stream_monitoring import legacy_stream_monitoring_service
 from .services.hls_segmenter import hls_segmenter_service
-from .services.docker_client import get_client
+from .services.docker_client import get_client, docker_event_watcher
 from .proxy.manager import ProxyManager
 from .proxy.ace_api_client import AceLegacyApiClient, AceLegacyApiError
 from .proxy.constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mode
@@ -75,6 +75,18 @@ from .proxy.constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mo
 logger = logging.getLogger(__name__)
 
 setup()
+
+
+def _trigger_engine_generation_rollout(reason: str) -> Dict[str, Any]:
+    """Update target engine config generation and request reconciliation."""
+    target_hash = compute_current_engine_config_hash()
+    result = state.set_target_engine_config(target_hash)
+    if result.get("changed"):
+        logger.info(
+            f"Engine target config updated ({reason}): hash={result['config_hash']} generation={result['generation']}"
+        )
+        engine_controller.request_reconcile(reason=f"config_rollout:{reason}")
+    return result
 
 def _init_proxy_server():
     """Initialize ProxyServer and HLSProxyServer in background thread during startup.
@@ -358,102 +370,18 @@ async def lifespan(app: FastAPI):
     # Initialize looping streams tracker with configured retention
     looping_streams_tracker.set_retention_minutes(cfg.STREAM_LOOP_RETENTION_MINUTES)
     
-    async def _provision_worker():
-        """Provision engines in background after VPN is healthy."""
-        state.enter_reprovisioning_mode()
-        
-        if cfg.GLUETUN_CONTAINER_NAME:
-            logger.info("Waiting for Gluetun to become healthy before provisioning engines...")
-            max_wait_time = 60  # Maximum 60 seconds to wait for Gluetun
-            wait_start = asyncio.get_event_loop().time()
-            
-            is_healthy = False
-            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
-                logger.info(f"Waiting for both Gluetun containers ({cfg.GLUETUN_CONTAINER_NAME}, {cfg.GLUETUN_CONTAINER_NAME_2}) to become healthy...")
-                v1_task = gluetun_monitor.wait_for_healthy(timeout=max_wait_time, container_name=cfg.GLUETUN_CONTAINER_NAME)
-                v2_task = gluetun_monitor.wait_for_healthy(timeout=max_wait_time, container_name=cfg.GLUETUN_CONTAINER_NAME_2)
-                v1, v2 = await asyncio.gather(v1_task, v2_task)
-                is_healthy = v1 and v2
-                if is_healthy:
-                    logger.info("Both Gluetun containers are healthy - proceeding with engine provisioning")
-            else:
-                logger.info(f"Waiting for Gluetun ({cfg.GLUETUN_CONTAINER_NAME}) to become healthy...")
-                is_healthy = await gluetun_monitor.wait_for_healthy(timeout=max_wait_time)
-                if is_healthy:
-                    logger.info("Gluetun is healthy - proceeding with engine provisioning")
+    state.set_desired_replica_count(cfg.MIN_REPLICAS)
+    target_config_hash = compute_current_engine_config_hash()
+    target_config = state.set_target_engine_config(target_config_hash)
+    logger.info(
+        f"Initialized desired replicas={cfg.MIN_REPLICAS}, config_hash={target_config['config_hash']}, generation={target_config['generation']}"
+    )
 
-            if is_healthy:
-                # Log VPN location information for all healthy VPN containers
-                from .services.gluetun import get_vpn_status
-                try:
-                    vpn_status = get_vpn_status()
-                    
-                    # Check VPN1 location
-                    if vpn_status.get("vpn1") and vpn_status["vpn1"].get("public_ip"):
-                        logger.info(f"VPN1 ({vpn_status['vpn1']['container_name']}) status: "
-                                  f"IP={vpn_status['vpn1']['public_ip']}, "
-                                  f"Provider={vpn_status['vpn1'].get('provider', 'Unknown')}, "
-                                  f"Country={vpn_status['vpn1'].get('country', 'Unknown')}, "
-                                  f"City={vpn_status['vpn1'].get('city', 'Unknown')}")
-                    
-                    # Check VPN2 location (redundant mode)
-                    if vpn_status.get("vpn2") and vpn_status["vpn2"].get("public_ip"):
-                        logger.info(f"VPN2 ({vpn_status['vpn2']['container_name']}) status: "
-                                  f"IP={vpn_status['vpn2']['public_ip']}, "
-                                  f"Provider={vpn_status['vpn2'].get('provider', 'Unknown')}, "
-                                  f"Country={vpn_status['vpn2'].get('country', 'Unknown')}, "
-                                  f"City={vpn_status['vpn2'].get('city', 'Unknown')}")
-                    
-                    # For single VPN mode
-                    if vpn_status.get("mode") == "single" and vpn_status.get("public_ip"):
-                        if not vpn_status.get("vpn1"):  # Already logged above if vpn1 exists
-                            logger.info(f"VPN ({vpn_status['container_name']}) status: "
-                                      f"IP={vpn_status['public_ip']}, "
-                                      f"Provider={vpn_status.get('provider', 'Unknown')}, "
-                                      f"Country={vpn_status.get('country', 'Unknown')}, "
-                                      f"City={vpn_status.get('city', 'Unknown')}")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to get VPN status: {e}")
-            else:
-                logger.warning(f"Gluetun did not become healthy within {max_wait_time}s - proceeding anyway")
-        
-        # Now provision engines with Gluetun health checks working
-        # On startup, provision MIN_REPLICAS total containers
-        # We invoke start_acestream directly here instead of autoscaler to isolate
-        # initial provisioning from periodic maintenance logic like circuit breakers
-        from app.services.provisioner import start_acestream, AceProvisionRequest
-        
-        target_count = cfg.MIN_REPLICAS
-        logger.info(f"Starting {target_count} AceStream containers for initial startup")
-        
-        provisioned = 0
-        failed = 0
-        for i in range(target_count):
-            try:
-                logger.debug(f"Provisioning initial engine {i+1}/{target_count}")
-                req = AceProvisionRequest(labels={}, env={})
-                response = start_acestream(req)
-                if response and response.container_id:
-                    logger.info(f"Successfully started AceStream container {response.container_id[:12]} ({i+1}/{target_count})")
-                    provisioned += 1
-                else:
-                    logger.error(f"Failed to start AceStream container {i+1}/{target_count}: No response")
-                    failed += 1
-            except Exception as e:
-                logger.error(f"Failed to provision engine {i+1}/{target_count}: {e}")
-                failed += 1
-                
-        logger.info(f"Initial provisioning complete: {provisioned}/{target_count} engines started ({failed} failed)")
-        
-        # Trigger state re-index to ensure visibility across APIs
-        reindex_existing()
-        state.exit_reprovisioning_mode()
+    await docker_event_watcher.start()
+    await engine_controller.start()
 
-    # Start Gluetun monitoring BEFORE provisioning to avoid race condition
-    # This ensures health checks work when ensure_minimum() tries to start engines
+    # Start Gluetun monitoring after controller/watcher bootstrap.
     await gluetun_monitor.start()
-    asyncio.create_task(_provision_worker())
     
     # Initialize ProxyServer in background to avoid blocking later API calls
     init_thread = threading.Thread(target=_init_proxy_server, daemon=True, name="ProxyServer-Init")
@@ -496,6 +424,8 @@ async def lifespan(app: FastAPI):
     await health_monitor.stop()  # Stop health monitoring
     await health_manager.stop()  # Stop health management
     await docker_stats_collector.stop()  # Stop Docker stats collector
+    await engine_controller.stop()  # Stop declarative engine controller
+    await docker_event_watcher.stop()  # Stop Docker event watcher
     await gluetun_monitor.stop()  # Stop Gluetun monitoring
     await stream_loop_detector.stop()  # Stop stream loop detector
     await looping_streams_tracker.stop()  # Stop looping streams tracker
@@ -1962,10 +1892,16 @@ def update_custom_variant_config(config: CustomVariantConfig):
     
     # Reload the configuration to ensure it's active
     reload_config()
+    rollout = _trigger_engine_generation_rollout(reason="custom_variant_config")
     
     return {
         "message": "Configuration saved successfully",
-        "config": config.dict()
+        "config": config.dict(),
+        "rolling_update": {
+            "changed": bool(rollout.get("changed")),
+            "target_generation": rollout.get("generation"),
+            "target_hash": rollout.get("config_hash"),
+        },
     }
 
 @app.get("/custom-variant/reprovision/status")
@@ -1976,219 +1912,35 @@ def get_reprovision_status():
 @app.post("/custom-variant/reprovision", dependencies=[Depends(require_api_key)])
 async def reprovision_all_engines(background_tasks: BackgroundTasks):
     """
-    Delete all engines and reprovision them with current settings.
-    This is a potentially disruptive operation.
-    This operation runs entirely in the background to avoid blocking the API/UI.
+    Trigger a declarative rolling update by bumping target engine config generation.
     """
     global _reprovision_state
-    
-    # Check if already in progress
-    if _reprovision_state["in_progress"]:
-        raise HTTPException(
-            status_code=409,
-            detail="Reprovisioning operation already in progress"
-        )
-    
-    from .services.health import list_managed
-    
-    # Get engine count for response before marking in progress
-    engines = list_managed()
-    engine_count = len(engines)
-    
-    # Mark as in progress
+    rollout = _trigger_engine_generation_rollout(reason="custom_variant_reprovision")
+    current_engines = len(state.list_engines())
+    changed = bool(rollout.get("changed"))
+
     _reprovision_state = {
-        "in_progress": True,
-        "status": "in_progress",
-        "message": "Reprovisioning engines...",
+        "in_progress": False,
+        "status": "success",
+        "message": "Rolling update scheduled" if changed else "No config change detected; rollout not required",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "total_engines": engine_count,
+        "total_engines": current_engines,
         "engines_stopped": 0,
         "engines_provisioned": 0,
         "current_engine_id": None,
-        "current_phase": "preparing"
+        "current_phase": "complete",
+        "target_generation": rollout.get("generation"),
+        "target_hash": rollout.get("config_hash"),
     }
-    
-    # Perform all reprovisioning work in background task
-    def reprovision_task():
-        global _reprovision_state
-        import time
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        
-        try:
-            # Enter reprovisioning mode to coordinate with other services
-            state.enter_reprovisioning_mode()
-            
-            # Get current engines (refresh list in background context)
-            from .services.health import list_managed
-            engines = list_managed()
-            engine_ids = [c.id for c in engines]
-            total_engines = len(engine_ids)
-            
-            logger.info(f"Starting reprovision of {total_engines} engines with new custom variant settings")
-            
-            # Update state: stopping phase
-            _reprovision_state.update({
-                "total_engines": total_engines,
-                "current_phase": "stopping",
-                "message": f"Stopping {total_engines} engines concurrently..."
-            })
-            
-            # Delete all engines concurrently (similar to shutdown)
-            # Use ThreadPoolExecutor to stop containers concurrently without overwhelming Docker socket
-            max_workers = min(10, total_engines) if total_engines > 0 else 1  # Cap at 10 concurrent operations
-            stopped_count = 0
-            
-            def stop_engine_wrapper(engine_id, idx, total):
-                """Wrapper function to stop engine and update state"""
-                try:
-                    stop_container(engine_id)
-                    logger.info(f"Stopped engine {engine_id[:12]} ({idx}/{total})")
-                    return (True, engine_id, None)
-                except Exception as e:
-                    logger.error(f"Failed to stop engine {engine_id[:12]}: {e}")
-                    return (False, engine_id, str(e))
-            
-            if engine_ids:
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    # Submit all stop tasks
-                    future_to_engine = {
-                        executor.submit(stop_engine_wrapper, engine_id, idx, total_engines): engine_id
-                        for idx, engine_id in enumerate(engine_ids, 1)
-                    }
-                    
-                    # Process results as they complete
-                    for future in as_completed(future_to_engine):
-                        success, engine_id, error = future.result()
-                        if success:
-                            stopped_count += 1
-                            _reprovision_state["engines_stopped"] = stopped_count
-                            _reprovision_state.update({
-                                "message": f"Stopped {stopped_count}/{total_engines} engines..."
-                            })
-            
-            logger.info(f"Stopped {stopped_count}/{total_engines} engines concurrently")
-            
-            # Update state: cleaning phase
-            _reprovision_state.update({
-                "current_phase": "cleaning",
-                "current_engine_id": None,
-                "message": "Cleaning up state..."
-            })
-            
-            # Clear state
-            cleanup_on_shutdown()
-            
-            # Switch HLS mode back to TS (MPEG-TS) if it was set to HLS
-            # This prevents issues when users change engine variants since HLS may not be supported on all variants
-            current_stream_mode = os.getenv('PROXY_STREAM_MODE', 'TS')
-            if current_stream_mode == 'HLS':
-                logger.info("Switching stream mode from HLS to TS (MPEG-TS) for reprovisioning")
-                os.environ['PROXY_STREAM_MODE'] = 'TS'
-                # Reload the config to pick up the change
-                from .proxy.config_helper import Config
-                Config.STREAM_MODE = 'TS'
-            
-            # Reload custom config to ensure we have latest settings
-            reload_config()
-            
-            # Give time for cleanup and monitoring systems to settle
-            time.sleep(2)
-            
-            # Update state: provisioning phase
-            _reprovision_state.update({
-                "current_phase": "provisioning",
-                "message": f"Provisioning {cfg.MIN_REPLICAS} new engines concurrently..."
-            })
-            
-            # Reprovision minimum replicas concurrently
-            # Use ThreadPoolExecutor to start containers concurrently
-            target_engines = cfg.MIN_REPLICAS
-            max_provision_workers = min(5, target_engines)  # Cap at 5 concurrent provisions to avoid overwhelming Docker
-            provisioned_count = 0
-            
-            def provision_engine_wrapper(idx, total):
-                """Wrapper function to provision engine and update state"""
-                try:
-                    response = start_acestream(AceProvisionRequest())
-                    if response and response.container_id:
-                        logger.info(f"Successfully provisioned engine {response.container_id[:12]} ({idx}/{total})")
-                        return (True, response.container_id, None)
-                    else:
-                        logger.error(f"Failed to provision engine {idx}/{total}: No response or container ID")
-                        return (False, None, "No response or container ID")
-                except Exception as e:
-                    logger.error(f"Failed to provision engine {idx}/{total}: {e}")
-                    return (False, None, str(e))
-            
-            if target_engines > 0:
-                with ThreadPoolExecutor(max_workers=max_provision_workers) as executor:
-                    # Submit all provision tasks
-                    future_to_idx = {
-                        executor.submit(provision_engine_wrapper, idx, target_engines): idx
-                        for idx in range(1, target_engines + 1)
-                    }
-                    
-                    # Process results as they complete
-                    for future in as_completed(future_to_idx):
-                        success, container_id, error = future.result()
-                        if success:
-                            provisioned_count += 1
-                            _reprovision_state["engines_provisioned"] = provisioned_count
-                            _reprovision_state.update({
-                                "message": f"Provisioned {provisioned_count}/{target_engines} new engines..."
-                            })
-            
-            logger.info(f"Successfully provisioned {provisioned_count}/{target_engines} engines concurrently")
-            
-            # Reindex after provisioning to ensure state consistency
-            logger.info("Reindexing after reprovisioning to pick up new containers")
-            try:
-                from .services.reindex import reindex_existing
-                reindex_existing()
-            except Exception as e:
-                logger.error(f"Failed to reindex after reprovisioning: {e}")
-            
-            # Exit reprovisioning mode
-            state.exit_reprovisioning_mode()
-            
-            # Update state: complete
-            _reprovision_state = {
-                "in_progress": False,
-                "status": "success",
-                "message": f"Successfully reprovisioned all engines ({stopped_count} stopped, {provisioned_count} provisioned)",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "total_engines": total_engines,
-                "engines_stopped": stopped_count,
-                "engines_provisioned": provisioned_count,
-                "current_engine_id": None,
-                "current_phase": "complete"
-            }
-        except Exception as e:
-            logger.error(f"Failed to reprovision engines: {e}")
-            
-            # Exit reprovisioning mode on error
-            try:
-                state.exit_reprovisioning_mode()
-            except Exception:
-                pass
-            
-            _reprovision_state = {
-                "in_progress": False,
-                "status": "error",
-                "message": f"Failed to reprovision engines: {str(e)}",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "total_engines": _reprovision_state.get("total_engines", 0),
-                "engines_stopped": _reprovision_state.get("engines_stopped", 0),
-                "engines_provisioned": 0,
-                "current_engine_id": _reprovision_state.get("current_engine_id"),
-                "current_phase": "error"
-            }
-    
-    background_tasks.add_task(reprovision_task)
-    
+
     return {
-        "message": f"Started reprovisioning of {engine_count} engines",
-        "deleted_count": engine_count
+        "message": _reprovision_state["message"],
+        "rolling_update": {
+            "changed": changed,
+            "target_generation": rollout.get("generation"),
+            "target_hash": rollout.get("config_hash"),
+            "current_engines": current_engines,
+        },
     }
 
 # Template Management Endpoints
@@ -5210,10 +4962,19 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
         logger.info(f"Engine settings persisted: {current_settings}")
     else:
         logger.warning("Failed to persist engine settings to JSON file")
+
+    state.set_desired_replica_count(cfg.MIN_REPLICAS)
+    engine_controller.request_reconcile(reason="engine_settings_update")
+    rollout = _trigger_engine_generation_rollout(reason="engine_settings_update")
     
     return {
         "message": "Engine settings updated and persisted",
-        **current_settings
+        **current_settings,
+        "rolling_update": {
+            "changed": bool(rollout.get("changed")),
+            "target_generation": rollout.get("generation"),
+            "target_hash": rollout.get("config_hash"),
+        },
     }
 
 

@@ -187,12 +187,14 @@ class DockerEventWatcher:
         if vpn_name:
             if action in ("die", "destroy"):
                 state.update_vpn_node_status(vpn_name, "down")
+                self._emit_vpn_evictions(vpn_name, reason="node_down")
             elif action == "start":
                 state.update_vpn_node_status(vpn_name, "running")
             elif action == "health_status: healthy":
                 state.update_vpn_node_status(vpn_name, "healthy")
             elif action == "health_status: unhealthy":
                 state.update_vpn_node_status(vpn_name, "unhealthy")
+                self._emit_vpn_evictions(vpn_name, reason="node_unhealthy")
 
         if not self._is_managed_engine(attrs):
             return
@@ -204,6 +206,49 @@ class DockerEventWatcher:
             action=action,
             labels=labels,
         )
+
+    @staticmethod
+    def _emit_vpn_evictions(vpn_container: str, reason: str):
+        from .state import state
+
+        engines = state.get_engines_by_vpn(vpn_container)
+        if not engines:
+            return
+
+        pending = state.list_pending_scaling_intents(intent_type="terminate_request", limit=2000)
+        pending_ids = {
+            str((intent.get("details") or {}).get("container_id") or "")
+            for intent in pending
+        }
+
+        emitted = 0
+        for engine in engines:
+            if engine.container_id in pending_ids:
+                continue
+
+            state.emit_scaling_intent(
+                intent_type="terminate_request",
+                details={
+                    "requested_by": "docker_event_watcher",
+                    "eviction_reason": "vpn_not_ready",
+                    "vpn_container": vpn_container,
+                    "node_reason": reason,
+                    "container_id": engine.container_id,
+                    "force": True,
+                },
+            )
+            emitted += 1
+
+        if emitted > 0:
+            logger.warning(
+                f"VPN node '{vpn_container}' marked NotReady ({reason}); requested eviction for {emitted} engine(s)"
+            )
+            try:
+                from .autoscaler import engine_controller
+
+                engine_controller.request_reconcile(reason=f"vpn_not_ready:{vpn_container}")
+            except Exception as e:
+                logger.debug(f"Failed to request reconcile after VPN eviction intents: {e}")
 
 def get_client(timeout: int = 30):
     """
@@ -276,3 +321,6 @@ def get_orchestrator_network() -> str | None:
         logger.debug(f"Failed to detect orchestrator Docker network: {e}")
         
     return None
+
+
+docker_event_watcher = DockerEventWatcher()

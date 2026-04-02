@@ -40,7 +40,7 @@ def _compute_desired_replicas(total_running: int, free_count: int) -> tuple[int,
     """Compute desired replica count declaratively based on current stream pressure."""
     all_engines = state.list_engines()
     if not all_engines:
-        return 1, "1 minimum engine container (no engines exist)"
+        return max(0, int(cfg.MIN_REPLICAS)), "minimum replicas (no engines exist)"
 
     monitor_loads = state.get_active_monitor_load_by_engine()
     stream_counts = []
@@ -92,22 +92,11 @@ def ensure_minimum(*_args, **_kwargs):
     Uses layer-based lookahead provisioning to update desired replicas.
     """
     try:
-        # Skip autoscaling if in emergency mode
-        if state.is_emergency_mode():
-            emergency_info = state.get_emergency_mode_info()
-            logger.debug(f"Autoscaler paused: in emergency mode (failed VPN: {emergency_info['failed_vpn']})")
-            return
-            
         # Skip autoscaling if manual mode is enabled
         from .settings_persistence import SettingsPersistence
         engine_settings = SettingsPersistence.load_engine_settings() or {}
         if engine_settings.get('manual_mode'):
             logger.debug("Autoscaler paused: manual mode is enabled")
-            return
-        
-        # Skip autoscaling if in reprovisioning mode
-        if state.is_reprovisioning_mode():
-            logger.debug("Autoscaler paused: in reprovisioning mode")
             return
 
         # Keep explicit check for compatibility and observability.
@@ -231,6 +220,15 @@ class EngineController:
             self._reconcile_signal.clear()
 
     async def _reconcile_once(self):
+        from .settings_persistence import SettingsPersistence
+
+        engine_settings = SettingsPersistence.load_engine_settings() or {}
+        if engine_settings.get("manual_mode"):
+            return
+
+        await self._enqueue_outdated_engine_termination_intents()
+        await self._process_pending_termination_intents()
+
         desired = state.get_desired_replica_count()
         engines = state.list_engines()
         actual = len(engines)
@@ -275,6 +273,67 @@ class EngineController:
                 removed += 1
                 actual -= 1
 
+    async def _enqueue_outdated_engine_termination_intents(self):
+        target = state.get_target_engine_config()
+        target_hash = str(target.get("config_hash") or "").strip()
+        if not target_hash:
+            return
+
+        pending = state.list_pending_scaling_intents(intent_type="terminate_request", limit=1000)
+        pending_ids = {
+            str((intent.get("details") or {}).get("container_id") or "")
+            for intent in pending
+        }
+
+        outdated_candidates = []
+        for engine in state.list_engines():
+            engine_hash = str((engine.labels or {}).get("acestream.config_hash") or "").strip()
+            if engine_hash and engine_hash == target_hash:
+                continue
+            if engine.container_id in pending_ids:
+                continue
+            outdated_candidates.append(engine)
+
+        if not outdated_candidates:
+            return
+
+        candidate = sorted(
+            outdated_candidates,
+            key=lambda e: (
+                bool(state.list_streams(status="started", container_id=e.container_id)),
+                e.last_seen or datetime.min,
+            ),
+        )[0]
+
+        state.emit_scaling_intent(
+            intent_type="terminate_request",
+            details={
+                "requested_by": "engine_controller",
+                "eviction_reason": "config_hash_mismatch",
+                "target_config_hash": target_hash,
+                "container_id": candidate.container_id,
+                "force": False,
+            },
+        )
+
+    async def _process_pending_termination_intents(self):
+        pending = state.list_pending_scaling_intents(intent_type="terminate_request", limit=1000)
+        if not pending:
+            return
+
+        for intent in pending:
+            details = intent.get("details") or {}
+            container_id = str(details.get("container_id") or "").strip()
+            if not container_id:
+                state.resolve_scaling_intent(intent.get("id"), "failed", {"error": "missing_container_id"})
+                continue
+
+            force = bool(details.get("force", False))
+            if not force and not can_stop_engine(container_id, bypass_grace_period=False):
+                continue
+
+            await self._execute_terminate_intent(intent, container_id, force=force)
+
     def _build_termination_candidates(self, engines):
         active_streams = state.list_streams(status="started")
         used_container_ids = {stream.container_id for stream in active_streams}
@@ -309,10 +368,10 @@ class EngineController:
             circuit_breaker_manager.record_provisioning_failure("general")
             state.resolve_scaling_intent(intent_id, "failed", {"error": str(e)})
 
-    async def _execute_terminate_intent(self, intent: dict, container_id: str):
+    async def _execute_terminate_intent(self, intent: dict, container_id: str, force: bool = False):
         intent_id = intent.get("id")
         try:
-            await asyncio.to_thread(stop_container, container_id)
+            await asyncio.to_thread(stop_container, container_id, force)
             state.remove_engine(container_id)
             state.resolve_scaling_intent(intent_id, "applied", {"container_id": container_id})
         except Exception as e:

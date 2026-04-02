@@ -10,7 +10,7 @@ from typing import Dict, Optional
 from datetime import datetime, timezone
 from .state import state
 from .docker_stats import get_multiple_container_stats
-from .docker_client import DockerEventWatcher
+from .docker_client import docker_event_watcher
 from ..core.config import cfg
 
 logger = logging.getLogger(__name__)
@@ -29,8 +29,7 @@ class DockerStatsCollector:
         self._stats_cache: Dict[str, Dict] = {}  # container_id -> stats
         self._total_stats_cache: Optional[Dict] = None
         self._last_update: Optional[datetime] = None
-        self._event_watcher = DockerEventWatcher()
-        self._event_watcher.subscribe(self._on_docker_event)
+        docker_event_watcher.subscribe(self._on_docker_event)
         
         # Dynamic collection interval based on engine count
         # UI typically polls every 5s, so we adapt:
@@ -66,7 +65,6 @@ class DockerStatsCollector:
         if self._task and not self._task.done():
             return
         self._stop.clear()
-        await self._event_watcher.start()
         self._task = asyncio.create_task(self._run())
         logger.info(f"Docker stats collector started with dynamic interval ({self._min_collection_interval}s-{self._max_collection_interval}s)")
     
@@ -75,7 +73,6 @@ class DockerStatsCollector:
         self._stop.set()
         if self._task:
             await self._task
-        await self._event_watcher.stop()
         logger.info("Docker stats collector stopped")
 
     def _on_docker_event(self, event: Dict):

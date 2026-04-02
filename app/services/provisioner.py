@@ -3,6 +3,8 @@ import logging
 import docker
 from docker.errors import NotFound
 import threading
+import hashlib
+import json
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
 from .docker_client import get_client, safe
@@ -36,6 +38,8 @@ HOST_LABEL_API = "host.api_port"
 FORWARDED_LABEL = "acestream.forwarded"
 VPN_CONTAINER_LABEL = "acestream.vpn_container"
 ENGINE_VARIANT_LABEL = "acestream.engine_variant"
+ENGINE_CONFIG_HASH_LABEL = "acestream.config_hash"
+ENGINE_CONFIG_GENERATION_LABEL = "acestream.config_generation"
 
 class StartRequest(BaseModel):
     image: str | None = None
@@ -82,6 +86,8 @@ class ResourceScheduler:
         self._lock = _vpn_assignment_lock
 
     def schedule(self, req: "AceProvisionRequest", engine_variant_name: str, base_volumes: Optional[Dict[str, Any]] = None) -> EngineSpec:
+        from .state import state
+
         user_conf = req.env.get("CONF")
         user_http_port = _parse_conf_port(user_conf, "http") if user_conf else None
         user_https_port = _parse_conf_port(user_conf, "https") if user_conf else None
@@ -112,6 +118,12 @@ class ResourceScheduler:
                 forwarded, p2p_port = self._elect_forwarded_engine_locked(vpn_container)
 
                 key, val = cfg.CONTAINER_LABEL.split("=", 1)
+                target_config = state.get_target_engine_config()
+                target_hash = str(target_config.get("config_hash") or "").strip()
+                if not target_hash:
+                    target_hash = compute_current_engine_config_hash()
+                    target_config = state.set_target_engine_config(target_hash)
+
                 labels = {
                     **req.labels,
                     key: val,
@@ -121,6 +133,8 @@ class ResourceScheduler:
                     HOST_LABEL_HTTP: str(ports_info["host_http_port"]),
                     HOST_LABEL_API: str(ports_info["host_api_port"]),
                     ENGINE_VARIANT_LABEL: engine_variant_name,
+                    ENGINE_CONFIG_HASH_LABEL: target_hash,
+                    ENGINE_CONFIG_GENERATION_LABEL: str(int(target_config.get("generation") or 0)),
                 }
 
                 if vpn_container:
@@ -168,25 +182,15 @@ class ResourceScheduler:
         if cfg.VPN_MODE != 'redundant' or not cfg.GLUETUN_CONTAINER_NAME_2:
             return cfg.GLUETUN_CONTAINER_NAME
 
-        recovery_target = state.get_vpn_recovery_target()
-        if recovery_target:
-            logger.info(f"VPN recovery mode active: assigning engine to recovery target VPN '{recovery_target}'")
-            return recovery_target
-
-        if state.is_emergency_mode():
-            emergency_info = state.get_emergency_mode_info()
-            healthy_vpn = emergency_info['healthy_vpn']
-            logger.info(f"Emergency mode active: assigning engine to healthy VPN '{healthy_vpn}'")
-            return healthy_vpn
-
         vpn1_name = cfg.GLUETUN_CONTAINER_NAME
         vpn2_name = cfg.GLUETUN_CONTAINER_NAME_2
+        vpn_nodes = {node.get("container_name"): node for node in state.list_vpn_nodes()}
 
         vpn1_engines = len(state.get_engines_by_vpn(vpn1_name)) + _vpn_pending_engines.get(vpn1_name, 0)
         vpn2_engines = len(state.get_engines_by_vpn(vpn2_name)) + _vpn_pending_engines.get(vpn2_name, 0)
 
-        vpn1_healthy = self._vpn_is_healthy(vpn1_name)
-        vpn2_healthy = self._vpn_is_healthy(vpn2_name)
+        vpn1_healthy = self._vpn_is_schedulable(vpn1_name, vpn_nodes.get(vpn1_name))
+        vpn2_healthy = self._vpn_is_schedulable(vpn2_name, vpn_nodes.get(vpn2_name))
 
         if vpn1_healthy and vpn2_healthy:
             selected = vpn1_name if vpn1_engines <= vpn2_engines else vpn2_name
@@ -199,6 +203,12 @@ class ResourceScheduler:
 
         logger.info(f"Scheduling new engine on VPN '{selected}' (VPN1: {vpn1_engines} engines, VPN2: {vpn2_engines} engines)")
         return selected
+
+    @classmethod
+    def _vpn_is_schedulable(cls, vpn_container: str, node_info: Optional[Dict[str, object]]) -> bool:
+        if node_info is not None:
+            return bool(node_info.get("healthy"))
+        return cls._vpn_is_healthy(vpn_container)
 
     def _validate_vpn_health_locked(self, vpn_container: Optional[str]):
         if not vpn_container:
@@ -253,6 +263,33 @@ class ResourceScheduler:
 
 
 resource_scheduler = ResourceScheduler()
+
+
+def compute_current_engine_config_hash() -> str:
+    """Compute a stable hash for the desired engine runtime configuration."""
+    from .custom_variant_config import get_config as get_custom_config, is_custom_variant_enabled
+    from .template_manager import get_active_template_id
+
+    custom_config = None
+    if is_custom_variant_enabled():
+        cfg_obj = get_custom_config()
+        if cfg_obj:
+            custom_config = cfg_obj.model_dump(mode="json")
+
+    payload = {
+        "engine_variant": cfg.ENGINE_VARIANT,
+        "variant_config": get_variant_config(cfg.ENGINE_VARIANT),
+        "custom_variant_enabled": is_custom_variant_enabled(),
+        "active_template_id": get_active_template_id(),
+        "custom_config": custom_config,
+        "engine_memory_limit": cfg.ENGINE_MEMORY_LIMIT,
+        "ace_map_https": cfg.ACE_MAP_HTTPS,
+        "docker_network": cfg.DOCKER_NETWORK,
+        "vpn_mode": cfg.VPN_MODE,
+    }
+
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
 
 def start_container(req: StartRequest) -> dict:
     from .naming import generate_container_name

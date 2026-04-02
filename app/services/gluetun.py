@@ -604,172 +604,28 @@ class GluetunMonitor:
             logger.error(f"Error restarting engines for VPN '{container_name}': {e}")
     
     async def _handle_vpn_failure(self, failed_vpn: str):
-        """
-        Handle VPN failure in redundant mode by entering emergency mode.
-        
-        Emergency mode immediately:
-        - Takes over all operations for the failed VPN's engines
-        - Deletes engines from the failed VPN
-        - Only manages the healthy VPN's engines
-        """
+        """Handle VPN failure in redundant mode via declarative reconciliation."""
         try:
-            from .state import state
-            
-            # Determine which VPN is still healthy
-            vpn1_healthy = self.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
-            vpn2_healthy = self.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
-            
-            # Don't enter emergency mode if both VPNs are unhealthy or both are healthy
-            if vpn1_healthy == vpn2_healthy:
-                logger.debug(f"Not entering emergency mode: both VPNs have same health status")
-                return
-            
-            # Determine healthy VPN
-            if failed_vpn == cfg.GLUETUN_CONTAINER_NAME:
-                healthy_vpn = cfg.GLUETUN_CONTAINER_NAME_2
-            else:
-                healthy_vpn = cfg.GLUETUN_CONTAINER_NAME
-            
-            # Verify the healthy VPN is actually healthy
-            if not self.is_healthy(healthy_vpn):
-                logger.warning(f"Cannot enter emergency mode: healthy VPN '{healthy_vpn}' is not actually healthy")
-                return
-            
-            # Enter emergency mode
-            entered = state.enter_emergency_mode(failed_vpn, healthy_vpn)
-            
-            if entered:
-                # Reset port tracking for the failed VPN to prevent false port change detection after recovery
-                failed_vpn_monitor = self._vpn_monitors.get(failed_vpn)
-                if failed_vpn_monitor:
-                    failed_vpn_monitor.reset_port_tracking()
-                
-                logger.info(f"Emergency mode activated - system operating on single VPN '{healthy_vpn}'")
-                
+            failed_vpn_monitor = self._vpn_monitors.get(failed_vpn)
+            if failed_vpn_monitor:
+                failed_vpn_monitor.reset_port_tracking()
+
+            logger.warning(f"VPN '{failed_vpn}' failure detected; reconciliation will evict and replace affected engines")
+            from .autoscaler import engine_controller
+
+            engine_controller.request_reconcile(reason=f"vpn_failure:{failed_vpn}")
         except Exception as e:
             logger.error(f"Error handling VPN failure for '{failed_vpn}': {e}")
     
     async def _handle_vpn_recovery(self, recovered_vpn: str):
-        """
-        Handle VPN recovery in redundant mode.
-        
-        If in emergency mode, exits emergency mode and provisions engines to restore capacity.
-        """
+        """Handle VPN recovery in redundant mode via declarative reconciliation."""
         try:
-            from .state import state
-            
-            # Check if we're in emergency mode
-            if not state.is_emergency_mode():
-                logger.debug(f"VPN '{recovered_vpn}' recovered but not in emergency mode")
-                return
-            
-            emergency_info = state.get_emergency_mode_info()
-            
-            # Only exit emergency mode if the recovered VPN is the one that failed
-            if recovered_vpn != emergency_info.get("failed_vpn"):
-                logger.debug(f"VPN '{recovered_vpn}' recovered but it's not the failed VPN in emergency mode")
-                return
-            
-            # Exit emergency mode
-            exited = state.exit_emergency_mode()
-            
-            if exited:
-                logger.info(f"Emergency mode deactivated - restoring full capacity")
-                
-                # Wait for VPN to stabilize and get forwarded port before provisioning
-                # This is important because the first engine provisioned should be the forwarded engine
-                await asyncio.sleep(5)
-                
-                # Wait for forwarded port to become available (max 30 seconds)
-                monitor = self._vpn_monitors.get(recovered_vpn)
-                if monitor:
-                    logger.info(f"Waiting for VPN '{recovered_vpn}' to establish port forwarding...")
-                    port_wait_start = asyncio.get_event_loop().time()
-                    port_wait_timeout = 30
-                    forwarded_port = None
-                    
-                    while (asyncio.get_event_loop().time() - port_wait_start) < port_wait_timeout:
-                        forwarded_port = await monitor.get_forwarded_port()
-                        if forwarded_port:
-                            logger.info(f"VPN '{recovered_vpn}' forwarded port {forwarded_port} is now available")
-                            break
-                        await asyncio.sleep(2)
-                    
-                    if not forwarded_port:
-                        logger.warning(f"VPN '{recovered_vpn}' forwarded port not available after {port_wait_timeout}s, provisioning without it")
-                
-                # Provision engines to restore full capacity
-                await self._provision_engines_after_vpn_recovery(recovered_vpn)
-                
+            logger.info(f"VPN '{recovered_vpn}' recovered; reconciliation will rebalance engines on Ready nodes")
+            from .autoscaler import engine_controller
+
+            engine_controller.request_reconcile(reason=f"vpn_recovery:{recovered_vpn}")
         except Exception as e:
             logger.error(f"Error handling VPN recovery for '{recovered_vpn}': {e}")
-
-    async def _provision_engines_after_vpn_recovery(self, recovered_vpn: str):
-        """
-        Provision engines after VPN recovery to restore full capacity and balance.
-        
-        When a VPN fails, engines on it are removed and we run with reduced capacity.
-        When it recovers, this method provisions new engines to restore MIN_REPLICAS
-        and ensure engines are balanced across both VPNs.
-        """
-        try:
-            from .state import state
-            from .provisioner import start_acestream, AceProvisionRequest
-            
-            # Count current engines per VPN
-            vpn1_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
-            vpn2_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
-            current_count = vpn1_engines + vpn2_engines
-            target_count = cfg.MIN_REPLICAS
-            
-            if current_count >= target_count:
-                logger.info(f"VPN '{recovered_vpn}' recovered - already at target capacity ({current_count}/{target_count})")
-                return
-            
-            # Calculate how many engines to provision to the recovered VPN to achieve balance
-            # We want to provision all available engines to the recovered VPN to restore balance
-            global_deficit = target_count - current_count
-            
-            if global_deficit <= 0:
-                logger.info(f"VPN '{recovered_vpn}' recovered - already at target capacity ({current_count}/{target_count})")
-                return
-            
-            # Provision all deficit engines to the recovered VPN to restore balance
-            # This will move towards a balanced state over time, even if we can't fully balance in one go
-            engines_to_provision = global_deficit
-            
-            logger.info(f"VPN '{recovered_vpn}' recovered - provisioning {engines_to_provision} engines to restore balance "
-                       f"(current: VPN1={vpn1_engines}, VPN2={vpn2_engines}, target: {target_count} total)")
-            
-            # Temporarily set recovery mode to force all new engines to recovered VPN
-            state.enter_vpn_recovery_mode(recovered_vpn)
-            
-            try:
-                provisioned = 0
-                failed = 0
-                for i in range(engines_to_provision):
-                    try:
-                        logger.info(f"Provisioning recovery engine {i+1}/{engines_to_provision} to VPN '{recovered_vpn}'")
-                        req = AceProvisionRequest(labels={}, env={})
-                        response = start_acestream(req)
-                        logger.info(f"Successfully provisioned recovery engine {response.container_id[:12]} to VPN '{recovered_vpn}'")
-                        provisioned += 1
-                    except Exception as e:
-                        logger.error(f"Failed to provision recovery engine {i+1}/{engines_to_provision}: {e}")
-                        failed += 1
-                        # Continue with remaining engines even if one fails
-                
-                # Get final counts
-                final_vpn1 = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
-                final_vpn2 = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
-                logger.info(f"VPN recovery provisioning complete - provisioned {provisioned}/{engines_to_provision} engines "
-                           f"(failed: {failed}, final: VPN1={final_vpn1}, VPN2={final_vpn2})")
-            finally:
-                # Always exit recovery mode
-                state.exit_vpn_recovery_mode()
-            
-        except Exception as e:
-            logger.error(f"Error provisioning engines after VPN '{recovered_vpn}' recovery: {e}")
 
     def is_healthy(self, container_name: Optional[str] = None) -> Optional[bool]:
         """Get the current VPN health status. If container_name is None, returns primary VPN status."""
@@ -1071,11 +927,6 @@ def _get_single_vpn_status(container_name: str) -> dict:
 
 def get_vpn_status() -> dict:
     """Get comprehensive VPN status information."""
-    from .state import state
-    
-    # Get emergency mode info
-    emergency_info = state.get_emergency_mode_info()
-    
     if not cfg.GLUETUN_CONTAINER_NAME:
         return {
             "mode": "disabled",
@@ -1090,7 +941,12 @@ def get_vpn_status() -> dict:
             "last_check_at": None,
             "vpn1": {},
             "vpn2": {},
-            "emergency_mode": emergency_info
+            "emergency_mode": {
+                "active": False,
+                "failed_vpn": None,
+                "healthy_vpn": None,
+                "duration_seconds": 0,
+            },
         }
     
     # Get status for VPN1
@@ -1102,7 +958,12 @@ def get_vpn_status() -> dict:
         result["mode"] = "single"
         result["vpn1"] = vpn1_status
         result["vpn2"] = {}
-        result["emergency_mode"] = emergency_info
+        result["emergency_mode"] = {
+            "active": False,
+            "failed_vpn": None,
+            "healthy_vpn": None,
+            "duration_seconds": 0,
+        }
         return result
     
     # In redundant mode, get both VPN statuses
@@ -1127,7 +988,12 @@ def get_vpn_status() -> dict:
         "last_check_at": datetime.now(timezone.utc).isoformat(),
         "vpn1": vpn1_status,
         "vpn2": vpn2_status,
-        "emergency_mode": emergency_info
+        "emergency_mode": {
+            "active": False,
+            "failed_vpn": None,
+            "healthy_vpn": None,
+            "duration_seconds": 0,
+        },
     }
 
 def normalize_provider_name(provider: str) -> str:

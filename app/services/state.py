@@ -25,21 +25,8 @@ class State:
         self._vpn_nodes: Dict[str, Dict[str, object]] = {}
         self._scaling_intents: List[Dict[str, object]] = []
         self._max_scaling_intents = 300
-        
-        # Emergency mode state for redundant VPN failure handling
-        self._emergency_mode = False
-        self._failed_vpn_container: Optional[str] = None
-        self._healthy_vpn_container: Optional[str] = None
-        self._emergency_mode_entered_at: Optional[datetime] = None
-        
-        # Reprovisioning mode state for coordinating system-wide reprovisioning
-        self._reprovisioning_mode = False
-        self._reprovisioning_entered_at: Optional[datetime] = None
-        
-        # VPN recovery mode state for directing engines to recovered VPN
-        self._vpn_recovery_mode = False
-        self._recovery_target_vpn: Optional[str] = None
-        self._vpn_recovery_entered_at: Optional[datetime] = None
+        self._target_engine_config_hash: str = ""
+        self._target_engine_generation: int = 0
         
         # Lookahead provisioning tracking
         # Tracks the minimum stream count across all engines when lookahead was last triggered
@@ -742,17 +729,55 @@ class State:
             items = self._scaling_intents[-max(1, int(limit)) :]
             return [dict(item) for item in items]
 
+    def list_pending_scaling_intents(self, intent_type: Optional[str] = None, limit: int = 200) -> List[Dict[str, object]]:
+        with self._lock:
+            pending = [
+                intent
+                for intent in self._scaling_intents
+                if intent.get("status") == "pending"
+                and (intent_type is None or intent.get("intent_type") == intent_type)
+            ]
+            if limit > 0:
+                pending = pending[-limit:]
+            return [dict(item) for item in pending]
+
+    def set_target_engine_config(self, config_hash: str) -> Dict[str, object]:
+        normalized_hash = str(config_hash or "").strip()
+        if not normalized_hash:
+            raise ValueError("config_hash cannot be empty")
+
+        with self._lock:
+            changed = normalized_hash != self._target_engine_config_hash
+            if changed:
+                self._target_engine_generation += 1
+                self._target_engine_config_hash = normalized_hash
+
+            return {
+                "config_hash": self._target_engine_config_hash,
+                "generation": self._target_engine_generation,
+                "changed": changed,
+            }
+
+    def get_target_engine_config(self) -> Dict[str, object]:
+        with self._lock:
+            return {
+                "config_hash": self._target_engine_config_hash,
+                "generation": self._target_engine_generation,
+            }
+
     def update_vpn_node_status(self, vpn_container: str, status: str):
         """Track VPN node health/runtime status from Docker events."""
         now = self.now()
         normalized = status.strip().lower()
         healthy = normalized in {"healthy", "running"}
+        condition = "ready" if healthy else "notready"
 
         with self._lock:
             self._vpn_nodes[vpn_container] = {
                 "container_name": vpn_container,
                 "status": normalized,
                 "healthy": healthy,
+                "condition": condition,
                 "last_event_at": now,
             }
 
@@ -763,6 +788,10 @@ class State:
     def get_healthy_vpn_nodes(self) -> List[str]:
         with self._lock:
             return [name for name, node in self._vpn_nodes.items() if bool(node.get("healthy"))]
+
+    def get_ready_vpn_nodes(self) -> List[str]:
+        with self._lock:
+            return [name for name, node in self._vpn_nodes.items() if str(node.get("condition", "")).lower() == "ready"]
 
     @staticmethod
     def _safe_int(value: Optional[str], default: Optional[int]) -> Optional[int]:
@@ -944,246 +973,7 @@ class State:
     def has_forwarded_engine_for_vpn(self, vpn_container: str) -> bool:
         """Check if there is a forwarded engine for a specific VPN container."""
         return self.get_forwarded_engine_for_vpn(vpn_container) is not None
-    
-    def enter_emergency_mode(self, failed_vpn: str, healthy_vpn: str) -> bool:
-        """
-        Enter emergency mode when one VPN fails in redundant mode.
-        
-        Emergency mode:
-        - Immediately takes over all operations
-        - Deletes engines from the failed VPN
-        - Only manages the working VPN's engines
-        - Prevents provisioner/health_manager from operating on failed VPN
-        
-        Args:
-            failed_vpn: Name of the failed VPN container
-            healthy_vpn: Name of the healthy VPN container
-            
-        Returns:
-            True if emergency mode was entered, False if already in emergency mode
-        """
-        with self._lock:
-            if self._emergency_mode:
-                logger.warning(f"Already in emergency mode (failed VPN: {self._failed_vpn_container})")
-                return False
-            
-            self._emergency_mode = True
-            self._failed_vpn_container = failed_vpn
-            self._healthy_vpn_container = healthy_vpn
-            self._emergency_mode_entered_at = self.now()
-            
-            logger.warning(f"⚠️  ENTERING EMERGENCY MODE ⚠️")
-            logger.warning(f"Failed VPN: {failed_vpn}")
-            logger.warning(f"Healthy VPN: {healthy_vpn}")
-            logger.warning(f"System will operate with reduced capacity on single VPN until recovery")
-            
-            # Remove all engines assigned to the failed VPN
-            engines_to_remove = [
-                eng.container_id for eng in self.engines.values()
-                if eng.vpn_container == failed_vpn
-            ]
-            
-            if engines_to_remove:
-                logger.warning(f"Removing {len(engines_to_remove)} engines from failed VPN '{failed_vpn}'")
-                for container_id in engines_to_remove:
-                    self.remove_engine(container_id)
-                    try:
-                        from .provisioner import stop_container
-                        stop_container(container_id, force=True)
-                        logger.info(f"Forcibly destroyed engine {container_id[:12]} from failed VPN")
-                    except Exception as e:
-                        logger.error(f"Failed to stop engine {container_id[:12]}: {e}")
-            
-            remaining_engines = len([eng for eng in self.engines.values()])
-            logger.warning(f"Emergency mode active: operating with {remaining_engines} engines on '{healthy_vpn}'")
-            
-            return True
-    
-    def exit_emergency_mode(self) -> bool:
-        """
-        Exit emergency mode after VPN recovery.
-        
-        Returns:
-            True if emergency mode was exited, False if not in emergency mode
-        """
-        with self._lock:
-            if not self._emergency_mode:
-                return False
-            
-            failed_vpn = self._failed_vpn_container
-            healthy_vpn = self._healthy_vpn_container
-            duration = (self.now() - self._emergency_mode_entered_at).total_seconds() if self._emergency_mode_entered_at else 0
-            
-            self._emergency_mode = False
-            self._failed_vpn_container = None
-            self._healthy_vpn_container = None
-            self._emergency_mode_entered_at = None
-            
-            logger.info(f"✅ EXITING EMERGENCY MODE ✅")
-            logger.info(f"VPN '{failed_vpn}' has recovered after {duration:.1f}s")
-            logger.info(f"System will restore full capacity and resume normal operations")
-            
-            return True
-    
-    def is_emergency_mode(self) -> bool:
-        """Check if system is in emergency mode."""
-        with self._lock:
-            return self._emergency_mode
-    
-    def get_emergency_mode_info(self) -> Dict:
-        """Get information about emergency mode status."""
-        with self._lock:
-            if not self._emergency_mode:
-                return {
-                    "active": False,
-                    "failed_vpn": None,
-                    "healthy_vpn": None,
-                    "duration_seconds": 0
-                }
-            
-            duration = (self.now() - self._emergency_mode_entered_at).total_seconds() if self._emergency_mode_entered_at else 0
-            
-            return {
-                "active": True,
-                "failed_vpn": self._failed_vpn_container,
-                "healthy_vpn": self._healthy_vpn_container,
-                "duration_seconds": duration,
-                "entered_at": self._emergency_mode_entered_at.isoformat() if self._emergency_mode_entered_at else None
-            }
-    
-    def should_skip_vpn_operations(self, vpn_container: str) -> bool:
-        """
-        Check if operations should be skipped for a VPN container.
-        
-        In emergency mode, operations on the failed VPN should be skipped.
-        """
-        with self._lock:
-            if not self._emergency_mode:
-                return False
-            return vpn_container == self._failed_vpn_container
-    
-    def enter_reprovisioning_mode(self) -> bool:
-        """
-        Enter reprovisioning mode to coordinate system-wide engine reprovisioning.
-        
-        Reprovisioning mode:
-        - Pauses health management operations
-        - Pauses autoscaling operations
-        - Allows monitoring to continue (but with reduced operations)
-        
-        Returns:
-            bool: True if successfully entered reprovisioning mode, False if already in it
-        """
-        with self._lock:
-            if self._reprovisioning_mode:
-                logger.warning("Already in reprovisioning mode")
-                return False
-            
-            self._reprovisioning_mode = True
-            self._reprovisioning_entered_at = self.now()
-            
-            logger.info("Entered reprovisioning mode - pausing health management and autoscaling")
-            return True
-    
-    def exit_reprovisioning_mode(self) -> bool:
-        """
-        Exit reprovisioning mode and resume normal operations.
-        
-        Returns:
-            bool: True if successfully exited reprovisioning mode, False if wasn't in it
-        """
-        with self._lock:
-            if not self._reprovisioning_mode:
-                logger.warning("Not in reprovisioning mode")
-                return False
-            
-            duration = (self.now() - self._reprovisioning_entered_at).total_seconds() if self._reprovisioning_entered_at else 0
-            
-            self._reprovisioning_mode = False
-            self._reprovisioning_entered_at = None
-            
-            logger.info(f"Exited reprovisioning mode after {duration:.1f}s - resuming normal operations")
-            return True
-    
-    def is_reprovisioning_mode(self) -> bool:
-        """Check if system is in reprovisioning mode."""
-        with self._lock:
-            return self._reprovisioning_mode
-    
-    def get_reprovisioning_mode_info(self) -> Dict:
-        """Get information about reprovisioning mode status."""
-        with self._lock:
-            if not self._reprovisioning_mode:
-                return {
-                    "active": False,
-                    "duration_seconds": 0,
-                    "entered_at": None
-                }
-            
-            duration = (self.now() - self._reprovisioning_entered_at).total_seconds() if self._reprovisioning_entered_at else 0
-            
-            return {
-                "active": True,
-                "duration_seconds": duration,
-                "entered_at": self._reprovisioning_entered_at.isoformat() if self._reprovisioning_entered_at else None
-            }
-    
-    def enter_vpn_recovery_mode(self, target_vpn: str) -> bool:
-        """
-        Enter VPN recovery mode to direct all new engines to the specified VPN.
-        
-        This is used after a VPN recovers to ensure engines are provisioned to it
-        to restore balance, rather than using round-robin which would keep imbalance.
-        
-        Args:
-            target_vpn: VPN container name to direct all new engines to
-            
-        Returns:
-            bool: True if successfully entered VPN recovery mode, False if already in it
-        """
-        with self._lock:
-            if self._vpn_recovery_mode:
-                logger.warning(f"Already in VPN recovery mode (target: {self._recovery_target_vpn})")
-                return False
-            
-            self._vpn_recovery_mode = True
-            self._recovery_target_vpn = target_vpn
-            self._vpn_recovery_entered_at = self.now()
-            
-            logger.info(f"Entered VPN recovery mode - all new engines will be assigned to '{target_vpn}'")
-            return True
-    
-    def exit_vpn_recovery_mode(self) -> bool:
-        """
-        Exit VPN recovery mode and resume normal round-robin provisioning.
-        
-        Returns:
-            bool: True if successfully exited VPN recovery mode, False if wasn't in it
-        """
-        with self._lock:
-            if not self._vpn_recovery_mode:
-                logger.warning("Not in VPN recovery mode")
-                return False
-            
-            duration = (self.now() - self._vpn_recovery_entered_at).total_seconds() if self._vpn_recovery_entered_at else 0
-            target_vpn = self._recovery_target_vpn
-            
-            self._vpn_recovery_mode = False
-            self._recovery_target_vpn = None
-            self._vpn_recovery_entered_at = None
-            
-            logger.info(f"Exited VPN recovery mode after {duration:.1f}s (target was: {target_vpn}) - resuming normal round-robin")
-            return True
-    
-    def is_vpn_recovery_mode(self) -> bool:
-        """Check if system is in VPN recovery mode."""
-        with self._lock:
-            return self._vpn_recovery_mode
-    
-    def get_vpn_recovery_target(self) -> Optional[str]:
-        """Get the target VPN for recovery mode, or None if not in recovery mode."""
-        with self._lock:
-            return self._recovery_target_vpn if self._vpn_recovery_mode else None
+
     
     def set_lookahead_layer(self, layer: int) -> None:
         """
