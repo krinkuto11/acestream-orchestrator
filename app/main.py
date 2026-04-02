@@ -311,7 +311,11 @@ async def lifespan(app: FastAPI):
             }
             for _json_key, _cfg_attr in _orch_field_map.items():
                 if _json_key in orchestrator_settings:
-                    setattr(cfg, _cfg_attr, orchestrator_settings[_json_key])
+                    _value = orchestrator_settings[_json_key]
+                    if _json_key == 'collect_interval_s':
+                        # Keep collector cadence fast so frontend topology interpolation has fresh targets.
+                        _value = 1
+                    setattr(cfg, _cfg_attr, _value)
             logger.info("Orchestrator settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted orchestrator settings: {e}")
@@ -1671,7 +1675,7 @@ def by_label(key: str, value: str):
 @app.get("/vpn/status")
 async def get_vpn_status_endpoint():
     """
-    Get VPN (Gluetun) status information with location data (cached for 3 seconds).
+    Get VPN (Gluetun) status information with location data (cached for 0.5 seconds).
     
     Location data (provider, country, city, region) is now obtained directly from:
     - Provider: VPN_SERVICE_PROVIDER docker environment variable
@@ -1689,8 +1693,8 @@ async def get_vpn_status_endpoint():
     # Cache miss - fetch VPN status
     vpn_status = get_vpn_status()
     
-    # Cache for 3 seconds
-    cache.set(cache_key, vpn_status, ttl=3.0)
+    # Cache for 0.5 seconds
+    cache.set(cache_key, vpn_status, ttl=0.5)
     
     return vpn_status
 
@@ -1721,7 +1725,7 @@ def reset_circuit_breaker(operation_type: Optional[str] = None):
 @app.get("/orchestrator/status")
 def get_orchestrator_status():
     """
-    Get comprehensive orchestrator status for proxy integration (cached for 2 seconds).
+    Get comprehensive orchestrator status for proxy integration (cached for 0.5 seconds).
     This endpoint provides all the information a proxy needs to understand
     the orchestrator's current state including VPN, provisioning, and health status.
     
@@ -1873,8 +1877,8 @@ def get_orchestrator_status():
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     
-    # Cache for 2 seconds (UI polls every 5s)
-    cache.set(cache_key, result, ttl=2.0)
+    # Cache for 0.5 seconds to keep topology updates responsive.
+    cache.set(cache_key, result, ttl=0.5)
     
     return result
 
@@ -4717,6 +4721,7 @@ def get_orchestrator_settings():
     persisted = SettingsPersistence.load_orchestrator_config()
     if persisted:
         merged = {**defaults, **persisted}
+        merged["collect_interval_s"] = 1
         return merged
 
     # Return defaults from runtime cfg
@@ -4757,6 +4762,7 @@ async def update_orchestrator_settings(settings: OrchestratorSettingsUpdate):
         "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         "debug_mode": cfg.DEBUG_MODE,
     }
+    current["collect_interval_s"] = 1
 
     def _validate_port_range(v: str, field: str):
         try:
@@ -4802,8 +4808,8 @@ async def update_orchestrator_settings(settings: OrchestratorSettingsUpdate):
     if settings.collect_interval_s is not None:
         if settings.collect_interval_s < 1:
             raise HTTPException(status_code=400, detail="collect_interval_s must be >= 1")
-        current["collect_interval_s"] = settings.collect_interval_s
-        cfg.COLLECT_INTERVAL_S = settings.collect_interval_s
+        current["collect_interval_s"] = 1
+        cfg.COLLECT_INTERVAL_S = 1
 
     if settings.stats_history_max is not None:
         if settings.stats_history_max < 1:

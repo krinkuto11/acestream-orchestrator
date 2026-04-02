@@ -78,6 +78,28 @@ const jitter = (value: number, ratio = 0.16, floor = 0): number => {
   return Math.max(floor, value + randomBetween(-delta, delta))
 }
 
+const INTERPOLATION_ALPHA = 0.35
+const INTERPOLATION_EPSILON = 0.05
+
+type NodeFlowTarget = {
+  bandwidthMbps: number
+  uploadMbps?: number
+  proxyIngressMbps?: number
+}
+
+type EdgeFlowTarget = {
+  bandwidthMbps: number
+  uploadMbps?: number
+}
+
+const nodeInterpolationTargets = new Map<string, NodeFlowTarget>()
+const edgeInterpolationTargets = new Map<string, EdgeFlowTarget>()
+
+const interpolateNumber = (current: number, target: number, alpha = INTERPOLATION_ALPHA): number => {
+  const next = current + (target - current) * alpha
+  return Math.abs(target - next) <= INTERPOLATION_EPSILON ? target : next
+}
+
 
 const formatCompactId = (id: string): string => {
   if (!id) return 'unknown'
@@ -697,6 +719,8 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
   isMockMode: true,
 
   initializeMock: () => {
+    nodeInterpolationTargets.clear()
+    edgeInterpolationTargets.clear()
     const snapshot = buildSnapshot({})
     set({
       nodes: snapshot.nodes,
@@ -709,35 +733,85 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
   },
 
   hydrateFromBackend: (snapshot) => {
-    const currentState = get() // <--- Fetch current state
-    const next = buildSnapshot(snapshot, currentState) // <--- Pass it to the builder
+    const currentState = get()
+    const next = buildSnapshot(snapshot, currentState)
     
     set((state) => {
-      // Stabilize nodes: reuse existing object if content is logically same
+      const nextNodeIds = new Set(next.nodes.map((node) => node.id))
+      for (const nodeId of nodeInterpolationTargets.keys()) {
+        if (!nextNodeIds.has(nodeId)) {
+          nodeInterpolationTargets.delete(nodeId)
+        }
+      }
+
       const stabilizedNodes = next.nodes.map((nextNode) => {
         const existingNode = state.nodes.find((n) => n.id === nextNode.id)
+        nodeInterpolationTargets.set(nextNode.id, {
+          bandwidthMbps: nextNode.data?.bandwidthMbps ?? 0,
+          uploadMbps: nextNode.data?.uploadMbps,
+          proxyIngressMbps: nextNode.data?.proxyIngressMbps,
+        })
+
         if (!existingNode) return nextNode
         
-        // Compare data fields and position
         const dataChanged = JSON.stringify(existingNode.data) !== JSON.stringify(nextNode.data)
         const posChanged = 
           existingNode.position.x !== nextNode.position.x || 
           existingNode.position.y !== nextNode.position.y
           
         if (!dataChanged && !posChanged) return existingNode
-        return nextNode
+
+        return {
+          ...nextNode,
+          data: {
+            ...nextNode.data,
+            bandwidthMbps: existingNode.data?.bandwidthMbps ?? nextNode.data.bandwidthMbps,
+            uploadMbps: existingNode.data?.uploadMbps ?? nextNode.data.uploadMbps,
+            proxyIngressMbps: existingNode.data?.proxyIngressMbps ?? nextNode.data.proxyIngressMbps,
+          },
+        }
       })
 
-      // Stabilize edges: reuse existing object if content is logically same
+      const nextEdgeIds = new Set(next.edges.map((edge) => edge.id))
+      for (const edgeId of edgeInterpolationTargets.keys()) {
+        if (!nextEdgeIds.has(edgeId)) {
+          edgeInterpolationTargets.delete(edgeId)
+        }
+      }
+
       const stabilizedEdges = next.edges.map((nextEdge) => {
         const existingEdge = state.edges.find((e) => e.id === nextEdge.id)
+        edgeInterpolationTargets.set(nextEdge.id, {
+          bandwidthMbps: Number(nextEdge.data?.bandwidthMbps ?? 0),
+          uploadMbps:
+            typeof nextEdge.data?.uploadMbps === 'number' ? nextEdge.data.uploadMbps : undefined,
+        })
+
         if (!existingEdge) return nextEdge
         
         const styleChanged = JSON.stringify(existingEdge.style) !== JSON.stringify(nextEdge.style)
         const labelChanged = existingEdge.label !== nextEdge.label
         
         if (!styleChanged && !labelChanged) return existingEdge
-        return nextEdge
+
+        const currentBandwidth = Number(existingEdge.data?.bandwidthMbps ?? nextEdge.data?.bandwidthMbps ?? 0)
+        const currentUpload =
+          typeof existingEdge.data?.uploadMbps === 'number'
+            ? existingEdge.data.uploadMbps
+            : nextEdge.data?.uploadMbps
+
+        return {
+          ...nextEdge,
+          data: {
+            ...nextEdge.data,
+            bandwidthMbps: currentBandwidth,
+            uploadMbps: currentUpload,
+          },
+          style: {
+            ...nextEdge.style,
+            strokeWidth: existingEdge.style?.strokeWidth ?? nextEdge.style?.strokeWidth,
+          },
+        }
       })
 
       return {
@@ -758,83 +832,129 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
       return
     }
 
-    if (!state.isMockMode) {
-      return
-    }
-
     const nextNodes = state.nodes.map((node) => {
       const data = node.data
       if (!data) {
         return node
       }
 
-      if (data.kind === 'vpn') {
-        return {
-          ...node,
-          data: {
-            ...data,
-            bandwidthMbps: jitter(data.bandwidthMbps, 0.08, 12),
-          },
+      const flowTarget = nodeInterpolationTargets.get(node.id)
+
+      if (!flowTarget) {
+        if (!state.isMockMode) {
+          return node
         }
+
+        if (data.kind === 'vpn') {
+          return {
+            ...node,
+            data: {
+              ...data,
+              bandwidthMbps: jitter(data.bandwidthMbps, 0.08, 12),
+            },
+          }
+        }
+
+        if (data.kind === 'engine') {
+          const floor = data.streamCount > 0 ? 1.5 : 0
+          return {
+            ...node,
+            data: {
+              ...data,
+              bandwidthMbps: jitter(data.bandwidthMbps, 0.14, floor),
+            },
+          }
+        }
+
+        if (data.kind === 'proxy' || data.kind === 'client') {
+          return {
+            ...node,
+            data: {
+              ...data,
+              bandwidthMbps: jitter(data.bandwidthMbps, 0.07, 4),
+            },
+          }
+        }
+
+        return node
       }
 
-      if (data.kind === 'engine') {
-        const floor = data.streamCount > 0 ? 1.5 : 0
-        return {
-          ...node,
-          data: {
-            ...data,
-            bandwidthMbps: jitter(data.bandwidthMbps, 0.14, floor),
-          },
-        }
-      }
+      const nextBandwidth = interpolateNumber(data.bandwidthMbps || 0, flowTarget.bandwidthMbps || 0)
+      const nextUpload =
+        typeof data.uploadMbps === 'number' || typeof flowTarget.uploadMbps === 'number'
+          ? interpolateNumber(data.uploadMbps ?? 0, flowTarget.uploadMbps ?? 0)
+          : undefined
+      const nextProxyIngress =
+        typeof data.proxyIngressMbps === 'number' || typeof flowTarget.proxyIngressMbps === 'number'
+          ? interpolateNumber(data.proxyIngressMbps ?? 0, flowTarget.proxyIngressMbps ?? 0)
+          : undefined
 
-      if (data.kind === 'proxy' || data.kind === 'client') {
-        return {
-          ...node,
-          data: {
-            ...data,
-            bandwidthMbps: jitter(data.bandwidthMbps, 0.07, 4),
-          },
-        }
+      return {
+        ...node,
+        data: {
+          ...data,
+          bandwidthMbps: nextBandwidth,
+          ...(typeof nextUpload === 'number' ? { uploadMbps: nextUpload } : {}),
+          ...(typeof nextProxyIngress === 'number' ? { proxyIngressMbps: nextProxyIngress } : {}),
+        },
       }
-
-      return node
     })
 
     const nodeMap = new Map(nextNodes.map((node) => [node.id, node]))
 
     const nextEdges = state.edges.map((edge) => {
+      const flowTarget = edgeInterpolationTargets.get(edge.id)
       const sourceNode = nodeMap.get(edge.source)
       const targetNode = nodeMap.get(edge.target)
       
-      let baseBandwidth = 0
+      let targetBandwidth = flowTarget?.bandwidthMbps ?? 0
+      let targetUpload = flowTarget?.uploadMbps
       
-      // VPN -> Engine: use Engine's download speed (stored in bandwidthMbps)
-      if (sourceNode?.data?.kind === 'vpn' && targetNode?.data?.kind === 'engine') {
-        baseBandwidth = targetNode.data.bandwidthMbps || 0
-      } 
-      // Engine -> Proxy: use Engine's proxy ingress speed (stored in proxyIngressMbps)
-      else if (sourceNode?.data?.kind === 'engine' && targetNode?.data?.kind === 'proxy') {
-        baseBandwidth = sourceNode.data.proxyIngressMbps || 0
-      }
-      else {
-        baseBandwidth = sourceNode?.data?.bandwidthMbps || 0
+      if (!flowTarget) {
+        let baseBandwidth = 0
+
+        if (sourceNode?.data?.kind === 'vpn' && targetNode?.data?.kind === 'engine') {
+          baseBandwidth = targetNode.data.bandwidthMbps || 0
+        } else if (sourceNode?.data?.kind === 'engine' && targetNode?.data?.kind === 'proxy') {
+          baseBandwidth = sourceNode.data.proxyIngressMbps || 0
+        } else {
+          baseBandwidth = sourceNode?.data?.bandwidthMbps || 0
+        }
+
+        const jitterVal = (Math.random() - 0.5) * (baseBandwidth * 0.05)
+        targetBandwidth = Math.max(0, baseBandwidth + jitterVal)
+        targetUpload =
+          typeof edge.data?.uploadMbps === 'number'
+            ? Math.max(0, edge.data.uploadMbps + (Math.random() - 0.5) * (edge.data.uploadMbps * 0.05))
+            : undefined
       }
 
-      const jitterVal = (Math.random() - 0.5) * (baseBandwidth * 0.05)
-      const nextBandwidth = Math.max(0, baseBandwidth + jitterVal)
+      const currentBandwidth = Number(edge.data?.bandwidthMbps ?? 0)
+      const nextBandwidth = interpolateNumber(currentBandwidth, targetBandwidth)
+      const nextUpload =
+        typeof edge.data?.uploadMbps === 'number' || typeof targetUpload === 'number'
+          ? interpolateNumber(edge.data?.uploadMbps ?? 0, targetUpload ?? 0)
+          : undefined
+
       const failover = edge.style?.strokeDasharray !== undefined
+
+      let strokeWidth = clamp(1.6 + nextBandwidth / (failover ? 58 : 46), 1.6, 8.6)
+      if (sourceNode?.data?.kind === 'engine' && targetNode?.data?.kind === 'proxy') {
+        strokeWidth = clamp(1.8 + nextBandwidth / 48, 1.8, 6.4)
+      } else if (sourceNode?.data?.kind === 'proxy' && targetNode?.data?.kind === 'client') {
+        strokeWidth = clamp(2.2 + nextBandwidth / 35, 2.2, 8.5)
+      }
 
       return {
         ...edge,
         data: {
           ...edge.data,
           bandwidthMbps: nextBandwidth,
+          ...(typeof nextUpload === 'number' ? { uploadMbps: nextUpload } : {}),
         },
         style: {
           ...edge.style,
-          strokeWidth: clamp(1.6 + nextBandwidth / (failover ? 58 : 46), 1.6, 8.6),
+          strokeWidth,
         },
       }
     })
