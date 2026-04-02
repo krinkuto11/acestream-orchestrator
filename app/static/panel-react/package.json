@@ -1,6 +1,6 @@
 {
   "name": "acestream-orchestrator-panel",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "private": true,
   "type": "module",
   "description": "React Material-UI Dashboard for Acestream Orchestrator",

@@ -6,8 +6,12 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+import os
+from urllib.parse import urlparse
 
 from ..proxy.ace_api_client import AceLegacyApiClient
+from ..proxy.http_streamer import HTTPStreamReader
+from ..proxy.constants import VLC_USER_AGENT
 from .state import state
 from ..core.config import cfg
 from .engine_selection import select_best_engine
@@ -445,8 +449,21 @@ class LegacyStreamMonitoringService:
         stop_event = self._stop_events[monitor_id]
         stream_started = False
 
+        # NEW: Track our background dummy reader
+        dummy_reader_task: Optional[asyncio.Task] = None
+
         async def _shutdown_client():
-            nonlocal client, stream_started
+            nonlocal client, stream_started, dummy_reader_task
+
+            # NEW: Clean up the dummy reader on shutdown
+            if dummy_reader_task:
+                dummy_reader_task.cancel()
+                try:
+                    await dummy_reader_task
+                except asyncio.CancelledError:
+                    pass
+                dummy_reader_task = None
+
             if not client:
                 return
             try:
@@ -529,16 +546,124 @@ class LegacyStreamMonitoringService:
                         if not playback_session_id:
                             playback_session_id = f"legacy-monitor-{monitor_id[:8]}-{int(time.time())}"
 
-                        await self._update_session(
-                            monitor_id,
-                            status="running",
-                            last_error=None,
-                            session={
-                                "playback_session_id": playback_session_id,
-                                "playback_url": start_info.get("url"),
-                                "resolved_infohash": resolved_infohash,
-                            },
-                        )
+                        # Extract the REAL URL from the engine
+                        real_playback_url = start_info.get("url")
+
+                        # NEW: Micro-Relay Server Implementation
+                        if real_playback_url and not dummy_reader_task:
+                            proxy_clients = set()
+
+                            # 1. Define the handler for when StreamManager connects to us
+                            async def handle_proxy_client(reader, writer):
+                                try:
+                                    # Wait for the StreamManager's HTTP GET request
+                                    await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), timeout=5.0)
+                                    # Reply with a standard HTTP 200 OK so StreamManager accepts it
+                                    writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nConnection: close\r\n\r\n")
+                                    await writer.drain()
+
+                                    # Register this client to receive live chunks
+                                    proxy_clients.add(writer)
+
+                                    # Keep connection open until StreamManager disconnects
+                                    while not stop_event.is_set():
+                                        if writer.is_closing():
+                                            break
+                                        await asyncio.sleep(1)
+                                except Exception:
+                                    pass
+                                finally:
+                                    proxy_clients.discard(writer)
+                                    try:
+                                        writer.close()
+                                        await writer.wait_closed()
+                                    except Exception:
+                                        pass
+
+                            # 2. Start the local server on 127.0.0.2 (bypasses URL normalizer)
+                            dummy_server = await asyncio.start_server(handle_proxy_client, '127.0.0.2', 0)
+                            dummy_port = dummy_server.sockets[0].getsockname()[1]
+                            relay_url = f"http://127.0.0.2:{dummy_port}/"
+
+                            # 3. Trick the Orchestrator into connecting to our Relay instead of the Engine
+                            await self._update_session(
+                                monitor_id,
+                                status="running",
+                                last_error=None,
+                                session={
+                                    "playback_session_id": playback_session_id,
+                                    "playback_url": relay_url,  # <--- THE MAGIC HAPPENS HERE
+                                    "resolved_infohash": resolved_infohash,
+                                },
+                            )
+
+                            # 4. The Engine Consumer: Uses the proxy's native HTTPStreamReader!
+                            async def _engine_consumer(url: str):
+                                try:
+                                    while not stop_event.is_set():
+                                        http_reader = None
+                                        fd = None
+                                        try:
+                                            # Use the exact same reader the proxy uses to decode chunks!
+                                            http_reader = HTTPStreamReader(
+                                                url=url,
+                                                user_agent=VLC_USER_AGENT,
+                                                chunk_size=65536
+                                            )
+                                            # start() returns a pipe file descriptor
+                                            pipe_fd = await asyncio.to_thread(http_reader.start)
+                                            fd = os.fdopen(pipe_fd, 'rb', buffering=0)
+
+                                            while not stop_event.is_set():
+                                                # Read pure, decoded video bytes from the pipe
+                                                chunk = await asyncio.to_thread(fd.read, 65536)
+                                                if not chunk:
+                                                    break # EOF, engine dropped connection
+
+                                                # Broadcast the clean chunk to connected proxy clients
+                                                dead_clients = set()
+                                                for client_writer in list(proxy_clients):
+                                                    try:
+                                                        client_writer.write(chunk)
+                                                        # Timeout prevents a lagging client from freezing the relay
+                                                        await asyncio.wait_for(client_writer.drain(), timeout=2.0)
+                                                    except Exception:
+                                                        dead_clients.add(client_writer)
+
+                                                for dead in dead_clients:
+                                                    proxy_clients.discard(dead)
+                                                    try:
+                                                        dead.close()
+                                                    except Exception:
+                                                        pass
+                                        except Exception as e:
+                                            logger.debug(f"Relay engine consumer error: {e}")
+                                            if not stop_event.is_set():
+                                                await asyncio.sleep(2.0)
+                                        finally:
+                                            if fd:
+                                                try:
+                                                    fd.close()
+                                                except Exception:
+                                                    pass
+                                            if http_reader:
+                                                try:
+                                                    http_reader.stop()
+                                                except Exception:
+                                                    pass
+                                except asyncio.CancelledError:
+                                    pass
+                                finally:
+                                    # Clean up the server when the monitor dies
+                                    dummy_server.close()
+                                    await dummy_server.wait_closed()
+                                    for w in list(proxy_clients):
+                                        try:
+                                            w.close()
+                                        except Exception:
+                                            pass
+
+                            dummy_reader_task = asyncio.create_task(_engine_consumer(real_playback_url))
 
                     probe = await asyncio.to_thread(
                         client.collect_status_samples,

@@ -40,6 +40,7 @@ export function TopologyEdge({
   }
 
   const isFailover = style.strokeDasharray != null
+  const isMonitoringRoute = data?.monitoringActive === true
   const bandwidth = (data?.bandwidthMbps || 0) + (data?.uploadMbps || 0)
   const isActive = bandwidth > 0.1
   
@@ -47,7 +48,7 @@ export function TopologyEdge({
   // We ensure it's visible and high-contrast.
   const finalStyle = {
     ...style,
-    stroke: isActive ? '#22c55e' : '#64748b',
+    stroke: isActive ? ((isFailover || isMonitoringRoute) ? '#f59e0b' : '#22c55e') : '#64748b',
     strokeWidth: (style.strokeWidth as number || 2.2) * 1.2, // Slightly thicker for better visibility
     strokeOpacity: isActive ? 1 : 0.4,
     transition: 'all 0.3s ease',
@@ -70,7 +71,7 @@ export function TopologyEdge({
           <div 
             className={cn(
               "px-2 py-0.5 rounded-md border text-[11px] font-semibold transition-colors duration-300 shadow-md flex items-center gap-2",
-              isFailover 
+              (isFailover || isMonitoringRoute)
                 ? "border-amber-400 bg-[#020617] text-amber-400" 
                 : isActive 
                   ? "border-emerald-400 bg-[#020617] text-emerald-400" 

@@ -507,7 +507,7 @@ async def lifespan(app: FastAPI):
     
     cleanup_on_shutdown()
 
-__version__ = "1.7.2"
+__version__ = "1.7.3"
 
 app = FastAPI(
     title="On-Demand Orchestrator",
@@ -1012,6 +1012,78 @@ def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
 def get_engines():
     """Get all engines with Docker verification and VPN health filtering."""
     engines = state.list_engines()
+
+    def _to_int(value: Any) -> int:
+        if value is None:
+            return 0
+        try:
+            text = str(value).strip()
+            if text == "":
+                return 0
+            return int(float(text))
+        except Exception:
+            return 0
+
+    def _build_engine_runtime_metrics() -> Dict[str, Dict[str, int]]:
+        from .services.state import ACTIVE_MONITOR_SESSION_STATUSES
+
+        metrics: Dict[str, Dict[str, int]] = {}
+
+        def _entry(container_id: str) -> Dict[str, int]:
+            return metrics.setdefault(
+                container_id,
+                {
+                    "active_stream_count": 0,
+                    "monitor_stream_count": 0,
+                    "stream_peers": 0,
+                    "stream_speed_down": 0,
+                    "stream_speed_up": 0,
+                    "monitor_peers": 0,
+                    "monitor_speed_down": 0,
+                    "monitor_speed_up": 0,
+                },
+            )
+
+        for stream in state.list_streams_with_stats(status="started"):
+            cid = stream.container_id
+            item = _entry(cid)
+            item["active_stream_count"] += 1
+            item["stream_peers"] += _to_int(stream.peers)
+            item["stream_speed_down"] += _to_int(stream.speed_down)
+            item["stream_speed_up"] += _to_int(stream.speed_up)
+
+        for monitor in state.list_monitor_sessions():
+            monitor_status = str(monitor.get("status") or "").strip().lower()
+            if monitor_status not in ACTIVE_MONITOR_SESSION_STATUSES:
+                continue
+
+            engine_data = monitor.get("engine") or {}
+            cid = str(engine_data.get("container_id") or "").strip()
+            if not cid:
+                continue
+
+            latest_status = monitor.get("latest_status") or {}
+            item = _entry(cid)
+            item["monitor_stream_count"] += 1
+            item["monitor_peers"] += _to_int(latest_status.get("peers") or latest_status.get("http_peers"))
+            item["monitor_speed_down"] += _to_int(latest_status.get("speed_down") or latest_status.get("http_speed_down"))
+            item["monitor_speed_up"] += _to_int(latest_status.get("speed_up"))
+
+        aggregated: Dict[str, Dict[str, int]] = {}
+        for cid, item in metrics.items():
+            aggregated[cid] = {
+                "total_peers": item["stream_peers"] + item["monitor_peers"],
+                "total_speed_down": item["stream_speed_down"] + item["monitor_speed_down"],
+                "total_speed_up": item["stream_speed_up"] + item["monitor_speed_up"],
+                "stream_count": item["active_stream_count"] + item["monitor_stream_count"],
+                "monitor_stream_count": item["monitor_stream_count"],
+                "monitor_speed_down": item["monitor_speed_down"],
+                "monitor_speed_up": item["monitor_speed_up"],
+            }
+
+        return aggregated
+
+    runtime_metrics = _build_engine_runtime_metrics()
     
     # For better reliability, we can optionally verify against Docker
     # but we don't want to break existing functionality
@@ -1110,61 +1182,59 @@ def get_engines():
                 except Exception as e:
                     logger.warning(f"Could not get forwarded port for engine {engine.container_id[:12]} on VPN {engine.vpn_container}: {e}")
         
+        # Enrich engine payloads with runtime stream/monitor metrics.
+        enriched_engines = []
+        for engine in verified_engines:
+            metrics = runtime_metrics.get(
+                engine.container_id,
+                {
+                    "total_peers": 0,
+                    "total_speed_down": 0,
+                    "total_speed_up": 0,
+                    "stream_count": 0,
+                    "monitor_stream_count": 0,
+                    "monitor_speed_down": 0,
+                    "monitor_speed_up": 0,
+                },
+            )
+            enriched_engines.append(engine.model_copy(update=metrics))
+
         # Sort engines by port number for consistent ordering
-        verified_engines.sort(key=lambda e: e.port)
-        return verified_engines
+        enriched_engines.sort(key=lambda e: e.port)
+        return enriched_engines
     except Exception as e:
         # If verification fails, return state as is but still sorted
         logger.debug(f"Engine verification failed for /engines endpoint: {e}")
-        engines.sort(key=lambda e: e.port)
-        return engines
+        enriched_engines = []
+        for engine in engines:
+            metrics = runtime_metrics.get(
+                engine.container_id,
+                {
+                    "total_peers": 0,
+                    "total_speed_down": 0,
+                    "total_speed_up": 0,
+                    "stream_count": 0,
+                    "monitor_stream_count": 0,
+                    "monitor_speed_down": 0,
+                    "monitor_speed_up": 0,
+                },
+            )
+            enriched_engines.append(engine.model_copy(update=metrics))
+
+        enriched_engines.sort(key=lambda e: e.port)
+        return enriched_engines
 
 @app.get("/engines/with-metrics")
 def get_engines_with_metrics():
     """Get all engines with aggregated stream metrics (peers, download/upload speeds)."""
-    engines = state.list_engines()
-    all_active_streams = state.list_streams_with_stats(status="started")
-    monitor_loads = state.get_active_monitor_load_by_engine()
-    
-    # Group streams by container_id and aggregate metrics
-    engine_metrics = {}
-    for stream in all_active_streams:
-        container_id = stream.container_id
-        if container_id not in engine_metrics:
-            engine_metrics[container_id] = {
-                'total_peers': 0,
-                'total_speed_down': 0,
-                'total_speed_up': 0,
-                'stream_count': 0,
-                'monitor_stream_count': 0
-            }
-        
-        # Aggregate metrics from active streams
-        engine_metrics[container_id]['stream_count'] += 1
-        if stream.peers is not None:
-            engine_metrics[container_id]['total_peers'] += stream.peers
-        if stream.speed_down is not None:
-            engine_metrics[container_id]['total_speed_down'] += stream.speed_down
-        if stream.speed_up is not None:
-            engine_metrics[container_id]['total_speed_up'] += stream.speed_up
-    
-    # Enrich engine data with metrics
+    engines = get_engines()
+
+    # Keep compatibility with dict-based consumers.
     result = []
     for engine in engines:
-        monitor_stream_count = monitor_loads.get(engine.container_id, 0)
         engine_dict = engine.model_dump()
-        metrics = engine_metrics.get(engine.container_id, {
-            'total_peers': 0,
-            'total_speed_down': 0,
-            'total_speed_up': 0,
-            'stream_count': 0,
-            'monitor_stream_count': 0
-        })
-        metrics['monitor_stream_count'] = monitor_stream_count
-        metrics['stream_count'] = int(metrics.get('stream_count', 0)) + monitor_stream_count
-        engine_dict.update(metrics)
         result.append(engine_dict)
-    
+
     return result
 
 @app.get("/engines/{container_id}")

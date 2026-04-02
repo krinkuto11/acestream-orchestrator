@@ -289,12 +289,50 @@ class AceLegacyApiClient:
 
         target_timestamp = max(0, int(last_ts) - normalized_seekback)
         self.seek_stream(target_timestamp)
-        _, delayed_parts, _ = self._wait_for("START", timeout=self.response_timeout * 3)
-        delayed_start_info = self._parse_start_params(delayed_parts)
-        delayed_start_info["seek_target_timestamp"] = str(target_timestamp)
-        delayed_start_info["seekback"] = str(normalized_seekback)
-        delayed_start_info["seek_issued"] = "1"
-        return delayed_start_info
+
+        # Dynamic post-seek wait: some engine variants never send a second START
+        # after LIVESEEK and instead resume buffering immediately, broadcasting
+        # EVENT livepos with is_live=0.  Waiting a fixed 30 s for a START that
+        # will never arrive is a significant hang.  Instead we loop for up to
+        # 5 s and exit early on whichever signal arrives first:
+        #   • START  → engine sent a follow-up; merge any new fields.
+        #   • EVENT livepos → seek confirmed; break immediately.
+        merged_start_info = dict(first_start_info)
+        seek_deadline = time.time() + 5.0
+        while time.time() < seek_deadline:
+            try:
+                cmd, parts, _ = self._read_message(
+                    timeout=max(0.05, seek_deadline - time.time())
+                )
+            except AceLegacyApiError:
+                # Timeout or socket error – seek already issued, continue.
+                break
+
+            if cmd == "START":
+                # Merge the follow-up START, but do NOT overwrite keys that are
+                # already present so the original playback_url is preserved when
+                # the engine omits it from the second START.
+                for key, value in self._parse_start_params(parts).items():
+                    if value:
+                        merged_start_info[key] = value
+                break
+
+            if cmd == "EVENT" and len(parts) > 1 and parts[1] == "livepos":
+                # Seek confirmed by livepos – this engine variant does not send
+                # a second START.  Exit immediately to avoid unnecessary delay.
+                logger.debug(
+                    "LIVESEEK confirmed via EVENT livepos; skipping second-START wait"
+                )
+                self._handle_async(cmd, parts)
+                break
+
+            # Forward any other async events so stop notifications are not lost.
+            self._handle_async(cmd, parts)
+
+        merged_start_info["seek_target_timestamp"] = str(target_timestamp)
+        merged_start_info["seekback"] = str(normalized_seekback)
+        merged_start_info["seek_issued"] = "1"
+        return merged_start_info
 
     def seek_stream(self, timestamp: int) -> bool:
         """

@@ -55,6 +55,14 @@ class EngineState(BaseModel):
     platform: Optional[str] = None
     version: Optional[str] = None
     forwarded_port: Optional[int] = None  # For forwarded engines only
+    # Optional runtime aggregates (active streams + monitor sessions)
+    total_peers: Optional[int] = None
+    total_speed_down: Optional[int] = None
+    total_speed_up: Optional[int] = None
+    stream_count: Optional[int] = None
+    monitor_stream_count: Optional[int] = None
+    monitor_speed_down: Optional[int] = None
+    monitor_speed_up: Optional[int] = None
 
 class LivePosData(BaseModel):
     """Live position data for live streams."""
