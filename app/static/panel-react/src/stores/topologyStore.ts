@@ -80,6 +80,7 @@ const jitter = (value: number, ratio = 0.16, floor = 0): number => {
 
 const INTERPOLATION_ALPHA = 0.35
 const INTERPOLATION_EPSILON = 0.05
+const FLOW_DEADBAND_Mbps = 0.35
 
 type NodeFlowTarget = {
   bandwidthMbps: number
@@ -98,6 +99,16 @@ const edgeInterpolationTargets = new Map<string, EdgeFlowTarget>()
 const interpolateNumber = (current: number, target: number, alpha = INTERPOLATION_ALPHA): number => {
   const next = current + (target - current) * alpha
   return Math.abs(target - next) <= INTERPOLATION_EPSILON ? target : next
+}
+
+const applyDeadband = (
+  current: number | undefined,
+  target: number | undefined,
+  threshold = FLOW_DEADBAND_Mbps,
+): number | undefined => {
+  if (typeof target !== 'number') return undefined
+  if (typeof current !== 'number') return target
+  return Math.abs(target - current) < threshold ? current : target
 }
 
 
@@ -746,10 +757,17 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
 
       const stabilizedNodes = next.nodes.map((nextNode) => {
         const existingNode = state.nodes.find((n) => n.id === nextNode.id)
+        const targetBandwidth = applyDeadband(existingNode?.data?.bandwidthMbps, nextNode.data?.bandwidthMbps)
+        const targetUpload = applyDeadband(existingNode?.data?.uploadMbps, nextNode.data?.uploadMbps)
+        const targetProxyIngress = applyDeadband(
+          existingNode?.data?.proxyIngressMbps,
+          nextNode.data?.proxyIngressMbps,
+        )
+
         nodeInterpolationTargets.set(nextNode.id, {
-          bandwidthMbps: nextNode.data?.bandwidthMbps ?? 0,
-          uploadMbps: nextNode.data?.uploadMbps,
-          proxyIngressMbps: nextNode.data?.proxyIngressMbps,
+          bandwidthMbps: targetBandwidth ?? 0,
+          uploadMbps: targetUpload,
+          proxyIngressMbps: targetProxyIngress,
         })
 
         if (!existingNode) return nextNode
@@ -781,10 +799,19 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
 
       const stabilizedEdges = next.edges.map((nextEdge) => {
         const existingEdge = state.edges.find((e) => e.id === nextEdge.id)
+        const nextEdgeTargetBandwidth = Number(nextEdge.data?.bandwidthMbps ?? 0)
+        const existingEdgeBandwidth =
+          typeof existingEdge?.data?.bandwidthMbps === 'number'
+            ? Number(existingEdge.data.bandwidthMbps)
+            : undefined
+        const nextEdgeTargetUpload =
+          typeof nextEdge.data?.uploadMbps === 'number' ? nextEdge.data.uploadMbps : undefined
+        const existingEdgeUpload =
+          typeof existingEdge?.data?.uploadMbps === 'number' ? existingEdge.data.uploadMbps : undefined
+
         edgeInterpolationTargets.set(nextEdge.id, {
-          bandwidthMbps: Number(nextEdge.data?.bandwidthMbps ?? 0),
-          uploadMbps:
-            typeof nextEdge.data?.uploadMbps === 'number' ? nextEdge.data.uploadMbps : undefined,
+          bandwidthMbps: applyDeadband(existingEdgeBandwidth, nextEdgeTargetBandwidth) ?? 0,
+          uploadMbps: applyDeadband(existingEdgeUpload, nextEdgeTargetUpload),
         })
 
         if (!existingEdge) return nextEdge
@@ -911,22 +938,23 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
       let targetUpload = flowTarget?.uploadMbps
       
       if (!flowTarget) {
-        let baseBandwidth = 0
-
         if (sourceNode?.data?.kind === 'vpn' && targetNode?.data?.kind === 'engine') {
-          baseBandwidth = targetNode.data.bandwidthMbps || 0
+          targetBandwidth = targetNode.data.bandwidthMbps || 0
+          targetUpload = targetNode.data.uploadMbps
         } else if (sourceNode?.data?.kind === 'engine' && targetNode?.data?.kind === 'proxy') {
-          baseBandwidth = sourceNode.data.proxyIngressMbps || 0
+          targetBandwidth = sourceNode.data.proxyIngressMbps || 0
         } else {
-          baseBandwidth = sourceNode?.data?.bandwidthMbps || 0
+          targetBandwidth = sourceNode?.data?.bandwidthMbps || 0
         }
 
-        const jitterVal = (Math.random() - 0.5) * (baseBandwidth * 0.05)
-        targetBandwidth = Math.max(0, baseBandwidth + jitterVal)
-        targetUpload =
-          typeof edge.data?.uploadMbps === 'number'
-            ? Math.max(0, edge.data.uploadMbps + (Math.random() - 0.5) * (edge.data.uploadMbps * 0.05))
-            : undefined
+        if (state.isMockMode) {
+          const jitterVal = (Math.random() - 0.5) * (targetBandwidth * 0.05)
+          targetBandwidth = Math.max(0, targetBandwidth + jitterVal)
+          targetUpload =
+            typeof targetUpload === 'number'
+              ? Math.max(0, targetUpload + (Math.random() - 0.5) * (targetUpload * 0.05))
+              : undefined
+        }
       }
 
       const currentBandwidth = Number(edge.data?.bandwidthMbps ?? 0)
