@@ -95,7 +95,7 @@ function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus,
   useEffect(() => {
     const interval = window.setInterval(() => {
       simulateTick()
-    }, 1000)
+    }, 250)
 
     return () => {
       window.clearInterval(interval)
