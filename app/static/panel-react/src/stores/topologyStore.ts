@@ -117,6 +117,15 @@ const formatCompactId = (id: string): string => {
   return id.length > 12 ? id.slice(0, 12) : id
 }
 
+const stableTunnelFromEngineIdentity = (engine: EngineState): TunnelId => {
+  const identity = `${engine.container_id || ''}:${engine.container_name || ''}`
+  let hash = 0
+  for (let i = 0; i < identity.length; i += 1) {
+    hash = ((hash * 31) + identity.charCodeAt(i)) >>> 0
+  }
+  return (hash % 2 === 0) ? 'vpn1' : 'vpn2'
+}
+
 const inferTunnelFromEngine = (
   engine: EngineState,
   index: number,
@@ -151,7 +160,7 @@ const inferTunnelFromEngine = (
     return 'vpn1'
   }
 
-  return index % 2 === 0 ? 'vpn1' : 'vpn2'
+  return stableTunnelFromEngineIdentity(engine)
 }
 
 const deriveTunnelConnectivity = (
@@ -284,7 +293,15 @@ const buildSnapshot = (
 
   const failoverEngines: string[] = []
 
-  // 1. Sort engines so active ones are prioritized at the top
+  const previousEngineOrder = new Map<string, number>()
+  if (prevState) {
+    prevState.nodes
+      .filter((node) => node.data?.kind === 'engine')
+      .forEach((node, index) => {
+        previousEngineOrder.set(node.id, index)
+      })
+  }
+
   const engineStats = workingEngines.map((engine) => {
     const engineStreams = streamMap.get(engine.container_id) || []
     const streamMeasuredDownMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_down), 0)
@@ -304,10 +321,20 @@ const buildSnapshot = (
       measuredDownMbps,
       measuredUpMbps,
     }
-  }).sort((a, b) => {
-    if (b.streamCount !== a.streamCount) return b.streamCount - a.streamCount
-    if (b.measuredMbps !== a.measuredMbps) return b.measuredMbps - a.measuredMbps
-    return (a.engine.container_name || '').localeCompare(b.engine.container_name || '')
+  })
+
+  // Keep engine placement stable across updates to prevent pipes appearing to jump between engines.
+  engineStats.sort((a, b) => {
+    const aPrev = previousEngineOrder.get(a.engine.container_id)
+    const bPrev = previousEngineOrder.get(b.engine.container_id)
+
+    if (aPrev !== undefined && bPrev !== undefined) return aPrev - bPrev
+    if (aPrev !== undefined) return -1
+    if (bPrev !== undefined) return 1
+
+    const aName = a.engine.container_name || a.engine.container_id || ''
+    const bName = b.engine.container_name || b.engine.container_id || ''
+    return aName.localeCompare(bName)
   })
 
   const isVpnClusterMode = Boolean(vpnStatus && vpnStatus.mode !== 'disabled')
