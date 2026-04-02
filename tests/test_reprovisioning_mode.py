@@ -65,9 +65,31 @@ def test_custom_variant_reprovision_endpoint_triggers_rolling_update_payload():
 
     with patch("app.main._trigger_engine_generation_rollout", return_value={"changed": True, "generation": 5, "config_hash": "abc123"}), \
          patch.object(main.state, "list_engines", return_value=[object(), object()]):
-        response = asyncio.run(main.reprovision_all_engines(background_tasks=None))
+        response = asyncio.run(main.reprovision_all_engines())
 
     assert response["rolling_update"]["changed"] is True
     assert response["rolling_update"]["target_generation"] == 5
     assert response["rolling_update"]["target_hash"] == "abc123"
-    assert response["rolling_update"]["current_engines"] == 2
+
+
+def test_custom_variant_reprovision_status_is_computed_declaratively():
+    from app import main
+
+    engines = [
+        _engine("e-1", "target-hash"),
+        _engine("e-2", "old-hash"),
+        _engine("e-3", "target-hash"),
+        _engine("e-4", "old-hash"),
+    ]
+
+    with patch.object(main.state, "get_target_engine_config", return_value={"config_hash": "target-hash", "generation": 7}), \
+         patch.object(main.state, "get_desired_replica_count", return_value=3), \
+         patch.object(main.state, "list_engines", return_value=engines):
+        status = main.get_reprovision_status()
+
+    assert status["in_progress"] is True
+    assert status["status"] == "in_progress"
+    assert status["total_engines"] == 3
+    assert status["engines_provisioned"] == 2
+    assert status["target_generation"] == 7
+    assert status["current_phase"] == "stopping"

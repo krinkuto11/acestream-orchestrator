@@ -1835,19 +1835,6 @@ from .services.template_manager import (
     rename_template
 )
 
-# Global state for reprovisioning tracking
-_reprovision_state = {
-    "in_progress": False,
-    "status": "idle",  # idle, in_progress, success, error
-    "message": None,
-    "timestamp": None,
-    "total_engines": 0,
-    "engines_stopped": 0,
-    "engines_provisioned": 0,
-    "current_engine_id": None,
-    "current_phase": None  # stopping, cleaning, provisioning, complete
-}
-
 @app.get("/custom-variant/platform")
 def get_platform_info():
     """Get detected platform information."""
@@ -1906,40 +1893,61 @@ def update_custom_variant_config(config: CustomVariantConfig):
 
 @app.get("/custom-variant/reprovision/status")
 def get_reprovision_status():
-    """Get current reprovisioning status."""
-    return _reprovision_state
+    """Compute declarative rollout status from desired-vs-actual engine hashes."""
+    target = state.get_target_engine_config()
+    target_hash = str(target.get("config_hash") or "")
+    desired = max(0, int(state.get_desired_replica_count()))
+    engines = state.list_engines()
+
+    engines_with_target_hash = sum(
+        1
+        for engine in engines
+        if str((engine.labels or {}).get("acestream.config_hash") or "") == target_hash
+    )
+
+    actual = len(engines)
+    outdated_running = max(0, actual - engines_with_target_hash)
+    in_progress = engines_with_target_hash < desired or actual > desired
+
+    if in_progress and actual > desired:
+        current_phase = "stopping"
+    elif in_progress:
+        current_phase = "provisioning"
+    else:
+        current_phase = "complete"
+
+    return {
+        "in_progress": in_progress,
+        "status": "in_progress" if in_progress else "idle",
+        "message": (
+            "Rolling update in progress"
+            if in_progress
+            else "No rollout in progress"
+        ),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "total_engines": desired,
+        "engines_stopped": outdated_running,
+        "engines_provisioned": engines_with_target_hash,
+        "current_engine_id": None,
+        "current_phase": current_phase,
+        "target_generation": target.get("generation"),
+        "target_hash": target_hash,
+    }
 
 @app.post("/custom-variant/reprovision", dependencies=[Depends(require_api_key)])
-async def reprovision_all_engines(background_tasks: BackgroundTasks):
+async def reprovision_all_engines():
     """
     Trigger a declarative rolling update by bumping target engine config generation.
     """
-    global _reprovision_state
     rollout = _trigger_engine_generation_rollout(reason="custom_variant_reprovision")
-    current_engines = len(state.list_engines())
     changed = bool(rollout.get("changed"))
 
-    _reprovision_state = {
-        "in_progress": False,
-        "status": "success",
-        "message": "Rolling update scheduled" if changed else "No config change detected; rollout not required",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "total_engines": current_engines,
-        "engines_stopped": 0,
-        "engines_provisioned": 0,
-        "current_engine_id": None,
-        "current_phase": "complete",
-        "target_generation": rollout.get("generation"),
-        "target_hash": rollout.get("config_hash"),
-    }
-
     return {
-        "message": _reprovision_state["message"],
+        "message": "Rolling update scheduled" if changed else "No config change detected; rollout not required",
         "rolling_update": {
             "changed": changed,
             "target_generation": rollout.get("generation"),
             "target_hash": rollout.get("config_hash"),
-            "current_engines": current_engines,
         },
     }
 
