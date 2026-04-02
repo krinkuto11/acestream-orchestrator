@@ -1,22 +1,19 @@
 """
 Health Manager Service
 
-This service ensures service availability by:
+This service ensures service health by:
 1. Continuously monitoring engine health
-2. Automatically replacing unhealthy engines while keeping healthy ones running
-3. Maintaining minimum healthy engine count at all times
-4. Implementing gradual replacement to avoid service interruption
+2. Evicting fatally unhealthy engines
+3. Preserving grace-period and threshold protections against premature eviction
 """
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import List, Set, Dict, Optional
+from datetime import datetime, timezone
+from typing import List, Dict, Optional
 from .state import state
-from .health import check_acestream_health, list_managed
-from .provisioner import AceProvisionRequest, start_acestream, stop_container
-from .autoscaler import ensure_minimum
+from .health import check_acestream_health
+from .provisioner import stop_container
 from .circuit_breaker import circuit_breaker_manager
-from .event_logger import event_logger
 from ..core.config import cfg
 
 logger = logging.getLogger(__name__)
@@ -45,13 +42,12 @@ class EngineHealthStatus:
 
 class HealthManager:
     """
-    Manages engine health and ensures service availability by maintaining healthy engines.
+    Manages engine health as probe-and-evict control loop.
     
     Key principles:
-    - Always maintain minimum healthy engines
-    - Replace unhealthy engines gradually
-    - Never interrupt service during replacements
-    - Prioritize availability over fixing individual engines
+    - Track health transitions and enforce grace periods
+    - Evict only engines that are durably unhealthy
+    - Do not perform provisioning; reconciliation controller handles replacement
     """
     
     def __init__(self, check_interval: int = None):
@@ -157,11 +153,9 @@ class HealthManager:
         if self._should_wait_for_vpn_recovery(healthy_engines):
             return
         
-        # Ensure we have minimum healthy engines (skip in manual mode)
+        # Evictions are disabled in manual mode.
         if not is_manual_mode:
-            await self._ensure_healthy_engines(healthy_engines, unhealthy_engines)
-            
-            # Replace unhealthy engines if we have enough healthy ones
+            # Evict unhealthy engines; provisioning is handled by EngineController.
             await self._replace_unhealthy_engines(healthy_engines, unhealthy_engines)
     
     def _get_target_vpn_for_provisioning(self) -> Optional[str]:
@@ -241,33 +235,8 @@ class HealthManager:
 
         return False
     
-    async def _ensure_healthy_engines(self, healthy_engines: List, unhealthy_engines: List):
-        """Ensure we have at least MIN_REPLICAS healthy engines."""
-        healthy_count = len(healthy_engines)
-        total_needed = cfg.MIN_REPLICAS
-        
-        if healthy_count < total_needed:
-            deficit = total_needed - healthy_count
-            logger.warning(f"Only {healthy_count} healthy engines, need {total_needed}. Starting {deficit} new engines.")
-            
-            # Log health event for visibility in dashboard
-            event_logger.log_event(
-                event_type="health",
-                category="insufficient_engines",
-                message=f"Only {healthy_count} healthy engines, need {total_needed}. Starting {deficit} new engines.",
-                details={
-                    "healthy_count": healthy_count,
-                    "total_needed": total_needed,
-                    "deficit": deficit,
-                    "unhealthy_count": len(unhealthy_engines)
-                }
-            )
-            
-            # Start new engines to ensure service availability
-            await self._start_replacement_engines(deficit)
-    
     async def _replace_unhealthy_engines(self, healthy_engines: List, unhealthy_engines: List):
-        """Replace unhealthy engines gradually while maintaining service availability."""
+        """Evict unhealthy engines gradually to avoid mass churn."""
         if not unhealthy_engines:
             return
         
@@ -277,7 +246,7 @@ class HealthManager:
         if time_since_last_replacement < self._replacement_cooldown_s:
             return
         
-        # Only replace engines that should be replaced and have enough healthy engines
+        # Evict only engines that crossed threshold and grace-period protections.
         replaceable_engines = [
             engine for engine in unhealthy_engines 
             if self._engine_health[engine.container_id].should_be_replaced()
@@ -286,14 +255,8 @@ class HealthManager:
         
         if not replaceable_engines:
             return
-        
-        # Ensure we have enough healthy engines to replace unhealthy ones
-        healthy_count = len(healthy_engines)
-        if healthy_count < cfg.MIN_REPLICAS:
-            logger.info(f"Not enough healthy engines ({healthy_count}) to replace unhealthy ones. Ensuring minimum first.")
-            return
-        
-        # Replace one engine at a time to maintain service availability
+
+        # Evict one engine at a time to avoid burst evictions.
         engine_to_replace = replaceable_engines[0]
         engine_health = self._engine_health[engine_to_replace.container_id]
         
@@ -304,113 +267,28 @@ class HealthManager:
             # Start replacement process
             await self._replace_engine(engine_to_replace)
     
-    async def _start_replacement_engines(self, count: int):
-        """Start new engines to replace unhealthy ones or meet minimum requirements."""
-        loop = asyncio.get_event_loop()
-        
-        # Check circuit breaker before attempting replacement
-        if not circuit_breaker_manager.can_provision("replacement"):
-            logger.warning("Replacement circuit breaker is OPEN - skipping replacement attempt")
-            return
-        
-        success_count = 0
-        for i in range(count):
-            try:
-                logger.info(f"Starting replacement engine {i+1}/{count}")
-                
-                # Run provisioning in executor to avoid blocking
-                response = await loop.run_in_executor(
-                    None, 
-                    start_acestream, 
-                    AceProvisionRequest()
-                )
-                
-                if response and response.container_id:
-                    success_count += 1
-                    circuit_breaker_manager.record_provisioning_success("replacement")
-                    logger.info(f"Successfully started replacement engine {response.container_id[:12]}")
-                    
-                    # Log engine creation event
-                    event_logger.log_event(
-                        event_type="health",
-                        category="replacement_started",
-                        message=f"Successfully started replacement engine {response.container_id[:12]}",
-                        details={
-                            "engine_number": i+1,
-                            "total_count": count
-                        },
-                        container_id=response.container_id
-                    )
-                    
-                    # Initialize health tracking for new engine
-                    self._engine_health[response.container_id] = EngineHealthStatus(response.container_id)
-                else:
-                    circuit_breaker_manager.record_provisioning_failure("replacement")
-                    logger.error(f"Failed to start replacement engine {i+1}/{count}")
-                    
-            except Exception as e:
-                circuit_breaker_manager.record_provisioning_failure("replacement")
-                logger.error(f"Error starting replacement engine {i+1}/{count}: {e}")
-                
-        # Trigger reindexing to pick up new containers
-        if success_count > 0:
-            try:
-                from .reindex import reindex_existing
-                await loop.run_in_executor(None, reindex_existing)
-            except Exception as e:
-                logger.error(f"Failed to reindex after starting replacement engines: {e}")
-        
-        # Log circuit breaker status
-        if success_count < count:
-            breaker_status = circuit_breaker_manager.get_status()
-            logger.debug(f"Replacement circuit breaker status: {breaker_status['replacement']['state']}")
-    
     async def _replace_engine(self, engine_to_replace):
-        """Replace a specific unhealthy engine."""
+        """Evict a specific unhealthy engine immediately."""
         engine_health = self._engine_health[engine_to_replace.container_id]
         
         if engine_health.replacement_started:
             return
         
         engine_health.replacement_started = True
-        logger.info(f"Starting replacement process for engine {engine_to_replace.container_id[:12]}")
+        logger.info(f"Evicting unhealthy engine {engine_to_replace.container_id[:12]}")
         
         try:
-            # First, start a replacement engine
-            await self._start_replacement_engines(1)
-            
-            # Wait a bit for the new engine to become healthy
-            await asyncio.sleep(10)
-            
-            # Check if we now have enough healthy engines to safely remove the unhealthy one
-            engines = state.list_engines()
-            healthy_count = sum(
-                1 for engine in engines 
-                if engine.container_id != engine_to_replace.container_id 
-                and check_acestream_health(engine.host, engine.port) == "healthy"
-            )
-            
-            if healthy_count >= cfg.MIN_REPLICAS:
-                # Safe to remove the unhealthy engine
-                logger.info(f"Removing unhealthy engine {engine_to_replace.container_id[:12]}")
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, stop_container, engine_to_replace.container_id)
-                state.remove_engine(engine_to_replace.container_id)
-                
-                # Remove from health tracking
-                if engine_to_replace.container_id in self._engine_health:
-                    del self._engine_health[engine_to_replace.container_id]
-                
-                self._last_replacement_time = datetime.now(timezone.utc)
-                logger.info(f"Successfully replaced unhealthy engine {engine_to_replace.container_id[:12]}")
-            else:
-                logger.warning(f"Not enough healthy engines to safely remove {engine_to_replace.container_id[:12]}")
-                # Reset replacement flags to try again later
-                engine_health.marked_for_replacement = False
-                engine_health.replacement_started = False
+            await asyncio.to_thread(stop_container, engine_to_replace.container_id)
+            state.remove_engine(engine_to_replace.container_id)
+
+            if engine_to_replace.container_id in self._engine_health:
+                del self._engine_health[engine_to_replace.container_id]
+
+            self._last_replacement_time = datetime.now(timezone.utc)
+            logger.info(f"Successfully evicted unhealthy engine {engine_to_replace.container_id[:12]}")
                 
         except Exception as e:
-            logger.error(f"Error replacing engine {engine_to_replace.container_id[:12]}: {e}")
+            logger.error(f"Error evicting engine {engine_to_replace.container_id[:12]}: {e}")
             # Reset replacement flags to try again later
             engine_health.marked_for_replacement = False
             engine_health.replacement_started = False

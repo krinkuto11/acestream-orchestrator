@@ -1,112 +1,73 @@
-#!/usr/bin/env python3
-"""
-Test reprovisioning mode coordination.
+import asyncio
+from datetime import datetime, timezone
+from unittest.mock import patch
 
-This test validates that reprovisioning mode properly coordinates
-with other system components (health manager, autoscaler).
-"""
+from app.models.schemas import EngineState
+from app.services.autoscaler import EngineController
+from app.services.state import state
 
-import sys
-import os
 
-# Add app to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+def _engine(container_id: str, config_hash: str) -> EngineState:
+    now = datetime.now(timezone.utc)
+    return EngineState(
+        container_id=container_id,
+        container_name=container_id,
+        host="127.0.0.1",
+        port=6878,
+        labels={"acestream.config_hash": config_hash},
+        forwarded=False,
+        first_seen=now,
+        last_seen=now,
+        streams=[],
+        health_status="healthy",
+    )
 
-def test_reprovisioning_mode_state():
-    """Test reprovisioning mode state management."""
-    from app.services.state import state
-    
-    # Clear any existing state
-    state._reprovisioning_mode = False
-    state._reprovisioning_entered_at = None
-    
-    # Initially not in reprovisioning mode
-    assert not state.is_reprovisioning_mode(), "Should not be in reprovisioning mode initially"
-    
-    # Enter reprovisioning mode
-    result = state.enter_reprovisioning_mode()
-    assert result, "Should successfully enter reprovisioning mode"
-    assert state.is_reprovisioning_mode(), "Should be in reprovisioning mode"
-    
-    # Try to enter again (should fail)
-    result = state.enter_reprovisioning_mode()
-    assert not result, "Should not allow entering reprovisioning mode twice"
-    
-    # Get mode info
-    info = state.get_reprovisioning_mode_info()
-    assert info["active"] == True, "Mode info should show active"
-    assert info["duration_seconds"] >= 0, "Duration should be non-negative"
-    assert info["entered_at"] is not None, "Should have entered_at timestamp"
-    
-    # Exit reprovisioning mode
-    result = state.exit_reprovisioning_mode()
-    assert result, "Should successfully exit reprovisioning mode"
-    assert not state.is_reprovisioning_mode(), "Should not be in reprovisioning mode after exit"
-    
-    # Try to exit again (should fail)
-    result = state.exit_reprovisioning_mode()
-    assert not result, "Should not allow exiting reprovisioning mode twice"
-    
-    # Get mode info when not active
-    info = state.get_reprovisioning_mode_info()
-    assert info["active"] == False, "Mode info should show not active"
-    assert info["duration_seconds"] == 0, "Duration should be 0 when not active"
-    assert info["entered_at"] is None, "Should not have entered_at when not active"
-    
-    print("✅ Reprovisioning mode state test passed!")
 
-def test_reprovisioning_mode_coordination():
-    """Test that health manager and autoscaler respect reprovisioning mode."""
-    from app.services.state import state
-    
-    # Clear any existing state
-    state._reprovisioning_mode = False
-    state._emergency_mode = False
-    
-    # Initially not in reprovisioning mode
-    assert not state.is_reprovisioning_mode(), "Should not be in reprovisioning mode initially"
-    assert not state.is_emergency_mode(), "Should not be in emergency mode initially"
-    
-    # Enter reprovisioning mode
-    state.enter_reprovisioning_mode()
-    assert state.is_reprovisioning_mode(), "Should be in reprovisioning mode"
-    
-    # Components should check this flag and pause operations
-    # The actual check is in health_manager._check_and_manage_health() and autoscaler.ensure_minimum()
-    # We can't easily test the full async flow here, but we can verify the flag works
-    
-    # Exit reprovisioning mode
-    state.exit_reprovisioning_mode()
-    assert not state.is_reprovisioning_mode(), "Should not be in reprovisioning mode after exit"
-    
-    print("✅ Reprovisioning mode coordination test passed!")
+def setup_function():
+    state.clear_state()
 
-def test_emergency_mode_and_reprovisioning_mode_independence():
-    """Test that emergency mode and reprovisioning mode are independent."""
-    from app.services.state import state
-    
-    # Clear any existing state
-    state._reprovisioning_mode = False
-    state._emergency_mode = False
-    
-    # Enter reprovisioning mode
-    state.enter_reprovisioning_mode()
-    assert state.is_reprovisioning_mode(), "Should be in reprovisioning mode"
-    assert not state.is_emergency_mode(), "Should not be in emergency mode"
-    
-    # Exit reprovisioning mode
-    state.exit_reprovisioning_mode()
-    
-    # Verify we can enter emergency mode independently (if in redundant VPN mode)
-    # Note: emergency mode requires specific VPN configuration
-    # For this test, we just verify the flags are independent
-    assert not state.is_reprovisioning_mode(), "Should not be in reprovisioning mode"
-    assert not state.is_emergency_mode(), "Should not be in emergency mode"
-    
-    print("✅ Emergency mode and reprovisioning mode independence test passed!")
 
-if __name__ == "__main__":
-    test_reprovisioning_mode_state()
-    test_reprovisioning_mode_coordination()
-    test_emergency_mode_and_reprovisioning_mode_independence()
-    print("\n✅ All reprovisioning mode tests passed!")
+def teardown_function():
+    state.clear_state()
+
+
+def test_target_engine_config_generation_increments_only_on_hash_change():
+    first = state.set_target_engine_config("hash-a")
+    same = state.set_target_engine_config("hash-a")
+    changed = state.set_target_engine_config("hash-b")
+
+    assert first["generation"] == 1
+    assert first["changed"] is True
+    assert same["generation"] == 1
+    assert same["changed"] is False
+    assert changed["generation"] == 2
+    assert changed["changed"] is True
+
+
+def test_controller_enqueues_eviction_for_outdated_hash():
+    state.set_target_engine_config("new-hash")
+    state.engines["e-old"] = _engine("e-old", "old-hash")
+
+    controller = EngineController()
+
+    with patch.object(state, "list_pending_scaling_intents", return_value=[]), \
+         patch.object(state, "emit_scaling_intent") as emit_intent:
+        asyncio.run(controller._enqueue_outdated_engine_termination_intents())
+
+    emit_intent.assert_called_once()
+    details = emit_intent.call_args.kwargs["details"]
+    assert details["eviction_reason"] == "config_hash_mismatch"
+    assert details["container_id"] == "e-old"
+
+
+def test_custom_variant_reprovision_endpoint_triggers_rolling_update_payload():
+    from app import main
+
+    with patch("app.main._trigger_engine_generation_rollout", return_value={"changed": True, "generation": 5, "config_hash": "abc123"}), \
+         patch.object(main.state, "list_engines", return_value=[object(), object()]):
+        response = asyncio.run(main.reprovision_all_engines(background_tasks=None))
+
+    assert response["rolling_update"]["changed"] is True
+    assert response["rolling_update"]["target_generation"] == 5
+    assert response["rolling_update"]["target_hash"] == "abc123"
+    assert response["rolling_update"]["current_engines"] == 2
