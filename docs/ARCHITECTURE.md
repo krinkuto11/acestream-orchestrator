@@ -42,6 +42,7 @@ The orchestrator:
 The orchestrator now uses a declarative control model inspired by Kubernetes controllers:
 - **Informer**: Docker events update runtime state immediately
 - **Controller**: desired replica count is reconciled against actual engines
+- **VPN Controller**: desired VPN nodes are reconciled against actual dynamic VPN nodes with lease-aware self-healing
 - **Scheduler**: placement and port resources are resolved atomically before create
 - **Provisioner**: executes container create only; lifecycle confirmation is event-driven
 
@@ -123,6 +124,17 @@ The orchestrator now uses a declarative control model inspired by Kubernetes con
 **Supported Modes**:
 - **Single VPN**: One Gluetun container
 - **Redundant VPN**: Two Gluetun containers with automatic failover
+- **Dynamic VPN Management**: Controller-provisioned Gluetun nodes backed by finite credential leases
+
+### Dynamic VPN Controller (when enabled)
+
+**Technology**: Async reconciliation loop
+
+**Responsibilities**:
+- Computes VPN demand declaratively from engine load using preferred density
+- Enforces finite credential capacity (`Desired_VPNs = min(Required_VPNs, Total_Credentials)`)
+- Heals unhealthy dynamic VPN nodes by draining attached engines, releasing lease, and replacing node
+- Preserves static Gluetun behavior when dynamic management is disabled
 
 ### 6. Collector Service
 
@@ -172,7 +184,7 @@ The orchestrator now uses a declarative control model inspired by Kubernetes con
 **Technology**: Atomic scheduler in provisioning pipeline
 
 **Responsibilities**:
-- Selects healthy VPN node (single or redundant mode)
+- Selects healthy VPN node (static single/redundant or dynamic managed nodes)
 - Elects forwarded engine role where required
 - Allocates all ports atomically (with rollback on failure)
 - Produces a fully-resolved `EngineSpec`

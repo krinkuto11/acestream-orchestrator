@@ -17,6 +17,9 @@ class PortAllocator:
         
         # Gluetun-specific port allocation starting from 19000
         self._gluetun_port_base = 19000
+        self._gluetun_min = max(self._gluetun_port_base, self._host_min)
+        self._gluetun_max = self._host_max
+        self._gluetun_next = self._gluetun_min
         self._used_gluetun_ports: set[int] = set()
         
         # VPN-specific port ranges for redundant mode
@@ -236,17 +239,13 @@ class PortAllocator:
                 return port
             
             # Fallback to global allocation (backwards compatibility)
-            # Check if we've reached the maximum number of replicas
-            if len(self._used_gluetun_ports) >= cfg.MAX_REPLICAS:
-                raise RuntimeError(f"Maximum replicas limit reached ({cfg.MAX_REPLICAS})")
-            
-            # Find the next available port starting from 19000
-            for port in range(self._gluetun_port_base, self._gluetun_port_base + cfg.MAX_REPLICAS):
-                if port not in self._used_gluetun_ports:
-                    self._used_gluetun_ports.add(port)
-                    return port
-            
-            raise RuntimeError("No available ports in Gluetun port range")
+            if self._gluetun_min > self._gluetun_max:
+                raise RuntimeError("Invalid Gluetun fallback port range")
+
+            port = self._next_in(self._gluetun_next, self._gluetun_min, self._gluetun_max, self._used_gluetun_ports)
+            self._used_gluetun_ports.add(port)
+            self._gluetun_next = port + 1
+            return port
 
     def reserve_gluetun_port(self, p: int, vpn_container: Optional[str] = None):
         """Reserve a specific Gluetun port."""
@@ -280,6 +279,7 @@ class PortAllocator:
             self._used_http.clear()
             self._used_https.clear()
             self._used_gluetun_ports.clear()
+            self._gluetun_next = self._gluetun_min
             
             # Clear VPN-specific port allocations
             for vpn_name in self._vpn_port_ranges:

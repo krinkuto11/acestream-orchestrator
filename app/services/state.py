@@ -22,6 +22,7 @@ class State:
         self.stream_stats: Dict[str, List[StreamStatSnapshot]] = {}
         self.monitor_sessions: Dict[str, Dict[str, object]] = {}
         self._desired_replica_count = 0
+        self._desired_vpn_node_count = 0
         self._vpn_nodes: Dict[str, Dict[str, object]] = {}
         self._scaling_intents: List[Dict[str, object]] = []
         self._max_scaling_intents = 300
@@ -581,6 +582,8 @@ class State:
                 self._desired_replica_count = cfg.MIN_REPLICAS
             except Exception:
                 self._desired_replica_count = 0
+
+            self._desired_vpn_node_count = 0
         
         # Also clear cumulative metrics tracking
         try:
@@ -694,6 +697,14 @@ class State:
         with self._lock:
             return self._desired_replica_count
 
+    def set_desired_vpn_node_count(self, desired: int):
+        with self._lock:
+            self._desired_vpn_node_count = max(0, int(desired))
+
+    def get_desired_vpn_node_count(self) -> int:
+        with self._lock:
+            return self._desired_vpn_node_count
+
     def emit_scaling_intent(self, intent_type: str, details: Optional[Dict[str, object]] = None) -> Dict[str, object]:
         """Record declarative scaling intents produced by the reconciliation loop."""
         now = self.now()
@@ -765,21 +776,31 @@ class State:
                 "generation": self._target_engine_generation,
             }
 
-    def update_vpn_node_status(self, vpn_container: str, status: str):
+    def update_vpn_node_status(self, vpn_container: str, status: str, metadata: Optional[Dict[str, object]] = None):
         """Track VPN node health/runtime status from Docker events."""
         now = self.now()
         normalized = status.strip().lower()
         healthy = normalized in {"healthy", "running"}
         condition = "ready" if healthy else "notready"
+        metadata = dict(metadata or {})
 
         with self._lock:
+            previous = self._vpn_nodes.get(vpn_container, {})
             self._vpn_nodes[vpn_container] = {
                 "container_name": vpn_container,
                 "status": normalized,
                 "healthy": healthy,
                 "condition": condition,
                 "last_event_at": now,
+                "managed_dynamic": bool(metadata.get("managed_dynamic", previous.get("managed_dynamic", False))),
+                "provider": metadata.get("provider", previous.get("provider")),
+                "protocol": metadata.get("protocol", previous.get("protocol")),
+                "credential_id": metadata.get("credential_id", previous.get("credential_id")),
             }
+
+    def remove_vpn_node(self, vpn_container: str):
+        with self._lock:
+            self._vpn_nodes.pop(vpn_container, None)
 
     def list_vpn_nodes(self) -> List[Dict[str, object]]:
         with self._lock:
@@ -792,6 +813,22 @@ class State:
     def get_ready_vpn_nodes(self) -> List[str]:
         with self._lock:
             return [name for name, node in self._vpn_nodes.items() if str(node.get("condition", "")).lower() == "ready"]
+
+    def list_notready_vpn_nodes(self, dynamic_only: bool = False) -> List[Dict[str, object]]:
+        with self._lock:
+            nodes = [
+                dict(node)
+                for node in self._vpn_nodes.values()
+                if str(node.get("condition", "")).lower() == "notready"
+            ]
+
+        if not dynamic_only:
+            return nodes
+        return [node for node in nodes if bool(node.get("managed_dynamic"))]
+
+    def list_dynamic_vpn_nodes(self) -> List[Dict[str, object]]:
+        with self._lock:
+            return [dict(node) for node in self._vpn_nodes.values() if bool(node.get("managed_dynamic"))]
 
     @staticmethod
     def _safe_int(value: Optional[str], default: Optional[int]) -> Optional[int]:

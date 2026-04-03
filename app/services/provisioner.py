@@ -106,7 +106,7 @@ class ResourceScheduler:
                 self._validate_vpn_health_locked(vpn_container)
 
                 ports_info = alloc.allocate_engine_ports(
-                    use_gluetun=bool(cfg.GLUETUN_CONTAINER_NAME),
+                    use_gluetun=bool(vpn_container or cfg.GLUETUN_CONTAINER_NAME),
                     vpn_container=vpn_container,
                     requested_host_port=req.host_port,
                     user_http_port=user_http_port,
@@ -145,7 +145,7 @@ class ResourceScheduler:
                     labels[HOST_LABEL_HTTPS] = str(ports_info["host_https_port"])
 
                 docker_ports = None
-                if not cfg.GLUETUN_CONTAINER_NAME:
+                if not (vpn_container or cfg.GLUETUN_CONTAINER_NAME):
                     docker_ports = {
                         f"{ports_info['container_http_port']}/tcp": ports_info["host_http_port"],
                         f"{ports_info['container_api_port']}/tcp": ports_info["host_api_port"],
@@ -174,10 +174,35 @@ class ResourceScheduler:
             raise
 
     def _select_vpn_container_locked(self) -> Optional[str]:
+        from .state import state
+        from .settings_persistence import SettingsPersistence
+
+        vpn_settings = SettingsPersistence.load_vpn_config() or {}
+        vpn_enabled = bool(vpn_settings.get("enabled", False))
+        dynamic_vpn_enabled = bool(vpn_enabled and vpn_settings.get("dynamic_vpn_management", False))
+
+        if dynamic_vpn_enabled:
+            dynamic_ready_nodes = [
+                node for node in state.list_vpn_nodes()
+                if bool(node.get("managed_dynamic")) and bool(node.get("healthy"))
+            ]
+            if not dynamic_ready_nodes:
+                raise RuntimeError("No healthy dynamic VPN nodes available - cannot schedule AceStream engine")
+
+            selected = min(
+                dynamic_ready_nodes,
+                key=lambda node: len(state.get_engines_by_vpn(str(node.get("container_name") or "")))
+                + _vpn_pending_engines.get(str(node.get("container_name") or ""), 0),
+            )
+            selected_name = str(selected.get("container_name") or "").strip()
+            if not selected_name:
+                raise RuntimeError("Selected dynamic VPN node has no container name")
+
+            logger.info(f"Scheduling new engine on dynamic VPN '{selected_name}'")
+            return selected_name
+
         if not cfg.GLUETUN_CONTAINER_NAME:
             return None
-
-        from .state import state
 
         if cfg.VPN_MODE != 'redundant' or not cfg.GLUETUN_CONTAINER_NAME_2:
             return cfg.GLUETUN_CONTAINER_NAME
@@ -237,7 +262,7 @@ class ResourceScheduler:
 
     @staticmethod
     def _elect_forwarded_engine_locked(vpn_container: Optional[str]) -> tuple[bool, Optional[int]]:
-        if not cfg.GLUETUN_CONTAINER_NAME:
+        if not vpn_container and not cfg.GLUETUN_CONTAINER_NAME:
             return False, None
 
         from .state import state
@@ -246,7 +271,7 @@ class ResourceScheduler:
         is_forwarded = False
         p2p_port = None
 
-        if cfg.VPN_MODE == 'redundant' and vpn_container:
+        if vpn_container:
             if not state.has_forwarded_engine_for_vpn(vpn_container):
                 p2p_port = get_forwarded_port_sync(vpn_container)
                 is_forwarded = p2p_port is not None
@@ -330,22 +355,16 @@ def start_container(req: StartRequest) -> dict:
         else:
             raise RuntimeError(f"Failed to start container with image '{image_name}': {e}")
     
-    deadline = time.time() + cfg.STARTUP_TIMEOUT_S
-    cont.reload()
-    while cont.status not in ("running",) and time.time() < deadline:
-        time.sleep(0.5); cont.reload()
-    if cont.status != "running":
-        duration = time.time() - start_time
-        logger.error(f"Container {container_name} ({cont.id[:12]}) failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status}, duration: {duration:.2f}s)")
-        cont.remove(force=True)
-        raise RuntimeError(f"Container failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status})")
-    
-    # Get container name - should match what we set
-    cont.reload()
-    actual_container_name = cont.attrs.get("Name", "").lstrip("/")
+    # Do not poll for running status; lifecycle confirmation is informer-driven.
+    attrs_name = str((cont.attrs or {}).get("Name", "")).lstrip("/") if getattr(cont, "attrs", None) else ""
+    raw_name = attrs_name or getattr(cont, "name", "") or ""
+    actual_container_name = str(raw_name).lstrip("/")
     
     duration = time.time() - start_time
-    logger.info(f"Container started successfully: {actual_container_name} ({cont.id[:12]}, duration: {duration:.2f}s)")
+    logger.info(
+        f"Container create submitted: {actual_container_name} ({cont.id[:12]}, duration: {duration:.2f}s). "
+        "Running state will be confirmed via Docker events."
+    )
     
     # Check for slow provisioning (stress indicator)
     if duration > cfg.STARTUP_TIMEOUT_S * 0.5:

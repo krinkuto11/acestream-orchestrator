@@ -23,6 +23,8 @@ class Cfg(BaseModel):
     MIN_REPLICAS: int = int(os.getenv("MIN_REPLICAS", 2))
     MIN_FREE_REPLICAS: int = int(os.getenv("MIN_FREE_REPLICAS", 1))
     MAX_REPLICAS: int = int(os.getenv("MAX_REPLICAS", 6))
+    # Backward compatibility alias retained for legacy tests and scripts.
+    MAX_ACTIVE_REPLICAS: int = int(os.getenv("MAX_ACTIVE_REPLICAS", os.getenv("MAX_REPLICAS", 6)))
     CONTAINER_LABEL: str = os.getenv("CONTAINER_LABEL", "ondemand.app=myservice")
     STARTUP_TIMEOUT_S: int = int(os.getenv("STARTUP_TIMEOUT_S", 25))
     IDLE_TTL_S: int = int(os.getenv("IDLE_TTL_S", 600))

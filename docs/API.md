@@ -39,6 +39,57 @@ Response:
   "container_https_port":45109
 }
 ```
+
+## Settings
+### GET /settings/vpn
+
+Returns persisted VPN configuration including static and dynamic VPN management fields.
+
+### POST /settings/vpn
+
+Updates VPN configuration at runtime and persists it.
+
+Request fields (all optional):
+- `enabled`
+- `vpn_mode` (`single` or `redundant`)
+- `container_name`
+- `container_name_2`
+- `api_port`
+- `port_range_1`
+- `port_range_2`
+- `health_check_interval_s`
+- `port_cache_ttl_s`
+- `restart_engines_on_reconnect`
+- `unhealthy_restart_timeout_s`
+- `dynamic_vpn_management`
+- `providers` (list of provider names, e.g. `protonvpn`, `mullvad`)
+- `protocol` (`wireguard` or `openvpn`)
+- `regions` (list of regions/countries/cities, can be prefixed as `country:`, `city:`, `region:`, `hostname:`)
+- `credentials` (list of JSON objects used for dynamic VPN node provisioning)
+
+Example dynamic request payload:
+
+```json
+{
+  "enabled": true,
+  "dynamic_vpn_management": true,
+  "protocol": "wireguard",
+  "providers": ["protonvpn"],
+  "regions": ["country:Spain", "country:France"],
+  "credentials": [
+    {
+      "provider": "protonvpn",
+      "protocol": "wireguard",
+      "wireguard_private_key": "<base64-private-key-1>"
+    },
+    {
+      "provider": "protonvpn",
+      "protocol": "wireguard",
+      "wireguard_private_key": "<base64-private-key-2>"
+    }
+  ]
+}
+```
 ## Events
 ### POST /events/stream_started
 Body:

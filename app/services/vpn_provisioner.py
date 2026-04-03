@@ -1,0 +1,533 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import uuid
+from contextlib import suppress
+from typing import Any, Dict, List, Optional
+
+from docker.errors import APIError, NotFound
+
+from ..core.config import cfg
+from .docker_client import get_client, get_orchestrator_network
+from .state import state
+from .vpn_credentials import credential_manager
+
+logger = logging.getLogger(__name__)
+
+
+PROVIDER_ALIASES = {
+    "pia": "private internet access",
+    "privateinternetaccess": "private internet access",
+    "private_internet_access": "private internet access",
+}
+
+PORT_FORWARDING_NATIVE_PROVIDERS = {
+    "private internet access",
+    "perfect privacy",
+    "privatevpn",
+    "protonvpn",
+}
+
+REGION_DEFAULTS_BY_PROVIDER = {
+    "private internet access": "SERVER_REGIONS",
+    "giganews": "SERVER_REGIONS",
+    "windscribe": "SERVER_REGIONS",
+    "vyprvpn": "SERVER_REGIONS",
+}
+
+
+class VPNProvisioner:
+    """Provision and lifecycle-manage dynamic Gluetun VPN containers."""
+
+    def __init__(self, default_image: str = "qmcgaw/gluetun"):
+        self._default_image = default_image
+
+    async def provision_node(
+        self,
+        vpn_settings: Dict[str, Any],
+        *,
+        requested_provider: Optional[str] = None,
+        requested_regions: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Lease credentials, translate settings to Gluetun env, and start a VPN node."""
+        settings = dict(vpn_settings or {})
+        container_name = self._generate_container_name()
+
+        lease = await credential_manager.acquire_lease(container_id=container_name)
+        if not lease:
+            raise RuntimeError("No available VPN credential lease; max VPN capacity reached")
+
+        credential = dict(lease.get("credential") or {})
+
+        provider = self._resolve_provider(
+            requested_provider=requested_provider,
+            settings=settings,
+            credential=credential,
+        )
+        protocol = self._resolve_protocol(settings=settings, credential=credential)
+        regions = self._resolve_regions(requested_regions=requested_regions, settings=settings, credential=credential)
+
+        env = self._build_gluetun_env(
+            provider=provider,
+            protocol=protocol,
+            settings=settings,
+            credential=credential,
+            regions=regions,
+        )
+
+        labels = self._build_labels(
+            provider=provider,
+            protocol=protocol,
+            credential_id=str(lease.get("credential_id") or ""),
+        )
+
+        image = str(settings.get("image") or self._default_image)
+        network = cfg.DOCKER_NETWORK or get_orchestrator_network()
+        cap_add, devices, volumes = self._build_runtime_privileges(protocol=protocol, settings=settings, credential=credential)
+
+        try:
+            container = await asyncio.to_thread(
+                self._run_container_sync,
+                image,
+                container_name,
+                env,
+                labels,
+                network,
+                cap_add,
+                devices,
+                volumes,
+            )
+        except Exception:
+            await credential_manager.release_lease(container_name)
+            raise
+
+        state.update_vpn_node_status(container_name, "running")
+
+        return {
+            "container_id": container.id,
+            "container_name": container_name,
+            "provider": provider,
+            "protocol": protocol,
+            "lease": {
+                "credential_id": lease.get("credential_id"),
+                "leased_at": lease.get("leased_at"),
+            },
+            "control_server_url": f"http://{container_name}:{cfg.GLUETUN_API_PORT}",
+            "network": network,
+            "labels": labels,
+            "environment": env,
+        }
+
+    async def destroy_node(self, container_ref: str, *, release_credential: bool = True, force: bool = True) -> Dict[str, Any]:
+        """Stop/remove a dynamic VPN node and release its credential lease."""
+        resolved_name = await asyncio.to_thread(self._resolve_container_name_sync, container_ref)
+
+        removed = await asyncio.to_thread(self._destroy_container_sync, container_ref, force)
+        lease_released = False
+        if release_credential:
+            lease_released = await credential_manager.release_lease(container_ref)
+            if not lease_released and resolved_name:
+                lease_released = await credential_manager.release_lease(resolved_name)
+
+        if resolved_name:
+            state.update_vpn_node_status(resolved_name, "down")
+
+        return {
+            "removed": removed,
+            "lease_released": lease_released,
+            "container_name": resolved_name,
+        }
+
+    async def list_managed_nodes(self, include_stopped: bool = False) -> List[Dict[str, Any]]:
+        """List currently managed dynamic VPN nodes."""
+        return await asyncio.to_thread(self._list_managed_nodes_sync, include_stopped)
+
+    def _generate_container_name(self) -> str:
+        return f"gluetun-dyn-{uuid.uuid4().hex[:8]}"
+
+    def _resolve_provider(
+        self,
+        *,
+        requested_provider: Optional[str],
+        settings: Dict[str, Any],
+        credential: Dict[str, Any],
+    ) -> str:
+        provider = (
+            requested_provider
+            or credential.get("provider")
+            or credential.get("vpn_service_provider")
+            or (settings.get("providers") or [None])[0]
+            or "protonvpn"
+        )
+        normalized = str(provider).strip().lower()
+        return PROVIDER_ALIASES.get(normalized, normalized)
+
+    @staticmethod
+    def _resolve_protocol(*, settings: Dict[str, Any], credential: Dict[str, Any]) -> str:
+        protocol = credential.get("protocol") or credential.get("vpn_type") or settings.get("protocol") or "wireguard"
+        normalized = str(protocol).strip().lower()
+        if normalized not in {"wireguard", "openvpn"}:
+            raise ValueError("VPN protocol must be wireguard or openvpn")
+        return normalized
+
+    @staticmethod
+    def _resolve_regions(
+        *,
+        requested_regions: Optional[List[str]],
+        settings: Dict[str, Any],
+        credential: Dict[str, Any],
+    ) -> List[str]:
+        if requested_regions is not None:
+            source = requested_regions
+        elif isinstance(credential.get("regions"), list):
+            source = credential.get("regions")
+        else:
+            source = settings.get("regions") or []
+        return [str(item).strip() for item in source if str(item).strip()]
+
+    def _build_gluetun_env(
+        self,
+        *,
+        provider: str,
+        protocol: str,
+        settings: Dict[str, Any],
+        credential: Dict[str, Any],
+        regions: List[str],
+    ) -> Dict[str, str]:
+        env: Dict[str, str] = {
+            "VPN_SERVICE_PROVIDER": provider,
+            "VPN_TYPE": protocol,
+            "HTTP_CONTROL_SERVER_ADDRESS": f":{cfg.GLUETUN_API_PORT}",
+        }
+
+        tz = str(settings.get("tz") or os.getenv("TZ") or "UTC").strip()
+        if tz:
+            env["TZ"] = tz
+
+        if settings.get("disable_dot") is True:
+            env["DOT"] = "off"
+
+        self._apply_credential_env(env=env, protocol=protocol, credential=credential)
+        self._apply_region_env(env=env, provider=provider, regions=regions, credential=credential)
+        self._apply_port_forwarding_env(env=env, provider=provider, settings=settings, credential=credential)
+        self._apply_optional_credential_env(env=env, protocol=protocol, credential=credential)
+
+        for key, value in (settings.get("extra_env") or {}).items():
+            key_s = str(key).strip()
+            if not key_s:
+                continue
+            env[key_s] = str(value)
+
+        for key, value in (credential.get("extra_env") or {}).items():
+            key_s = str(key).strip()
+            if not key_s:
+                continue
+            env[key_s] = str(value)
+
+        return env
+
+    @staticmethod
+    def _apply_credential_env(*, env: Dict[str, str], protocol: str, credential: Dict[str, Any]):
+        if protocol == "wireguard":
+            private_key = (
+                credential.get("wireguard_private_key")
+                or credential.get("private_key")
+                or credential.get("wg_private_key")
+            )
+            if not private_key:
+                raise ValueError("wireguard credential is missing private_key/WIREGUARD_PRIVATE_KEY")
+            env["WIREGUARD_PRIVATE_KEY"] = str(private_key)
+
+            addresses = credential.get("wireguard_addresses") or credential.get("addresses")
+            if addresses:
+                env["WIREGUARD_ADDRESSES"] = str(addresses)
+        else:
+            username = credential.get("openvpn_user") or credential.get("username") or credential.get("user")
+            password = credential.get("openvpn_password") or credential.get("password") or credential.get("pass")
+            if not username or not password:
+                raise ValueError("openvpn credential is missing username/password")
+            env["OPENVPN_USER"] = str(username)
+            env["OPENVPN_PASSWORD"] = str(password)
+
+    def _apply_region_env(
+        self,
+        *,
+        env: Dict[str, str],
+        provider: str,
+        regions: List[str],
+        credential: Dict[str, Any],
+    ):
+        countries: List[str] = []
+        cities: List[str] = []
+        server_regions: List[str] = []
+        hostnames: List[str] = []
+
+        countries.extend(self._normalize_list(credential.get("server_countries")))
+        cities.extend(self._normalize_list(credential.get("server_cities")))
+        server_regions.extend(self._normalize_list(credential.get("server_regions")))
+        hostnames.extend(self._normalize_list(credential.get("server_hostnames")))
+
+        raw_regions = list(regions or [])
+        unqualified: List[str] = []
+
+        for region in raw_regions:
+            if ":" not in region:
+                unqualified.append(region)
+                continue
+            prefix, value = region.split(":", 1)
+            value = value.strip()
+            if not value:
+                continue
+
+            tag = prefix.strip().lower()
+            if tag in {"country", "countries"}:
+                countries.append(value)
+            elif tag in {"city", "cities"}:
+                cities.append(value)
+            elif tag in {"region", "regions"}:
+                server_regions.append(value)
+            elif tag in {"hostname", "hostnames", "server"}:
+                hostnames.append(value)
+            else:
+                unqualified.append(region)
+
+        if unqualified:
+            preferred_key = REGION_DEFAULTS_BY_PROVIDER.get(provider, "SERVER_COUNTRIES")
+            if preferred_key == "SERVER_REGIONS":
+                server_regions.extend(unqualified)
+            else:
+                countries.extend(unqualified)
+
+        if countries:
+            env["SERVER_COUNTRIES"] = ",".join(dict.fromkeys(countries))
+        if cities:
+            env["SERVER_CITIES"] = ",".join(dict.fromkeys(cities))
+        if server_regions:
+            env["SERVER_REGIONS"] = ",".join(dict.fromkeys(server_regions))
+        if hostnames:
+            env["SERVER_HOSTNAMES"] = ",".join(dict.fromkeys(hostnames))
+
+    def _apply_port_forwarding_env(
+        self,
+        *,
+        env: Dict[str, str],
+        provider: str,
+        settings: Dict[str, Any],
+        credential: Dict[str, Any],
+    ):
+        enabled = self._coerce_bool(
+            credential.get("vpn_port_forwarding")
+            if credential.get("vpn_port_forwarding") is not None
+            else settings.get("vpn_port_forwarding")
+        )
+
+        p2p_enabled = self._coerce_bool(
+            credential.get("p2p_forwarding_enabled")
+            if credential.get("p2p_forwarding_enabled") is not None
+            else settings.get("p2p_forwarding_enabled")
+        )
+
+        should_enable = bool(enabled or p2p_enabled)
+        if not should_enable:
+            return
+
+        env["VPN_PORT_FORWARDING"] = "on"
+
+        if provider in PORT_FORWARDING_NATIVE_PROVIDERS:
+            env.setdefault("VPN_PORT_FORWARDING_PROVIDER", provider)
+
+        custom_pf_provider = credential.get("vpn_port_forwarding_provider") or settings.get("vpn_port_forwarding_provider")
+        if custom_pf_provider:
+            env["VPN_PORT_FORWARDING_PROVIDER"] = str(custom_pf_provider).strip().lower()
+
+        if provider == "private internet access":
+            username = credential.get("vpn_port_forwarding_username") or credential.get("openvpn_user") or credential.get("username")
+            password = credential.get("vpn_port_forwarding_password") or credential.get("openvpn_password") or credential.get("password")
+            if username:
+                env["VPN_PORT_FORWARDING_USERNAME"] = str(username)
+            if password:
+                env["VPN_PORT_FORWARDING_PASSWORD"] = str(password)
+            env.setdefault("PORT_FORWARD_ONLY", "true")
+
+        if provider == "protonvpn":
+            env.setdefault("PORT_FORWARD_ONLY", "on")
+
+    @staticmethod
+    def _apply_optional_credential_env(*, env: Dict[str, str], protocol: str, credential: Dict[str, Any]):
+        if protocol == "wireguard":
+            optional_map = {
+                "wireguard_public_key": "WIREGUARD_PUBLIC_KEY",
+                "wireguard_preshared_key": "WIREGUARD_PRESHARED_KEY",
+                "wireguard_endpoint_ip": "WIREGUARD_ENDPOINT_IP",
+                "endpoint_ip": "WIREGUARD_ENDPOINT_IP",
+                "wireguard_endpoint_port": "WIREGUARD_ENDPOINT_PORT",
+                "endpoint_port": "WIREGUARD_ENDPOINT_PORT",
+                "wireguard_allowed_ips": "WIREGUARD_ALLOWED_IPS",
+                "wireguard_implementation": "WIREGUARD_IMPLEMENTATION",
+                "wireguard_mtu": "WIREGUARD_MTU",
+                "wireguard_persistent_keepalive_interval": "WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL",
+            }
+        else:
+            optional_map = {
+                "openvpn_protocol": "OPENVPN_PROTOCOL",
+                "openvpn_endpoint_ip": "OPENVPN_ENDPOINT_IP",
+                "endpoint_ip": "OPENVPN_ENDPOINT_IP",
+                "openvpn_endpoint_port": "OPENVPN_ENDPOINT_PORT",
+                "endpoint_port": "OPENVPN_ENDPOINT_PORT",
+                "openvpn_version": "OPENVPN_VERSION",
+                "openvpn_ciphers": "OPENVPN_CIPHERS",
+                "openvpn_auth": "OPENVPN_AUTH",
+            }
+
+        for source_key, env_key in optional_map.items():
+            value = credential.get(source_key)
+            if value is None or str(value).strip() == "":
+                continue
+            env[env_key] = str(value)
+
+    @staticmethod
+    def _build_labels(*, provider: str, protocol: str, credential_id: str) -> Dict[str, str]:
+        labels = {
+            "acestream-orchestrator.managed": "true",
+            "role": "vpn_node",
+            "acestream.vpn.provider": provider,
+            "acestream.vpn.protocol": protocol,
+        }
+        if credential_id:
+            labels["acestream.vpn.credential_id"] = credential_id
+        return labels
+
+    @staticmethod
+    def _build_runtime_privileges(
+        *,
+        protocol: str,
+        settings: Dict[str, Any],
+        credential: Dict[str, Any],
+    ) -> tuple[List[str], List[str], Dict[str, Dict[str, str]]]:
+        cap_add = ["NET_ADMIN"]
+        devices = ["/dev/net/tun:/dev/net/tun"]
+        volumes: Dict[str, Dict[str, str]] = {}
+
+        require_wireguard_module = False
+        if protocol == "wireguard":
+            require_wireguard_module = bool(
+                VPNProvisioner._coerce_bool(settings.get("wireguard_kernel_module"))
+                or VPNProvisioner._coerce_bool(credential.get("wireguard_kernel_module"))
+            )
+
+        if require_wireguard_module:
+            cap_add.append("SYS_MODULE")
+            volumes["/lib/modules"] = {"bind": "/lib/modules", "mode": "ro"}
+
+        return cap_add, devices, volumes
+
+    @staticmethod
+    def _run_container_sync(
+        image: str,
+        container_name: str,
+        env: Dict[str, str],
+        labels: Dict[str, str],
+        network: Optional[str],
+        cap_add: List[str],
+        devices: List[str],
+        volumes: Dict[str, Dict[str, str]],
+    ):
+        cli = get_client(timeout=30)
+        try:
+            kwargs: Dict[str, Any] = {
+                "image": image,
+                "detach": True,
+                "name": container_name,
+                "environment": env,
+                "labels": labels,
+                "cap_add": cap_add,
+                "devices": devices,
+                "restart_policy": {"Name": "unless-stopped"},
+            }
+            if network:
+                kwargs["network"] = network
+            if volumes:
+                kwargs["volumes"] = volumes
+
+            return cli.containers.run(**kwargs)
+        finally:
+            with suppress(Exception):
+                cli.close()
+
+    @staticmethod
+    def _resolve_container_name_sync(container_ref: str) -> Optional[str]:
+        cli = get_client(timeout=30)
+        try:
+            container = cli.containers.get(container_ref)
+            return str(container.name or "").strip() or None
+        except Exception:
+            return None
+        finally:
+            with suppress(Exception):
+                cli.close()
+
+    @staticmethod
+    def _destroy_container_sync(container_ref: str, force: bool) -> bool:
+        cli = get_client(timeout=30)
+        try:
+            container = cli.containers.get(container_ref)
+            container.remove(force=force)
+            return True
+        except NotFound:
+            return False
+        except APIError as e:
+            logger.error("Failed to remove VPN container %s: %s", container_ref, e)
+            raise
+        finally:
+            with suppress(Exception):
+                cli.close()
+
+    @staticmethod
+    def _list_managed_nodes_sync(include_stopped: bool) -> List[Dict[str, Any]]:
+        cli = get_client(timeout=30)
+        try:
+            containers = cli.containers.list(
+                all=include_stopped,
+                filters={"label": ["acestream-orchestrator.managed=true", "role=vpn_node"]},
+            )
+
+            nodes: List[Dict[str, Any]] = []
+            for container in containers:
+                labels = container.labels or {}
+                nodes.append(
+                    {
+                        "container_id": container.id,
+                        "container_name": container.name,
+                        "status": container.status,
+                        "provider": labels.get("acestream.vpn.provider"),
+                        "protocol": labels.get("acestream.vpn.protocol"),
+                        "credential_id": labels.get("acestream.vpn.credential_id"),
+                    }
+                )
+            return nodes
+        finally:
+            with suppress(Exception):
+                cli.close()
+
+    @staticmethod
+    def _normalize_list(value: Any) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+vpn_provisioner = VPNProvisioner()

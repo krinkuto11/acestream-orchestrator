@@ -1,0 +1,135 @@
+import asyncio
+from unittest.mock import AsyncMock, patch
+
+from app.services.provisioner import AceProvisionRequest, ResourceScheduler, _vpn_pending_engines
+from app.services.state import state
+from app.services.vpn_controller import VPNController
+
+
+def test_scheduler_prefers_least_loaded_dynamic_vpn_node():
+    state.set_target_engine_config("dynamic-test-hash")
+    scheduler = ResourceScheduler()
+    _vpn_pending_engines.clear()
+
+    with patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME", None), \
+         patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME_2", None), \
+         patch("app.services.provisioner.cfg.VPN_MODE", "single"), \
+         patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
+         patch("app.services.provisioner.cfg.ACE_MAP_HTTPS", True), \
+         patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={"enabled": True, "dynamic_vpn_management": True}), \
+         patch("app.services.state.state.list_vpn_nodes", return_value=[
+             {"container_name": "gluetun-dyn-a", "healthy": True, "managed_dynamic": True},
+             {"container_name": "gluetun-dyn-b", "healthy": True, "managed_dynamic": True},
+         ]), \
+         patch("app.services.state.state.get_engines_by_vpn", side_effect=lambda vpn: [object(), object()] if vpn == "gluetun-dyn-a" else []), \
+         patch("app.services.gluetun.gluetun_monitor.is_healthy", return_value=True), \
+         patch("app.services.provisioner.alloc.allocate_engine_ports", return_value={
+             "host_http_port": 30001,
+             "container_http_port": 6878,
+             "container_https_port": 6879,
+             "host_api_port": 30002,
+             "container_api_port": 62062,
+             "host_https_port": 30003,
+         }), \
+         patch.object(ResourceScheduler, "_elect_forwarded_engine_locked", return_value=(False, None)):
+        spec = scheduler.schedule(AceProvisionRequest(labels={}, env={}), engine_variant_name="AceServe-amd64")
+
+    assert spec.vpn_container == "gluetun-dyn-b"
+    assert spec.ports is None
+    assert spec.network_config["network_mode"] == "container:gluetun-dyn-b"
+
+
+def test_vpn_controller_caps_desired_vpns_by_credentials():
+    controller = VPNController()
+
+    with patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={
+        "enabled": True,
+        "dynamic_vpn_management": True,
+        "preferred_engines_per_vpn": 2,
+    }), \
+         patch("app.services.vpn_controller.credential_manager.summary", new=AsyncMock(return_value={"total_credentials": 2})), \
+         patch("app.services.vpn_controller.vpn_provisioner.list_managed_nodes", new=AsyncMock(side_effect=[[], []])), \
+         patch("app.services.state.state.list_engines", return_value=[object(), object(), object(), object(), object()]), \
+         patch.object(controller, "_sync_dynamic_nodes_to_state"), \
+         patch.object(controller, "_heal_notready_nodes", new=AsyncMock()), \
+         patch.object(controller, "_scale_down_idle_nodes", new=AsyncMock()), \
+         patch.object(controller, "_provision_one", new=AsyncMock()) as provision_mock:
+        asyncio.run(controller._reconcile_once())
+
+    assert state.get_desired_vpn_node_count() == 2
+    assert provision_mock.await_count == 2
+
+
+def test_vpn_controller_heals_before_provisioning_replacement():
+    controller = VPNController()
+    call_order = []
+
+    async def _record_heal():
+        call_order.append("heal")
+
+    async def _record_provision(_settings):
+        call_order.append("provision")
+
+    with patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={
+        "enabled": True,
+        "dynamic_vpn_management": True,
+        "preferred_engines_per_vpn": 1,
+    }), \
+         patch("app.services.vpn_controller.credential_manager.summary", new=AsyncMock(return_value={"total_credentials": 1})), \
+         patch("app.services.vpn_controller.vpn_provisioner.list_managed_nodes", new=AsyncMock(side_effect=[[], []])), \
+         patch("app.services.state.state.list_engines", return_value=[object()]), \
+         patch.object(controller, "_sync_dynamic_nodes_to_state"), \
+         patch.object(controller, "_heal_notready_nodes", side_effect=_record_heal), \
+         patch.object(controller, "_scale_down_idle_nodes", new=AsyncMock()), \
+         patch.object(controller, "_provision_one", side_effect=_record_provision):
+        asyncio.run(controller._reconcile_once())
+
+    assert call_order == ["heal", "provision"]
+
+
+def test_scheduler_no_vpn_mode_ignores_dynamic_config_when_disabled():
+    state.set_target_engine_config("dynamic-test-hash-no-vpn")
+    scheduler = ResourceScheduler()
+    _vpn_pending_engines.clear()
+
+    with patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME", None), \
+         patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME_2", None), \
+         patch("app.services.provisioner.cfg.VPN_MODE", "single"), \
+         patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
+         patch("app.services.provisioner.cfg.ACE_MAP_HTTPS", True), \
+         patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={
+             "enabled": False,
+             "dynamic_vpn_management": True,
+         }), \
+         patch("app.services.provisioner.alloc.allocate_engine_ports", return_value={
+             "host_http_port": 30011,
+             "container_http_port": 6878,
+             "container_https_port": 6879,
+             "host_api_port": 30012,
+             "container_api_port": 62062,
+             "host_https_port": 30013,
+         }), \
+         patch.object(ResourceScheduler, "_elect_forwarded_engine_locked", return_value=(False, None)):
+        spec = scheduler.schedule(AceProvisionRequest(labels={}, env={}), engine_variant_name="AceServe-amd64")
+
+    assert spec.vpn_container is None
+    assert spec.ports is not None
+    assert "network" in spec.network_config
+
+
+def test_vpn_controller_skips_when_vpn_disabled_even_if_dynamic_flag_set():
+    controller = VPNController()
+
+    with patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={
+        "enabled": False,
+        "dynamic_vpn_management": True,
+    }), \
+         patch("app.services.vpn_controller.vpn_provisioner.list_managed_nodes", new=AsyncMock()) as list_nodes_mock, \
+         patch.object(controller, "_heal_notready_nodes", new=AsyncMock()) as heal_mock, \
+         patch.object(controller, "_provision_one", new=AsyncMock()) as provision_mock:
+        asyncio.run(controller._reconcile_once())
+
+    assert state.get_desired_vpn_node_count() == 0
+    assert list_nodes_mock.await_count == 0
+    assert heal_mock.await_count == 0
+    assert provision_mock.await_count == 0

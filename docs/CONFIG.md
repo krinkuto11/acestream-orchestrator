@@ -42,6 +42,21 @@ The AceStream Orchestrator uses a UI-driven configuration system. All settings a
 - **Unhealthy Restart Timeout (s)**: Force-restart VPN container after this period of unhealthiness. Default: 60s.
 - **Restart Engines on VPN Reconnect**: Refresh engine routes when VPN reconnects. Default: `true`.
 
+### Dynamic VPN Management
+- **Dynamic VPN Management**: Enables controller-managed Gluetun nodes provisioned at runtime from credential pool.
+- **Providers**: Preferred VPN providers for dynamic provisioning.
+- **Protocol**: `wireguard` or `openvpn`.
+- **Regions**: Placement filters (countries/cities/regions/hostnames).
+- **Credentials**: Finite credential pool used for lease-based VPN node provisioning.
+- **Preferred Engines per VPN**: Density target used by the controller to compute desired VPN count.
+
+When dynamic VPN management is enabled, desired VPN nodes are computed as:
+
+- `Required_VPNs = ceil(Total_Engines / Preferred_Engines_Per_VPN)`
+- `Desired_VPNs = min(Required_VPNs, Total_Credentials)`
+
+If engine demand exceeds credential capacity, engine density per VPN increases automatically (dynamic density behavior).
+
 ---
 
 ## Proxy Settings

@@ -23,6 +23,25 @@ VPN_CONFIG_FILE = CONFIG_DIR / "vpn_settings.json"
 
 class SettingsPersistence:
     """Handles persistence of runtime settings to JSON files."""
+
+    @staticmethod
+    def normalize_vpn_config(config: Dict[str, Any]) -> Dict[str, Any]:
+        """Backfill missing VPN settings keys for schema evolution compatibility."""
+        normalized = dict(config or {})
+        normalized.setdefault("dynamic_vpn_management", False)
+        normalized.setdefault("providers", [])
+        normalized.setdefault("protocol", "")
+        normalized.setdefault("regions", [])
+        normalized.setdefault("credentials", [])
+
+        if not isinstance(normalized.get("providers"), list):
+            normalized["providers"] = []
+        if not isinstance(normalized.get("regions"), list):
+            normalized["regions"] = []
+        if not isinstance(normalized.get("credentials"), list):
+            normalized["credentials"] = []
+
+        return normalized
     
     @staticmethod
     def ensure_config_dir():
@@ -222,9 +241,10 @@ class SettingsPersistence:
         """
         try:
             SettingsPersistence.ensure_config_dir()
+            normalized = SettingsPersistence.normalize_vpn_config(config)
 
             with open(VPN_CONFIG_FILE, 'w') as f:
-                json.dump(config, f, indent=2)
+                json.dump(normalized, f, indent=2)
 
             logger.debug(f"VPN configuration saved to {VPN_CONFIG_FILE}")
             return True
@@ -247,6 +267,8 @@ class SettingsPersistence:
 
             with open(VPN_CONFIG_FILE, 'r') as f:
                 config = json.load(f)
+
+            config = SettingsPersistence.normalize_vpn_config(config)
 
             logger.debug(f"VPN configuration loaded from {VPN_CONFIG_FILE}")
             return config

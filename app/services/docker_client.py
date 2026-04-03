@@ -166,7 +166,17 @@ class DockerEventWatcher:
         return attrs.get(label_key) == label_value
 
     @staticmethod
-    def _match_vpn_name(container_name: Optional[str]) -> Optional[str]:
+    def _is_managed_vpn_node(attrs: dict) -> bool:
+        return (
+            attrs.get("acestream-orchestrator.managed") == "true"
+            and attrs.get("role") == "vpn_node"
+        )
+
+    @classmethod
+    def _match_vpn_name(cls, container_name: Optional[str], attrs: dict) -> Optional[str]:
+        if container_name and cls._is_managed_vpn_node(attrs):
+            return container_name
+
         if not container_name:
             return None
 
@@ -183,17 +193,23 @@ class DockerEventWatcher:
     def _apply_state_update(self, container_id: str, container_name: Optional[str], action: str, attrs: dict):
         from .state import state
 
-        vpn_name = self._match_vpn_name(container_name)
+        vpn_name = self._match_vpn_name(container_name, attrs)
         if vpn_name:
+            vpn_metadata = {
+                "managed_dynamic": self._is_managed_vpn_node(attrs),
+                "provider": attrs.get("acestream.vpn.provider"),
+                "protocol": attrs.get("acestream.vpn.protocol"),
+                "credential_id": attrs.get("acestream.vpn.credential_id"),
+            }
             if action in ("die", "destroy"):
-                state.update_vpn_node_status(vpn_name, "down")
+                state.update_vpn_node_status(vpn_name, "down", metadata=vpn_metadata)
                 self._emit_vpn_evictions(vpn_name, reason="node_down")
             elif action == "start":
-                state.update_vpn_node_status(vpn_name, "running")
+                state.update_vpn_node_status(vpn_name, "running", metadata=vpn_metadata)
             elif action == "health_status: healthy":
-                state.update_vpn_node_status(vpn_name, "healthy")
+                state.update_vpn_node_status(vpn_name, "healthy", metadata=vpn_metadata)
             elif action == "health_status: unhealthy":
-                state.update_vpn_node_status(vpn_name, "unhealthy")
+                state.update_vpn_node_status(vpn_name, "unhealthy", metadata=vpn_metadata)
                 self._emit_vpn_evictions(vpn_name, reason="node_unhealthy")
 
         if not self._is_managed_engine(attrs):
