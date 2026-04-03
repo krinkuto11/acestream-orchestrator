@@ -68,6 +68,7 @@ class VPNProvisioner:
         )
         protocol = self._resolve_protocol(settings=settings, credential=credential)
         regions = self._resolve_regions(requested_regions=requested_regions, settings=settings, credential=credential)
+        port_forwarding_supported = self.provider_supports_port_forwarding(provider)
 
         env = self._build_gluetun_env(
             provider=provider,
@@ -75,12 +76,14 @@ class VPNProvisioner:
             settings=settings,
             credential=credential,
             regions=regions,
+            port_forwarding_supported=port_forwarding_supported,
         )
 
         labels = self._build_labels(
             provider=provider,
             protocol=protocol,
             credential_id=str(lease.get("credential_id") or ""),
+            port_forwarding_supported=port_forwarding_supported,
         )
 
         image = str(settings.get("image") or self._default_image)
@@ -103,7 +106,17 @@ class VPNProvisioner:
             await credential_manager.release_lease(container_name)
             raise
 
-        state.update_vpn_node_status(container_name, "running")
+        state.update_vpn_node_status(
+            container_name,
+            "running",
+            metadata={
+                "managed_dynamic": True,
+                "provider": provider,
+                "protocol": protocol,
+                "credential_id": lease.get("credential_id"),
+                "port_forwarding_supported": port_forwarding_supported,
+            },
+        )
 
         return {
             "container_id": container.id,
@@ -118,6 +131,7 @@ class VPNProvisioner:
             "network": network,
             "labels": labels,
             "environment": env,
+            "port_forwarding_supported": port_forwarding_supported,
         }
 
     async def destroy_node(self, container_ref: str, *, release_credential: bool = True, force: bool = True) -> Dict[str, Any]:
@@ -146,6 +160,11 @@ class VPNProvisioner:
 
     def _generate_container_name(self) -> str:
         return f"gluetun-dyn-{uuid.uuid4().hex[:8]}"
+
+    @staticmethod
+    def provider_supports_port_forwarding(provider: Optional[str]) -> bool:
+        normalized = str(provider or "").strip().lower()
+        return normalized in PORT_FORWARDING_NATIVE_PROVIDERS
 
     def _resolve_provider(
         self,
@@ -195,6 +214,7 @@ class VPNProvisioner:
         settings: Dict[str, Any],
         credential: Dict[str, Any],
         regions: List[str],
+        port_forwarding_supported: bool,
     ) -> Dict[str, str]:
         env: Dict[str, str] = {
             "VPN_SERVICE_PROVIDER": provider,
@@ -211,7 +231,13 @@ class VPNProvisioner:
 
         self._apply_credential_env(env=env, protocol=protocol, credential=credential)
         self._apply_region_env(env=env, provider=provider, regions=regions, credential=credential)
-        self._apply_port_forwarding_env(env=env, provider=provider, settings=settings, credential=credential)
+        self._apply_port_forwarding_env(
+            env=env,
+            provider=provider,
+            settings=settings,
+            credential=credential,
+            port_forwarding_supported=port_forwarding_supported,
+        )
         self._apply_optional_credential_env(env=env, protocol=protocol, credential=credential)
 
         for key, value in (settings.get("extra_env") or {}).items():
@@ -316,6 +342,7 @@ class VPNProvisioner:
         provider: str,
         settings: Dict[str, Any],
         credential: Dict[str, Any],
+        port_forwarding_supported: bool,
     ):
         enabled = self._coerce_bool(
             credential.get("vpn_port_forwarding")
@@ -329,14 +356,27 @@ class VPNProvisioner:
             else settings.get("p2p_forwarding_enabled")
         )
 
-        should_enable = bool(enabled or p2p_enabled)
+        explicit_pref = credential.get("vpn_port_forwarding")
+        if explicit_pref is None:
+            explicit_pref = settings.get("vpn_port_forwarding")
+
+        if explicit_pref is not None:
+            requested = self._coerce_bool(explicit_pref)
+        else:
+            requested = bool(enabled or p2p_enabled or port_forwarding_supported)
+
+        should_enable = bool(requested and port_forwarding_supported)
+        env["VPN_PORT_FORWARDING"] = "on" if should_enable else "off"
+
         if not should_enable:
+            if requested and not port_forwarding_supported:
+                logger.info(
+                    "Port forwarding disabled for provider '%s' because native support is unavailable",
+                    provider,
+                )
             return
 
-        env["VPN_PORT_FORWARDING"] = "on"
-
-        if provider in PORT_FORWARDING_NATIVE_PROVIDERS:
-            env.setdefault("VPN_PORT_FORWARDING_PROVIDER", provider)
+        env.setdefault("VPN_PORT_FORWARDING_PROVIDER", provider)
 
         custom_pf_provider = credential.get("vpn_port_forwarding_provider") or settings.get("vpn_port_forwarding_provider")
         if custom_pf_provider:
@@ -388,12 +428,19 @@ class VPNProvisioner:
             env[env_key] = str(value)
 
     @staticmethod
-    def _build_labels(*, provider: str, protocol: str, credential_id: str) -> Dict[str, str]:
+    def _build_labels(
+        *,
+        provider: str,
+        protocol: str,
+        credential_id: str,
+        port_forwarding_supported: bool,
+    ) -> Dict[str, str]:
         labels = {
             "acestream-orchestrator.managed": "true",
             "role": "vpn_node",
             "acestream.vpn.provider": provider,
             "acestream.vpn.protocol": protocol,
+            "acestream.vpn.port_forwarding_supported": "true" if port_forwarding_supported else "false",
         }
         if credential_id:
             labels["acestream.vpn.credential_id"] = credential_id
@@ -504,6 +551,9 @@ class VPNProvisioner:
                         "provider": labels.get("acestream.vpn.provider"),
                         "protocol": labels.get("acestream.vpn.protocol"),
                         "credential_id": labels.get("acestream.vpn.credential_id"),
+                        "port_forwarding_supported": str(
+                            labels.get("acestream.vpn.port_forwarding_supported", "false")
+                        ).strip().lower() == "true",
                     }
                 )
             return nodes

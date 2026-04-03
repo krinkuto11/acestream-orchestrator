@@ -57,6 +57,11 @@ class CredentialManager:
             normalized[cred_id] = credential
         return normalized
 
+    def normalize_credentials_for_storage(self, credentials: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        """Normalize submitted credential payloads and ensure each item has a deterministic id."""
+        normalized = self._normalize_credentials(credentials)
+        return [dict(item) for item in normalized.values()]
+
     async def configure(
         self,
         *,
@@ -215,6 +220,14 @@ class CredentialManager:
     def _snapshot_locked(self) -> Dict[str, Any]:
         total_credentials = len(self._credentials_by_id)
         leased_count = len(self._leases_by_container)
+        leases = [
+            {
+                "container_id": container_id,
+                "credential_id": credential_id,
+                "leased_at": self._lease_timestamps.get(container_id),
+            }
+            for container_id, credential_id in sorted(self._leases_by_container.items())
+        ]
         return {
             "dynamic_vpn_management": self._dynamic_vpn_management,
             "providers": list(self._providers),
@@ -225,6 +238,7 @@ class CredentialManager:
             "leased": leased_count,
             "available": max(total_credentials - leased_count, 0),
             "leased_container_ids": sorted(self._leases_by_container.keys()),
+            "leases": leases,
         }
 
 

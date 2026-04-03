@@ -69,6 +69,7 @@ from .services.legacy_stream_monitoring import legacy_stream_monitoring_service
 from .services.hls_segmenter import hls_segmenter_service
 from .services.docker_client import get_client, docker_event_watcher
 from .services.vpn_credentials import credential_manager
+from .utils.wireguard_parser import parse_wireguard_conf
 from .proxy.manager import ProxyManager
 from .proxy.ace_api_client import AceLegacyApiClient, AceLegacyApiError
 from .proxy.constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mode
@@ -76,6 +77,10 @@ from .proxy.constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mo
 logger = logging.getLogger(__name__)
 
 setup()
+
+
+class WireguardParseRequest(BaseModel):
+    file_content: str
 
 
 def _trigger_engine_generation_rollout(reason: str) -> Dict[str, Any]:
@@ -1643,6 +1648,28 @@ async def get_vpn_status_endpoint():
     cache.set(cache_key, vpn_status, ttl=0.5)
     
     return vpn_status
+
+
+@app.post("/vpn/parse-wireguard")
+def parse_wireguard_config(payload: WireguardParseRequest):
+    """Parse Wireguard .conf text and return key fields used by VPN credential forms."""
+    parsed = parse_wireguard_conf(payload.file_content)
+    if not parsed.get("is_valid"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_wireguard_conf",
+                "message": "Unable to parse required Wireguard fields (PrivateKey, Address, Endpoint)",
+                "parsed": parsed,
+            },
+        )
+    return parsed
+
+
+@app.get("/vpn/leases")
+async def get_vpn_credential_leases():
+    """Return VPN credential pool lease status used by the settings dashboard."""
+    return await credential_manager.summary()
 
 @app.get("/vpn/publicip")
 def get_vpn_publicip_endpoint():
@@ -4828,7 +4855,7 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
     if settings.credentials is not None:
         if not all(isinstance(credential, dict) for credential in settings.credentials):
             raise HTTPException(status_code=400, detail="credentials must be a list of JSON objects")
-        current["credentials"] = settings.credentials
+        current["credentials"] = credential_manager.normalize_credentials_for_storage(settings.credentials)
 
     # Apply enabled flag: clear container name if VPN is disabled
     if not current.get("enabled"):

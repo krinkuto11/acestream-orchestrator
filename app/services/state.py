@@ -816,6 +816,10 @@ class State:
                 "protocol": metadata.get("protocol", previous.get("protocol")),
                 "credential_id": metadata.get("credential_id", previous.get("credential_id")),
                 "forwarded_port": metadata.get("forwarded_port", previous.get("forwarded_port")),
+                "port_forwarding_supported": metadata.get(
+                    "port_forwarding_supported",
+                    previous.get("port_forwarding_supported", False),
+                ),
             }
 
     def remove_vpn_node(self, vpn_container: str):

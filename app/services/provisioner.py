@@ -41,6 +41,13 @@ ENGINE_VARIANT_LABEL = "acestream.engine_variant"
 ENGINE_CONFIG_HASH_LABEL = "acestream.config_hash"
 ENGINE_CONFIG_GENERATION_LABEL = "acestream.config_generation"
 
+PORT_FORWARDING_NATIVE_PROVIDERS = {
+    "private internet access",
+    "perfect privacy",
+    "privatevpn",
+    "protonvpn",
+}
+
 class StartRequest(BaseModel):
     image: str | None = None
     env: dict = {}
@@ -98,7 +105,8 @@ class ResourceScheduler:
 
         try:
             with self._lock:
-                vpn_container = self._select_vpn_container_locked()
+                require_forwarding_capable = self._should_prefer_forwarding_capable_node_locked()
+                vpn_container = self._select_vpn_container_locked(require_forwarding_capable=require_forwarding_capable)
                 if cfg.VPN_MODE == 'redundant' and vpn_container:
                     _vpn_pending_engines[vpn_container] = _vpn_pending_engines.get(vpn_container, 0) + 1
                     pending_incremented = True
@@ -173,7 +181,7 @@ class ResourceScheduler:
                 _decrement_vpn_pending_counter(vpn_container)
             raise
 
-    def _select_vpn_container_locked(self) -> Optional[str]:
+    def _select_vpn_container_locked(self, *, require_forwarding_capable: bool = False) -> Optional[str]:
         from .state import state
         from .settings_persistence import SettingsPersistence
 
@@ -184,13 +192,25 @@ class ResourceScheduler:
         if dynamic_vpn_enabled:
             dynamic_ready_nodes = [
                 node for node in state.list_vpn_nodes()
-                if bool(node.get("managed_dynamic")) and bool(node.get("healthy"))
+                if bool(node.get("managed_dynamic")) and self._is_dynamic_node_ready(node)
             ]
             if not dynamic_ready_nodes:
                 raise RuntimeError("No healthy dynamic VPN nodes available - cannot schedule AceStream engine")
 
+            candidate_nodes = dynamic_ready_nodes
+            if require_forwarding_capable:
+                forwarding_capable_nodes = [
+                    node for node in dynamic_ready_nodes if self._node_supports_port_forwarding(node)
+                ]
+                if forwarding_capable_nodes:
+                    candidate_nodes = forwarding_capable_nodes
+                else:
+                    logger.info(
+                        "No forwarding-capable dynamic VPN nodes are ready; scheduling fallback without forwarding"
+                    )
+
             selected = min(
-                dynamic_ready_nodes,
+                candidate_nodes,
                 key=lambda node: len(state.get_engines_by_vpn(str(node.get("container_name") or "")))
                 + _vpn_pending_engines.get(str(node.get("container_name") or ""), 0),
             )
@@ -228,6 +248,56 @@ class ResourceScheduler:
 
         logger.info(f"Scheduling new engine on VPN '{selected}' (VPN1: {vpn1_engines} engines, VPN2: {vpn2_engines} engines)")
         return selected
+
+    @staticmethod
+    def _node_supports_port_forwarding(node: Dict[str, object]) -> bool:
+        supported_flag = node.get("port_forwarding_supported")
+        if isinstance(supported_flag, bool):
+            return supported_flag
+
+        provider = str(node.get("provider") or "").strip().lower()
+        if provider:
+            return provider in PORT_FORWARDING_NATIVE_PROVIDERS
+        return False
+
+    @staticmethod
+    def _is_dynamic_node_ready(node: Dict[str, object]) -> bool:
+        condition = str(node.get("condition", "")).strip().lower()
+        if condition:
+            return condition == "ready"
+        return bool(node.get("healthy"))
+
+    def _should_prefer_forwarding_capable_node_locked(self) -> bool:
+        from .state import state
+        from .settings_persistence import SettingsPersistence
+
+        vpn_settings = SettingsPersistence.load_vpn_config() or {}
+        vpn_enabled = bool(vpn_settings.get("enabled", False))
+        dynamic_vpn_enabled = bool(vpn_enabled and vpn_settings.get("dynamic_vpn_management", False))
+        if not dynamic_vpn_enabled:
+            return False
+
+        ready_dynamic_nodes = [
+            node for node in state.list_vpn_nodes()
+            if bool(node.get("managed_dynamic")) and self._is_dynamic_node_ready(node)
+        ]
+        forwarding_capable = [node for node in ready_dynamic_nodes if self._node_supports_port_forwarding(node)]
+        if not forwarding_capable:
+            return False
+
+        forwarding_capable_names = {
+            str(node.get("container_name") or "").strip()
+            for node in forwarding_capable
+            if str(node.get("container_name") or "").strip()
+        }
+        if not forwarding_capable_names:
+            return False
+
+        for engine in state.list_engines():
+            if engine.forwarded and engine.vpn_container in forwarding_capable_names:
+                return False
+
+        return True
 
     @classmethod
     def _vpn_is_schedulable(cls, vpn_container: str, node_info: Optional[Dict[str, object]]) -> bool:
@@ -272,6 +342,13 @@ class ResourceScheduler:
         p2p_port = None
 
         if vpn_container:
+            if not ResourceScheduler._vpn_supports_port_forwarding(vpn_container):
+                logger.info(
+                    "VPN '%s' does not support port forwarding; engine will be scheduled without forwarded P2P port",
+                    vpn_container,
+                )
+                return False, None
+
             if not state.has_forwarded_engine_for_vpn(vpn_container):
                 p2p_port = get_forwarded_port_sync(vpn_container)
                 is_forwarded = p2p_port is not None
@@ -285,6 +362,26 @@ class ResourceScheduler:
                     logger.info(f"Scheduled forwarded engine with P2P port {p2p_port}")
 
         return is_forwarded, p2p_port
+
+    @staticmethod
+    def _vpn_supports_port_forwarding(vpn_container: str) -> bool:
+        from .state import state
+
+        for node in state.list_vpn_nodes():
+            node_name = str(node.get("container_name") or "").strip()
+            if node_name != vpn_container:
+                continue
+
+            if bool(node.get("managed_dynamic")):
+                return ResourceScheduler._node_supports_port_forwarding(node)
+
+            provider = str(node.get("provider") or "").strip().lower()
+            if provider:
+                return provider in PORT_FORWARDING_NATIVE_PROVIDERS
+            return True
+
+        # Static VPN nodes may not have provider metadata in state; preserve prior behavior.
+        return True
 
 
 resource_scheduler = ResourceScheduler()

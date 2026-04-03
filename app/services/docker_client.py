@@ -200,6 +200,9 @@ class DockerEventWatcher:
                 "provider": attrs.get("acestream.vpn.provider"),
                 "protocol": attrs.get("acestream.vpn.protocol"),
                 "credential_id": attrs.get("acestream.vpn.credential_id"),
+                "port_forwarding_supported": str(
+                    attrs.get("acestream.vpn.port_forwarding_supported", "false")
+                ).strip().lower() == "true",
             }
             if action in ("die", "destroy"):
                 state.update_vpn_node_status(vpn_name, "down", metadata=vpn_metadata)

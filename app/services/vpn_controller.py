@@ -142,6 +142,7 @@ class VPNController:
                     "provider": node.get("provider"),
                     "protocol": node.get("protocol"),
                     "credential_id": node.get("credential_id"),
+                    "port_forwarding_supported": bool(node.get("port_forwarding_supported", False)),
                 },
             )
 
