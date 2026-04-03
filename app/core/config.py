@@ -58,10 +58,8 @@ class Cfg(BaseModel):
     VPN_PROVIDER: str = os.getenv("VPN_PROVIDER", "protonvpn")
     VPN_PROTOCOL: str = os.getenv("VPN_PROTOCOL", "wireguard")
 
-    # Legacy static-container fields retained for backward compatibility only.
+    # Static fallback container watched when dynamic management is disabled.
     GLUETUN_CONTAINER_NAME: str | None = os.getenv("GLUETUN_CONTAINER_NAME")
-    GLUETUN_CONTAINER_NAME_2: str | None = os.getenv("GLUETUN_CONTAINER_NAME_2")
-    VPN_MODE: str = os.getenv("VPN_MODE", "single")  # Options: single, redundant
     GLUETUN_API_PORT: int = int(os.getenv("GLUETUN_API_PORT", 8001))
     GLUETUN_HEALTH_CHECK_INTERVAL_S: int = int(os.getenv("GLUETUN_HEALTH_CHECK_INTERVAL_S", 5))
     GLUETUN_PORT_CACHE_TTL_S: int = int(os.getenv("GLUETUN_PORT_CACHE_TTL_S", 60))
@@ -188,13 +186,6 @@ class Cfg(BaseModel):
             raise ValueError('STATS_HISTORY_MAX must be > 0')
         return v
 
-    @validator('VPN_MODE')
-    def validate_vpn_mode(cls, v):
-        valid_modes = ['single', 'redundant']
-        if v not in valid_modes:
-            raise ValueError(f'VPN_MODE must be one of: {", ".join(valid_modes)}')
-        return v
-
     @validator('PREFERRED_ENGINES_PER_VPN')
     def validate_preferred_engines_per_vpn(cls, v):
         if v <= 0:
@@ -203,14 +194,9 @@ class Cfg(BaseModel):
 
     @model_validator(mode='after')
     def validate_vpn_config(self):
-        # Legacy static validation only applies when dynamic management is disabled.
-        if self.VPN_MODE == 'redundant' and not self.DYNAMIC_VPN_MANAGEMENT:
+        if not self.DYNAMIC_VPN_MANAGEMENT:
             if not self.GLUETUN_CONTAINER_NAME:
-                raise ValueError('GLUETUN_CONTAINER_NAME is required when VPN_MODE is "redundant"')
-            if not self.GLUETUN_CONTAINER_NAME_2:
-                raise ValueError('GLUETUN_CONTAINER_NAME_2 is required when VPN_MODE is "redundant"')
-            if self.GLUETUN_CONTAINER_NAME == self.GLUETUN_CONTAINER_NAME_2:
-                raise ValueError('GLUETUN_CONTAINER_NAME and GLUETUN_CONTAINER_NAME_2 must be different')
+                raise ValueError('GLUETUN_CONTAINER_NAME is required when DYNAMIC_VPN_MANAGEMENT is false')
         return self
     
 cfg = Cfg()

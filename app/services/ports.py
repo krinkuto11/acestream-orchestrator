@@ -22,7 +22,7 @@ class PortAllocator:
         self._gluetun_next = self._gluetun_min
         self._used_gluetun_ports: set[int] = set()
         
-        # VPN-specific port ranges for redundant mode
+        # VPN-specific port ranges for static fallback mode
         # Maps VPN container name to (min_port, max_port, next_port, used_ports_set)
         self._vpn_port_ranges: Dict[str, Tuple[int, int, int, set[int]]] = {}
         self._init_vpn_port_ranges()
@@ -45,14 +45,6 @@ class PortAllocator:
             except (ValueError, AttributeError) as e:
                 logger.error(f"Invalid GLUETUN_PORT_RANGE_1 format '{cfg.GLUETUN_PORT_RANGE_1}': {e}. Expected format: 'min-max'")
         
-        if cfg.GLUETUN_CONTAINER_NAME_2 and cfg.GLUETUN_PORT_RANGE_2:
-            try:
-                min_port, max_port = self._parse(cfg.GLUETUN_PORT_RANGE_2)
-                self._vpn_port_ranges[cfg.GLUETUN_CONTAINER_NAME_2] = (min_port, max_port, min_port, set())
-                logger.info(f"VPN port range for {cfg.GLUETUN_CONTAINER_NAME_2}: {min_port}-{max_port}")
-            except (ValueError, AttributeError) as e:
-                logger.error(f"Invalid GLUETUN_PORT_RANGE_2 format '{cfg.GLUETUN_PORT_RANGE_2}': {e}. Expected format: 'min-max'")
-
     def _next_in(self, cur: int, lo: int, hi: int, used: set[int]) -> int:
         p = cur
         for _ in range(hi - lo + 1):

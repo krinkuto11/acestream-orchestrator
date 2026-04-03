@@ -1122,30 +1122,20 @@ def update_custom_metrics(window_seconds: int = 900, max_points: int = 360) -> D
     orch_used_engines.set(used_engines)
     orch_vpn_health.state(vpn_health_str)
     
-    # Update VPN-specific metrics for redundant mode
-    if cfg.VPN_MODE == 'redundant':
-        # Get individual VPN statuses
-        vpn1_status = vpn_status.get("vpn1") or {}
-        vpn2_status = vpn_status.get("vpn2") or {}
-        
-        vpn1_health = vpn1_status.get("health", "unknown")
-        vpn2_health = vpn2_status.get("health", "unknown")
-        
-        orch_vpn1_health.state(vpn1_health)
-        orch_vpn2_health.state(vpn2_health)
-        
-        # Count engines per VPN
-        vpn1_engine_count = sum(1 for e in engines if e.vpn_container == cfg.GLUETUN_CONTAINER_NAME)
-        vpn2_engine_count = sum(1 for e in engines if e.vpn_container == cfg.GLUETUN_CONTAINER_NAME_2)
-        
-        orch_vpn1_engines.set(vpn1_engine_count)
-        orch_vpn2_engines.set(vpn2_engine_count)
-    else:
-        # Single VPN mode - set VPN1 metrics, VPN2 to 0
-        orch_vpn1_health.state(vpn_health_str)
-        orch_vpn2_health.state("disabled")
-        orch_vpn1_engines.set(total_engines if cfg.GLUETUN_CONTAINER_NAME else 0)
-        orch_vpn2_engines.set(0)
+    # Update VPN-specific metrics from current node inventory.
+    vpn1_status = vpn_status.get("vpn1") or {}
+    vpn2_status = vpn_status.get("vpn2") or {}
+    vpn1_name = vpn1_status.get("container_name")
+    vpn2_name = vpn2_status.get("container_name")
+
+    orch_vpn1_health.state(vpn1_status.get("health", vpn_health_str if vpn1_name else "disabled"))
+    orch_vpn2_health.state(vpn2_status.get("health", "disabled" if not vpn2_name else "unknown"))
+
+    vpn1_engine_count = sum(1 for e in engines if vpn1_name and e.vpn_container == vpn1_name)
+    vpn2_engine_count = sum(1 for e in engines if vpn2_name and e.vpn_container == vpn2_name)
+
+    orch_vpn1_engines.set(vpn1_engine_count)
+    orch_vpn2_engines.set(vpn2_engine_count)
     
     orch_extra_engines.set(extra_engines)
 

@@ -3,19 +3,18 @@ from unittest.mock import patch
 from app.services import gluetun
 
 
-def test_get_vpn_status_keeps_compatibility_emergency_field_when_disabled():
+def test_get_vpn_status_returns_disabled_shape_when_vpn_not_configured():
     with patch("app.services.gluetun.cfg.GLUETUN_CONTAINER_NAME", None):
         status = gluetun.get_vpn_status()
 
     assert status["enabled"] is False
-    assert "emergency_mode" in status
-    assert status["emergency_mode"]["active"] is False
+    assert status["mode"] == "disabled"
+    assert status["connected"] is False
 
 
-def test_get_vpn_status_keeps_compatibility_emergency_field_single_mode():
+def test_get_vpn_status_reports_single_mode_when_primary_vpn_is_ready():
     with patch("app.services.gluetun.cfg.GLUETUN_CONTAINER_NAME", "gluetun"), \
-         patch("app.services.gluetun.cfg.VPN_MODE", "single"), \
-         patch("app.services.gluetun._get_single_vpn_status", return_value={
+         patch("app.services.gluetun._single_vpn_status", return_value={
              "enabled": True,
              "connected": True,
              "status": "running",
@@ -27,5 +26,5 @@ def test_get_vpn_status_keeps_compatibility_emergency_field_single_mode():
         status = gluetun.get_vpn_status()
 
     assert status["mode"] == "single"
-    assert "emergency_mode" in status
-    assert status["emergency_mode"]["active"] is False
+    assert status["enabled"] is True
+    assert status["connected"] is True

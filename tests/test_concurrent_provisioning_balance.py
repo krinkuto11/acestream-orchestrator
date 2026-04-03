@@ -23,14 +23,11 @@ def test_scheduler_balances_assignments_with_pending_counts():
         }
 
     with patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME", "gluetun"), \
-         patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME_2", "gluetun2"), \
-         patch("app.services.provisioner.cfg.VPN_MODE", "redundant"), \
          patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
          patch("app.services.provisioner.cfg.ACE_MAP_HTTPS", True), \
          patch("app.services.gluetun.gluetun_monitor.is_healthy", return_value=True), \
          patch("app.services.state.state.list_vpn_nodes", return_value=[
-             {"container_name": "gluetun", "healthy": True},
-             {"container_name": "gluetun2", "healthy": True},
+             {"container_name": "gluetun", "healthy": True, "condition": "ready", "managed_dynamic": False},
          ]), \
          patch("app.services.state.state.get_engines_by_vpn", side_effect=lambda vpn: []), \
          patch("app.services.provisioner.alloc.allocate_engine_ports", side_effect=_alloc), \
@@ -40,7 +37,4 @@ def test_scheduler_balances_assignments_with_pending_counts():
             spec = scheduler.schedule(AceProvisionRequest(labels={}, env={}), engine_variant_name="AceServe-amd64")
             assignments.append(spec.vpn_container)
 
-    vpn1 = sum(1 for a in assignments if a == "gluetun")
-    vpn2 = sum(1 for a in assignments if a == "gluetun2")
-
-    assert abs(vpn1 - vpn2) <= 1
+    assert all(a == "gluetun" for a in assignments)

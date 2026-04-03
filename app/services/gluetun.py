@@ -35,8 +35,6 @@ def _configured_vpn_names() -> Set[str]:
     names: Set[str] = set()
     if cfg.GLUETUN_CONTAINER_NAME:
         names.add(cfg.GLUETUN_CONTAINER_NAME)
-    if cfg.GLUETUN_CONTAINER_NAME_2:
-        names.add(cfg.GLUETUN_CONTAINER_NAME_2)
     return names
 
 
@@ -361,6 +359,20 @@ def _single_vpn_status(container_name: str) -> Dict[str, object]:
 
 def get_vpn_status() -> Dict[str, object]:
     primary = cfg.GLUETUN_CONTAINER_NAME
+    try:
+        from .state import state
+
+        discovered = [
+            str(node.get("container_name") or "").strip()
+            for node in state.list_vpn_nodes()
+            if str(node.get("container_name") or "").strip()
+        ]
+    except Exception:
+        discovered = []
+
+    if not primary and discovered:
+        primary = discovered[0]
+
     if not primary:
         return {
             "mode": "disabled",
@@ -384,25 +396,12 @@ def get_vpn_status() -> Dict[str, object]:
         }
 
     vpn1_status = _single_vpn_status(primary)
-
-    if cfg.VPN_MODE != "redundant" or not cfg.GLUETUN_CONTAINER_NAME_2:
-        result = dict(vpn1_status)
-        result["mode"] = "single"
-        result["vpn1"] = vpn1_status
-        result["vpn2"] = {}
-        result["emergency_mode"] = {
-            "active": False,
-            "failed_vpn": None,
-            "healthy_vpn": None,
-            "duration_seconds": 0,
-        }
-        return result
-
-    vpn2_status = _single_vpn_status(cfg.GLUETUN_CONTAINER_NAME_2)
+    secondary = next((name for name in discovered if name and name != primary), None)
+    vpn2_status = _single_vpn_status(secondary) if secondary else {}
     any_healthy = bool(vpn1_status.get("connected")) or bool(vpn2_status.get("connected"))
 
     return {
-        "mode": "redundant",
+        "mode": "multi" if secondary else "single",
         "enabled": True,
         "status": "running" if any_healthy else "unhealthy",
         "container_name": primary,

@@ -90,11 +90,11 @@ def reindex_existing():
             # Check if this container is marked as forwarded
             is_forwarded_label = lbl.get(FORWARDED_LABEL, "false").lower() == "true"
             
-            # In redundant VPN mode, check per-VPN forwarded engine status
-            if cfg.VPN_MODE == 'redundant' and vpn_container:
+            # If VPN assigned, enforce per-VPN forwarded uniqueness.
+            if vpn_container:
                 should_be_forwarded = is_forwarded_label and not state.has_forwarded_engine_for_vpn(vpn_container)
             else:
-                # In single mode, check global forwarded engine status
+                # No VPN assignment: enforce global forwarded uniqueness.
                 should_be_forwarded = is_forwarded_label and not state.has_forwarded_engine()
             
             # Get engine variant from labels

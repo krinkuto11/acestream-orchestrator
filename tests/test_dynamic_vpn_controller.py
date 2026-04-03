@@ -13,8 +13,6 @@ def test_scheduler_prefers_least_loaded_dynamic_vpn_node():
     _vpn_pending_engines.clear()
 
     with patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME", None), \
-         patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME_2", None), \
-         patch("app.services.provisioner.cfg.VPN_MODE", "single"), \
          patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
          patch("app.services.provisioner.cfg.ACE_MAP_HTTPS", True), \
          patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={"enabled": True, "dynamic_vpn_management": True}), \
@@ -88,14 +86,12 @@ def test_vpn_controller_heals_before_provisioning_replacement():
     assert call_order == ["heal", "provision"]
 
 
-def test_scheduler_no_vpn_mode_ignores_dynamic_config_when_disabled():
+def test_scheduler_no_vpn_enabled_ignores_dynamic_config_when_disabled():
     state.set_target_engine_config("dynamic-test-hash-no-vpn")
     scheduler = ResourceScheduler()
     _vpn_pending_engines.clear()
 
     with patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME", None), \
-         patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME_2", None), \
-         patch("app.services.provisioner.cfg.VPN_MODE", "single"), \
          patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
          patch("app.services.provisioner.cfg.ACE_MAP_HTTPS", True), \
          patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={

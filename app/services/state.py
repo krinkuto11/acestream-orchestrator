@@ -23,7 +23,8 @@ class State:
         self.monitor_sessions: Dict[str, Dict[str, object]] = {}
         self._desired_replica_count = 0
         self._desired_vpn_node_count = 0
-        self._vpn_nodes: Dict[str, Dict[str, object]] = {}
+        self._dynamic_vpn_nodes: Dict[str, Dict[str, object]] = {}
+        self._static_vpn_nodes: Dict[str, Dict[str, object]] = {}
         self._scaling_intents: List[Dict[str, object]] = []
         self._max_scaling_intents = 300
         self._target_engine_config_hash: str = ""
@@ -51,13 +52,6 @@ class State:
     def now():
         return datetime.now(timezone.utc)
     
-    def _is_redundant_mode(self) -> bool:
-        """Check if we're in redundant VPN mode."""
-        from ..core.config import cfg
-        return (cfg.VPN_MODE == 'redundant' and 
-                cfg.GLUETUN_CONTAINER_NAME and 
-                cfg.GLUETUN_CONTAINER_NAME_2)
-
     def on_stream_started(self, evt: StreamStartedEvent) -> StreamState:
         with self._lock:
             # Try to find existing engine using multiple approaches
@@ -595,6 +589,8 @@ class State:
             self.stream_stats.clear()
             self.monitor_sessions.clear()
             self._scaling_intents.clear()
+            self._dynamic_vpn_nodes.clear()
+            self._static_vpn_nodes.clear()
 
             try:
                 from ..core.config import cfg
@@ -804,14 +800,18 @@ class State:
         metadata = dict(metadata or {})
 
         with self._lock:
-            previous = self._vpn_nodes.get(vpn_container, {})
-            self._vpn_nodes[vpn_container] = {
+            previous_dynamic = self._dynamic_vpn_nodes.get(vpn_container)
+            previous_static = self._static_vpn_nodes.get(vpn_container)
+            managed_dynamic = bool(metadata.get("managed_dynamic", previous_dynamic is not None))
+            previous = previous_dynamic or previous_static or {}
+
+            node_payload = {
                 "container_name": vpn_container,
                 "status": normalized,
                 "healthy": healthy,
                 "condition": condition,
                 "last_event_at": now,
-                "managed_dynamic": bool(metadata.get("managed_dynamic", previous.get("managed_dynamic", False))),
+                "managed_dynamic": managed_dynamic,
                 "provider": metadata.get("provider", previous.get("provider")),
                 "protocol": metadata.get("protocol", previous.get("protocol")),
                 "credential_id": metadata.get("credential_id", previous.get("credential_id")),
@@ -822,44 +822,59 @@ class State:
                 ),
             }
 
+            if managed_dynamic:
+                self._static_vpn_nodes.pop(vpn_container, None)
+                self._dynamic_vpn_nodes[vpn_container] = node_payload
+            else:
+                self._dynamic_vpn_nodes.pop(vpn_container, None)
+                self._static_vpn_nodes[vpn_container] = node_payload
+
     def remove_vpn_node(self, vpn_container: str):
         with self._lock:
-            self._vpn_nodes.pop(vpn_container, None)
+            self._dynamic_vpn_nodes.pop(vpn_container, None)
+            self._static_vpn_nodes.pop(vpn_container, None)
 
     def list_vpn_nodes(self) -> List[Dict[str, object]]:
         with self._lock:
-            return [dict(v) for v in self._vpn_nodes.values()]
+            nodes: List[Dict[str, object]] = []
+            nodes.extend(dict(v) for v in self._dynamic_vpn_nodes.values())
+            nodes.extend(dict(v) for v in self._static_vpn_nodes.values())
+            return nodes
 
     def get_healthy_vpn_nodes(self) -> List[str]:
-        with self._lock:
-            return [name for name, node in self._vpn_nodes.items() if bool(node.get("healthy"))]
+        return [
+            str(node.get("container_name"))
+            for node in self.list_vpn_nodes()
+            if node.get("container_name") and bool(node.get("healthy"))
+        ]
 
     def get_ready_vpn_nodes(self) -> List[str]:
-        with self._lock:
-            return [name for name, node in self._vpn_nodes.items() if str(node.get("condition", "")).lower() == "ready"]
+        return [
+            str(node.get("container_name"))
+            for node in self.list_vpn_nodes()
+            if node.get("container_name") and str(node.get("condition", "")).lower() == "ready"
+        ]
 
     def list_notready_vpn_nodes(self, dynamic_only: bool = False) -> List[Dict[str, object]]:
-        with self._lock:
-            nodes = [
-                dict(node)
-                for node in self._vpn_nodes.values()
-                if str(node.get("condition", "")).lower() == "notready"
-            ]
-
-        if not dynamic_only:
-            return nodes
-        return [node for node in nodes if bool(node.get("managed_dynamic"))]
+        nodes = [
+            node
+            for node in self.list_vpn_nodes()
+            if str(node.get("condition", "")).lower() == "notready"
+        ]
+        if dynamic_only:
+            return [node for node in nodes if bool(node.get("managed_dynamic"))]
+        return nodes
 
     def list_dynamic_vpn_nodes(self) -> List[Dict[str, object]]:
         with self._lock:
-            return [dict(node) for node in self._vpn_nodes.values() if bool(node.get("managed_dynamic"))]
+            return [dict(node) for node in self._dynamic_vpn_nodes.values()]
 
     def initialize_static_vpn_nodes_notready(self, container_names: Optional[List[str]] = None):
         """Seed configured static VPN containers as NotReady until Docker events report readiness."""
         if container_names is None:
             from ..core.config import cfg
 
-            names = [cfg.GLUETUN_CONTAINER_NAME, cfg.GLUETUN_CONTAINER_NAME_2]
+            names = [cfg.GLUETUN_CONTAINER_NAME]
         else:
             names = container_names
 
@@ -985,8 +1000,9 @@ class State:
     def set_forwarded_engine(self, container_id: str):
         """Mark an engine as the forwarded engine and clear forwarded flag from others.
         
-        In redundant VPN mode, only clears forwarded flag from engines on the same VPN.
-        In single VPN mode, clears forwarded flag from all engines.
+        If the target engine is assigned to a VPN node, only engines on the same
+        VPN have their forwarded flag cleared. Otherwise all forwarded flags are
+        cleared before assigning the target.
         """
         with self._lock:
             # Get the target engine first to determine its VPN
@@ -996,14 +1012,12 @@ class State:
                 return
             
             target_vpn = target_engine.vpn_container
-            is_redundant_mode = self._is_redundant_mode()
+            scope_to_target_vpn = bool(target_vpn)
             
             # Clear forwarded flag from engines
             for engine in self.engines.values():
                 if engine.forwarded:
-                    # In redundant mode, only clear if on the same VPN
-                    # In single mode, clear all forwarded engines
-                    should_clear = (not is_redundant_mode or engine.vpn_container == target_vpn)
+                    should_clear = engine.vpn_container == target_vpn if scope_to_target_vpn else True
                     
                     if should_clear:
                         engine.forwarded = False
@@ -1025,7 +1039,7 @@ class State:
                                 last_seen=target_engine.last_seen, vpn_container=target_engine.vpn_container))
                 s.commit()
             
-            if is_redundant_mode and target_vpn:
+            if target_vpn:
                 logger.info(f"Engine {container_id[:12]} is now the forwarded engine for VPN '{target_vpn}'")
             else:
                 logger.info(f"Engine {container_id[:12]} is now the forwarded engine")

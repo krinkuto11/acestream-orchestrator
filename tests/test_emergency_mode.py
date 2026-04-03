@@ -61,7 +61,9 @@ def test_apply_state_update_marks_node_status_and_triggers_eviction_on_unhealthy
             attrs={},
         )
 
-    update_status.assert_called_once_with("gluetun", "unhealthy")
+    update_status.assert_called_once()
+    assert update_status.call_args.args[:2] == ("gluetun", "unhealthy")
+    assert "metadata" in update_status.call_args.kwargs
     emit_evictions.assert_called_once_with("gluetun", reason="node_unhealthy")
 
 
@@ -77,5 +79,7 @@ def test_apply_state_update_marks_ready_without_eviction_on_healthy():
             attrs={},
         )
 
-    update_status.assert_called_once_with("gluetun", "healthy")
+    update_status.assert_called_once()
+    assert update_status.call_args.args[:2] == ("gluetun", "healthy")
+    assert "metadata" in update_status.call_args.kwargs
     emit_evictions.assert_not_called()

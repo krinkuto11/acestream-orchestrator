@@ -164,76 +164,48 @@ class HealthManager:
         """
         Determine which VPN would receive a new engine if provisioned now.
         
-        This replicates the VPN selection logic from provisioner.start_acestream()
-        to allow per-VPN stabilization checks.
+        Uses informer state as source of truth and mirrors scheduler balancing.
         
         Returns:
             VPN container name that would receive the next engine, or None if not using VPN
         """
-        if not cfg.GLUETUN_CONTAINER_NAME:
+        vpn_nodes = [
+            node for node in state.list_vpn_nodes()
+            if bool(node.get("healthy")) and str(node.get("container_name") or "").strip()
+        ]
+        if not vpn_nodes:
+            if cfg.GLUETUN_CONTAINER_NAME:
+                return cfg.GLUETUN_CONTAINER_NAME
             return None
-        
-        # Single VPN mode
-        if cfg.VPN_MODE != 'redundant' or not cfg.GLUETUN_CONTAINER_NAME_2:
-            return cfg.GLUETUN_CONTAINER_NAME
-        
-        # Redundant mode - replicate provisioner logic
-        from .gluetun import gluetun_monitor
-        vpn_nodes = {node.get("container_name"): node for node in state.list_vpn_nodes()}
-        
-        # Normal redundant mode: count engines per VPN
-        vpn1_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME))
-        vpn2_engines = len(state.get_engines_by_vpn(cfg.GLUETUN_CONTAINER_NAME_2))
-        
-        # Check readiness from informer state first, fallback to monitor health.
-        vpn1_node = vpn_nodes.get(cfg.GLUETUN_CONTAINER_NAME)
-        vpn2_node = vpn_nodes.get(cfg.GLUETUN_CONTAINER_NAME_2)
-        vpn1_healthy = bool(vpn1_node.get("healthy")) if vpn1_node is not None else bool(gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME))
-        vpn2_healthy = bool(vpn2_node.get("healthy")) if vpn2_node is not None else bool(gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2))
-        
-        # Determine VPN assignment based on health and load
-        if vpn1_healthy and vpn2_healthy:
-            # Both healthy: use round-robin to balance load
-            return cfg.GLUETUN_CONTAINER_NAME if vpn1_engines <= vpn2_engines else cfg.GLUETUN_CONTAINER_NAME_2
-        elif vpn1_healthy and not vpn2_healthy:
-            # Only VPN1 healthy: use it
-            return cfg.GLUETUN_CONTAINER_NAME
-        elif vpn2_healthy and not vpn1_healthy:
-            # Only VPN2 healthy: use it
-            return cfg.GLUETUN_CONTAINER_NAME_2
-        else:
-            # Both unhealthy: cannot provision
-            return None
+
+        return min(
+            vpn_nodes,
+            key=lambda node: len(state.get_engines_by_vpn(str(node.get("container_name") or ""))),
+        ).get("container_name")
     
     def _should_wait_for_vpn_recovery(self, healthy_engines: List) -> bool:
         """
         Check if we should wait for VPN recovery instead of taking action.
         
-        Returns True if:
-        - In redundant VPN mode
-        - The VPN that would receive new engines is in recovery stabilization period
-        
-        Per-VPN stabilization blocks only the specific target VPN when it is stabilizing,
-        while still allowing scheduling on other Ready VPN nodes.
+        Returns True if the selected target VPN node is currently NotReady.
         """
-        if cfg.VPN_MODE != 'redundant' or not cfg.GLUETUN_CONTAINER_NAME_2:
-            return False
-        
-        from .gluetun import gluetun_monitor
-        
-        # Determine which VPN would receive a new engine
         target_vpn = self._get_target_vpn_for_provisioning()
-        
-        # Check if the target VPN is in recovery stabilization period
-        # This is per-VPN: only blocks if the specific VPN we'd provision to is stabilizing
-        if target_vpn:
-            vpn_monitor = gluetun_monitor.get_vpn_monitor(target_vpn)
-            if vpn_monitor and vpn_monitor.is_in_recovery_stabilization_period():
-                healthy_count = len(healthy_engines)
-                logger.info(f"Target VPN '{target_vpn}' is in recovery stabilization period. "
-                           f"Not taking action - waiting for port forwarding to stabilize. "
-                           f"Running with {healthy_count}/{cfg.MIN_REPLICAS} engines.")
-                return True
+        if not target_vpn:
+            return False
+
+        vpn_nodes = {node.get("container_name"): node for node in state.list_vpn_nodes()}
+        target_node = vpn_nodes.get(target_vpn)
+        if target_node is None:
+            return False
+
+        condition = str(target_node.get("condition") or "").strip().lower()
+        if condition and condition != "ready":
+            healthy_count = len(healthy_engines)
+            logger.info(
+                f"Target VPN '{target_vpn}' is not ready (condition={condition}). "
+                f"Deferring evictions while node stabilizes. Running with {healthy_count}/{cfg.MIN_REPLICAS} engines."
+            )
+            return True
 
         return False
     

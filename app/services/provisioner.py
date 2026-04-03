@@ -21,7 +21,7 @@ _vpn_pending_engines: Dict[str, int] = {}
 
 def _decrement_vpn_pending_counter(vpn_container: Optional[str]):
     """Safely decrement the pending engine counter for a VPN container."""
-    if not vpn_container or cfg.VPN_MODE != 'redundant':
+    if not vpn_container:
         return
     
     with _vpn_assignment_lock:
@@ -107,7 +107,7 @@ class ResourceScheduler:
             with self._lock:
                 require_forwarding_capable = self._should_prefer_forwarding_capable_node_locked()
                 vpn_container = self._select_vpn_container_locked(require_forwarding_capable=require_forwarding_capable)
-                if cfg.VPN_MODE == 'redundant' and vpn_container:
+                if vpn_container:
                     _vpn_pending_engines[vpn_container] = _vpn_pending_engines.get(vpn_container, 0) + 1
                     pending_incremented = True
 
@@ -225,30 +225,12 @@ class ResourceScheduler:
         if not cfg.GLUETUN_CONTAINER_NAME:
             return None
 
-        if cfg.VPN_MODE != 'redundant' or not cfg.GLUETUN_CONTAINER_NAME_2:
-            return cfg.GLUETUN_CONTAINER_NAME
-
-        vpn1_name = cfg.GLUETUN_CONTAINER_NAME
-        vpn2_name = cfg.GLUETUN_CONTAINER_NAME_2
         vpn_nodes = {node.get("container_name"): node for node in state.list_vpn_nodes()}
+        static_node = vpn_nodes.get(cfg.GLUETUN_CONTAINER_NAME)
+        if not self._vpn_is_schedulable(cfg.GLUETUN_CONTAINER_NAME, static_node):
+            raise RuntimeError("Static VPN container is unhealthy - cannot schedule AceStream engine")
 
-        vpn1_engines = len(state.get_engines_by_vpn(vpn1_name)) + _vpn_pending_engines.get(vpn1_name, 0)
-        vpn2_engines = len(state.get_engines_by_vpn(vpn2_name)) + _vpn_pending_engines.get(vpn2_name, 0)
-
-        vpn1_healthy = self._vpn_is_schedulable(vpn1_name, vpn_nodes.get(vpn1_name))
-        vpn2_healthy = self._vpn_is_schedulable(vpn2_name, vpn_nodes.get(vpn2_name))
-
-        if vpn1_healthy and vpn2_healthy:
-            selected = vpn1_name if vpn1_engines <= vpn2_engines else vpn2_name
-        elif vpn1_healthy and not vpn2_healthy:
-            selected = vpn1_name
-        elif vpn2_healthy and not vpn1_healthy:
-            selected = vpn2_name
-        else:
-            raise RuntimeError("Both VPN containers are unhealthy - cannot schedule AceStream engine")
-
-        logger.info(f"Scheduling new engine on VPN '{selected}' (VPN1: {vpn1_engines} engines, VPN2: {vpn2_engines} engines)")
-        return selected
+        return cfg.GLUETUN_CONTAINER_NAME
 
     @staticmethod
     def _node_supports_port_forwarding(node: Dict[str, object]) -> bool:
@@ -413,7 +395,9 @@ def compute_current_engine_config_hash() -> str:
         "engine_memory_limit": cfg.ENGINE_MEMORY_LIMIT,
         "ace_map_https": cfg.ACE_MAP_HTTPS,
         "docker_network": cfg.DOCKER_NETWORK,
-        "vpn_mode": cfg.VPN_MODE,
+        "dynamic_vpn_management": cfg.DYNAMIC_VPN_MANAGEMENT,
+        "vpn_provider": cfg.VPN_PROVIDER,
+        "vpn_protocol": cfg.VPN_PROTOCOL,
     }
 
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)

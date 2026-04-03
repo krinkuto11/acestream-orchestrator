@@ -1096,8 +1096,8 @@ def get_engines():
                 verified_engines.append(engine)
                 continue
             
-            # In redundant mode, filter by VPN health
-            if cfg.VPN_MODE == 'redundant' and engine.vpn_container:
+            # Filter engines by assigned VPN health when a VPN assignment exists.
+            if engine.vpn_container:
                 # Check VPN health (use cache to avoid repeated checks)
                 if engine.vpn_container not in vpn_health_cache:
                     vpn_health_cache[engine.vpn_container] = gluetun_monitor.is_healthy(engine.vpn_container)
@@ -1110,7 +1110,7 @@ def get_engines():
                 else:
                     logger.debug(f"Engine {engine.container_id[:12]} filtered out - VPN '{engine.vpn_container}' is unhealthy")
             else:
-                # Single VPN mode or no VPN - include the engine
+                # Engine has no VPN assignment.
                 verified_engines.append(engine)
         
         # Enrich engines with version info and forwarded port

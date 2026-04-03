@@ -93,30 +93,22 @@ class DockerMonitor:
         currently in stabilization, allowing cleanup on other healthy VPNs.
         """
         try:
-            # In redundant VPN mode, check VPN health and stabilization status
-            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
-                vpn1_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME)
-                vpn2_healthy = gluetun_monitor.is_healthy(cfg.GLUETUN_CONTAINER_NAME_2)
-                
-                # If one VPN is unhealthy, don't clean up engines (system is in degraded mode)
-                if vpn1_healthy != vpn2_healthy:
-                    logger.debug("Skipping empty engine cleanup - VPN in degraded mode")
-                    return
-                
-                # Get VPN monitors for per-VPN stabilization checks
-                vpn1_monitor = gluetun_monitor.get_vpn_monitor(cfg.GLUETUN_CONTAINER_NAME)
-                vpn2_monitor = gluetun_monitor.get_vpn_monitor(cfg.GLUETUN_CONTAINER_NAME_2)
-                
-                # Build a set of VPNs that are in stabilization
-                vpns_in_stabilization = set()
-                if vpn1_monitor and vpn1_monitor.is_in_recovery_stabilization_period():
-                    vpns_in_stabilization.add(cfg.GLUETUN_CONTAINER_NAME)
-                    logger.debug(f"VPN '{cfg.GLUETUN_CONTAINER_NAME}' is in recovery stabilization - will skip cleanup for its engines")
-                if vpn2_monitor and vpn2_monitor.is_in_recovery_stabilization_period():
-                    vpns_in_stabilization.add(cfg.GLUETUN_CONTAINER_NAME_2)
-                    logger.debug(f"VPN '{cfg.GLUETUN_CONTAINER_NAME_2}' is in recovery stabilization - will skip cleanup for its engines")
-            else:
-                vpns_in_stabilization = set()
+            vpn_nodes = state.list_vpn_nodes()
+            healthy_nodes = [node for node in vpn_nodes if bool(node.get("healthy"))]
+            unhealthy_nodes = [node for node in vpn_nodes if not bool(node.get("healthy"))]
+
+            # If some VPNs are healthy and others are not, avoid cleanup churn while routing converges.
+            if healthy_nodes and unhealthy_nodes:
+                logger.debug("Skipping empty engine cleanup - VPN node set is degraded")
+                return
+
+            # Treat NotReady nodes as stabilizing and avoid cleanup for engines on those nodes.
+            vpns_in_stabilization = {
+                str(node.get("container_name") or "")
+                for node in vpn_nodes
+                if str(node.get("condition") or "").strip().lower() != "ready"
+                and str(node.get("container_name") or "").strip()
+            }
             
             from .autoscaler import can_stop_engine
             from .provisioner import stop_container

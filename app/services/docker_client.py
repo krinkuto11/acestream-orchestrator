@@ -187,7 +187,7 @@ class DockerEventWatcher:
 
         from ..core.config import cfg
 
-        candidates = [cfg.GLUETUN_CONTAINER_NAME, cfg.GLUETUN_CONTAINER_NAME_2]
+        candidates = [cfg.GLUETUN_CONTAINER_NAME]
         for candidate in candidates:
             if not candidate:
                 continue
@@ -200,7 +200,7 @@ class DockerEventWatcher:
         from .state import state
         from ..core.config import cfg
 
-        static_names = [cfg.GLUETUN_CONTAINER_NAME, cfg.GLUETUN_CONTAINER_NAME_2]
+        static_names = [cfg.GLUETUN_CONTAINER_NAME]
         static_names = [name for name in static_names if name]
 
         cli = None

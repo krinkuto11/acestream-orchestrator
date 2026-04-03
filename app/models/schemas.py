@@ -158,15 +158,15 @@ class VPNSettingsResponse(BaseModel):
 
 
 class VPNSettingsUpdate(BaseModel):
-    """Partial update model for dynamic VPN settings."""
+    """Update model matching Smart VPN wizard save payload."""
 
-    enabled: Optional[bool] = None
-    dynamic_vpn_management: Optional[bool] = None
-    preferred_engines_per_vpn: Optional[int] = None
-    protocol: Optional[str] = None
-    provider: Optional[str] = None
-    regions: Optional[List[str] | str] = None
-    credentials: Optional[List[Dict[str, Any]]] = None
+    enabled: bool
+    dynamic_vpn_management: bool
+    preferred_engines_per_vpn: int
+    protocol: str
+    provider: str
+    regions: List[str] | str
+    credentials: List[Dict[str, Any]]
     api_port: Optional[int] = None
     health_check_interval_s: Optional[int] = None
     port_cache_ttl_s: Optional[int] = None

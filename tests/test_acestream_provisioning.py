@@ -23,7 +23,6 @@ def test_scheduler_labels_include_config_hash_and_generation():
     scheduler = ResourceScheduler()
 
     with patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME", None), \
-         patch("app.services.provisioner.cfg.VPN_MODE", "single"), \
          patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
          patch("app.services.provisioner.cfg.ACE_MAP_HTTPS", True), \
          patch("app.services.provisioner.alloc.allocate_engine_ports", return_value={
