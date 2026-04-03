@@ -32,19 +32,15 @@ import {
 
 const DEFAULTS = {
   enabled: false,
-  vpn_mode: 'single',
-  container_name: '',
-  container_name_2: '',
   api_port: 8001,
-  port_range_1: '',
-  port_range_2: '',
   health_check_interval_s: 5,
   port_cache_ttl_s: 60,
   restart_engines_on_reconnect: true,
   unhealthy_restart_timeout_s: 60,
-  dynamic_vpn_management: false,
+  dynamic_vpn_management: true,
+  preferred_engines_per_vpn: 10,
   protocol: 'wireguard',
-  providers: ['protonvpn'],
+  provider: 'protonvpn',
   regions: [],
   credentials: [],
 }
@@ -136,14 +132,9 @@ export function VPNSettings({ apiKey, orchUrl }) {
 
   // Basic settings
   const [enabled, setEnabled] = useState(DEFAULTS.enabled)
-  const [vpnMode, setVpnMode] = useState(DEFAULTS.vpn_mode)
-  const [containerName, setContainerName] = useState(DEFAULTS.container_name)
-  const [containerName2, setContainerName2] = useState(DEFAULTS.container_name_2)
   const [apiPort, setApiPort] = useState(DEFAULTS.api_port)
 
   // Expert settings
-  const [portRange1, setPortRange1] = useState(DEFAULTS.port_range_1)
-  const [portRange2, setPortRange2] = useState(DEFAULTS.port_range_2)
   const [healthCheckIntervalS, setHealthCheckIntervalS] = useState(DEFAULTS.health_check_interval_s)
   const [portCacheTtlS, setPortCacheTtlS] = useState(DEFAULTS.port_cache_ttl_s)
   const [restartEnginesOnReconnect, setRestartEnginesOnReconnect] = useState(DEFAULTS.restart_engines_on_reconnect)
@@ -151,8 +142,9 @@ export function VPNSettings({ apiKey, orchUrl }) {
 
   // Dynamic VPN wizard state
   const [dynamicVpnManagement, setDynamicVpnManagement] = useState(DEFAULTS.dynamic_vpn_management)
+  const [preferredEnginesPerVpn, setPreferredEnginesPerVpn] = useState(DEFAULTS.preferred_engines_per_vpn)
   const [protocol, setProtocol] = useState(DEFAULTS.protocol)
-  const [selectedProvider, setSelectedProvider] = useState(DEFAULTS.providers[0])
+  const [selectedProvider, setSelectedProvider] = useState(DEFAULTS.provider)
   const [regionsText, setRegionsText] = useState('')
   const [credentials, setCredentials] = useState(DEFAULTS.credentials)
 
@@ -160,7 +152,6 @@ export function VPNSettings({ apiKey, orchUrl }) {
   const [piaUsername, setPiaUsername] = useState('')
   const [piaPassword, setPiaPassword] = useState('')
 
-  const isRedundant = vpnMode === 'redundant'
   const forwardingSupported = isForwardingSupported(selectedProvider)
 
   const leasesByCredentialId = useMemo(() => {
@@ -198,25 +189,20 @@ export function VPNSettings({ apiKey, orchUrl }) {
       if (response.ok) {
         const data = await response.json()
         setEnabled(data.enabled ?? DEFAULTS.enabled)
-        setVpnMode(data.vpn_mode ?? DEFAULTS.vpn_mode)
-        setContainerName(data.container_name ?? DEFAULTS.container_name)
-        setContainerName2(data.container_name_2 ?? DEFAULTS.container_name_2)
         setApiPort(data.api_port ?? DEFAULTS.api_port)
-        setPortRange1(data.port_range_1 ?? DEFAULTS.port_range_1)
-        setPortRange2(data.port_range_2 ?? DEFAULTS.port_range_2)
         setHealthCheckIntervalS(data.health_check_interval_s ?? DEFAULTS.health_check_interval_s)
         setPortCacheTtlS(data.port_cache_ttl_s ?? DEFAULTS.port_cache_ttl_s)
         setRestartEnginesOnReconnect(data.restart_engines_on_reconnect ?? DEFAULTS.restart_engines_on_reconnect)
         setUnhealthyRestartTimeoutS(data.unhealthy_restart_timeout_s ?? DEFAULTS.unhealthy_restart_timeout_s)
 
         setDynamicVpnManagement(Boolean(data.dynamic_vpn_management ?? DEFAULTS.dynamic_vpn_management))
+        setPreferredEnginesPerVpn(Math.max(1, Number(data.preferred_engines_per_vpn ?? DEFAULTS.preferred_engines_per_vpn) || DEFAULTS.preferred_engines_per_vpn))
 
         const loadedProtocol = String(data.protocol || DEFAULTS.protocol).toLowerCase()
         setProtocol(loadedProtocol === 'openvpn' ? 'openvpn' : 'wireguard')
 
-        const providers = Array.isArray(data.providers) ? data.providers : []
-        const firstProvider = normalizeProvider(providers[0] || DEFAULTS.providers[0])
-        setSelectedProvider(firstProvider)
+        const loadedProvider = normalizeProvider(data.provider || DEFAULTS.provider)
+        setSelectedProvider(loadedProvider || DEFAULTS.provider)
 
         const loadedRegions = Array.isArray(data.regions) ? data.regions : []
         setRegionsText(loadedRegions.join(', '))
@@ -341,19 +327,15 @@ export function VPNSettings({ apiKey, orchUrl }) {
 
     const payload = {
       enabled,
-      vpn_mode: vpnMode,
-      container_name: containerName,
-      container_name_2: containerName2,
       api_port: apiPort,
-      port_range_1: portRange1,
-      port_range_2: portRange2,
       health_check_interval_s: healthCheckIntervalS,
       port_cache_ttl_s: portCacheTtlS,
       restart_engines_on_reconnect: restartEnginesOnReconnect,
       unhealthy_restart_timeout_s: unhealthyRestartTimeoutS,
       dynamic_vpn_management: dynamicVpnManagement,
+      preferred_engines_per_vpn: Math.max(1, Number(preferredEnginesPerVpn) || DEFAULTS.preferred_engines_per_vpn),
       protocol,
-      providers: selectedProvider ? [normalizeProvider(selectedProvider)] : [],
+      provider: selectedProvider ? normalizeProvider(selectedProvider) : '',
       regions: parseRegionsInput(regionsText),
       credentials: normalizedCredentials,
     }
@@ -445,6 +427,20 @@ export function VPNSettings({ apiKey, orchUrl }) {
                     Disable to fall back to static Gluetun container routing.
                   </p>
                 </div>
+              </div>
+
+              <div className="space-y-2 max-w-xs">
+                <Label htmlFor="preferred-engines-per-vpn">Preferred Engines per VPN Node</Label>
+                <Input
+                  id="preferred-engines-per-vpn"
+                  type="number"
+                  min={1}
+                  value={preferredEnginesPerVpn}
+                  onChange={(e) => setPreferredEnginesPerVpn(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Scheduler target used by the controller to estimate how many VPN nodes should be active.
+                </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -605,77 +601,6 @@ export function VPNSettings({ apiKey, orchUrl }) {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>VPN Connection</CardTitle>
-              <CardDescription>Configure the Gluetun container and VPN mode</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="vpn-mode">VPN Mode</Label>
-                <Select value={vpnMode} onValueChange={setVpnMode}>
-                  <SelectTrigger id="vpn-mode" className="max-w-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="single">Single — one Gluetun container</SelectItem>
-                    <SelectItem value="redundant">Redundant — two Gluetun containers for high-availability</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Single: all engines use one VPN. Redundant: engines split between two VPNs.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <Label htmlFor="container-name">
-                    {isRedundant ? 'VPN 1 Container Name' : 'Container Name'}
-                  </Label>
-                  <Input
-                    id="container-name"
-                    type="text"
-                    value={containerName}
-                    onChange={(e) => setContainerName(e.target.value)}
-                    placeholder="gluetun"
-                  />
-                  <p className="text-xs text-muted-foreground">Docker container name of the Gluetun VPN. Default: gluetun</p>
-                </div>
-
-                <div className="space-y-1">
-                  <Label htmlFor="api-port">Gluetun HTTP API Port</Label>
-                  <Input
-                    id="api-port"
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={apiPort}
-                    onChange={(e) => setApiPort(parseInt(e.target.value) || 8001)}
-                    className="max-w-xs"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Must match HTTP_CONTROL_SERVER_ADDRESS in Gluetun. Default: 8001
-                  </p>
-                </div>
-
-                {isRedundant && (
-                  <div className="space-y-1 sm:col-span-2">
-                    <Label htmlFor="container-name-2">VPN 2 Container Name</Label>
-                    <Input
-                      id="container-name-2"
-                      type="text"
-                      value={containerName2}
-                      onChange={(e) => setContainerName2(e.target.value)}
-                      placeholder="gluetun2"
-                      className="max-w-xs"
-                    />
-                    <p className="text-xs text-muted-foreground">Docker container name of the second Gluetun VPN. Default: gluetun2</p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Expert Toggle */}
           <button
             type="button"
@@ -688,45 +613,6 @@ export function VPNSettings({ apiKey, orchUrl }) {
 
           {showExpert && (
             <>
-              {/* Port Ranges for Redundant mode */}
-              {isRedundant && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Redundant Mode Port Ranges</CardTitle>
-                    <CardDescription>
-                      Each VPN needs its own port range to route engines correctly.
-                      These must match the Docker Compose port mappings.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <Label htmlFor="port-range-1">VPN 1 Port Range</Label>
-                        <Input
-                          id="port-range-1"
-                          type="text"
-                          value={portRange1}
-                          onChange={(e) => setPortRange1(e.target.value)}
-                          placeholder="19000-19499"
-                        />
-                        <p className="text-xs text-muted-foreground">Port range for first VPN. Example: 19000-19499</p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="port-range-2">VPN 2 Port Range</Label>
-                        <Input
-                          id="port-range-2"
-                          type="text"
-                          value={portRange2}
-                          onChange={(e) => setPortRange2(e.target.value)}
-                          placeholder="19500-19999"
-                        />
-                        <p className="text-xs text-muted-foreground">Port range for second VPN. Example: 19500-19999</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
               {/* Health & Recovery */}
               <Card>
                 <CardHeader>
@@ -735,6 +621,22 @@ export function VPNSettings({ apiKey, orchUrl }) {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <Label htmlFor="api-port">Gluetun HTTP API Port</Label>
+                      <Input
+                        id="api-port"
+                        type="number"
+                        min={1}
+                        max={65535}
+                        value={apiPort}
+                        onChange={(e) => setApiPort(parseInt(e.target.value, 10) || 8001)}
+                        className="max-w-xs"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Must match HTTP_CONTROL_SERVER_ADDRESS in Gluetun. Default: 8001
+                      </p>
+                    </div>
+
                     <div className="space-y-1">
                       <Label htmlFor="health-check-interval">Health Check Interval (seconds)</Label>
                       <Input
@@ -900,7 +802,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
       <Alert>
         <Info className="h-4 w-4" />
         <AlertDescription>
-          VPN settings are persisted and applied immediately. The Gluetun monitor restarts automatically to pick up changes.
+          VPN settings are persisted and applied immediately through the dynamic controller and Docker events.
           Existing engines are not restarted unless Restart Engines on VPN Reconnect is enabled.
         </AlertDescription>
       </Alert>

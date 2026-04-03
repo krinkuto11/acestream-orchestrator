@@ -53,6 +53,12 @@ class Cfg(BaseModel):
     CIRCUIT_BREAKER_REPLACEMENT_TIMEOUT_S: int = int(os.getenv("CIRCUIT_BREAKER_REPLACEMENT_TIMEOUT_S", 180))
 
     # Gluetun VPN integration
+    DYNAMIC_VPN_MANAGEMENT: bool = os.getenv("DYNAMIC_VPN_MANAGEMENT", "true").lower() == "true"
+    PREFERRED_ENGINES_PER_VPN: int = int(os.getenv("PREFERRED_ENGINES_PER_VPN", 10))
+    VPN_PROVIDER: str = os.getenv("VPN_PROVIDER", "protonvpn")
+    VPN_PROTOCOL: str = os.getenv("VPN_PROTOCOL", "wireguard")
+
+    # Legacy static-container fields retained for backward compatibility only.
     GLUETUN_CONTAINER_NAME: str | None = os.getenv("GLUETUN_CONTAINER_NAME")
     GLUETUN_CONTAINER_NAME_2: str | None = os.getenv("GLUETUN_CONTAINER_NAME_2")
     VPN_MODE: str = os.getenv("VPN_MODE", "single")  # Options: single, redundant
@@ -189,10 +195,16 @@ class Cfg(BaseModel):
             raise ValueError(f'VPN_MODE must be one of: {", ".join(valid_modes)}')
         return v
 
+    @validator('PREFERRED_ENGINES_PER_VPN')
+    def validate_preferred_engines_per_vpn(cls, v):
+        if v <= 0:
+            raise ValueError('PREFERRED_ENGINES_PER_VPN must be > 0')
+        return v
+
     @model_validator(mode='after')
     def validate_vpn_config(self):
-        # If redundant mode is set, ensure second container name is provided
-        if self.VPN_MODE == 'redundant':
+        # Legacy static validation only applies when dynamic management is disabled.
+        if self.VPN_MODE == 'redundant' and not self.DYNAMIC_VPN_MANAGEMENT:
             if not self.GLUETUN_CONTAINER_NAME:
                 raise ValueError('GLUETUN_CONTAINER_NAME is required when VPN_MODE is "redundant"')
             if not self.GLUETUN_CONTAINER_NAME_2:

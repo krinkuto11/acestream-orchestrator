@@ -177,6 +177,7 @@ class VPNProvisioner:
             requested_provider
             or credential.get("provider")
             or credential.get("vpn_service_provider")
+            or settings.get("provider")
             or (settings.get("providers") or [None])[0]
             or "protonvpn"
         )

@@ -139,6 +139,40 @@ class GenericObjectResponse(BaseModel):
 class GenericListResponse(RootModel[List[Any]]):
     pass
 
+
+class VPNSettingsResponse(BaseModel):
+    """Dynamic VPN settings payload exposed by /settings/vpn."""
+
+    enabled: bool = False
+    dynamic_vpn_management: bool = True
+    preferred_engines_per_vpn: int = 10
+    protocol: str = "wireguard"
+    provider: str = "protonvpn"
+    regions: List[str] = []
+    credentials: List[Dict[str, Any]] = []
+    api_port: int = 8001
+    health_check_interval_s: int = 5
+    port_cache_ttl_s: int = 60
+    restart_engines_on_reconnect: bool = True
+    unhealthy_restart_timeout_s: int = 60
+
+
+class VPNSettingsUpdate(BaseModel):
+    """Partial update model for dynamic VPN settings."""
+
+    enabled: Optional[bool] = None
+    dynamic_vpn_management: Optional[bool] = None
+    preferred_engines_per_vpn: Optional[int] = None
+    protocol: Optional[str] = None
+    provider: Optional[str] = None
+    regions: Optional[List[str] | str] = None
+    credentials: Optional[List[Dict[str, Any]]] = None
+    api_port: Optional[int] = None
+    health_check_interval_s: Optional[int] = None
+    port_cache_ttl_s: Optional[int] = None
+    restart_engines_on_reconnect: Optional[bool] = None
+    unhealthy_restart_timeout_s: Optional[int] = None
+
 class OrchestratorStatusResponse(BaseModel):
     """
     Comprehensive orchestrator status for proxy integration.

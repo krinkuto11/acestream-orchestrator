@@ -42,6 +42,8 @@ from .models.schemas import (
     OrchestratorStatusResponse,
     GenericObjectResponse,
     GenericListResponse,
+    VPNSettingsUpdate,
+    VPNSettingsResponse,
 )
 from .services.collector import collector
 from .services.event_logger import event_logger
@@ -346,21 +348,9 @@ async def lifespan(app: FastAPI):
         vpn_settings = SettingsPersistence.load_vpn_config() or {}
         if vpn_settings:
             logger.info("Loading persisted VPN settings")
-            vpn_enabled = vpn_settings.get('enabled', False)
-            if 'vpn_mode' in vpn_settings:
-                cfg.VPN_MODE = vpn_settings['vpn_mode']
-            if vpn_enabled:
-                cfg.GLUETUN_CONTAINER_NAME = vpn_settings.get('container_name') or None
-                cfg.GLUETUN_CONTAINER_NAME_2 = vpn_settings.get('container_name_2') or None
-            else:
-                cfg.GLUETUN_CONTAINER_NAME = None
-                cfg.GLUETUN_CONTAINER_NAME_2 = None
+            vpn_enabled = bool(vpn_settings.get('enabled', False))
             if 'api_port' in vpn_settings:
                 cfg.GLUETUN_API_PORT = vpn_settings['api_port']
-            if 'port_range_1' in vpn_settings:
-                cfg.GLUETUN_PORT_RANGE_1 = vpn_settings['port_range_1'] or None
-            if 'port_range_2' in vpn_settings:
-                cfg.GLUETUN_PORT_RANGE_2 = vpn_settings['port_range_2'] or None
             if 'health_check_interval_s' in vpn_settings:
                 cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S = vpn_settings['health_check_interval_s']
             if 'port_cache_ttl_s' in vpn_settings:
@@ -369,16 +359,40 @@ async def lifespan(app: FastAPI):
                 cfg.VPN_RESTART_ENGINES_ON_RECONNECT = vpn_settings['restart_engines_on_reconnect']
             if 'unhealthy_restart_timeout_s' in vpn_settings:
                 cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S = vpn_settings['unhealthy_restart_timeout_s']
-            logger.info(f"VPN settings loaded from persistent storage: enabled={vpn_enabled}, mode={cfg.VPN_MODE}, container={cfg.GLUETUN_CONTAINER_NAME}")
+            if 'dynamic_vpn_management' in vpn_settings:
+                cfg.DYNAMIC_VPN_MANAGEMENT = bool(vpn_settings['dynamic_vpn_management'])
+            if 'preferred_engines_per_vpn' in vpn_settings:
+                try:
+                    cfg.PREFERRED_ENGINES_PER_VPN = max(1, int(vpn_settings['preferred_engines_per_vpn']))
+                except Exception:
+                    logger.warning("Invalid preferred_engines_per_vpn in persisted settings; keeping current value")
+            if 'provider' in vpn_settings:
+                cfg.VPN_PROVIDER = str(vpn_settings['provider'] or cfg.VPN_PROVIDER).strip().lower() or cfg.VPN_PROVIDER
+            if 'protocol' in vpn_settings:
+                protocol = str(vpn_settings['protocol'] or cfg.VPN_PROTOCOL).strip().lower()
+                cfg.VPN_PROTOCOL = protocol or cfg.VPN_PROTOCOL
+
+            logger.info(
+                "VPN settings loaded from persistent storage: enabled=%s dynamic=%s provider=%s protocol=%s preferred_engines_per_vpn=%s",
+                vpn_enabled,
+                cfg.DYNAMIC_VPN_MANAGEMENT,
+                cfg.VPN_PROVIDER,
+                cfg.VPN_PROTOCOL,
+                cfg.PREFERRED_ENGINES_PER_VPN,
+            )
 
         dynamic_vpn_management_enabled = bool(
-            vpn_settings.get("enabled", False) and vpn_settings.get("dynamic_vpn_management", False)
+            vpn_settings.get("enabled", False)
+            and vpn_settings.get("dynamic_vpn_management", cfg.DYNAMIC_VPN_MANAGEMENT)
         )
 
+        provider_value = str(vpn_settings.get("provider") or cfg.VPN_PROVIDER).strip().lower()
+        providers = [provider_value] if provider_value else []
+
         lease_summary = await credential_manager.configure(
-            dynamic_vpn_management=bool(vpn_settings.get("dynamic_vpn_management", False)),
-            providers=vpn_settings.get("providers", []),
-            protocol=vpn_settings.get("protocol"),
+            dynamic_vpn_management=bool(vpn_settings.get("dynamic_vpn_management", cfg.DYNAMIC_VPN_MANAGEMENT)),
+            providers=providers,
+            protocol=vpn_settings.get("protocol") or cfg.VPN_PROTOCOL,
             regions=vpn_settings.get("regions", []),
             credentials=vpn_settings.get("credentials", []),
         )
@@ -394,9 +408,6 @@ async def lifespan(app: FastAPI):
 
     # Load state from database first
     load_state_from_db()
-
-    if cfg.GLUETUN_CONTAINER_NAME and not dynamic_vpn_management_enabled:
-        state.initialize_static_vpn_nodes_notready([cfg.GLUETUN_CONTAINER_NAME, cfg.GLUETUN_CONTAINER_NAME_2])
     
     # Initialize looping streams tracker with configured retention
     looping_streams_tracker.set_retention_minutes(cfg.STREAM_LOOP_RETENTION_MINUTES)
@@ -4487,26 +4498,6 @@ class OrchestratorSettingsUpdate(BaseModel):
     debug_mode: Optional[bool] = None
 
 
-class VPNSettingsUpdate(BaseModel):
-    """Model for updating VPN (Gluetun) settings."""
-    enabled: Optional[bool] = None
-    vpn_mode: Optional[str] = None           # 'single' or 'redundant'
-    container_name: Optional[str] = None
-    container_name_2: Optional[str] = None
-    api_port: Optional[int] = None
-    port_range_1: Optional[str] = None       # redundant mode
-    port_range_2: Optional[str] = None       # redundant mode
-    health_check_interval_s: Optional[int] = None
-    port_cache_ttl_s: Optional[int] = None
-    restart_engines_on_reconnect: Optional[bool] = None
-    unhealthy_restart_timeout_s: Optional[int] = None
-    dynamic_vpn_management: Optional[bool] = None
-    providers: Optional[List[str]] = None
-    protocol: Optional[str] = None
-    regions: Optional[List[str]] = None
-    credentials: Optional[List[Dict[str, Any]]] = None
-
-
 @app.get("/settings/orchestrator")
 def get_orchestrator_settings():
     """Get current orchestrator core configuration settings."""
@@ -4729,35 +4720,43 @@ async def update_orchestrator_settings(settings: OrchestratorSettingsUpdate):
     return {"message": "Orchestrator settings updated and persisted", **current}
 
 
-@app.get("/settings/vpn")
+@app.get("/settings/vpn", response_model=VPNSettingsResponse)
 def get_vpn_settings():
-    """Get current VPN (Gluetun) configuration settings."""
+    """Get current dynamic VPN configuration settings."""
     from .services.settings_persistence import SettingsPersistence
 
-    defaults = {
-        "enabled": bool(cfg.GLUETUN_CONTAINER_NAME),
-        "vpn_mode": cfg.VPN_MODE,
-        "container_name": cfg.GLUETUN_CONTAINER_NAME or "",
-        "container_name_2": cfg.GLUETUN_CONTAINER_NAME_2 or "",
+    defaults: Dict[str, Any] = {
+        "enabled": False,
+        "dynamic_vpn_management": bool(cfg.DYNAMIC_VPN_MANAGEMENT),
+        "preferred_engines_per_vpn": int(cfg.PREFERRED_ENGINES_PER_VPN),
+        "protocol": str(cfg.VPN_PROTOCOL or "wireguard"),
+        "provider": str(cfg.VPN_PROVIDER or "protonvpn"),
+        "regions": [],
+        "credentials": [],
         "api_port": cfg.GLUETUN_API_PORT,
-        "port_range_1": cfg.GLUETUN_PORT_RANGE_1 or "",
-        "port_range_2": cfg.GLUETUN_PORT_RANGE_2 or "",
         "health_check_interval_s": cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S,
         "port_cache_ttl_s": cfg.GLUETUN_PORT_CACHE_TTL_S,
         "restart_engines_on_reconnect": cfg.VPN_RESTART_ENGINES_ON_RECONNECT,
         "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
-        "dynamic_vpn_management": False,
-        "providers": [],
-        "protocol": "",
-        "regions": [],
-        "credentials": [],
     }
 
     persisted = SettingsPersistence.load_vpn_config()
     if persisted:
         merged = {**defaults, **persisted}
-        if not isinstance(merged.get("providers"), list):
-            merged["providers"] = []
+
+        legacy_providers = merged.pop("providers", None)
+        if not merged.get("provider") and isinstance(legacy_providers, list) and legacy_providers:
+            merged["provider"] = str(legacy_providers[0]).strip()
+
+        try:
+            merged["preferred_engines_per_vpn"] = max(1, int(merged.get("preferred_engines_per_vpn", 10)))
+        except Exception:
+            merged["preferred_engines_per_vpn"] = 10
+
+        merged["dynamic_vpn_management"] = bool(merged.get("dynamic_vpn_management", True))
+        merged["provider"] = str(merged.get("provider") or "").strip().lower() or defaults["provider"]
+        merged["protocol"] = str(merged.get("protocol") or "").strip().lower() or defaults["protocol"]
+
         if not isinstance(merged.get("regions"), list):
             merged["regions"] = []
         if not isinstance(merged.get("credentials"), list):
@@ -4773,58 +4772,39 @@ def get_vpn_settings():
 
 @app.post("/settings/vpn", dependencies=[Depends(require_api_key)])
 async def update_vpn_settings(settings: VPNSettingsUpdate):
-    """Update VPN (Gluetun) configuration settings at runtime and persist."""
+    """Update dynamic VPN configuration settings at runtime and persist."""
     from .services.settings_persistence import SettingsPersistence
 
-    current = SettingsPersistence.load_vpn_config() or {
-        "enabled": bool(cfg.GLUETUN_CONTAINER_NAME),
-        "vpn_mode": cfg.VPN_MODE,
-        "container_name": cfg.GLUETUN_CONTAINER_NAME or "",
-        "container_name_2": cfg.GLUETUN_CONTAINER_NAME_2 or "",
+    current: Dict[str, Any] = SettingsPersistence.load_vpn_config() or {
+        "enabled": False,
+        "dynamic_vpn_management": bool(cfg.DYNAMIC_VPN_MANAGEMENT),
+        "preferred_engines_per_vpn": int(cfg.PREFERRED_ENGINES_PER_VPN),
+        "protocol": str(cfg.VPN_PROTOCOL or "wireguard"),
+        "provider": str(cfg.VPN_PROVIDER or "protonvpn"),
+        "regions": [],
+        "credentials": [],
         "api_port": cfg.GLUETUN_API_PORT,
-        "port_range_1": cfg.GLUETUN_PORT_RANGE_1 or "",
-        "port_range_2": cfg.GLUETUN_PORT_RANGE_2 or "",
         "health_check_interval_s": cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S,
         "port_cache_ttl_s": cfg.GLUETUN_PORT_CACHE_TTL_S,
         "restart_engines_on_reconnect": cfg.VPN_RESTART_ENGINES_ON_RECONNECT,
         "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
-        "dynamic_vpn_management": False,
-        "providers": [],
-        "protocol": "",
-        "regions": [],
-        "credentials": [],
     }
 
+    for legacy_key in ("vpn_mode", "container_name", "container_name_2", "port_range_1", "port_range_2"):
+        current.pop(legacy_key, None)
+
+    legacy_providers = current.pop("providers", None)
+    if not current.get("provider") and isinstance(legacy_providers, list) and legacy_providers:
+        current["provider"] = str(legacy_providers[0]).strip()
+
     if settings.enabled is not None:
-        current["enabled"] = settings.enabled
-
-    if settings.vpn_mode is not None:
-        if settings.vpn_mode not in ('single', 'redundant'):
-            raise HTTPException(status_code=400, detail="vpn_mode must be 'single' or 'redundant'")
-        current["vpn_mode"] = settings.vpn_mode
-        cfg.VPN_MODE = settings.vpn_mode
-
-    if settings.container_name is not None:
-        current["container_name"] = settings.container_name
-        cfg.GLUETUN_CONTAINER_NAME = settings.container_name or None
-
-    if settings.container_name_2 is not None:
-        current["container_name_2"] = settings.container_name_2
-        cfg.GLUETUN_CONTAINER_NAME_2 = settings.container_name_2 or None
+        current["enabled"] = bool(settings.enabled)
 
     if settings.api_port is not None:
         if not (1 <= settings.api_port <= 65535):
             raise HTTPException(status_code=400, detail="api_port must be 1-65535")
         current["api_port"] = settings.api_port
         cfg.GLUETUN_API_PORT = settings.api_port
-
-    if settings.port_range_1 is not None:
-        current["port_range_1"] = settings.port_range_1
-        cfg.GLUETUN_PORT_RANGE_1 = settings.port_range_1 or None
-
-    if settings.port_range_2 is not None:
-        current["port_range_2"] = settings.port_range_2
-        cfg.GLUETUN_PORT_RANGE_2 = settings.port_range_2 or None
 
     if settings.health_check_interval_s is not None:
         if settings.health_check_interval_s < 1:
@@ -4851,34 +4831,49 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
     if settings.dynamic_vpn_management is not None:
         current["dynamic_vpn_management"] = bool(settings.dynamic_vpn_management)
 
-    if settings.providers is not None:
-        current["providers"] = [str(provider).strip() for provider in settings.providers if str(provider).strip()]
+    if settings.preferred_engines_per_vpn is not None:
+        if settings.preferred_engines_per_vpn < 1:
+            raise HTTPException(status_code=400, detail="preferred_engines_per_vpn must be >= 1")
+        current["preferred_engines_per_vpn"] = int(settings.preferred_engines_per_vpn)
+        cfg.PREFERRED_ENGINES_PER_VPN = int(settings.preferred_engines_per_vpn)
+
+    if settings.provider is not None:
+        provider = str(settings.provider).strip().lower()
+        current["provider"] = provider
+        if provider:
+            cfg.VPN_PROVIDER = provider
 
     if settings.protocol is not None:
         protocol = str(settings.protocol).strip().lower()
         if protocol and protocol not in ("wireguard", "openvpn"):
             raise HTTPException(status_code=400, detail="protocol must be 'wireguard' or 'openvpn'")
         current["protocol"] = protocol
+        if protocol:
+            cfg.VPN_PROTOCOL = protocol
 
     if settings.regions is not None:
-        current["regions"] = [str(region).strip() for region in settings.regions if str(region).strip()]
+        if isinstance(settings.regions, str):
+            current["regions"] = [
+                str(region).strip()
+                for region in settings.regions.split(",")
+                if str(region).strip()
+            ]
+        else:
+            current["regions"] = [str(region).strip() for region in settings.regions if str(region).strip()]
 
     if settings.credentials is not None:
         if not all(isinstance(credential, dict) for credential in settings.credentials):
             raise HTTPException(status_code=400, detail="credentials must be a list of JSON objects")
         current["credentials"] = credential_manager.normalize_credentials_for_storage(settings.credentials)
 
-    # Apply enabled flag: clear container name if VPN is disabled
-    if not current.get("enabled"):
-        cfg.GLUETUN_CONTAINER_NAME = None
-        cfg.GLUETUN_CONTAINER_NAME_2 = None
-    else:
-        cfg.GLUETUN_CONTAINER_NAME = current.get("container_name") or None
-        cfg.GLUETUN_CONTAINER_NAME_2 = current.get("container_name_2") or None
+    cfg.DYNAMIC_VPN_MANAGEMENT = bool(current.get("dynamic_vpn_management", True))
+
+    provider_value = str(current.get("provider") or "").strip().lower()
+    providers = [provider_value] if provider_value else []
 
     lease_summary = await credential_manager.configure(
-        dynamic_vpn_management=bool(current.get("dynamic_vpn_management", False)),
-        providers=current.get("providers", []),
+        dynamic_vpn_management=bool(current.get("dynamic_vpn_management", True)),
+        providers=providers,
         protocol=current.get("protocol"),
         regions=current.get("regions", []),
         credentials=current.get("credentials", []),
@@ -4891,7 +4886,7 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
         lease_summary.get("leased"),
     )
 
-    dynamic_enabled = bool(current.get("enabled", False) and current.get("dynamic_vpn_management", False))
+    dynamic_enabled = bool(current.get("enabled", False) and current.get("dynamic_vpn_management", True))
     if dynamic_enabled:
         if not vpn_controller.is_running():
             await vpn_controller.start()
@@ -4901,12 +4896,6 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
             await vpn_controller.stop()
             state.set_desired_vpn_node_count(0)
             logger.info("Dynamic VPN controller stopped after VPN settings update")
-
-        if current.get("enabled", False):
-            state.initialize_static_vpn_nodes_notready([
-                current.get("container_name"),
-                current.get("container_name_2"),
-            ])
 
     if SettingsPersistence.save_vpn_config(current):
         logger.info("VPN settings persisted")

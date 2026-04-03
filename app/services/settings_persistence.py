@@ -28,18 +28,36 @@ class SettingsPersistence:
     def normalize_vpn_config(config: Dict[str, Any]) -> Dict[str, Any]:
         """Backfill missing VPN settings keys for schema evolution compatibility."""
         normalized = dict(config or {})
-        normalized.setdefault("dynamic_vpn_management", False)
-        normalized.setdefault("providers", [])
-        normalized.setdefault("protocol", "")
+        normalized.setdefault("enabled", False)
+        normalized.setdefault("dynamic_vpn_management", True)
+        normalized.setdefault("preferred_engines_per_vpn", 10)
+        normalized.setdefault("provider", "")
+        normalized.setdefault("protocol", "wireguard")
         normalized.setdefault("regions", [])
         normalized.setdefault("credentials", [])
 
-        if not isinstance(normalized.get("providers"), list):
-            normalized["providers"] = []
+        legacy_providers = normalized.get("providers")
+        if not normalized.get("provider") and isinstance(legacy_providers, list) and legacy_providers:
+            normalized["provider"] = str(legacy_providers[0]).strip()
+
+        if "providers" in normalized:
+            normalized.pop("providers", None)
+
+        # Remove legacy static VPN keys from persisted payloads.
+        for legacy_key in ("vpn_mode", "container_name", "container_name_2", "port_range_1", "port_range_2"):
+            normalized.pop(legacy_key, None)
+
+        if not isinstance(normalized.get("provider"), str):
+            normalized["provider"] = ""
         if not isinstance(normalized.get("regions"), list):
             normalized["regions"] = []
         if not isinstance(normalized.get("credentials"), list):
             normalized["credentials"] = []
+
+        try:
+            normalized["preferred_engines_per_vpn"] = max(1, int(normalized.get("preferred_engines_per_vpn", 10)))
+        except Exception:
+            normalized["preferred_engines_per_vpn"] = 10
 
         return normalized
     
