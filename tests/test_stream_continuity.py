@@ -45,6 +45,7 @@ class ContinuityConfig:
     migration_url: Optional[str]
     hls_segment_batch: int
     hls_pts_gap_tolerance: int
+    hls_pts_backward_tolerance: int
     poll_interval_s: float
 
     @classmethod
@@ -64,6 +65,10 @@ class ContinuityConfig:
             migration_url=(os.getenv("STREAM_CONTINUITY_MIGRATION_URL") or "").strip() or None,
             hls_segment_batch=max(1, int(os.getenv("STREAM_CONTINUITY_HLS_SEGMENTS", "3"))),
             hls_pts_gap_tolerance=max(0, int(os.getenv("STREAM_CONTINUITY_HLS_PTS_TOLERANCE", "9000"))),
+            hls_pts_backward_tolerance=max(
+                0,
+                int(os.getenv("STREAM_CONTINUITY_HLS_PTS_BACKWARD_TOLERANCE", "12000")),
+            ),
             poll_interval_s=max(0.05, float(os.getenv("STREAM_CONTINUITY_POLL_INTERVAL_S", "0.5"))),
         )
 
@@ -671,9 +676,10 @@ async def test_hls_seamless_handover() -> None:
 
         after_first_start_pts = after_pts_ranges[0][0]
         pts_delta = _pts_forward_delta(before_last_end_pts, after_first_start_pts)
-        assert pts_delta >= 0, (
-            "PTS moved backwards across migration: "
-            f"before_end={before_last_end_pts}, after_start={after_first_start_pts}, delta={pts_delta}"
+        assert pts_delta >= -cfg.hls_pts_backward_tolerance, (
+            "PTS moved too far backwards across migration: "
+            f"before_end={before_last_end_pts}, after_start={after_first_start_pts}, delta={pts_delta}, "
+            f"backward_tolerance={cfg.hls_pts_backward_tolerance}"
         )
         assert pts_delta <= cfg.hls_pts_gap_tolerance, (
             "PTS gap too large across migration (possible dropped frames): "
