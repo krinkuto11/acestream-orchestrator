@@ -279,6 +279,7 @@ class DockerEventWatcher:
                 state.update_vpn_node_status(vpn_name, "running", metadata=vpn_metadata)
             elif action == "health_status: healthy":
                 state.update_vpn_node_status(vpn_name, "healthy", metadata=vpn_metadata)
+                self._request_engine_reconcile(reason=f"vpn_ready:{vpn_name}")
             elif action == "health_status: unhealthy":
                 state.update_vpn_node_status(vpn_name, "unhealthy", metadata=vpn_metadata)
                 self._emit_vpn_evictions(vpn_name, reason="node_unhealthy")
@@ -330,12 +331,16 @@ class DockerEventWatcher:
             logger.warning(
                 f"VPN node '{vpn_container}' marked NotReady ({reason}); requested eviction for {emitted} engine(s)"
             )
-            try:
-                from .autoscaler import engine_controller
+            DockerEventWatcher._request_engine_reconcile(reason=f"vpn_not_ready:{vpn_container}")
 
-                engine_controller.request_reconcile(reason=f"vpn_not_ready:{vpn_container}")
-            except Exception as e:
-                logger.debug(f"Failed to request reconcile after VPN eviction intents: {e}")
+    @staticmethod
+    def _request_engine_reconcile(reason: str):
+        try:
+            from .autoscaler import engine_controller
+
+            engine_controller.request_reconcile(reason=reason)
+        except Exception as e:
+            logger.debug(f"Failed to request engine reconcile: {e}")
 
 def get_client(timeout: int = 30):
     """

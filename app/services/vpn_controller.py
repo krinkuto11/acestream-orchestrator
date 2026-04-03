@@ -200,6 +200,16 @@ class VPNController:
                 str(result.get("container_name") or "unknown"),
             )
             state.resolve_scaling_intent(intent["id"], "completed", result={"container_name": result.get("container_name")})
+            # Nudge engine controller immediately so blocked create intents can retry
+            # without waiting for the next autoscaler interval.
+            try:
+                from .autoscaler import engine_controller
+
+                engine_controller.request_reconcile(
+                    reason=f"vpn_node_provisioned:{str(result.get('container_name') or 'unknown')}"
+                )
+            except Exception as e:
+                logger.debug("Failed to request engine reconcile after VPN provision: %s", e)
         except Exception as e:
             logger.error("Failed to provision dynamic VPN node: %s", e)
             state.resolve_scaling_intent(intent["id"], "failed", result={"error": str(e)})

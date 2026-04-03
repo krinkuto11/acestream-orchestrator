@@ -71,7 +71,8 @@ def test_apply_state_update_marks_ready_without_eviction_on_healthy():
     watcher = DockerEventWatcher()
 
     with patch.object(state, "update_vpn_node_status") as update_status, \
-         patch.object(DockerEventWatcher, "_emit_vpn_evictions") as emit_evictions:
+         patch.object(DockerEventWatcher, "_emit_vpn_evictions") as emit_evictions, \
+         patch.object(DockerEventWatcher, "_request_engine_reconcile") as request_reconcile:
         watcher._apply_state_update(
             container_id="vpn-1",
             container_name="gluetun",
@@ -83,3 +84,4 @@ def test_apply_state_update_marks_ready_without_eviction_on_healthy():
     assert update_status.call_args.args[:2] == ("gluetun", "healthy")
     assert "metadata" in update_status.call_args.kwargs
     emit_evictions.assert_not_called()
+    request_reconcile.assert_called_once_with(reason="vpn_ready:gluetun")

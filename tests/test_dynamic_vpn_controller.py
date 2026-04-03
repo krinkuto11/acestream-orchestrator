@@ -245,6 +245,20 @@ def test_vpn_controller_heal_notready_destroys_stale_nodes_after_grace():
     destroy_mock.assert_awaited_once_with("gluetun-dyn-a", reason="node_not_ready")
 
 
+def test_vpn_controller_provision_requests_engine_reconcile_on_success():
+    controller = VPNController()
+
+    with patch("app.services.vpn_controller.state.emit_scaling_intent", return_value={"id": "intent-1"}), \
+         patch("app.services.vpn_controller.state.resolve_scaling_intent") as resolve_mock, \
+         patch("app.services.vpn_controller.vpn_provisioner.provision_node", new=AsyncMock(return_value={"container_name": "gluetun-dyn-test"})), \
+         patch("app.services.autoscaler.engine_controller.request_reconcile") as request_reconcile:
+        asyncio.run(controller._provision_one({}))
+
+    resolve_mock.assert_called_once()
+    request_reconcile.assert_called_once()
+    assert "vpn_node_provisioned:gluetun-dyn-test" in request_reconcile.call_args.kwargs.get("reason", "")
+
+
 def test_vpn_controller_drain_uses_gather_and_resolves_intents_per_engine():
     controller = VPNController()
     engines = [
