@@ -161,7 +161,7 @@ class VPNSettingsUpdate(BaseModel):
     """Update model matching Smart VPN wizard save payload."""
 
     enabled: bool
-    dynamic_vpn_management: bool
+    dynamic_vpn_management: Optional[bool] = None
     preferred_engines_per_vpn: int
     protocol: str
     provider: str

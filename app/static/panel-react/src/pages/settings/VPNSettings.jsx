@@ -141,7 +141,6 @@ export function VPNSettings({ apiKey, orchUrl }) {
   const [unhealthyRestartTimeoutS, setUnhealthyRestartTimeoutS] = useState(DEFAULTS.unhealthy_restart_timeout_s)
 
   // Dynamic VPN wizard state
-  const [dynamicVpnManagement, setDynamicVpnManagement] = useState(DEFAULTS.dynamic_vpn_management)
   const [preferredEnginesPerVpn, setPreferredEnginesPerVpn] = useState(DEFAULTS.preferred_engines_per_vpn)
   const [protocol, setProtocol] = useState(DEFAULTS.protocol)
   const [selectedProvider, setSelectedProvider] = useState(DEFAULTS.provider)
@@ -195,7 +194,6 @@ export function VPNSettings({ apiKey, orchUrl }) {
         setRestartEnginesOnReconnect(data.restart_engines_on_reconnect ?? DEFAULTS.restart_engines_on_reconnect)
         setUnhealthyRestartTimeoutS(data.unhealthy_restart_timeout_s ?? DEFAULTS.unhealthy_restart_timeout_s)
 
-        setDynamicVpnManagement(Boolean(data.dynamic_vpn_management ?? DEFAULTS.dynamic_vpn_management))
         setPreferredEnginesPerVpn(Math.max(1, Number(data.preferred_engines_per_vpn ?? DEFAULTS.preferred_engines_per_vpn) || DEFAULTS.preferred_engines_per_vpn))
 
         const loadedProtocol = String(data.protocol || DEFAULTS.protocol).toLowerCase()
@@ -332,7 +330,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
       port_cache_ttl_s: portCacheTtlS,
       restart_engines_on_reconnect: restartEnginesOnReconnect,
       unhealthy_restart_timeout_s: unhealthyRestartTimeoutS,
-      dynamic_vpn_management: dynamicVpnManagement,
+      dynamic_vpn_management: true,
       preferred_engines_per_vpn: Math.max(1, Number(preferredEnginesPerVpn) || DEFAULTS.preferred_engines_per_vpn),
       protocol,
       provider: selectedProvider ? normalizeProvider(selectedProvider) : '',
@@ -410,25 +408,10 @@ export function VPNSettings({ apiKey, orchUrl }) {
             <CardHeader>
               <CardTitle>Smart VPN Wizard</CardTitle>
               <CardDescription>
-                Configure protocol/provider combinations and build a credential pool for dynamic VPN nodes.
+                Configure protocol/provider combinations and build a credential pool for orchestrator-managed dynamic VPN nodes.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
-              <div className="flex items-start gap-3">
-                <Switch
-                  id="dynamic-vpn-management"
-                  checked={dynamicVpnManagement}
-                  onCheckedChange={setDynamicVpnManagement}
-                />
-                <div>
-                  <Label htmlFor="dynamic-vpn-management">Enable Dynamic VPN Controller</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Keep this enabled to auto-scale dynamic VPN nodes using the credential pool.
-                    Disable to fall back to static Gluetun container routing.
-                  </p>
-                </div>
-              </div>
-
               <div className="space-y-2 max-w-xs">
                 <Label htmlFor="preferred-engines-per-vpn">Preferred Engines per VPN Node</Label>
                 <Input

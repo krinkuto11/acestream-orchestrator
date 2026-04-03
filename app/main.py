@@ -359,8 +359,7 @@ async def lifespan(app: FastAPI):
                 cfg.VPN_RESTART_ENGINES_ON_RECONNECT = vpn_settings['restart_engines_on_reconnect']
             if 'unhealthy_restart_timeout_s' in vpn_settings:
                 cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S = vpn_settings['unhealthy_restart_timeout_s']
-            if 'dynamic_vpn_management' in vpn_settings:
-                cfg.DYNAMIC_VPN_MANAGEMENT = bool(vpn_settings['dynamic_vpn_management'])
+            cfg.DYNAMIC_VPN_MANAGEMENT = True
             if 'preferred_engines_per_vpn' in vpn_settings:
                 try:
                     cfg.PREFERRED_ENGINES_PER_VPN = max(1, int(vpn_settings['preferred_engines_per_vpn']))
@@ -383,14 +382,14 @@ async def lifespan(app: FastAPI):
 
         dynamic_vpn_management_enabled = bool(
             vpn_settings.get("enabled", False)
-            and vpn_settings.get("dynamic_vpn_management", cfg.DYNAMIC_VPN_MANAGEMENT)
+            and cfg.DYNAMIC_VPN_MANAGEMENT
         )
 
         provider_value = str(vpn_settings.get("provider") or cfg.VPN_PROVIDER).strip().lower()
         providers = [provider_value] if provider_value else []
 
         lease_summary = await credential_manager.configure(
-            dynamic_vpn_management=bool(vpn_settings.get("dynamic_vpn_management", cfg.DYNAMIC_VPN_MANAGEMENT)),
+            dynamic_vpn_management=True,
             providers=providers,
             protocol=vpn_settings.get("protocol") or cfg.VPN_PROTOCOL,
             regions=vpn_settings.get("regions", []),
@@ -4727,7 +4726,7 @@ def get_vpn_settings():
 
     defaults: Dict[str, Any] = {
         "enabled": False,
-        "dynamic_vpn_management": bool(cfg.DYNAMIC_VPN_MANAGEMENT),
+        "dynamic_vpn_management": True,
         "preferred_engines_per_vpn": int(cfg.PREFERRED_ENGINES_PER_VPN),
         "protocol": str(cfg.VPN_PROTOCOL or "wireguard"),
         "provider": str(cfg.VPN_PROVIDER or "protonvpn"),
@@ -4753,7 +4752,7 @@ def get_vpn_settings():
         except Exception:
             merged["preferred_engines_per_vpn"] = 10
 
-        merged["dynamic_vpn_management"] = bool(merged.get("dynamic_vpn_management", True))
+        merged["dynamic_vpn_management"] = True
         merged["provider"] = str(merged.get("provider") or "").strip().lower() or defaults["provider"]
         merged["protocol"] = str(merged.get("protocol") or "").strip().lower() or defaults["protocol"]
 
@@ -4777,7 +4776,7 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
 
     current: Dict[str, Any] = SettingsPersistence.load_vpn_config() or {
         "enabled": False,
-        "dynamic_vpn_management": bool(cfg.DYNAMIC_VPN_MANAGEMENT),
+        "dynamic_vpn_management": True,
         "preferred_engines_per_vpn": int(cfg.PREFERRED_ENGINES_PER_VPN),
         "protocol": str(cfg.VPN_PROTOCOL or "wireguard"),
         "provider": str(cfg.VPN_PROVIDER or "protonvpn"),
@@ -4828,8 +4827,8 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
         current["unhealthy_restart_timeout_s"] = settings.unhealthy_restart_timeout_s
         cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S = settings.unhealthy_restart_timeout_s
 
-    if settings.dynamic_vpn_management is not None:
-        current["dynamic_vpn_management"] = bool(settings.dynamic_vpn_management)
+    # Dynamic controller mode is mandatory for VPN mode.
+    current["dynamic_vpn_management"] = True
 
     if settings.preferred_engines_per_vpn is not None:
         if settings.preferred_engines_per_vpn < 1:
@@ -4866,13 +4865,13 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
             raise HTTPException(status_code=400, detail="credentials must be a list of JSON objects")
         current["credentials"] = credential_manager.normalize_credentials_for_storage(settings.credentials)
 
-    cfg.DYNAMIC_VPN_MANAGEMENT = bool(current.get("dynamic_vpn_management", True))
+    cfg.DYNAMIC_VPN_MANAGEMENT = True
 
     provider_value = str(current.get("provider") or "").strip().lower()
     providers = [provider_value] if provider_value else []
 
     lease_summary = await credential_manager.configure(
-        dynamic_vpn_management=bool(current.get("dynamic_vpn_management", True)),
+        dynamic_vpn_management=True,
         providers=providers,
         protocol=current.get("protocol"),
         regions=current.get("regions", []),
@@ -4886,7 +4885,7 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
         lease_summary.get("leased"),
     )
 
-    dynamic_enabled = bool(current.get("enabled", False) and current.get("dynamic_vpn_management", True))
+    dynamic_enabled = bool(current.get("enabled", False))
     if dynamic_enabled:
         if not vpn_controller.is_running():
             await vpn_controller.start()

@@ -29,7 +29,8 @@ class SettingsPersistence:
         """Backfill missing VPN settings keys for schema evolution compatibility."""
         normalized = dict(config or {})
         normalized.setdefault("enabled", False)
-        normalized.setdefault("dynamic_vpn_management", True)
+        # Dynamic VPN controller mode is always used when VPN is enabled.
+        normalized["dynamic_vpn_management"] = True
         normalized.setdefault("preferred_engines_per_vpn", 10)
         normalized.setdefault("provider", "")
         normalized.setdefault("protocol", "wireguard")
