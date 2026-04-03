@@ -37,5 +37,8 @@ def parse_wireguard_conf(file_content: str) -> Dict[str, object]:
         "address": address_value,
         "addresses": addresses,
         "endpoint": endpoint,
+        "PrivateKey": private_key,
+        "Address": address_value,
+        "Endpoint": endpoint,
         "is_valid": bool(private_key and address_value and endpoint),
     }

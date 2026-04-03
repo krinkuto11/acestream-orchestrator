@@ -110,6 +110,19 @@ function parseRegionsInput(value) {
     .filter(Boolean)
 }
 
+function normalizeCredentialsWithIds(items) {
+  if (!Array.isArray(items)) return []
+  return items
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => {
+      const existingId = String(item.id || '').trim()
+      return {
+        ...item,
+        id: existingId || generateCredentialId(),
+      }
+    })
+}
+
 export function VPNSettings({ apiKey, orchUrl }) {
   const [loading, setLoading] = useState(false)
   const [loadingLeases, setLoadingLeases] = useState(false)
@@ -208,7 +221,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
         const loadedRegions = Array.isArray(data.regions) ? data.regions : []
         setRegionsText(loadedRegions.join(', '))
 
-        const loadedCredentials = Array.isArray(data.credentials) ? data.credentials : []
+        const loadedCredentials = normalizeCredentialsWithIds(data.credentials)
         setCredentials(loadedCredentials)
       }
       await fetchLeases()
@@ -257,6 +270,8 @@ export function VPNSettings({ apiKey, orchUrl }) {
       addresses: address,
       wireguard_addresses: address,
       endpoint: parsed.endpoint,
+      endpoints: parsed.endpoint,
+      wireguard_endpoints: parsed.endpoint,
       source,
     }
 
@@ -308,8 +323,8 @@ export function VPNSettings({ apiKey, orchUrl }) {
     await handleWireguardFile(file)
   }
 
-  const deleteCredential = (index) => {
-    setCredentials((prev) => prev.filter((_, i) => i !== index))
+  const deleteCredential = (credentialId) => {
+    setCredentials((prev) => prev.filter((credential) => credential.id !== credentialId))
   }
 
   const saveConfig = async () => {
@@ -320,6 +335,9 @@ export function VPNSettings({ apiKey, orchUrl }) {
     setLoading(true)
     setMessage(null)
     setError(null)
+
+    const normalizedCredentials = normalizeCredentialsWithIds(credentials)
+    setCredentials(normalizedCredentials)
 
     const payload = {
       enabled,
@@ -337,7 +355,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
       protocol,
       providers: selectedProvider ? [normalizeProvider(selectedProvider)] : [],
       regions: parseRegionsInput(regionsText),
-      credentials,
+      credentials: normalizedCredentials,
     }
 
     try {
@@ -812,7 +830,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  credentials.map((credential, index) => {
+                  credentials.map((credential) => {
                     const credentialId = String(credential.id || '').trim()
                     const lease = credentialId ? leasesByCredentialId.get(credentialId) : null
                     const inUse = Boolean(lease)
@@ -821,7 +839,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
                       : 'Available'
 
                     return (
-                      <TableRow key={credential.id || `credential-${index}`}>
+                      <TableRow key={credential.id}>
                         <TableCell>
                           <div className="font-medium">{providerLabel(credential.provider || selectedProvider)}</div>
                           <div className="text-xs text-muted-foreground uppercase">{credential.protocol || protocol}</div>
@@ -839,7 +857,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
                             type="button"
                             variant="ghost"
                             size="icon"
-                            onClick={() => deleteCredential(index)}
+                            onClick={() => deleteCredential(credential.id)}
                             aria-label="Delete credential"
                           >
                             <Trash2 className="h-4 w-4 text-destructive" />

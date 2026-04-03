@@ -261,14 +261,29 @@ class VPNProvisioner:
                 credential.get("wireguard_private_key")
                 or credential.get("private_key")
                 or credential.get("wg_private_key")
+                or credential.get("PrivateKey")
             )
             if not private_key:
                 raise ValueError("wireguard credential is missing private_key/WIREGUARD_PRIVATE_KEY")
             env["WIREGUARD_PRIVATE_KEY"] = str(private_key)
 
-            addresses = credential.get("wireguard_addresses") or credential.get("addresses")
+            addresses = (
+                credential.get("wireguard_addresses")
+                or credential.get("addresses")
+                or credential.get("Address")
+            )
             if addresses:
                 env["WIREGUARD_ADDRESSES"] = str(addresses)
+
+            endpoints = (
+                credential.get("wireguard_endpoints")
+                or credential.get("endpoints")
+                or credential.get("endpoint")
+                or credential.get("Endpoint")
+            )
+            if endpoints:
+                # Gluetun expects pluralized endpoint variable.
+                env["WIREGUARD_ENDPOINTS"] = str(endpoints)
         else:
             username = credential.get("openvpn_user") or credential.get("username") or credential.get("user")
             password = credential.get("openvpn_password") or credential.get("password") or credential.get("pass")
@@ -360,29 +375,34 @@ class VPNProvisioner:
         if explicit_pref is None:
             explicit_pref = settings.get("vpn_port_forwarding")
 
+        normalized_provider = str(provider or "").strip().lower()
+        normalized_supported = bool(
+            port_forwarding_supported or self.provider_supports_port_forwarding(normalized_provider)
+        )
+
         if explicit_pref is not None:
             requested = self._coerce_bool(explicit_pref)
         else:
-            requested = bool(enabled or p2p_enabled or port_forwarding_supported)
+            requested = bool(enabled or p2p_enabled or normalized_supported)
 
-        should_enable = bool(requested and port_forwarding_supported)
+        should_enable = bool(requested and normalized_supported)
         env["VPN_PORT_FORWARDING"] = "on" if should_enable else "off"
 
         if not should_enable:
-            if requested and not port_forwarding_supported:
+            if requested and not normalized_supported:
                 logger.info(
                     "Port forwarding disabled for provider '%s' because native support is unavailable",
-                    provider,
+                    normalized_provider or provider,
                 )
             return
 
-        env.setdefault("VPN_PORT_FORWARDING_PROVIDER", provider)
+        env.setdefault("VPN_PORT_FORWARDING_PROVIDER", normalized_provider)
 
         custom_pf_provider = credential.get("vpn_port_forwarding_provider") or settings.get("vpn_port_forwarding_provider")
         if custom_pf_provider:
             env["VPN_PORT_FORWARDING_PROVIDER"] = str(custom_pf_provider).strip().lower()
 
-        if provider == "private internet access":
+        if normalized_provider == "private internet access":
             username = credential.get("vpn_port_forwarding_username") or credential.get("openvpn_user") or credential.get("username")
             password = credential.get("vpn_port_forwarding_password") or credential.get("openvpn_password") or credential.get("password")
             if username:
@@ -391,7 +411,7 @@ class VPNProvisioner:
                 env["VPN_PORT_FORWARDING_PASSWORD"] = str(password)
             env.setdefault("PORT_FORWARD_ONLY", "true")
 
-        if provider == "protonvpn":
+        if normalized_provider == "protonvpn":
             env.setdefault("PORT_FORWARD_ONLY", "on")
 
     @staticmethod

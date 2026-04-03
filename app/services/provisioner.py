@@ -205,8 +205,9 @@ class ResourceScheduler:
                 if forwarding_capable_nodes:
                     candidate_nodes = forwarding_capable_nodes
                 else:
-                    logger.info(
-                        "No forwarding-capable dynamic VPN nodes are ready; scheduling fallback without forwarding"
+                    logger.warning(
+                        "P2P forwarding requested but no dynamic VPN nodes support port forwarding; "
+                        "falling back to standard node routing"
                     )
 
             selected = min(
@@ -283,6 +284,11 @@ class ResourceScheduler:
         ]
         forwarding_capable = [node for node in ready_dynamic_nodes if self._node_supports_port_forwarding(node)]
         if not forwarding_capable:
+            if ready_dynamic_nodes:
+                logger.warning(
+                    "No forwarding-capable dynamic VPN nodes are available; forwarded engine election will degrade "
+                    "to non-forwarded placement"
+                )
             return False
 
         forwarding_capable_names = {
@@ -343,7 +349,7 @@ class ResourceScheduler:
 
         if vpn_container:
             if not ResourceScheduler._vpn_supports_port_forwarding(vpn_container):
-                logger.info(
+                logger.warning(
                     "VPN '%s' does not support port forwarding; engine will be scheduled without forwarded P2P port",
                     vpn_container,
                 )
