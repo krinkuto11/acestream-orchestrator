@@ -189,6 +189,28 @@ def test_vpn_controller_restores_leases_once_at_run_startup():
     restore_mock.assert_awaited_once_with(startup_nodes)
 
 
+def test_vpn_controller_bootstraps_vpn_nodes_from_desired_replicas_when_no_engines():
+    controller = VPNController()
+    state.set_desired_replica_count(2)
+
+    with patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={
+        "enabled": True,
+        "dynamic_vpn_management": True,
+        "preferred_engines_per_vpn": 10,
+    }), \
+         patch("app.services.vpn_controller.credential_manager.summary", new=AsyncMock(return_value={"total_credentials": 2})), \
+         patch("app.services.vpn_controller.vpn_provisioner.list_managed_nodes", new=AsyncMock(side_effect=[[], []])), \
+         patch("app.services.state.state.list_engines", return_value=[]), \
+         patch.object(controller, "_sync_dynamic_nodes_to_state"), \
+         patch.object(controller, "_heal_notready_nodes", new=AsyncMock()), \
+         patch.object(controller, "_scale_down_idle_nodes", new=AsyncMock()), \
+         patch.object(controller, "_provision_one", new=AsyncMock()) as provision_mock:
+        asyncio.run(controller._reconcile_once())
+
+    assert state.get_desired_vpn_node_count() == 1
+    assert provision_mock.await_count == 1
+
+
 def test_vpn_controller_drain_uses_gather_and_resolves_intents_per_engine():
     controller = VPNController()
     engines = [

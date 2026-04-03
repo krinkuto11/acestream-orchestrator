@@ -107,12 +107,28 @@ class VPNController:
 
         preferred_engines_per_vpn = self._get_preferred_engines_per_vpn(settings)
         total_engines = len(state.list_engines())
+        desired_engines = max(0, int(state.get_desired_replica_count()))
+        # Bootstrap dynamic VPN nodes from desired engine demand as well.
+        # Using only existing engines causes a startup deadlock:
+        # no engines -> no VPN nodes -> engine provisioning blocked.
+        engine_demand = max(total_engines, desired_engines)
         required_vpns = 0
-        if total_engines > 0 and preferred_engines_per_vpn > 0:
-            required_vpns = math.ceil(total_engines / preferred_engines_per_vpn)
+        if engine_demand > 0 and preferred_engines_per_vpn > 0:
+            required_vpns = math.ceil(engine_demand / preferred_engines_per_vpn)
 
         desired_vpns = min(required_vpns, total_credentials)
         state.set_desired_vpn_node_count(desired_vpns)
+
+        logger.debug(
+            "VPN controller desired nodes computed "
+            "(engines=%s, desired_engines=%s, demand=%s, preferred=%s, credentials=%s, desired_vpns=%s)",
+            total_engines,
+            desired_engines,
+            engine_demand,
+            preferred_engines_per_vpn,
+            total_credentials,
+            desired_vpns,
+        )
 
         await self._heal_notready_nodes()
 
@@ -166,6 +182,7 @@ class VPNController:
             return 4
 
     async def _provision_one(self, settings: Dict[str, object]):
+        logger.info("Provisioning dynamic VPN node")
         intent = state.emit_scaling_intent(
             intent_type="create_vpn_request",
             details={
@@ -176,6 +193,10 @@ class VPNController:
 
         try:
             result = await vpn_provisioner.provision_node(settings)
+            logger.info(
+                "Dynamic VPN node provisioned: %s",
+                str(result.get("container_name") or "unknown"),
+            )
             state.resolve_scaling_intent(intent["id"], "completed", result={"container_name": result.get("container_name")})
         except Exception as e:
             logger.error("Failed to provision dynamic VPN node: %s", e)
