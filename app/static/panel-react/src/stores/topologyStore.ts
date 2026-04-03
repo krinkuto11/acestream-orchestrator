@@ -101,7 +101,8 @@ const shouldBypassEdgeSmoothing = (
 ): boolean => {
   return (
     (sourceKind === 'vpn' && targetKind === 'engine') ||
-    (sourceKind === 'engine' && targetKind === 'proxy')
+    (sourceKind === 'engine' && targetKind === 'proxy') ||
+    (sourceKind === 'proxy' && targetKind === 'client')
   )
 }
 
@@ -795,8 +796,9 @@ const buildSnapshot = (
     // Retrieve previous client node state
     const prevClientNode = prevState?.nodes.find(n => n.id === cNodeId)
     
-    // Smooth it! (isActive is true simply because the client exists in the list)
-    const clientBwMbps = smoothBandwidth(rawClientBw, prevClientNode?.data?.bandwidthMbps, true)
+    // Treat zero-bitrate clients as inactive to avoid lingering proxy->client pipes.
+    const clientIsActive = rawClientBw > 0.05
+    const clientBwMbps = smoothBandwidth(rawClientBw, prevClientNode?.data?.bandwidthMbps, clientIsActive)
 
     nodes.push({
       id: cNodeId,
@@ -1149,6 +1151,8 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
           targetUpload = targetNode.data.uploadMbps
         } else if (sourceNode?.data?.kind === 'engine' && targetNode?.data?.kind === 'proxy') {
           targetBandwidth = sourceNode.data.proxyIngressMbps || 0
+        } else if (sourceNode?.data?.kind === 'proxy' && targetNode?.data?.kind === 'client') {
+          targetBandwidth = targetNode?.data?.bandwidthMbps || 0
         } else {
           targetBandwidth = sourceNode?.data?.bandwidthMbps || 0
         }
