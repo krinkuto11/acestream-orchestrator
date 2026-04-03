@@ -121,6 +121,10 @@ const applyDeadband = (
   return Math.abs(target - current) < threshold ? current : target
 }
 
+const shouldBypassNodeSmoothing = (kind: TopologyNodeKind | undefined): boolean => {
+  return kind === 'vpn' || kind === 'proxy'
+}
+
 
 const formatCompactId = (id: string): string => {
   if (!id) return 'unknown'
@@ -794,18 +798,37 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
 
       const stabilizedNodes = next.nodes.map((nextNode) => {
         const existingNode = state.nodes.find((n) => n.id === nextNode.id)
-        const targetBandwidth = applyDeadband(existingNode?.data?.bandwidthMbps, nextNode.data?.bandwidthMbps)
-        const targetUpload = applyDeadband(existingNode?.data?.uploadMbps, nextNode.data?.uploadMbps)
-        const targetProxyIngress = applyDeadband(
-          existingNode?.data?.proxyIngressMbps,
-          nextNode.data?.proxyIngressMbps,
-        )
+        const bypassSmoothing = shouldBypassNodeSmoothing(nextNode.data?.kind)
+        const targetBandwidth = bypassSmoothing
+          ? (nextNode.data?.bandwidthMbps ?? 0)
+          : applyDeadband(existingNode?.data?.bandwidthMbps, nextNode.data?.bandwidthMbps)
+        const targetUpload = bypassSmoothing
+          ? nextNode.data?.uploadMbps
+          : applyDeadband(existingNode?.data?.uploadMbps, nextNode.data?.uploadMbps)
+        const targetProxyIngress = bypassSmoothing
+          ? nextNode.data?.proxyIngressMbps
+          : applyDeadband(
+            existingNode?.data?.proxyIngressMbps,
+            nextNode.data?.proxyIngressMbps,
+          )
 
         nodeInterpolationTargets.set(nextNode.id, {
           bandwidthMbps: targetBandwidth ?? 0,
           uploadMbps: targetUpload,
           proxyIngressMbps: targetProxyIngress,
         })
+
+        if (bypassSmoothing) {
+          return {
+            ...nextNode,
+            data: {
+              ...nextNode.data,
+              bandwidthMbps: targetBandwidth ?? 0,
+              ...(typeof targetUpload === 'number' ? { uploadMbps: targetUpload } : {}),
+              ...(typeof targetProxyIngress === 'number' ? { proxyIngressMbps: targetProxyIngress } : {}),
+            },
+          }
+        }
 
         if (!existingNode) return nextNode
         
@@ -967,14 +990,21 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
         return node
       }
 
-      const nextBandwidth = interpolateNumber(data.bandwidthMbps || 0, flowTarget.bandwidthMbps || 0)
+      const bypassSmoothing = shouldBypassNodeSmoothing(data.kind)
+      const nextBandwidth = bypassSmoothing
+        ? (flowTarget.bandwidthMbps || 0)
+        : interpolateNumber(data.bandwidthMbps || 0, flowTarget.bandwidthMbps || 0)
       const nextUpload =
         typeof data.uploadMbps === 'number' || typeof flowTarget.uploadMbps === 'number'
-          ? interpolateNumber(data.uploadMbps ?? 0, flowTarget.uploadMbps ?? 0)
+          ? (bypassSmoothing
+            ? (flowTarget.uploadMbps ?? 0)
+            : interpolateNumber(data.uploadMbps ?? 0, flowTarget.uploadMbps ?? 0))
           : undefined
       const nextProxyIngress =
         typeof data.proxyIngressMbps === 'number' || typeof flowTarget.proxyIngressMbps === 'number'
-          ? interpolateNumber(data.proxyIngressMbps ?? 0, flowTarget.proxyIngressMbps ?? 0)
+          ? (bypassSmoothing
+            ? (flowTarget.proxyIngressMbps ?? 0)
+            : interpolateNumber(data.proxyIngressMbps ?? 0, flowTarget.proxyIngressMbps ?? 0))
           : undefined
 
       return {
