@@ -37,6 +37,7 @@ class ProxyServer:
         self.stream_managers = {}
         self.stream_buffers = {}
         self.client_managers = {}
+        self.shutdown_timers = {}
         
         # Generate unique worker ID
         pid = os.getpid()
@@ -55,6 +56,14 @@ class ProxyServer:
         self._start_event_listener()
         
         logger.info(f"ProxyServer initialized with worker_id={self.worker_id}")
+
+    def _get_shutdown_timers(self):
+        """Return shutdown timer registry, creating it for __new__-constructed test stubs."""
+        timers = getattr(self, "shutdown_timers", None)
+        if timers is None:
+            timers = {}
+            self.shutdown_timers = timers
+        return timers
     
     def _setup_redis_connection(self):
         """Setup Redis connection"""
@@ -130,8 +139,13 @@ class ProxyServer:
                     remaining = data.get('remaining_clients', 0)
                     if remaining == 0:
                         logger.info(f"Last client disconnected for {content_id}, scheduling cleanup")
+                        shutdown_timers = self._get_shutdown_timers()
+                        existing_timer = shutdown_timers.get(content_id)
+                        if existing_timer:
+                            existing_timer.cancel()
                         # Use threading.Timer instead of gevent.spawn_later
                         timer = threading.Timer(Config.CHANNEL_SHUTDOWN_DELAY, self._stop_stream, args=[content_id])
+                        shutdown_timers[content_id] = timer
                         timer.daemon = True
                         timer.start()
         
@@ -159,8 +173,20 @@ class ProxyServer:
     ):
         """Start a new stream session"""
         if content_id in self.stream_managers:
-            logger.info(f"Stream already exists for content_id={content_id}")
-            return True
+            stream_manager = self.stream_managers[content_id]
+            if getattr(stream_manager, 'running', False):
+                shutdown_timers = self._get_shutdown_timers()
+                existing_timer = shutdown_timers.get(content_id)
+                if existing_timer:
+                    existing_timer.cancel()
+                    shutdown_timers.pop(content_id, None)
+                    logger.info(f"Canceled pending shutdown timer for {content_id}")
+
+                logger.info(f"Stream already exists and is active for content_id={content_id}")
+                return True
+
+            logger.info(f"Stream exists but thread is dead, cleaning up for restart: {content_id}")
+            self._stop_stream(content_id)
         
         try:
             # Get API key from environment
@@ -298,6 +324,11 @@ class ProxyServer:
     def _stop_stream(self, content_id):
         """Stop a stream session (internal method)"""
         logger.info(f"Stopping stream for content_id={content_id}")
+
+        shutdown_timers = self._get_shutdown_timers()
+        existing_timer = shutdown_timers.pop(content_id, None)
+        if existing_timer:
+            existing_timer.cancel()
         
         # Stop stream manager atomically
         stream_manager = self.stream_managers.pop(content_id, None)
@@ -437,7 +468,12 @@ class ProxyServer:
             
             if client_count == 0:
                 logger.info(f"No clients left for {content_id}, scheduling stop")
+                shutdown_timers = self._get_shutdown_timers()
+                existing_timer = shutdown_timers.get(content_id)
+                if existing_timer:
+                    existing_timer.cancel()
                 # Use threading.Timer instead of gevent.spawn_later
                 timer = threading.Timer(Config.CHANNEL_SHUTDOWN_DELAY, self._stop_stream, args=[content_id])
+                shutdown_timers[content_id] = timer
                 timer.daemon = True
                 timer.start()
