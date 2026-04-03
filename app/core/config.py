@@ -57,9 +57,9 @@ class Cfg(BaseModel):
     PREFERRED_ENGINES_PER_VPN: int = int(os.getenv("PREFERRED_ENGINES_PER_VPN", 10))
     VPN_PROVIDER: str = os.getenv("VPN_PROVIDER", "protonvpn")
     VPN_PROTOCOL: str = os.getenv("VPN_PROTOCOL", "wireguard")
-
-    # Static fallback container watched when dynamic management is disabled.
+    # Deprecated and ignored at runtime (dynamic VPN orchestration is always used).
     GLUETUN_CONTAINER_NAME: str | None = os.getenv("GLUETUN_CONTAINER_NAME")
+
     GLUETUN_API_PORT: int = int(os.getenv("GLUETUN_API_PORT", 8001))
     GLUETUN_HEALTH_CHECK_INTERVAL_S: int = int(os.getenv("GLUETUN_HEALTH_CHECK_INTERVAL_S", 5))
     GLUETUN_PORT_CACHE_TTL_S: int = int(os.getenv("GLUETUN_PORT_CACHE_TTL_S", 60))
@@ -192,11 +192,4 @@ class Cfg(BaseModel):
             raise ValueError('PREFERRED_ENGINES_PER_VPN must be > 0')
         return v
 
-    @model_validator(mode='after')
-    def validate_vpn_config(self):
-        if not self.DYNAMIC_VPN_MANAGEMENT:
-            if not self.GLUETUN_CONTAINER_NAME:
-                raise ValueError('GLUETUN_CONTAINER_NAME is required when DYNAMIC_VPN_MANAGEMENT is false')
-        return self
-    
 cfg = Cfg()

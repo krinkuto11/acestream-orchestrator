@@ -13,8 +13,7 @@ def test_scheduler_prefers_least_loaded_dynamic_vpn_node():
     scheduler = ResourceScheduler()
     _vpn_pending_engines.clear()
 
-    with patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME", None), \
-         patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
+    with patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
          patch("app.services.provisioner.cfg.ACE_MAP_HTTPS", True), \
          patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={"enabled": True, "dynamic_vpn_management": True}), \
          patch("app.services.state.state.list_vpn_nodes", return_value=[
@@ -92,8 +91,7 @@ def test_scheduler_no_vpn_enabled_ignores_dynamic_config_when_disabled():
     scheduler = ResourceScheduler()
     _vpn_pending_engines.clear()
 
-    with patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME", None), \
-         patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
+    with patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
          patch("app.services.provisioner.cfg.ACE_MAP_HTTPS", True), \
          patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={
              "enabled": False,

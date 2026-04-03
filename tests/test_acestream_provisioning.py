@@ -22,8 +22,7 @@ def test_scheduler_labels_include_config_hash_and_generation():
     state.set_target_engine_config("hash-123")
     scheduler = ResourceScheduler()
 
-    with patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME", None), \
-         patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
+    with patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
          patch("app.services.provisioner.cfg.ACE_MAP_HTTPS", True), \
          patch("app.services.provisioner.alloc.allocate_engine_ports", return_value={
              "host_http_port": 30001,

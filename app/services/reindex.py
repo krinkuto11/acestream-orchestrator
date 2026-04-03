@@ -13,7 +13,6 @@ from .provisioner import (
 from .state import state
 from .inspect import get_container_name
 from ..models.schemas import EngineState
-from ..core.config import cfg
 import logging
 
 logger = logging.getLogger(__name__)
@@ -38,10 +37,9 @@ def reindex_existing():
         # Extract VPN container assignment from labels
         vpn_container = lbl.get("acestream.vpn_container")
         
-        # Reserve Gluetun ports if using Gluetun
-        # Only reserve one port per container (use HOST_LABEL_HTTP as the primary port)
-        # to avoid double-counting which would cause MAX_REPLICAS limit to be hit prematurely
-        if cfg.GLUETUN_CONTAINER_NAME:
+        # Reserve dynamic VPN host-mapped ports when a VPN assignment exists.
+        # Only reserve one port per container (HOST_LABEL_HTTP) to avoid double-counting.
+        if vpn_container:
             try:
                 if HOST_LABEL_HTTP in lbl: 
                     alloc.reserve_gluetun_port(int(lbl[HOST_LABEL_HTTP]), vpn_container)
@@ -56,13 +54,9 @@ def reindex_existing():
             if not container_name:
                 container_name = f"container-{key[:12]}"
             
-            # Determine host based on Gluetun configuration
-            # When using Gluetun VPN with redundant mode, use the specific VPN container's name
-            # Otherwise use primary Gluetun container or container name
+            # Determine host based on VPN assignment.
             if vpn_container:
                 host = vpn_container
-            elif cfg.GLUETUN_CONTAINER_NAME:
-                host = cfg.GLUETUN_CONTAINER_NAME
             else:
                 # Use container name as host for Docker containers, fallback to 127.0.0.1
                 host = container_name or "127.0.0.1"

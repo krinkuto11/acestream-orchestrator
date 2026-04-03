@@ -151,7 +151,7 @@ Orchestrator-managed dynamic VPN provisioning is the recommended mode.
 
 | Variable | Default | Description |
 |---|---|---|
-| `DYNAMIC_VPN_MANAGEMENT` | `true` | **[UI]** Enable orchestrator-managed dynamic Gluetun node lifecycle. |
+| `DYNAMIC_VPN_MANAGEMENT` | `true` | **[UI]** Compatibility key; runtime enforces dynamic Gluetun node lifecycle. |
 | `VPN_PROVIDER` | `protonvpn` | **[UI]** Default provider for dynamic VPN nodes. |
 | `VPN_PROTOCOL` | `wireguard` | **[UI]** Default protocol for dynamic VPN nodes (`wireguard` or `openvpn`). |
 | `PREFERRED_ENGINES_PER_VPN` | `10` | **[UI]** Target engines per dynamic VPN node; controller scales node count from this density. |
@@ -160,7 +160,6 @@ Orchestrator-managed dynamic VPN provisioning is the recommended mode.
 | `GLUETUN_PORT_CACHE_TTL_S` | `60` | **[UI]** Seconds to cache the forwarded port value. |
 | `VPN_RESTART_ENGINES_ON_RECONNECT` | `true` | **[UI]** Restart VPN-attached engines when the VPN reconnects. |
 | `VPN_UNHEALTHY_RESTART_TIMEOUT_S` | `60` | **[UI]** Seconds of VPN unhealthiness before force-restarting the container. |
-| `GLUETUN_CONTAINER_NAME` | *(none)* | Deprecated static fallback: attach engines to a pre-existing Gluetun container. |
 | `GLUETUN_PORT_RANGE_1` | *(none)* | Host port sub-range assigned to the primary VPN (redundant mode, e.g. `19000-19499`). |
 | `GLUETUN_PORT_RANGE_2` | *(none)* | Host port sub-range assigned to the secondary VPN (redundant mode, e.g. `19500-19999`). |
 

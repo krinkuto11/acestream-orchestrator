@@ -24,7 +24,6 @@ class State:
         self._desired_replica_count = 0
         self._desired_vpn_node_count = 0
         self._dynamic_vpn_nodes: Dict[str, Dict[str, object]] = {}
-        self._static_vpn_nodes: Dict[str, Dict[str, object]] = {}
         self._scaling_intents: List[Dict[str, object]] = []
         self._max_scaling_intents = 300
         self._target_engine_config_hash: str = ""
@@ -590,7 +589,6 @@ class State:
             self.monitor_sessions.clear()
             self._scaling_intents.clear()
             self._dynamic_vpn_nodes.clear()
-            self._static_vpn_nodes.clear()
 
             try:
                 from ..core.config import cfg
@@ -851,9 +849,8 @@ class State:
 
         with self._lock:
             previous_dynamic = self._dynamic_vpn_nodes.get(vpn_container)
-            previous_static = self._static_vpn_nodes.get(vpn_container)
-            managed_dynamic = bool(metadata.get("managed_dynamic", previous_dynamic is not None))
-            previous = previous_dynamic or previous_static or {}
+            managed_dynamic = bool(metadata.get("managed_dynamic", True))
+            previous = previous_dynamic or {}
 
             node_payload = {
                 "container_name": vpn_container,
@@ -871,25 +868,15 @@ class State:
                     previous.get("port_forwarding_supported", False),
                 ),
             }
-
-            if managed_dynamic:
-                self._static_vpn_nodes.pop(vpn_container, None)
-                self._dynamic_vpn_nodes[vpn_container] = node_payload
-            else:
-                self._dynamic_vpn_nodes.pop(vpn_container, None)
-                self._static_vpn_nodes[vpn_container] = node_payload
+            self._dynamic_vpn_nodes[vpn_container] = node_payload
 
     def remove_vpn_node(self, vpn_container: str):
         with self._lock:
             self._dynamic_vpn_nodes.pop(vpn_container, None)
-            self._static_vpn_nodes.pop(vpn_container, None)
 
     def list_vpn_nodes(self) -> List[Dict[str, object]]:
         with self._lock:
-            nodes: List[Dict[str, object]] = []
-            nodes.extend(dict(v) for v in self._dynamic_vpn_nodes.values())
-            nodes.extend(dict(v) for v in self._static_vpn_nodes.values())
-            return nodes
+            return [dict(node) for node in self._dynamic_vpn_nodes.values()]
 
     def get_healthy_vpn_nodes(self) -> List[str]:
         return [
@@ -918,27 +905,6 @@ class State:
     def list_dynamic_vpn_nodes(self) -> List[Dict[str, object]]:
         with self._lock:
             return [dict(node) for node in self._dynamic_vpn_nodes.values()]
-
-    def initialize_static_vpn_nodes_notready(self, container_names: Optional[List[str]] = None):
-        """Seed configured static VPN containers as NotReady until Docker events report readiness."""
-        if container_names is None:
-            from ..core.config import cfg
-
-            names = [cfg.GLUETUN_CONTAINER_NAME]
-        else:
-            names = container_names
-
-        for raw_name in names:
-            name = str(raw_name or "").strip()
-            if not name:
-                continue
-            self.update_vpn_node_status(
-                name,
-                "down",
-                metadata={
-                    "managed_dynamic": False,
-                },
-            )
 
     @staticmethod
     def _safe_int(value: Optional[str], default: Optional[int]) -> Optional[int]:

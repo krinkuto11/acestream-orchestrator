@@ -341,7 +341,7 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to load persisted orchestrator settings: {e}")
 
     vpn_settings: Dict[str, Any] = {}
-    dynamic_vpn_management_enabled = False
+    vpn_controller_enabled = False
 
     # Load VPN settings
     try:
@@ -380,10 +380,7 @@ async def lifespan(app: FastAPI):
                 cfg.PREFERRED_ENGINES_PER_VPN,
             )
 
-        dynamic_vpn_management_enabled = bool(
-            vpn_settings.get("enabled", False)
-            and cfg.DYNAMIC_VPN_MANAGEMENT
-        )
+        vpn_controller_enabled = bool(vpn_settings.get("enabled", False))
 
         provider_value = str(vpn_settings.get("provider") or cfg.VPN_PROVIDER).strip().lower()
         providers = [provider_value] if provider_value else []
@@ -421,10 +418,10 @@ async def lifespan(app: FastAPI):
     await docker_event_watcher.start()
     await engine_controller.start()
 
-    if dynamic_vpn_management_enabled:
+    if vpn_controller_enabled:
         await vpn_controller.start()
     else:
-        logger.info("Dynamic VPN controller disabled; static VPN nodes are informer-managed")
+        logger.info("Dynamic VPN controller disabled in settings")
     
     # Initialize ProxyServer in background to avoid blocking later API calls
     init_thread = threading.Thread(target=_init_proxy_server, daemon=True, name="ProxyServer-Init")

@@ -22,9 +22,11 @@ class PortAllocator:
         self._gluetun_next = self._gluetun_min
         self._used_gluetun_ports: set[int] = set()
         
-        # VPN-specific port ranges for static fallback mode
-        # Maps VPN container name to (min_port, max_port, next_port, used_ports_set)
+        # VPN-specific port ranges for dynamic nodes.
+        # Maps VPN container name to (min_port, max_port, next_port, used_ports_set).
         self._vpn_port_ranges: Dict[str, Tuple[int, int, int, set[int]]] = {}
+        self._vpn_range_slots: list[Tuple[int, int]] = []
+        self._vpn_range_assignments: Dict[str, int] = {}
         self._init_vpn_port_ranges()
 
     def _parse(self, s: str) -> Tuple[int, int]:
@@ -32,18 +34,51 @@ class PortAllocator:
         return int(a), int(b)
     
     def _init_vpn_port_ranges(self):
-        """Initialize VPN-specific port ranges for redundant mode."""
+        """Initialize optional dynamic VPN range slots from environment."""
         import logging
         logger = logging.getLogger(__name__)
-        
-        # Set up port ranges for each VPN if configured
-        if cfg.GLUETUN_CONTAINER_NAME and cfg.GLUETUN_PORT_RANGE_1:
+
+        ranges: list[Tuple[int, int]] = []
+        for idx, raw_range in enumerate((cfg.GLUETUN_PORT_RANGE_1, cfg.GLUETUN_PORT_RANGE_2), start=1):
+            if not raw_range:
+                continue
             try:
-                min_port, max_port = self._parse(cfg.GLUETUN_PORT_RANGE_1)
-                self._vpn_port_ranges[cfg.GLUETUN_CONTAINER_NAME] = (min_port, max_port, min_port, set())
-                logger.info(f"VPN port range for {cfg.GLUETUN_CONTAINER_NAME}: {min_port}-{max_port}")
+                min_port, max_port = self._parse(raw_range)
+                ranges.append((min_port, max_port))
+                logger.info(f"Configured dynamic VPN port range slot {idx}: {min_port}-{max_port}")
             except (ValueError, AttributeError) as e:
-                logger.error(f"Invalid GLUETUN_PORT_RANGE_1 format '{cfg.GLUETUN_PORT_RANGE_1}': {e}. Expected format: 'min-max'")
+                logger.error(f"Invalid GLUETUN_PORT_RANGE_{idx} format '{raw_range}': {e}. Expected format: 'min-max'")
+
+        self._vpn_range_slots = ranges
+
+    def _ensure_vpn_range_assigned(self, vpn_container: Optional[str]) -> Optional[Tuple[int, int, int, set[int]]]:
+        """Assign a configured range slot to a dynamic VPN container on first use."""
+        if not vpn_container:
+            return None
+
+        existing = self._vpn_port_ranges.get(vpn_container)
+        if existing is not None:
+            return existing
+
+        if not self._vpn_range_slots:
+            return None
+
+        slot_index = self._vpn_range_assignments.get(vpn_container)
+        if slot_index is None:
+            used_indices = set(self._vpn_range_assignments.values())
+            for idx in range(len(self._vpn_range_slots)):
+                if idx not in used_indices:
+                    slot_index = idx
+                    break
+
+        if slot_index is None:
+            return None
+
+        min_port, max_port = self._vpn_range_slots[slot_index]
+        assigned = (min_port, max_port, min_port, set())
+        self._vpn_port_ranges[vpn_container] = assigned
+        self._vpn_range_assignments[vpn_container] = slot_index
+        return assigned
         
     def _next_in(self, cur: int, lo: int, hi: int, used: set[int]) -> int:
         p = cur
@@ -218,6 +253,7 @@ class PortAllocator:
             Allocated port number
         """
         with self._lock:
+            self._ensure_vpn_range_assigned(vpn_container)
             # If VPN-specific range is configured, use it
             if vpn_container and vpn_container in self._vpn_port_ranges:
                 min_port, max_port, next_port, used_ports = self._vpn_port_ranges[vpn_container]
@@ -242,6 +278,7 @@ class PortAllocator:
     def reserve_gluetun_port(self, p: int, vpn_container: Optional[str] = None):
         """Reserve a specific Gluetun port."""
         with self._lock:
+            self._ensure_vpn_range_assigned(vpn_container)
             # If VPN-specific range is configured, reserve in that range
             if vpn_container and vpn_container in self._vpn_port_ranges:
                 min_port, max_port, next_port, used_ports = self._vpn_port_ranges[vpn_container]
@@ -255,6 +292,7 @@ class PortAllocator:
         """Free a Gluetun port."""
         if p is None: return
         with self._lock:
+            self._ensure_vpn_range_assigned(vpn_container)
             # If VPN-specific range is configured, free from that range
             if vpn_container and vpn_container in self._vpn_port_ranges:
                 min_port, max_port, next_port, used_ports = self._vpn_port_ranges[vpn_container]
@@ -272,11 +310,9 @@ class PortAllocator:
             self._used_https.clear()
             self._used_gluetun_ports.clear()
             self._gluetun_next = self._gluetun_min
-            
-            # Clear VPN-specific port allocations
-            for vpn_name in self._vpn_port_ranges:
-                min_port, max_port, next_port, used_ports = self._vpn_port_ranges[vpn_name]
-                used_ports.clear()
-                self._vpn_port_ranges[vpn_name] = (min_port, max_port, min_port, used_ports)
+
+            # Clear VPN-specific allocations and slot bindings.
+            self._vpn_port_ranges.clear()
+            self._vpn_range_assignments.clear()
 
 alloc = PortAllocator()

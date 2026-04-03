@@ -31,13 +31,6 @@ def _cache_ttl_seconds() -> int:
         return 60
 
 
-def _configured_vpn_names() -> Set[str]:
-    names: Set[str] = set()
-    if cfg.GLUETUN_CONTAINER_NAME:
-        names.add(cfg.GLUETUN_CONTAINER_NAME)
-    return names
-
-
 def _state_node(container_name: str) -> Optional[Dict[str, object]]:
     try:
         from .state import state
@@ -48,6 +41,31 @@ def _state_node(container_name: str) -> Optional[Dict[str, object]]:
     except Exception:
         return None
     return None
+
+
+def _discover_vpn_names() -> Set[str]:
+    names: Set[str] = set()
+    try:
+        from .state import state
+
+        for node in state.list_vpn_nodes():
+            name = str(node.get("container_name") or "").strip()
+            if name:
+                names.add(name)
+    except Exception:
+        return names
+    return names
+
+
+def _resolve_target_container(container_name: Optional[str] = None) -> Optional[str]:
+    explicit = str(container_name or "").strip()
+    if explicit:
+        return explicit
+
+    discovered = _discover_vpn_names()
+    if not discovered:
+        return None
+    return sorted(discovered)[0]
 
 
 def _check_container_health_sync(container_name: str) -> Optional[bool]:
@@ -143,21 +161,11 @@ class GluetunMonitor:
         return PassiveVpnMonitor(container_name, self)
 
     def get_all_vpn_monitors(self) -> Dict[str, PassiveVpnMonitor]:
-        names = set(_configured_vpn_names())
-        try:
-            from .state import state
-
-            for node in state.list_vpn_nodes():
-                name = str(node.get("container_name") or "").strip()
-                if name:
-                    names.add(name)
-        except Exception:
-            pass
-
+        names = _discover_vpn_names()
         return {name: PassiveVpnMonitor(name, self) for name in names}
 
     def is_healthy(self, container_name: Optional[str] = None) -> Optional[bool]:
-        target = container_name or cfg.GLUETUN_CONTAINER_NAME
+        target = _resolve_target_container(container_name)
         if not target:
             return None
 
@@ -168,7 +176,7 @@ class GluetunMonitor:
         return _check_container_health_sync(target)
 
     async def wait_for_healthy(self, timeout: float = 30.0, container_name: Optional[str] = None) -> bool:
-        target = container_name or cfg.GLUETUN_CONTAINER_NAME
+        target = _resolve_target_container(container_name)
         if not target:
             return True
 
@@ -183,7 +191,7 @@ class GluetunMonitor:
         return await fetch_forwarded_port(container_name)
 
     def get_cached_forwarded_port(self, container_name: Optional[str] = None) -> Optional[int]:
-        target = container_name or cfg.GLUETUN_CONTAINER_NAME
+        target = _resolve_target_container(container_name)
         if not target:
             return None
         return _get_cached_port(target)
@@ -196,7 +204,7 @@ class GluetunMonitor:
 
 
 async def fetch_forwarded_port(container_name: Optional[str] = None) -> Optional[int]:
-    target = container_name or cfg.GLUETUN_CONTAINER_NAME
+    target = _resolve_target_container(container_name)
     if not target:
         return None
 
@@ -233,7 +241,7 @@ async def fetch_forwarded_port(container_name: Optional[str] = None) -> Optional
 
 
 def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[int]:
-    target = container_name or cfg.GLUETUN_CONTAINER_NAME
+    target = _resolve_target_container(container_name)
     if not target:
         return None
 
@@ -304,7 +312,7 @@ def normalize_provider_name(provider: str) -> str:
 
 
 def get_vpn_provider(container_name: Optional[str] = None) -> Optional[str]:
-    target = container_name or cfg.GLUETUN_CONTAINER_NAME
+    target = _resolve_target_container(container_name)
     if not target:
         return None
 
@@ -327,7 +335,7 @@ def get_vpn_provider(container_name: Optional[str] = None) -> Optional[str]:
 
 
 def get_vpn_public_ip_info(container_name: Optional[str] = None) -> Optional[Dict[str, str]]:
-    target = container_name or cfg.GLUETUN_CONTAINER_NAME
+    target = _resolve_target_container(container_name)
     if not target:
         return None
 
@@ -385,20 +393,8 @@ def _single_vpn_status(container_name: str) -> Dict[str, object]:
 
 
 def get_vpn_status() -> Dict[str, object]:
-    primary = cfg.GLUETUN_CONTAINER_NAME
-    try:
-        from .state import state
-
-        discovered = [
-            str(node.get("container_name") or "").strip()
-            for node in state.list_vpn_nodes()
-            if str(node.get("container_name") or "").strip()
-        ]
-    except Exception:
-        discovered = []
-
-    if not primary and discovered:
-        primary = discovered[0]
+    discovered = sorted(_discover_vpn_names())
+    primary = discovered[0] if discovered else None
 
     if not primary:
         return {

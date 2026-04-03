@@ -181,27 +181,11 @@ class DockerEventWatcher:
     def _match_vpn_name(cls, container_name: Optional[str], attrs: dict) -> Optional[str]:
         if container_name and (cls._is_managed_vpn_node(attrs) or cls._is_dynamic_vpn_name(container_name)):
             return container_name
-
-        if not container_name:
-            return None
-
-        from ..core.config import cfg
-
-        candidates = [cfg.GLUETUN_CONTAINER_NAME]
-        for candidate in candidates:
-            if not candidate:
-                continue
-            if container_name == candidate or container_name.endswith(candidate):
-                return candidate
         return None
 
     def _bootstrap_vpn_nodes_snapshot(self):
         """Seed VPN node state from currently existing containers before streaming events."""
         from .state import state
-        from ..core.config import cfg
-
-        static_names = [cfg.GLUETUN_CONTAINER_NAME]
-        static_names = [name for name in static_names if name]
 
         cli = None
         try:
@@ -214,12 +198,7 @@ class DockerEventWatcher:
 
                 labels = dict(getattr(container, "labels", {}) or {})
                 is_dynamic = self._is_managed_vpn_node(labels) or self._is_dynamic_vpn_name(container_name)
-                is_static = any(
-                    container_name == static_name or container_name.endswith(static_name)
-                    for static_name in static_names
-                )
-
-                if not is_dynamic and not is_static:
+                if not is_dynamic:
                     continue
 
                 health = str((container.attrs or {}).get("State", {}).get("Health", {}).get("Status") or "").strip().lower()

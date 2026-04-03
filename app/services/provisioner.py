@@ -115,7 +115,7 @@ class ResourceScheduler:
                 self._validate_vpn_health_locked(vpn_container)
 
                 ports_info = alloc.allocate_engine_ports(
-                    use_gluetun=bool(vpn_container or cfg.GLUETUN_CONTAINER_NAME),
+                    use_gluetun=bool(vpn_container),
                     vpn_container=vpn_container,
                     requested_host_port=req.host_port,
                     user_http_port=user_http_port,
@@ -154,7 +154,7 @@ class ResourceScheduler:
                     labels[HOST_LABEL_HTTPS] = str(ports_info["host_https_port"])
 
                 docker_ports = None
-                if not (vpn_container or cfg.GLUETUN_CONTAINER_NAME):
+                if not vpn_container:
                     docker_ports = {
                         f"{ports_info['container_http_port']}/tcp": ports_info["host_http_port"],
                         f"{ports_info['container_api_port']}/tcp": ports_info["host_api_port"],
@@ -188,50 +188,40 @@ class ResourceScheduler:
 
         vpn_settings = SettingsPersistence.load_vpn_config() or {}
         vpn_enabled = bool(vpn_settings.get("enabled", False))
-        dynamic_vpn_enabled = bool(vpn_enabled and vpn_settings.get("dynamic_vpn_management", False))
-
-        if dynamic_vpn_enabled:
-            dynamic_ready_nodes = [
-                node for node in state.list_vpn_nodes()
-                if bool(node.get("managed_dynamic")) and self._is_dynamic_node_ready(node)
-            ]
-            if not dynamic_ready_nodes:
-                raise RuntimeError("No healthy dynamic VPN nodes available - cannot schedule AceStream engine")
-
-            candidate_nodes = dynamic_ready_nodes
-            if require_forwarding_capable:
-                forwarding_capable_nodes = [
-                    node for node in dynamic_ready_nodes if self._node_supports_port_forwarding(node)
-                ]
-                if forwarding_capable_nodes:
-                    candidate_nodes = forwarding_capable_nodes
-                else:
-                    logger.warning(
-                        "P2P forwarding requested but no dynamic VPN nodes support port forwarding; "
-                        "falling back to standard node routing"
-                    )
-
-            selected = min(
-                candidate_nodes,
-                key=lambda node: len(state.get_engines_by_vpn(str(node.get("container_name") or "")))
-                + _vpn_pending_engines.get(str(node.get("container_name") or ""), 0),
-            )
-            selected_name = str(selected.get("container_name") or "").strip()
-            if not selected_name:
-                raise RuntimeError("Selected dynamic VPN node has no container name")
-
-            logger.info(f"Scheduling new engine on dynamic VPN '{selected_name}'")
-            return selected_name
-
-        if not cfg.GLUETUN_CONTAINER_NAME:
+        if not vpn_enabled:
             return None
 
-        vpn_nodes = {node.get("container_name"): node for node in state.list_vpn_nodes()}
-        static_node = vpn_nodes.get(cfg.GLUETUN_CONTAINER_NAME)
-        if not self._vpn_is_schedulable(cfg.GLUETUN_CONTAINER_NAME, static_node):
-            raise RuntimeError("Static VPN container is unhealthy - cannot schedule AceStream engine")
+        dynamic_ready_nodes = [
+            node for node in state.list_vpn_nodes()
+            if bool(node.get("managed_dynamic")) and self._is_dynamic_node_ready(node)
+        ]
+        if not dynamic_ready_nodes:
+            raise RuntimeError("No healthy dynamic VPN nodes available - cannot schedule AceStream engine")
 
-        return cfg.GLUETUN_CONTAINER_NAME
+        candidate_nodes = dynamic_ready_nodes
+        if require_forwarding_capable:
+            forwarding_capable_nodes = [
+                node for node in dynamic_ready_nodes if self._node_supports_port_forwarding(node)
+            ]
+            if forwarding_capable_nodes:
+                candidate_nodes = forwarding_capable_nodes
+            else:
+                logger.warning(
+                    "P2P forwarding requested but no dynamic VPN nodes support port forwarding; "
+                    "falling back to standard node routing"
+                )
+
+        selected = min(
+            candidate_nodes,
+            key=lambda node: len(state.get_engines_by_vpn(str(node.get("container_name") or "")))
+            + _vpn_pending_engines.get(str(node.get("container_name") or ""), 0),
+        )
+        selected_name = str(selected.get("container_name") or "").strip()
+        if not selected_name:
+            raise RuntimeError("Selected dynamic VPN node has no container name")
+
+        logger.info(f"Scheduling new engine on dynamic VPN '{selected_name}'")
+        return selected_name
 
     @staticmethod
     def _node_supports_port_forwarding(node: Dict[str, object]) -> bool:
@@ -284,9 +274,7 @@ class ResourceScheduler:
         from .settings_persistence import SettingsPersistence
 
         vpn_settings = SettingsPersistence.load_vpn_config() or {}
-        vpn_enabled = bool(vpn_settings.get("enabled", False))
-        dynamic_vpn_enabled = bool(vpn_enabled and vpn_settings.get("dynamic_vpn_management", False))
-        if not dynamic_vpn_enabled:
+        if not bool(vpn_settings.get("enabled", False)):
             return False
 
         ready_dynamic_nodes = [
@@ -316,12 +304,6 @@ class ResourceScheduler:
 
         return True
 
-    @classmethod
-    def _vpn_is_schedulable(cls, vpn_container: str, node_info: Optional[Dict[str, object]]) -> bool:
-        if node_info is not None:
-            return bool(node_info.get("healthy"))
-        return cls._vpn_is_healthy(vpn_container)
-
     def _validate_vpn_health_locked(self, vpn_container: Optional[str]):
         if not vpn_container:
             return
@@ -349,7 +331,7 @@ class ResourceScheduler:
 
     @staticmethod
     def _elect_forwarded_engine_locked(vpn_container: Optional[str]) -> tuple[bool, Optional[int]]:
-        if not vpn_container and not cfg.GLUETUN_CONTAINER_NAME:
+        if not vpn_container:
             return False, None
 
         from .state import state
@@ -397,7 +379,6 @@ class ResourceScheduler:
                 return provider in PORT_FORWARDING_NATIVE_PROVIDERS
             return True
 
-        # Static VPN nodes may not have provider metadata in state; preserve prior behavior.
         return True
 
 
@@ -507,18 +488,16 @@ def _release_ports_from_labels(labels: dict):
         sp = labels.get(ACESTREAM_LABEL_HTTPS); alloc.free_https(int(sp) if sp else None)
     except Exception: pass
     
-    # Release Gluetun ports if using Gluetun.
-    # HTTP and legacy API ports are both allocated from the Gluetun range.
-    if cfg.GLUETUN_CONTAINER_NAME:
+    # Release dynamic VPN-mapped ports only when the engine was bound to a VPN node.
+    vpn_container = labels.get(VPN_CONTAINER_LABEL)
+    if vpn_container:
         try:
             hp = labels.get(HOST_LABEL_HTTP)
-            vpn_container = labels.get(VPN_CONTAINER_LABEL)
             alloc.free_gluetun_port(int(hp) if hp else None, vpn_container)
         except Exception: pass
         try:
             ap = labels.get(HOST_LABEL_API)
             hp = labels.get(HOST_LABEL_HTTP)
-            vpn_container = labels.get(VPN_CONTAINER_LABEL)
             # Avoid double-free if API and HTTP share the same port.
             if ap and ap != hp:
                 alloc.free_gluetun_port(int(ap), vpn_container)
@@ -629,11 +608,6 @@ def _get_network_config(vpn_container: Optional[str] = None):
         return {
             "network_mode": f"container:{vpn_container}"
         }
-    elif cfg.GLUETUN_CONTAINER_NAME:
-        # Use primary Gluetun container's network stack (backwards compatibility)
-        return {
-            "network_mode": f"container:{cfg.GLUETUN_CONTAINER_NAME}"
-        }
     elif cfg.DOCKER_NETWORK:
         # Use specified Docker network
         return {
@@ -655,11 +629,10 @@ def _get_network_config(vpn_container: Optional[str] = None):
 def _check_gluetun_health_sync(container_name: Optional[str] = None) -> bool:
     """Synchronous version of VPN health check."""
     try:
-        from ..core.config import cfg
         from .docker_client import get_client
         from docker.errors import NotFound
         
-        target_container = container_name or cfg.GLUETUN_CONTAINER_NAME
+        target_container = container_name
         if not target_container:
             return False
         

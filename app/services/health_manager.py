@@ -174,8 +174,6 @@ class HealthManager:
             if bool(node.get("healthy")) and str(node.get("container_name") or "").strip()
         ]
         if not vpn_nodes:
-            if cfg.GLUETUN_CONTAINER_NAME:
-                return cfg.GLUETUN_CONTAINER_NAME
             return None
 
         return min(

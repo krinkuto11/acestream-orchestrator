@@ -22,12 +22,12 @@ def test_scheduler_balances_assignments_with_pending_counts():
             "host_https_port": port_counter["https"],
         }
 
-    with patch("app.services.provisioner.cfg.GLUETUN_CONTAINER_NAME", "gluetun"), \
-         patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
+    with patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
          patch("app.services.provisioner.cfg.ACE_MAP_HTTPS", True), \
+         patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={"enabled": True, "dynamic_vpn_management": True}), \
          patch("app.services.gluetun.gluetun_monitor.is_healthy", return_value=True), \
          patch("app.services.state.state.list_vpn_nodes", return_value=[
-             {"container_name": "gluetun", "healthy": True, "condition": "ready", "managed_dynamic": False},
+             {"container_name": "gluetun-dyn-a", "healthy": True, "condition": "ready", "managed_dynamic": True},
          ]), \
          patch("app.services.state.state.get_engines_by_vpn", side_effect=lambda vpn: []), \
          patch("app.services.provisioner.alloc.allocate_engine_ports", side_effect=_alloc), \
@@ -37,4 +37,4 @@ def test_scheduler_balances_assignments_with_pending_counts():
             spec = scheduler.schedule(AceProvisionRequest(labels={}, env={}), engine_variant_name="AceServe-amd64")
             assignments.append(spec.vpn_container)
 
-    assert all(a == "gluetun" for a in assignments)
+    assert all(a == "gluetun-dyn-a" for a in assignments)

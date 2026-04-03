@@ -104,7 +104,7 @@ Key environment variables:
 | `MIN_REPLICAS` | `2` | Minimum engine containers to keep running |
 | `MAX_REPLICAS` | `6` | Maximum concurrent engines |
 | `PORT_RANGE_HOST` | `19000-19999` | Host ports mapped to engine containers |
-| `DYNAMIC_VPN_MANAGEMENT` | `true` | Enable orchestrator-managed dynamic Gluetun provisioning |
+| `DYNAMIC_VPN_MANAGEMENT` | `true` | Compatibility key (runtime forces dynamic orchestration on) |
 | `VPN_PROVIDER` | `protonvpn` | Default VPN provider for dynamic nodes |
 | `VPN_PROTOCOL` | `wireguard` | Default VPN protocol for dynamic nodes |
 | `PREFERRED_ENGINES_PER_VPN` | `10` | Target engines per dynamic VPN node |

@@ -88,9 +88,6 @@ def _compute_desired_replicas(total_running: int, free_count: int) -> tuple[int,
         if lookahead_layer is not None and min_streams < lookahead_layer:
             state.reset_lookahead_layer()
 
-    if cfg.GLUETUN_CONTAINER_NAME:
-        desired = min(desired, cfg.MAX_REPLICAS)
-
     return max(0, desired), target_description
 
 def ensure_minimum(*_args, **_kwargs):

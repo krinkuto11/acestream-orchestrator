@@ -96,8 +96,7 @@ class VPNController:
     async def _reconcile_once(self):
         settings = SettingsPersistence.load_vpn_config() or {}
         vpn_enabled = bool(settings.get("enabled", False))
-        dynamic_enabled = bool(vpn_enabled and settings.get("dynamic_vpn_management", False))
-        if not dynamic_enabled:
+        if not vpn_enabled:
             state.set_desired_vpn_node_count(0)
             return
 
