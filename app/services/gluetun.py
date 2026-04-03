@@ -14,7 +14,7 @@ import httpx
 import os
 import time
 from datetime import datetime, timezone
-from typing import Optional, Dict
+from typing import Dict, Optional, Set
 from .docker_client import get_client
 from ..core.config import cfg
 from .event_logger import event_logger
@@ -363,28 +363,13 @@ class GluetunMonitor:
         
         # VPN container monitors
         self._vpn_monitors: Dict[str, VpnContainerMonitor] = {}
-        
-        # Initialize monitors based on configuration
-        if cfg.GLUETUN_CONTAINER_NAME:
-            self._vpn_monitors[cfg.GLUETUN_CONTAINER_NAME] = VpnContainerMonitor(cfg.GLUETUN_CONTAINER_NAME)
-        
-        if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
-            self._vpn_monitors[cfg.GLUETUN_CONTAINER_NAME_2] = VpnContainerMonitor(cfg.GLUETUN_CONTAINER_NAME_2)
+        self._static_vpn_names: Set[str] = set()
+        self._sync_vpn_monitors()
         
     async def start(self):
         """Start the Gluetun monitoring task."""
-        # Re-initialize monitors based on current configuration
-        # This handles cases where settings were loaded from storage after import
-        self._vpn_monitors = {}
-        if cfg.GLUETUN_CONTAINER_NAME:
-            self._vpn_monitors[cfg.GLUETUN_CONTAINER_NAME] = VpnContainerMonitor(cfg.GLUETUN_CONTAINER_NAME)
-        
-        if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
-            self._vpn_monitors[cfg.GLUETUN_CONTAINER_NAME_2] = VpnContainerMonitor(cfg.GLUETUN_CONTAINER_NAME_2)
-
-        if not self._vpn_monitors:
-            logger.info("VPN monitoring disabled - no VPN containers configured")
-            return
+        # Sync static + dynamic monitors in case settings/state changed since import.
+        self._sync_vpn_monitors()
             
         if self._task and not self._task.done():
             return
@@ -393,7 +378,9 @@ class GluetunMonitor:
         self._task = asyncio.create_task(self._monitor_gluetun())
         
         vpn_names = list(self._vpn_monitors.keys())
-        if cfg.VPN_MODE == 'redundant':
+        if not vpn_names:
+            logger.info("VPN monitor started with no discovered VPN containers; waiting for dynamic nodes")
+        elif cfg.VPN_MODE == 'redundant':
             logger.info(f"VPN monitor started in REDUNDANT mode for containers: {', '.join(vpn_names)}")
         else:
             logger.info(f"VPN monitor started in SINGLE mode for container: {vpn_names[0]}")
@@ -415,15 +402,57 @@ class GluetunMonitor:
     def get_all_vpn_monitors(self) -> Dict[str, VpnContainerMonitor]:
         """Get all VPN monitors."""
         return self._vpn_monitors
+
+    @staticmethod
+    def _configured_static_vpn_names() -> Set[str]:
+        names: Set[str] = set()
+        if cfg.GLUETUN_CONTAINER_NAME:
+            names.add(cfg.GLUETUN_CONTAINER_NAME)
+        if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
+            names.add(cfg.GLUETUN_CONTAINER_NAME_2)
+        return names
+
+    @staticmethod
+    def _dynamic_vpn_names_from_state() -> Set[str]:
+        try:
+            from .state import state
+
+            names: Set[str] = set()
+            for node in state.list_dynamic_vpn_nodes():
+                name = str(node.get("container_name") or "").strip()
+                if name:
+                    names.add(name)
+            return names
+        except Exception:
+            return set()
+
+    def _sync_vpn_monitors(self):
+        static_names = self._configured_static_vpn_names()
+        dynamic_names = self._dynamic_vpn_names_from_state()
+        required_names = static_names | dynamic_names
+
+        for name in required_names:
+            if name not in self._vpn_monitors:
+                self._vpn_monitors[name] = VpnContainerMonitor(name)
+                logger.info("Added VPN monitor for container '%s'", name)
+
+        for name in list(self._vpn_monitors.keys()):
+            if name in required_names:
+                continue
+            self._vpn_monitors.pop(name, None)
+            logger.info("Removed VPN monitor for container '%s'", name)
+
+        self._static_vpn_names = static_names
     
     async def _monitor_gluetun(self):
         """Main monitoring loop for VPN container health status and port caching."""
         while not self._stop.is_set():
             try:
+                self._sync_vpn_monitors()
                 now = datetime.now(timezone.utc)
                 
                 # Check health for each VPN container
-                for container_name, monitor in self._vpn_monitors.items():
+                for container_name, monitor in list(self._vpn_monitors.items()):
                     old_health = monitor.is_healthy()
                     current_health = await monitor.check_health()
                     monitor.update_health_status(current_health, now)
@@ -526,13 +555,38 @@ class GluetunMonitor:
         try:
             from .state import state
             from .provisioner import stop_container
+
+            dynamic_node_names = {
+                str(node.get("container_name") or "").strip()
+                for node in state.list_dynamic_vpn_nodes()
+            }
+            is_dynamic_node = container_name in dynamic_node_names
             
             logger.warning(f"VPN '{container_name}' port changed from {old_port} to {new_port} - replacing forwarded engine")
             logger.debug("VPN operation")
+
+            # Keep state consistent for dynamic nodes so dependent flows observe the new port.
+            if is_dynamic_node:
+                updated_count = state.update_vpn_engine_forwarded_port(
+                    container_name,
+                    new_port,
+                    forwarded_only=False,
+                )
+                state.update_vpn_node_status(
+                    container_name,
+                    "running",
+                    metadata={"managed_dynamic": True, "forwarded_port": new_port},
+                )
+                logger.info(
+                    "Updated forwarded_port=%s for %s engine(s) on dynamic VPN '%s'",
+                    new_port,
+                    updated_count,
+                    container_name,
+                )
             
             # Find the forwarded engine for this VPN
             forwarded_engine = None
-            if cfg.VPN_MODE == 'redundant':
+            if cfg.VPN_MODE == 'redundant' or is_dynamic_node:
                 forwarded_engine = state.get_forwarded_engine_for_vpn(container_name)
             else:
                 forwarded_engine = state.get_forwarded_engine()

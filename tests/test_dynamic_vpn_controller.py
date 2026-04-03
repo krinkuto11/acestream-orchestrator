@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.services.provisioner import AceProvisionRequest, ResourceScheduler, _vpn_pending_engines
@@ -133,3 +134,93 @@ def test_vpn_controller_skips_when_vpn_disabled_even_if_dynamic_flag_set():
     assert list_nodes_mock.await_count == 0
     assert heal_mock.await_count == 0
     assert provision_mock.await_count == 0
+
+
+def test_vpn_controller_restores_leases_before_capacity_eval():
+    controller = VPNController()
+    call_order = []
+    current_nodes = [
+        {
+            "container_id": "abc123",
+            "container_name": "gluetun-dyn-1",
+            "status": "running",
+            "provider": "protonvpn",
+            "protocol": "wireguard",
+            "credential_id": "cred-1",
+        }
+    ]
+
+    async def _restore(nodes):
+        call_order.append("restore")
+        assert nodes == current_nodes
+        return {}
+
+    async def _summary():
+        call_order.append("summary")
+        return {"total_credentials": 1}
+
+    with patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={
+        "enabled": True,
+        "dynamic_vpn_management": True,
+        "preferred_engines_per_vpn": 1,
+    }), \
+         patch("app.services.vpn_controller.vpn_provisioner.list_managed_nodes", new=AsyncMock(side_effect=[current_nodes, current_nodes])), \
+         patch("app.services.vpn_controller.credential_manager.restore_leases", new=AsyncMock(side_effect=_restore)) as restore_mock, \
+         patch("app.services.vpn_controller.credential_manager.summary", new=AsyncMock(side_effect=_summary)), \
+         patch("app.services.state.state.list_engines", return_value=[]), \
+         patch.object(controller, "_sync_dynamic_nodes_to_state"), \
+         patch.object(controller, "_heal_notready_nodes", new=AsyncMock()), \
+         patch.object(controller, "_scale_down_idle_nodes", new=AsyncMock()), \
+         patch.object(controller, "_provision_one", new=AsyncMock()):
+        asyncio.run(controller._reconcile_once())
+
+    restore_mock.assert_awaited_once_with(current_nodes)
+    assert call_order == ["restore", "summary"]
+
+
+def test_vpn_controller_drain_uses_gather_and_resolves_intents_per_engine():
+    controller = VPNController()
+    engines = [
+        SimpleNamespace(container_id="engine-a"),
+        SimpleNamespace(container_id="engine-b"),
+        SimpleNamespace(container_id="engine-c"),
+    ]
+
+    def _emit_intent(intent_type, details=None):
+        details = details or {}
+        if intent_type == "terminate_request":
+            return {"id": f"terminate:{details.get('container_id')}"}
+        return {"id": f"destroy:{details.get('vpn_container')}"}
+
+    def _stop(container_id, force):
+        if container_id == "engine-b":
+            raise RuntimeError("forced failure")
+        return None
+
+    gather_calls = []
+    original_gather = asyncio.gather
+
+    async def _gather_spy(*args, **kwargs):
+        gather_calls.append((len(args), kwargs.get("return_exceptions")))
+        return await original_gather(*args, **kwargs)
+
+    with patch("app.services.vpn_controller.state.get_engines_by_vpn", return_value=engines), \
+         patch("app.services.vpn_controller.state.emit_scaling_intent", side_effect=_emit_intent), \
+         patch("app.services.vpn_controller.state.resolve_scaling_intent") as resolve_mock, \
+         patch("app.services.vpn_controller.stop_container", side_effect=_stop), \
+         patch("app.services.vpn_controller.asyncio.gather", side_effect=_gather_spy), \
+         patch("app.services.vpn_controller.vpn_provisioner.destroy_node", new=AsyncMock(return_value={"removed": True, "lease_released": True, "container_name": "vpn-a"})):
+        asyncio.run(controller._drain_and_destroy_node("vpn-a", reason="node_not_ready"))
+
+    assert gather_calls == [(3, True)]
+
+    terminate_results = {}
+    for call in resolve_mock.call_args_list:
+        intent_id = call.args[0]
+        status = call.args[1]
+        if intent_id.startswith("terminate:"):
+            terminate_results[intent_id] = status
+
+    assert terminate_results["terminate:engine-a"] == "completed"
+    assert terminate_results["terminate:engine-b"] == "failed"
+    assert terminate_results["terminate:engine-c"] == "completed"

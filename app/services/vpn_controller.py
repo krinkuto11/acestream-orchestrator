@@ -5,7 +5,7 @@ import logging
 import math
 import os
 import threading
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .provisioner import stop_container
 from .settings_persistence import SettingsPersistence
@@ -92,10 +92,12 @@ class VPNController:
             state.set_desired_vpn_node_count(0)
             return
 
+        current_nodes = await vpn_provisioner.list_managed_nodes(include_stopped=True)
+        await credential_manager.restore_leases(current_nodes)
+
         lease_summary = await credential_manager.summary()
         total_credentials = int(lease_summary.get("total_credentials") or 0)
 
-        current_nodes = await vpn_provisioner.list_managed_nodes(include_stopped=True)
         self._sync_dynamic_nodes_to_state(current_nodes)
 
         preferred_engines_per_vpn = self._get_preferred_engines_per_vpn(settings)
@@ -204,6 +206,7 @@ class VPNController:
     async def _drain_and_destroy_node(self, vpn_container: str, *, reason: str):
         engines = list(state.get_engines_by_vpn(vpn_container))
 
+        eviction_jobs: List[Dict[str, Any]] = []
         for engine in engines:
             intent = state.emit_scaling_intent(
                 intent_type="terminate_request",
@@ -215,12 +218,22 @@ class VPNController:
                     "force": True,
                 },
             )
-            try:
-                await asyncio.to_thread(stop_container, engine.container_id, True)
-                state.resolve_scaling_intent(intent["id"], "completed", result={"stopped": engine.container_id})
-            except Exception as e:
-                state.resolve_scaling_intent(intent["id"], "failed", result={"error": str(e)})
-                logger.warning("Failed evicting engine %s from VPN node %s: %s", engine.container_id, vpn_container, e)
+            eviction_jobs.append({"container_id": engine.container_id, "intent_id": intent["id"]})
+
+        if eviction_jobs:
+            eviction_results = await asyncio.gather(
+                *[asyncio.to_thread(stop_container, job["container_id"], True) for job in eviction_jobs],
+                return_exceptions=True,
+            )
+
+            for job, result in zip(eviction_jobs, eviction_results):
+                container_id = str(job["container_id"])
+                intent_id = str(job["intent_id"])
+                if isinstance(result, Exception):
+                    state.resolve_scaling_intent(intent_id, "failed", result={"error": str(result)})
+                    logger.warning("Failed evicting engine %s from VPN node %s: %s", container_id, vpn_container, result)
+                    continue
+                state.resolve_scaling_intent(intent_id, "completed", result={"stopped": container_id})
 
         # Release credential lease as part of node destruction before any replacement provisioning.
         destroy_intent = state.emit_scaling_intent(

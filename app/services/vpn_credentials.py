@@ -156,6 +156,58 @@ class CredentialManager:
                 "leased_at": self._lease_timestamps.get(container_id),
             }
 
+    async def restore_leases(self, active_nodes: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Rebuild lease state from currently running/managed dynamic VPN nodes.
+
+        This allows the orchestrator to re-adopt leases after restart so
+        credentials already attached to live containers are not re-used.
+        """
+        async with self._lock:
+            restored_leases: Dict[str, str] = {}
+            restored_timestamps: Dict[str, datetime] = {}
+            used_credential_ids: set[str] = set()
+            unknown_credential_ids: set[str] = set()
+
+            now = datetime.now(timezone.utc)
+            for node in active_nodes or []:
+                if not isinstance(node, dict):
+                    continue
+
+                credential_id = str(node.get("credential_id") or "").strip()
+                if not credential_id:
+                    continue
+                if credential_id not in self._credentials_by_id:
+                    unknown_credential_ids.add(credential_id)
+                    continue
+                if credential_id in used_credential_ids:
+                    logger.warning("Skipping duplicate credential lease adoption for credential_id=%s", credential_id)
+                    continue
+
+                container_key = str(node.get("container_name") or node.get("container_id") or "").strip()
+                if not container_key:
+                    continue
+
+                used_credential_ids.add(credential_id)
+                restored_leases[container_key] = credential_id
+                restored_timestamps[container_key] = self._lease_timestamps.get(container_key, now)
+
+            self._leases_by_container = restored_leases
+            self._lease_timestamps = restored_timestamps
+            self._available_credential_ids = [
+                cred_id
+                for cred_id in self._credentials_by_id.keys()
+                if cred_id not in used_credential_ids
+            ]
+
+            if unknown_credential_ids:
+                logger.warning(
+                    "Detected active VPN nodes with unknown credential ids: %s",
+                    sorted(unknown_credential_ids),
+                )
+
+            return self._snapshot_locked()
+
     async def summary(self) -> Dict[str, Any]:
         async with self._lock:
             return self._snapshot_locked()

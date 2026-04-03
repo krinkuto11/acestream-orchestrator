@@ -519,6 +519,25 @@ class State:
         with self._lock:
             return [eng for eng in self.engines.values() if eng.vpn_container == vpn_container]
 
+    def update_vpn_engine_forwarded_port(self, vpn_container: str, forwarded_port: Optional[int], forwarded_only: bool = False) -> int:
+        """Update forwarded-port metadata for engines assigned to a VPN container."""
+        with self._lock:
+            updated = 0
+            for engine in self.engines.values():
+                if engine.vpn_container != vpn_container:
+                    continue
+                if forwarded_only and not engine.forwarded:
+                    continue
+
+                engine.forwarded_port = forwarded_port
+                if forwarded_port is None:
+                    engine.labels.pop("acestream.forwarded_port", None)
+                else:
+                    engine.labels["acestream.forwarded_port"] = str(int(forwarded_port))
+                updated += 1
+
+            return updated
+
     def load_from_db(self):
         from ..models.db_models import EngineRow, StreamRow
         with SessionLocal() as s:
@@ -796,6 +815,7 @@ class State:
                 "provider": metadata.get("provider", previous.get("provider")),
                 "protocol": metadata.get("protocol", previous.get("protocol")),
                 "credential_id": metadata.get("credential_id", previous.get("credential_id")),
+                "forwarded_port": metadata.get("forwarded_port", previous.get("forwarded_port")),
             }
 
     def remove_vpn_node(self, vpn_container: str):
