@@ -48,7 +48,7 @@ def test_replica_validator_consistency():
         assert 'container_2' in docker_status['running_container_ids']
 
 def test_replica_validator_sync():
-    """Test that replica validator properly syncs state with Docker."""
+    """Test that replica validator is state-derived and side-effect free."""
     from app.services.replica_validator import ReplicaValidator
     from app.services.state import state
     from app.models.schemas import EngineState
@@ -70,6 +70,7 @@ def test_replica_validator_sync():
     )
     
     # Mock Docker containers (only container_1 exists in Docker)
+    # In declarative mode validate_and_sync_state should ignore Docker and avoid reindex side effects.
     mock_container = Mock()
     mock_container.id = "container_1"
     mock_container.status = "running"
@@ -80,17 +81,21 @@ def test_replica_validator_sync():
         'NetworkSettings': {'Ports': {}}
     }
     
-    with patch('app.services.replica_validator.list_managed', return_value=[mock_container]):
-        with patch('app.services.reindex.reindex_existing'):
+    with patch('app.services.replica_validator.list_managed', return_value=[mock_container]) as list_managed_mock:
+        with patch('app.services.reindex.reindex_existing') as reindex_mock:
             total_running, used_engines, free_count = validator.validate_and_sync_state()
-            
-            # Should detect the discrepancy and sync
-            assert total_running == 1  # Only 1 container in Docker
+
+            # Should use state counts only.
+            assert total_running == 2  # Two managed engines in state
             assert used_engines == 0   # No active streams
-            assert free_count == 1     # 1 free container
-            
-            # container_2 should have been removed from state during sync
-            assert len(state.engines) <= 1
+            assert free_count == 2     # Both are free
+
+            # No imperative Docker sync/reindex should happen.
+            assert list_managed_mock.call_count == 0
+            reindex_mock.assert_not_called()
+
+            # State should remain unchanged.
+            assert len(state.engines) == 2
 
 def test_replica_validator_caching():
     """Test that replica validator caches results appropriately."""

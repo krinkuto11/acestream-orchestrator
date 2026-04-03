@@ -100,109 +100,41 @@ class ReplicaValidator:
     
     def validate_and_sync_state(self, force_reindex: bool = False) -> Tuple[int, int, int]:
         """
-        Validate state against Docker socket and sync if needed.
+        Return replica counts from in-memory declarative state only.
+
+        In the informer/controller architecture, transient Docker-vs-state mismatches are
+        expected during rollouts and startup. This method is intentionally side-effect free:
+        it never reindexes, never mutates state, and never performs blocking Docker calls.
+
         Returns: (total_running, used_engines, free_count)
         """
-        # Use synchronization lock to prevent concurrent modifications
+        del force_reindex  # intentionally ignored in declarative mode
+
         with self._get_sync_lock():
             now = datetime.now(timezone.utc)
-            
-            # Check if we need to throttle synchronization operations
-            if (not force_reindex and 
-                self._last_sync_time and 
-                (now - self._last_sync_time).total_seconds() < self._min_sync_interval_s):
-                logger.debug("Throttling sync operation - too frequent")
-                if self._cached_result:
-                    return self._cached_result
-            
-            # Use cached result if recent enough and not forcing
-            if (not force_reindex and 
-                self._cached_result and 
-                self._last_validation and 
-                (now - self._last_validation).total_seconds() < self._validation_cache_ttl_s):
+
+            if (
+                self._cached_result
+                and self._last_validation
+                and (now - self._last_validation).total_seconds() < self._validation_cache_ttl_s
+            ):
                 return self._cached_result
-            
-            # Get current state
+
             all_engines = state.list_engines()
             active_streams = state.list_streams(status="started")
             monitor_container_ids = state.get_active_monitor_container_ids()
-            docker_status = self.get_docker_container_status()
-            
-            # Check if Docker socket is available
-            if not docker_status.get('docker_available', True):
-                logger.warning("Docker socket temporarily unavailable - skipping state synchronization to avoid premature cleanup")
-                # Return current state counts without modification
-                used_container_ids = {stream.container_id for stream in active_streams}
-                used_container_ids.update(monitor_container_ids)
-                state_engine_count = len(all_engines)
-                used_engines = len(used_container_ids)
-                free_count = state_engine_count - used_engines
-                
-                # Return last known good result or cache current state estimate
-                if self._cached_result:
-                    return self._cached_result
-                
-                # Cache current state estimate for consistency on subsequent calls
-                current_state_estimate = (state_engine_count, used_engines, free_count)
-                self._cached_result = current_state_estimate
-                return current_state_estimate
-            
-            # Find engines currently in use
+
+            managed_engines = [e for e in all_engines if not e.labels.get("manual")]
+            total_running = len(managed_engines)
+
             used_container_ids = {stream.container_id for stream in active_streams}
             used_container_ids.update(monitor_container_ids)
-            
-            # Docker containers as source of truth for total running count
-            total_running = docker_status['total_running']
             used_engines = len(used_container_ids)
+
             free_count = total_running - used_engines
-            
-            # Check for state/Docker discrepancies
-            # Filter out manual engines from validation - they don't have backing Docker containers
-            managed_engines = [e for e in all_engines if not e.labels.get("manual")]
-            state_engine_count = len(managed_engines)
-            running_container_ids = docker_status['running_container_ids']
-            state_container_ids = {engine.container_id for engine in managed_engines}
-            
-            sync_needed = False
-            
-            # Check if counts don't match
-            if state_engine_count != total_running:
-                logger.warning(f"State/Docker engine count mismatch: state={state_engine_count}, docker={total_running}")
-                sync_needed = True
-            
-            # Check for orphaned engines in state
-            orphaned_engines = state_container_ids - running_container_ids
-            if orphaned_engines:
-                logger.info(f"Found {len(orphaned_engines)} orphaned engines in state: {[e[:12] for e in orphaned_engines]}")
-                sync_needed = True
-            
-            # Check for engines missing from state
-            missing_engines = running_container_ids - state_container_ids
-            if missing_engines:
-                logger.info(f"Found {len(missing_engines)} Docker containers missing from state: {[e[:12] for e in missing_engines]}")
-                sync_needed = True
-            
-            # Perform synchronization if needed
-            if sync_needed or force_reindex:
-                logger.info(f"Triggering state synchronization with Docker (sync_needed={sync_needed}, force_reindex={force_reindex})")
-                self._sync_state_with_docker(orphaned_engines, docker_status)
-                # Note: _last_sync_time is updated in request_sync_coordination or here if called directly
-                if not self._last_sync_time or (now - self._last_sync_time).total_seconds() >= self._min_sync_interval_s:
-                    self._last_sync_time = now
-                
-                # Recalculate after sync
-                all_engines = state.list_engines()
-                total_running = docker_status['total_running']  # Docker count remains the same
-                free_count = total_running - used_engines
-                
-                logger.info(f"After sync: state_engines={len(all_engines)}, docker_running={total_running}, free={free_count}")
-            else:
-                logger.debug(f"No sync needed: state_engines={state_engine_count}, docker_running={total_running}, orphaned={len(orphaned_engines)}, missing={len(missing_engines)}")
-            
             result = (total_running, used_engines, free_count)
             self._cached_result = result
             self._last_validation = now
-            
             return result
     
     def request_sync_coordination(self, source: str) -> bool:
