@@ -12,6 +12,7 @@ import httpx
 import m3u8
 import os
 import asyncio
+import uuid
 from typing import Dict, Optional, Set, Any, List
 from urllib.parse import urljoin, urlparse
 from .config_helper import ConfigHelper
@@ -301,11 +302,13 @@ class StreamManager:
                  stream_key_type: str = "content_id",
                  file_indexes: str = "0",
                  seekback: int = 0,
+                 engine_api_port: Optional[int] = None,
                  event_loop: Optional[asyncio.AbstractEventLoop] = None):
         self.playback_url = playback_url
         self.channel_id = channel_id
         self.engine_host = engine_host
         self.engine_port = engine_port
+        self.engine_api_port = int(engine_api_port or 62062)
         self.engine_container_id = engine_container_id
         self.stream_key_type = (stream_key_type or "content_id").strip().lower()
         normalized_file_indexes = str(file_indexes if file_indexes is not None else "0").strip()
@@ -352,8 +355,109 @@ class StreamManager:
         self.client_manager: Optional[ClientManager] = None
         self.cleanup_thread: Optional[threading.Thread] = None
         self.cleanup_running = False
+
+        self._swap_lock = threading.RLock()
         
         logger.info(f"Initialized HLS stream manager for channel {channel_id}")
+
+    def _build_engine_stream_params(self) -> Dict[str, str]:
+        params: Dict[str, str] = {
+            "format": "json",
+            "pid": str(uuid.uuid4()),
+            "file_indexes": self.file_indexes,
+        }
+
+        if self.seekback > 0:
+            params["seekback"] = str(self.seekback)
+
+        if self.stream_key_type in {"content_id", "infohash"}:
+            params["id"] = self.channel_id
+            if self.stream_key_type == "infohash":
+                params["infohash"] = self.channel_id
+        elif self.stream_key_type == "torrent_url":
+            params["torrent_url"] = self.channel_id
+        elif self.stream_key_type == "direct_url":
+            params["direct_url"] = self.channel_id
+            params["url"] = self.channel_id
+        elif self.stream_key_type == "raw_data":
+            params["raw_data"] = self.channel_id
+        else:
+            params["id"] = self.channel_id
+
+        return params
+
+    def hot_swap_engine(
+        self,
+        new_host: str,
+        new_port: int,
+        new_api_port: int,
+        new_container_id: str,
+    ) -> Dict[str, Any]:
+        """Request a new HLS backend session and switch this channel to the new engine."""
+        if not self.running:
+            raise RuntimeError("hls_channel_not_running")
+
+        target_container_id = str(new_container_id or "").strip()
+        if not new_host or not target_container_id:
+            raise RuntimeError("invalid_swap_target")
+
+        if target_container_id == self.engine_container_id:
+            return {
+                "swapped": False,
+                "reason": "already_on_target_engine",
+                "old_container_id": self.engine_container_id,
+                "new_container_id": target_container_id,
+            }
+
+        hls_url = f"http://{new_host}:{int(new_port)}/ace/manifest.m3u8"
+        params = self._build_engine_stream_params()
+        response = requests.get(hls_url, params=params, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+
+        if payload.get("error"):
+            raise RuntimeError(f"AceStream engine returned error: {payload.get('error')}")
+
+        response_data = payload.get("response", {})
+        playback_url = str(response_data.get("playback_url") or "").strip()
+        if not playback_url:
+            raise RuntimeError("No playback_url in HLS swap response")
+
+        parsed_url = urlparse(playback_url)
+        if parsed_url.hostname in {"127.0.0.1", "localhost"}:
+            port_part = f":{parsed_url.port}" if parsed_url.port else ""
+            playback_url = f"{parsed_url.scheme}://{new_host}{port_part}{parsed_url.path}"
+            if parsed_url.query:
+                playback_url = f"{playback_url}?{parsed_url.query}"
+
+        with self._swap_lock:
+            old_container_id = self.engine_container_id
+            self.engine_host = str(new_host)
+            self.engine_port = int(new_port)
+            self.engine_api_port = int(new_api_port or 62062)
+            self.engine_container_id = target_container_id
+            self.playback_url = playback_url
+            self.playback_session_id = response_data.get("playback_session_id") or self.playback_session_id
+            self.stat_url = response_data.get("stat_url") or self.stat_url
+            self.command_url = response_data.get("command_url") or self.command_url
+            self.is_live = int(response_data.get("is_live", self.is_live or 1) or 1)
+
+        logger.info(
+            "Applied HLS hot swap for channel=%s old_engine=%s new_engine=%s",
+            self.channel_id,
+            old_container_id,
+            target_container_id,
+        )
+
+        return {
+            "swapped": True,
+            "old_container_id": old_container_id,
+            "new_container_id": target_container_id,
+            "playback_session_id": self.playback_session_id,
+            "stat_url": self.stat_url,
+            "command_url": self.command_url,
+            "is_live": self.is_live,
+        }
     
     def stop(self):
         """Stop the stream manager"""
@@ -601,9 +705,6 @@ class StreamFetcher:
             while self.manager.running:
                 try:
                     # Fetch manifest (non-blocking)
-                    # Note: playback_url is immutable after channel initialization.
-                    # The has_channel() check in main.py ensures we don't create duplicate
-                    # channels, so there's no risk of the URL changing during fetch.
                     response = await client.get(self.manager.playback_url)
                     response.raise_for_status()
                     
@@ -748,6 +849,7 @@ class HLSProxyServer:
         self.stream_buffers: Dict[str, StreamBuffer] = {}
         self.client_managers: Dict[str, ClientManager] = {}  # Track client activity per channel
         self.fetch_tasks: Dict[str, asyncio.Task] = {}  # Changed from threads to async tasks
+        self.fetchers: Dict[str, StreamFetcher] = {}
         self.lock = threading.Lock()  # Lock for thread-safe operations
         
         # Store reference to the main event loop for thread-safe event scheduling
@@ -775,6 +877,7 @@ class HLSProxyServer:
     
     def initialize_channel(self, channel_id: str, playback_url: str, engine_host: str, 
                           engine_port: int, engine_container_id: str, session_info: Dict[str, Any],
+                          engine_api_port: Optional[int] = None,
                           api_key: Optional[str] = None, stream_key_type: str = "content_id",
                           file_indexes: str = "0", seekback: int = 0):
         """Initialize a new HLS channel.
@@ -813,6 +916,7 @@ class HLSProxyServer:
                 stream_key_type=stream_key_type,
                 file_indexes=file_indexes,
                 seekback=seekback,
+                engine_api_port=engine_api_port,
                 event_loop=self._main_loop  # Pass event loop reference for thread-safe event sending
             )
             buffer = StreamBuffer()
@@ -830,6 +934,7 @@ class HLSProxyServer:
             
             # Start fetcher as async task (non-blocking, with connection pooling)
             fetcher = StreamFetcher(manager, buffer)
+            self.fetchers[channel_id] = fetcher
             task = asyncio.create_task(
                 fetcher.fetch_loop(),
                 name=f"HLS-Fetcher-{channel_id[:8]}"
@@ -915,8 +1020,65 @@ class HLSProxyServer:
                 del self.client_managers[channel_id]
             if channel_id in self.fetch_tasks:
                 del self.fetch_tasks[channel_id]
+            if channel_id in self.fetchers:
+                del self.fetchers[channel_id]
             
             logger.info(f"HLS channel {channel_id} stopped and cleaned up")
+
+    def migrate_stream(self, channel_id: str, new_engine) -> Dict[str, Any]:
+        """Hot-swap an active HLS channel to a new backend engine."""
+        with self.lock:
+            manager = self.stream_managers.get(channel_id)
+            if not manager:
+                return {
+                    "migrated": False,
+                    "reason": "hls_channel_not_found",
+                    "stream_type": "HLS",
+                }
+
+            old_container_id = str(manager.engine_container_id or "")
+            target_container_id = str(getattr(new_engine, "container_id", "") or "")
+            if not target_container_id:
+                return {
+                    "migrated": False,
+                    "reason": "invalid_target_engine",
+                    "stream_type": "HLS",
+                    "old_container_id": old_container_id,
+                }
+
+            if old_container_id and old_container_id == target_container_id:
+                return {
+                    "migrated": False,
+                    "reason": "already_on_target_engine",
+                    "stream_type": "HLS",
+                    "old_container_id": old_container_id,
+                    "new_container_id": target_container_id,
+                }
+
+            swap_result = manager.hot_swap_engine(
+                new_host=str(getattr(new_engine, "host", "") or ""),
+                new_port=int(getattr(new_engine, "port", 0) or 0),
+                new_api_port=int(getattr(new_engine, "api_port", 62062) or 62062),
+                new_container_id=target_container_id,
+            )
+
+            fetcher = self.fetchers.get(channel_id)
+            if fetcher:
+                fetcher.downloaded_segments.clear()
+
+            return {
+                "migrated": bool(swap_result.get("swapped", False)),
+                "reason": str(swap_result.get("reason") or ""),
+                "stream_type": "HLS",
+                "old_container_id": old_container_id,
+                "new_container_id": target_container_id,
+                "session_updates": {
+                    "playback_session_id": swap_result.get("playback_session_id"),
+                    "stat_url": swap_result.get("stat_url"),
+                    "command_url": swap_result.get("command_url"),
+                    "is_live": swap_result.get("is_live"),
+                },
+            }
     
     def get_manifest(self, channel_id: str) -> str:
         """Generate HLS manifest for a channel (synchronous version for backward compatibility)

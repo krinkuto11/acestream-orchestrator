@@ -31,6 +31,7 @@ class VPNController:
         self._draining_hard_timeout_s = max(60, int(os.getenv("VPN_DRAINING_HARD_TIMEOUT_S", "7200")))
         self._active_healings: set[str] = set()
         self._active_destroys: set[str] = set()
+        self._stream_migration_attempts: set[str] = set()
 
     async def start(self):
         if self._task and not self._task.done():
@@ -134,6 +135,7 @@ class VPNController:
         )
 
         await self._heal_notready_nodes()
+        await self._migrate_streams_on_draining_nodes()
         await self._garbage_collect_draining_nodes()
 
         running_nodes = await vpn_provisioner.list_managed_nodes(include_stopped=False)
@@ -357,6 +359,67 @@ class VPNController:
                 await self._drain_and_destroy_node(vpn_name, reason=destroy_reason)
             finally:
                 self._active_destroys.discard(vpn_name)
+
+    async def _migrate_streams_on_draining_nodes(self):
+        active_tokens: set[str] = set()
+
+        for node in state.list_draining_vpn_nodes(dynamic_only=True):
+            vpn_name = str(node.get("container_name") or "").strip()
+            if not vpn_name:
+                continue
+
+            for engine in list(state.get_engines_by_vpn(vpn_name)):
+                # Snapshot stream IDs to avoid in-loop mutation while migrations update state.
+                stream_ids = list(engine.streams)
+                for stream_id in stream_ids:
+                    stream = state.get_stream(stream_id)
+                    if not stream or stream.status != "started":
+                        continue
+                    if stream.container_id != engine.container_id:
+                        continue
+
+                    token = f"{stream.id}:{engine.container_id}"
+                    active_tokens.add(token)
+                    if token in self._stream_migration_attempts:
+                        continue
+
+                    self._stream_migration_attempts.add(token)
+                    try:
+                        from ..proxy.manager import ProxyManager
+
+                        result = await asyncio.to_thread(
+                            ProxyManager.migrate_stream,
+                            stream.key,
+                            None,
+                            engine.container_id,
+                        )
+                        if result.get("migrated"):
+                            logger.info(
+                                "Migrated draining stream key=%s from engine=%s to engine=%s",
+                                stream.key,
+                                engine.container_id,
+                                str(result.get("new_container_id") or "unknown"),
+                            )
+                        else:
+                            logger.warning(
+                                "Failed migrating draining stream key=%s on engine=%s: %s",
+                                stream.key,
+                                engine.container_id,
+                                str(result.get("reason") or "migration_failed"),
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "Migration trigger error for stream key=%s on engine=%s: %s",
+                            stream.key,
+                            engine.container_id,
+                            e,
+                        )
+
+        # Keep attempt memory bounded to currently active draining stream tokens.
+        if active_tokens:
+            self._stream_migration_attempts.intersection_update(active_tokens)
+        else:
+            self._stream_migration_attempts.clear()
 
     async def _drain_and_destroy_node(self, vpn_container: str, *, reason: str):
         engines = list(state.get_engines_by_vpn(vpn_container))

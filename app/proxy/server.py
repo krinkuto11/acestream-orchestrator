@@ -237,6 +237,57 @@ class ProxyServer:
         logger.info(f"Stopping proxy session for content_id={content_id} (called from state synchronization)")
         self._stop_stream(content_id)
 
+    def migrate_stream(self, content_id: str, new_engine) -> dict:
+        """Hot-swap an active TS stream to a new engine without dropping client sockets."""
+        stream_manager = self.stream_managers.get(content_id)
+        if not stream_manager:
+            return {
+                "migrated": False,
+                "reason": "ts_stream_not_found",
+                "stream_type": "TS",
+            }
+
+        old_container_id = str(getattr(stream_manager, "engine_container_id", "") or "")
+        target_container_id = str(getattr(new_engine, "container_id", "") or "")
+
+        if not target_container_id:
+            return {
+                "migrated": False,
+                "reason": "invalid_target_engine",
+                "stream_type": "TS",
+                "old_container_id": old_container_id,
+            }
+
+        if old_container_id and old_container_id == target_container_id:
+            return {
+                "migrated": False,
+                "reason": "already_on_target_engine",
+                "stream_type": "TS",
+                "old_container_id": old_container_id,
+                "new_container_id": target_container_id,
+            }
+
+        swap_result = stream_manager.hot_swap_engine(
+            new_host=str(getattr(new_engine, "host", "") or ""),
+            new_port=int(getattr(new_engine, "port", 0) or 0),
+            new_api_port=int(getattr(new_engine, "api_port", 62062) or 62062),
+            new_container_id=target_container_id,
+        )
+
+        return {
+            "migrated": bool(swap_result.get("swapped", False)),
+            "reason": str(swap_result.get("reason") or ""),
+            "stream_type": "TS",
+            "old_container_id": old_container_id,
+            "new_container_id": target_container_id,
+            "session_updates": {
+                "playback_session_id": swap_result.get("playback_session_id"),
+                "stat_url": swap_result.get("stat_url"),
+                "command_url": swap_result.get("command_url"),
+                "is_live": swap_result.get("is_live"),
+            },
+        }
+
     def seek_stream_by_key(self, content_id: str, target_timestamp: int):
         """Seek an active proxy session using LIVESEEK in API mode."""
         stream_manager = self.stream_managers.get(content_id)

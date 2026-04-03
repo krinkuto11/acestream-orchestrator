@@ -10,7 +10,7 @@ import time
 import requests
 import os
 import uuid
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 from urllib.parse import unquote, urlparse, urlunparse
 
 from ..core.config import cfg
@@ -126,6 +126,7 @@ class StreamManager:
         self.socket = None  # Read end of pipe from http_reader
         self._reader_lock = threading.RLock()
         self._pending_seek_start_info = None
+        self._pending_engine_swap_info = None
         
         # Health monitoring
         self.last_data_time = time.time()
@@ -378,8 +379,156 @@ class StreamManager:
             self.ace_api_client = None
             return False
 
-    def _normalize_playback_url(self, url: str) -> str:
+    def _request_stream_session_http_for_engine(self, engine_host: str, engine_port: int) -> Dict[str, Any]:
+        """Request a new HTTP-mode AceStream session from a specific engine."""
+        stream_mode = Config.STREAM_MODE
+        if stream_mode == 'HLS':
+            url = f"http://{engine_host}:{engine_port}/ace/manifest.m3u8"
+        else:
+            url = f"http://{engine_host}:{engine_port}/ace/getstream"
+
+        params = self._build_legacy_http_params()
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+
+        data = response.json()
+        if data.get("error"):
+            raise RuntimeError(f"AceStream engine returned error: {data.get('error')}")
+
+        resp_data = data.get("response", {})
+        playback_url = resp_data.get("playback_url")
+        if not playback_url:
+            raise RuntimeError("No playback_url in AceStream response")
+
+        return {
+            "playback_url": self._normalize_playback_url(str(playback_url), engine_host=engine_host),
+            "playback_session_id": resp_data.get("playback_session_id"),
+            "stat_url": resp_data.get("stat_url") or "",
+            "command_url": resp_data.get("command_url") or "",
+            "is_live": int(resp_data.get("is_live", 1) or 1),
+            "resolved_infohash": self.resolved_infohash,
+            "ace_api_client": None,
+        }
+
+    def _request_stream_session_api_for_engine(self, engine_host: str, engine_api_port: int) -> Dict[str, Any]:
+        """Request a new API-mode AceStream session from a specific engine."""
+        client = AceLegacyApiClient(
+            host=engine_host,
+            port=engine_api_port,
+            connect_timeout=10,
+            response_timeout=10,
+        )
+        client.connect()
+        client.authenticate()
+
+        try:
+            loadresp, resolved_mode = client.resolve_content(
+                self.source_input,
+                session_id="0",
+                mode=self.source_input_type,
+            )
+
+            status_code = loadresp.get("status")
+            if status_code not in (1, 2) and resolved_mode != "direct_url":
+                message = loadresp.get("message") or "content unavailable"
+                raise AceLegacyApiError(f"LOADASYNC status={status_code}: {message}")
+
+            resolved_infohash = loadresp.get("infohash") or None
+            if resolved_infohash:
+                start_mode = "infohash"
+                start_payload = resolved_infohash
+            else:
+                start_mode = resolved_mode
+                start_payload = self.source_input
+
+            start_info = client.start_stream(
+                start_payload,
+                mode=start_mode,
+                file_indexes=self.file_indexes,
+                seekback=self.seekback,
+            )
+
+            playback_url = start_info.get("url")
+            if not playback_url:
+                raise AceLegacyApiError("Legacy API START did not return playback URL")
+
+            return {
+                "playback_url": self._normalize_playback_url(str(playback_url), engine_host=engine_host),
+                "playback_session_id": start_info.get("playback_session_id", f"legacy-{int(time.time())}"),
+                "stat_url": "",
+                "command_url": "",
+                "is_live": int(start_info.get("stream", 1) or 1),
+                "resolved_infohash": resolved_infohash,
+                "ace_api_client": client,
+            }
+        except Exception:
+            try:
+                client.shutdown()
+            except Exception:
+                pass
+            raise
+
+    def hot_swap_engine(self, new_host: str, new_port: int, new_api_port: int, new_container_id: str) -> Dict[str, Any]:
+        """Queue a hot engine swap while preserving the same proxy buffer and stream identity."""
+        if not self.running:
+            raise RuntimeError("stream_manager_not_running")
+
+        if not new_host or not new_container_id:
+            raise RuntimeError("invalid_swap_target")
+
+        if new_container_id == self.engine_container_id:
+            return {
+                "swapped": False,
+                "reason": "already_on_target_engine",
+                "old_container_id": self.engine_container_id,
+                "new_container_id": new_container_id,
+            }
+
+        if self._is_api_mode():
+            session = self._request_stream_session_api_for_engine(new_host, int(new_api_port or 62062))
+        else:
+            session = self._request_stream_session_http_for_engine(new_host, int(new_port))
+
+        pending_payload = {
+            "engine_host": str(new_host),
+            "engine_port": int(new_port),
+            "engine_api_port": int(new_api_port or 62062),
+            "engine_container_id": str(new_container_id),
+            "playback_url": str(session.get("playback_url") or "").strip(),
+            "playback_session_id": session.get("playback_session_id"),
+            "stat_url": str(session.get("stat_url") or ""),
+            "command_url": str(session.get("command_url") or ""),
+            "is_live": int(session.get("is_live", 1) or 1),
+            "resolved_infohash": session.get("resolved_infohash"),
+            "ace_api_client": session.get("ace_api_client"),
+        }
+
+        if not pending_payload["playback_url"]:
+            raise RuntimeError("swap_session_has_no_playback_url")
+
+        with self._reader_lock:
+            self._pending_engine_swap_info = pending_payload
+
+        logger.info(
+            "Queued TS hot swap for content_id=%s old_engine=%s new_engine=%s",
+            self.content_id,
+            self.engine_container_id,
+            new_container_id,
+        )
+
+        return {
+            "swapped": True,
+            "old_container_id": self.engine_container_id,
+            "new_container_id": str(new_container_id),
+            "playback_session_id": pending_payload.get("playback_session_id"),
+            "stat_url": pending_payload.get("stat_url"),
+            "command_url": pending_payload.get("command_url"),
+            "is_live": pending_payload.get("is_live"),
+        }
+
+    def _normalize_playback_url(self, url: str, engine_host: Optional[str] = None) -> str:
         """Rewrite localhost playback URLs so proxy can always reach the selected engine."""
+        target_engine_host = str(engine_host or self.engine_host)
         try:
             normalized_url = (url or "").strip()
 
@@ -392,7 +541,7 @@ class StreamManager:
 
             parsed = urlparse(normalized_url)
             if parsed.hostname in {"127.0.0.1", "localhost"}:
-                netloc = f"{self.engine_host}:{parsed.port}" if parsed.port else self.engine_host
+                netloc = f"{target_engine_host}:{parsed.port}" if parsed.port else target_engine_host
                 return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
             if parsed.scheme and parsed.netloc:
                 return normalized_url
@@ -690,7 +839,96 @@ class StreamManager:
         }
 
     def _apply_pending_seek_switch(self):
-        """Switch HTTP reader to a newly-seeked playback URL without tearing down stream state."""
+        """Switch HTTP reader to a newly queued playback source without tearing down stream state."""
+        pending_engine_swap = None
+        with self._reader_lock:
+            if self._pending_engine_swap_info:
+                pending_engine_swap = dict(self._pending_engine_swap_info)
+                self._pending_engine_swap_info = None
+
+        if pending_engine_swap:
+            old_engine_host = self.engine_host
+            old_engine_port = self.engine_port
+            old_engine_api_port = self.engine_api_port
+            old_engine_container_id = self.engine_container_id
+            old_playback_url = self.playback_url
+            old_playback_session_id = self.playback_session_id
+            old_stat_url = self.stat_url
+            old_command_url = self.command_url
+            old_is_live = self.is_live
+            old_resolved_infohash = self.resolved_infohash
+            old_ace_api_client = self.ace_api_client
+
+            with self._reader_lock:
+                old_reader = self.http_reader
+                old_socket = self.socket
+                self.connected = False
+
+                if old_reader:
+                    try:
+                        old_reader.stop()
+                    except Exception as e:
+                        logger.debug("Failed to stop previous HTTP reader during hot swap: %s", e)
+
+                if old_socket:
+                    try:
+                        old_socket.close()
+                    except Exception:
+                        pass
+
+                self.engine_host = str(pending_engine_swap.get("engine_host") or old_engine_host)
+                self.engine_port = int(pending_engine_swap.get("engine_port") or old_engine_port)
+                self.engine_api_port = int(pending_engine_swap.get("engine_api_port") or old_engine_api_port)
+                self.engine_container_id = str(pending_engine_swap.get("engine_container_id") or old_engine_container_id)
+                self.playback_url = str(pending_engine_swap.get("playback_url") or "").strip() or old_playback_url
+                self.playback_session_id = pending_engine_swap.get("playback_session_id") or old_playback_session_id
+                self.stat_url = str(pending_engine_swap.get("stat_url") or old_stat_url or "")
+                self.command_url = str(pending_engine_swap.get("command_url") or old_command_url or "")
+                self.is_live = int(pending_engine_swap.get("is_live", old_is_live or 1) or 1)
+                self.resolved_infohash = pending_engine_swap.get("resolved_infohash") or old_resolved_infohash
+                self.ace_api_client = pending_engine_swap.get("ace_api_client")
+
+            if not self.start_stream():
+                new_client = pending_engine_swap.get("ace_api_client")
+                if new_client and new_client is not old_ace_api_client:
+                    try:
+                        new_client.shutdown()
+                    except Exception:
+                        pass
+
+                with self._reader_lock:
+                    self.engine_host = old_engine_host
+                    self.engine_port = old_engine_port
+                    self.engine_api_port = old_engine_api_port
+                    self.engine_container_id = old_engine_container_id
+                    self.playback_url = old_playback_url
+                    self.playback_session_id = old_playback_session_id
+                    self.stat_url = old_stat_url
+                    self.command_url = old_command_url
+                    self.is_live = old_is_live
+                    self.resolved_infohash = old_resolved_infohash
+                    self.ace_api_client = old_ace_api_client
+
+                if not self.start_stream():
+                    raise RuntimeError("Failed to apply hot swap and failed to restore previous stream reader")
+                raise RuntimeError("Failed to restart HTTP stream reader after hot swap")
+
+            if old_ace_api_client and old_ace_api_client is not self.ace_api_client:
+                try:
+                    with self._legacy_api_lock:
+                        old_ace_api_client.stop_stream()
+                        old_ace_api_client.shutdown()
+                except Exception as e:
+                    logger.debug("Failed to shutdown old legacy API session after hot swap: %s", e)
+
+            self.last_data_time = time.time()
+            logger.info(
+                "Applied TS hot swap for content_id=%s new_engine=%s",
+                self.content_id,
+                self.engine_container_id,
+            )
+            return True
+
         pending = None
         with self._reader_lock:
             if self._pending_seek_start_info:
@@ -1020,6 +1258,7 @@ class StreamManager:
         self._legacy_probe_cache = None
         self._legacy_probe_cache_ts = 0.0
         self._pending_seek_start_info = None
+        self._pending_engine_swap_info = None
 
     def _cleanup(self):
         """Cleanup resources"""

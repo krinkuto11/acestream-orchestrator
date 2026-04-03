@@ -3051,6 +3051,7 @@ async def ace_getstream(
                         engine_port=selected_engine.port,
                         engine_container_id=selected_engine.container_id,
                         session_info=session_info,
+                        engine_api_port=selected_engine.api_port,
                         api_key=api_key,
                         stream_key_type=input_type,
                         file_indexes=normalized_file_indexes,

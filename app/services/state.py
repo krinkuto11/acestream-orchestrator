@@ -325,6 +325,111 @@ class State:
         with self._lock:
             return self.streams.get(stream_id)
 
+    def reassign_active_streams_to_engine_by_key(
+        self,
+        *,
+        stream_key: str,
+        old_container_id: str,
+        new_engine: EngineState,
+        session_updates: Optional[Dict[str, object]] = None,
+    ) -> int:
+        """Move active stream ownership from one engine to another for a stream key.
+
+        This is used by proxy hot-swap migrations so draining engines can reach zero active streams
+        without dropping frontend client connections.
+        """
+        normalized_key = str(stream_key or "").strip()
+        normalized_old = str(old_container_id or "").strip()
+        session_updates = dict(session_updates or {})
+
+        if not normalized_key:
+            return 0
+
+        updates: List[Dict[str, object]] = []
+        updated_count = 0
+
+        with self._lock:
+            target_engine = self.engines.get(new_engine.container_id)
+            if target_engine is None:
+                target_engine = new_engine.model_copy(deep=True)
+                if not target_engine.streams:
+                    target_engine.streams = []
+                self.engines[target_engine.container_id] = target_engine
+
+            source_engine = self.engines.get(normalized_old) if normalized_old else None
+
+            for stream in self.streams.values():
+                if stream.status != "started":
+                    continue
+                if stream.key != normalized_key:
+                    continue
+                if normalized_old and stream.container_id != normalized_old:
+                    continue
+
+                previous_container_id = stream.container_id
+
+                stream.container_id = target_engine.container_id
+                stream.container_name = target_engine.container_name or stream.container_name
+
+                playback_session_id = session_updates.get("playback_session_id")
+                if playback_session_id:
+                    stream.playback_session_id = str(playback_session_id)
+
+                if "stat_url" in session_updates and session_updates.get("stat_url") is not None:
+                    stream.stat_url = str(session_updates.get("stat_url") or "")
+
+                if "command_url" in session_updates and session_updates.get("command_url") is not None:
+                    stream.command_url = str(session_updates.get("command_url") or "")
+
+                if "is_live" in session_updates and session_updates.get("is_live") is not None:
+                    stream.is_live = bool(session_updates.get("is_live"))
+
+                if source_engine and stream.id in source_engine.streams:
+                    source_engine.streams.remove(stream.id)
+                if stream.id not in target_engine.streams:
+                    target_engine.streams.append(stream.id)
+
+                updates.append(
+                    {
+                        "stream_id": stream.id,
+                        "previous_engine": previous_container_id,
+                        "new_engine": target_engine.container_id,
+                        "container_name": stream.container_name,
+                        "playback_session_id": stream.playback_session_id,
+                        "stat_url": stream.stat_url,
+                        "command_url": stream.command_url,
+                        "is_live": stream.is_live,
+                    }
+                )
+                updated_count += 1
+
+        if not updates:
+            return 0
+
+        try:
+            with SessionLocal() as s:
+                for payload in updates:
+                    row = s.get(StreamRow, str(payload["stream_id"]))
+                    if not row:
+                        continue
+                    row.engine_key = str(payload["new_engine"])
+                    row.playback_session_id = str(payload["playback_session_id"])
+                    row.stat_url = str(payload["stat_url"])
+                    row.command_url = str(payload["command_url"])
+                    row.is_live = bool(payload["is_live"])
+                s.commit()
+        except Exception as e:
+            logger.warning("Failed persisting migrated stream ownership for key %s: %s", normalized_key, e)
+
+        logger.info(
+            "Reassigned %s active stream(s) for key=%s from engine=%s to engine=%s",
+            updated_count,
+            normalized_key,
+            normalized_old or "any",
+            new_engine.container_id,
+        )
+        return updated_count
+
     def set_stream_paused(self, stream_id: str, paused: bool) -> Optional[StreamState]:
         with self._lock:
             stream = self.streams.get(stream_id)
