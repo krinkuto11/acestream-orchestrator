@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -209,6 +210,39 @@ def test_vpn_controller_bootstraps_vpn_nodes_from_desired_replicas_when_no_engin
 
     assert state.get_desired_vpn_node_count() == 1
     assert provision_mock.await_count == 1
+
+
+def test_vpn_controller_heal_notready_respects_grace_period():
+    controller = VPNController()
+    node = {
+        "container_name": "gluetun-dyn-a",
+        "condition": "notready",
+        "managed_dynamic": True,
+        "last_event_at": datetime.now(timezone.utc),
+    }
+
+    with patch("app.services.vpn_controller.state.list_notready_vpn_nodes", return_value=[node]), \
+         patch.object(controller, "_drain_and_destroy_node", new=AsyncMock()) as destroy_mock:
+        asyncio.run(controller._heal_notready_nodes())
+
+    assert destroy_mock.await_count == 0
+
+
+def test_vpn_controller_heal_notready_destroys_stale_nodes_after_grace():
+    controller = VPNController()
+    stale_at = datetime.now(timezone.utc) - timedelta(seconds=controller._notready_heal_grace_s + 5)
+    node = {
+        "container_name": "gluetun-dyn-a",
+        "condition": "notready",
+        "managed_dynamic": True,
+        "last_event_at": stale_at,
+    }
+
+    with patch("app.services.vpn_controller.state.list_notready_vpn_nodes", return_value=[node]), \
+         patch.object(controller, "_drain_and_destroy_node", new=AsyncMock()) as destroy_mock:
+        asyncio.run(controller._heal_notready_nodes())
+
+    destroy_mock.assert_awaited_once_with("gluetun-dyn-a", reason="node_not_ready")
 
 
 def test_vpn_controller_drain_uses_gather_and_resolves_intents_per_engine():

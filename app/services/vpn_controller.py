@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import threading
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .provisioner import stop_container
@@ -26,6 +27,7 @@ class VPNController:
         self._thread_signal = threading.Event()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._interval_s = max(2, int(os.getenv("VPN_CONTROLLER_INTERVAL_S", "5")))
+        self._notready_heal_grace_s = max(0, int(os.getenv("VPN_NOTREADY_HEAL_GRACE_S", "45")))
         self._active_healings: set[str] = set()
 
     async def start(self):
@@ -204,10 +206,35 @@ class VPNController:
 
     async def _heal_notready_nodes(self):
         candidates = state.list_notready_vpn_nodes(dynamic_only=True)
+        now = datetime.now(timezone.utc)
         for node in candidates:
             name = str(node.get("container_name") or "").strip()
             if not name or name in self._active_healings:
                 continue
+
+            last_event_at_raw = node.get("last_event_at")
+            last_event_at: Optional[datetime] = None
+            if isinstance(last_event_at_raw, datetime):
+                last_event_at = last_event_at_raw
+            elif isinstance(last_event_at_raw, str):
+                try:
+                    last_event_at = datetime.fromisoformat(last_event_at_raw)
+                except ValueError:
+                    last_event_at = None
+
+            if last_event_at is not None:
+                if last_event_at.tzinfo is None:
+                    last_event_at = last_event_at.replace(tzinfo=timezone.utc)
+                age_s = (now - last_event_at).total_seconds()
+                if age_s < self._notready_heal_grace_s:
+                    logger.debug(
+                        "Skipping NotReady heal for '%s' during startup grace (age=%.1fs < grace=%ss)",
+                        name,
+                        age_s,
+                        self._notready_heal_grace_s,
+                    )
+                    continue
+
             self._active_healings.add(name)
             try:
                 await self._drain_and_destroy_node(name, reason="node_not_ready")
