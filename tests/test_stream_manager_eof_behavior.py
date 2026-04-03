@@ -2,6 +2,8 @@
 
 from unittest.mock import Mock
 
+import app.proxy.stream_manager as stream_manager_module
+
 
 def _build_manager():
     from app.proxy.stream_manager import StreamManager
@@ -380,3 +382,28 @@ def test_cleanup_failed_engine_after_transition_skips_when_old_engine_has_active
     manager._cleanup_failed_engine_after_transition("old-engine-999")
 
     assert stop_calls["count"] == 0
+
+
+def test_monitor_health_force_kills_socket_on_stall(monkeypatch):
+    manager = _build_manager()
+    manager.running = True
+    manager.connected = True
+    manager.healthy = True
+    manager.last_data_time = 90.0
+    manager.http_reader = Mock()
+    manager.socket = Mock()
+
+    monkeypatch.setattr(stream_manager_module.time, "time", lambda: 100.0)
+    monkeypatch.setattr(stream_manager_module.ConfigHelper, "connection_timeout", lambda: 15.0)
+
+    def _single_cycle_sleep(_seconds):
+        manager.running = False
+
+    monkeypatch.setattr(stream_manager_module.time, "sleep", _single_cycle_sleep)
+
+    manager._monitor_health()
+
+    manager.http_reader.stop.assert_called_once()
+    manager.socket.close.assert_called_once()
+    assert manager.healthy is False
+    assert manager.connected is False

@@ -67,12 +67,12 @@ class HTTPStreamReader:
             self.session.mount('https://', adapter)
 
             # Stream the URL
-            logger.debug(f"Initiating HTTP GET request with timeout=(5, 30)")
+            logger.debug("Initiating HTTP GET request with timeout=(3.0, 5.0)")
             self.response = self.session.get(
                 self.url,
                 headers=headers,
                 stream=True,
-                timeout=(5, 30)  # 5s connect, 30s read
+                timeout=(3.0, 5.0)
             )
 
             logger.debug(f"HTTP response status: {self.response.status_code}")

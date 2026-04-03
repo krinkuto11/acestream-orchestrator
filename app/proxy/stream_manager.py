@@ -37,6 +37,9 @@ logger = get_logger()
 # Timeout for stream event handlers (in seconds)
 # This prevents blocking if internal event handling is slow (e.g., Docker API calls)
 STREAM_EVENT_HANDLER_TIMEOUT = 2.0
+FAST_CONNECT_TIMEOUT_S = 3.0
+FAST_READ_TIMEOUT_S = 5.0
+FAST_HTTP_TIMEOUT = (FAST_CONNECT_TIMEOUT_S, FAST_READ_TIMEOUT_S)
 
 
 class StreamManager:
@@ -131,7 +134,7 @@ class StreamManager:
         
         # Health monitoring
         self.last_data_time = time.time()
-        self.health_check_interval = 5
+        self.health_check_interval = 2.0
         
         # Orchestrator event tracking
         self.stream_id = None  # Will be set after sending start event
@@ -345,7 +348,7 @@ class StreamManager:
             )
             logger.debug(f"Generated PID: {params.get('pid')}")
             
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, timeout=FAST_HTTP_TIMEOUT)
             
             # Log response details in debug mode
             logger.debug(f"AceStream response status: {response.status_code}")
@@ -414,8 +417,8 @@ class StreamManager:
             client = AceLegacyApiClient(
                 host=self.engine_host,
                 port=self.engine_api_port,
-                connect_timeout=10,
-                response_timeout=10,
+                connect_timeout=FAST_CONNECT_TIMEOUT_S,
+                response_timeout=FAST_READ_TIMEOUT_S,
             )
             client.connect()
             client.authenticate()
@@ -491,7 +494,7 @@ class StreamManager:
             url = f"http://{engine_host}:{engine_port}/ace/getstream"
 
         params = self._build_legacy_http_params()
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=FAST_HTTP_TIMEOUT)
         response.raise_for_status()
 
         data = response.json()
@@ -518,8 +521,8 @@ class StreamManager:
         client = AceLegacyApiClient(
             host=engine_host,
             port=engine_api_port,
-            connect_timeout=10,
-            response_timeout=10,
+            connect_timeout=FAST_CONNECT_TIMEOUT_S,
+            response_timeout=FAST_READ_TIMEOUT_S,
         )
         client.connect()
         client.authenticate()
@@ -1278,12 +1281,28 @@ class StreamManager:
             try:
                 now = time.time()
                 inactivity_duration = now - self.last_data_time
-                timeout_threshold = ConfigHelper.connection_timeout()
+                timeout_threshold = min(5.0, float(ConfigHelper.connection_timeout()))
                 
                 if inactivity_duration > timeout_threshold and self.connected:
                     if self.healthy:
-                        logger.warning(f"Stream unhealthy - no data for {inactivity_duration:.1f}s")
+                        logger.warning(
+                            f"Stream unhealthy - no data for {inactivity_duration:.1f}s. "
+                            "Force-killing socket to trigger failover."
+                        )
                         self.healthy = False
+
+                    if self.http_reader:
+                        try:
+                            self.http_reader.stop()
+                        except Exception:
+                            pass
+
+                    try:
+                        if self.socket:
+                            self.socket.close()
+                    except Exception:
+                        pass
+                    self.connected = False
                 elif self.connected and not self.healthy:
                     logger.info("Stream health restored")
                     self.healthy = True
