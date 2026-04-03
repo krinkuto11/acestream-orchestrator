@@ -136,9 +136,8 @@ def test_vpn_controller_skips_when_vpn_disabled_even_if_dynamic_flag_set():
     assert provision_mock.await_count == 0
 
 
-def test_vpn_controller_restores_leases_before_capacity_eval():
+def test_vpn_controller_does_not_restore_leases_during_reconcile_tick():
     controller = VPNController()
-    call_order = []
     current_nodes = [
         {
             "container_id": "abc123",
@@ -150,23 +149,14 @@ def test_vpn_controller_restores_leases_before_capacity_eval():
         }
     ]
 
-    async def _restore(nodes):
-        call_order.append("restore")
-        assert nodes == current_nodes
-        return {}
-
-    async def _summary():
-        call_order.append("summary")
-        return {"total_credentials": 1}
-
     with patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={
         "enabled": True,
         "dynamic_vpn_management": True,
         "preferred_engines_per_vpn": 1,
     }), \
          patch("app.services.vpn_controller.vpn_provisioner.list_managed_nodes", new=AsyncMock(side_effect=[current_nodes, current_nodes])), \
-         patch("app.services.vpn_controller.credential_manager.restore_leases", new=AsyncMock(side_effect=_restore)) as restore_mock, \
-         patch("app.services.vpn_controller.credential_manager.summary", new=AsyncMock(side_effect=_summary)), \
+         patch("app.services.vpn_controller.credential_manager.restore_leases", new=AsyncMock()) as restore_mock, \
+         patch("app.services.vpn_controller.credential_manager.summary", new=AsyncMock(return_value={"total_credentials": 1})), \
          patch("app.services.state.state.list_engines", return_value=[]), \
          patch.object(controller, "_sync_dynamic_nodes_to_state"), \
          patch.object(controller, "_heal_notready_nodes", new=AsyncMock()), \
@@ -174,8 +164,33 @@ def test_vpn_controller_restores_leases_before_capacity_eval():
          patch.object(controller, "_provision_one", new=AsyncMock()):
         asyncio.run(controller._reconcile_once())
 
-    restore_mock.assert_awaited_once_with(current_nodes)
-    assert call_order == ["restore", "summary"]
+    restore_mock.assert_not_called()
+
+
+def test_vpn_controller_restores_leases_once_at_run_startup():
+    controller = VPNController()
+    startup_nodes = [
+        {
+            "container_id": "abc123",
+            "container_name": "gluetun-dyn-1",
+            "status": "running",
+            "provider": "protonvpn",
+            "protocol": "wireguard",
+            "credential_id": "cred-1",
+        }
+    ]
+
+    async def _single_tick_then_stop():
+        controller._stop.set()
+
+    with patch("app.services.vpn_controller.vpn_provisioner.list_managed_nodes", new=AsyncMock(return_value=startup_nodes)) as list_nodes_mock, \
+         patch("app.services.vpn_controller.credential_manager.restore_leases", new=AsyncMock()) as restore_mock, \
+         patch.object(controller, "_reconcile_once", new=AsyncMock(side_effect=_single_tick_then_stop)), \
+         patch.object(controller, "request_reconcile"):
+        asyncio.run(controller._run())
+
+    list_nodes_mock.assert_awaited_once_with(include_stopped=True)
+    restore_mock.assert_awaited_once_with(startup_nodes)
 
 
 def test_vpn_controller_drain_uses_gather_and_resolves_intents_per_engine():

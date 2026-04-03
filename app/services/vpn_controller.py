@@ -60,6 +60,13 @@ class VPNController:
                 pass
 
     async def _run(self):
+        logger.info("Adopting orphaned VPN leases from Docker on controller startup")
+        try:
+            startup_nodes = await vpn_provisioner.list_managed_nodes(include_stopped=True)
+            await credential_manager.restore_leases(startup_nodes)
+        except Exception as e:
+            logger.error("Failed to adopt startup VPN leases: %s", e)
+
         self.request_reconcile(reason="startup")
 
         while not self._stop.is_set():
@@ -93,8 +100,6 @@ class VPNController:
             return
 
         current_nodes = await vpn_provisioner.list_managed_nodes(include_stopped=True)
-        await credential_manager.restore_leases(current_nodes)
-
         lease_summary = await credential_manager.summary()
         total_credentials = int(lease_summary.get("total_credentials") or 0)
 
