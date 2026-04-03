@@ -36,7 +36,6 @@ class SegmenterSession:
     seekback: int = 0
     stream_id: str = ""
     control_client: Optional[object] = None
-    clients: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     legacy_probe_cache: Optional[Dict[str, Any]] = None
     legacy_probe_cache_ts: float = 0.0
     legacy_probe_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -213,7 +212,7 @@ class HLSSegmenterService:
         sequence: Optional[int] = None,
         now: Optional[float] = None,
     ) -> None:
-        from .metrics import observe_proxy_client_connect
+        from .client_tracker import client_tracking_service
 
         key = self._sanitize_monitor_id(monitor_id)
         session = self._sessions.get(key)
@@ -221,17 +220,9 @@ class HLSSegmenterService:
             return
 
         ts = now if now is not None else time.time()
-        self._prune_stale_clients(
-            session,
-            now=ts,
-            max_idle_seconds=self._client_record_ttl_s,
-            emit_disconnect_metric=True,
-        )
-
         normalized_client_id = str(client_id or client_ip or "unknown")
         normalized_ip = str(client_ip or "unknown")
         normalized_ua = str(user_agent or "unknown")
-        normalized_request_kind = str(request_kind or "").strip().lower()
         try:
             bytes_delta = float(bytes_sent) if bytes_sent is not None else 0.0
         except (TypeError, ValueError):
@@ -246,119 +237,141 @@ class HLSSegmenterService:
         if chunks_delta < 0:
             chunks_delta = 0
 
-        existing = session.clients.get(normalized_client_id)
-        connected_at = existing.get("connected_at") if existing else ts
-        request_count = int(existing.get("requests_total") or 0) + 1 if existing else 1
-        existing_bytes = 0.0
-        existing_chunks = 0
-        existing_sequence = existing.get("last_sequence") if existing else None
-        
-        if existing:
-            try:
-                existing_bytes = float(existing.get("bytes_sent") or 0.0)
-            except (TypeError, ValueError):
-                existing_bytes = 0.0
-            try:
-                existing_chunks = int(existing.get("chunks_sent") or 0)
-            except (TypeError, ValueError):
-                existing_chunks = 0
-
-        # Update sequence only if it's greater than before (absolute progress)
-        last_sequence = existing_sequence
-        if sequence is not None:
-            if existing_sequence is None:
-                last_sequence = sequence
-            else:
-                last_sequence = max(existing_sequence, sequence)
-
-        session.clients[normalized_client_id] = {
-            "client_id": normalized_client_id,
-            "ip_address": normalized_ip,
-            "user_agent": normalized_ua,
-            "connected_at": connected_at,
-            "last_active": ts,
-            "worker_id": "api_hls_segmenter",
-            "requests_total": request_count,
-            "last_request_kind": normalized_request_kind or (existing.get("last_request_kind") if existing else ""),
-            "bytes_sent": existing_bytes + bytes_delta,
-            "chunks_sent": existing_chunks + chunks_delta,
-            "last_sequence": last_sequence,
-            "stats_updated_at": ts,
-        }
-        if not existing:
-            observe_proxy_client_connect("HLS")
+        client_tracking_service.record_activity(
+            client_id=normalized_client_id,
+            stream_id=key,
+            bytes_delta=bytes_delta,
+            protocol="HLS",
+            ip_address=normalized_ip,
+            user_agent=normalized_ua,
+            request_kind=request_kind,
+            chunks_delta=chunks_delta,
+            sequence=sequence,
+            now=ts,
+            idle_timeout_s=self._client_record_ttl_s,
+            worker_id="api_hls_segmenter",
+        )
         session.last_activity = ts
 
-    def _prune_stale_clients(
-        self,
-        session: SegmenterSession,
-        now: float,
-        max_idle_seconds: int,
-        emit_disconnect_metric: bool = False,
-    ) -> None:
-        if max_idle_seconds <= 0 or not session.clients:
-            return
-
-        observe_proxy_client_disconnect = None
-        if emit_disconnect_metric:
-            from .metrics import observe_proxy_client_disconnect
-
-        stale_ids: List[str] = []
-        for client_id, details in session.clients.items():
-            last_active_raw = details.get("last_active")
-            try:
-                last_active = float(str(last_active_raw))
-            except (TypeError, ValueError):
-                stale_ids.append(client_id)
-                continue
-
-            if (now - last_active) > max_idle_seconds:
-                stale_ids.append(client_id)
-
-        for client_id in stale_ids:
-            session.clients.pop(client_id, None)
-            if observe_proxy_client_disconnect is not None:
-                observe_proxy_client_disconnect("HLS")
-
     def list_clients(self, monitor_id: str, max_idle_seconds: Optional[int] = None) -> List[Dict[str, Any]]:
+        from .client_tracker import client_tracking_service
+
         key = self._sanitize_monitor_id(monitor_id)
         session = self._sessions.get(key)
         if not session:
             return []
 
         idle_limit = self._client_record_ttl_s if max_idle_seconds is None else self._to_int(max_idle_seconds, default=self._client_record_ttl_s)
+        clients = client_tracking_service.get_stream_clients(
+            key,
+            protocol="HLS",
+            worker_id="api_hls_segmenter",
+        )
+        if idle_limit > 0:
+            clients = [c for c in clients if float(c.get("inactive_seconds") or 0.0) <= float(idle_limit)]
+
+        if clients:
+            return clients
+
+        legacy_clients = self._list_legacy_session_clients(session, idle_limit=idle_limit, emit_disconnect_metric=False)
+        return legacy_clients
+
+    def count_active_clients(self, max_idle_seconds: Optional[int] = None) -> int:
+        from .client_tracker import client_tracking_service
+
+        idle_limit = self._client_record_ttl_s if max_idle_seconds is None else self._to_int(max_idle_seconds, default=self._client_record_ttl_s)
+        total = 0
+        for key in self._sessions.keys():
+            stream_clients = client_tracking_service.get_stream_clients(
+                key,
+                protocol="HLS",
+                worker_id="api_hls_segmenter",
+            )
+            if idle_limit > 0 and stream_clients:
+                active_clients: List[Dict[str, Any]] = []
+                for row in stream_clients:
+                    inactive_seconds = float(row.get("inactive_seconds") or 0.0)
+                    if inactive_seconds > float(idle_limit):
+                        client_tracking_service.unregister_client(
+                            client_id=str(row.get("client_id") or row.get("id") or ""),
+                            stream_id=key,
+                            protocol="HLS",
+                        )
+                        continue
+                    active_clients.append(row)
+                stream_clients = active_clients
+
+            session_total = len(stream_clients)
+            if session_total == 0:
+                session = self._sessions.get(key)
+                if session is not None:
+                    session_total = len(
+                        self._list_legacy_session_clients(
+                            session,
+                            idle_limit=idle_limit,
+                            emit_disconnect_metric=True,
+                        )
+                    )
+
+            total += session_total
+        return total
+
+    def _list_legacy_session_clients(
+        self,
+        session: SegmenterSession,
+        *,
+        idle_limit: int,
+        emit_disconnect_metric: bool,
+    ) -> List[Dict[str, Any]]:
+        legacy_clients = getattr(session, "clients", None)
+        if not isinstance(legacy_clients, dict):
+            return []
+
         now = time.time()
         clients: List[Dict[str, Any]] = []
-        self._prune_stale_clients(session, now=now, max_idle_seconds=idle_limit)
+        stale_ids: List[str] = []
 
-        for details in session.clients.values():
-            last_active_raw = details.get("last_active")
+        for client_id, details in legacy_clients.items():
             try:
-                last_active = float(str(last_active_raw))
+                last_active = float(str((details or {}).get("last_active") or now))
             except (TypeError, ValueError):
                 last_active = now
 
-            inactive_seconds = max(0.0, now - last_active)
-            payload = dict(details)
-            payload["inactive_seconds"] = inactive_seconds
+            if idle_limit > 0 and (now - last_active) > idle_limit:
+                stale_ids.append(str(client_id))
+                continue
+
+            payload = dict(details or {})
+            payload["client_id"] = str(payload.get("client_id") or client_id)
+            payload["id"] = str(payload.get("id") or payload["client_id"])
+            payload["stream_id"] = str(payload.get("stream_id") or session.monitor_id)
+            payload["ip_address"] = str(payload.get("ip_address") or payload.get("ip") or "unknown")
+            payload["ip"] = str(payload.get("ip") or payload["ip_address"])
+            payload["user_agent"] = str(payload.get("user_agent") or payload.get("ua") or "unknown")
+            payload["ua"] = str(payload.get("ua") or payload["user_agent"])
+            payload["protocol"] = "HLS"
+            payload["type"] = "HLS"
+            payload["connected_at"] = float(payload.get("connected_at") or last_active)
+            payload["last_active"] = last_active
+            payload["inactive_seconds"] = max(0.0, now - last_active)
+            payload["bps"] = float(payload.get("bps") or 0.0)
+            payload["bytes_sent"] = float(payload.get("bytes_sent") or 0.0)
             clients.append(payload)
+
+        if stale_ids:
+            for stale_id in stale_ids:
+                legacy_clients.pop(stale_id, None)
+            if emit_disconnect_metric:
+                try:
+                    from .metrics import observe_proxy_client_disconnect
+
+                    for _ in stale_ids:
+                        observe_proxy_client_disconnect("HLS")
+                except Exception:
+                    pass
 
         clients.sort(key=lambda item: float(item.get("last_active") or 0.0), reverse=True)
         return clients
-
-    def count_active_clients(self, max_idle_seconds: Optional[int] = None) -> int:
-        idle_limit = self._client_record_ttl_s if max_idle_seconds is None else self._to_int(max_idle_seconds, default=self._client_record_ttl_s)
-        now = time.time()
-        total = 0
-        for session in self._sessions.values():
-            self._prune_stale_clients(
-                session,
-                now=now,
-                max_idle_seconds=idle_limit,
-                emit_disconnect_metric=True,
-            )
-            total += len(session.clients)
-        return total
 
     def collect_legacy_stats_probe(
         self,
@@ -565,9 +578,17 @@ class HLSSegmenterService:
             return await self._stop_locked(key, emit_stream_ended=emit_stream_ended)
 
     async def _stop_locked(self, key: str, emit_stream_ended: bool = True) -> bool:
+        from .client_tracker import client_tracking_service
+
         session = self._sessions.pop(key, None)
         if not session:
             return False
+
+        client_tracking_service.unregister_stream(
+            stream_id=key,
+            protocol="HLS",
+            worker_id="api_hls_segmenter",
+        )
 
         logger.info("Stopping external HLS segmenter for stream %s", key)
         process = session.process

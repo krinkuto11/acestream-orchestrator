@@ -67,66 +67,31 @@ class HLSConfig:
 
 
 class ClientManager:
-    """Manages client connections and activity tracking (adapted from context/hls_proxy)"""
-    
-    def __init__(self):
-        self.last_activity: Dict[str, float] = {}  # Maps client IPs to last activity timestamp
-        self.clients: Dict[str, Dict[str, Any]] = {}
+    """Manages HLS client activity using the central client tracker service."""
+
+    def __init__(self, stream_id: str = ""):
+        self.stream_id = str(stream_id or f"__hls_local_{id(self)}")
+        self.worker_id = f"hls_proxy:{id(self)}"
+        self.last_activity: Dict[str, float] = {}
         self.lock = threading.Lock()
-        
-    def _prune_inactive_locked(self, timeout: Optional[float], now: float, emit_disconnect_metric: bool) -> List[Dict[str, Any]]:
-        """Prune stale clients and rebuild per-IP activity map.
 
-        Must be called with self.lock held.
-        """
-        from ..services.metrics import observe_proxy_client_disconnect
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
-        if timeout is None:
-            timeout = 0.0
-
-        stale_client_ids: List[str] = []
-        stale_payloads: List[Dict[str, Any]] = []
-
-        for client_id, payload in self.clients.items():
-            last_active_raw = payload.get("last_active")
-            try:
-                last_active = float(last_active_raw)
-            except (TypeError, ValueError):
-                stale_client_ids.append(client_id)
-                stale_payloads.append(payload)
-                continue
-
-            if timeout <= 0 or (now - last_active) >= timeout:
-                stale_client_ids.append(client_id)
-                stale_payloads.append(payload)
-
-        for client_id in stale_client_ids:
-            self.clients.pop(client_id, None)
-
+    def _sync_last_activity_from_clients(self, clients: List[Dict[str, Any]]) -> None:
         rebuilt_activity: Dict[str, float] = {}
-        for payload in self.clients.values():
-            ip = str(payload.get("ip_address") or "unknown")
-            try:
-                ts = float(payload.get("last_active") or 0.0)
-            except (TypeError, ValueError):
-                ts = now
+        now = time.time()
+        for payload in clients:
+            ip = str(payload.get("ip_address") or payload.get("ip") or "unknown")
+            ts = self._safe_float(payload.get("last_active"), default=now)
             previous = rebuilt_activity.get(ip)
             if previous is None or ts > previous:
                 rebuilt_activity[ip] = ts
         self.last_activity = rebuilt_activity
-
-        if stale_payloads:
-            for payload in stale_payloads:
-                ip = str(payload.get("ip_address") or "unknown")
-                try:
-                    inactive_time = now - float(payload.get("last_active") or now)
-                except (TypeError, ValueError):
-                    inactive_time = 0.0
-                logger.warning(f"Client {ip} inactive for {inactive_time:.1f}s, removing")
-                if emit_disconnect_metric:
-                    observe_proxy_client_disconnect("HLS")
-
-        return stale_payloads
 
     def record_activity(
         self,
@@ -139,14 +104,13 @@ class ClientManager:
         sequence: Optional[int] = None,
         now: Optional[float] = None,
     ):
-        """Record client activity and transfer counters."""
-        from ..services.metrics import observe_proxy_client_connect
+        """Record client activity and transfer counters in the central tracker."""
+        from ..services.client_tracker import client_tracking_service
 
         ts = now if now is not None else time.time()
         normalized_ip = str(client_ip or "unknown")
         normalized_client_id = str(client_id or normalized_ip)
         normalized_ua = str(user_agent or "unknown")
-        normalized_request_kind = str(request_kind or "").strip().lower()
 
         try:
             bytes_delta = float(bytes_sent) if bytes_sent is not None else 0.0
@@ -162,96 +126,88 @@ class ClientManager:
         if chunks_delta < 0:
             chunks_delta = 0
 
+        tracked = client_tracking_service.record_activity(
+            client_id=normalized_client_id,
+            stream_id=self.stream_id,
+            bytes_delta=bytes_delta,
+            protocol="HLS",
+            ip_address=normalized_ip,
+            user_agent=normalized_ua,
+            request_kind=request_kind,
+            chunks_delta=chunks_delta,
+            sequence=sequence,
+            now=ts,
+            worker_id=self.worker_id,
+        )
+
         with self.lock:
-            existing = self.clients.get(normalized_client_id)
-            connected_at = existing.get("connected_at") if existing else ts
-            requests_total = int(existing.get("requests_total") or 0) + 1 if existing else 1
-
-            existing_bytes = 0.0
-            existing_chunks = 0
-            existing_sequence = existing.get("last_sequence") if existing else None
-            
-            # Update sequence only if it's greater than before (absolute progress)
-            last_sequence = existing_sequence
-            if sequence is not None:
-                if existing_sequence is None:
-                    last_sequence = sequence
-                else:
-                    last_sequence = max(existing_sequence, sequence)
-            
-            if existing:
-                try:
-                    existing_bytes = float(existing.get("bytes_sent") or 0.0)
-                except (TypeError, ValueError):
-                    existing_bytes = 0.0
-                try:
-                    existing_chunks = int(existing.get("chunks_sent") or 0)
-                except (TypeError, ValueError):
-                    existing_chunks = 0
-
-            self.clients[normalized_client_id] = {
-                "client_id": normalized_client_id,
-                "ip_address": normalized_ip,
-                "user_agent": normalized_ua,
-                "connected_at": connected_at,
-                "last_active": ts,
-                "worker_id": "hls_proxy",
-                "requests_total": requests_total,
-                "last_request_kind": normalized_request_kind or (existing.get("last_request_kind") if existing else ""),
-                "bytes_sent": existing_bytes + bytes_delta,
-                "chunks_sent": existing_chunks + chunks_delta,
-                "last_sequence": last_sequence,
-                "stats_updated_at": ts,
-            }
-
             previous_ip_activity = self.last_activity.get(normalized_ip)
             self.last_activity[normalized_ip] = ts if previous_ip_activity is None else max(previous_ip_activity, ts)
 
-            if not existing:
-                logger.info(f"New client connected: {normalized_ip} ({normalized_client_id})")
-                observe_proxy_client_connect("HLS")
-            else:
-                logger.debug(f"Client activity: {normalized_ip} ({normalized_client_id})")
+        if tracked.get("requests_total") == 1:
+            logger.info(f"New client connected: {normalized_ip} ({normalized_client_id})")
+        else:
+            logger.debug(f"Client activity: {normalized_ip} ({normalized_client_id})")
                 
     def cleanup_inactive(self, timeout: float) -> bool:
         """Remove inactive clients and return True if no clients remain"""
-        now = time.time()
-        with self.lock:
-            self._prune_inactive_locked(timeout=timeout, now=now, emit_disconnect_metric=True)
-            if self.clients:
-                oldest = min(now - float(p.get("last_active") or now) for p in self.clients.values())
-                logger.debug(f"Active clients: {len(self.clients)}, oldest activity: {oldest:.1f}s ago")
+        from ..services.client_tracker import client_tracking_service
 
-            return len(self.clients) == 0
+        if timeout <= 0:
+            client_tracking_service.unregister_stream(
+                stream_id=self.stream_id,
+                protocol="HLS",
+                worker_id=self.worker_id,
+            )
+            with self.lock:
+                self.last_activity = {}
+            return True
+
+        now = time.time()
+        client_tracking_service.prune_stale_clients(timeout)
+
+        clients = client_tracking_service.get_stream_clients(
+            self.stream_id,
+            protocol="HLS",
+            worker_id=self.worker_id,
+        )
+        with self.lock:
+            self._sync_last_activity_from_clients(clients)
+
+        if clients:
+            oldest = min(now - self._safe_float(p.get("last_active"), default=now) for p in clients)
+            logger.debug(f"Active clients: {len(clients)}, oldest activity: {oldest:.1f}s ago")
+
+        return len(clients) == 0
 
     def list_clients(self, max_idle_seconds: Optional[float] = None) -> List[Dict[str, Any]]:
         """Return active clients enriched with transfer counters."""
-        now = time.time()
+        from ..services.client_tracker import client_tracking_service
+
+        if max_idle_seconds is not None and max_idle_seconds > 0:
+            client_tracking_service.prune_stale_clients(max_idle_seconds)
+
+        clients = client_tracking_service.get_stream_clients(
+            self.stream_id,
+            protocol="HLS",
+            worker_id=self.worker_id,
+        )
         with self.lock:
-            if max_idle_seconds is not None:
-                self._prune_inactive_locked(timeout=max_idle_seconds, now=now, emit_disconnect_metric=False)
-
-            clients: List[Dict[str, Any]] = []
-            for payload in self.clients.values():
-                row = dict(payload)
-                try:
-                    last_active = float(row.get("last_active") or now)
-                except (TypeError, ValueError):
-                    last_active = now
-                row["inactive_seconds"] = max(0.0, now - last_active)
-                clients.append(row)
-
-            clients.sort(key=lambda item: float(item.get("last_active") or 0.0), reverse=True)
-            return clients
+            self._sync_last_activity_from_clients(clients)
+        return clients
 
     def count_active_clients(self) -> int:
-        with self.lock:
-            return len(self.clients)
+        from ..services.client_tracker import client_tracking_service
+
+        return client_tracking_service.count_active_clients(
+            stream_id=self.stream_id,
+            protocol="HLS",
+            worker_id=self.worker_id,
+        )
     
     def has_clients(self) -> bool:
         """Check if there are any active clients"""
-        with self.lock:
-            return len(self.clients) > 0
+        return self.count_active_clients() > 0
 
 
 class StreamBuffer:
@@ -524,7 +480,9 @@ class StreamManager:
                     # Schedule on the main loop from this thread
                     asyncio.run_coroutine_threadsafe(coro, self._event_loop)
                 else:
+                    # Fallback for sync contexts (tests/manual calls): run to completion.
                     logger.warning(fallback_warning)
+                    asyncio.run(coro)
         except Exception as e:
             logger.error(f"Failed to schedule async task {task_name}: {e}")
     
@@ -954,7 +912,7 @@ class HLSProxyServer:
                 event_loop=self._main_loop  # Pass event loop reference for thread-safe event sending
             )
             buffer = StreamBuffer()
-            client_manager = ClientManager()
+            client_manager = ClientManager(stream_id=channel_id)
             
             # Link client manager to stream manager
             manager.client_manager = client_manager
@@ -969,11 +927,27 @@ class HLSProxyServer:
             # Start fetcher as async task (non-blocking, with connection pooling)
             fetcher = StreamFetcher(manager, buffer)
             self.fetchers[channel_id] = fetcher
-            task = asyncio.create_task(
-                fetcher.fetch_loop(),
-                name=f"HLS-Fetcher-{channel_id[:8]}"
-            )
-            self.fetch_tasks[channel_id] = task
+            task: Optional[asyncio.Task] = None
+            try:
+                running_loop = asyncio.get_running_loop()
+                task = running_loop.create_task(
+                    fetcher.fetch_loop(),
+                    name=f"HLS-Fetcher-{channel_id[:8]}"
+                )
+            except RuntimeError:
+                if self._main_loop and self._main_loop.is_running():
+                    try:
+                        task = self._main_loop.create_task(
+                            fetcher.fetch_loop(),
+                            name=f"HLS-Fetcher-{channel_id[:8]}"
+                        )
+                    except Exception:
+                        task = None
+
+            if task is not None:
+                self.fetch_tasks[channel_id] = task
+            else:
+                logger.warning(f"No running event loop; fetcher task not started for HLS channel {channel_id}")
             
             # Start cleanup monitoring
             manager.start_cleanup_monitoring(self)

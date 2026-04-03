@@ -3993,77 +3993,12 @@ async def get_stream_clients(stream_key: str):
     Returns:
         List of client details or empty list if no clients
     """
-    from .proxy.server import ProxyServer
-    from .proxy.hls_proxy import HLSProxyServer
-    from .proxy.redis_keys import RedisKeys
-    import redis
+    from .services.client_tracker import client_tracking_service
+    from .proxy.config_helper import Config as ProxyConfig
     
     try:
-        # First check if this is an HLS stream
-        hls_proxy = HLSProxyServer.get_instance()
-        if hls_proxy.has_channel(stream_key):
-            # This is an HLS stream - get client info from HLS proxy
-            client_manager = hls_proxy.client_managers.get(stream_key)
-            if not client_manager:
-                return {"clients": []}
-
-            return {"clients": client_manager.list_clients()}
-
-        # Fallback for API-mode external HLS segmenter sessions.
-        segmenter_clients = hls_segmenter_service.list_clients(stream_key)
-        if segmenter_clients or hls_segmenter_service.has_session(stream_key):
-            return {"clients": segmenter_clients}
-        
-        # Not an HLS stream, check TS proxy
-        proxy_server = ProxyServer.get_instance()
-        
-        # Get client manager for this stream
-        client_manager = proxy_server.client_managers.get(stream_key)
-        if not client_manager:
-            # Stream not active in proxy, return empty list
-            return {"clients": []}
-        
-        # Get clients from Redis
-        redis_client = proxy_server.redis_client
-        if not redis_client:
-            return {"clients": []}
-        
-        clients_set_key = RedisKeys.clients(stream_key)
-        client_ids = redis_client.smembers(clients_set_key)
-        
-        clients = []
-        for client_id_bytes in client_ids:
-            client_id = client_id_bytes.decode('utf-8')
-            client_key = RedisKeys.client_metadata(stream_key, client_id)
-            
-            # Get client metadata
-            client_data = redis_client.hgetall(client_key)
-            if client_data:
-                # Decode Redis data
-                client_info = {}
-                for key, value in client_data.items():
-                    key_str = key.decode('utf-8')
-                    value_str = value.decode('utf-8')
-                    
-                    # Convert numeric fields with appropriate type
-                    if key_str in ['chunks_sent', 'initial_index', 'last_sequence']:
-                        # Integer fields
-                        try:
-                            client_info[key_str] = int(value_str)
-                        except ValueError:
-                            client_info[key_str] = value_str
-                    elif key_str in ['connected_at', 'last_active', 'bytes_sent', 'stats_updated_at']:
-                        # Float/timestamp fields
-                        try:
-                            client_info[key_str] = float(value_str)
-                        except ValueError:
-                            client_info[key_str] = value_str
-                    else:
-                        client_info[key_str] = value_str
-                
-                client_info['client_id'] = client_id
-                clients.append(client_info)
-        
+        client_tracking_service.prune_stale_clients(float(ProxyConfig.CLIENT_RECORD_TTL))
+        clients = client_tracking_service.get_stream_clients(stream_key)
         return {"clients": clients}
         
     except Exception as e:

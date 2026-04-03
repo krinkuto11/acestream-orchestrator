@@ -196,7 +196,7 @@ class ClientManager:
     
     def add_client(self, client_id, client_ip, user_agent=None, initial_index=0):
         """Add a client with duplicate prevention and backpressure limits"""
-        from ..services.metrics import observe_proxy_client_connect
+        from ..services.client_tracker import client_tracking_service
         
         # BACKPRESSURE: Throttling client count to prevent connection and CPU exhaustion
         max_clients = getattr(Config, 'MAX_CLIENTS_PER_STREAM', 100)
@@ -271,7 +271,17 @@ class ClientManager:
                 # Get total clients across all workers
                 total_clients = self.get_total_client_count()
                 logger.info(f"New client connected: {client_id} (local: {len(self.clients)}, total: {total_clients})")
-                observe_proxy_client_connect("TS")
+
+                client_tracking_service.register_client(
+                    client_id=str(client_id),
+                    stream_id=str(self.content_id or ""),
+                    ip_address=str(client_ip or "unknown"),
+                    user_agent=str(user_agent or "unknown"),
+                    protocol="TS",
+                    connected_at=time.time(),
+                    idle_timeout_s=float(self.client_ttl),
+                    worker_id=str(self.worker_id or "unknown"),
+                )
                 
                 self.last_heartbeat_time[client_id] = time.time()
                 
@@ -283,7 +293,7 @@ class ClientManager:
     
     def remove_client(self, client_id):
         """Remove a client from this stream and Redis"""
-        from ..services.metrics import observe_proxy_client_disconnect
+        from ..services.client_tracker import client_tracking_service
         client_ip = None
         
         with self.lock:
@@ -356,7 +366,12 @@ class ClientManager:
             
             total_clients = self.get_total_client_count()
             logger.info(f"Client disconnected: {client_id} (local: {len(self.clients)}, total: {total_clients})")
-            observe_proxy_client_disconnect("TS")
+
+            client_tracking_service.unregister_client(
+                client_id=str(client_id),
+                stream_id=str(self.content_id or ""),
+                protocol="TS",
+            )
         
         return len(self.clients)
     

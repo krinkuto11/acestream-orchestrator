@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import MagicMock, patch, call
 import threading
 import time
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -26,17 +27,12 @@ class TestHLSEvents(unittest.TestCase):
         # Reset singleton for clean test
         HLSProxyServer._instance = None
     
-    @patch('app.proxy.hls_proxy.requests.post')
-    def test_stream_started_event_sent(self, mock_post):
-        """Test that stream started event is sent when channel is initialized"""
+    @patch('app.services.internal_events.handle_stream_started')
+    def test_stream_started_event_sent(self, mock_handle_stream_started):
+        """Test that stream started event is sent internally when channel is initialized"""
         from app.proxy.hls_proxy import HLSProxyServer
-        
-        # Mock successful response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {'id': 'stream_123'}
-        mock_response.raise_for_status = MagicMock()
-        mock_post.return_value = mock_response
+
+        mock_handle_stream_started.return_value = SimpleNamespace(id="stream_123")
         
         # Create session info
         session_info = {
@@ -61,46 +57,28 @@ class TestHLSEvents(unittest.TestCase):
         # Give time for event to be sent
         time.sleep(0.1)
         
-        # Verify event was sent
-        self.assertTrue(mock_post.called, "Stream started event should be sent")
-        
-        # Verify event payload
-        call_args = mock_post.call_args
-        self.assertIsNotNone(call_args, "Event should be sent")
-        
-        # Check URL
-        self.assertIn('/events/stream_started', call_args[0][0])
-        
-        # Check event data
-        event_data = call_args[1]['json']
-        self.assertEqual(event_data['container_id'], 'container_123')
-        self.assertEqual(event_data['engine']['host'], 'localhost')
-        self.assertEqual(event_data['engine']['port'], 6878)
-        self.assertEqual(event_data['stream']['key'], 'test_channel')
-        self.assertEqual(event_data['session']['playback_session_id'], 'test_session_123')
+        # Verify internal event handler was called
+        self.assertTrue(mock_handle_stream_started.called, "Stream started event should be sent internally")
+
+        event = mock_handle_stream_started.call_args[0][0]
+        self.assertEqual(event.container_id, 'container_123')
+        self.assertEqual(event.engine.host, 'localhost')
+        self.assertEqual(event.engine.port, 6878)
+        self.assertEqual(event.stream.key, 'test_channel')
+        self.assertEqual(event.session.playback_session_id, 'test_session_123')
         
         # Cleanup
         proxy.stop_channel("test_channel")
     
-    @patch('app.proxy.hls_proxy.requests.post')
+    @patch('app.services.internal_events.handle_stream_ended')
+    @patch('app.services.internal_events.handle_stream_started')
     @patch('app.proxy.hls_proxy.requests.get')
-    def test_stream_ended_event_sent(self, mock_get, mock_post):
-        """Test that stream ended event is sent when channel is stopped"""
+    def test_stream_ended_event_sent(self, mock_get, mock_handle_stream_started, mock_handle_stream_ended):
+        """Test that stream ended event is sent internally when channel is stopped"""
         from app.proxy.hls_proxy import HLSProxyServer
-        
-        # Mock successful started event response
-        mock_start_response = MagicMock()
-        mock_start_response.status_code = 200
-        mock_start_response.json.return_value = {'id': 'stream_123'}
-        mock_start_response.raise_for_status = MagicMock()
-        
-        # Mock successful ended event response
-        mock_end_response = MagicMock()
-        mock_end_response.status_code = 200
-        mock_end_response.raise_for_status = MagicMock()
-        
-        # Return different responses for different calls
-        mock_post.side_effect = [mock_start_response, mock_end_response]
+
+        mock_handle_stream_started.return_value = SimpleNamespace(id="stream_123")
+        mock_handle_stream_ended.return_value = SimpleNamespace(id="stream_123")
         
         # Mock stop command
         mock_stop_response = MagicMock()
@@ -136,29 +114,21 @@ class TestHLSEvents(unittest.TestCase):
         # Give time for ended event
         time.sleep(0.1)
         
-        # Verify both events were sent
-        self.assertEqual(mock_post.call_count, 2, "Both started and ended events should be sent")
-        
-        # Check ended event
-        ended_call = mock_post.call_args_list[1]
-        self.assertIn('/events/stream_ended', ended_call[0][0])
-        
-        ended_data = ended_call[1]['json']
-        self.assertEqual(ended_data['container_id'], 'container_123')
-        self.assertEqual(ended_data['stream_id'], 'stream_123')
-        self.assertEqual(ended_data['reason'], 'test_stop')
+        # Verify both internal events were sent
+        self.assertEqual(mock_handle_stream_started.call_count, 1, "Started event should be sent once")
+        self.assertEqual(mock_handle_stream_ended.call_count, 1, "Ended event should be sent once")
+
+        ended_event = mock_handle_stream_ended.call_args[0][0]
+        self.assertEqual(ended_event.container_id, 'container_123')
+        self.assertEqual(ended_event.stream_id, 'stream_123')
+        self.assertEqual(ended_event.reason, 'test_stop')
     
-    @patch('app.proxy.hls_proxy.requests.post')
-    def test_multiple_clients_same_channel(self, mock_post):
+    @patch('app.services.internal_events.handle_stream_started')
+    def test_multiple_clients_same_channel(self, mock_handle_stream_started):
         """Test that multiple clients can connect to the same channel without reinitializing"""
         from app.proxy.hls_proxy import HLSProxyServer
-        
-        # Mock successful response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {'id': 'stream_123'}
-        mock_response.raise_for_status = MagicMock()
-        mock_post.return_value = mock_response
+
+        mock_handle_stream_started.return_value = SimpleNamespace(id="stream_123")
         
         # Create session info
         session_info = {
@@ -205,24 +175,22 @@ class TestHLSEvents(unittest.TestCase):
         )
         
         # Verify only one started event was sent (not reinitialized)
-        self.assertEqual(mock_post.call_count, 1, "Only one started event should be sent for multiple clients")
+        self.assertEqual(mock_handle_stream_started.call_count, 1, "Only one started event should be sent for multiple clients")
         
         # Cleanup
         proxy.stop_channel("test_channel")
     
-    @patch('app.proxy.hls_proxy.requests.post')
+    @patch('app.services.internal_events.handle_stream_started')
     @patch('app.proxy.hls_proxy.requests.get')
-    def test_channel_cleanup_on_inactivity(self, mock_get, mock_post):
+    def test_channel_cleanup_on_inactivity(self, mock_get, mock_handle_stream_started):
         """Test that channel is stopped when all clients become inactive"""
         from app.proxy.hls_proxy import HLSProxyServer
-        
-        # Mock successful responses
+
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {'id': 'stream_123'}
         mock_response.raise_for_status = MagicMock()
-        mock_post.return_value = mock_response
         mock_get.return_value = mock_response
+        mock_handle_stream_started.return_value = SimpleNamespace(id="stream_123")
         
         # Create session info
         session_info = {

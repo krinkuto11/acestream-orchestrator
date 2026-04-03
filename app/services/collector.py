@@ -283,22 +283,28 @@ class Collector:
 
 def _get_proxy_stream_buffer_pieces(stream_key: str) -> Optional[int]:
     try:
+        from .client_tracker import client_tracking_service
+
         # 1. Check HLS Proxy (HTTP mode HLS)
         try:
             from ..proxy.hls_proxy import HLSProxyServer
             hls_proxy = HLSProxyServer.get_instance()
             if hls_proxy:
                 buffer = hls_proxy.stream_buffers.get(stream_key)
-                client_manager = hls_proxy.client_managers.get(stream_key)
                 
                 if buffer and buffer.keys():
                     latest_seq = max(buffer.keys())
-                    
-                    if client_manager and client_manager.clients:
+
+                    hls_clients = client_tracking_service.get_stream_clients(
+                        stream_key,
+                        protocol="HLS",
+                        worker_id="hls_proxy",
+                    )
+                    if hls_clients:
                         min_client_seq = latest_seq
                         has_active_clients = False
-                        
-                        for client in client_manager.clients.values():
+
+                        for client in hls_clients:
                             c_seq = client.get("last_sequence")
                             if c_seq is not None:
                                 if c_seq < min_client_seq:
@@ -316,11 +322,14 @@ def _get_proxy_stream_buffer_pieces(stream_key: str) -> Optional[int]:
 
         # 2. Check HLS Segmenter (API mode HLS)
         try:
-            from .hls_segmenter import hls_segmenter_service
+            api_hls_clients = client_tracking_service.get_stream_clients(
+                stream_key,
+                protocol="HLS",
+                worker_id="api_hls_segmenter",
+            )
             # For now, HLS Segmenter aggregate pieces = number of available segments
             # (Lag calculation would require parsing the manifest on disk each second)
-            clients = hls_segmenter_service.list_clients(stream_key)
-            if clients:
+            if api_hls_clients:
                 # If we have clients, we return a value that reflects the potential lag
                 # But since we don't have the live head easily, we fall back to a "healthy" signal
                 # or a fixed value if clients exist.

@@ -231,150 +231,21 @@ def observe_proxy_egress_bytes(mode: str, byte_count: int):
         _proxy_egress_observed_bytes += int(byte_count)
 
 
-class ClientRateTracker:
-    def __init__(self):
-        self._last_stats = {}  # (client_id, stream_id) -> (last_bytes, last_ts)
-        self._lock = threading.Lock()
-
-    def update_and_get_rate(self, client_id: str, stream_id: str, current_bytes: float, current_ts: float) -> float:
-        key = (client_id, stream_id)
-        with self._lock:
-            last = self._last_stats.get(key)
-            self._last_stats[key] = (current_bytes, current_ts)
-            if last is None:
-                return 0.0
-            last_bytes, last_ts = last
-            delta_bytes = current_bytes - last_bytes
-            delta_time = current_ts - last_ts
-            if delta_time <= 0 or delta_bytes < 0:
-                return 0.0
-            return delta_bytes / delta_time
-
-    def cleanup(self, active_keys: Set[tuple]):
-        with self._lock:
-            self._last_stats = {k: v for k, v in self._last_stats.items() if k in active_keys}
-
-
-_client_rate_tracker = ClientRateTracker()
-
-
 def _compute_proxy_clients_snapshot() -> Dict[str, Any]:
-    """Best-effort snapshot of active clients for TS and HLS proxies with detailed metadata."""
-    ts_clients_count = 0
-    hls_clients_count = 0
-    client_list = []
-    active_tracker_keys = set()
-    now = time.time()
+    """Unified snapshot of active TS/HLS clients from the central tracker."""
+    from .client_tracker import client_tracking_service
+    from ..proxy.config_helper import Config as ProxyConfig
 
-    try:
-        from ..proxy.manager import ProxyManager
-        from ..proxy.redis_keys import RedisKeys
-        from .state import state
-
-        proxy = ProxyManager.get_instance()
-        redis_client = getattr(proxy, "redis_client", None)
-        if redis_client:
-            stream_keys = [s.key for s in state.list_streams(status="started") if s.key]
-            for stream_key in stream_keys:
-                try:
-                    client_ids = redis_client.smembers(RedisKeys.clients(stream_key))
-                    if not client_ids:
-                        continue
-                    
-                    for cid_bytes in client_ids:
-                        client_id = cid_bytes.decode('utf-8') if isinstance(cid_bytes, bytes) else str(cid_bytes)
-                        ts_clients_count += 1
-                        
-                        # Fetch metadata
-                        meta_key = RedisKeys.client_metadata(stream_key, client_id)
-                        meta = redis_client.hgetall(meta_key)
-                        if not meta:
-                            continue
-                            
-                        # Decode meta
-                        d_meta = {k.decode('utf-8') if isinstance(k, bytes) else k: 
-                                 v.decode('utf-8') if isinstance(v, bytes) else v 
-                                 for k, v in meta.items()}
-                        
-                        bytes_sent = float(d_meta.get("bytes_sent") or 0.0)
-                        bps = _client_rate_tracker.update_and_get_rate(client_id, stream_key, bytes_sent, now)
-                        active_tracker_keys.add((client_id, stream_key))
-                        
-                        client_list.append({
-                            "id": client_id,
-                            "stream_id": stream_key,
-                            "ip": d_meta.get("ip_address", "unknown"),
-                            "ua": d_meta.get("user_agent", "unknown"),
-                            "type": "TS",
-                            "bps": bps,
-                            "bytes_sent": bytes_sent,
-                            "connected_at": float(d_meta.get("connected_at") or now)
-                        })
-                except Exception:
-                    continue
-    except Exception:
-        pass
-
-    try:
-        from ..proxy.hls_proxy import HLSProxyServer
-        from .hls_segmenter import hls_segmenter_service
-
-        hls_proxy = HLSProxyServer.get_instance()
-        # Non-API HLS clients (from HLSProxyServer managers)
-        managers = getattr(hls_proxy, "client_managers", {}) or {}
-        for channel_id, manager in managers.items():
-            try:
-                with manager.lock:
-                    for client_id, payload in manager.clients.items():
-                        hls_clients_count += 1
-                        bytes_sent = float(payload.get("bytes_sent") or 0.0)
-                        bps = _client_rate_tracker.update_and_get_rate(client_id, channel_id, bytes_sent, now)
-                        active_tracker_keys.add((client_id, channel_id))
-                        
-                        client_list.append({
-                            "id": client_id,
-                            "stream_id": channel_id,
-                            "ip": payload.get("ip_address", "unknown"),
-                            "ua": payload.get("user_agent", "unknown"),
-                            "type": "HLS",
-                            "bps": bps,
-                            "bytes_sent": bytes_sent,
-                            "connected_at": float(payload.get("connected_at") or now)
-                        })
-            except Exception:
-                continue
-
-        # API-mode HLS clients (from segmenter sessions)
-        for monitor_id, session in getattr(hls_segmenter_service, "_sessions", {}).items():
-            try:
-                for client_id, payload in session.clients.items():
-                    hls_clients_count += 1
-                    bytes_sent = float(payload.get("bytes_sent") or 0.0)
-                    bps = _client_rate_tracker.update_and_get_rate(client_id, monitor_id, bytes_sent, now)
-                    active_tracker_keys.add((client_id, monitor_id))
-                    
-                    client_list.append({
-                        "id": client_id,
-                        "stream_id": monitor_id,
-                        "ip": payload.get("ip_address", "unknown"),
-                        "ua": payload.get("user_agent", "unknown"),
-                        "type": "HLS",
-                        "bps": bps,
-                        "bytes_sent": bytes_sent,
-                        "connected_at": float(payload.get("connected_at") or now)
-                    })
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-    _client_rate_tracker.cleanup(active_tracker_keys)
+    client_tracking_service.prune_stale_clients(float(getattr(ProxyConfig, "CLIENT_RECORD_TTL", 60)))
+    clients = client_tracking_service.get_all_active_clients()
+    ts_clients_count = sum(1 for row in clients if str(row.get("protocol", "")).upper() == "TS")
+    hls_clients_count = sum(1 for row in clients if str(row.get("protocol", "")).upper() == "HLS")
 
     return {
         "ts": ts_clients_count,
         "hls": hls_clients_count,
-        "total": ts_clients_count + hls_clients_count,
-        "list": client_list,
+        "total": len(clients),
+        "list": clients,
     }
 
 
