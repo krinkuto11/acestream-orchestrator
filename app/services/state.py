@@ -964,6 +964,10 @@ class State:
             previous_dynamic = self._dynamic_vpn_nodes.get(vpn_container)
             managed_dynamic = bool(metadata.get("managed_dynamic", True))
             previous = previous_dynamic or {}
+            last_event_at = previous.get("last_event_at")
+            # Only reset event age when readiness condition transitions (or first sighting).
+            if previous.get("condition") != condition or last_event_at is None:
+                last_event_at = now
             lifecycle = str(
                 metadata.get(
                     "lifecycle",
@@ -985,7 +989,7 @@ class State:
                 "status": normalized,
                 "healthy": healthy,
                 "condition": condition,
-                "last_event_at": now,
+                "last_event_at": last_event_at,
                 "managed_dynamic": managed_dynamic,
                 "lifecycle": lifecycle,
                 "draining_since": draining_since,

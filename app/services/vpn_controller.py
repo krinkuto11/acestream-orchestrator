@@ -468,8 +468,27 @@ class VPNController:
             state.remove_vpn_node(vpn_container)
             state.resolve_scaling_intent(destroy_intent["id"], "completed", result=destroy_result)
         except Exception as e:
-            logger.error("Failed destroying dynamic VPN node %s: %s", vpn_container, e)
-            state.resolve_scaling_intent(destroy_intent["id"], "failed", result={"error": str(e)})
+            error_text = str(e).strip().lower()
+            if "not found" in error_text or "no such container" in error_text:
+                logger.warning(
+                    "Dynamic VPN node %s already absent during destroy; removing stale state",
+                    vpn_container,
+                )
+                state.remove_vpn_node(vpn_container)
+                state.resolve_scaling_intent(
+                    destroy_intent["id"],
+                    "completed",
+                    result={
+                        "removed": False,
+                        "lease_released": False,
+                        "container_name": vpn_container,
+                        "already_absent": True,
+                        "error": str(e),
+                    },
+                )
+            else:
+                logger.error("Failed destroying dynamic VPN node %s: %s", vpn_container, e)
+                state.resolve_scaling_intent(destroy_intent["id"], "failed", result={"error": str(e)})
 
 
 vpn_controller = VPNController()

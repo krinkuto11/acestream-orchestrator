@@ -354,3 +354,42 @@ def test_vpn_controller_drain_uses_gather_and_resolves_intents_per_engine():
     assert terminate_results["terminate:engine-a"] == "completed"
     assert terminate_results["terminate:engine-b"] == "failed"
     assert terminate_results["terminate:engine-c"] == "completed"
+
+
+def test_update_vpn_node_status_preserves_last_event_at_until_condition_change():
+    vpn_name = "gluetun-dyn-time-loop-test"
+
+    state.remove_vpn_node(vpn_name)
+    try:
+        state.update_vpn_node_status(vpn_name, "running", metadata={"managed_dynamic": True})
+        first = next(node for node in state.list_vpn_nodes() if node.get("container_name") == vpn_name)
+        first_event_at = first.get("last_event_at")
+
+        state.update_vpn_node_status(vpn_name, "running", metadata={"managed_dynamic": True})
+        second = next(node for node in state.list_vpn_nodes() if node.get("container_name") == vpn_name)
+        second_event_at = second.get("last_event_at")
+
+        assert second_event_at == first_event_at
+
+        state.update_vpn_node_status(vpn_name, "exited", metadata={"managed_dynamic": True})
+        third = next(node for node in state.list_vpn_nodes() if node.get("container_name") == vpn_name)
+        third_event_at = third.get("last_event_at")
+
+        assert third.get("condition") == "notready"
+        assert third_event_at != first_event_at
+    finally:
+        state.remove_vpn_node(vpn_name)
+
+
+def test_vpn_controller_destroy_not_found_removes_stale_state():
+    controller = VPNController()
+
+    with patch("app.services.vpn_controller.state.get_engines_by_vpn", return_value=[]), \
+         patch("app.services.vpn_controller.state.emit_scaling_intent", return_value={"id": "destroy:vpn-z"}), \
+         patch("app.services.vpn_controller.state.resolve_scaling_intent") as resolve_mock, \
+         patch("app.services.vpn_controller.state.remove_vpn_node") as remove_mock, \
+         patch("app.services.vpn_controller.vpn_provisioner.destroy_node", new=AsyncMock(side_effect=RuntimeError("No such container"))):
+        asyncio.run(controller._drain_and_destroy_node("vpn-z", reason="draining_gc_idle"))
+
+    remove_mock.assert_called_once_with("vpn-z")
+    assert resolve_mock.call_args.args[1] == "completed"
