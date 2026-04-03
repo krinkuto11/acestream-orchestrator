@@ -30,6 +30,7 @@ from .constants import (
 from .config_helper import ConfigHelper, Config
 from .ace_api_client import AceLegacyApiClient, AceLegacyApiError
 from .utils import get_logger
+from ..services.engine_selection import select_best_engine
 
 logger = get_logger()
 
@@ -139,6 +140,40 @@ class StreamManager:
         self._stream_exit_reason = None
         
         logger.info(f"StreamManager initialized for content_id={content_id}")
+
+    def _failover_to_new_engine(self):
+        """Dynamically fetch a new healthy engine during a retry/failover."""
+        try:
+            penalties = {self.engine_container_id: 999} if self.engine_container_id else None
+            new_engine, _ = select_best_engine(additional_load_by_engine=penalties)
+
+            self.engine_host = new_engine.host
+            self.engine_port = int(new_engine.port)
+            self.engine_api_port = int(new_engine.api_port or 62062)
+            self.engine_container_id = new_engine.container_id
+
+            # Force a brand-new session request on the selected engine.
+            self.playback_url = None
+            self.playback_session_id = None
+            self.stat_url = ""
+            self.command_url = ""
+            self.existing_session = {}
+            self.ace_api_client = None
+            self.legacy_status_probe = None
+            self._legacy_probe_cache = None
+            self._legacy_probe_cache_ts = 0.0
+            self.owns_engine_session = True
+
+            logger.info(
+                "Failover successful: swapped target to engine %s (%s:%s)",
+                str(self.engine_container_id or "unknown")[:12],
+                self.engine_host,
+                self.engine_port,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failover engine selection failed: {e}")
+            return False
 
     def _build_legacy_http_params(self):
         """Build engine query params for HTTP mode based on source input type."""
@@ -995,6 +1030,10 @@ class StreamManager:
                     # Request stream from engine (if not connected/reconnecting)
                     # We always request a new session on reconnect to get updated URLs
                     if not self.connected:
+                        # On retry attempts, proactively select a new engine target.
+                        if self.retry_count > 0 and not self._failover_to_new_engine():
+                            raise RuntimeError("Failover engine selection failed")
+
                         reused_existing = self._apply_existing_session()
                         if not reused_existing:
                             if not self.request_stream_from_engine():
@@ -1259,6 +1298,12 @@ class StreamManager:
         self._legacy_probe_cache_ts = 0.0
         self._pending_seek_start_info = None
         self._pending_engine_swap_info = None
+        self.playback_url = None
+        self.playback_session_id = None
+        self.stat_url = ""
+        self.command_url = ""
+        self.existing_session = {}
+        self.owns_engine_session = True
 
     def _cleanup(self):
         """Cleanup resources"""

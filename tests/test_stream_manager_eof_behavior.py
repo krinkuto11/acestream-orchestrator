@@ -220,3 +220,92 @@ def test_stream_manager_save_stream_uses_resolved_infohash():
         "index": 3,
         "path": "/downloads",
     }
+
+
+def test_failover_to_new_engine_resets_cached_session(monkeypatch):
+    manager = _build_manager()
+    manager.engine_host = "172.19.0.5"
+    manager.engine_port = 19000
+    manager.engine_api_port = 62062
+    manager.engine_container_id = "dead-engine-123"
+    manager.playback_url = "http://172.19.0.5:19000/content/old"
+    manager.playback_session_id = "old-session"
+    manager.stat_url = "http://172.19.0.5:19000/stat"
+    manager.command_url = "http://172.19.0.5:19000/cmd"
+    manager.existing_session = {"session": {"playback_url": manager.playback_url}}
+
+    replacement = Mock()
+    replacement.host = "172.19.0.88"
+    replacement.port = 19000
+    replacement.api_port = 62062
+    replacement.container_id = "new-engine-456"
+
+    monkeypatch.setattr(
+        "app.proxy.stream_manager.select_best_engine",
+        lambda additional_load_by_engine=None: (replacement, 0),
+    )
+
+    assert manager._failover_to_new_engine() is True
+    assert manager.engine_container_id == "new-engine-456"
+    assert manager.engine_host == "172.19.0.88"
+    assert manager.playback_url is None
+    assert manager.playback_session_id is None
+    assert manager.stat_url == ""
+    assert manager.command_url == ""
+    assert manager.existing_session == {}
+
+
+def test_retry_attempt_triggers_engine_failover(monkeypatch):
+    manager = _build_manager()
+    manager.running = True
+    manager.max_retries = 3
+
+    call_state = {
+        "failover_calls": 0,
+        "process_calls": 0,
+        "request_calls": 0,
+    }
+
+    monkeypatch.setattr(manager, "_monitor_health", lambda: None)
+    monkeypatch.setattr(manager, "_send_stream_started_event", lambda: None)
+    monkeypatch.setattr(manager, "_send_stream_ended_event", lambda reason="normal": None)
+    monkeypatch.setattr(manager, "_cleanup", lambda: None)
+    monkeypatch.setattr("app.proxy.stream_manager.time.sleep", lambda _seconds: None)
+
+    def _fake_cleanup_for_retry():
+        manager.connected = False
+
+    monkeypatch.setattr(manager, "_cleanup_for_retry", _fake_cleanup_for_retry)
+
+    def _fake_failover_to_new_engine():
+        call_state["failover_calls"] += 1
+        return True
+
+    monkeypatch.setattr(manager, "_failover_to_new_engine", _fake_failover_to_new_engine)
+    monkeypatch.setattr(manager, "_apply_existing_session", lambda: False)
+
+    def _fake_request_stream_from_engine():
+        call_state["request_calls"] += 1
+        return True
+
+    monkeypatch.setattr(manager, "request_stream_from_engine", _fake_request_stream_from_engine)
+
+    def _fake_start_stream():
+        manager.connected = True
+        return True
+
+    monkeypatch.setattr(manager, "start_stream", _fake_start_stream)
+
+    def _fake_process_stream_data():
+        call_state["process_calls"] += 1
+        if call_state["process_calls"] == 1:
+            manager._stream_exit_reason = "error"
+            return
+        manager.running = False
+
+    monkeypatch.setattr(manager, "_process_stream_data", _fake_process_stream_data)
+
+    manager.run()
+
+    assert call_state["failover_calls"] == 1
+    assert call_state["request_calls"] == 2
