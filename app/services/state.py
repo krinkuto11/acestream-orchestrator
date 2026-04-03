@@ -854,6 +854,27 @@ class State:
         with self._lock:
             return [dict(node) for node in self._vpn_nodes.values() if bool(node.get("managed_dynamic"))]
 
+    def initialize_static_vpn_nodes_notready(self, container_names: Optional[List[str]] = None):
+        """Seed configured static VPN containers as NotReady until Docker events report readiness."""
+        if container_names is None:
+            from ..core.config import cfg
+
+            names = [cfg.GLUETUN_CONTAINER_NAME, cfg.GLUETUN_CONTAINER_NAME_2]
+        else:
+            names = container_names
+
+        for raw_name in names:
+            name = str(raw_name or "").strip()
+            if not name:
+                continue
+            self.update_vpn_node_status(
+                name,
+                "down",
+                metadata={
+                    "managed_dynamic": False,
+                },
+            )
+
     @staticmethod
     def _safe_int(value: Optional[str], default: Optional[int]) -> Optional[int]:
         if value is None:

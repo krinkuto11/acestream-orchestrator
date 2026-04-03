@@ -65,6 +65,7 @@ class DockerEventWatcher:
             return
 
         self._stop_sync.clear()
+        self._bootstrap_vpn_nodes_snapshot()
         self._thread = threading.Thread(target=self._run_sync, name="docker-event-watcher", daemon=True)
         self._thread.start()
         logger.info("Docker event watcher started")
@@ -172,9 +173,13 @@ class DockerEventWatcher:
             and attrs.get("role") == "vpn_node"
         )
 
+    @staticmethod
+    def _is_dynamic_vpn_name(container_name: str) -> bool:
+        return str(container_name or "").strip().lower().startswith("gluetun-dyn-")
+
     @classmethod
     def _match_vpn_name(cls, container_name: Optional[str], attrs: dict) -> Optional[str]:
-        if container_name and cls._is_managed_vpn_node(attrs):
+        if container_name and (cls._is_managed_vpn_node(attrs) or cls._is_dynamic_vpn_name(container_name)):
             return container_name
 
         if not container_name:
@@ -190,13 +195,76 @@ class DockerEventWatcher:
                 return candidate
         return None
 
+    def _bootstrap_vpn_nodes_snapshot(self):
+        """Seed VPN node state from currently existing containers before streaming events."""
+        from .state import state
+        from ..core.config import cfg
+
+        static_names = [cfg.GLUETUN_CONTAINER_NAME, cfg.GLUETUN_CONTAINER_NAME_2]
+        static_names = [name for name in static_names if name]
+
+        cli = None
+        try:
+            cli = get_client(timeout=20)
+            containers = cli.containers.list(all=True)
+            for container in containers:
+                container_name = str(getattr(container, "name", "") or "").strip()
+                if not container_name:
+                    continue
+
+                labels = dict(getattr(container, "labels", {}) or {})
+                is_dynamic = self._is_managed_vpn_node(labels) or self._is_dynamic_vpn_name(container_name)
+                is_static = any(
+                    container_name == static_name or container_name.endswith(static_name)
+                    for static_name in static_names
+                )
+
+                if not is_dynamic and not is_static:
+                    continue
+
+                health = str((container.attrs or {}).get("State", {}).get("Health", {}).get("Status") or "").strip().lower()
+                status = str(getattr(container, "status", "") or "").strip().lower()
+                if status == "running":
+                    if health == "healthy":
+                        node_status = "healthy"
+                    elif health == "unhealthy":
+                        node_status = "unhealthy"
+                    else:
+                        node_status = "running"
+                else:
+                    node_status = "down"
+
+                state.update_vpn_node_status(
+                    container_name,
+                    node_status,
+                    metadata={
+                        "managed_dynamic": bool(is_dynamic),
+                        "provider": labels.get("acestream.vpn.provider"),
+                        "protocol": labels.get("acestream.vpn.protocol"),
+                        "credential_id": labels.get("acestream.vpn.credential_id"),
+                        "port_forwarding_supported": str(
+                            labels.get("acestream.vpn.port_forwarding_supported", "false")
+                        ).strip().lower() == "true",
+                    },
+                )
+        except Exception as e:
+            logger.debug("Failed to bootstrap VPN node snapshot from Docker: %s", e)
+        finally:
+            if cli is not None:
+                with suppress(Exception):
+                    cli.close()
+
     def _apply_state_update(self, container_id: str, container_name: Optional[str], action: str, attrs: dict):
         from .state import state
 
         vpn_name = self._match_vpn_name(container_name, attrs)
         if vpn_name:
+            managed_dynamic = bool(self._is_managed_vpn_node(attrs))
+            if not managed_dynamic and container_name:
+                managed_dynamic = self._is_dynamic_vpn_name(container_name)
+
             vpn_metadata = {
-                "managed_dynamic": self._is_managed_vpn_node(attrs),
+                "managed_dynamic": managed_dynamic,
                 "provider": attrs.get("acestream.vpn.provider"),
                 "protocol": attrs.get("acestream.vpn.protocol"),
                 "credential_id": attrs.get("acestream.vpn.credential_id"),

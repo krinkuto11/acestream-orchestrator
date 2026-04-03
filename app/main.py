@@ -338,6 +338,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to load persisted orchestrator settings: {e}")
 
+    vpn_settings: Dict[str, Any] = {}
+    dynamic_vpn_management_enabled = False
+
     # Load VPN settings
     try:
         vpn_settings = SettingsPersistence.load_vpn_config() or {}
@@ -368,6 +371,10 @@ async def lifespan(app: FastAPI):
                 cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S = vpn_settings['unhealthy_restart_timeout_s']
             logger.info(f"VPN settings loaded from persistent storage: enabled={vpn_enabled}, mode={cfg.VPN_MODE}, container={cfg.GLUETUN_CONTAINER_NAME}")
 
+        dynamic_vpn_management_enabled = bool(
+            vpn_settings.get("enabled", False) and vpn_settings.get("dynamic_vpn_management", False)
+        )
+
         lease_summary = await credential_manager.configure(
             dynamic_vpn_management=bool(vpn_settings.get("dynamic_vpn_management", False)),
             providers=vpn_settings.get("providers", []),
@@ -387,6 +394,9 @@ async def lifespan(app: FastAPI):
 
     # Load state from database first
     load_state_from_db()
+
+    if cfg.GLUETUN_CONTAINER_NAME and not dynamic_vpn_management_enabled:
+        state.initialize_static_vpn_nodes_notready([cfg.GLUETUN_CONTAINER_NAME, cfg.GLUETUN_CONTAINER_NAME_2])
     
     # Initialize looping streams tracker with configured retention
     looping_streams_tracker.set_retention_minutes(cfg.STREAM_LOOP_RETENTION_MINUTES)
@@ -401,9 +411,10 @@ async def lifespan(app: FastAPI):
     await docker_event_watcher.start()
     await engine_controller.start()
 
-    # Start Gluetun monitoring after controller/watcher bootstrap.
-    await gluetun_monitor.start()
-    await vpn_controller.start()
+    if dynamic_vpn_management_enabled:
+        await vpn_controller.start()
+    else:
+        logger.info("Dynamic VPN controller disabled; static VPN nodes are informer-managed")
     
     # Initialize ProxyServer in background to avoid blocking later API calls
     init_thread = threading.Thread(target=_init_proxy_server, daemon=True, name="ProxyServer-Init")
@@ -444,10 +455,10 @@ async def lifespan(app: FastAPI):
     await health_monitor.stop()  # Stop health monitoring
     await health_manager.stop()  # Stop health management
     await docker_stats_collector.stop()  # Stop Docker stats collector
-    await vpn_controller.stop()  # Stop VPN reconciliation controller
+    if vpn_controller.is_running():
+        await vpn_controller.stop()  # Stop VPN reconciliation controller
     await engine_controller.stop()  # Stop declarative engine controller
     await docker_event_watcher.stop()  # Stop Docker event watcher
-    await gluetun_monitor.stop()  # Stop Gluetun monitoring
     await stream_loop_detector.stop()  # Stop stream loop detector
     await looping_streams_tracker.stop()  # Stop looping streams tracker
     await legacy_stream_monitoring_service.stop_all()  # Stop legacy monitor sessions
@@ -4880,13 +4891,22 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
         lease_summary.get("leased"),
     )
 
-    # Restart gluetun monitor to pick up new config
-    try:
-        await gluetun_monitor.stop()
-        await gluetun_monitor.start()
-        logger.info("Gluetun monitor restarted with new VPN config")
-    except Exception as e:
-        logger.warning(f"Failed to restart gluetun monitor: {e}")
+    dynamic_enabled = bool(current.get("enabled", False) and current.get("dynamic_vpn_management", False))
+    if dynamic_enabled:
+        if not vpn_controller.is_running():
+            await vpn_controller.start()
+            logger.info("Dynamic VPN controller started after VPN settings update")
+    else:
+        if vpn_controller.is_running():
+            await vpn_controller.stop()
+            state.set_desired_vpn_node_count(0)
+            logger.info("Dynamic VPN controller stopped after VPN settings update")
+
+        if current.get("enabled", False):
+            state.initialize_static_vpn_nodes_notready([
+                current.get("container_name"),
+                current.get("container_name_2"),
+            ])
 
     if SettingsPersistence.save_vpn_config(current):
         logger.info("VPN settings persisted")

@@ -1,1069 +1,251 @@
-"""
-Gluetun VPN integration and health monitoring service.
+"""Passive Gluetun helpers for event-driven VPN orchestration.
 
-This module provides:
-- Gluetun container health monitoring
-- VPN connection status tracking  
-- Integration with AceStream engine lifecycle
-- VPN port forwarding support
+This module intentionally avoids background polling loops. VPN node readiness and
+health transitions are driven by DockerEventWatcher events stored in state.
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
-import httpx
-import os
-import time
 from datetime import datetime, timezone
-from typing import Dict, Optional, Set
-from .docker_client import get_client
-from ..core.config import cfg
-from .event_logger import event_logger
+from typing import Dict, Optional, Set, Tuple
+
+import httpx
 from docker.errors import NotFound
+
+from ..core.config import cfg
+from .docker_client import get_client
 
 logger = logging.getLogger(__name__)
 
 
-class VpnContainerMonitor:
-    """Monitors a single VPN container's health and manages operations."""
-    
-    def __init__(self, container_name: str):
-        self.container_name = container_name
-        self._last_health_status: Optional[bool] = None
-        
-        # Port forwarding cache to reduce API calls
-        self._cached_port: Optional[int] = None
-        self._port_cache_time: Optional[datetime] = None
-        self._port_cache_ttl_seconds: int = cfg.GLUETUN_PORT_CACHE_TTL_S
-        self._last_logged_port: Optional[int] = None
-        
-        # Track the last known stable forwarded port for detecting changes
-        self._last_stable_forwarded_port: Optional[int] = None
-        self._last_port_check_time: Optional[datetime] = None
-        self._port_check_interval_s: int = 30  # Check for port changes every 30 seconds
-        
-        # Track health stability to prevent engine restarts during initial startup
-        self._startup_grace_period_s = 60
-        self._first_healthy_time: Optional[datetime] = None
-        self._consecutive_healthy_count = 0
-        
-        # Track when container became unhealthy for forced restart timeout
-        self._unhealthy_since: Optional[datetime] = None
-        self._force_restart_attempted: bool = False
-        
-        # Track when VPN was restarted to add grace period before API calls
-        self._last_restart_time: Optional[datetime] = None
-        self._restart_grace_period_s: int = 15  # Wait 15 seconds after restart before API calls
-        
-        # Track when VPN recovered to add grace period before cleanup
-        self._last_recovery_time: Optional[datetime] = None
-        self._recovery_stabilization_period_s: int = 120  # Wait 2 minutes after recovery before cleanup
-        
-        # Track last logged container status to prevent spam logging
-        self._last_logged_status: Optional[str] = None
+# Forwarded-port cache: container_name -> (port, cached_at)
+_FORWARDED_PORT_CACHE: Dict[str, Tuple[int, datetime]] = {}
 
-    async def check_health(self) -> bool:
-        """Check if VPN container is healthy."""
-        check_start = time.time()
-        
-        try:
-            # Use increased timeout for better resilience during VPN lifecycle events
-            cli = get_client(timeout=30)
-            container = cli.containers.get(self.container_name)
-            container.reload()
-            
-            # Check container status
-            if container.status != "running":
-                duration = time.time() - check_start
-                # Only log warning if status has changed to avoid spam
-                if self._last_logged_status != container.status:
-                    logger.warning(f"VPN container '{self.container_name}' is not running (status: {container.status})")
-                    self._last_logged_status = container.status
-                logger.debug("VPN operation")
-                return False
-            
-            # Check Docker health status if available
-            health = container.attrs.get("State", {}).get("Health", {})
-            if health:
-                health_status = health.get("Status")
-                duration = time.time() - check_start
-                
-                if health_status == "unhealthy":
-                    logger.warning(f"VPN container '{self.container_name}' is unhealthy")
-                    logger.debug("VPN operation")
-                    return False
-                elif health_status == "healthy":
-                    logger.debug(f"VPN container '{self.container_name}' is healthy")
-                    # Reset logged status when container becomes healthy again
-                    self._last_logged_status = None
-                    logger.debug("VPN operation")
-                    return True
-                else:
-                    # Health status might be "starting" or "none"
-                    logger.debug(f"VPN container '{self.container_name}' health status: {health_status}")
-                    # Reset logged status when container is running
-                    self._last_logged_status = None
-                    logger.debug("VPN operation")
-                    return True
-            else:
-                duration = time.time() - check_start
-                logger.debug(f"VPN container '{self.container_name}' has no health check, considering healthy")
-                # Reset logged status when container is running
-                self._last_logged_status = None
-                logger.debug("VPN operation")
+
+def _cache_ttl_seconds() -> int:
+    try:
+        return max(1, int(getattr(cfg, "GLUETUN_PORT_CACHE_TTL_S", 60)))
+    except Exception:
+        return 60
+
+
+def _configured_vpn_names() -> Set[str]:
+    names: Set[str] = set()
+    if cfg.GLUETUN_CONTAINER_NAME:
+        names.add(cfg.GLUETUN_CONTAINER_NAME)
+    if cfg.GLUETUN_CONTAINER_NAME_2:
+        names.add(cfg.GLUETUN_CONTAINER_NAME_2)
+    return names
+
+
+def _state_node(container_name: str) -> Optional[Dict[str, object]]:
+    try:
+        from .state import state
+
+        for node in state.list_vpn_nodes():
+            if str(node.get("container_name") or "").strip() == container_name:
+                return node
+    except Exception:
+        return None
+    return None
+
+
+def _check_container_health_sync(container_name: str) -> Optional[bool]:
+    """Best-effort Docker health probe used as fallback when state is missing."""
+    try:
+        cli = get_client(timeout=20)
+        container = cli.containers.get(container_name)
+        container.reload()
+
+        if container.status != "running":
+            return False
+
+        health = (container.attrs or {}).get("State", {}).get("Health", {})
+        if health:
+            status = str(health.get("Status") or "").strip().lower()
+            if status == "healthy":
                 return True
-                
-        except NotFound:
-            duration = time.time() - check_start
-            logger.error(f"VPN container '{self.container_name}' not found")
-            logger.debug("VPN operation")
-            return False
-        except Exception as e:
-            duration = time.time() - check_start
-            logger.error(f"Error checking VPN health for '{self.container_name}': {e}")
-            logger.debug("VPN operation")
-            return False
+            if status == "unhealthy":
+                return False
+        return True
+    except NotFound:
+        return False
+    except Exception as exc:
+        logger.debug("Docker health probe failed for '%s': %s", container_name, exc)
+        return None
+
+
+def _get_cached_port(container_name: str) -> Optional[int]:
+    item = _FORWARDED_PORT_CACHE.get(container_name)
+    if not item:
+        return None
+
+    port, cached_at = item
+    age = (datetime.now(timezone.utc) - cached_at).total_seconds()
+    if age > _cache_ttl_seconds():
+        _FORWARDED_PORT_CACHE.pop(container_name, None)
+        return None
+    return port
+
+
+def _set_cached_port(container_name: str, port: int):
+    _FORWARDED_PORT_CACHE[container_name] = (int(port), datetime.now(timezone.utc))
+
+
+class PassiveVpnMonitor:
+    """Compatibility wrapper for legacy callers expecting per-VPN monitor objects."""
+
+    def __init__(self, container_name: str, manager: "GluetunMonitor"):
+        self.container_name = container_name
+        self._manager = manager
 
     def is_healthy(self) -> Optional[bool]:
-        """Get the current health status."""
-        return self._last_health_status
-
-    def update_health_status(self, current_health: bool, now: datetime):
-        """Update health status and tracking."""
-        # Track first healthy status and consecutive healthy checks
-        if current_health:
-            if self._first_healthy_time is None:
-                self._first_healthy_time = now
-                logger.info(f"VPN '{self.container_name}' first became healthy at {now}")
-                # Log VPN connection event
-                event_logger.log_event(
-                    event_type="vpn",
-                    category="connected",
-                    message=f"VPN '{self.container_name}' established connection",
-                    details={"container": self.container_name}
-                )
-            self._consecutive_healthy_count += 1
-            # Reset unhealthy tracking when healthy
-            if self._unhealthy_since is not None:
-                # Log recovery event
-                event_logger.log_event(
-                    event_type="vpn",
-                    category="recovered",
-                    message=f"VPN '{self.container_name}' recovered from unhealthy state",
-                    details={"container": self.container_name}
-                )
-            self._unhealthy_since = None
-            self._force_restart_attempted = False
-        else:
-            self._consecutive_healthy_count = 0
-            # Track when became unhealthy
-            if self._unhealthy_since is None:
-                self._unhealthy_since = now
-                # Log VPN disconnection event
-                event_logger.log_event(
-                    event_type="vpn",
-                    category="disconnected",
-                    message=f"VPN '{self.container_name}' became unhealthy",
-                    details={"container": self.container_name}
-                )
-        
-        self._last_health_status = current_health
-
-    def should_restart_engines_on_reconnection(self, now: datetime) -> bool:
-        """Determine if engines should be restarted on VPN reconnection."""
-        if self._first_healthy_time is None:
-            return False
-        
-        time_since_first_healthy = (now - self._first_healthy_time).total_seconds()
-        if time_since_first_healthy < self._startup_grace_period_s:
-            logger.debug(f"VPN '{self.container_name}' still in startup grace period")
-            return False
-        
-        min_stable_checks = 5
-        if self._consecutive_healthy_count < min_stable_checks:
-            logger.debug(f"VPN '{self.container_name}' insufficient stability before reconnection")
-            return False
-        
-        logger.info(f"VPN '{self.container_name}' reconnection detected - will restart engines")
-        return True
-
-    def should_force_restart(self) -> bool:
-        """Check if VPN container should be forcefully restarted due to prolonged unhealthy state."""
-        if not self._unhealthy_since or self._force_restart_attempted:
-            return False
-        
-        unhealthy_duration = (datetime.now(timezone.utc) - self._unhealthy_since).total_seconds()
-        return unhealthy_duration >= cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S
-
-    async def force_restart_container(self):
-        """Force restart the VPN container using Docker socket."""
-        if self._force_restart_attempted:
-            return
-        
-        try:
-            logger.warning(f"Force restarting VPN container '{self.container_name}' after {cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S}s timeout")
-            cli = get_client(timeout=30)
-            container = cli.containers.get(self.container_name)
-            container.restart()
-            self._force_restart_attempted = True
-            self._last_restart_time = datetime.now(timezone.utc)  # Track restart time
-            logger.info(f"VPN container '{self.container_name}' restart initiated")
-        except Exception as e:
-            logger.error(f"Failed to force restart VPN container '{self.container_name}': {e}")
-
-    def _is_in_restart_grace_period(self) -> bool:
-        """Check if we're still in the grace period after a restart."""
-        if self._last_restart_time is None:
-            return False
-        
-        time_since_restart = (datetime.now(timezone.utc) - self._last_restart_time).total_seconds()
-        return time_since_restart < self._restart_grace_period_s
+        return self._manager.is_healthy(self.container_name)
 
     def is_in_recovery_stabilization_period(self) -> bool:
-        """Check if we're still in the stabilization period after recovery."""
-        if self._last_recovery_time is None:
-            return False
-        
-        time_since_recovery = (datetime.now(timezone.utc) - self._last_recovery_time).total_seconds()
-        return time_since_recovery < self._recovery_stabilization_period_s
-    
-    def reset_port_tracking(self):
-        """
-        Reset port tracking state.
-        
-        This should be called when entering emergency mode to prevent false
-        port change detection after recovery. When a VPN fails and recovers,
-        the forwarded port typically changes, and we don't want to treat
-        the new port as a "change" from the old pre-failure port.
-        """
-        self._last_stable_forwarded_port = None
-        self._last_port_check_time = None
-        logger.debug(f"Port tracking reset for '{self.container_name}'")
+        # Event-driven architecture does not keep local stabilization state.
+        return False
 
-    async def get_forwarded_port(self) -> Optional[int]:
-        """Get the VPN forwarded port from Gluetun API with caching."""
-        # Don't try to get port if we're in restart grace period
-        if self._is_in_restart_grace_period():
-            logger.debug(f"VPN '{self.container_name}' is in restart grace period, skipping port fetch")
-            return None
-        
-        if self._is_port_cache_valid():
-            logger.debug(f"Using cached forwarded port for '{self.container_name}': {self._cached_port}")
-            return self._cached_port
-        return await self._fetch_and_cache_port()
-
-    def _is_port_cache_valid(self) -> bool:
-        """Check if the cached port is still valid based on TTL."""
-        if self._cached_port is None or self._port_cache_time is None:
-            return False
-        cache_age = (datetime.now(timezone.utc) - self._port_cache_time).total_seconds()
-        return cache_age < self._port_cache_ttl_seconds
-
-    async def _fetch_and_cache_port(self) -> Optional[int]:
-        """Fetch the forwarded port from Gluetun API and cache it."""
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(f"http://{self.container_name}:{cfg.GLUETUN_API_PORT}/v1/portforward", timeout=10)
-                response.raise_for_status()
-                data = response.json()
-                port = data.get("port")
-                if port:
-                    port = int(port)
-                    self._cached_port = port
-                    self._port_cache_time = datetime.now(timezone.utc)
-                    if self._last_logged_port != port:
-                        logger.info(f"Retrieved VPN forwarded port for '{self.container_name}': {port}")
-                        self._last_logged_port = port
-                    return port
-                else:
-                    logger.warning(f"No port forwarding info from '{self.container_name}'")
-                    return None
-        except httpx.HTTPStatusError as e:
-            # 401 error means port forwarding is not supported by this VPN config
-            # This is normal and expected for some VPN providers - don't log as error
-            if e.response.status_code == 401:
-                logger.info(f"Port forwarding not supported by VPN config for '{self.container_name}' (401 Unauthorized)")
-                return None
-            logger.error(f"Failed to get forwarded port from '{self.container_name}': {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get forwarded port from '{self.container_name}': {e}")
-            return None
-
-    def get_cached_forwarded_port(self) -> Optional[int]:
-        """Get cached forwarded port without API calls."""
-        if self._is_port_cache_valid():
-            return self._cached_port
-        return None
-
-    def invalidate_port_cache(self):
-        """Invalidate the port cache."""
-        self._cached_port = None
-        self._port_cache_time = None
-        logger.debug(f"Port cache invalidated for '{self.container_name}'")
-
-    async def check_port_change(self) -> Optional[tuple[int, int]]:
-        """
-        Check if the forwarded port has changed since the last check.
-        
-        This check is throttled to avoid excessive API calls. It only runs if:
-        - VPN is healthy
-        - Sufficient time has passed since last check (based on _port_check_interval_s)
-        - Not in recovery stabilization period (to avoid false detection after VPN recovery)
-        
-        Returns:
-            Optional[tuple[int, int]]: (old_port, new_port) if port changed, None otherwise
-        """
-        # Only check for port changes if VPN is healthy
-        if not self._last_health_status:
-            return None
-        
-        # Don't check for port changes during recovery stabilization period
-        # The port is expected to be different after recovery
-        if self.is_in_recovery_stabilization_period():
-            return None
-        
-        # Throttle port change checks to avoid excessive API calls
-        now = datetime.now(timezone.utc)
-        if self._last_port_check_time is not None:
-            time_since_last_check = (now - self._last_port_check_time).total_seconds()
-            if time_since_last_check < self._port_check_interval_s:
-                return None
-        
-        self._last_port_check_time = now
-        
-        # Fetch the current port
-        current_port = await self._fetch_and_cache_port()
-        
-        # If we have no current port, we can't detect a change
-        if current_port is None:
-            return None
-        
-        # If we have no previous stable port, set the current one as stable
-        if self._last_stable_forwarded_port is None:
-            self._last_stable_forwarded_port = current_port
-            return None
-        
-        # Check if port has changed
-        if current_port != self._last_stable_forwarded_port:
-            old_port = self._last_stable_forwarded_port
-            logger.warning(f"VPN '{self.container_name}' forwarded port changed from {old_port} to {current_port}")
-            self._last_stable_forwarded_port = current_port
-            return (old_port, current_port)
-        
-        return None
+    def _is_in_restart_grace_period(self) -> bool:
+        return False
 
 
 class GluetunMonitor:
-    """Monitors Gluetun VPN container(s) health and manages VPN-dependent operations."""
-    
+    """Passive compatibility facade. No background tasks, no polling loop."""
+
     def __init__(self):
-        self._task: Optional[asyncio.Task] = None
-        self._stop = asyncio.Event()
-        self._health_transition_callbacks = []
-        
-        # VPN container monitors
-        self._vpn_monitors: Dict[str, VpnContainerMonitor] = {}
-        self._static_vpn_names: Set[str] = set()
-        self._sync_vpn_monitors()
-        
+        self._callbacks = []
+
     async def start(self):
-        """Start the Gluetun monitoring task."""
-        # Sync static + dynamic monitors in case settings/state changed since import.
-        self._sync_vpn_monitors()
-            
-        if self._task and not self._task.done():
-            return
-            
-        self._stop.clear()
-        self._task = asyncio.create_task(self._monitor_gluetun())
-        
-        vpn_names = list(self._vpn_monitors.keys())
-        if not vpn_names:
-            logger.info("VPN monitor started with no discovered VPN containers; waiting for dynamic nodes")
-        elif cfg.VPN_MODE == 'redundant':
-            logger.info(f"VPN monitor started in REDUNDANT mode for containers: {', '.join(vpn_names)}")
-        else:
-            logger.info(f"VPN monitor started in SINGLE mode for container: {vpn_names[0]}")
-    
+        logger.info("Passive Gluetun monitor initialized (event-driven mode, no polling loop)")
+
     async def stop(self):
-        """Stop the Gluetun monitoring task."""
-        self._stop.set()
-        if self._task:
-            await self._task
-            
+        logger.info("Passive Gluetun monitor stopped")
+
     def add_health_transition_callback(self, callback):
-        """Add a callback to be called when Gluetun health status changes."""
-        self._health_transition_callbacks.append(callback)
+        self._callbacks.append(callback)
 
-    def get_vpn_monitor(self, container_name: str) -> Optional[VpnContainerMonitor]:
-        """Get the monitor for a specific VPN container."""
-        return self._vpn_monitors.get(container_name)
+    def get_vpn_monitor(self, container_name: str) -> PassiveVpnMonitor:
+        return PassiveVpnMonitor(container_name, self)
 
-    def get_all_vpn_monitors(self) -> Dict[str, VpnContainerMonitor]:
-        """Get all VPN monitors."""
-        return self._vpn_monitors
-
-    @staticmethod
-    def _configured_static_vpn_names() -> Set[str]:
-        names: Set[str] = set()
-        if cfg.GLUETUN_CONTAINER_NAME:
-            names.add(cfg.GLUETUN_CONTAINER_NAME)
-        if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
-            names.add(cfg.GLUETUN_CONTAINER_NAME_2)
-        return names
-
-    @staticmethod
-    def _dynamic_vpn_names_from_state() -> Set[str]:
+    def get_all_vpn_monitors(self) -> Dict[str, PassiveVpnMonitor]:
+        names = set(_configured_vpn_names())
         try:
             from .state import state
 
-            names: Set[str] = set()
-            for node in state.list_dynamic_vpn_nodes():
+            for node in state.list_vpn_nodes():
                 name = str(node.get("container_name") or "").strip()
                 if name:
                     names.add(name)
-            return names
         except Exception:
-            return set()
+            pass
 
-    def _sync_vpn_monitors(self):
-        static_names = self._configured_static_vpn_names()
-        dynamic_names = self._dynamic_vpn_names_from_state()
-        required_names = static_names | dynamic_names
-
-        for name in required_names:
-            if name not in self._vpn_monitors:
-                self._vpn_monitors[name] = VpnContainerMonitor(name)
-                logger.info("Added VPN monitor for container '%s'", name)
-
-        for name in list(self._vpn_monitors.keys()):
-            if name in required_names:
-                continue
-            self._vpn_monitors.pop(name, None)
-            logger.info("Removed VPN monitor for container '%s'", name)
-
-        self._static_vpn_names = static_names
-    
-    async def _monitor_gluetun(self):
-        """Main monitoring loop for VPN container health status and port caching."""
-        while not self._stop.is_set():
-            try:
-                self._sync_vpn_monitors()
-                now = datetime.now(timezone.utc)
-                
-                # Check health for each VPN container
-                for container_name, monitor in list(self._vpn_monitors.items()):
-                    old_health = monitor.is_healthy()
-                    current_health = await monitor.check_health()
-                    monitor.update_health_status(current_health, now)
-                    
-                    # Detect health status transitions
-                    if old_health is not None and current_health != old_health:
-                        await self._handle_health_transition(container_name, old_health, current_health)
-                    
-                    # Check for forwarded port changes when VPN is healthy
-                    if current_health:
-                        try:
-                            port_change = await monitor.check_port_change()
-                            if port_change:
-                                old_port, new_port = port_change
-                                await self._handle_port_change(container_name, old_port, new_port)
-                        except Exception as e:
-                            logger.error(f"Error checking port change for '{container_name}': {e}")
-                    
-                    # Check if VPN needs forced restart
-                    if not current_health and monitor.should_force_restart():
-                        await monitor.force_restart_container()
-                
-            except Exception as e:
-                logger.error(f"Error monitoring VPN health: {e}")
-            
-            try:
-                await asyncio.wait_for(self._stop.wait(), timeout=cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S)
-            except asyncio.TimeoutError:
-                pass
-    
-    async def _handle_health_transition(self, container_name: str, old_status: bool, new_status: bool):
-        """
-        Handle VPN health status transitions for a specific container.
-        """
-        now = datetime.now(timezone.utc)
-        monitor = self._vpn_monitors.get(container_name)
-        
-        if not monitor:
-            return
-        
-        if old_status and not new_status:
-            logger.warning(f"VPN '{container_name}' became unhealthy")
-            logger.debug("VPN operation")
-            logger.warning("VPN stress event")
-            monitor.invalidate_port_cache()
-            
-            # In redundant mode, enter emergency mode if one VPN fails
-            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
-                await self._handle_vpn_failure(container_name)
-            
-        elif not old_status and new_status:
-            logger.info(f"VPN '{container_name}' recovered and is now healthy")
-            logger.debug("VPN operation")
-            monitor.invalidate_port_cache()
-            
-            # Mark recovery time to prevent premature cleanup
-            monitor._last_recovery_time = now
-            
-            # In redundant mode, handle VPN recovery (may exit emergency mode)
-            if cfg.VPN_MODE == 'redundant' and cfg.GLUETUN_CONTAINER_NAME_2:
-                await self._handle_vpn_recovery(container_name)
-            
-            # Only restart engines if this is a real reconnection, not initial startup
-            should_restart_engines = monitor.should_restart_engines_on_reconnection(now)
-            
-            # In single VPN mode, restart engines on reconnection
-            if cfg.VPN_MODE == 'single' and cfg.VPN_RESTART_ENGINES_ON_RECONNECT and should_restart_engines:
-                logger.info(f"VPN '{container_name}' reconnected - triggering engine restart")
-                logger.debug("VPN operation")
-                await self._restart_engines_for_vpn(container_name)
-            elif cfg.VPN_MODE == 'single' and cfg.VPN_RESTART_ENGINES_ON_RECONNECT and not should_restart_engines:
-                logger.info(f"VPN '{container_name}' became healthy but skipping engine restart (grace period)")
-                logger.debug("VPN operation")
-        
-        # Call registered callbacks
-        for callback in self._health_transition_callbacks:
-            try:
-                if asyncio.iscoroutinefunction(callback):
-                    await callback(container_name, old_status, new_status)
-                else:
-                    callback(container_name, old_status, new_status)
-            except Exception as e:
-                logger.error(f"Error in health transition callback: {e}")
-
-    async def _handle_port_change(self, container_name: str, old_port: int, new_port: int):
-        """
-        Handle VPN forwarded port change by replacing the forwarded engine.
-        
-        When the VPN restarts internally and the forwarded port changes, the existing
-        forwarded engine becomes invalid. This method:
-        1. Identifies and stops the old forwarded engine
-        2. Removes it from state so it's not exposed via /engines endpoint
-        3. Triggers immediate autoscaling to provision a new forwarded engine with the new port
-        
-        Note: Port change indicates the VPN container restarted internally and is already
-        healthy and ready for operation. No stabilization period is needed.
-        """
-        now = datetime.now(timezone.utc)
-        
-        try:
-            from .state import state
-            from .provisioner import stop_container
-
-            dynamic_node_names = {
-                str(node.get("container_name") or "").strip()
-                for node in state.list_dynamic_vpn_nodes()
-            }
-            is_dynamic_node = container_name in dynamic_node_names
-            
-            logger.warning(f"VPN '{container_name}' port changed from {old_port} to {new_port} - replacing forwarded engine")
-            logger.debug("VPN operation")
-
-            # Keep state consistent for dynamic nodes so dependent flows observe the new port.
-            if is_dynamic_node:
-                updated_count = state.update_vpn_engine_forwarded_port(
-                    container_name,
-                    new_port,
-                    forwarded_only=False,
-                )
-                state.update_vpn_node_status(
-                    container_name,
-                    "running",
-                    metadata={"managed_dynamic": True, "forwarded_port": new_port},
-                )
-                logger.info(
-                    "Updated forwarded_port=%s for %s engine(s) on dynamic VPN '%s'",
-                    new_port,
-                    updated_count,
-                    container_name,
-                )
-            
-            # Find the forwarded engine for this VPN
-            forwarded_engine = None
-            if cfg.VPN_MODE == 'redundant' or is_dynamic_node:
-                forwarded_engine = state.get_forwarded_engine_for_vpn(container_name)
-            else:
-                forwarded_engine = state.get_forwarded_engine()
-            
-            if not forwarded_engine:
-                logger.info(f"No forwarded engine found for VPN '{container_name}' - port change handled gracefully")
-                return
-            
-            logger.info(f"Stopping forwarded engine {forwarded_engine.container_id[:12]} due to port change")
-            
-            # Remove from state first to hide from /engines endpoint immediately
-            state.remove_engine(forwarded_engine.container_id)
-            
-            # Then stop the container
-            try:
-                stop_container(forwarded_engine.container_id, force=True)
-                logger.info(f"Successfully destroyed forwarded engine {forwarded_engine.container_id[:12]}")
-            except Exception as e:
-                logger.error(f"Error stopping forwarded engine {forwarded_engine.container_id[:12]}: {e}")
-            
-            logger.debug("VPN operation")
-            
-            # Trigger immediate autoscaling to provision replacement engine
-            # instead of waiting for next periodic autoscaler cycle (up to 30 seconds)
-            logger.info(f"Forwarded engine replacement triggered - provisioning new engine immediately with port {new_port}")
-            try:
-                from .autoscaler import ensure_minimum
-                # Run autoscaler in current running loop to provision replacement immediately
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, ensure_minimum)
-                logger.info("Immediate autoscaling completed after port change")
-            except Exception as autoscale_error:
-                logger.error(f"Error during immediate autoscaling after port change: {autoscale_error}")
-                # Don't fail the entire port change handling if autoscaling fails
-                # The periodic autoscaler will eventually provision the engine
-            
-        except Exception as e:
-            logger.error(f"Error handling port change for VPN '{container_name}': {e}")
-            logger.debug("VPN operation")
-
-    async def _restart_engines_for_vpn(self, container_name: str):
-        """Restart all engines assigned to a specific VPN container."""
-        try:
-            from .health import list_managed
-            from .provisioner import stop_container
-            from .state import state
-            
-            # Get engines assigned to this VPN
-            engines_for_vpn = state.get_engines_by_vpn(container_name)
-            
-            if not engines_for_vpn:
-                logger.info(f"No engines assigned to VPN '{container_name}' to restart")
-                return
-            
-            logger.info(f"Restarting {len(engines_for_vpn)} engines assigned to VPN '{container_name}'")
-            # Stop all engines for this VPN
-            for engine in engines_for_vpn:
-                try:
-                    logger.info(f"Forcibly destroying engine {engine.container_id[:12]} for VPN restart")
-                    stop_container(engine.container_id, force=True)
-                    state.remove_engine(engine.container_id)
-                except Exception as e:
-                    logger.error(f"Error destroying engine {engine.container_id[:12]}: {e}")
-            
-            # The autoscaler will automatically start new engines to maintain MIN_REPLICAS
-            logger.info("Engine restart completed - autoscaler will provision new engines")
-            
-        except Exception as e:
-            logger.error(f"Error restarting engines for VPN '{container_name}': {e}")
-    
-    async def _handle_vpn_failure(self, failed_vpn: str):
-        """Handle VPN failure in redundant mode via declarative reconciliation."""
-        try:
-            failed_vpn_monitor = self._vpn_monitors.get(failed_vpn)
-            if failed_vpn_monitor:
-                failed_vpn_monitor.reset_port_tracking()
-
-            logger.warning(f"VPN '{failed_vpn}' failure detected; reconciliation will evict and replace affected engines")
-            from .autoscaler import engine_controller
-
-            engine_controller.request_reconcile(reason=f"vpn_failure:{failed_vpn}")
-        except Exception as e:
-            logger.error(f"Error handling VPN failure for '{failed_vpn}': {e}")
-    
-    async def _handle_vpn_recovery(self, recovered_vpn: str):
-        """Handle VPN recovery in redundant mode via declarative reconciliation."""
-        try:
-            logger.info(f"VPN '{recovered_vpn}' recovered; reconciliation will rebalance engines on Ready nodes")
-            from .autoscaler import engine_controller
-
-            engine_controller.request_reconcile(reason=f"vpn_recovery:{recovered_vpn}")
-        except Exception as e:
-            logger.error(f"Error handling VPN recovery for '{recovered_vpn}': {e}")
+        return {name: PassiveVpnMonitor(name, self) for name in names}
 
     def is_healthy(self, container_name: Optional[str] = None) -> Optional[bool]:
-        """Get the current VPN health status. If container_name is None, returns primary VPN status."""
-        if container_name:
-            monitor = self._vpn_monitors.get(container_name)
-            return monitor.is_healthy() if monitor else None
-        
-        # If no container specified, return primary VPN status
-        if cfg.GLUETUN_CONTAINER_NAME:
-            monitor = self._vpn_monitors.get(cfg.GLUETUN_CONTAINER_NAME)
-            return monitor.is_healthy() if monitor else None
-        return None
-    
+        target = container_name or cfg.GLUETUN_CONTAINER_NAME
+        if not target:
+            return None
+
+        node = _state_node(target)
+        if node is not None:
+            return bool(node.get("healthy"))
+
+        return _check_container_health_sync(target)
+
     async def wait_for_healthy(self, timeout: float = 30.0, container_name: Optional[str] = None) -> bool:
-        """Wait for VPN to become healthy, with timeout."""
-        if not self._vpn_monitors:
-            return True  # No VPN configured
-        
-        # If specific container requested, wait for it
-        if container_name:
-            monitor = self._vpn_monitors.get(container_name)
-            if not monitor:
-                return False
-            
-            start_time = asyncio.get_event_loop().time()
-            while (asyncio.get_event_loop().time() - start_time) < timeout:
-                if await monitor.check_health():
-                    from datetime import datetime, timezone
-                    monitor.update_health_status(True, datetime.now(timezone.utc))
-                    return True
-                await asyncio.sleep(1)
-            return False
-        
-        # Otherwise wait for primary VPN
-        if cfg.GLUETUN_CONTAINER_NAME:
-            monitor = self._vpn_monitors.get(cfg.GLUETUN_CONTAINER_NAME)
-            if monitor:
-                start_time = asyncio.get_event_loop().time()
-                while (asyncio.get_event_loop().time() - start_time) < timeout:
-                    if await monitor.check_health():
-                        from datetime import datetime, timezone
-                        monitor.update_health_status(True, datetime.now(timezone.utc))
-                        return True
-                    await asyncio.sleep(1)
+        target = container_name or cfg.GLUETUN_CONTAINER_NAME
+        if not target:
+            return True
+
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            if self.is_healthy(target) is True:
+                return True
+            await asyncio.sleep(1)
         return False
 
     async def get_forwarded_port(self, container_name: Optional[str] = None) -> Optional[int]:
-        """Get VPN forwarded port. If container_name is None, returns primary VPN port."""
-        target_container = container_name or cfg.GLUETUN_CONTAINER_NAME
-        if not target_container:
-            return None
-        
-        monitor = self._vpn_monitors.get(target_container)
-        if monitor:
-            return await monitor.get_forwarded_port()
-        return None
-    
-    def get_cached_forwarded_port(self, container_name: Optional[str] = None) -> Optional[int]:
-        """Get cached forwarded port without making API calls."""
-        target_container = container_name or cfg.GLUETUN_CONTAINER_NAME
-        if not target_container:
-            return None
-        
-        monitor = self._vpn_monitors.get(target_container)
-        if monitor:
-            return monitor.get_cached_forwarded_port()
-        return None
-    
-    def invalidate_port_cache(self, container_name: Optional[str] = None):
-        """Invalidate the port cache."""
-        if container_name:
-            monitor = self._vpn_monitors.get(container_name)
-            if monitor:
-                monitor.invalidate_port_cache()
-        else:
-            # Invalidate all caches
-            for monitor in self._vpn_monitors.values():
-                monitor.invalidate_port_cache()
+        return await fetch_forwarded_port(container_name)
 
-def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[int]:
-    """Synchronous version of get_forwarded_port with caching support."""
-    target_container = container_name or cfg.GLUETUN_CONTAINER_NAME
-    if not target_container:
+    def get_cached_forwarded_port(self, container_name: Optional[str] = None) -> Optional[int]:
+        target = container_name or cfg.GLUETUN_CONTAINER_NAME
+        if not target:
+            return None
+        return _get_cached_port(target)
+
+    def invalidate_port_cache(self, container_name: Optional[str] = None):
+        if container_name:
+            _FORWARDED_PORT_CACHE.pop(container_name, None)
+            return
+        _FORWARDED_PORT_CACHE.clear()
+
+
+async def fetch_forwarded_port(container_name: Optional[str] = None) -> Optional[int]:
+    target = container_name or cfg.GLUETUN_CONTAINER_NAME
+    if not target:
         return None
-    
-    # Check if we're in restart grace period
-    monitor = gluetun_monitor.get_vpn_monitor(target_container)
-    if monitor and monitor._is_in_restart_grace_period():
-        logger.debug(f"VPN '{target_container}' is in restart grace period, skipping port fetch (sync)")
-        return None
-    
-    # First try to get from cache if available
-    cached_port = gluetun_monitor.get_cached_forwarded_port(target_container)
-    if cached_port is not None:
-        logger.debug(f"Using cached forwarded port (sync) for '{target_container}': {cached_port}")
-        return cached_port
-        
-    # If no cached port available, make API call
+
+    cached = _get_cached_port(target)
+    if cached is not None:
+        return cached
+
     try:
-        with httpx.Client() as client:
-            response = client.get(f"http://{target_container}:{cfg.GLUETUN_API_PORT}/v1/portforward", timeout=10)
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(f"http://{target}:{cfg.GLUETUN_API_PORT}/v1/portforward")
             response.raise_for_status()
             data = response.json()
             port = data.get("port")
-            if port:
-                port = int(port)
-                # Update the monitor's cache
-                if monitor:
-                    monitor._cached_port = port
-                    monitor._port_cache_time = datetime.now(timezone.utc)
-                    if monitor._last_logged_port != port:
-                        logger.info(f"Retrieved VPN forwarded port (sync) for '{target_container}': {port}")
-                        monitor._last_logged_port = port
-                return port
-            else:
-                logger.warning(f"No port forwarding information available from '{target_container}'")
+            if port is None:
                 return None
-    except httpx.HTTPStatusError as e:
-        # 401 error means port forwarding is not supported by this VPN config
-        # This is normal and expected for some VPN providers - don't log as error
-        if e.response.status_code == 401:
-            logger.info(f"Port forwarding not supported by VPN config for '{target_container}' (401 Unauthorized)")
+            port_int = int(port)
+            _set_cached_port(target, port_int)
+            return port_int
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 401:
+            logger.info("Port forwarding not supported by VPN config for '%s'", target)
             return None
-        logger.error(f"Failed to get forwarded port from '{target_container}': {e}")
+        logger.warning("Failed to fetch forwarded port for '%s': %s", target, exc)
         return None
-    except Exception as e:
-        logger.error(f"Failed to get forwarded port from '{target_container}': {e}")
+    except Exception as exc:
+        logger.warning("Failed to fetch forwarded port for '%s': %s", target, exc)
         return None
 
-# Track when we last did a connectivity double-check per VPN to avoid spamming
-_last_double_check_time: Dict[str, datetime] = {}
-_double_check_interval_s = 30  # Only double-check every 30 seconds
 
-def _double_check_connectivity_via_engines(container_name: Optional[str] = None) -> str:
-    """
-    Double-check VPN connectivity by checking if engines can connect to the internet.
-    This is used when Gluetun container health appears unhealthy but the issue
-    might be unrelated to actual network connectivity.
-    
-    This function is throttled to avoid excessive checks - it only runs once per
-    _double_check_interval_s seconds per VPN to prevent log spam.
-    
-    Uses the engine's /server/api?api_version=3&method=get_network_connection_status
-    endpoint which returns {"result": {"connected": true}} when the engine has
-    internet connectivity through the VPN.
-    
-    Args:
-        container_name: If provided, only check engines assigned to this VPN container
-    
-    Returns "healthy" if any running engine reports connected=true, "unhealthy" otherwise.
-    """
+def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[int]:
+    target = container_name or cfg.GLUETUN_CONTAINER_NAME
+    if not target:
+        return None
+
+    cached = _get_cached_port(target)
+    if cached is not None:
+        return cached
+
     try:
-        # Throttle double-checks to avoid spamming logs and API calls
-        now = datetime.now(timezone.utc)
-        check_key = container_name or "default"
-        
-        if check_key in _last_double_check_time:
-            time_since_last_check = (now - _last_double_check_time[check_key]).total_seconds()
-            if time_since_last_check < _double_check_interval_s:
-                # Too soon since last check, return unhealthy to maintain cautious behavior
-                return "unhealthy"
-        
-        _last_double_check_time[check_key] = now
-        
-        from .state import state
-        from .health import check_engine_network_connection
-        
-        # Get engines to check
-        if container_name:
-            engines_to_check = state.get_engines_by_vpn(container_name)
-        else:
-            engines_to_check = state.list_engines()
-        
-        if not engines_to_check:
-            logger.debug(f"VPN double-check: No engines available to verify connectivity for '{container_name or 'any VPN'}'")
-            return "unhealthy"
-        
-        # Check network connectivity on each engine
-        connected_engines = 0
-        for engine in engines_to_check:
-            try:
-                if check_engine_network_connection(engine.host, engine.port):
-                    connected_engines += 1
-                    logger.info(f"VPN double-check: Engine {engine.container_id[:12]} reports internet connectivity")
-            except Exception as e:
-                logger.debug(f"VPN double-check: Failed to check engine {engine.container_id[:12]}: {e}")
-                continue
-        
-        if connected_engines > 0:
-            logger.info(f"VPN double-check: {connected_engines}/{len(engines_to_check)} engine(s) have internet connectivity - considering VPN healthy")
-            return "healthy"
-        else:
-            logger.warning(f"VPN double-check: None of {len(engines_to_check)} engine(s) have internet connectivity")
-            return "unhealthy"
-            
-    except Exception as e:
-        logger.error(f"Error during VPN connectivity double-check: {e}")
-        return "unhealthy"
+        with httpx.Client(timeout=10) as client:
+            response = client.get(f"http://{target}:{cfg.GLUETUN_API_PORT}/v1/portforward")
+            response.raise_for_status()
+            data = response.json()
+            port = data.get("port")
+            if port is None:
+                return None
+            port_int = int(port)
+            _set_cached_port(target, port_int)
+            return port_int
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 401:
+            logger.info("Port forwarding not supported by VPN config for '%s'", target)
+            return None
+        logger.warning("Failed to fetch forwarded port for '%s': %s", target, exc)
+        return None
+    except Exception as exc:
+        logger.warning("Failed to fetch forwarded port for '%s': %s", target, exc)
+        return None
 
-def _get_single_vpn_status(container_name: str) -> dict:
-    """Get status for a single VPN container."""
-    try:
-        from .docker_client import get_client
-        from docker.errors import NotFound
-        
-        cli = get_client(timeout=30)
-        container = cli.containers.get(container_name)
-        container.reload()
-        
-        # Get container health
-        container_running = container.status == "running"
-        health_info = container.attrs.get("State", {}).get("Health", {})
-        
-        if health_info:
-            health_status = health_info.get("Status", "unknown")
-            if health_status == "unhealthy":
-                # Double-check with engine network connectivity if container is unhealthy
-                health = _double_check_connectivity_via_engines(container_name) 
-            elif health_status == "healthy":
-                health = "healthy"
-            else:
-                health = "starting" if container_running else "unknown"
-        else:
-            health = "healthy" if container_running else "unhealthy"
-        
-        # Get forwarded port (try cache first, fallback to API call)
-        forwarded_port = None
-        if container_running:
-            forwarded_port = gluetun_monitor.get_cached_forwarded_port(container_name)
-            if forwarded_port is None:
-                forwarded_port = get_forwarded_port_sync(container_name)
-        
-        # Get provider from docker config
-        provider = None
-        if container_running:
-            provider = get_vpn_provider(container_name)
-        
-        # Get public IP info (includes location data from Gluetun API)
-        public_ip = None
-        country = None
-        city = None
-        region = None
-        if container_running and health == "healthy":
-            ip_info = get_vpn_public_ip_info(container_name)
-            if ip_info:
-                public_ip = ip_info.get("public_ip")
-                country = ip_info.get("country")
-                city = ip_info.get("city")
-                region = ip_info.get("region")
-        
-        result = {
-            "enabled": True,
-            "status": container.status,
-            "container_name": container_name,
-            "container": container_name,
-            "health": health,
-            "connected": health == "healthy",
-            "forwarded_port": forwarded_port,
-            "public_ip": public_ip,
-            "provider": provider,
-            "country": country,
-            "city": city,
-            "region": region,
-            "last_check": datetime.now(timezone.utc).isoformat(),
-            "last_check_at": datetime.now(timezone.utc).isoformat()
-        }
-        
-        return result
-        
-    except NotFound:
-        return {
-            "enabled": True,
-            "status": "not_found",
-            "container_name": container_name,
-            "container": container_name,
-            "health": "unhealthy",
-            "connected": False,
-            "forwarded_port": None,
-            "public_ip": None,
-            "last_check": datetime.now(timezone.utc).isoformat(),
-            "last_check_at": datetime.now(timezone.utc).isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Error getting VPN status for '{container_name}': {e}")
-        return {
-            "enabled": True,
-            "status": "error",
-            "container_name": container_name,
-            "container": container_name,
-            "health": "unknown",
-            "connected": False,
-            "forwarded_port": None,
-            "public_ip": None,
-            "last_check": datetime.now(timezone.utc).isoformat(),
-            "last_check_at": datetime.now(timezone.utc).isoformat(),
-            "error": str(e)
-        }
-
-
-def get_vpn_status() -> dict:
-    """Get comprehensive VPN status information."""
-    if not cfg.GLUETUN_CONTAINER_NAME:
-        return {
-            "mode": "disabled",
-            "enabled": False,
-            "status": "disabled",
-            "container_name": None,
-            "container": None,
-            "health": "unknown",
-            "connected": False,
-            "forwarded_port": None,
-            "last_check": None,
-            "last_check_at": None,
-            "vpn1": {},
-            "vpn2": {},
-            "emergency_mode": {
-                "active": False,
-                "failed_vpn": None,
-                "healthy_vpn": None,
-                "duration_seconds": 0,
-            },
-        }
-    
-    # Get status for VPN1
-    vpn1_status = _get_single_vpn_status(cfg.GLUETUN_CONTAINER_NAME)
-    
-    # In single mode, return status with backwards compatibility
-    if cfg.VPN_MODE == 'single':
-        result = vpn1_status.copy()
-        result["mode"] = "single"
-        result["vpn1"] = vpn1_status
-        result["vpn2"] = {}
-        result["emergency_mode"] = {
-            "active": False,
-            "failed_vpn": None,
-            "healthy_vpn": None,
-            "duration_seconds": 0,
-        }
-        return result
-    
-    # In redundant mode, get both VPN statuses
-    vpn2_status = {}
-    if cfg.GLUETUN_CONTAINER_NAME_2:
-        vpn2_status = _get_single_vpn_status(cfg.GLUETUN_CONTAINER_NAME_2)
-    
-    # Determine overall health: healthy if at least one VPN is healthy
-    any_healthy = vpn1_status["connected"] or (vpn2_status and vpn2_status["connected"])
-    overall_health = "healthy" if any_healthy else "unhealthy"
-    
-    return {
-        "mode": "redundant",
-        "enabled": True,
-        "status": "running" if any_healthy else "unhealthy",
-        "container_name": cfg.GLUETUN_CONTAINER_NAME,  # Primary for backwards compatibility
-        "container": cfg.GLUETUN_CONTAINER_NAME,  # For frontend compatibility
-        "health": overall_health,
-        "connected": any_healthy,
-        "forwarded_port": vpn1_status.get("forwarded_port"),  # Primary port for backwards compatibility
-        "last_check": datetime.now(timezone.utc).isoformat(),
-        "last_check_at": datetime.now(timezone.utc).isoformat(),
-        "vpn1": vpn1_status,
-        "vpn2": vpn2_status,
-        "emergency_mode": {
-            "active": False,
-            "failed_vpn": None,
-            "healthy_vpn": None,
-            "duration_seconds": 0,
-        },
-    }
 
 def normalize_provider_name(provider: str) -> str:
-    """
-    Normalize VPN provider name from docker env variable to proper capitalization.
-    
-    The VPN_SERVICE_PROVIDER env variable is lowercase, but we need to match
-    it against a list of properly capitalized provider names.
-    
-    Args:
-        provider: Provider name from docker env (e.g., "protonvpn", "nordvpn")
-    
-    Returns:
-        Properly capitalized provider name (e.g., "ProtonVPN", "NordVPN")
-    """
-    # Provider name mapping from lowercase to proper capitalization
     provider_map = {
         "airvpn": "AirVPN",
         "cyberghost": "Cyberghost",
@@ -1093,123 +275,152 @@ def normalize_provider_name(provider: str) -> str:
         "wevpn": "WeVPN",
         "windscribe": "Windscribe",
     }
-    
-    # Normalize input to lowercase for lookup
-    provider_lower = provider.lower().strip()
-    
-    # Return mapped name or title case as fallback
-    return provider_map.get(provider_lower, provider.title())
+    provider_lower = str(provider or "").lower().strip()
+    return provider_map.get(provider_lower, str(provider or "").title())
 
 
 def get_vpn_provider(container_name: Optional[str] = None) -> Optional[str]:
-    """
-    Get VPN provider from container's VPN_SERVICE_PROVIDER environment variable.
-    
-    Args:
-        container_name: Specific VPN container name, or None for primary VPN
-    
-    Returns:
-        Normalized provider name (e.g., "ProtonVPN", "NordVPN") or None if not found
-    """
-    target_container = container_name or cfg.GLUETUN_CONTAINER_NAME
-    if not target_container:
+    target = container_name or cfg.GLUETUN_CONTAINER_NAME
+    if not target:
         return None
-    
+
     try:
-        from .docker_client import get_client
-        from docker.errors import NotFound
-        
-        cli = get_client(timeout=30)
-        container = cli.containers.get(target_container)
+        cli = get_client(timeout=20)
+        container = cli.containers.get(target)
         container.reload()
-        
-        # Get VPN_SERVICE_PROVIDER from container environment
-        env_vars = container.attrs.get("Config", {}).get("Env", [])
+        env_vars = (container.attrs or {}).get("Config", {}).get("Env", [])
+
         for env_var in env_vars:
-            if env_var.startswith("VPN_SERVICE_PROVIDER="):
+            if str(env_var).startswith("VPN_SERVICE_PROVIDER="):
                 provider = env_var.split("=", 1)[1]
-                normalized = normalize_provider_name(provider)
-                logger.debug(f"Retrieved VPN provider for '{target_container}': {provider} -> {normalized}")
-                return normalized
-        
-        logger.warning(f"VPN_SERVICE_PROVIDER not found in container '{target_container}' environment")
+                return normalize_provider_name(provider)
         return None
-        
     except NotFound:
-        logger.error(f"VPN container '{target_container}' not found")
         return None
-    except Exception as e:
-        logger.error(f"Failed to get VPN provider from '{target_container}': {e}")
+    except Exception as exc:
+        logger.debug("Failed to get VPN provider from '%s': %s", target, exc)
         return None
 
 
 def get_vpn_public_ip_info(container_name: Optional[str] = None) -> Optional[Dict[str, str]]:
-    """
-    Get comprehensive public IP information from Gluetun's /v1/publicip/ip endpoint.
-    
-    The new API response format includes:
-    {
-        "public_ip": "217.138.216.131",
-        "region": "Land Berlin",
-        "country": "Germany",
-        "city": "Berlin",
-        "location": "52.519600,13.406900",
-        "organization": "M247 Europe SRL",
-        "postal_code": "10178",
-        "timezone": "Europe/Berlin"
-    }
-    
-    Args:
-        container_name: Specific VPN container name, or None for primary VPN
-    
-    Returns:
-        Dict with public IP and location information, or None if unavailable
-    """
-    target_container = container_name or cfg.GLUETUN_CONTAINER_NAME
-    if not target_container:
+    target = container_name or cfg.GLUETUN_CONTAINER_NAME
+    if not target:
         return None
-    
-    # Don't try to get public IP if VPN is unhealthy or in restart grace period
-    monitor = gluetun_monitor.get_vpn_monitor(target_container)
-    if monitor:
-        if monitor.is_healthy() is False:
-            return None
-        if monitor._is_in_restart_grace_period():
-            logger.debug(f"VPN '{target_container}' is in restart grace period, skipping public IP fetch")
-            return None
-    
+
+    if gluetun_monitor.is_healthy(target) is False:
+        return None
+
     try:
-        with httpx.Client() as client:
-            response = client.get(f"http://{target_container}:{cfg.GLUETUN_API_PORT}/v1/publicip/ip", timeout=10)
+        with httpx.Client(timeout=10) as client:
+            response = client.get(f"http://{target}:{cfg.GLUETUN_API_PORT}/v1/publicip/ip")
             response.raise_for_status()
             data = response.json()
-            
             if data.get("public_ip"):
-                logger.debug(f"Retrieved VPN public IP info for '{target_container}': {data.get('public_ip')}, {data.get('country')}, {data.get('city')}")
                 return data
-            else:
-                logger.warning(f"No public IP information available from '{target_container}'")
-                return None
-    except Exception as e:
-        logger.error(f"Failed to get public IP info from '{target_container}': {e}")
+            return None
+    except Exception as exc:
+        logger.debug("Failed to fetch VPN public IP info from '%s': %s", target, exc)
         return None
 
 
 def get_vpn_public_ip(container_name: Optional[str] = None) -> Optional[str]:
-    """
-    Get the public IP address of the VPN connection from Gluetun.
-    
-    Args:
-        container_name: Specific VPN container name, or None for primary VPN
-    
-    Returns:
-        Public IP address as string, or None if unavailable
-    
-    This function should only be called when the VPN is healthy to avoid
-    excessive error logging when VPN is down.
-    """
     info = get_vpn_public_ip_info(container_name)
     return info.get("public_ip") if info else None
 
-# Global Gluetun monitor instance
+
+def _single_vpn_status(container_name: str) -> Dict[str, object]:
+    node = _state_node(container_name)
+    state_health = bool(node.get("healthy")) if node is not None else None
+    health_bool = state_health if state_health is not None else _check_container_health_sync(container_name)
+
+    connected = bool(health_bool)
+    health = "healthy" if connected else "unhealthy"
+
+    forwarded_port = get_forwarded_port_sync(container_name) if connected else None
+    provider = get_vpn_provider(container_name) if connected else None
+    ip_info = get_vpn_public_ip_info(container_name) if connected else None
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    return {
+        "enabled": True,
+        "status": "running" if connected else "not_ready",
+        "container_name": container_name,
+        "container": container_name,
+        "health": health,
+        "connected": connected,
+        "forwarded_port": forwarded_port,
+        "public_ip": (ip_info or {}).get("public_ip"),
+        "provider": provider,
+        "country": (ip_info or {}).get("country"),
+        "city": (ip_info or {}).get("city"),
+        "region": (ip_info or {}).get("region"),
+        "last_check": now_iso,
+        "last_check_at": now_iso,
+    }
+
+
+def get_vpn_status() -> Dict[str, object]:
+    primary = cfg.GLUETUN_CONTAINER_NAME
+    if not primary:
+        return {
+            "mode": "disabled",
+            "enabled": False,
+            "status": "disabled",
+            "container_name": None,
+            "container": None,
+            "health": "unknown",
+            "connected": False,
+            "forwarded_port": None,
+            "last_check": None,
+            "last_check_at": None,
+            "vpn1": {},
+            "vpn2": {},
+            "emergency_mode": {
+                "active": False,
+                "failed_vpn": None,
+                "healthy_vpn": None,
+                "duration_seconds": 0,
+            },
+        }
+
+    vpn1_status = _single_vpn_status(primary)
+
+    if cfg.VPN_MODE != "redundant" or not cfg.GLUETUN_CONTAINER_NAME_2:
+        result = dict(vpn1_status)
+        result["mode"] = "single"
+        result["vpn1"] = vpn1_status
+        result["vpn2"] = {}
+        result["emergency_mode"] = {
+            "active": False,
+            "failed_vpn": None,
+            "healthy_vpn": None,
+            "duration_seconds": 0,
+        }
+        return result
+
+    vpn2_status = _single_vpn_status(cfg.GLUETUN_CONTAINER_NAME_2)
+    any_healthy = bool(vpn1_status.get("connected")) or bool(vpn2_status.get("connected"))
+
+    return {
+        "mode": "redundant",
+        "enabled": True,
+        "status": "running" if any_healthy else "unhealthy",
+        "container_name": primary,
+        "container": primary,
+        "health": "healthy" if any_healthy else "unhealthy",
+        "connected": any_healthy,
+        "forwarded_port": vpn1_status.get("forwarded_port"),
+        "last_check": datetime.now(timezone.utc).isoformat(),
+        "last_check_at": datetime.now(timezone.utc).isoformat(),
+        "vpn1": vpn1_status,
+        "vpn2": vpn2_status,
+        "emergency_mode": {
+            "active": False,
+            "failed_vpn": None,
+            "healthy_vpn": None,
+            "duration_seconds": 0,
+        },
+    }
+
+
 gluetun_monitor = GluetunMonitor()
