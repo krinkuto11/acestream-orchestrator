@@ -2,7 +2,7 @@ from __future__ import annotations
 import threading
 import logging
 import uuid
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..models.schemas import EngineState, StreamState, StreamStartedEvent, StreamEndedEvent, StreamStatSnapshot
@@ -623,18 +623,68 @@ class State:
                 s.rollback()
                 logger.debug(f"Database cleanup skipped (tables may not exist): {e}")
 
+    @staticmethod
+    def _list_dynamic_vpn_managed_containers() -> List[object]:
+        """List orchestrator-managed dynamic VPN containers (Gluetun nodes)."""
+        from ..services.docker_client import get_client
+
+        cli = get_client(timeout=30)
+        try:
+            return cli.containers.list(
+                all=True,
+                filters={"label": ["acestream-orchestrator.managed=true", "role=vpn_node"]},
+            )
+        finally:
+            try:
+                cli.close()
+            except Exception:
+                pass
+
+    @classmethod
+    def _collect_managed_cleanup_targets(cls) -> Tuple[List[object], int, int]:
+        """Collect engine and dynamic VPN containers to remove during shutdown cleanup."""
+        from ..services.health import list_managed
+
+        engine_containers: List[object] = []
+        vpn_containers: List[object] = []
+
+        try:
+            engine_containers = list_managed()
+        except Exception as e:
+            logger.warning(f"Failed to list managed engine containers: {e}")
+
+        try:
+            vpn_containers = cls._list_dynamic_vpn_managed_containers()
+        except Exception as e:
+            logger.warning(f"Failed to list managed dynamic VPN containers: {e}")
+
+        combined: List[object] = []
+        seen_ids: Set[str] = set()
+        for container in [*engine_containers, *vpn_containers]:
+            container_id = str(getattr(container, "id", "") or "").strip()
+            if not container_id or container_id in seen_ids:
+                continue
+            seen_ids.add(container_id)
+            combined.append(container)
+
+        return combined, len(engine_containers), len(vpn_containers)
+
     def cleanup_all(self):
         """Full cleanup: stop containers, clear database and memory state."""
-        logger.info("Starting full cleanup: stopping all managed containers")
+        logger.info("Starting full cleanup: stopping managed engine and dynamic VPN containers")
         
         # Stop all managed containers in parallel
         containers_stopped = 0
         try:
-            from ..services.health import list_managed
             from ..services.provisioner import stop_container
-            
-            managed_containers = list_managed()
-            logger.info(f"Found {len(managed_containers)} managed containers to stop")
+
+            managed_containers, engine_count, vpn_count = self._collect_managed_cleanup_targets()
+            logger.info(
+                "Found %s cleanup targets (%s engine containers, %s dynamic VPN containers)",
+                len(managed_containers),
+                engine_count,
+                vpn_count,
+            )
             
             if managed_containers:
                 # Stop containers in parallel using ThreadPoolExecutor
@@ -665,7 +715,7 @@ class State:
                         if future.result():
                             containers_stopped += 1
         except Exception as e:
-            logger.warning(f"Failed to list or stop managed containers: {e}")
+            logger.warning(f"Failed to stop cleanup target containers: {e}")
         
         logger.info(f"Stopped {containers_stopped} containers during cleanup")
         

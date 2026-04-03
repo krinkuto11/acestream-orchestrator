@@ -29,7 +29,7 @@ def test_cleanup_all_stops_containers_in_parallel():
     stop_times = []
     stop_calls = []
     
-    def mock_stop_container(container_id):
+    def mock_stop_container(container_id, force=False):
         """Mock stop_container that records timing."""
         stop_calls.append(container_id)
         stop_times.append(time.time())
@@ -37,6 +37,7 @@ def test_cleanup_all_stops_containers_in_parallel():
         time.sleep(0.1)  # Use shorter sleep for testing
     
     with patch('app.services.health.list_managed', return_value=mock_containers), \
+         patch.object(State, '_list_dynamic_vpn_managed_containers', return_value=[]), \
          patch('app.services.provisioner.stop_container', side_effect=mock_stop_container):
         
         start_time = time.time()
@@ -77,7 +78,7 @@ def test_cleanup_all_handles_errors_gracefully():
     
     stop_calls = []
     
-    def mock_stop_container(container_id):
+    def mock_stop_container(container_id, force=False):
         """Mock stop_container that fails for some containers."""
         stop_calls.append(container_id)
         # Fail for container_1 and container_3
@@ -85,6 +86,7 @@ def test_cleanup_all_handles_errors_gracefully():
             raise Exception(f"Failed to stop {container_id}")
     
     with patch('app.services.health.list_managed', return_value=mock_containers), \
+         patch.object(State, '_list_dynamic_vpn_managed_containers', return_value=[]), \
          patch('app.services.provisioner.stop_container', side_effect=mock_stop_container):
         
         # Should not raise an exception
@@ -99,7 +101,8 @@ def test_cleanup_all_with_no_containers():
     
     state = State()
     
-    with patch('app.services.health.list_managed', return_value=[]):
+    with patch('app.services.health.list_managed', return_value=[]), \
+         patch.object(State, '_list_dynamic_vpn_managed_containers', return_value=[]):
         # Should not raise an exception
         state.cleanup_all()
 
@@ -117,12 +120,13 @@ def test_cleanup_all_respects_max_workers_limit():
     
     stop_calls = []
     
-    def mock_stop_container(container_id):
+    def mock_stop_container(container_id, force=False):
         """Mock stop_container that just records the call."""
         stop_calls.append(container_id)
         time.sleep(0.01)  # Minimal sleep to ensure concurrent execution
     
     with patch('app.services.health.list_managed', return_value=mock_containers), \
+         patch.object(State, '_list_dynamic_vpn_managed_containers', return_value=[]), \
          patch('app.services.provisioner.stop_container', side_effect=mock_stop_container):
         
         state.cleanup_all()
@@ -132,6 +136,30 @@ def test_cleanup_all_respects_max_workers_limit():
         
         # Note: We can't easily verify the max_workers limit from outside,
         # but we verify that all containers were processed successfully
+
+
+def test_cleanup_all_includes_dynamic_vpn_containers():
+    """Test that cleanup_all also removes orchestrator-managed dynamic VPN containers."""
+
+    state = State()
+
+    mock_engine_container = Mock(id=f"engine_1_{'a' * CONTAINER_ID_PADDING_LENGTH}")
+    mock_vpn_container = Mock(id=f"vpn_1_{'b' * CONTAINER_ID_PADDING_LENGTH}")
+    duplicate_vpn_container = Mock(id=mock_vpn_container.id)
+
+    stop_calls = []
+
+    def mock_stop_container(container_id, force=False):
+        stop_calls.append(container_id)
+
+    with patch('app.services.health.list_managed', return_value=[mock_engine_container]), \
+         patch.object(State, '_list_dynamic_vpn_managed_containers', return_value=[mock_vpn_container, duplicate_vpn_container]), \
+         patch('app.services.provisioner.stop_container', side_effect=mock_stop_container):
+
+        state.cleanup_all()
+
+    assert set(stop_calls) == {mock_engine_container.id, mock_vpn_container.id}
+    assert len(stop_calls) == 2
 
 
 if __name__ == "__main__":
