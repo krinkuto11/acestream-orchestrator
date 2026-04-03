@@ -37,6 +37,7 @@ def parse_wireguard_conf(file_content: str) -> Dict[str, object]:
         "address": address_value,
         "addresses": addresses,
         "endpoint": endpoint,
+        "port_forwarding": True,
         "PrivateKey": private_key,
         "Address": address_value,
         "Endpoint": endpoint,

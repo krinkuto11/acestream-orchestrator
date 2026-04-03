@@ -28,6 +28,8 @@ import {
   ShieldOff,
   Trash2,
   Upload,
+  Zap,
+  ZapOff,
 } from 'lucide-react'
 
 const DEFAULTS = {
@@ -106,6 +108,12 @@ function parseRegionsInput(value) {
     .filter(Boolean)
 }
 
+function coerceBoolean(value, fallback = false) {
+  if (typeof value === 'boolean') return value
+  if (value === null || value === undefined) return fallback
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase())
+}
+
 function normalizeCredentialsWithIds(items) {
   if (!Array.isArray(items)) return []
   return items
@@ -115,6 +123,7 @@ function normalizeCredentialsWithIds(items) {
       return {
         ...item,
         id: existingId || generateCredentialId(),
+        port_forwarding: coerceBoolean(item.port_forwarding, true),
       }
     })
 }
@@ -146,12 +155,19 @@ export function VPNSettings({ apiKey, orchUrl }) {
   const [selectedProvider, setSelectedProvider] = useState(DEFAULTS.provider)
   const [regionsText, setRegionsText] = useState('')
   const [credentials, setCredentials] = useState(DEFAULTS.credentials)
+  const [credentialPortForwarding, setCredentialPortForwarding] = useState(true)
 
   // Conditional OpenVPN + PIA fields
   const [piaUsername, setPiaUsername] = useState('')
   const [piaPassword, setPiaPassword] = useState('')
 
   const forwardingSupported = isForwardingSupported(selectedProvider)
+
+  useEffect(() => {
+    if (!forwardingSupported) {
+      setCredentialPortForwarding(false)
+    }
+  }, [forwardingSupported])
 
   const leasesByCredentialId = useMemo(() => {
     const leaseMap = new Map()
@@ -231,6 +247,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
       password,
       openvpn_user: username,
       openvpn_password: password,
+      port_forwarding: Boolean(credentialPortForwarding && isForwardingSupported(provider)),
     }
 
     setCredentials((prev) => [...prev, credential])
@@ -244,6 +261,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
     const provider = normalizeProvider(selectedProvider || 'custom')
     const address = parsed.address || (Array.isArray(parsed.addresses) ? parsed.addresses.join(',') : '')
     const privateKey = parsed.private_key
+    const parsedPortForwarding = coerceBoolean(parsed?.port_forwarding, true)
 
     const credential = {
       id: generateCredentialId(),
@@ -257,6 +275,9 @@ export function VPNSettings({ apiKey, orchUrl }) {
       endpoints: parsed.endpoint,
       wireguard_endpoints: parsed.endpoint,
       source,
+      port_forwarding: Boolean(
+        parsedPortForwarding && credentialPortForwarding && isForwardingSupported(provider)
+      ),
     }
 
     setCredentials((prev) => [...prev, credential])
@@ -476,6 +497,26 @@ export function VPNSettings({ apiKey, orchUrl }) {
                   onChange={(e) => setRegionsText(e.target.value)}
                   placeholder="us-east, nl, region:paris"
                 />
+              </div>
+
+              <div className="flex items-start gap-3 rounded-md border p-3">
+                <Switch
+                  id="credential-port-forwarding"
+                  checked={credentialPortForwarding}
+                  disabled={!forwardingSupported}
+                  onCheckedChange={setCredentialPortForwarding}
+                />
+                <div>
+                  <Label htmlFor="credential-port-forwarding">Supports Port Forwarding (P2P)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Set per credential. Disable for keys that connect but do not expose a forwarded port.
+                  </p>
+                  {!forwardingSupported && (
+                    <p className="text-xs text-yellow-700 dark:text-yellow-300">
+                      Disabled because the selected provider does not support native port forwarding.
+                    </p>
+                  )}
+                </div>
               </div>
 
               {protocol === 'openvpn' && normalizeProvider(selectedProvider) === 'private internet access' && (
@@ -703,6 +744,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
                 <TableRow>
                   <TableHead>Provider / Protocol</TableHead>
                   <TableHead>Identifier</TableHead>
+                  <TableHead>P2P PF</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -710,7 +752,7 @@ export function VPNSettings({ apiKey, orchUrl }) {
               <TableBody>
                 {credentials.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-6">
+                    <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-6">
                       No credentials in pool yet.
                     </TableCell>
                   </TableRow>
@@ -722,6 +764,9 @@ export function VPNSettings({ apiKey, orchUrl }) {
                     const statusText = inUse
                       ? `In Use (Node: ${lease.container_id || 'unknown'})`
                       : 'Available'
+                    const providerSupports = isForwardingSupported(credential.provider || selectedProvider)
+                    const credentialSupports = coerceBoolean(credential.port_forwarding, true)
+                    const hasPortForwarding = providerSupports && credentialSupports
 
                     return (
                       <TableRow key={credential.id}>
@@ -730,6 +775,19 @@ export function VPNSettings({ apiKey, orchUrl }) {
                           <div className="text-xs text-muted-foreground uppercase">{credential.protocol || protocol}</div>
                         </TableCell>
                         <TableCell className="text-sm">{credentialIdentifier(credential)}</TableCell>
+                        <TableCell>
+                          {hasPortForwarding ? (
+                            <Badge className="bg-green-600 hover:bg-green-600 text-white">
+                              <Zap className="h-3.5 w-3.5 mr-1" />
+                              Enabled
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary" className="bg-muted text-muted-foreground">
+                              <ZapOff className="h-3.5 w-3.5 mr-1" />
+                              Disabled
+                            </Badge>
+                          )}
+                        </TableCell>
                         <TableCell>
                           {inUse ? (
                             <Badge className="bg-green-600 hover:bg-green-600 text-white">{statusText}</Badge>

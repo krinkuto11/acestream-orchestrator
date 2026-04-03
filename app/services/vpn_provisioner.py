@@ -69,7 +69,16 @@ class VPNProvisioner:
         )
         protocol = self._resolve_protocol(settings=settings, credential=credential)
         regions = self._resolve_regions(requested_regions=requested_regions, settings=settings, credential=credential)
-        port_forwarding_supported = self.provider_supports_port_forwarding(provider)
+        provider_supports_port_forwarding = self.provider_supports_port_forwarding(provider)
+        credential_supports_port_forwarding = self.credential_supports_port_forwarding(credential)
+        port_forwarding_supported = provider_supports_port_forwarding and credential_supports_port_forwarding
+
+        if provider_supports_port_forwarding and not credential_supports_port_forwarding:
+            logger.info(
+                "Credential '%s' disabled port forwarding support for provider '%s'",
+                str(lease.get("credential_id") or "unknown"),
+                provider,
+            )
 
         env = self._build_gluetun_env(
             provider=provider,
@@ -166,6 +175,18 @@ class VPNProvisioner:
     def provider_supports_port_forwarding(provider: Optional[str]) -> bool:
         normalized = str(provider or "").strip().lower()
         return normalized in PORT_FORWARDING_NATIVE_PROVIDERS
+
+    @classmethod
+    def credential_supports_port_forwarding(cls, credential: Dict[str, Any]) -> bool:
+        """
+        Determine whether a credential is eligible for forwarded-port workflows.
+
+        Credentials default to supporting forwarding for backward compatibility.
+        """
+        value = credential.get("port_forwarding")
+        if value is None:
+            return True
+        return cls._coerce_bool(value)
 
     def _resolve_provider(
         self,
@@ -458,8 +479,10 @@ class VPNProvisioner:
             explicit_pref = settings.get("vpn_port_forwarding")
 
         normalized_provider = str(provider or "").strip().lower()
+        credential_supported = self.credential_supports_port_forwarding(credential)
+        provider_supported = self.provider_supports_port_forwarding(normalized_provider)
         normalized_supported = bool(
-            port_forwarding_supported or self.provider_supports_port_forwarding(normalized_provider)
+            port_forwarding_supported and credential_supported and provider_supported
         )
 
         if explicit_pref is not None:
@@ -472,10 +495,16 @@ class VPNProvisioner:
 
         if not should_enable:
             if requested and not normalized_supported:
-                logger.info(
-                    "Port forwarding disabled for provider '%s' because native support is unavailable",
-                    normalized_provider or provider,
-                )
+                if not credential_supported:
+                    logger.info(
+                        "Port forwarding disabled for credential '%s' because credential-level support is off",
+                        str(credential.get("id") or "unknown"),
+                    )
+                elif not provider_supported:
+                    logger.info(
+                        "Port forwarding disabled for provider '%s' because native support is unavailable",
+                        normalized_provider or provider,
+                    )
             return
 
         env.setdefault("VPN_PORT_FORWARDING_PROVIDER", normalized_provider)

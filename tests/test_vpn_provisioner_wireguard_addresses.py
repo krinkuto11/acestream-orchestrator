@@ -53,3 +53,22 @@ def test_wireguard_addresses_ipv6_only_raises_clear_error():
         assert False, "Expected ValueError for IPv6-only address without IPv6 support"
     except ValueError as exc:
         assert "IPv6-only" in str(exc)
+
+
+def test_credential_port_forwarding_defaults_to_supported():
+    assert VPNProvisioner.credential_supports_port_forwarding({}) is True
+
+
+def test_apply_port_forwarding_env_disables_for_credential_opt_out():
+    env = {}
+    provisioner = VPNProvisioner()
+
+    provisioner._apply_port_forwarding_env(
+        env=env,
+        provider="protonvpn",
+        settings={"vpn_port_forwarding": True},
+        credential={"id": "cred-1", "port_forwarding": False},
+        port_forwarding_supported=True,
+    )
+
+    assert env["VPN_PORT_FORWARDING"] == "off"
