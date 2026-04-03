@@ -189,7 +189,7 @@ async def lifespan(app: FastAPI):
     try:
         proxy_settings = SettingsPersistence.load_proxy_config()
         if proxy_settings:
-            logger.info("Loading persisted proxy settings")
+            logger.debug("Loading persisted proxy settings")
             if 'initial_data_wait_timeout' in proxy_settings:
                 ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT = proxy_settings['initial_data_wait_timeout']
             if 'initial_data_check_interval' in proxy_settings:
@@ -216,7 +216,7 @@ async def lifespan(app: FastAPI):
                 tier = str(proxy_settings['legacy_api_preflight_tier']).strip().lower()
                 if tier in ['light', 'deep']:
                     ProxyConfig.LEGACY_API_PREFLIGHT_TIER = tier
-            logger.info("Proxy settings loaded from persistent storage")
+            logger.debug("Proxy settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
     
@@ -224,7 +224,7 @@ async def lifespan(app: FastAPI):
     try:
         loop_settings = SettingsPersistence.load_loop_detection_config()
         if loop_settings:
-            logger.info("Loading persisted loop detection settings")
+            logger.debug("Loading persisted loop detection settings")
             if 'enabled' in loop_settings:
                 cfg.STREAM_LOOP_DETECTION_ENABLED = loop_settings['enabled']
             if 'threshold_seconds' in loop_settings:
@@ -233,7 +233,7 @@ async def lifespan(app: FastAPI):
                 cfg.STREAM_LOOP_CHECK_INTERVAL_S = loop_settings['check_interval_seconds']
             if 'retention_minutes' in loop_settings:
                 cfg.STREAM_LOOP_RETENTION_MINUTES = loop_settings['retention_minutes']
-            logger.info("Loop detection settings loaded from persistent storage")
+            logger.debug("Loop detection settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted loop detection settings: {e}")
     
@@ -241,7 +241,7 @@ async def lifespan(app: FastAPI):
     try:
         engine_settings = SettingsPersistence.load_engine_settings()
         if engine_settings:
-            logger.info("Loading persisted engine settings")
+            logger.debug("Loading persisted engine settings")
             if 'min_replicas' in engine_settings:
                 cfg.MIN_REPLICAS = engine_settings['min_replicas']
             if 'max_replicas' in engine_settings:
@@ -304,7 +304,7 @@ async def lifespan(app: FastAPI):
     try:
         orchestrator_settings = SettingsPersistence.load_orchestrator_config()
         if orchestrator_settings:
-            logger.info("Loading persisted orchestrator settings")
+            logger.debug("Loading persisted orchestrator settings")
             _orch_field_map = {
                 'monitor_interval_s': 'MONITOR_INTERVAL_S',
                 'engine_grace_period_s': 'ENGINE_GRACE_PERIOD_S',
@@ -336,7 +336,7 @@ async def lifespan(app: FastAPI):
                         # Keep collector cadence fast so frontend topology interpolation has fresh targets.
                         _value = 1
                     setattr(cfg, _cfg_attr, _value)
-            logger.info("Orchestrator settings loaded from persistent storage")
+            logger.debug("Orchestrator settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted orchestrator settings: {e}")
 
@@ -347,7 +347,7 @@ async def lifespan(app: FastAPI):
     try:
         vpn_settings = SettingsPersistence.load_vpn_config() or {}
         if vpn_settings:
-            logger.info("Loading persisted VPN settings")
+            logger.debug("Loading persisted VPN settings")
             vpn_enabled = bool(vpn_settings.get('enabled', False))
             if 'api_port' in vpn_settings:
                 cfg.GLUETUN_API_PORT = vpn_settings['api_port']
@@ -437,7 +437,6 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(health_monitor.start())  # Start health monitoring  
     asyncio.create_task(health_manager.start())  # Start proactive health management
     asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
-    asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
     asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
     asyncio.create_task(looping_streams_tracker.start())  # Start looping streams tracker
     

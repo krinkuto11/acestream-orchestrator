@@ -1,4 +1,6 @@
 import threading
+import time
+import os
 from ..core.config import cfg
 from .provisioner import AceProvisionRequest, start_acestream, stop_container
 from .state import state
@@ -15,6 +17,12 @@ logger = logging.getLogger(__name__)
 # Track when engines became empty for grace period implementation
 _empty_engine_timestamps = {}
 
+_vpn_block_log_lock = threading.Lock()
+_last_vpn_block_log_ts = 0.0
+_last_vpn_block_reason = ""
+_suppressed_vpn_block_logs = 0
+_VPN_BLOCK_LOG_INTERVAL_S = max(1.0, float(os.getenv("VPN_BLOCK_LOG_INTERVAL_S", "5")))
+
 
 def _is_transient_vpn_not_ready_error(exc: Exception) -> bool:
     message = str(exc or "").lower()
@@ -24,6 +32,39 @@ def _is_transient_vpn_not_ready_error(exc: Exception) -> bool:
         "control api not reachable",
     )
     return any(marker in message for marker in markers)
+
+
+def _log_vpn_not_ready_block(error: Exception):
+    """Rate-limit repeated VPN readiness block logs during startup bursts."""
+    global _last_vpn_block_log_ts, _last_vpn_block_reason, _suppressed_vpn_block_logs
+
+    reason = str(error)
+    now = time.monotonic()
+
+    with _vpn_block_log_lock:
+        should_emit = (
+            (now - _last_vpn_block_log_ts) >= _VPN_BLOCK_LOG_INTERVAL_S
+            or reason != _last_vpn_block_reason
+        )
+
+        if not should_emit:
+            _suppressed_vpn_block_logs += 1
+            return
+
+        suppressed = _suppressed_vpn_block_logs
+        _suppressed_vpn_block_logs = 0
+        _last_vpn_block_log_ts = now
+        _last_vpn_block_reason = reason
+
+    if suppressed > 0:
+        logger.info(
+            "Create intents blocked awaiting VPN readiness (%s suppressed): %s",
+            suppressed,
+            reason,
+        )
+        return
+
+    logger.info("Create intent blocked awaiting VPN readiness: %s", reason)
 
 def _count_healthy_engines() -> int:
     """Count engines that are currently healthy."""
@@ -370,7 +411,7 @@ class EngineController:
             )
         except Exception as e:
             if _is_transient_vpn_not_ready_error(e):
-                logger.info("Create intent blocked awaiting VPN readiness: %s", e)
+                _log_vpn_not_ready_block(e)
                 state.resolve_scaling_intent(intent_id, "blocked", {"reason": "vpn_not_ready", "error": str(e)})
                 return
             circuit_breaker_manager.record_provisioning_failure("general")

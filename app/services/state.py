@@ -677,12 +677,15 @@ class State:
             from ..services.provisioner import stop_container
 
             managed_containers, engine_count, vpn_count = self._collect_managed_cleanup_targets()
-            logger.info(
-                "Found %s cleanup targets (%s engine containers, %s dynamic VPN containers)",
-                len(managed_containers),
-                engine_count,
-                vpn_count,
-            )
+            if managed_containers:
+                logger.info(
+                    "Found %s cleanup targets (%s engine containers, %s dynamic VPN containers)",
+                    len(managed_containers),
+                    engine_count,
+                    vpn_count,
+                )
+            else:
+                logger.debug("Cleanup startup found no managed engine/VPN containers")
             
             if managed_containers:
                 # Stop containers in parallel using ThreadPoolExecutor
@@ -715,18 +718,21 @@ class State:
         except Exception as e:
             logger.warning(f"Failed to stop cleanup target containers: {e}")
         
-        logger.info(f"Stopped {containers_stopped} containers during cleanup")
+        if containers_stopped > 0:
+            logger.info(f"Stopped {containers_stopped} containers during cleanup")
+        else:
+            logger.debug("No containers stopped during cleanup")
         
         # Clear database state
-        logger.info("Clearing database state")
+        logger.debug("Clearing database state")
         self.clear_database()
         
         # Clear in-memory state
-        logger.info("Clearing in-memory state")
+        logger.debug("Clearing in-memory state")
         self.clear_state()
         
         # Clear port allocations to prevent double-counting during reindex
-        logger.info("Clearing port allocations")
+        logger.debug("Clearing port allocations")
         try:
             from ..services.ports import alloc
             alloc.clear_all_allocations()
