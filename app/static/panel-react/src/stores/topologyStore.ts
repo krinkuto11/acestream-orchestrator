@@ -220,10 +220,33 @@ const extractVpnNodes = (
   const nodes: VpnNodeDescriptor[] = []
   const seen = new Set<string>()
 
+  const hasVpnIdentity = (rawNode: Record<string, unknown>): boolean => {
+    const identity = rawNode.container_name || rawNode.container || rawNode.name || rawNode.id
+    return Boolean(String(identity || '').trim())
+  }
+
+  const hasMeaningfulSignals = (rawNode: Record<string, unknown>): boolean => {
+    const signalKeys = [
+      'connected',
+      'healthy',
+      'condition',
+      'status',
+      'lifecycle',
+      'public_ip',
+      'provider',
+      'country',
+    ]
+
+    return signalKeys.some((key) => {
+      const value = rawNode[key]
+      if (value == null) return false
+      if (typeof value === 'string') return value.trim().length > 0
+      return true
+    })
+  }
+
   const upsert = (rawNode: Record<string, unknown>, indexHint: number) => {
-    const name = String(
-      rawNode.container_name || rawNode.container || rawNode.name || rawNode.id || `vpn-${indexHint + 1}`,
-    ).trim()
+    const name = String(rawNode.container_name || rawNode.container || rawNode.name || rawNode.id || '').trim()
     if (!name || seen.has(name)) return
 
     seen.add(name)
@@ -265,9 +288,14 @@ const extractVpnNodes = (
   if (nodes.length === 0 && vpnStatus && vpnStatus.mode !== 'disabled') {
     const legacyNodes = [vpnStatus.vpn1, vpnStatus.vpn2].filter(Boolean)
     legacyNodes.forEach((legacyNode, idx) => {
+      const legacyRaw = legacyNode as Record<string, unknown>
+      if (!hasVpnIdentity(legacyRaw) && !hasMeaningfulSignals(legacyRaw)) {
+        return
+      }
+
       upsert(
         {
-          container_name: legacyNode?.container_name || legacyNode?.container || `vpn-${idx + 1}`,
+          container_name: legacyNode?.container_name || legacyNode?.container,
           connected: legacyNode?.connected,
           lifecycle: (legacyNode as Record<string, unknown>)?.lifecycle,
           public_ip: legacyNode?.public_ip,
@@ -279,7 +307,7 @@ const extractVpnNodes = (
     })
   }
 
-  if (nodes.length === 0) {
+  if (nodes.length === 0 && (!vpnStatus || vpnStatus.mode !== 'disabled')) {
     const vpnNames = Array.from(
       new Set(
         engines
@@ -473,15 +501,14 @@ const buildSnapshot = (
     }
   })
 
-  // Tighter grid to visually bind engines to their assigned VPN node.
-  const DEFAULT_COLUMNS = isVpnClusterMode
-    ? Math.max(1, Math.min(2, Math.ceil(engineStats.length / 10)))
+  const NUM_COLUMNS = isVpnClusterMode
+    ? Math.max(1, Math.min(2, Math.ceil(engineStats.length / 8)))
     : Math.max(1, Math.min(3, Math.ceil(engineStats.length / 6)))
-  const COLUMN_SPACING_X = isVpnClusterMode ? 265 : 320
-  const STAGGERED_ROW_SPACING_Y = isVpnClusterMode ? 108 : 128
-  const CLUSTER_GAP_Y = 130
+  const COLUMN_SPACING_X = 340
+  const STAGGERED_ROW_SPACING_Y = 140
+  const CLUSTER_GAP_Y = 220
 
-  const engineStartX = 320
+  const engineStartX = 350
   const engineStartY = 80
 
   const enginesPerTunnel = normalizedEngineStats.reduce(
@@ -496,18 +523,14 @@ const buildSnapshot = (
   let tunnelCursorY = engineStartY
 
   for (const tunnelId of tunnelOrder) {
-    const tunnelEngineCount = Math.max(1, Number(enginesPerTunnel[tunnelId] || 0))
-    const cols = isVpnClusterMode
-      ? Math.max(1, Math.min(2, Math.ceil(tunnelEngineCount / 6)))
-      : DEFAULT_COLUMNS
-    const rows = Math.max(1, Math.ceil(tunnelEngineCount / cols))
-    const height = Math.max(0, rows - 1) * STAGGERED_ROW_SPACING_Y
+    const tunnelEngineCount = Math.max(0, Number(enginesPerTunnel[tunnelId] || 0))
+    const height = Math.max(0, tunnelEngineCount - 1) * STAGGERED_ROW_SPACING_Y
 
     tunnelLayout.set(tunnelId, {
       startY: tunnelCursorY,
       centerY: tunnelCursorY + (height / 2),
-      cols,
-      rows,
+      cols: NUM_COLUMNS,
+      rows: tunnelEngineCount,
       height,
     })
 
@@ -576,7 +599,7 @@ const buildSnapshot = (
     })
   }
 
-  // 3. Process engine nodes with compact per-VPN grouping
+  // 3. Process engine nodes with stable staggered lanes
   normalizedEngineStats.forEach(({ engine, streamCount, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, assignedTunnel }, index) => {
     const engineStreams = streamMap.get(engine.container_id) || []
     const monitorStreamCount = Math.max(
@@ -592,11 +615,9 @@ const buildSnapshot = (
     tunnelLocalIndex[assignedTunnel] = localIndex + 1
 
     const cluster = tunnelLayout.get(assignedTunnel)
-    const clusterCols = cluster?.cols || DEFAULT_COLUMNS
-    const colIndex = localIndex % clusterCols
-    const rowIndex = Math.floor(localIndex / clusterCols)
+    const colIndex = localIndex % NUM_COLUMNS
     const currentX = engineStartX + (colIndex * COLUMN_SPACING_X)
-    const currentY = (cluster?.startY ?? engineStartY) + (rowIndex * STAGGERED_ROW_SPACING_Y)
+    const currentY = (cluster?.startY ?? engineStartY) + (localIndex * STAGGERED_ROW_SPACING_Y)
 
     const tunnelHealthy = isVpnDisabledMode ? true : Boolean(tunnelConnectivity[assignedTunnel])
     const backupTunnel = !isVpnDisabledMode
@@ -753,12 +774,7 @@ const buildSnapshot = (
   const clientList = isMockMode ? mockClients : (orchestratorStatus?.proxy?.active_clients?.list || [])
   const activeClients = isMockMode ? clientList.length : (orchestratorStatus?.proxy?.active_clients?.total ?? clientList.length)
 
-  // Dynamically position downstream nodes based on the maximum engine columns among VPN clusters.
-  const maxColumns = Math.max(
-    1,
-    ...Array.from(tunnelLayout.values()).map((layout) => layout.cols),
-  )
-  const proxyNodeX = engineStartX + (maxColumns * COLUMN_SPACING_X) + 140
+  const proxyNodeX = engineStartX + (NUM_COLUMNS * COLUMN_SPACING_X) + 160
   const clientNodeX = proxyNodeX + 460
 
   nodes.push({
