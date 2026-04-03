@@ -93,6 +93,16 @@ type EdgeFlowTarget = {
   uploadMbps?: number
 }
 
+const shouldBypassEdgeSmoothing = (
+  sourceKind: TopologyNodeKind | undefined,
+  targetKind: TopologyNodeKind | undefined,
+): boolean => {
+  return (
+    (sourceKind === 'vpn' && targetKind === 'engine') ||
+    (sourceKind === 'engine' && targetKind === 'proxy')
+  )
+}
+
 const nodeInterpolationTargets = new Map<string, NodeFlowTarget>()
 const edgeInterpolationTargets = new Map<string, EdgeFlowTarget>()
 
@@ -824,6 +834,10 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
         }
       }
 
+      const nextNodeKinds = new Map(
+        next.nodes.map((node) => [node.id, node.data?.kind as TopologyNodeKind | undefined]),
+      )
+
       const stabilizedEdges = next.edges.map((nextEdge) => {
         const existingEdge = state.edges.find((e) => e.id === nextEdge.id)
         const nextEdgeTargetBandwidth = Number(nextEdge.data?.bandwidthMbps ?? 0)
@@ -835,6 +849,26 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
           typeof nextEdge.data?.uploadMbps === 'number' ? nextEdge.data.uploadMbps : undefined
         const existingEdgeUpload =
           typeof existingEdge?.data?.uploadMbps === 'number' ? existingEdge.data.uploadMbps : undefined
+
+        const sourceKind = nextNodeKinds.get(nextEdge.source)
+        const targetKind = nextNodeKinds.get(nextEdge.target)
+        const bypassSmoothing = shouldBypassEdgeSmoothing(sourceKind, targetKind)
+
+        if (bypassSmoothing) {
+          edgeInterpolationTargets.set(nextEdge.id, {
+            bandwidthMbps: nextEdgeTargetBandwidth,
+            uploadMbps: nextEdgeTargetUpload,
+          })
+
+          return {
+            ...nextEdge,
+            data: {
+              ...nextEdge.data,
+              bandwidthMbps: nextEdgeTargetBandwidth,
+              ...(typeof nextEdgeTargetUpload === 'number' ? { uploadMbps: nextEdgeTargetUpload } : {}),
+            },
+          }
+        }
 
         edgeInterpolationTargets.set(nextEdge.id, {
           bandwidthMbps: applyDeadband(existingEdgeBandwidth, nextEdgeTargetBandwidth) ?? 0,
@@ -985,13 +1019,21 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
       }
 
       const currentBandwidth = Number(edge.data?.bandwidthMbps ?? 0)
-      const nextBandwidth = interpolateNumber(currentBandwidth, targetBandwidth)
+      const failover = edge.style?.strokeDasharray !== undefined
+
+      const sourceKind = sourceNode?.data?.kind
+      const targetKind = targetNode?.data?.kind
+      const bypassSmoothing = shouldBypassEdgeSmoothing(sourceKind, targetKind)
+
+      const nextBandwidth = bypassSmoothing
+        ? targetBandwidth
+        : interpolateNumber(currentBandwidth, targetBandwidth)
       const nextUpload =
         typeof edge.data?.uploadMbps === 'number' || typeof targetUpload === 'number'
-          ? interpolateNumber(edge.data?.uploadMbps ?? 0, targetUpload ?? 0)
+          ? (bypassSmoothing
+            ? (targetUpload ?? 0)
+            : interpolateNumber(edge.data?.uploadMbps ?? 0, targetUpload ?? 0))
           : undefined
-
-      const failover = edge.style?.strokeDasharray !== undefined
 
       let strokeWidth = clamp(1.6 + nextBandwidth / (failover ? 58 : 46), 1.6, 8.6)
       if (sourceNode?.data?.kind === 'engine' && targetNode?.data?.kind === 'proxy') {
