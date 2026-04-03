@@ -17,17 +17,17 @@ On-demand AceStream engine orchestration with a built-in proxy, health managemen
 docker-compose up -d
 ```
 
-### VPN (single)
+### VPN (orchestrator-managed)
 
 ```bash
-docker-compose -f docker-compose.gluetun.yml up -d
+docker-compose up -d
 ```
 
-### VPN (redundant)
+Then open the panel and configure VPN under Settings -> VPN. The orchestrator will provision and manage Gluetun instances dynamically.
 
-```bash
-docker-compose -f docker-compose.gluetun-redundant.yml up -d
-```
+> [!IMPORTANT]
+> Legacy `docker-compose.gluetun.yml` and `docker-compose.gluetun-redundant.yml` are deprecated.
+> Use `docker-compose.yml` and orchestrator-managed VPN provisioning.
 
 Panel URL:
 
@@ -43,10 +43,11 @@ http://<host>:8000/ace/getstream?id=<acestream_id>
 
 ## Minimal Usage
 
-1. Start containers with one of the compose files.
+1. Start containers with `docker-compose.yml`.
 2. Open `http://<host>:8000/panel`.
 3. Set API key in Settings if protected endpoints are enabled.
-4. Use stream URL format in your player.
+4. If VPN is needed, configure provider/protocol/credentials in Settings -> VPN.
+5. Use stream URL format in your player.
 
 ## Modify M3U Playlist
 
@@ -67,7 +68,7 @@ Typical replacements:
 
 - Docker and Docker Compose
 - Docker socket access for the orchestrator container
-- VPN credentials if using Gluetun compose files
+- VPN credentials if enabling orchestrator-managed VPN nodes
 
 ## Main Endpoints
 
@@ -103,13 +104,15 @@ Key environment variables:
 | `MIN_REPLICAS` | `2` | Minimum engine containers to keep running |
 | `MAX_REPLICAS` | `6` | Maximum concurrent engines |
 | `PORT_RANGE_HOST` | `19000-19999` | Host ports mapped to engine containers |
-| `GLUETUN_CONTAINER_NAME` | *(none)* | Gluetun container name (VPN mode) |
-| `VPN_MODE` | `single` | `single` or `redundant` |
+| `DYNAMIC_VPN_MANAGEMENT` | `true` | Enable orchestrator-managed dynamic Gluetun provisioning |
+| `VPN_PROVIDER` | `protonvpn` | Default VPN provider for dynamic nodes |
+| `VPN_PROTOCOL` | `wireguard` | Default VPN protocol for dynamic nodes |
+| `PREFERRED_ENGINES_PER_VPN` | `10` | Target engines per dynamic VPN node |
 | `DEBUG_MODE` | `false` | Verbose logging |
 
 ## Documentation
 
-- [docs/DEPLOY.md](docs/DEPLOY.md) — Deployment guide (standalone, single VPN, redundant VPN)
+- [docs/DEPLOY.md](docs/DEPLOY.md) — Deployment guide (standalone + orchestrator-managed VPN)
 - [docs/CONFIG.md](docs/CONFIG.md) — Complete environment variable reference
 - [docs/API.md](docs/API.md) — Full API reference
 - [docs/SECURITY.md](docs/SECURITY.md) — Authentication, network exposure, TLS

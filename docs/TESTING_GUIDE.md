@@ -1,5 +1,9 @@
 # Testing Guide: VPN Port Allocation Fix
 
+> [!IMPORTANT]
+> This guide targets legacy static/external Gluetun compose setups.
+> For recommended deployments, use orchestrator-managed dynamic VPN provisioning.
+
 > **Note**: This document describes testing for a specific VPN port allocation fix. For general deployment and testing, see:
 > - [Deployment Guide](DEPLOY.md) - Complete deployment and testing instructions
 > - [Gluetun Integration](GLUETUN_INTEGRATION.md) - VPN setup and configuration

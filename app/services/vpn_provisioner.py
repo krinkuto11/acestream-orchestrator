@@ -223,6 +223,15 @@ class VPNProvisioner:
             "HTTP_CONTROL_SERVER_ADDRESS": f":{cfg.GLUETUN_API_PORT}",
         }
 
+        auth_default_role = credential.get("http_control_server_auth_default_role")
+        if auth_default_role is None:
+            auth_default_role = settings.get("http_control_server_auth_default_role")
+        if auth_default_role is None:
+            # Keep control API reachable for internal orchestrator calls by default.
+            env["HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE"] = '{"auth":"none"}'
+        else:
+            env["HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE"] = str(auth_default_role)
+
         tz = str(settings.get("tz") or os.getenv("TZ") or "UTC").strip()
         if tz:
             env["TZ"] = tz

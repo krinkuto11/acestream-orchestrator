@@ -15,8 +15,7 @@ Brief, actionable guidance to help an AI agent become productive in this reposit
 
 ## Key workflows & commands
 - Start standalone (no VPN): `cp .env.example .env` -> edit -> `docker-compose up -d`
-- Start with single VPN: `docker-compose -f docker-compose.gluetun.yml up -d`
-- Start with redundant VPN: `docker-compose -f docker-compose.gluetun-redundant.yml up -d`
+- Start with orchestrator-managed VPN: `cp .env.example .env` -> edit -> `docker-compose up -d` -> configure VPN in Settings
 - Run tests: `python -m pytest tests/`
 - Useful endpoints during development:
   - `GET /metrics` — Prometheus metrics

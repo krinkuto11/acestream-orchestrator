@@ -7,8 +7,8 @@ This guide covers deployment of the AceStream Orchestrator in various configurat
 - [Quick Start](#quick-start)
 - [Deployment Modes](#deployment-modes)
   - [Standalone (No VPN)](#standalone-no-vpn)
-  - [Single VPN Mode](#single-vpn-mode)
-  - [Redundant VPN Mode](#redundant-vpn-mode-high-availability)
+  - [Dynamic VPN Mode (Orchestrator-Managed)](#dynamic-vpn-mode-orchestrator-managed)
+  - [Legacy External Gluetun Compose (Deprecated)](#legacy-external-gluetun-compose-deprecated)
 - [Production Checklist](#production-checklist)
 - [Monitoring](#monitoring)
 - [Troubleshooting](#troubleshooting)
@@ -29,19 +29,19 @@ docker-compose up -d
 open http://localhost:8000/panel
 ```
 
-### With VPN (Single)
+### With VPN (Orchestrator-Managed)
 
-For VPN-protected engines:
+For VPN-protected engines with dynamic Gluetun provisioning:
 
 ```bash
 # 1. Copy and edit the environment file
 cp .env.example .env
-# Edit .env: set API_KEY, GLUETUN_CONTAINER_NAME, VPN credentials in docker-compose.gluetun.yml
+# Edit .env: set API_KEY and dynamic VPN defaults (provider/protocol)
 
-# 2. Start with VPN
-docker-compose -f docker-compose.gluetun.yml up -d
+# 2. Start orchestrator
+docker-compose up -d
 
-# 3. Access the dashboard
+# 3. Access the dashboard and configure VPN credentials in Settings -> VPN
 open http://localhost:8000/panel
 ```
 
@@ -78,53 +78,35 @@ docker logs orchestrator
 open http://localhost:8000/panel
 ```
 
-### Single VPN Mode
+### Dynamic VPN Mode (Orchestrator-Managed)
 
-**Use Case:** Production deployments requiring VPN protection for all engines.
+**Use Case:** Production deployments requiring VPN protection with automatic Gluetun lifecycle management.
 
-**Docker Compose:** `docker-compose.gluetun.yml`
+**Docker Compose:** `docker-compose.yml`
 
 **Configuration:**
 
-1. **Edit `docker-compose.gluetun.yml`:**
-```yaml
-# Configure VPN credentials in the environment section of the gluetun service
-- WIREGUARD_PRIVATE_KEY=YOUR_WIREGUARD_PRIVATE_KEY_HERE
-- VPN_SERVICE_PROVIDER=protonvpn
-```
-
-2. **Start services:**
+1. **Start services:**
 ```bash
-docker-compose -f docker-compose.gluetun.yml up -d
+docker-compose up -d
 ```
 
-3. **Enable VPN in Dashboard:**
+2. **Enable VPN in Dashboard:**
 - Go to **Settings > VPN**.
 - Set **VPN Integration** to Enabled.
-- Ensure the **Container Name** matches your Gluetun service name (Default: `gluetun`).
+- Enable **Dynamic VPN Management**.
+- Configure provider/protocol defaults and add VPN credentials.
 
-### Redundant VPN Mode (High Availability)
+3. **High availability behavior:**
+- The controller provisions multiple dynamic VPN nodes as load grows.
+- Desired VPN node count is derived from active engine demand and `PREFERRED_ENGINES_PER_VPN`.
 
-**Use Case:** Mission-critical deployments requiring zero downtime during VPN failures.
+### Legacy External Gluetun Compose (Deprecated)
 
-**Docker Compose:** `docker-compose.gluetun-redundant.yml`
+`docker-compose.gluetun.yml` and `docker-compose.gluetun-redundant.yml` are deprecated.
+They are retained only for backward compatibility and are no longer the recommended deployment path.
 
-**Configuration:**
-
-1. **Edit `docker-compose.gluetun-redundant.yml`:**
-Configure both `gluetun1` and `gluetun2` credentials.
-
-2. **Start services:**
-```bash
-docker-compose -f docker-compose.gluetun-redundant.yml up -d
-```
-
-3. **Configure Redundancy in Dashboard:**
-- Go to **Settings > VPN**.
-- Enable VPN.
-- Change **VPN Mode** to Redundant.
-- Provide names for both containers (`gluetun1`, `gluetun2`).
-- Go to **Expert Settings** to verify port ranges assigned to each VPN.
+Use orchestrator-managed dynamic provisioning unless you are maintaining an existing legacy setup.
 
 ---
 

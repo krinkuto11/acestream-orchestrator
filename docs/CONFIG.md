@@ -147,16 +147,20 @@ A ready-to-use template with all variables is provided in [`.env.example`](../.e
 
 ### VPN (Gluetun)
 
+Orchestrator-managed dynamic VPN provisioning is the recommended mode.
+
 | Variable | Default | Description |
 |---|---|---|
-| `VPN_MODE` | `single` | **[UI]** `single` or `redundant`. |
-| `GLUETUN_CONTAINER_NAME` | *(none)* | **[UI]** Primary Gluetun container name. |
-| `GLUETUN_CONTAINER_NAME_2` | *(none)* | **[UI]** Secondary Gluetun container name (redundant mode). |
-| `GLUETUN_API_PORT` | `8001` | **[UI]** Host port of Gluetun's HTTP control server. Must match `HTTP_CONTROL_SERVER_ADDRESS`. |
+| `DYNAMIC_VPN_MANAGEMENT` | `true` | **[UI]** Enable orchestrator-managed dynamic Gluetun node lifecycle. |
+| `VPN_PROVIDER` | `protonvpn` | **[UI]** Default provider for dynamic VPN nodes. |
+| `VPN_PROTOCOL` | `wireguard` | **[UI]** Default protocol for dynamic VPN nodes (`wireguard` or `openvpn`). |
+| `PREFERRED_ENGINES_PER_VPN` | `10` | **[UI]** Target engines per dynamic VPN node; controller scales node count from this density. |
+| `GLUETUN_API_PORT` | `8001` | **[UI]** Control-server port used by the orchestrator to query Gluetun nodes. |
 | `GLUETUN_HEALTH_CHECK_INTERVAL_S` | `5` | **[UI]** Seconds between Gluetun health polls. |
 | `GLUETUN_PORT_CACHE_TTL_S` | `60` | **[UI]** Seconds to cache the forwarded port value. |
 | `VPN_RESTART_ENGINES_ON_RECONNECT` | `true` | **[UI]** Restart VPN-attached engines when the VPN reconnects. |
 | `VPN_UNHEALTHY_RESTART_TIMEOUT_S` | `60` | **[UI]** Seconds of VPN unhealthiness before force-restarting the container. |
+| `GLUETUN_CONTAINER_NAME` | *(none)* | Deprecated static fallback: attach engines to a pre-existing Gluetun container. |
 | `GLUETUN_PORT_RANGE_1` | *(none)* | Host port sub-range assigned to the primary VPN (redundant mode, e.g. `19000-19499`). |
 | `GLUETUN_PORT_RANGE_2` | *(none)* | Host port sub-range assigned to the secondary VPN (redundant mode, e.g. `19500-19999`). |
 

@@ -1,5 +1,9 @@
 # Gluetun VPN Integration
 
+> [!IMPORTANT]
+> This document primarily describes legacy static/external Gluetun container integration.
+> Recommended deployment uses orchestrator-managed dynamic Gluetun provisioning via `docker-compose.yml` and Settings -> VPN.
+
 The AceStream Orchestrator can integrate with [Gluetun](https://github.com/qdm12/gluetun) to route all AceStream engines through a VPN connection.
 
 ## Quick Links

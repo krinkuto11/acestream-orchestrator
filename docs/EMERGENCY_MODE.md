@@ -1,5 +1,9 @@
 # Emergency Mode for Redundant VPN Failure
 
+> [!IMPORTANT]
+> This document describes legacy static redundant VPN mode behavior.
+> Dynamic orchestrator-managed VPN provisioning is the recommended deployment model.
+
 ## Overview
 
 Emergency mode is a special operational state that activates automatically when one VPN container fails in redundant VPN mode. It ensures continuous service availability by operating on the single healthy VPN until the failed VPN recovers.

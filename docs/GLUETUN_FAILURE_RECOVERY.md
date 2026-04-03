@@ -1,5 +1,9 @@
 # Gluetun VPN Failure and Recovery Scenarios
 
+> [!IMPORTANT]
+> This page focuses on legacy static/external Gluetun topologies.
+> For current deployments, prefer orchestrator-managed dynamic VPN provisioning and use this page as historical reference.
+
 This document describes the failure and recovery scenarios for Gluetun VPN integration with the AceStream Orchestrator.
 
 ## Table of Contents

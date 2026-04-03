@@ -1,6 +1,7 @@
 import time
 import logging
 import docker
+import httpx
 from docker.errors import NotFound
 import threading
 import hashlib
@@ -245,10 +246,38 @@ class ResourceScheduler:
 
     @staticmethod
     def _is_dynamic_node_ready(node: Dict[str, object]) -> bool:
+        container_name = str(node.get("container_name") or "").strip()
+        if not container_name:
+            return False
+
         condition = str(node.get("condition", "")).strip().lower()
         if condition:
-            return condition == "ready"
-        return bool(node.get("healthy"))
+            if condition != "ready":
+                return False
+        elif not bool(node.get("healthy")):
+            return False
+
+        # Docker "running" can precede Gluetun control API readiness by a few seconds.
+        # Require control API reachability before scheduling engines on dynamic nodes.
+        status = str(node.get("status") or "").strip().lower()
+        if status == "running" and not ResourceScheduler._is_vpn_control_api_reachable(container_name):
+            return False
+
+        return True
+
+    @staticmethod
+    def _is_vpn_control_api_reachable(vpn_container: str) -> bool:
+        try:
+            with httpx.Client(timeout=1.5) as client:
+                response = client.get(f"http://{vpn_container}:{cfg.GLUETUN_API_PORT}/v1/vpn/status")
+                if response.status_code == 401:
+                    # API is reachable but auth is required.
+                    return True
+                response.raise_for_status()
+                return True
+        except Exception as exc:
+            logger.debug("Dynamic VPN '%s' control API not reachable yet: %s", vpn_container, exc)
+            return False
 
     def _should_prefer_forwarding_capable_node_locked(self) -> bool:
         from .state import state

@@ -15,6 +15,16 @@ logger = logging.getLogger(__name__)
 # Track when engines became empty for grace period implementation
 _empty_engine_timestamps = {}
 
+
+def _is_transient_vpn_not_ready_error(exc: Exception) -> bool:
+    message = str(exc or "").lower()
+    markers = (
+        "no healthy dynamic vpn nodes available",
+        "cannot schedule acestream engine",
+        "control api not reachable",
+    )
+    return any(marker in message for marker in markers)
+
 def _count_healthy_engines() -> int:
     """Count engines that are currently healthy."""
     try:
@@ -362,6 +372,10 @@ class EngineController:
                 {"container_id": response.container_id, "container_name": response.container_name},
             )
         except Exception as e:
+            if _is_transient_vpn_not_ready_error(e):
+                logger.info("Create intent blocked awaiting VPN readiness: %s", e)
+                state.resolve_scaling_intent(intent_id, "blocked", {"reason": "vpn_not_ready", "error": str(e)})
+                return
             circuit_breaker_manager.record_provisioning_failure("general")
             state.resolve_scaling_intent(intent_id, "failed", {"error": str(e)})
 
