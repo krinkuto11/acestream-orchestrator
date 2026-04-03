@@ -23,7 +23,7 @@ class _FakeAceLegacyApiClient:
     def resolve_content(self, content_id, session_id=None):
         return ({"status": 1, "infohash": content_id}, "infohash")
 
-    def start_stream(self, content_id, mode, stream_type="output_format=http", file_indexes="0"):
+    def start_stream(self, content_id, mode, stream_type="output_format=http", file_indexes="0", live_delay=0):
         return {
             "playback_session_id": "test-session",
             "url": "http://127.0.0.1:6878/content/test/0.0",
@@ -87,6 +87,20 @@ class _FakeFailoverClient(_FakeAceLegacyApiClient):
         return super().collect_status_samples(samples=samples, interval_s=interval_s, per_sample_timeout_s=per_sample_timeout_s)
 
 
+class _FakeRelayStickyFailoverClient(_FakeAceLegacyApiClient):
+    _calls_by_port = {}
+
+    def collect_status_samples(self, samples=1, interval_s=0.0, per_sample_timeout_s=1.0):
+        port = int(self.port)
+        call_count = int(self._calls_by_port.get(port, 0)) + 1
+        self._calls_by_port[port] = call_count
+
+        if port == 62062 and call_count >= 2:
+            raise asyncio.TimeoutError("api timed out on primary engine")
+
+        return super().collect_status_samples(samples=samples, interval_s=interval_s, per_sample_timeout_s=per_sample_timeout_s)
+
+
 class _FakeDownloadStoppedClient(_FakeAceLegacyApiClient):
     def __init__(self, host, port, connect_timeout=10.0, response_timeout=10.0, product_key=None):
         super().__init__(host, port, connect_timeout=connect_timeout, response_timeout=response_timeout, product_key=product_key)
@@ -115,6 +129,50 @@ class _FakeDownloadStoppedFailoverClient(_FakeAceLegacyApiClient):
             "event": "download_stopped",
             "reason": "Primary engine stopped download",
         }
+
+
+@pytest.fixture(autouse=True)
+def _stub_engine_selection(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    def _select_best_engine_stub(
+        requested_container_id=None,
+        additional_load_by_engine=None,
+        reserve_pending=False,
+        not_found_error="engine_not_found",
+    ):
+        del reserve_pending
+
+        engines = [
+            e for e in module.state.list_engines()
+            if not module.state.is_engine_draining(e.container_id)
+        ]
+        if not engines:
+            raise RuntimeError("No non-draining engines available")
+
+        if requested_container_id:
+            selected = next((e for e in engines if e.container_id == requested_container_id), None)
+            if not selected:
+                raise RuntimeError(not_found_error)
+            return selected, 0
+
+        loads = {}
+        for engine in engines:
+            base = 0
+            if additional_load_by_engine:
+                base = int(additional_load_by_engine.get(engine.container_id, 0) or 0)
+            loads[engine.container_id] = max(0, base)
+
+        selected = sorted(
+            engines,
+            key=lambda e: (loads.get(e.container_id, 0), not e.forwarded),
+        )[0]
+
+        return selected, int(loads.get(selected.container_id, 0) or 0)
+
+    monkeypatch.setattr(module, "select_best_engine", _select_best_engine_stub)
+    monkeypatch.setattr(module.state, "get_active_monitor_load_by_engine", lambda: {})
+    monkeypatch.setattr(module.state, "is_engine_draining", lambda _cid: False)
 
 
 @pytest.mark.asyncio
@@ -480,6 +538,54 @@ async def test_download_stopped_triggers_immediate_failover(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_relay_url_is_persistent_across_failover(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    _FakeRelayStickyFailoverClient._calls_by_port = {}
+
+    engine_1 = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=True,
+    )
+    engine_2 = SimpleNamespace(
+        container_id="engine-2",
+        host="127.0.0.1",
+        port=6879,
+        api_port=62063,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine_1, engine_2])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module.state, "is_engine_draining", lambda _cid: False)
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeRelayStickyFailoverClient)
+
+    service = LegacyStreamMonitoringService()
+
+    monitor = await service.start_monitor(content_id="abc123", interval_s=0.2, run_seconds=0)
+    monitor_id = monitor["monitor_id"]
+
+    await asyncio.sleep(0.45)
+    before = await service.get_monitor(monitor_id)
+    assert before is not None
+    relay_before = str((before.get("session") or {}).get("playback_url") or "")
+    assert relay_before.startswith("http://127.0.0.2:") or relay_before.startswith("http://127.0.0.1:")
+
+    await asyncio.sleep(1.1)
+    after = await service.get_monitor(monitor_id)
+    assert after is not None
+    assert (after.get("engine") or {}).get("container_id") == "engine-2"
+    assert int(after.get("reconnect_attempts") or 0) >= 1
+    relay_after = str((after.get("session") or {}).get("playback_url") or "")
+    assert relay_after == relay_before
+
+    await service.stop_all()
+
+
+@pytest.mark.asyncio
 async def test_dead_monitor_retries_once_on_different_engine(monkeypatch):
     from app.services import legacy_stream_monitoring as module
 
@@ -514,6 +620,103 @@ async def test_dead_monitor_retries_once_on_different_engine(monkeypatch):
     assert current["status"] in {"running", "stuck"}
     assert current["reconnect_attempts"] == 1
     assert (current.get("engine") or {}).get("container_id") == "engine-2"
+
+    await service.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_failover_retry_not_limited_to_single_attempt(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine_1 = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=True,
+    )
+    engine_2 = SimpleNamespace(
+        container_id="engine-2",
+        host="127.0.0.1",
+        port=6879,
+        api_port=62063,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine_1, engine_2])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module.state, "get_active_monitor_load_by_engine", lambda: {})
+
+    service = LegacyStreamMonitoringService()
+    service._sessions = {
+        "monitor-1": {
+            "status": "running",
+            "reconnect_attempts": 5,
+            "engine": {
+                "container_id": "engine-1",
+                "host": "127.0.0.1",
+                "port": 6878,
+                "api_port": 62062,
+            },
+            "session": {},
+            "latest_status": {},
+            "recent_status": [],
+        }
+    }
+
+    did_failover = await service._failover_retry_dead_monitor("monitor-1", "timeout", "simulated")
+
+    assert did_failover is True
+    current = service._sessions["monitor-1"]
+    assert current["reconnect_attempts"] == 6
+    assert current["status"] == "reconnecting"
+    assert (current.get("engine") or {}).get("container_id") == "engine-2"
+
+
+@pytest.mark.asyncio
+async def test_monitor_preemptively_fails_over_on_draining_engine(monkeypatch):
+    from app.services import legacy_stream_monitoring as module
+
+    engine_1 = SimpleNamespace(
+        container_id="engine-1",
+        host="127.0.0.1",
+        port=6878,
+        api_port=62062,
+        forwarded=True,
+    )
+    engine_2 = SimpleNamespace(
+        container_id="engine-2",
+        host="127.0.0.1",
+        port=6879,
+        api_port=62063,
+        forwarded=False,
+    )
+
+    monkeypatch.setattr(module.state, "list_engines", lambda: [engine_1, engine_2])
+    monkeypatch.setattr(module.state, "list_streams", lambda status=None: [])
+    monkeypatch.setattr(module, "AceLegacyApiClient", _FakeAceLegacyApiClient)
+
+    draining_state = {"enabled": False}
+
+    def _is_engine_draining(cid: str) -> bool:
+        return bool(draining_state["enabled"] and cid == "engine-1")
+
+    monkeypatch.setattr(module.state, "is_engine_draining", _is_engine_draining)
+
+    service = LegacyStreamMonitoringService()
+
+    monitor = await service.start_monitor(content_id="abc123", interval_s=0.25, run_seconds=0)
+    monitor_id = monitor["monitor_id"]
+
+    await asyncio.sleep(0.45)
+    draining_state["enabled"] = True
+    await asyncio.sleep(0.8)
+
+    current = await service.get_monitor(monitor_id)
+    assert current is not None
+    assert int(current.get("reconnect_attempts") or 0) >= 1
+    assert (current.get("engine") or {}).get("container_id") == "engine-2"
+    assert current.get("status") in {"running", "stuck", "starting", "reconnecting"}
 
     await service.stop_all()
 
