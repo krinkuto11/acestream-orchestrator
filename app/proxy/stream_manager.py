@@ -141,9 +141,76 @@ class StreamManager:
         
         logger.info(f"StreamManager initialized for content_id={content_id}")
 
+    def _cleanup_failed_engine_after_transition(self, previous_engine_container_id: Optional[str]) -> None:
+        """Best-effort cleanup for a failed source engine after a successful transition."""
+        previous_id = str(previous_engine_container_id or "").strip()
+        if not previous_id:
+            return
+        if previous_id == str(self.engine_container_id or "").strip():
+            return
+
+        try:
+            from ..services.state import state
+
+            active_streams = state.list_streams(status="started", container_id=previous_id)
+            if active_streams:
+                logger.debug(
+                    "Skipping cleanup for previous engine %s; %s active stream(s) still attached",
+                    previous_id[:12],
+                    len(active_streams),
+                )
+                return
+
+            old_engine = state.get_engine(previous_id)
+            if not old_engine:
+                return
+
+            old_vpn = str(old_engine.vpn_container or "").strip()
+            vpn_failed_or_draining = False
+            if old_vpn:
+                vpn_failed_or_draining = state.is_vpn_node_draining(old_vpn)
+                if not vpn_failed_or_draining:
+                    for node in state.list_vpn_nodes():
+                        node_name = str(node.get("container_name") or "").strip()
+                        if node_name != old_vpn:
+                            continue
+
+                        status = str(node.get("status") or "").strip().lower()
+                        condition = str(node.get("condition") or "").strip().lower()
+                        healthy = bool(node.get("healthy", True))
+                        if (not healthy) or condition == "notready" or status in {"dead", "exited", "down"}:
+                            vpn_failed_or_draining = True
+                        break
+
+            engine_unhealthy = str(old_engine.health_status or "").strip().lower() == "unhealthy"
+            if not vpn_failed_or_draining and not engine_unhealthy:
+                logger.debug(
+                    "Skipping cleanup for previous engine %s; not marked failed/draining",
+                    previous_id[:12],
+                )
+                return
+
+            from ..services.provisioner import stop_container
+
+            stop_container(previous_id, force=True)
+            state.remove_engine(previous_id)
+
+            logger.info(
+                "Cleaned up failed source engine after transition: old=%s new=%s",
+                previous_id[:12],
+                str(self.engine_container_id or "unknown")[:12],
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to cleanup previous engine %s after transition: %s",
+                previous_id[:12],
+                e,
+            )
+
     def _failover_to_new_engine(self):
         """Dynamically fetch a new healthy engine during a retry/failover."""
         try:
+            previous_engine_container_id = str(self.engine_container_id or "").strip()
             penalties = {self.engine_container_id: 999} if self.engine_container_id else None
             new_engine, _ = select_best_engine(additional_load_by_engine=penalties)
 
@@ -170,6 +237,7 @@ class StreamManager:
                 self.engine_host,
                 self.engine_port,
             )
+            self._cleanup_failed_engine_after_transition(previous_engine_container_id)
             return True
         except Exception as e:
             logger.error(f"Failover engine selection failed: {e}")

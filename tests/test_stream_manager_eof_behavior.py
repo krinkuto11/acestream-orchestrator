@@ -309,3 +309,74 @@ def test_retry_attempt_triggers_engine_failover(monkeypatch):
 
     assert call_state["failover_calls"] == 1
     assert call_state["request_calls"] == 2
+
+
+def test_cleanup_failed_engine_after_transition_stops_old_engine(monkeypatch):
+    manager = _build_manager()
+    manager.engine_container_id = "new-engine-123"
+
+    old_engine = Mock()
+    old_engine.vpn_container = "vpn-old"
+    old_engine.health_status = "unhealthy"
+
+    fake_state = Mock()
+    fake_state.list_streams.return_value = []
+    fake_state.get_engine.return_value = old_engine
+    fake_state.is_vpn_node_draining.return_value = True
+    fake_state.list_vpn_nodes.return_value = [
+        {
+            "container_name": "vpn-old",
+            "healthy": False,
+            "status": "running",
+            "condition": "notready",
+        }
+    ]
+
+    stop_calls = {"count": 0}
+    remove_calls = {"count": 0}
+
+    def _fake_stop_container(container_id, force=False):
+        assert container_id == "old-engine-999"
+        assert force is True
+        stop_calls["count"] += 1
+
+    def _fake_remove_engine(container_id):
+        assert container_id == "old-engine-999"
+        remove_calls["count"] += 1
+
+    fake_state.remove_engine.side_effect = _fake_remove_engine
+
+    monkeypatch.setattr("app.services.state.state", fake_state)
+    monkeypatch.setattr("app.services.provisioner.stop_container", _fake_stop_container)
+
+    manager._cleanup_failed_engine_after_transition("old-engine-999")
+
+    assert stop_calls["count"] == 1
+    assert remove_calls["count"] == 1
+
+
+def test_cleanup_failed_engine_after_transition_skips_when_old_engine_has_active_streams(monkeypatch):
+    manager = _build_manager()
+    manager.engine_container_id = "new-engine-123"
+
+    old_engine = Mock()
+    old_engine.vpn_container = "vpn-old"
+    old_engine.health_status = "unhealthy"
+
+    fake_state = Mock()
+    fake_state.list_streams.return_value = [Mock()]
+    fake_state.get_engine.return_value = old_engine
+    fake_state.is_vpn_node_draining.return_value = True
+    fake_state.list_vpn_nodes.return_value = []
+
+    stop_calls = {"count": 0}
+
+    def _fake_stop_container(*_args, **_kwargs):
+        stop_calls["count"] += 1
+
+    monkeypatch.setattr("app.services.state.state", fake_state)
+    monkeypatch.setattr("app.services.provisioner.stop_container", _fake_stop_container)
+
+    manager._cleanup_failed_engine_after_transition("old-engine-999")
+
+    assert stop_calls["count"] == 0
