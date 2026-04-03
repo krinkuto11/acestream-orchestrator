@@ -207,6 +207,7 @@ class MockMpegTsPlayer:
         self._stream_iter: Optional[AsyncIterator[bytes]] = None
         self._pending = bytearray()
         self._packets_read = 0
+        self._sync_locked = False
         self.read_errors: List[BaseException] = []
 
     async def attach(self, response: httpx.Response) -> None:
@@ -219,6 +220,21 @@ class MockMpegTsPlayer:
         target_total = self._packets_read + max(1, int(packet_count))
 
         while self._packets_read < target_total:
+            if not self._sync_locked and not self._try_lock_sync():
+                try:
+                    chunk = await asyncio.wait_for(anext(self._stream_iter), timeout=self.read_timeout_s)
+                except StopAsyncIteration as exc:
+                    self.read_errors.append(exc)
+                    raise AssertionError(
+                        "Socket closed before MPEG-TS sync lock could be established"
+                    ) from exc
+                except (httpx.ReadError, httpx.RemoteProtocolError, asyncio.TimeoutError) as exc:
+                    self.read_errors.append(exc)
+                    raise AssertionError(f"Streaming socket became unstable: {exc}") from exc
+
+                self._pending.extend(chunk)
+                continue
+
             while len(self._pending) >= TS_PACKET_SIZE and self._packets_read < target_total:
                 packet = bytes(self._pending[:TS_PACKET_SIZE])
                 del self._pending[:TS_PACKET_SIZE]
@@ -240,6 +256,31 @@ class MockMpegTsPlayer:
                 raise AssertionError(f"Streaming socket became unstable: {exc}") from exc
 
             self._pending.extend(chunk)
+
+    def _try_lock_sync(self) -> bool:
+        if self._sync_locked:
+            return True
+
+        probe_packets = 5
+        required_span = TS_PACKET_SIZE * probe_packets
+        if len(self._pending) < required_span:
+            return False
+
+        max_start = len(self._pending) - required_span
+        for start in range(max_start + 1):
+            if self._pending[start] != SYNC_BYTE:
+                continue
+            if all(self._pending[start + (idx * TS_PACKET_SIZE)] == SYNC_BYTE for idx in range(1, probe_packets)):
+                if start > 0:
+                    del self._pending[:start]
+                self._sync_locked = True
+                return True
+
+        # Keep only the tail window needed for future sync detection.
+        keep_tail = required_span - 1
+        if len(self._pending) > keep_tail:
+            del self._pending[:-keep_tail]
+        return False
 
     def assert_no_transport_errors(self) -> None:
         assert not self.read_errors, f"Transport errors encountered: {self.read_errors!r}"
@@ -263,7 +304,10 @@ def _load_default_content_id() -> str:
 def _headers(api_key: Optional[str]) -> Dict[str, str]:
     if not api_key:
         return {}
-    return {"X-API-KEY": api_key}
+    return {
+        "X-API-KEY": api_key,
+        "Authorization": f"Bearer {api_key}",
+    }
 
 
 def _extract_items(payload: object) -> List[dict]:

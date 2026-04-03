@@ -287,6 +287,31 @@ Response:
    }
    ```
 
+ - POST /proxy/migrate-stream (protected) → Trigger on-demand stream migration
+   - Triggers TS/HLS stream migration via proxy manager without waiting for background draining reconciliation.
+   - Body:
+   ```json
+   {
+     "stream_key": "b3bdd6ef7f795c4f321a3ce5cf4907338f462929",
+     "old_container_id": "optional-source-container-id",
+     "new_container_id": "optional-target-container-id"
+   }
+   ```
+   - Notes:
+     - `stream_key` is required.
+     - If `new_container_id` is omitted, orchestrator auto-selects a healthy target engine.
+     - If `old_container_id` is provided, selection avoids reusing that engine.
+   - Response:
+   ```json
+   {
+     "migrated": true,
+     "stream_key": "b3bdd6ef7f795c4f321a3ce5cf4907338f462929",
+     "old_container_id": "...",
+     "new_container_id": "...",
+     "state_streams_reassigned": 1
+   }
+   ```
+
 ### Read Operations
 
  - GET /engines → EngineState[]

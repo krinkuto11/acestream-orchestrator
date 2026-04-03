@@ -85,6 +85,12 @@ class WireguardParseRequest(BaseModel):
     file_content: str
 
 
+class StreamMigrationRequest(BaseModel):
+    stream_key: str
+    old_container_id: Optional[str] = None
+    new_container_id: Optional[str] = None
+
+
 def _trigger_engine_generation_rollout(reason: str) -> Dict[str, Any]:
     """Update target engine config generation and request reconciliation."""
     target_hash = compute_current_engine_config_hash()
@@ -1624,6 +1630,53 @@ async def batch_stop_streams(command_urls: List[str]):
         "failure_count": len(command_urls) - success_count,
         "results": results
     }
+
+
+@app.post("/proxy/migrate-stream", dependencies=[Depends(require_api_key)])
+async def migrate_proxy_stream(req: StreamMigrationRequest):
+    """Trigger an on-demand proxy stream migration for TS/HLS continuity workflows."""
+    stream_key = str(req.stream_key or "").strip()
+    if not stream_key:
+        raise HTTPException(status_code=400, detail="stream_key is required")
+
+    old_container_id = str(req.old_container_id or "").strip() or None
+    new_container_id = str(req.new_container_id or "").strip() or None
+
+    selected_engine = None
+    if new_container_id:
+        selected_engine = state.get_engine(new_container_id)
+        if not selected_engine:
+            raise HTTPException(status_code=404, detail=f"Target engine not found: {new_container_id}")
+
+    try:
+        result = await asyncio.to_thread(
+            ProxyManager.migrate_stream,
+            stream_key,
+            selected_engine,
+            old_container_id,
+        )
+    except Exception as e:
+        logger.exception("On-demand stream migration failed for stream_key=%s", stream_key)
+        raise HTTPException(status_code=500, detail=f"stream migration failed: {e}") from e
+
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=500, detail=f"unexpected migration result payload: {result!r}")
+
+    if bool(result.get("migrated")):
+        logger.info(
+            "On-demand stream migration succeeded: key=%s old=%s new=%s",
+            stream_key,
+            str(result.get("old_container_id") or old_container_id or "unknown"),
+            str(result.get("new_container_id") or "unknown"),
+        )
+    else:
+        logger.warning(
+            "On-demand stream migration returned non-migrated result: key=%s reason=%s",
+            stream_key,
+            str(result.get("reason") or "unknown"),
+        )
+
+    return result
 
 # by-label
 from .services.inspect import inspect_container
