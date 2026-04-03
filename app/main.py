@@ -5044,9 +5044,6 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
         
     # Inject manual engines into state if manual mode is enabled
     if current_settings.get("manual_mode"):
-        from .services.state import state
-        from .models.schemas import EngineState
-        
         # Clear existing manual engines first
         manual_keys = [k for k in state.engines.keys() if k.startswith("manual-")]
         for k in manual_keys:
@@ -5081,7 +5078,20 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
     else:
         logger.warning("Failed to persist engine settings to JSON file")
 
-    state.set_desired_replica_count(cfg.MIN_REPLICAS)
+    # Keep desired replicas within the updated [MIN_REPLICAS, MAX_REPLICAS] window
+    # so settings changes take effect immediately without waiting for future demand recompute.
+    previous_desired = state.get_desired_replica_count()
+    adjusted_desired = max(cfg.MIN_REPLICAS, min(previous_desired, cfg.MAX_REPLICAS))
+    state.set_desired_replica_count(adjusted_desired)
+    if adjusted_desired != previous_desired:
+        logger.info(
+            "Adjusted desired replicas after engine settings update: %s -> %s (min=%s max=%s)",
+            previous_desired,
+            adjusted_desired,
+            cfg.MIN_REPLICAS,
+            cfg.MAX_REPLICAS,
+        )
+
     engine_controller.request_reconcile(reason="engine_settings_update")
     rollout = _trigger_engine_generation_rollout(reason="engine_settings_update")
     
