@@ -41,9 +41,6 @@ function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus,
     edges,
     summary,
     selectedNodeId,
-    lastUpdated,
-    isMockMode,
-    initializeMock,
     hydrateFromBackend,
     simulateTick,
     setSelectedNode,
@@ -73,24 +70,13 @@ function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus,
   }, [debouncedFitView])
 
   useEffect(() => {
-    const hasBackendData =
-      Boolean(engines && engines.length > 0) ||
-      Boolean(streams && streams.length > 0) ||
-      Boolean(vpnStatus) ||
-      Boolean(orchestratorStatus)
-
-    if (hasBackendData) {
-      hydrateFromBackend({
-        engines,
-        streams,
-        vpnStatus,
-        orchestratorStatus,
-      })
-      return
-    }
-
-    initializeMock()
-  }, [engines, streams, vpnStatus, orchestratorStatus, hydrateFromBackend, initializeMock])
+    hydrateFromBackend({
+      engines,
+      streams,
+      vpnStatus,
+      orchestratorStatus,
+    })
+  }, [engines, streams, vpnStatus, orchestratorStatus, hydrateFromBackend])
 
   useEffect(() => {
     const interval = window.setInterval(() => {

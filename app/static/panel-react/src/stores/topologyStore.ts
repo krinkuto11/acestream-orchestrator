@@ -50,7 +50,6 @@ interface TopologyState {
   selectedNodeId: string | null
   lastUpdated: string | null
   isMockMode: boolean
-  initializeMock: () => void
   hydrateFromBackend: (snapshot: TopologyInputSnapshot) => void
   simulateTick: () => void
   setSelectedNode: (nodeId: string | null) => void
@@ -360,54 +359,11 @@ const buildSnapshot = (
   lastUpdated: string
   isMockMode: boolean
 } => {
-  const isMockMode = !Boolean(engines && engines.length)
+  const isMockMode = false
 
-  const workingEngines: EngineState[] = !isMockMode
-    ? engines || []
-    : Array.from({ length: 8 }).map((_, idx) => {
-        const tunnel = idx % 2 === 0 ? 'vpn1' : 'vpn2'
-        return {
-          container_id: `mock-engine-${idx + 1}`,
-          container_name: `engine-${idx + 1}`,
-          host: '127.0.0.1',
-          port: 6878 + idx,
-          labels: {},
-          forwarded: false,
-          first_seen: new Date(Date.now() - (idx + 1) * 120000).toISOString(),
-          last_seen: new Date().toISOString(),
-          streams: [],
-          health_status: 'healthy',
-          vpn_container: tunnel,
-        }
-      })
+  const workingEngines: EngineState[] = engines || []
 
-  const workingStreams: StreamState[] = !isMockMode
-    ? streams || []
-    : workingEngines.flatMap((engine, idx) => {
-        const streamCount = idx % 3 === 0 ? 2 : 1
-        return Array.from({ length: streamCount }).map((__, streamIdx) => ({
-          id: `mock-stream-${idx + 1}-${streamIdx + 1}`,
-          key_type: 'infohash',
-          key: `3d2b7cfae9aa${idx}${streamIdx}`,
-          file_indexes: '0',
-          seekback: 0,
-          live_delay: 0,
-          container_id: engine.container_id,
-          container_name: engine.container_name,
-          playback_session_id: `session-${idx + 1}-${streamIdx + 1}`,
-          stat_url: `http://127.0.0.1:${engine.port}/webui/api/service`,
-          command_url: `http://127.0.0.1:${engine.port}/ace/getstream`,
-          is_live: true,
-          started_at: new Date(Date.now() - randomBetween(20000, 120000)).toISOString(),
-          status: 'started',
-          paused: false,
-          peers: Math.round(randomBetween(12, 78)),
-          speed_down: Math.round(randomBetween(12, 95) * 1024),
-          speed_up: Math.round(randomBetween(2, 11) * 1024),
-          downloaded: Math.round(randomBetween(12, 480) * 1024 * 1024),
-          uploaded: Math.round(randomBetween(2, 50) * 1024 * 1024),
-        }))
-      })
+  const workingStreams: StreamState[] = streams || []
 
   const streamMap = new Map<string, StreamState[]>()
   for (const stream of workingStreams) {
@@ -766,13 +722,8 @@ const buildSnapshot = (
   const activeStreams = orchestratorStatus?.streams?.active ?? workingStreams.length
   
   // 3. Client Nodes and Egress Pipelines
-  const mockClients = [
-    { id: 'mock-1', ip: '192.168.1.45', ua: 'VLC/3.0.18', type: 'TS', connected_at: Date.now() / 1000 - 3600, bps: 4500000, bytes_sent: 1.2 * 1024 * 1024 * 1024 },
-    { id: 'mock-2', ip: '172.16.5.12', ua: 'AppleCoreMedia/1.0.0', type: 'HLS', connected_at: Date.now() / 1000 - 1800, bps: 2800000, bytes_sent: 450 * 1024 * 1024 },
-    { id: 'mock-3', ip: '10.0.0.156', ua: 'ExoPlayerLib/2.18.5', type: 'TS', connected_at: Date.now() / 1000 - 600, bps: 6200000, bytes_sent: 2.8 * 1024 * 1024 * 1024 },
-  ]
-  const clientList = isMockMode ? mockClients : (orchestratorStatus?.proxy?.active_clients?.list || [])
-  const activeClients = isMockMode ? clientList.length : (orchestratorStatus?.proxy?.active_clients?.total ?? clientList.length)
+  const clientList = orchestratorStatus?.proxy?.active_clients?.list || []
+  const activeClients = orchestratorStatus?.proxy?.active_clients?.total ?? clientList.length
 
   const proxyNodeX = engineStartX + (NUM_COLUMNS * COLUMN_SPACING_X) + 160
   const clientNodeX = proxyNodeX + 460
@@ -901,21 +852,7 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
   summary: BASE_SUMMARY,
   selectedNodeId: null,
   lastUpdated: null,
-  isMockMode: true,
-
-  initializeMock: () => {
-    nodeInterpolationTargets.clear()
-    edgeInterpolationTargets.clear()
-    const snapshot = buildSnapshot({})
-    set({
-      nodes: snapshot.nodes,
-      edges: snapshot.edges,
-      summary: snapshot.summary,
-      lastUpdated: snapshot.lastUpdated,
-      isMockMode: snapshot.isMockMode,
-      selectedNodeId: null,
-    })
-  },
+  isMockMode: false,
 
   hydrateFromBackend: (snapshot) => {
     const currentState = get()
