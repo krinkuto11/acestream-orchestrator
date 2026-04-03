@@ -103,24 +103,37 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
       try {
         const status = await fetchJSON(`${orchUrl}/api/v1/custom-variant/reprovision/status`)
         const wasReprovisioning = isReprovisioning
+        const inProgress = status?.in_progress === true || status?.status === 'in_progress'
 
         setReprovisionStatus(status)
-        setIsReprovisioning(status.in_progress)
+        setIsReprovisioning(inProgress)
+
+        if (inProgress) {
+          setShowSuccessMessage(false)
+          setShowErrorMessage(false)
+        }
 
         // When reprovisioning completes, show success/error message briefly
-        if (wasReprovisioning && !status.in_progress) {
-          if (status.status === 'success') {
-            setShowSuccessMessage(true)
-            // Auto-dismiss success message after 10 seconds
-            setTimeout(() => setShowSuccessMessage(false), 10000)
-          } else if (status.status === 'error') {
-            setShowErrorMessage(true)
-            // Auto-dismiss error message after 15 seconds
-            setTimeout(() => setShowErrorMessage(false), 15000)
-          }
+        if (wasReprovisioning && !inProgress) {
+          setReprovisionStatus((prev) => ({
+            ...prev,
+            status: 'success',
+            message: 'Reprovisioning completed successfully.'
+          }))
+          setShowSuccessMessage(true)
+          // Auto-dismiss success message after 10 seconds
+          setTimeout(() => setShowSuccessMessage(false), 10000)
         }
       } catch (err) {
-        // Ignore errors
+        if (isReprovisioning) {
+          setReprovisionStatus((prev) => ({
+            ...prev,
+            status: 'error',
+            message: 'Failed to refresh reprovision status. Retrying...'
+          }))
+          setShowErrorMessage(true)
+          setTimeout(() => setShowErrorMessage(false), 15000)
+        }
       }
     }
 
@@ -204,25 +217,15 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                   <p className="text-sm text-muted-foreground">
                     {reprovisionStatus?.message || 'Engines are being reprovisioned with new settings.'}
                   </p>
+                  <p className="text-xs text-muted-foreground">
+                    Phase: {reprovisionStatus?.current_phase || 'provisioning'}
+                  </p>
                   {(() => {
-                    // Calculate progress percentage based on current phase and counts
-                    let progress = 0
-                    if (reprovisionStatus) {
-                      const { current_phase, engines_stopped = 0, total_engines = 0 } = reprovisionStatus
-
-                      if (current_phase === 'stopping' && total_engines > 0) {
-                        // Stopping phase: 0-40% of progress
-                        progress = Math.round((engines_stopped / total_engines) * 40)
-                      } else if (current_phase === 'cleaning') {
-                        // Cleaning phase: 40-50% of progress
-                        progress = 45
-                      } else if (current_phase === 'provisioning') {
-                        // Provisioning phase: 50-100% of progress
-                        progress = 50 + Math.round((engines_stopped / Math.max(total_engines, 1)) * 50)
-                      } else if (current_phase === 'complete') {
-                        progress = 100
-                      }
-                    }
+                    const total = Number(reprovisionStatus?.total_engines || 0)
+                    const provisioned = Number(reprovisionStatus?.engines_provisioned || 0)
+                    const progress = total > 0
+                      ? Math.max(0, Math.min(100, Math.round((provisioned / total) * 100)))
+                      : (reprovisionStatus?.current_phase === 'complete' ? 100 : 0)
                     return <Progress value={progress} className="w-full mt-2" />
                   })()}
                 </div>
@@ -428,6 +431,16 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                             'Authorization': `Bearer ${apiKey}`
                           }
                         }).then(() => {
+                          setIsReprovisioning(true)
+                          setShowSuccessMessage(false)
+                          setShowErrorMessage(false)
+                          setReprovisionStatus((prev) => ({
+                            ...prev,
+                            in_progress: true,
+                            status: 'in_progress',
+                            current_phase: 'provisioning',
+                            message: 'Rolling update scheduled. Waiting for controller reconciliation...'
+                          }))
                           addNotification('Reprovisioning started', 'success')
                         }).catch(err => {
                           addNotification(`Failed to start reprovision: ${err.message}`, 'error')

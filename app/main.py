@@ -46,7 +46,6 @@ from .models.schemas import (
 from .services.collector import collector
 from .services.event_logger import event_logger
 from .services.stream_cleanup import stream_cleanup
-from .services.monitor import docker_monitor
 from .services.metrics import (
     update_custom_metrics,
     observe_proxy_request,
@@ -419,7 +418,6 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await collector.stop()
     await stream_cleanup.stop()  # Stop stream cleanup service
-    await docker_monitor.stop()  # Stop Docker monitoring
     await health_monitor.stop()  # Stop health monitoring
     await health_manager.stop()  # Stop health management
     await docker_stats_collector.stop()  # Stop Docker stats collector
