@@ -107,14 +107,14 @@ Runtime state is centralized in `state.py` for fast reads and coordinated writes
 
 ### Current Characteristics
 
-- Uses an `RLock` to synchronize multi-threaded access paths.
-- Maintains engine, stream, VPN-node, and intent state snapshots.
-- Persists canonical records to SQLite for restart durability.
+- Uses an `RLock` to synchronize in-memory mutations only.
+- Maintains engine, stream, VPN-node, monitor-session, and scaling-intent snapshots for low-latency reads.
+- Persists canonical records to SQLite through an asynchronous write-behind queue.
+- Runs a dedicated background DB worker thread that drains queued persistence tasks and commits outside the request/proxy critical path.
+- Captures immutable payloads for queued DB tasks to avoid races with live in-memory objects.
+- Shuts down persistence gracefully using a stop signal and poison-pill task during cleanup.
 
-> [!WARNING]
-> **Architectural debt note**
->
-> `state.py` currently combines synchronization and persistence orchestration behind the same state lifecycle. The long-term design goal is to decouple SQLite persistence from the `RLock`-guarded critical path to reduce async event-loop blocking risk under high churn.
+This design decouples disk latency from state reads/writes in the hot path and reduces lock contention under high stream churn.
 
 ## Operational Flow
 

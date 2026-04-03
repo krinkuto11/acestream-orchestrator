@@ -1,8 +1,9 @@
 from __future__ import annotations
+import queue
 import threading
 import logging
 import uuid
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..models.schemas import EngineState, StreamState, StreamStartedEvent, StreamEndedEvent, StreamStatSnapshot
@@ -19,6 +20,10 @@ VPN_NODE_LIFECYCLE_DRAINING = "draining"
 class State:
     def __init__(self):
         self._lock = threading.RLock()
+        self._db_queue: queue.Queue = queue.Queue()
+        self._stop_db_worker = threading.Event()
+        self._db_worker = threading.Thread(target=self._db_persistence_worker, daemon=True, name="state-db-worker")
+        self._db_worker.start()
         self.engines: Dict[str, EngineState] = {}
         self.streams: Dict[str, StreamState] = {}
         self.stream_stats: Dict[str, List[StreamStatSnapshot]] = {}
@@ -52,6 +57,38 @@ class State:
     @staticmethod
     def now():
         return datetime.now(timezone.utc)
+
+    def _enqueue_db_task(self, task: Callable[[Any], None]):
+        if self._stop_db_worker.is_set():
+            logger.debug("Skipping DB task enqueue because DB worker is stopping")
+            return
+        self._db_queue.put(task)
+
+    def _db_persistence_worker(self):
+        while True:
+            if self._stop_db_worker.is_set() and self._db_queue.empty():
+                break
+
+            try:
+                task = self._db_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+
+            try:
+                if task is None:
+                    break
+
+                with SessionLocal() as s:
+                    try:
+                        task(s)
+                        s.commit()
+                    except Exception as e:
+                        logger.error(f"Background DB write failed: {e}")
+                        s.rollback()
+            except Exception as e:
+                logger.error(f"DB worker loop error: {e}")
+            finally:
+                self._db_queue.task_done()
     
     def on_stream_started(self, evt: StreamStartedEvent) -> StreamState:
         with self._lock:
@@ -155,14 +192,36 @@ class State:
                     )
                     self.stream_stats.setdefault(stream_id, []).append(initial_snap)
 
-        with SessionLocal() as s:
-            s.merge(EngineRow(engine_key=eng.container_id, container_id=evt.container_id, container_name=container_name,
-                              host=eng.host, port=eng.port, labels=eng.labels, forwarded=eng.forwarded, 
-                              first_seen=eng.first_seen, last_seen=eng.last_seen, vpn_container=eng.vpn_container))
-            s.merge(StreamRow(id=stream_id, engine_key=eng.container_id, key_type=st.key_type, key=st.key,
-                              playback_session_id=st.playback_session_id, stat_url=st.stat_url, command_url=st.command_url,
-                              is_live=st.is_live, started_at=st.started_at, status=st.status))
-            s.commit()
+        engine_payload = {
+            "engine_key": eng.container_id,
+            "container_id": evt.container_id,
+            "container_name": container_name,
+            "host": eng.host,
+            "port": eng.port,
+            "labels": dict(eng.labels or {}),
+            "forwarded": eng.forwarded,
+            "first_seen": eng.first_seen,
+            "last_seen": eng.last_seen,
+            "vpn_container": eng.vpn_container,
+        }
+        stream_payload = {
+            "id": stream_id,
+            "engine_key": eng.container_id,
+            "key_type": st.key_type,
+            "key": st.key,
+            "playback_session_id": st.playback_session_id,
+            "stat_url": st.stat_url,
+            "command_url": st.command_url,
+            "is_live": st.is_live,
+            "started_at": st.started_at,
+            "status": st.status,
+        }
+
+        def db_work(session):
+            session.merge(EngineRow(**engine_payload))
+            session.merge(StreamRow(**stream_payload))
+
+        self._enqueue_db_task(db_work)
         return st
 
     def on_stream_ended(self, evt: StreamEndedEvent) -> Optional[StreamState]:
@@ -199,14 +258,20 @@ class State:
             if st.id in self.stream_stats:
                 del self.stream_stats[st.id]
                 
-        try:
-            with SessionLocal() as s:
-                row = s.get(StreamRow, st.id)
+        if st:
+            stream_end_payload = {
+                "id": st.id,
+                "ended_at": st.ended_at,
+                "status": st.status,
+            }
+
+            def db_work(session):
+                row = session.get(StreamRow, stream_end_payload["id"])
                 if row:
-                    row.ended_at = st.ended_at; row.status = st.status; s.commit()
-        except Exception:
-            # Database operation failed, but we can continue since we've updated memory state
-            pass
+                    row.ended_at = stream_end_payload["ended_at"]
+                    row.status = str(stream_end_payload["status"])
+
+            self._enqueue_db_task(db_work)
         
         # Clean up metrics tracking for ended stream
         if stream_id_for_metrics:
@@ -265,6 +330,7 @@ class State:
         provision a new engine to maintain MIN_REPLICAS. That new engine will become
         the forwarded engine since none will exist for that VPN.
         """
+        ended_stream_updates: List[Dict[str, object]] = []
         with self._lock:
             removed_engine = self.engines.pop(container_id, None)
             if removed_engine:
@@ -276,17 +342,14 @@ class State:
                     stream = self.streams[s_id]
                     stream.status = "ended"
                     stream.ended_at = self.now()
-                    
-                    # Update database
-                    try:
-                        with SessionLocal() as s:
-                            row = s.get(StreamRow, s_id)
-                            if row:
-                                row.ended_at = stream.ended_at
-                                row.status = stream.status
-                                s.commit()
-                    except Exception:
-                        pass  # Database operation failed, continue
+
+                    ended_stream_updates.append(
+                        {
+                            "id": s_id,
+                            "ended_at": stream.ended_at,
+                            "status": stream.status,
+                        }
+                    )
                     
                     # Now remove from memory (consistent with on_stream_ended behavior)
                     del self.streams[s_id]
@@ -295,16 +358,21 @@ class State:
         
         # Remove from database as well (if database is available)
         if removed_engine:
-            try:
-                with SessionLocal() as s:
-                    # Remove engine from database
-                    engine_row = s.get(EngineRow, container_id)
-                    if engine_row:
-                        s.delete(engine_row)
-                        s.commit()
-            except Exception:
-                # Database operation failed, but we can continue since we've updated memory state
-                pass
+            updates_payload = [dict(item) for item in ended_stream_updates]
+            removed_engine_id = str(container_id)
+
+            def db_work(session):
+                for payload in updates_payload:
+                    row = session.get(StreamRow, str(payload["id"]))
+                    if row:
+                        row.ended_at = payload["ended_at"]
+                        row.status = str(payload["status"])
+
+                engine_row = session.get(EngineRow, removed_engine_id)
+                if engine_row:
+                    session.delete(engine_row)
+
+            self._enqueue_db_task(db_work)
 
             try:
                 from .engine_info import invalidate_engine_version_cache
@@ -406,20 +474,20 @@ class State:
         if not updates:
             return 0
 
-        try:
-            with SessionLocal() as s:
-                for payload in updates:
-                    row = s.get(StreamRow, str(payload["stream_id"]))
-                    if not row:
-                        continue
-                    row.engine_key = str(payload["new_engine"])
-                    row.playback_session_id = str(payload["playback_session_id"])
-                    row.stat_url = str(payload["stat_url"])
-                    row.command_url = str(payload["command_url"])
-                    row.is_live = bool(payload["is_live"])
-                s.commit()
-        except Exception as e:
-            logger.warning("Failed persisting migrated stream ownership for key %s: %s", normalized_key, e)
+        updates_payload = [dict(payload) for payload in updates]
+
+        def db_work(session):
+            for payload in updates_payload:
+                row = session.get(StreamRow, str(payload["stream_id"]))
+                if not row:
+                    continue
+                row.engine_key = str(payload["new_engine"])
+                row.playback_session_id = str(payload["playback_session_id"])
+                row.stat_url = str(payload["stat_url"])
+                row.command_url = str(payload["command_url"])
+                row.is_live = bool(payload["is_live"])
+
+        self._enqueue_db_task(db_work)
 
         logger.info(
             "Reassigned %s active stream(s) for key=%s from engine=%s to engine=%s",
@@ -590,29 +658,57 @@ class State:
             from ..core.config import cfg as _cfg
             if len(arr) > _cfg.STATS_HISTORY_MAX:
                 del arr[: len(arr) - _cfg.STATS_HISTORY_MAX]
+
+        stat_payload = {
+            "stream_id": stream_id,
+            "ts": snap.ts,
+            "peers": snap.peers,
+            "speed_down": snap.speed_down,
+            "speed_up": snap.speed_up,
+            "downloaded": snap.downloaded,
+            "uploaded": snap.uploaded,
+            "status": snap.status,
+        }
+
         # Note: livepos data is intentionally not persisted to database
         # It's highly transient (updates every 1s) and would cause database bloat.
         # It's only kept in memory for real-time access via /streams endpoint.
-        with SessionLocal() as s:
-            s.add(StatRow(stream_id=stream_id, ts=snap.ts, peers=snap.peers, speed_down=snap.speed_down,
-                          speed_up=snap.speed_up, downloaded=snap.downloaded, uploaded=snap.uploaded, status=snap.status))
-            s.commit()
+
+        def db_work(session):
+            session.add(
+                StatRow(
+                    stream_id=str(stat_payload["stream_id"]),
+                    ts=stat_payload["ts"],
+                    peers=stat_payload["peers"],
+                    speed_down=stat_payload["speed_down"],
+                    speed_up=stat_payload["speed_up"],
+                    downloaded=stat_payload["downloaded"],
+                    uploaded=stat_payload["uploaded"],
+                    status=stat_payload["status"],
+                )
+            )
+
+        self._enqueue_db_task(db_work)
 
     def set_engine_vpn(self, container_id: str, vpn_container: str):
         """Set the VPN container assignment for an engine."""
+        update_payload = None
         with self._lock:
             eng = self.engines.get(container_id)
             if eng:
                 eng.vpn_container = vpn_container
-                # Update database as well
-                try:
-                    with SessionLocal() as s:
-                        engine_row = s.get(EngineRow, container_id)
-                        if engine_row:
-                            engine_row.vpn_container = vpn_container
-                            s.commit()
-                except Exception as e:
-                    logger.warning(f"Failed to update VPN assignment in database: {e}")
+                update_payload = {
+                    "container_id": str(container_id),
+                    "vpn_container": str(vpn_container),
+                }
+
+        if update_payload:
+            def db_work(session):
+                engine_row = session.get(EngineRow, update_payload["container_id"])
+                if engine_row:
+                    engine_row.vpn_container = update_payload["vpn_container"]
+
+            self._enqueue_db_task(db_work)
 
     def get_engines_by_vpn(self, vpn_container: str) -> List[EngineState]:
         """Get all engines assigned to a specific VPN container."""
@@ -640,6 +736,7 @@ class State:
 
     def load_from_db(self):
         from ..models.db_models import EngineRow, StreamRow
+        from ..services.db import SessionLocal
         with SessionLocal() as s:
             for e in s.query(EngineRow).all():
                 # Ensure datetime objects are timezone-aware when loaded from database
@@ -715,6 +812,7 @@ class State:
     def clear_database(self):
         """Clear all database state."""
         from ..models.db_models import EngineRow, StreamRow, StatRow
+        from ..services.db import SessionLocal
         with SessionLocal() as s:
             try:
                 # Delete all records in reverse dependency order
@@ -777,6 +875,14 @@ class State:
     def cleanup_all(self):
         """Full cleanup: stop containers, clear database and memory state."""
         logger.info("Starting full cleanup: stopping managed engine and dynamic VPN containers")
+
+        # Stop the async DB worker so no persistence tasks race with cleanup.
+        self._stop_db_worker.set()
+        self._db_queue.put(None)
+        try:
+            self._db_worker.join(timeout=5.0)
+        except Exception as e:
+            logger.warning(f"Failed to join DB worker thread during cleanup: {e}")
         
         # Stop all managed containers in parallel
         containers_stopped = 0
@@ -1199,25 +1305,23 @@ class State:
         if not engine_snapshot:
             return
 
-        try:
-            with SessionLocal() as s:
-                s.merge(
-                    EngineRow(
-                        engine_key=engine_snapshot.container_id,
-                        container_id=engine_snapshot.container_id,
-                        container_name=engine_snapshot.container_name,
-                        host=engine_snapshot.host,
-                        port=engine_snapshot.port,
-                        labels=engine_snapshot.labels,
-                        forwarded=engine_snapshot.forwarded,
-                        first_seen=engine_snapshot.first_seen,
-                        last_seen=engine_snapshot.last_seen,
-                        vpn_container=engine_snapshot.vpn_container,
-                    )
-                )
-                s.commit()
-        except Exception as e:
-            logger.debug(f"Failed to persist Docker event update for {container_id[:12]}: {e}")
+        engine_payload = {
+            "engine_key": engine_snapshot.container_id,
+            "container_id": engine_snapshot.container_id,
+            "container_name": engine_snapshot.container_name,
+            "host": engine_snapshot.host,
+            "port": engine_snapshot.port,
+            "labels": dict(engine_snapshot.labels or {}),
+            "forwarded": engine_snapshot.forwarded,
+            "first_seen": engine_snapshot.first_seen,
+            "last_seen": engine_snapshot.last_seen,
+            "vpn_container": engine_snapshot.vpn_container,
+        }
+
+        def db_work(session):
+            session.merge(EngineRow(**engine_payload))
+
+        self._enqueue_db_task(db_work)
     
     def set_forwarded_engine(self, container_id: str):
         """Mark an engine as the forwarded engine and clear forwarded flag from others.
@@ -1226,6 +1330,7 @@ class State:
         VPN have their forwarded flag cleared. Otherwise all forwarded flags are
         cleared before assigning the target.
         """
+        db_updates: List[Dict[str, object]] = []
         with self._lock:
             # Get the target engine first to determine its VPN
             target_engine = self.engines.get(container_id)
@@ -1243,23 +1348,46 @@ class State:
                     
                     if should_clear:
                         engine.forwarded = False
-                        # Update database
-                        with SessionLocal() as s:
-                            s.merge(EngineRow(engine_key=engine.container_id, container_id=engine.container_id,
-                                            container_name=engine.container_name, host=engine.host, port=engine.port,
-                                            labels=engine.labels, forwarded=False, first_seen=engine.first_seen,
-                                            last_seen=engine.last_seen, vpn_container=engine.vpn_container))
-                            s.commit()
+                        db_updates.append(
+                            {
+                                "engine_key": engine.container_id,
+                                "container_id": engine.container_id,
+                                "container_name": engine.container_name,
+                                "host": engine.host,
+                                "port": engine.port,
+                                "labels": dict(engine.labels or {}),
+                                "forwarded": False,
+                                "first_seen": engine.first_seen,
+                                "last_seen": engine.last_seen,
+                                "vpn_container": engine.vpn_container,
+                            }
+                        )
             
             # Set forwarded flag on the specified engine
             target_engine.forwarded = True
-            # Update database
-            with SessionLocal() as s:
-                s.merge(EngineRow(engine_key=target_engine.container_id, container_id=target_engine.container_id,
-                                container_name=target_engine.container_name, host=target_engine.host, port=target_engine.port,
-                                labels=target_engine.labels, forwarded=True, first_seen=target_engine.first_seen,
-                                last_seen=target_engine.last_seen, vpn_container=target_engine.vpn_container))
-                s.commit()
+            db_updates.append(
+                {
+                    "engine_key": target_engine.container_id,
+                    "container_id": target_engine.container_id,
+                    "container_name": target_engine.container_name,
+                    "host": target_engine.host,
+                    "port": target_engine.port,
+                    "labels": dict(target_engine.labels or {}),
+                    "forwarded": True,
+                    "first_seen": target_engine.first_seen,
+                    "last_seen": target_engine.last_seen,
+                    "vpn_container": target_engine.vpn_container,
+                }
+            )
+
+        if db_updates:
+            updates_payload = [dict(payload) for payload in db_updates]
+
+            def db_work(session):
+                for payload in updates_payload:
+                    session.merge(EngineRow(**payload))
+
+            self._enqueue_db_task(db_work)
             
             if target_vpn:
                 logger.info(f"Engine {container_id[:12]} is now the forwarded engine for VPN '{target_vpn}'")
@@ -1352,6 +1480,7 @@ class State:
         if streams_to_remove:
             try:
                 from ..models.db_models import StreamRow, StatRow
+                from ..services.db import SessionLocal
                 with SessionLocal() as s:
                     # Delete stats first (foreign key constraint)
                     s.query(StatRow).filter(StatRow.stream_id.in_(streams_to_remove)).delete(synchronize_session=False)
