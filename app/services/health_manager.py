@@ -122,29 +122,31 @@ class HealthManager:
         for engine in engines:
             health_status = check_acestream_health(engine.host, engine.port)
             engine_health = self._engine_health[engine.container_id]
-            
-            # Update state with health status
-            state.update_engine_health(engine.container_id, health_status)
-            
+
             if health_status == "healthy":
                 engine_health.consecutive_failures = 0
                 engine_health.last_healthy_time = datetime.now(timezone.utc)
                 engine_health.first_failure_time = None
+                state.update_engine_health(engine.container_id, "healthy")
                 healthy_engines.append(engine)
             else:
                 engine_health.consecutive_failures += 1
                 if engine_health.first_failure_time is None:
                     engine_health.first_failure_time = datetime.now(timezone.utc)
-                
+
+                is_unhealthy = engine_health.is_considered_unhealthy()
+                if is_unhealthy:
+                    state.update_engine_health(engine.container_id, "unhealthy")
+
                 # In manual mode, we track health but do NOT mark engines as unhealthy
                 # for replacement logic (because we cannot replace them automatically).
                 if is_manual_mode:
                     # Still consider them "healthy" for the sake of the lists so they don't trigger replacement
                     healthy_engines.append(engine)
-                elif engine_health.is_considered_unhealthy():
+                elif is_unhealthy:
                     unhealthy_engines.append(engine)
                 else:
-                    # Still in grace period, consider as potentially healthy
+                    # Transient probe failure: keep prior reported status stable.
                     healthy_engines.append(engine)
         
         logger.debug(f"Health check: {len(healthy_engines)} healthy, {len(unhealthy_engines)} unhealthy engines")

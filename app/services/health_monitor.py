@@ -8,10 +8,10 @@ logger = logging.getLogger(__name__)
 
 class HealthMonitor:
     """
-    Basic health monitoring service that updates engine health status.
+    Observability health monitor that reports aggregate engine health status.
     
-    Note: This works alongside the HealthManager service which handles
-    proactive engine replacement and availability management.
+    Note: HealthManager is the authoritative writer for per-engine health.
+    This monitor intentionally avoids active probing/writes to prevent status flapping.
     """
     def __init__(self, check_interval: int = 30):
         self.check_interval = check_interval
@@ -47,10 +47,7 @@ class HealthMonitor:
         while self._running:
             check_start = time.time()
             try:
-                # Update health for all engines
-                state.update_engines_health()
-                logger.debug("Updated health status for all engines")
-                
+                # HealthManager owns active probing; this monitor only reports aggregate status.
                 duration = time.time() - check_start
                 
                 # Log health check results
