@@ -75,6 +75,20 @@ def _check_container_health_sync(container_name: str) -> Optional[bool]:
         return None
 
 
+def _is_control_server_reachable_sync(container_name: str, timeout: float = 1.5) -> bool:
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.get(f"http://{container_name}:{cfg.GLUETUN_API_PORT}/v1/vpn/status")
+            if response.status_code == 401:
+                # Control server is reachable but auth is required.
+                return True
+            response.raise_for_status()
+            return True
+    except Exception as exc:
+        logger.debug("Control server not reachable yet for '%s': %s", container_name, exc)
+        return False
+
+
 def _get_cached_port(container_name: str) -> Optional[int]:
     item = _FORWARDED_PORT_CACHE.get(container_name)
     if not item:
@@ -190,6 +204,9 @@ async def fetch_forwarded_port(container_name: Optional[str] = None) -> Optional
     if cached is not None:
         return cached
 
+    if not _is_control_server_reachable_sync(target):
+        return None
+
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.get(f"http://{target}:{cfg.GLUETUN_API_PORT}/v1/portforward")
@@ -207,6 +224,9 @@ async def fetch_forwarded_port(container_name: Optional[str] = None) -> Optional
             return None
         logger.warning("Failed to fetch forwarded port for '%s': %s", target, exc)
         return None
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
+        logger.debug("Control server not ready for forwarded-port query on '%s': %s", target, exc)
+        return None
     except Exception as exc:
         logger.warning("Failed to fetch forwarded port for '%s': %s", target, exc)
         return None
@@ -220,6 +240,9 @@ def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[in
     cached = _get_cached_port(target)
     if cached is not None:
         return cached
+
+    if not _is_control_server_reachable_sync(target):
+        return None
 
     try:
         with httpx.Client(timeout=10) as client:
@@ -237,6 +260,9 @@ def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[in
             logger.info("Port forwarding not supported by VPN config for '%s'", target)
             return None
         logger.warning("Failed to fetch forwarded port for '%s': %s", target, exc)
+        return None
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
+        logger.debug("Control server not ready for forwarded-port query on '%s': %s", target, exc)
         return None
     except Exception as exc:
         logger.warning("Failed to fetch forwarded port for '%s': %s", target, exc)
@@ -330,8 +356,9 @@ def _single_vpn_status(container_name: str) -> Dict[str, object]:
     node = _state_node(container_name)
     state_health = bool(node.get("healthy")) if node is not None else None
     health_bool = state_health if state_health is not None else _check_container_health_sync(container_name)
+    control_ready = _is_control_server_reachable_sync(container_name)
 
-    connected = bool(health_bool)
+    connected = bool(health_bool) and control_ready
     health = "healthy" if connected else "unhealthy"
 
     forwarded_port = get_forwarded_port_sync(container_name) if connected else None
