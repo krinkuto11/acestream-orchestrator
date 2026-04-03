@@ -8,7 +8,6 @@ This guide covers deployment of the AceStream Orchestrator in various configurat
 - [Deployment Modes](#deployment-modes)
   - [Standalone (No VPN)](#standalone-no-vpn)
   - [Dynamic VPN Mode (Orchestrator-Managed)](#dynamic-vpn-mode-orchestrator-managed)
-  - [Legacy External Gluetun Compose (Deprecated)](#legacy-external-gluetun-compose-deprecated)
 - [Production Checklist](#production-checklist)
 - [Monitoring](#monitoring)
 - [Troubleshooting](#troubleshooting)
@@ -100,13 +99,6 @@ docker-compose up -d
 3. **High availability behavior:**
 - The controller provisions multiple dynamic VPN nodes as load grows.
 - Desired VPN node count is derived from active engine demand and `PREFERRED_ENGINES_PER_VPN`.
-
-### Legacy External Gluetun Compose (Deprecated)
-
-`docker-compose.gluetun.yml` and `docker-compose.gluetun-redundant.yml` are deprecated.
-They are retained only for backward compatibility and are no longer the recommended deployment path.
-
-Use orchestrator-managed dynamic provisioning unless you are maintaining an existing legacy setup.
 
 ---
 

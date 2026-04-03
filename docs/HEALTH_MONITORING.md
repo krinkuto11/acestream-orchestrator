@@ -205,4 +205,4 @@ AUTO_DELETE=true                 # Enable/disable automatic deletion
 - [API Documentation](API.md) - Health and engine endpoints
 - [Configuration](CONFIG.md) - Health monitoring settings
 - [Architecture](ARCHITECTURE.md) - System architecture and operations
-- [Gluetun Integration](GLUETUN_INTEGRATION.md) - VPN health monitoring
+- [Dynamic VPN Management](DYNAMIC_VPN_MANAGEMENT.md) - VPN health and failover model
