@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import ReactECharts from 'echarts-for-react'
-import { AlertTriangle, GaugeCircle, Network, Server, ShieldAlert, Tv, Waves, Workflow } from 'lucide-react'
+import { AlertTriangle, GaugeCircle, KeyRound, Network, Server, ShieldAlert, Tv, Waves, Workflow } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -144,6 +144,7 @@ export function StreamingCentralPage({
   orchUrl,
   apiKey,
 }) {
+  const [vpnLeaseSummary, setVpnLeaseSummary] = useState(null)
   const { resolvedTheme } = useTheme()
   const {
     kpiHistory,
@@ -182,6 +183,31 @@ export function StreamingCentralPage({
       window.clearInterval(interval)
     }
   }, [orchUrl, apiKey, refreshBackendTelemetry])
+
+  useEffect(() => {
+    let isCancelled = false
+
+    const fetchVpnLeases = async () => {
+      try {
+        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+        const response = await fetch(`${orchUrl}/api/v1/vpn/leases`, { headers })
+        if (!response.ok) return
+        const payload = await response.json()
+        if (!isCancelled) {
+          setVpnLeaseSummary(payload)
+        }
+      } catch {
+        // Best-effort telemetry: do not disrupt dashboard polling.
+      }
+    }
+
+    fetchVpnLeases()
+    const interval = window.setInterval(fetchVpnLeases, 10000)
+    return () => {
+      isCancelled = true
+      window.clearInterval(interval)
+    }
+  }, [orchUrl, apiKey])
 
   useEffect(() => {
     if (!selectedEngineId) return undefined
@@ -360,9 +386,38 @@ export function StreamingCentralPage({
   const unhealthyEnginesValue = Number(
     orchestratorStatus?.engines?.unhealthy ?? (engines || []).filter((engine) => engine.health_status === 'unhealthy').length,
   )
+  const runningEnginesValue = Number(orchestratorStatus?.engines?.running ?? (engines || []).length)
   const breakerState = orchestratorStatus?.provisioning?.circuit_breaker_state || 'unknown'
-  const capacityUsed = orchestratorStatus?.capacity?.used ?? 0
-  const capacityTotal = orchestratorStatus?.capacity?.total ?? 0
+  const capacityUsed = Number(orchestratorStatus?.capacity?.used ?? 0)
+  const capacityTotal = Number(orchestratorStatus?.capacity?.total ?? 0)
+  const capacityMax = Number(orchestratorStatus?.capacity?.max_replicas ?? capacityTotal)
+
+  const credentialSummary = useMemo(() => {
+    const statusSummary = vpnStatus?.lease_summary || vpnStatus?.credentials_summary || null
+    const merged = vpnLeaseSummary || statusSummary || {}
+    const leased = Number(merged?.leased ?? merged?.active_leases ?? 0)
+    const total = Number(
+      merged?.max_vpn_capacity
+      ?? merged?.total
+      ?? merged?.pool_size
+      ?? merged?.credentials_total
+      ?? ((Number(merged?.available ?? 0) + leased) || 0),
+    )
+    return {
+      leased,
+      total: Math.max(total, leased),
+    }
+  }, [vpnLeaseSummary, vpnStatus])
+
+  const provisioningBlocked = orchestratorStatus?.provisioning?.can_provision === false
+  const provisioningBlockedReason = orchestratorStatus?.provisioning?.blocked_reason
+  const provisioningRecoveryEta =
+    orchestratorStatus?.provisioning?.blocked_reason_details?.recovery_eta_seconds ?? null
+
+  const vpnCredentialPoints = useMemo(() => {
+    const pointCount = Math.max(4, kpiHistory.timestamps?.length || 0)
+    return Array.from({ length: pointCount }).map(() => credentialSummary.leased)
+  }, [credentialSummary.leased, kpiHistory.timestamps])
 
   const vpnEssentials = useMemo(() => {
     if (!vpnStatus || vpnStatus.mode === 'disabled') {
@@ -434,6 +489,17 @@ export function StreamingCentralPage({
         </Alert>
       )}
 
+      {provisioningBlocked && provisioningBlockedReason && (
+        <Alert variant="warning" className="border-amber-500/60 bg-amber-500/10">
+          <AlertTriangle className="h-4 w-4 text-amber-300" />
+          <AlertTitle>Provisioning Blocked</AlertTitle>
+          <AlertDescription>
+            {provisioningBlockedReason}
+            {typeof provisioningRecoveryEta === 'number' ? ` Recovery ETA: ${provisioningRecoveryEta}s.` : ''}
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Tabs defaultValue="pulse" className="space-y-3">
         <TabsList className="grid w-full grid-cols-4 border-slate-700 bg-slate-900/90 text-slate-300">
           <TabsTrigger value="pulse" className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50">Global Pulse</TabsTrigger>
@@ -444,7 +510,7 @@ export function StreamingCentralPage({
 
         <TabsContent value="pulse" className="space-y-3">
           <div className="grid grid-cols-12 gap-4">
-            <div className="col-span-12 sm:col-span-6 xl:col-span-3">
+            <div className="col-span-12 sm:col-span-6 xl:col-span-2">
               <KpiTile
                 title="Active Streams"
                 value={activeStreamsValue}
@@ -453,7 +519,7 @@ export function StreamingCentralPage({
                 icon={Tv}
               />
             </div>
-            <div className="col-span-12 sm:col-span-6 xl:col-span-3">
+            <div className="col-span-12 sm:col-span-6 xl:col-span-2">
               <KpiTile
                 title="Global Egress"
                 value={egressDisplay.value}
@@ -465,11 +531,21 @@ export function StreamingCentralPage({
             </div>
             <div className="col-span-12 sm:col-span-6 xl:col-span-3">
               <KpiTile
-                title="Healthy Engines"
-                value={healthyEnginesValue}
+                title="Engine Capacity"
+                value={`${runningEnginesValue} / ${capacityUsed}`}
+                suffix={capacityMax > 0 ? `(max ${capacityMax})` : ''}
                 points={kpiHistory.healthyEngines}
-                tone="amber"
+                tone={runningEnginesValue >= capacityMax && capacityMax > 0 ? 'rose' : 'amber'}
                 icon={Server}
+              />
+            </div>
+            <div className="col-span-12 sm:col-span-6 xl:col-span-2">
+              <KpiTile
+                title="VPN Credentials"
+                value={`${credentialSummary.leased} / ${credentialSummary.total}`}
+                points={vpnCredentialPoints}
+                tone={credentialSummary.leased > 0 ? 'amber' : 'default'}
+                icon={KeyRound}
               />
             </div>
             <div className="col-span-12 sm:col-span-6 xl:col-span-3">
@@ -500,7 +576,7 @@ export function StreamingCentralPage({
                 </div>
                 <div className="rounded-md border border-border bg-muted/40 p-3">
                   <p className="text-xs uppercase tracking-wider text-muted-foreground">Capacity</p>
-                  <p className="mt-0.5 font-semibold text-foreground">{capacityUsed} / {capacityTotal}</p>
+                  <p className="mt-0.5 font-semibold text-foreground">{runningEnginesValue} / {capacityUsed} (max {capacityMax || capacityTotal})</p>
                 </div>
                 <div className="rounded-md border border-border bg-muted/40 p-3">
                   <p className="text-xs uppercase tracking-wider text-muted-foreground">Circuit breaker</p>

@@ -416,6 +416,7 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
             showVpnLabel={true}
             orchUrl={orchUrl}
             vpnMode={isRedundantMode ? 'redundant' : null}
+            vpnStatus={vpnStatus}
           />
         ) : (
           // Card view - Grid layout for side-by-side VPN groups in redundant mode
@@ -491,6 +492,7 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
           showVpnLabel={false}
           orchUrl={orchUrl}
           vpnMode={null}
+          vpnStatus={vpnStatus}
         />
       ) : (
         <>

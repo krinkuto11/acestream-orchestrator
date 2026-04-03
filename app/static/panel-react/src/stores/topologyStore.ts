@@ -7,7 +7,7 @@ import type {
   VpnStatusPayload,
 } from '@/types/orchestrator'
 
-export type TunnelId = 'vpn1' | 'vpn2'
+export type TunnelId = string
 export type TopologyNodeKind = 'vpn' | 'engine' | 'proxy' | 'client'
 export type TopologyNodeHealth = 'healthy' | 'degraded' | 'down'
 
@@ -21,6 +21,8 @@ export interface TopologyNodeData {
   proxyIngressMbps?: number
   streamCount: number
   vpnTunnel?: TunnelId
+  lifecycle?: 'active' | 'draining'
+  forwarded?: boolean
   failoverActive?: boolean
   metadata?: Record<string, string | number | boolean | null>
 }
@@ -31,7 +33,7 @@ export interface TopologySummary {
   activeStreams: number
   activeClients: number
   failoverEngines: number
-  vpnDown: TunnelId[]
+  vpnDown: string[]
 }
 
 export interface TopologyInputSnapshot {
@@ -131,22 +133,48 @@ const formatCompactId = (id: string): string => {
   return id.length > 12 ? id.slice(0, 12) : id
 }
 
-const stableTunnelFromEngineIdentity = (engine: EngineState): TunnelId => {
+type VpnNodeDescriptor = {
+  id: string
+  title: string
+  subtitle: string
+  connected: boolean
+  lifecycle: 'active' | 'draining'
+  publicIp: string | null
+  provider: string | null
+  country: string | null
+}
+
+const normalizeLifecycle = (value: unknown): 'active' | 'draining' => {
+  return String(value || '').trim().toLowerCase() === 'draining' ? 'draining' : 'active'
+}
+
+const isTruthyConnection = (value: unknown): boolean => {
+  if (typeof value === 'boolean') return value
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized === 'true' || normalized === 'running' || normalized === 'healthy' || normalized === 'ready'
+}
+
+const stableTunnelFromEngineIdentity = (engine: EngineState, tunnelIds: string[]): TunnelId => {
+  const fallbackIds = tunnelIds.length > 0 ? tunnelIds : ['vpn1', 'vpn2']
   const identity = `${engine.container_id || ''}:${engine.container_name || ''}`
   let hash = 0
   for (let i = 0; i < identity.length; i += 1) {
     hash = ((hash * 31) + identity.charCodeAt(i)) >>> 0
   }
-  return (hash % 2 === 0) ? 'vpn1' : 'vpn2'
+  return fallbackIds[hash % fallbackIds.length]
 }
 
 const inferTunnelFromEngine = (
   engine: EngineState,
   index: number,
+  knownTunnelIds: string[],
   vpnStatus?: VpnStatusPayload | null,
 ): TunnelId => {
   const raw = String(engine.vpn_container || '').trim()
   const vpnName = raw.toLowerCase()
+
+  const exactMatch = knownTunnelIds.find((id) => id.toLowerCase() === vpnName)
+  if (exactMatch) return exactMatch
 
   const vpn1Candidates = [
     vpnStatus?.vpn1?.container_name,
@@ -163,44 +191,112 @@ const inferTunnelFromEngine = (
     .map((value) => value.trim().toLowerCase())
 
   // Prefer explicit backend identity over heuristic naming.
-  if (vpn1Candidates.includes(vpnName)) return 'vpn1'
-  if (vpn2Candidates.includes(vpnName)) return 'vpn2'
+  if (vpn1Candidates.includes(vpnName) && knownTunnelIds.length > 0) return knownTunnelIds[0]
+  if (vpn2Candidates.includes(vpnName) && knownTunnelIds.length > 1) return knownTunnelIds[1]
 
   // Fallback heuristics for legacy/custom names.
-  if (vpnName.includes('secondary') || vpnName.includes('backup') || vpnName.includes('vpn2')) {
-    return 'vpn2'
+  if ((vpnName.includes('secondary') || vpnName.includes('backup') || vpnName.includes('vpn2')) && knownTunnelIds.length > 1) {
+    return knownTunnelIds[1]
   }
-  if (vpnName.includes('primary') || vpnName.includes('main') || vpnName.includes('vpn1')) {
-    return 'vpn1'
+  if ((vpnName.includes('primary') || vpnName.includes('main') || vpnName.includes('vpn1')) && knownTunnelIds.length > 0) {
+    return knownTunnelIds[0]
   }
 
-  return stableTunnelFromEngineIdentity(engine)
+  // Use index as entropy to spread unassigned engines in larger dynamic pools.
+  const stable = stableTunnelFromEngineIdentity(engine, knownTunnelIds)
+  if (knownTunnelIds.length === 0) return stable
+  const stableIndex = knownTunnelIds.indexOf(stable)
+  if (stableIndex === -1) return knownTunnelIds[index % knownTunnelIds.length]
+  return knownTunnelIds[(stableIndex + index) % knownTunnelIds.length]
 }
 
-const deriveTunnelConnectivity = (
+const extractVpnNodes = (
   vpnStatus: VpnStatusPayload | null | undefined,
-  hasRealData: boolean,
-): Record<TunnelId, boolean> => {
-  if (!vpnStatus) {
-    if (hasRealData) {
-      return { vpn1: true, vpn2: true }
-    }
-    // Demo mode intentionally starts with VPN1 down to showcase failover behavior.
-    return { vpn1: false, vpn2: true }
+  orchestratorStatus: OrchestratorStatusResponse | null | undefined,
+  engines: EngineState[],
+  isMockMode: boolean,
+): VpnNodeDescriptor[] => {
+  const nodes: VpnNodeDescriptor[] = []
+  const seen = new Set<string>()
+
+  const upsert = (rawNode: Record<string, unknown>, indexHint: number) => {
+    const name = String(
+      rawNode.container_name || rawNode.container || rawNode.name || rawNode.id || `vpn-${indexHint + 1}`,
+    ).trim()
+    if (!name || seen.has(name)) return
+
+    seen.add(name)
+    const connected = isTruthyConnection(rawNode.connected ?? rawNode.healthy ?? rawNode.condition ?? rawNode.status)
+    const provider = rawNode.provider == null ? null : String(rawNode.provider)
+    const country = rawNode.country == null ? null : String(rawNode.country)
+
+    nodes.push({
+      id: name,
+      title: `VPN ${indexHint + 1}`,
+      subtitle: name,
+      connected,
+      lifecycle: normalizeLifecycle(rawNode.lifecycle),
+      publicIp: rawNode.public_ip == null ? null : String(rawNode.public_ip),
+      provider,
+      country,
+    })
   }
 
-  if (vpnStatus.mode === 'disabled') {
-    return { vpn1: true, vpn2: true }
+  const vpnStatusAny = (vpnStatus || {}) as Record<string, unknown>
+  const orchestratorAny = (orchestratorStatus || {}) as Record<string, unknown>
+
+  const explicitNodeLists = [
+    vpnStatusAny.vpn_nodes,
+    vpnStatusAny.nodes,
+    (orchestratorAny.vpn as Record<string, unknown> | undefined)?.nodes,
+    orchestratorAny.vpn_nodes,
+  ]
+
+  for (const source of explicitNodeLists) {
+    if (!Array.isArray(source)) continue
+    source.forEach((rawNode, idx) => {
+      if (rawNode && typeof rawNode === 'object') {
+        upsert(rawNode as Record<string, unknown>, nodes.length + idx)
+      }
+    })
   }
 
-  if (vpnStatus.mode === 'single') {
-    return { vpn1: Boolean(vpnStatus.vpn1?.connected), vpn2: true }
+  if (nodes.length === 0 && vpnStatus && vpnStatus.mode !== 'disabled') {
+    const legacyNodes = [vpnStatus.vpn1, vpnStatus.vpn2].filter(Boolean)
+    legacyNodes.forEach((legacyNode, idx) => {
+      upsert(
+        {
+          container_name: legacyNode?.container_name || legacyNode?.container || `vpn-${idx + 1}`,
+          connected: legacyNode?.connected,
+          lifecycle: (legacyNode as Record<string, unknown>)?.lifecycle,
+          public_ip: legacyNode?.public_ip,
+          provider: legacyNode?.provider,
+          country: legacyNode?.country,
+        },
+        idx,
+      )
+    })
   }
 
-  return {
-    vpn1: Boolean(vpnStatus.vpn1?.connected),
-    vpn2: Boolean(vpnStatus.vpn2?.connected),
+  if (nodes.length === 0) {
+    const vpnNames = Array.from(
+      new Set(
+        engines
+          .map((engine) => String(engine.vpn_container || '').trim())
+          .filter(Boolean),
+      ),
+    )
+    vpnNames.forEach((name, idx) => {
+      upsert({ container_name: name, connected: true, lifecycle: 'active' }, idx)
+    })
   }
+
+  if (nodes.length === 0 && isMockMode) {
+    upsert({ container_name: 'vpn1', connected: false, lifecycle: 'active' }, 0)
+    upsert({ container_name: 'vpn2', connected: true, lifecycle: 'active' }, 1)
+  }
+
+  return nodes
 }
 
 const toMbps = (speedMaybe: number | null | undefined): number => {
@@ -291,21 +387,26 @@ const buildSnapshot = (
     streamMap.set(stream.container_id, entry)
   }
 
-  const tunnelConnectivity = deriveTunnelConnectivity(vpnStatus, !isMockMode)
-  const vpnDown = (Object.entries(tunnelConnectivity)
-    .filter(([, connected]) => !connected)
-    .map(([id]) => id)) as TunnelId[]
-
   const nodes: Node<TopologyNodeData>[] = []
   const edges: Edge[] = []
-
-  const isVpnDisabledMode = vpnStatus?.mode === 'disabled'
-  const vpn1NodeId = 'vpn1'
-  const vpn2NodeId = 'vpn2'
   const internetNodeId = 'internet'
   const proxyNodeId = 'proxy-core'
 
   const failoverEngines: string[] = []
+
+  const vpnNodes = extractVpnNodes(vpnStatus, orchestratorStatus, workingEngines, isMockMode)
+  const tunnelConnectivity: Record<string, boolean> = {}
+  const vpnLifecycleByTunnel: Record<string, 'active' | 'draining'> = {}
+  for (const node of vpnNodes) {
+    tunnelConnectivity[node.id] = node.connected
+    vpnLifecycleByTunnel[node.id] = node.lifecycle
+  }
+
+  const isVpnDisabledMode = vpnNodes.length === 0
+  const tunnelOrder = isVpnDisabledMode ? [internetNodeId] : vpnNodes.map((node) => node.id)
+  const vpnDown = Object.entries(tunnelConnectivity)
+    .filter(([, connected]) => !connected)
+    .map(([id]) => id)
 
   const previousEngineOrder = new Map<string, number>()
   if (prevState) {
@@ -351,58 +452,74 @@ const buildSnapshot = (
     return aName.localeCompare(bName)
   })
 
-  const isVpnClusterMode = Boolean(vpnStatus && vpnStatus.mode !== 'disabled')
+  const isVpnClusterMode = !isVpnDisabledMode
+  const knownTunnelIds = isVpnDisabledMode ? [] : tunnelOrder
   const engineStatsWithTunnel = engineStats.map((entry, index) => ({
     ...entry,
-    assignedTunnel: vpnStatus?.mode === 'single' ? 'vpn1' : inferTunnelFromEngine(entry.engine, index, vpnStatus),
+    assignedTunnel: isVpnDisabledMode
+      ? internetNodeId
+      : inferTunnelFromEngine(entry.engine, index, knownTunnelIds, vpnStatus),
   }))
 
-  // 2. Define Staggered Grid properties
-  const NUM_COLUMNS = isVpnClusterMode
-    ? Math.max(1, Math.min(2, Math.ceil(engineStats.length / 8)))
-    : Math.max(1, Math.min(3, Math.ceil(engineStats.length / 6)))
-  const COLUMN_SPACING_X = 340   // 210px node width + 130px gap for pipes and labels
-  const STAGGERED_ROW_SPACING_Y = 140 // Enough vertical space for the node + a gap for horizontal pipes
-  const CLUSTER_GAP_Y = 220 // The vertical space between the bottom of VPN1 and top of VPN2
+  const normalizedEngineStats = engineStatsWithTunnel.map((entry, index) => {
+    if (isVpnDisabledMode) return entry
+    const assignedTunnel = knownTunnelIds.includes(entry.assignedTunnel)
+      ? entry.assignedTunnel
+      : knownTunnelIds[index % knownTunnelIds.length]
+    return {
+      ...entry,
+      assignedTunnel,
+    }
+  })
 
-  const engineStartX = 350
+  // Tighter grid to visually bind engines to their assigned VPN node.
+  const DEFAULT_COLUMNS = isVpnClusterMode
+    ? Math.max(1, Math.min(2, Math.ceil(engineStats.length / 10)))
+    : Math.max(1, Math.min(3, Math.ceil(engineStats.length / 6)))
+  const COLUMN_SPACING_X = isVpnClusterMode ? 265 : 320
+  const STAGGERED_ROW_SPACING_Y = isVpnClusterMode ? 108 : 128
+  const CLUSTER_GAP_Y = 130
+
+  const engineStartX = 320
   const engineStartY = 80
 
-  const enginesPerTunnel = engineStatsWithTunnel.reduce(
+  const enginesPerTunnel = normalizedEngineStats.reduce(
     (acc, item) => {
-      acc[item.assignedTunnel] += 1
+      acc[item.assignedTunnel] = (acc[item.assignedTunnel] || 0) + 1
       return acc
     },
-    { vpn1: 0, vpn2: 0 } as Record<TunnelId, number>,
+    {} as Record<string, number>,
   )
 
-  // Calculate bounding boxes for the clusters
-  const vpn1StartY = engineStartY
-  const vpn1Height = Math.max(0, enginesPerTunnel.vpn1 - 1) * STAGGERED_ROW_SPACING_Y
-  const vpn1CenterY = vpn1StartY + (vpn1Height / 2)
+  const tunnelLayout = new Map<string, { startY: number; centerY: number; cols: number; rows: number; height: number }>()
+  let tunnelCursorY = engineStartY
 
-  // VPN2 starts below VPN1
-  const vpn2StartY = vpn1StartY + vpn1Height + CLUSTER_GAP_Y
-  const vpn2Height = Math.max(0, enginesPerTunnel.vpn2 - 1) * STAGGERED_ROW_SPACING_Y
-  const vpn2CenterY = vpn2StartY + (vpn2Height / 2)
+  for (const tunnelId of tunnelOrder) {
+    const tunnelEngineCount = Math.max(1, Number(enginesPerTunnel[tunnelId] || 0))
+    const cols = isVpnClusterMode
+      ? Math.max(1, Math.min(2, Math.ceil(tunnelEngineCount / 6)))
+      : DEFAULT_COLUMNS
+    const rows = Math.max(1, Math.ceil(tunnelEngineCount / cols))
+    const height = Math.max(0, rows - 1) * STAGGERED_ROW_SPACING_Y
 
-  const tunnelClusterStartY = {
-    vpn1: vpn1StartY,
-    vpn2: vpn2StartY,
+    tunnelLayout.set(tunnelId, {
+      startY: tunnelCursorY,
+      centerY: tunnelCursorY + (height / 2),
+      cols,
+      rows,
+      height,
+    })
+
+    tunnelCursorY += height + (isVpnClusterMode ? CLUSTER_GAP_Y : 0)
   }
 
-  // Center Y for downstream nodes (Proxy, Clients) spans the entire height.
-  // In VPN-disabled mode we center against the single staggered engine corridor.
-  const isSingleVpn = vpnStatus?.mode === 'single'
-  const totalHeight = isVpnClusterMode
-    ? (isSingleVpn ? vpn1Height : (vpn2StartY + vpn2Height) - engineStartY)
-    : Math.max(0, engineStats.length - 1) * STAGGERED_ROW_SPACING_Y
-  const centerY = engineStartY + (totalHeight / 2)
+  const tunnelSpan = Math.max(
+    0,
+    tunnelCursorY - engineStartY - (isVpnClusterMode ? CLUSTER_GAP_Y : 0),
+  )
+  const centerY = engineStartY + (tunnelSpan / 2)
 
-  const tunnelLocalIndex: Record<TunnelId, number> = {
-    vpn1: 0,
-    vpn2: 0,
-  }
+  const tunnelLocalIndex: Record<string, number> = {}
 
   if (isVpnDisabledMode) {
     nodes.push({
@@ -416,6 +533,7 @@ const buildSnapshot = (
         health: 'healthy',
         bandwidthMbps: isMockMode ? randomBetween(180, 260) : 0,
         streamCount: 0,
+        lifecycle: 'active',
         metadata: {
           connected: true,
           publicIp: 'Direct route',
@@ -425,52 +543,40 @@ const buildSnapshot = (
       },
     })
   } else {
-    nodes.push({
-      id: vpn1NodeId,
-      type: 'topologyNode',
-      position: { x: -240, y: vpn1CenterY },
-      data: {
-        kind: 'vpn',
-        title: 'VPN Tunnel A',
-        subtitle: vpnStatus?.vpn1?.container_name || 'gluetun-primary',
-        health: tunnelConnectivity.vpn1 ? 'healthy' : 'down',
-        bandwidthMbps: isMockMode ? randomBetween(120, 210) : 0,
-        streamCount: 0,
-        metadata: {
-          connected: tunnelConnectivity.vpn1,
-          publicIp: vpnStatus?.vpn1?.public_ip || '185.102.112.44',
-          provider: vpnStatus?.vpn1?.provider || 'ProtonVPN',
-          country: vpnStatus?.vpn1?.country || null,
-        },
-      },
-    })
+    vpnNodes.forEach((vpnNode, idx) => {
+      const layout = tunnelLayout.get(vpnNode.id)
+      const health: TopologyNodeHealth = !vpnNode.connected
+        ? 'down'
+        : vpnNode.lifecycle === 'draining'
+          ? 'degraded'
+          : 'healthy'
 
-    if (vpnStatus?.mode !== 'single') {
       nodes.push({
-        id: vpn2NodeId,
+        id: vpnNode.id,
         type: 'topologyNode',
-        position: { x: -240, y: vpn2CenterY },
+        position: { x: -240, y: layout?.centerY ?? (engineStartY + (idx * CLUSTER_GAP_Y)) },
         data: {
           kind: 'vpn',
-          title: 'VPN Tunnel B',
-          subtitle: vpnStatus?.vpn2?.container_name || 'gluetun-secondary',
-          health: tunnelConnectivity.vpn2 ? 'healthy' : 'down',
-          bandwidthMbps: isMockMode ? randomBetween(90, 180) : 0,
+          title: vpnNode.title,
+          subtitle: vpnNode.subtitle,
+          health,
+          bandwidthMbps: isMockMode ? randomBetween(90, 210) : 0,
           streamCount: 0,
-          failoverActive: !tunnelConnectivity.vpn1 && tunnelConnectivity.vpn2,
+          lifecycle: vpnNode.lifecycle,
           metadata: {
-            connected: tunnelConnectivity.vpn2,
-            publicIp: vpnStatus?.vpn2?.public_ip || '79.127.210.63',
-            provider: vpnStatus?.vpn2?.provider || 'Mullvad',
-            country: vpnStatus?.vpn2?.country || null,
+            connected: vpnNode.connected,
+            publicIp: vpnNode.publicIp,
+            provider: vpnNode.provider,
+            country: vpnNode.country,
+            lifecycle: vpnNode.lifecycle,
           },
         },
       })
-    }
+    })
   }
 
-  // 3. Process the nodes using the Zig-Zag Staggered Corridor pattern
-  engineStatsWithTunnel.forEach(({ engine, streamCount, measuredMbps, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, assignedTunnel }, index) => {
+  // 3. Process engine nodes with compact per-VPN grouping
+  normalizedEngineStats.forEach(({ engine, streamCount, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, assignedTunnel }, index) => {
     const engineStreams = streamMap.get(engine.container_id) || []
     const monitorStreamCount = Math.max(
       0,
@@ -481,33 +587,32 @@ const buildSnapshot = (
     )
     const hasMonitoringSession = monitorStreamCount > 0
 
-    let colIndex: number
-    let currentX: number
-    let currentY: number
-    if (isVpnClusterMode) {
-      const localIndex = tunnelLocalIndex[assignedTunnel]
-      tunnelLocalIndex[assignedTunnel] += 1
+    const localIndex = tunnelLocalIndex[assignedTunnel] || 0
+    tunnelLocalIndex[assignedTunnel] = localIndex + 1
 
-      colIndex = localIndex % NUM_COLUMNS
-      currentX = engineStartX + (colIndex * COLUMN_SPACING_X)
-      // The magic trick: multiply by localIndex directly to guarantee unique Ys inside the cluster
-      currentY = tunnelClusterStartY[assignedTunnel] + (localIndex * STAGGERED_ROW_SPACING_Y)
-    } else {
-      // Determine column (0, 1, 2, 0, 1, 2...)
-      colIndex = index % NUM_COLUMNS
-      // Calculate positions — every index gets a unique Y, creating dedicated horizontal pipe corridors
-      currentX = engineStartX + (colIndex * COLUMN_SPACING_X)
-      currentY = engineStartY + (index * STAGGERED_ROW_SPACING_Y)
-    }
+    const cluster = tunnelLayout.get(assignedTunnel)
+    const clusterCols = cluster?.cols || DEFAULT_COLUMNS
+    const colIndex = localIndex % clusterCols
+    const rowIndex = Math.floor(localIndex / clusterCols)
+    const currentX = engineStartX + (colIndex * COLUMN_SPACING_X)
+    const currentY = (cluster?.startY ?? engineStartY) + (rowIndex * STAGGERED_ROW_SPACING_Y)
 
-    const tunnelHealthy = tunnelConnectivity[assignedTunnel]
-    const backupTunnel = assignedTunnel === 'vpn1' ? 'vpn2' : 'vpn1'
-    const backupHealthy = tunnelConnectivity[backupTunnel]
+    const tunnelHealthy = isVpnDisabledMode ? true : Boolean(tunnelConnectivity[assignedTunnel])
+    const backupTunnel = !isVpnDisabledMode
+      ? tunnelOrder.find((tunnelId) => tunnelId !== assignedTunnel && Boolean(tunnelConnectivity[tunnelId]))
+      : undefined
 
-    const failoverActive = !isVpnDisabledMode && !tunnelHealthy && backupHealthy
+    const failoverActive = !isVpnDisabledMode && !tunnelHealthy && Boolean(backupTunnel)
     const sourceNodeId: TunnelId | 'internet' = isVpnDisabledMode
       ? internetNodeId
-      : (failoverActive ? backupTunnel : assignedTunnel)
+      : (failoverActive ? (backupTunnel as string) : assignedTunnel)
+
+    const engineLifecycle = normalizeLifecycle(
+      (engine as Record<string, unknown>)?.lifecycle
+      ?? (engine as Record<string, unknown>)?.vpn_lifecycle
+      ?? (engine.labels || {})['acestream.lifecycle']
+      ?? vpnLifecycleByTunnel[assignedTunnel],
+    )
 
     // VPN → Engine: P2P download speed.
     // Keep the route visibly active during monitor-only sessions even if Ace reports 0 throughput.
@@ -525,9 +630,9 @@ const buildSnapshot = (
       : (streamCount > 0 ? streamMeasuredDownMbps * 0.98 : (isMockMode ? randomBetween(2, 18) : 0))
     
     let health: TopologyNodeHealth = 'healthy'
-    if (engine.health_status === 'unhealthy' || (!tunnelHealthy && !backupHealthy)) {
+    if (engine.health_status === 'unhealthy' || (!tunnelHealthy && !backupTunnel)) {
       health = 'down'
-    } else if (engine.health_status === 'unknown' || failoverActive) {
+    } else if (engine.health_status === 'unknown' || failoverActive || engineLifecycle === 'draining') {
       health = 'degraded'
     }
 
@@ -548,13 +653,16 @@ const buildSnapshot = (
         bandwidthMbps,
         uploadMbps: measuredUpMbps > 0 ? measuredUpMbps : (isMockMode ? randomBetween(2, 12) : 0),
         proxyIngressMbps: proxyIngressMbps,
-        vpnTunnel: isVpnDisabledMode ? undefined : (sourceNodeId as TunnelId),
+        vpnTunnel: isVpnDisabledMode ? undefined : assignedTunnel,
+        lifecycle: engineLifecycle,
+        forwarded: Boolean(engine.forwarded),
         failoverActive,
         metadata: {
           assignedTunnel,
           activeTunnel: sourceNodeId,
           peers: engineStreams.reduce((sum, stream) => sum + (stream.peers || 0), 0),
           monitorStreamCount,
+          lifecycle: engineLifecycle,
           variant: engine.engine_variant || 'default',
           forwarded: engine.forwarded,
           forwardedPort: engine.forwarded_port || null,
@@ -564,6 +672,7 @@ const buildSnapshot = (
 
     // VPN → Engine edge: shows both download (P2P ingress) and upload (P2P seeding) bandwidth
     const edgeUploadBw = measuredUpMbps > 0 ? measuredUpMbps : (isMockMode ? randomBetween(2, 12) : 0)
+    const edgeIsDraining = engineLifecycle === 'draining' || vpnLifecycleByTunnel[sourceNodeId] === 'draining'
     edges.push({
       id: `${sourceNodeId}->${engine.container_id}`,
       type: 'topologyEdge',
@@ -576,15 +685,17 @@ const buildSnapshot = (
         uploadMbps: edgeUploadBw,
         labelPosition: 'near-target',
         monitoringActive: hasMonitoringSession,
+        drainingRoute: edgeIsDraining,
       },
       style: {
-        stroke: (failoverActive || hasMonitoringSession) ? '#f59e0b' : '#64748b',
+        stroke: (failoverActive || hasMonitoringSession || edgeIsDraining) ? '#f59e0b' : '#64748b',
         strokeWidth: clamp(1.6 + bandwidthMbps / 55, 1.6, 5.8),
-        strokeDasharray: failoverActive ? '8 5' : undefined,
+        strokeDasharray: (failoverActive || edgeIsDraining) ? '8 5' : undefined,
       },
     })
 
     // Engine → Proxy edge: shows upload bandwidth (proxy ingress)
+    const proxyRouteDraining = engineLifecycle === 'draining'
     edges.push({
       id: `${engine.container_id}->${proxyNodeId}`,
       type: 'topologyEdge',
@@ -595,26 +706,26 @@ const buildSnapshot = (
       data: {
         bandwidthMbps: proxyIngressMbps,
         labelPosition: 'near-source',
+        drainingRoute: proxyRouteDraining,
       },
       style: {
-        stroke: '#60a5fa',
+        stroke: proxyRouteDraining ? '#f59e0b' : '#60a5fa',
         strokeWidth: clamp(1.8 + proxyIngressMbps / 48, 1.8, 6.4),
+        strokeDasharray: proxyRouteDraining ? '8 5' : undefined,
       },
     })
   })
 
   if (!isMockMode && !isVpnDisabledMode) {
-    const vpn1Node = nodes.find(n => n.id === vpn1NodeId)
-    const vpn2Node = nodes.find(n => n.id === vpn2NodeId)
-    if (vpn1Node) {
-      const vpn1Engines = nodes.filter(n => n.data.kind === 'engine' && n.data.vpnTunnel === 'vpn1')
-      vpn1Node.data.bandwidthMbps = vpn1Engines.reduce((s, n) => s + (n.data.bandwidthMbps || 0), 0)
-      vpn1Node.data.uploadMbps = vpn1Engines.reduce((s, n) => s + (n.data.uploadMbps || 0), 0)
-    }
-    if (vpn2Node) {
-      const vpn2Engines = nodes.filter(n => n.data.kind === 'engine' && n.data.vpnTunnel === 'vpn2')
-      vpn2Node.data.bandwidthMbps = vpn2Engines.reduce((s, n) => s + (n.data.bandwidthMbps || 0), 0)
-      vpn2Node.data.uploadMbps = vpn2Engines.reduce((s, n) => s + (n.data.uploadMbps || 0), 0)
+    for (const tunnelId of tunnelOrder) {
+      const vpnNode = nodes.find((node) => node.id === tunnelId)
+      if (!vpnNode) continue
+      const vpnEngines = nodes.filter((node) => {
+        if (node.data.kind !== 'engine') return false
+        return String(node.data.metadata?.assignedTunnel || '') === tunnelId
+      })
+      vpnNode.data.bandwidthMbps = vpnEngines.reduce((sum, node) => sum + (node.data.bandwidthMbps || 0), 0)
+      vpnNode.data.uploadMbps = vpnEngines.reduce((sum, node) => sum + (node.data.uploadMbps || 0), 0)
     }
   }
 
@@ -641,8 +752,12 @@ const buildSnapshot = (
   const clientList = isMockMode ? mockClients : (orchestratorStatus?.proxy?.active_clients?.list || [])
   const activeClients = isMockMode ? clientList.length : (orchestratorStatus?.proxy?.active_clients?.total ?? clientList.length)
 
-  // Dynamically position downstream nodes based on the number of engine columns
-  const proxyNodeX = engineStartX + (NUM_COLUMNS * COLUMN_SPACING_X) + 160
+  // Dynamically position downstream nodes based on the maximum engine columns among VPN clusters.
+  const maxColumns = Math.max(
+    1,
+    ...Array.from(tunnelLayout.values()).map((layout) => layout.cols),
+  )
+  const proxyNodeX = engineStartX + (maxColumns * COLUMN_SPACING_X) + 140
   const clientNodeX = proxyNodeX + 460
 
   nodes.push({

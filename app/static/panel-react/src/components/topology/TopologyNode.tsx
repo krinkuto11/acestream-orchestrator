@@ -1,4 +1,4 @@
-import { AlertTriangle, GitBranch, Server, ShieldCheck, Users } from 'lucide-react'
+import { AlertTriangle, GitBranch, Server, ShieldCheck, Timer, Users, Zap } from 'lucide-react'
 import { Handle, Position, type NodeProps } from 'reactflow'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
@@ -119,6 +119,7 @@ const healthLabelByState = {
 export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
   const Icon = iconByKind[data.kind] || Server
   const theme = themeByKind[data.kind] || themeByKind.engine
+  const isDraining = data.lifecycle === 'draining'
 
   const vpnIp = data.kind === 'vpn' ? String(data.metadata?.publicIp || '') : null
   const vpnCountry = data.kind === 'vpn' ? String(data.metadata?.country || '') : null
@@ -131,6 +132,7 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         'relative min-w-[210px] rounded-xl border p-3 shadow-2xl transition-all',
         theme.wrapper,
         healthClassByState[data.health],
+        isDraining && 'border-amber-400 border-dashed opacity-85',
         selected && 'ring-2 ring-sky-400 shadow-sky-500/20',
       )}
     >
@@ -156,15 +158,23 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
           </div>
         </div>
 
-        <Badge
-          variant={data.health === 'down' ? 'destructive' : data.health === 'degraded' ? 'warning' : 'outline'}
-          className={cn(
-            "text-[10px] font-semibold uppercase",
-            data.health === 'healthy' && `border-emerald-500/40 text-emerald-400 bg-emerald-500/10`
+        <div className="flex flex-col items-end gap-1">
+          <Badge
+            variant={data.health === 'down' ? 'destructive' : data.health === 'degraded' ? 'warning' : 'outline'}
+            className={cn(
+              "text-[10px] font-semibold uppercase",
+              data.health === 'healthy' && `border-emerald-500/40 text-emerald-400 bg-emerald-500/10`
+            )}
+          >
+            {healthLabelByState[data.health]}
+          </Badge>
+          {isDraining && (
+            <Badge variant="warning" className="gap-1 border-amber-400/60 bg-amber-500/15 text-[10px] font-semibold uppercase text-amber-200">
+              <Timer className="h-3 w-3" />
+              Draining
+            </Badge>
           )}
-        >
-          {healthLabelByState[data.health]}
-        </Badge>
+        </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -186,10 +196,24 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         )}
 
         {data.kind === 'engine' && (
-          <div className={cn("flex items-center justify-between rounded-md border p-1.5 px-2 shadow-sm", theme.box)}>
-            <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>Streams</span>
-            <span className="text-xs font-semibold">{data.streamCount}</span>
-          </div>
+          <>
+            <div className={cn("flex items-center justify-between rounded-md border p-1.5 px-2 shadow-sm", theme.box)}>
+              <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>Port</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-semibold">{String(data.subtitle || '').split(':').pop() || 'n/a'}</span>
+                {data.forwarded && (
+                  <Badge variant="outline" className="h-5 gap-1 border-amber-400/60 bg-amber-500/10 px-1.5 text-[9px] font-semibold text-amber-200">
+                    <Zap className="h-2.5 w-2.5" />
+                    Forwarded
+                  </Badge>
+                )}
+              </div>
+            </div>
+            <div className={cn("flex items-center justify-between rounded-md border p-1.5 px-2 shadow-sm", theme.box)}>
+              <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>Streams</span>
+              <span className="text-xs font-semibold">{data.streamCount}</span>
+            </div>
+          </>
         )}
 
         {/* Standard Bandwidth Block - Restored Upload/Download for VPN */}
