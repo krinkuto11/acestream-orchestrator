@@ -337,6 +337,7 @@ class StreamManager:
         # Sequence tracking
         self.next_sequence = 0
         self.segment_durations: Dict[int, float] = {}
+        self.segment_sources: Dict[int, str] = {}
         
         # Manifest info
         self.target_duration = 10.0
@@ -359,6 +360,27 @@ class StreamManager:
         self._swap_lock = threading.RLock()
         
         logger.info(f"Initialized HLS stream manager for channel {channel_id}")
+
+    def get_playback_context(self) -> Dict[str, str]:
+        """Return playback URL and engine identity atomically for fetch operations."""
+        with self._swap_lock:
+            return {
+                "playback_url": str(self.playback_url),
+                "engine_container_id": str(self.engine_container_id or ""),
+            }
+
+    def record_segment_metadata(self, sequence: int, duration: float, source_engine_id: str):
+        """Store duration and source engine metadata for a buffered segment."""
+        self.segment_durations[sequence] = duration
+        self.segment_sources[sequence] = str(source_engine_id or self.engine_container_id or "")
+
+        # Keep metadata bounded to avoid unbounded growth for long-lived streams.
+        max_metadata_entries = max(HLSConfig.MAX_SEGMENTS() * 3, HLSConfig.WINDOW_SIZE() * 4)
+        if len(self.segment_durations) > max_metadata_entries:
+            oldest = sorted(self.segment_durations.keys())[:-max_metadata_entries]
+            for seq in oldest:
+                self.segment_durations.pop(seq, None)
+                self.segment_sources.pop(seq, None)
 
     def _build_engine_stream_params(self) -> Dict[str, str]:
         params: Dict[str, str] = {
@@ -704,8 +726,12 @@ class StreamFetcher:
             
             while self.manager.running:
                 try:
+                    playback_context = self.manager.get_playback_context()
+                    playback_url = playback_context["playback_url"]
+                    source_engine_id = playback_context["engine_container_id"]
+
                     # Fetch manifest (non-blocking)
-                    response = await client.get(self.manager.playback_url)
+                    response = await client.get(playback_url)
                     response.raise_for_status()
                     
                     manifest = m3u8.loads(response.text)
@@ -723,11 +749,19 @@ class StreamFetcher:
                     
                     # Initial buffering - fetch multiple segments
                     if self.manager.initial_buffering:
-                        await self._fetch_initial_segments(manifest, str(response.url))
+                        await self._fetch_initial_segments(
+                            manifest,
+                            str(response.url),
+                            source_engine_id=source_engine_id,
+                        )
                         continue
                     
                     # Normal operation - fetch latest segment
-                    await self._fetch_latest_segment(manifest, str(response.url))
+                    await self._fetch_latest_segment(
+                        manifest,
+                        str(response.url),
+                        source_engine_id=source_engine_id,
+                    )
                     
                     # Wait before next manifest fetch (non-blocking)
                     await asyncio.sleep(self.manager.target_duration * HLSConfig.SEGMENT_FETCH_INTERVAL())
@@ -742,7 +776,7 @@ class StreamFetcher:
                     await asyncio.sleep(retry_delay)
                     retry_delay = min(retry_delay * 2, max_retry_delay)
     
-    async def _fetch_initial_segments(self, manifest: m3u8.M3U8, base_url: str):
+    async def _fetch_initial_segments(self, manifest: m3u8.M3U8, base_url: str, source_engine_id: str):
         """Fetch initial segments for buffering (async version)"""
         segments_to_fetch = []
         current_duration = 0.0
@@ -770,7 +804,7 @@ class StreamFetcher:
                     seq = self.manager.next_sequence
                     self.buffer[seq] = segment_data
                     duration = float(segment.duration)
-                    self.manager.segment_durations[seq] = duration
+                    self.manager.record_segment_metadata(seq, duration, source_engine_id=source_engine_id)
                     self.manager.buffered_duration += duration
                     self.manager.next_sequence += 1
                     successful_downloads += 1
@@ -786,7 +820,7 @@ class StreamFetcher:
             logger.info(f"Initial buffer ready with {successful_downloads} segments "
                        f"({self.manager.buffered_duration:.1f}s of content)")
     
-    async def _fetch_latest_segment(self, manifest: m3u8.M3U8, base_url: str):
+    async def _fetch_latest_segment(self, manifest: m3u8.M3U8, base_url: str, source_engine_id: str):
         """Fetch the latest segment if not already downloaded (async version)"""
         latest_segment = manifest.segments[-1]
         
@@ -801,7 +835,7 @@ class StreamFetcher:
                 seq = self.manager.next_sequence
                 self.buffer[seq] = segment_data
                 duration = float(latest_segment.duration)
-                self.manager.segment_durations[seq] = duration
+                self.manager.record_segment_metadata(seq, duration, source_engine_id=source_engine_id)
                 self.manager.next_sequence += 1
                 self.downloaded_segments.add(latest_segment.uri)
                 logger.debug(f"Buffered segment {seq} (duration: {duration}s)")
@@ -1170,10 +1204,18 @@ class HLSProxyServer:
         
         # Add segments within window
         window_segments = [s for s in available if min_seq <= s <= max_seq]
+        previous_source_engine = ""
         for seq in window_segments:
+            current_source_engine = str(manager.segment_sources.get(seq) or "")
+            if previous_source_engine and current_source_engine and current_source_engine != previous_source_engine:
+                manifest_lines.append('#EXT-X-DISCONTINUITY')
+
             duration = manager.segment_durations.get(seq, 10.0)
             manifest_lines.append(f'#EXTINF:{duration},')
             manifest_lines.append(f'/ace/hls/{channel_id}/segment/{seq}.ts')
+
+            if current_source_engine:
+                previous_source_engine = current_source_engine
         
         manifest_content = '\n'.join(manifest_lines)
         logger.debug(f"Generated manifest for channel {channel_id} with segments {min_seq}-{max_seq}")
