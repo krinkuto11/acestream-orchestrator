@@ -47,6 +47,10 @@ def select_best_engine(
     if not engines:
         raise HTTPException(status_code=503, detail="No engines available")
 
+    engines = [engine for engine in engines if not state.is_engine_draining(engine.container_id)]
+    if not engines:
+        raise HTTPException(status_code=503, detail="No non-draining engines available")
+
     if requested_container_id:
         selected = next((e for e in engines if e.container_id == requested_container_id), None)
         if not selected:

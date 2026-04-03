@@ -217,6 +217,11 @@ class CredentialManager:
         async with self._lock:
             return self._snapshot_locked()
 
+    async def available_lease_count(self) -> int:
+        """Return currently available credential slots for new VPN nodes."""
+        async with self._lock:
+            return len(self._available_credential_ids)
+
     def _snapshot_locked(self) -> Dict[str, Any]:
         total_credentials = len(self._credentials_by_id)
         leased_count = len(self._leases_by_container)

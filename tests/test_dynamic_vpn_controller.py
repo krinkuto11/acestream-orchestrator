@@ -38,6 +38,57 @@ def test_scheduler_prefers_least_loaded_dynamic_vpn_node():
     assert spec.network_config["network_mode"] == "container:gluetun-dyn-b"
 
 
+def test_scheduler_skips_draining_dynamic_vpn_node():
+    state.set_target_engine_config("dynamic-test-hash-draining")
+    scheduler = ResourceScheduler()
+    _vpn_pending_engines.clear()
+
+    with patch("app.services.provisioner.cfg.CONTAINER_LABEL", "orchestrator.managed=true"), \
+         patch("app.services.provisioner.cfg.ACE_MAP_HTTPS", True), \
+         patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={"enabled": True, "dynamic_vpn_management": True}), \
+         patch("app.services.state.state.list_vpn_nodes", return_value=[
+             {"container_name": "gluetun-dyn-blue", "healthy": True, "managed_dynamic": True, "condition": "ready"},
+             {"container_name": "gluetun-dyn-green", "healthy": True, "managed_dynamic": True, "condition": "ready"},
+         ]), \
+         patch("app.services.state.state.is_vpn_node_draining", side_effect=lambda name: name == "gluetun-dyn-blue"), \
+         patch("app.services.state.state.get_engines_by_vpn", return_value=[]), \
+         patch("app.services.gluetun.gluetun_monitor.is_healthy", return_value=True), \
+         patch("app.services.provisioner.alloc.allocate_engine_ports", return_value={
+             "host_http_port": 30101,
+             "container_http_port": 6878,
+             "container_https_port": 6879,
+             "host_api_port": 30102,
+             "container_api_port": 62062,
+             "host_https_port": 30103,
+         }), \
+         patch.object(ResourceScheduler, "_elect_forwarded_engine_locked", return_value=(False, None)):
+        spec = scheduler.schedule(AceProvisionRequest(labels={}, env={}), engine_variant_name="AceServe-amd64")
+
+    assert spec.vpn_container == "gluetun-dyn-green"
+
+
+def test_vpn_controller_counts_only_non_draining_nodes_as_actual_capacity():
+    controller = VPNController()
+
+    with patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={
+        "enabled": True,
+        "dynamic_vpn_management": True,
+        "preferred_engines_per_vpn": 1,
+    }), \
+         patch("app.services.vpn_controller.credential_manager.summary", new=AsyncMock(return_value={"total_credentials": 2, "available": 2})), \
+         patch("app.services.vpn_controller.vpn_provisioner.list_managed_nodes", new=AsyncMock(side_effect=[[{"container_name": "gluetun-dyn-blue"}], [{"container_name": "gluetun-dyn-blue"}]])), \
+         patch("app.services.state.state.list_engines", return_value=[object()]), \
+         patch("app.services.state.state.is_vpn_node_draining", side_effect=lambda name: name == "gluetun-dyn-blue"), \
+         patch.object(controller, "_sync_dynamic_nodes_to_state"), \
+         patch.object(controller, "_heal_notready_nodes", new=AsyncMock()), \
+         patch.object(controller, "_garbage_collect_draining_nodes", new=AsyncMock()), \
+         patch.object(controller, "_scale_down_idle_nodes", new=AsyncMock()), \
+         patch.object(controller, "_provision_one", new=AsyncMock()) as provision_mock:
+        asyncio.run(controller._reconcile_once())
+
+    assert provision_mock.await_count == state.get_desired_vpn_node_count()
+
+
 def test_vpn_controller_caps_desired_vpns_by_credentials():
     controller = VPNController()
 
@@ -226,7 +277,7 @@ def test_vpn_controller_heal_notready_respects_grace_period():
     assert destroy_mock.await_count == 0
 
 
-def test_vpn_controller_heal_notready_destroys_stale_nodes_after_grace():
+def test_vpn_controller_heal_notready_marks_stale_nodes_draining_after_grace():
     controller = VPNController()
     stale_at = datetime.now(timezone.utc) - timedelta(seconds=controller._notready_heal_grace_s + 5)
     node = {
@@ -237,10 +288,10 @@ def test_vpn_controller_heal_notready_destroys_stale_nodes_after_grace():
     }
 
     with patch("app.services.vpn_controller.state.list_notready_vpn_nodes", return_value=[node]), \
-         patch.object(controller, "_drain_and_destroy_node", new=AsyncMock()) as destroy_mock:
+         patch.object(controller, "_mark_node_draining", new=AsyncMock()) as mark_draining_mock:
         asyncio.run(controller._heal_notready_nodes())
 
-    destroy_mock.assert_awaited_once_with("gluetun-dyn-a", reason="node_not_ready")
+    mark_draining_mock.assert_awaited_once_with("gluetun-dyn-a", reason="node_not_ready")
 
 
 def test_vpn_controller_provision_requests_engine_reconcile_on_success():

@@ -273,7 +273,11 @@ class LegacyStreamMonitoringService:
         }
 
     def _pick_engine_excluding(self, excluded_container_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        engines = [e for e in state.list_engines() if e.container_id != excluded_container_id]
+        engines = [
+            e
+            for e in state.list_engines()
+            if e.container_id != excluded_container_id and not state.is_engine_draining(e.container_id)
+        ]
         if not engines:
             return None
 

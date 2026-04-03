@@ -28,7 +28,9 @@ class VPNController:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._interval_s = max(2, int(os.getenv("VPN_CONTROLLER_INTERVAL_S", "5")))
         self._notready_heal_grace_s = max(0, int(os.getenv("VPN_NOTREADY_HEAL_GRACE_S", "45")))
+        self._draining_hard_timeout_s = max(60, int(os.getenv("VPN_DRAINING_HARD_TIMEOUT_S", "7200")))
         self._active_healings: set[str] = set()
+        self._active_destroys: set[str] = set()
 
     async def start(self):
         if self._task and not self._task.done():
@@ -132,17 +134,46 @@ class VPNController:
         )
 
         await self._heal_notready_nodes()
+        await self._garbage_collect_draining_nodes()
 
         running_nodes = await vpn_provisioner.list_managed_nodes(include_stopped=False)
-        actual_vpns = len(running_nodes)
+        active_running_nodes = [
+            node
+            for node in running_nodes
+            if not state.is_vpn_node_draining(str(node.get("container_name") or ""))
+        ]
+        actual_vpns = len(active_running_nodes)
 
         if actual_vpns < desired_vpns:
             deficit = desired_vpns - actual_vpns
-            for _ in range(deficit):
+            available_raw = lease_summary.get("available")
+            if available_raw is None:
+                available_credentials = max(
+                    total_credentials - int(lease_summary.get("leased") or 0),
+                    0,
+                )
+            else:
+                available_credentials = max(0, int(available_raw))
+            draining_nodes = state.list_draining_vpn_nodes(dynamic_only=True)
+
+            if deficit > available_credentials:
+                logger.warning(
+                    "VPN replacement overlap constrained by credentials "
+                    "(desired=%s, active=%s, deficit=%s, available_credentials=%s, draining=%s). "
+                    "Waiting for draining nodes to release leases.",
+                    desired_vpns,
+                    actual_vpns,
+                    deficit,
+                    available_credentials,
+                    len(draining_nodes),
+                )
+
+            provision_budget = min(deficit, max(available_credentials, 0))
+            for _ in range(provision_budget):
                 await self._provision_one(settings)
 
         elif actual_vpns > desired_vpns:
-            await self._scale_down_idle_nodes(running_nodes=running_nodes, desired_vpns=desired_vpns)
+            await self._scale_down_idle_nodes(running_nodes=active_running_nodes, desired_vpns=desired_vpns)
 
     def _sync_dynamic_nodes_to_state(self, nodes: List[Dict[str, object]]):
         observed_names: set[str] = set()
@@ -246,7 +277,7 @@ class VPNController:
 
             self._active_healings.add(name)
             try:
-                await self._drain_and_destroy_node(name, reason="node_not_ready")
+                await self._mark_node_draining(name, reason="node_not_ready")
             finally:
                 self._active_healings.discard(name)
 
@@ -264,7 +295,68 @@ class VPNController:
 
         excess = len(active_names) - desired_vpns
         for name in removable[:excess]:
-            await self._drain_and_destroy_node(name, reason="scale_down_idle")
+            await self._mark_node_draining(name, reason="scale_down_idle")
+
+    async def _mark_node_draining(self, vpn_container: str, *, reason: str):
+        if state.is_vpn_node_draining(vpn_container):
+            return
+
+        state.set_vpn_node_lifecycle(
+            vpn_container,
+            "draining",
+            metadata={
+                "drain_reason": reason,
+            },
+        )
+        logger.warning("Marked dynamic VPN node %s as draining (reason=%s)", vpn_container, reason)
+
+    @staticmethod
+    def _as_aware_datetime(value: object) -> Optional[datetime]:
+        if isinstance(value, datetime):
+            dt = value
+        elif isinstance(value, str):
+            try:
+                dt = datetime.fromisoformat(value)
+            except ValueError:
+                return None
+        else:
+            return None
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    async def _garbage_collect_draining_nodes(self):
+        now = datetime.now(timezone.utc)
+        for node in state.list_draining_vpn_nodes(dynamic_only=True):
+            vpn_name = str(node.get("container_name") or "").strip()
+            if not vpn_name or vpn_name in self._active_destroys:
+                continue
+
+            engines = list(state.get_engines_by_vpn(vpn_name))
+            active_streams = sum(len(engine.streams) for engine in engines)
+            draining_since = self._as_aware_datetime(node.get("draining_since"))
+            age_s = 0.0
+            if draining_since is not None:
+                age_s = max(0.0, (now - draining_since).total_seconds())
+
+            hard_timeout_reached = draining_since is not None and age_s >= self._draining_hard_timeout_s
+            if active_streams > 0 and not hard_timeout_reached:
+                continue
+
+            destroy_reason = "draining_gc_idle" if active_streams == 0 else "draining_gc_timeout"
+            if hard_timeout_reached and active_streams > 0:
+                logger.warning(
+                    "Draining VPN node %s reached hard timeout with %s active stream(s); forcing destroy",
+                    vpn_name,
+                    active_streams,
+                )
+
+            self._active_destroys.add(vpn_name)
+            try:
+                await self._drain_and_destroy_node(vpn_name, reason=destroy_reason)
+            finally:
+                self._active_destroys.discard(vpn_name)
 
     async def _drain_and_destroy_node(self, vpn_container: str, *, reason: str):
         engines = list(state.get_engines_by_vpn(vpn_container))
@@ -310,6 +402,7 @@ class VPNController:
 
         try:
             destroy_result = await vpn_provisioner.destroy_node(vpn_container, release_credential=True, force=True)
+            state.remove_vpn_node(vpn_container)
             state.resolve_scaling_intent(destroy_intent["id"], "completed", result=destroy_result)
         except Exception as e:
             logger.error("Failed destroying dynamic VPN node %s: %s", vpn_container, e)

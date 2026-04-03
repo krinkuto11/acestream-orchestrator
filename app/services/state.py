@@ -13,6 +13,8 @@ from ..models.db_models import EngineRow, StreamRow, StatRow
 logger = logging.getLogger(__name__)
 
 ACTIVE_MONITOR_SESSION_STATUSES: Set[str] = {"starting", "running", "stuck", "reconnecting"}
+VPN_NODE_LIFECYCLE_ACTIVE = "active"
+VPN_NODE_LIFECYCLE_DRAINING = "draining"
 
 class State:
     def __init__(self):
@@ -857,6 +859,21 @@ class State:
             previous_dynamic = self._dynamic_vpn_nodes.get(vpn_container)
             managed_dynamic = bool(metadata.get("managed_dynamic", True))
             previous = previous_dynamic or {}
+            lifecycle = str(
+                metadata.get(
+                    "lifecycle",
+                    previous.get("lifecycle", VPN_NODE_LIFECYCLE_ACTIVE),
+                )
+                or VPN_NODE_LIFECYCLE_ACTIVE
+            ).strip().lower()
+            if lifecycle not in {VPN_NODE_LIFECYCLE_ACTIVE, VPN_NODE_LIFECYCLE_DRAINING}:
+                lifecycle = VPN_NODE_LIFECYCLE_ACTIVE
+
+            draining_since = previous.get("draining_since")
+            if lifecycle == VPN_NODE_LIFECYCLE_DRAINING and draining_since is None:
+                draining_since = now
+            if lifecycle == VPN_NODE_LIFECYCLE_ACTIVE:
+                draining_since = None
 
             node_payload = {
                 "container_name": vpn_container,
@@ -865,6 +882,8 @@ class State:
                 "condition": condition,
                 "last_event_at": now,
                 "managed_dynamic": managed_dynamic,
+                "lifecycle": lifecycle,
+                "draining_since": draining_since,
                 "provider": metadata.get("provider", previous.get("provider")),
                 "protocol": metadata.get("protocol", previous.get("protocol")),
                 "credential_id": metadata.get("credential_id", previous.get("credential_id")),
@@ -911,6 +930,78 @@ class State:
     def list_dynamic_vpn_nodes(self) -> List[Dict[str, object]]:
         with self._lock:
             return [dict(node) for node in self._dynamic_vpn_nodes.values()]
+
+    def set_vpn_node_lifecycle(
+        self,
+        vpn_container: str,
+        lifecycle: str,
+        metadata: Optional[Dict[str, object]] = None,
+    ) -> Optional[Dict[str, object]]:
+        normalized_lifecycle = str(lifecycle or "").strip().lower()
+        if normalized_lifecycle not in {VPN_NODE_LIFECYCLE_ACTIVE, VPN_NODE_LIFECYCLE_DRAINING}:
+            return None
+
+        now = self.now()
+        metadata = dict(metadata or {})
+
+        with self._lock:
+            previous = dict(self._dynamic_vpn_nodes.get(vpn_container) or {})
+            if not previous:
+                previous = {
+                    "container_name": vpn_container,
+                    "status": "unknown",
+                    "healthy": False,
+                    "condition": "notready",
+                    "last_event_at": now,
+                    "managed_dynamic": True,
+                }
+
+            previous["container_name"] = vpn_container
+            previous["lifecycle"] = normalized_lifecycle
+            previous["last_event_at"] = now
+
+            if normalized_lifecycle == VPN_NODE_LIFECYCLE_DRAINING:
+                previous["draining_since"] = previous.get("draining_since") or now
+            else:
+                previous["draining_since"] = None
+
+            for key, value in metadata.items():
+                previous[key] = value
+
+            self._dynamic_vpn_nodes[vpn_container] = previous
+            return dict(previous)
+
+    def is_vpn_node_draining(self, vpn_container: Optional[str]) -> bool:
+        if not vpn_container:
+            return False
+
+        with self._lock:
+            node = self._dynamic_vpn_nodes.get(vpn_container)
+            if not node:
+                return False
+            lifecycle = str(node.get("lifecycle", VPN_NODE_LIFECYCLE_ACTIVE)).strip().lower()
+            return lifecycle == VPN_NODE_LIFECYCLE_DRAINING
+
+    def list_draining_vpn_nodes(self, dynamic_only: bool = True) -> List[Dict[str, object]]:
+        nodes = [
+            node
+            for node in self.list_vpn_nodes()
+            if str(node.get("lifecycle", VPN_NODE_LIFECYCLE_ACTIVE)).strip().lower() == VPN_NODE_LIFECYCLE_DRAINING
+        ]
+        if dynamic_only:
+            return [node for node in nodes if bool(node.get("managed_dynamic"))]
+        return nodes
+
+    def is_engine_draining(self, container_id: str) -> bool:
+        with self._lock:
+            engine = self.engines.get(container_id)
+            if not engine or not engine.vpn_container:
+                return False
+            node = self._dynamic_vpn_nodes.get(engine.vpn_container)
+            if not node:
+                return False
+            lifecycle = str(node.get("lifecycle", VPN_NODE_LIFECYCLE_ACTIVE)).strip().lower()
+            return lifecycle == VPN_NODE_LIFECYCLE_DRAINING
 
     @staticmethod
     def _safe_int(value: Optional[str], default: Optional[int]) -> Optional[int]:

@@ -193,10 +193,12 @@ class ResourceScheduler:
 
         dynamic_ready_nodes = [
             node for node in state.list_vpn_nodes()
-            if bool(node.get("managed_dynamic")) and self._is_dynamic_node_ready(node)
+            if bool(node.get("managed_dynamic"))
+            and self._is_dynamic_node_ready(node)
+            and not state.is_vpn_node_draining(str(node.get("container_name") or ""))
         ]
         if not dynamic_ready_nodes:
-            raise RuntimeError("No healthy dynamic VPN nodes available - cannot schedule AceStream engine")
+            raise RuntimeError("No healthy active dynamic VPN nodes available - cannot schedule AceStream engine")
 
         candidate_nodes = dynamic_ready_nodes
         if require_forwarding_capable:
