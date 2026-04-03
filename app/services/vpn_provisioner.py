@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import os
 import uuid
@@ -239,7 +240,18 @@ class VPNProvisioner:
         if settings.get("disable_dot") is True:
             env["DOT"] = "off"
 
-        self._apply_credential_env(env=env, protocol=protocol, credential=credential)
+        allow_ipv6_wireguard = self._coerce_bool(
+            credential.get("wireguard_allow_ipv6")
+            if credential.get("wireguard_allow_ipv6") is not None
+            else settings.get("wireguard_allow_ipv6")
+        )
+
+        self._apply_credential_env(
+            env=env,
+            protocol=protocol,
+            credential=credential,
+            allow_ipv6_wireguard=allow_ipv6_wireguard,
+        )
         self._apply_region_env(env=env, provider=provider, regions=regions, credential=credential)
         self._apply_port_forwarding_env(
             env=env,
@@ -265,7 +277,53 @@ class VPNProvisioner:
         return env
 
     @staticmethod
-    def _apply_credential_env(*, env: Dict[str, str], protocol: str, credential: Dict[str, Any]):
+    def _normalize_wireguard_addresses(raw_addresses: Any) -> List[str]:
+        if raw_addresses is None:
+            return []
+
+        tokens: List[str] = []
+
+        def _extend_from_value(value: Any):
+            if value is None:
+                return
+            if isinstance(value, (list, tuple, set)):
+                for item in value:
+                    _extend_from_value(item)
+                return
+
+            text = str(value).strip()
+            if not text:
+                return
+
+            # Be resilient to stored Python-list-like strings such as
+            # "['10.2.0.2/32', '2a07:.../128']".
+            text = text.replace("[", "").replace("]", "").replace("\"", "").replace("'", "")
+            for part in text.split(","):
+                item = part.strip()
+                if item:
+                    tokens.append(item)
+
+        _extend_from_value(raw_addresses)
+
+        # Preserve order while removing duplicates.
+        return list(dict.fromkeys(tokens))
+
+    @staticmethod
+    def _is_ipv4_interface(value: str) -> bool:
+        try:
+            return ipaddress.ip_interface(value).version == 4
+        except ValueError:
+            return False
+
+    @classmethod
+    def _apply_credential_env(
+        cls,
+        *,
+        env: Dict[str, str],
+        protocol: str,
+        credential: Dict[str, Any],
+        allow_ipv6_wireguard: bool = False,
+    ):
         if protocol == "wireguard":
             private_key = (
                 credential.get("wireguard_private_key")
@@ -283,7 +341,21 @@ class VPNProvisioner:
                 or credential.get("Address")
             )
             if addresses:
-                env["WIREGUARD_ADDRESSES"] = str(addresses)
+                normalized_addresses = cls._normalize_wireguard_addresses(addresses)
+                if not normalized_addresses:
+                    raise ValueError("wireguard credential has empty addresses")
+
+                if allow_ipv6_wireguard:
+                    env["WIREGUARD_ADDRESSES"] = ",".join(normalized_addresses)
+                else:
+                    ipv4_addresses = [value for value in normalized_addresses if cls._is_ipv4_interface(value)]
+                    if not ipv4_addresses:
+                        raise ValueError(
+                            "wireguard credential addresses are IPv6-only; provide an IPv4 address or enable wireguard_allow_ipv6"
+                        )
+                    env["WIREGUARD_ADDRESSES"] = ",".join(ipv4_addresses)
+                    if len(ipv4_addresses) < len(normalized_addresses):
+                        logger.info("Filtered IPv6 WireGuard interface addresses for IPv4-only Gluetun runtime")
 
             endpoints = (
                 credential.get("wireguard_endpoints")
