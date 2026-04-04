@@ -517,8 +517,15 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
                     _engine_ingress_rate_bps = fresh_rates
                     _last_engine_ingress_rate_bps = dict(fresh_rates)
                     _last_engine_rate_ts = now
-                elif _last_engine_rate_ts is not None and (now - _last_engine_rate_ts) <= rate_hold_seconds:
-                    _engine_ingress_rate_bps = dict(_last_engine_ingress_rate_bps)
+                elif current_engine_bytes and _last_engine_rate_ts is not None and (now - _last_engine_rate_ts) <= rate_hold_seconds:
+                    # Keep a brief hold only while streams are still mapped to engines.
+                    # If there are no active engine bytes, drop immediately to avoid stale
+                    # engine->proxy activity in routing topology.
+                    _engine_ingress_rate_bps = {
+                        cid: rate
+                        for cid, rate in _last_engine_ingress_rate_bps.items()
+                        if cid in current_engine_bytes
+                    }
                 else:
                     _engine_ingress_rate_bps = {}
                     _last_engine_ingress_rate_bps = {}

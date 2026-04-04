@@ -601,10 +601,16 @@ const buildSnapshot = (
       ? measuredDownMbps
       : (monitoringFloorMbps > 0 ? monitoringFloorMbps : (isMockMode ? randomBetween(8, 72) : 0))
     
-    // Engine → Proxy: Actual per-engine ingress
-    const engineIngressBps = orchestratorStatus?.proxy?.engine_ingress_bps?.[engine.container_id] ?? 0
-    const proxyIngressMbps = engineIngressBps > 0 
-      ? (engineIngressBps * 8) / 1_000_000 
+    // Engine → Proxy: actual per-engine ingress from proxy metrics when available.
+    // If the per-engine ingress map exists, treat missing/zero as zero (authoritative)
+    // so ended routes are deactivated promptly instead of falling back to stream stats.
+    const ingressByEngine = orchestratorStatus?.proxy?.engine_ingress_bps
+    const hasIngressMap = Boolean(ingressByEngine && typeof ingressByEngine === 'object')
+    const engineIngressBps = hasIngressMap
+      ? Number((ingressByEngine as Record<string, number | undefined>)[engine.container_id] ?? 0)
+      : undefined
+    const proxyIngressMbps = typeof engineIngressBps === 'number'
+      ? (engineIngressBps > 0 ? (engineIngressBps * 8) / 1_000_000 : 0)
       : (streamCount > 0 ? streamMeasuredDownMbps * 0.98 : (isMockMode ? randomBetween(2, 18) : 0))
     
     let health: TopologyNodeHealth = 'healthy'
