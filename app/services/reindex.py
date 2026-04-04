@@ -17,6 +17,50 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+def _is_engine_marked_provisioning(engine: EngineState) -> bool:
+    """Best-effort detection for engines still in provisioning transition."""
+    labels = engine.labels or {}
+    lifecycle = str(
+        labels.get("acestream.lifecycle")
+        or labels.get("engine.lifecycle")
+        or ""
+    ).strip().lower()
+    if lifecycle == "provisioning":
+        return True
+
+    provisioning_flag = str(labels.get("acestream.provisioning") or "").strip().lower()
+    return provisioning_flag in {"1", "true", "yes", "on", "pending"}
+
+
+def run_reindex():
+    """Perform a full state reconciliation against Docker, then reindex running containers."""
+    running_container_ids = {c.id for c in list_managed() if c.status == 'running'}
+
+    for engine in state.list_engines():
+        container_id = engine.container_id
+        if container_id in running_container_ids:
+            continue
+
+        is_draining = state.is_engine_draining(container_id)
+        is_provisioning = _is_engine_marked_provisioning(engine)
+
+        if is_draining or is_provisioning:
+            transition_state = "draining" if is_draining else "provisioning"
+            logger.info(
+                f"Reindex removing {transition_state} engine {container_id[:12]} "
+                "because container is no longer running"
+            )
+        else:
+            logger.warning(
+                f"Reindex detected lost engine {container_id[:12]} (missing from Docker). "
+                "Removing stale state entry."
+            )
+
+        state.remove_engine(container_id)
+
+    reindex_existing()
+
 def reindex_existing():
     for c in list_managed():
         # Only process running containers to avoid stale state

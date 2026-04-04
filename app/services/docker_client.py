@@ -55,6 +55,7 @@ class DockerEventWatcher:
         self._event_stream = None
         self._event_stream_lock = threading.RLock()
         self._subscribers: list[Callable[[dict], None]] = []
+        self._has_connected_once = False
 
     def subscribe(self, callback: Callable[[dict], None]):
         """Register a callback invoked after each processed Docker event."""
@@ -107,6 +108,18 @@ class DockerEventWatcher:
             stream = cli.events(decode=True, filters=_DOCKER_EVENT_FILTERS)
             with self._event_stream_lock:
                 self._event_stream = stream
+
+            if self._has_connected_once:
+                try:
+                    from .reindex import run_reindex
+
+                    run_reindex()
+                    logger.warning("Docker event stream reconnected. Executed full state reconciliation to catch missed events.")
+                    self._request_engine_reconcile(reason="docker_event_stream_reconnected")
+                except Exception as e:
+                    logger.warning(f"Docker event stream reconnected but reconciliation failed: {e}")
+            else:
+                self._has_connected_once = True
 
             for event in stream:
                 if self._stop_sync.is_set():
