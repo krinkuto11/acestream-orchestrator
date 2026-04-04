@@ -158,6 +158,8 @@ export function StreamingCentralPage({
     logsLoadingByContainerId,
     logsErrorByContainerId,
     ingestLiveSnapshot,
+    setDashboardSnapshot,
+    setEngineStartEvents,
     refreshBackendTelemetry,
     openEngineLogs,
     closeEngineLogs,
@@ -177,12 +179,175 @@ export function StreamingCentralPage({
     refreshBackendTelemetry({ orchUrl, apiKey })
     const interval = window.setInterval(() => {
       refreshBackendTelemetry({ orchUrl, apiKey })
-    }, 4000)
+    }, 30000)
 
     return () => {
       window.clearInterval(interval)
     }
   }, [orchUrl, apiKey, refreshBackendTelemetry])
+
+  useEffect(() => {
+    let eventSource = null
+    let reconnectTimer = null
+    let fallbackInterval = null
+    let closed = false
+
+    const fetchMetricsFallback = async () => {
+      try {
+        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+        const response = await fetch(`${orchUrl}/api/v1/metrics/dashboard?window_seconds=900&max_points=240`, {
+          headers,
+        })
+        if (!response.ok) return
+        const payload = await response.json()
+        setDashboardSnapshot(payload)
+      } catch {
+        // Best-effort telemetry update.
+      }
+    }
+
+    const connect = () => {
+      if (closed) return
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchMetricsFallback()
+        fallbackInterval = window.setInterval(fetchMetricsFallback, 10000)
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/metrics/stream`)
+      streamUrl.searchParams.set('window_seconds', '900')
+      streamUrl.searchParams.set('max_points', '240')
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleMetricsSnapshot = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          setDashboardSnapshot(parsed?.payload || null)
+        } catch {
+          // Ignore malformed frames and keep existing snapshot.
+        }
+      }
+
+      eventSource.addEventListener('metrics_snapshot', handleMetricsSnapshot)
+      eventSource.onmessage = handleMetricsSnapshot
+
+      eventSource.onerror = () => {
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (fallbackInterval) {
+        window.clearInterval(fallbackInterval)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
+    }
+  }, [orchUrl, apiKey, setDashboardSnapshot])
+
+  useEffect(() => {
+    let eventSource = null
+    let reconnectTimer = null
+    let fallbackInterval = null
+    let closed = false
+
+    const applyEngineEvents = (events) => {
+      const filtered = (Array.isArray(events) ? events : []).filter((event) => {
+        const category = String(event?.category || '').toLowerCase()
+        return category === 'created'
+      })
+      setEngineStartEvents(filtered)
+    }
+
+    const fetchEventsFallback = async () => {
+      try {
+        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+        const response = await fetch(`${orchUrl}/api/v1/events?event_type=engine&category=created&limit=100`, {
+          headers,
+        })
+        if (!response.ok) return
+        const payload = await response.json()
+        applyEngineEvents(payload)
+      } catch {
+        // Best-effort telemetry update.
+      }
+    }
+
+    const connect = () => {
+      if (closed) return
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchEventsFallback()
+        fallbackInterval = window.setInterval(fetchEventsFallback, 10000)
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/events/live`)
+      streamUrl.searchParams.set('event_type', 'engine')
+      streamUrl.searchParams.set('limit', '100')
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleEventsSnapshot = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          const events = parsed?.payload?.events || []
+          applyEngineEvents(events)
+        } catch {
+          // Ignore malformed frames and keep existing events.
+        }
+      }
+
+      eventSource.addEventListener('events_snapshot', handleEventsSnapshot)
+      eventSource.onmessage = handleEventsSnapshot
+
+      eventSource.onerror = () => {
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (fallbackInterval) {
+        window.clearInterval(fallbackInterval)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
+    }
+  }, [orchUrl, apiKey, setEngineStartEvents])
 
   useEffect(() => {
     let isCancelled = false

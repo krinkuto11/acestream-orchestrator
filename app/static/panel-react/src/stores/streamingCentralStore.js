@@ -62,6 +62,12 @@ export const useStreamingCentralStore = create((set, get) => ({
     const snapshotEngines = Array.isArray(engines) ? engines : []
     const snapshotStreams = Array.isArray(streams) ? streams : []
     const dashboardSnapshot = get().dashboardSnapshot
+    const engineStatsById = snapshotEngines.reduce((acc, engine) => {
+      if (engine?.container_id && engine?.docker_stats) {
+        acc[engine.container_id] = engine.docker_stats
+      }
+      return acc
+    }, {})
 
     const activeStreams = Number(orchestratorStatus?.streams?.active ?? snapshotStreams.length)
     const healthyEngines = Number(
@@ -116,6 +122,7 @@ export const useStreamingCentralStore = create((set, get) => ({
         streams: snapshotStreams,
         vpnStatus: vpnStatus || null,
         orchestratorStatus: orchestratorStatus || null,
+        engineStatsById,
         kpiHistory: {
           timestamps,
           activeStreams: activeStreamsHistory,
@@ -129,44 +136,18 @@ export const useStreamingCentralStore = create((set, get) => ({
     })
   },
 
+  setDashboardSnapshot: (dashboardSnapshot) => {
+    set({ dashboardSnapshot: dashboardSnapshot || null })
+  },
+
+  setEngineStartEvents: (engineStartEvents) => {
+    set({
+      engineStartEvents: Array.isArray(engineStartEvents) ? engineStartEvents : [],
+    })
+  },
+
   refreshBackendTelemetry: async ({ orchUrl, apiKey }) => {
     if (!orchUrl) return
-
-    set({ isBackendRefreshing: true })
-
-    const headers = buildHeaders(apiKey)
-
-    const dashboardPromise = fetch(`${orchUrl}/api/v1/metrics/dashboard?window_seconds=900&max_points=240`, {
-      headers,
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`metrics_dashboard_${res.status}`)
-        return res.json()
-      })
-      .catch(() => null)
-
-    const statsPromise = fetch(`${orchUrl}/api/v1/engines/stats/all`, { headers })
-      .then((res) => {
-        if (!res.ok) throw new Error(`engine_stats_${res.status}`)
-        return res.json()
-      })
-      .catch(() => ({}))
-
-    const eventsPromise = fetch(
-      `${orchUrl}/api/v1/events?event_type=engine&category=created&limit=100`,
-      { headers },
-    )
-      .then((res) => {
-        if (!res.ok) throw new Error(`events_${res.status}`)
-        return res.json()
-      })
-      .catch(() => [])
-
-    const [dashboardSnapshot, engineStatsById, engineStartEvents] = await Promise.all([
-      dashboardPromise,
-      statsPromise,
-      eventsPromise,
-    ])
 
     const nowMs = Date.now()
     const shouldRefreshInspect =
@@ -174,9 +155,17 @@ export const useStreamingCentralStore = create((set, get) => ({
       Array.isArray(get().engines) &&
       get().engines.length > 0
 
+    if (!shouldRefreshInspect) {
+      return
+    }
+
+    set({ isBackendRefreshing: true })
+
+    const headers = buildHeaders(apiKey)
+
     let engineInspectById = get().engineInspectById || {}
 
-    if (shouldRefreshInspect) {
+    try {
       const inspectEntries = await Promise.all(
         get().engines.map(async (engine) => {
           try {
@@ -199,16 +188,15 @@ export const useStreamingCentralStore = create((set, get) => ({
         }
         return acc
       }, { ...engineInspectById })
-    }
 
-    set({
-      dashboardSnapshot,
-      engineStatsById: engineStatsById || {},
-      engineInspectById,
-      lastInspectRefreshMs: shouldRefreshInspect ? nowMs : get().lastInspectRefreshMs,
-      engineStartEvents: Array.isArray(engineStartEvents) ? engineStartEvents : [],
-      isBackendRefreshing: false,
-    })
+      set({
+        engineInspectById,
+        lastInspectRefreshMs: nowMs,
+        isBackendRefreshing: false,
+      })
+    } catch {
+      set({ isBackendRefreshing: false })
+    }
   },
 
   openEngineLogs: (containerId) => {

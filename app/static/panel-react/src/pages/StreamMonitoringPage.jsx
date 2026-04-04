@@ -176,7 +176,7 @@ function BufferWindowBar({ livepos }) {
   )
 }
 
-export function StreamMonitoringPage({ orchUrl, apiKey }) {
+export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
   const uiPrefsStorageKey = 'stream-monitoring-ui-prefs-v1'
   const [monitors, setMonitors] = useState([])
   const [activeProxyKeys, setActiveProxyKeys] = useState(new Set())
@@ -234,6 +234,15 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     }
   }, [viewMode, sortMode, groupByStatus, statusFilter])
 
+  useEffect(() => {
+    const keys = new Set(
+      (Array.isArray(streams) ? streams : [])
+        .map((stream) => normalizeContentRef(stream?.key))
+        .filter(Boolean),
+    )
+    setActiveProxyKeys(keys)
+  }, [streams])
+
   const fetchMonitorsNow = async (showLoading = false) => {
     if (showLoading) {
       setLoading(true)
@@ -247,18 +256,11 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
     }
 
     try {
-      const [monitorResponse, streamsResponse] = await Promise.all([
-        fetch(`${orchUrl}/api/v1/ace/monitor/legacy`, {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-          },
-        }),
-        fetch(`${orchUrl}/api/v1/streams?status=started`, {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-          },
-        }),
-      ])
+      const monitorResponse = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy`, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      })
 
       if (!monitorResponse.ok) {
         throw new Error(`${monitorResponse.status} ${monitorResponse.statusText}`)
@@ -266,22 +268,9 @@ export function StreamMonitoringPage({ orchUrl, apiKey }) {
 
       const payload = await monitorResponse.json()
       setMonitors(Array.isArray(payload?.items) ? payload.items : [])
-
-      if (streamsResponse.ok) {
-        const streamItems = await streamsResponse.json()
-        const keys = new Set(
-          (Array.isArray(streamItems) ? streamItems : [])
-            .map((stream) => normalizeContentRef(stream?.key))
-            .filter(Boolean),
-        )
-        setActiveProxyKeys(keys)
-      } else {
-        setActiveProxyKeys(new Set())
-      }
       setError(null)
     } catch (err) {
       setError(err?.message || 'Failed to fetch stream monitoring sessions')
-      setActiveProxyKeys(new Set())
     } finally {
       setLoading(false)
     }

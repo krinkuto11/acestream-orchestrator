@@ -262,7 +262,7 @@ function AppContent() {
                 <MetricsPage apiKey={apiKey} orchUrl={orchUrl} />
               } />
               <Route path="/stream-monitoring" element={
-                <StreamMonitoringPage apiKey={apiKey} orchUrl={orchUrl} />
+                <StreamMonitoringPage apiKey={apiKey} orchUrl={orchUrl} streams={streams} />
               } />
               <Route path="/routing-topology" element={
                 <RoutingTopologyPage
