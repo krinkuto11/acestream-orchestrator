@@ -286,7 +286,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
             engines={engines}
             onDeleteEngine={onDeleteEngine}
             vpnStatus={vpnStatus}
-            orchUrl={orchUrl}
           />
         </TabsContent>
 

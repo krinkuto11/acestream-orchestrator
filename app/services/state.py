@@ -3,6 +3,7 @@ import queue
 import threading
 import logging
 import uuid
+import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -35,6 +36,10 @@ class State:
         self._max_scaling_intents = 300
         self._target_engine_config_hash: str = ""
         self._target_engine_generation: int = 0
+        self._state_change_subscribers: Dict[str, Callable[[Dict[str, object]], None]] = {}
+        self._state_change_lock = threading.RLock()
+        self._state_change_seq = 0
+        self._last_stats_broadcast_monotonic = 0.0
         
         # Lookahead provisioning tracking
         # Tracks the minimum stream count across all engines when lookahead was last triggered
@@ -57,6 +62,47 @@ class State:
     @staticmethod
     def now():
         return datetime.now(timezone.utc)
+
+    def subscribe_state_changes(self, callback: Callable[[Dict[str, object]], None]) -> Callable[[], None]:
+        """Register a callback for state change broadcasts and return an unsubscribe function."""
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+
+        token = str(uuid.uuid4())
+        with self._state_change_lock:
+            self._state_change_subscribers[token] = callback
+
+        def _unsubscribe():
+            with self._state_change_lock:
+                self._state_change_subscribers.pop(token, None)
+
+        return _unsubscribe
+
+    def get_state_change_seq(self) -> int:
+        with self._state_change_lock:
+            return self._state_change_seq
+
+    def broadcast_state_change(self, change_type: str = "state_updated", metadata: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+        """Broadcast an in-process state-change event to subscribers."""
+        with self._state_change_lock:
+            self._state_change_seq += 1
+            seq = self._state_change_seq
+            subscribers = list(self._state_change_subscribers.values())
+
+        event = {
+            "seq": seq,
+            "change_type": str(change_type or "state_updated"),
+            "at": self.now().isoformat(),
+            "metadata": dict(metadata or {}),
+        }
+
+        for callback in subscribers:
+            try:
+                callback(event)
+            except Exception as e:
+                logger.debug(f"State change subscriber callback failed: {e}")
+
+        return event
 
     def _enqueue_db_task(self, task: Callable[[Any], None]):
         if self._stop_db_worker.is_set():
@@ -222,6 +268,13 @@ class State:
             session.merge(StreamRow(**stream_payload))
 
         self._enqueue_db_task(db_work)
+        self.broadcast_state_change(
+            "stream_started",
+            {
+                "stream_id": stream_id,
+                "container_id": key,
+            },
+        )
         return st
 
     def on_stream_ended(self, evt: StreamEndedEvent) -> Optional[StreamState]:
@@ -312,6 +365,15 @@ class State:
                 hls_segmenter_service.stop_segmenter_nowait(st.key, emit_stream_ended=False)
             except Exception as e:
                 logger.warning(f"Failed to schedule external HLS segmenter cleanup for stream {st.key}: {e}")
+
+        if st:
+            self.broadcast_state_change(
+                "stream_ended",
+                {
+                    "stream_id": st.id,
+                    "container_id": st.container_id,
+                },
+            )
         
         return st
 
@@ -379,6 +441,13 @@ class State:
                 invalidate_engine_version_cache(container_id)
             except Exception:
                 pass
+
+            self.broadcast_state_change(
+                "engine_removed",
+                {
+                    "container_id": removed_engine_id,
+                },
+            )
         
         return removed_engine
 
@@ -495,6 +564,15 @@ class State:
             normalized_key,
             normalized_old or "any",
             new_engine.container_id,
+        )
+        self.broadcast_state_change(
+            "streams_reassigned",
+            {
+                "stream_key": normalized_key,
+                "old_container_id": normalized_old,
+                "new_container_id": new_engine.container_id,
+                "updated_count": updated_count,
+            },
         )
         return updated_count
 
@@ -652,12 +730,23 @@ class State:
             self.cache_stats["last_updated"] = self.now().isoformat()
 
     def append_stat(self, stream_id: str, snap: StreamStatSnapshot):
+        should_broadcast_stats = False
         with self._lock:
             arr = self.stream_stats.setdefault(stream_id, [])
             arr.append(snap)
             from ..core.config import cfg as _cfg
             if len(arr) > _cfg.STATS_HISTORY_MAX:
                 del arr[: len(arr) - _cfg.STATS_HISTORY_MAX]
+
+        # Throttle stats broadcast notifications to at most once every 2 seconds.
+        with self._state_change_lock:
+            now_monotonic = time.monotonic()
+            if (
+                self._last_stats_broadcast_monotonic <= 0
+                or (now_monotonic - self._last_stats_broadcast_monotonic) >= 2.0
+            ):
+                self._last_stats_broadcast_monotonic = now_monotonic
+                should_broadcast_stats = True
 
         stat_payload = {
             "stream_id": stream_id,
@@ -689,6 +778,13 @@ class State:
             )
 
         self._enqueue_db_task(db_work)
+        if should_broadcast_stats:
+            self.broadcast_state_change(
+                "stream_stats_updated",
+                {
+                    "stream_id": stream_id,
+                },
+            )
 
     def set_engine_vpn(self, container_id: str, vpn_container: str):
         """Set the VPN container assignment for an engine."""
@@ -1110,6 +1206,15 @@ class State:
             }
             self._dynamic_vpn_nodes[vpn_container] = node_payload
 
+        self.broadcast_state_change(
+            "vpn_node_status",
+            {
+                "vpn_container": vpn_container,
+                "status": normalized,
+                "condition": condition,
+            },
+        )
+
     def remove_vpn_node(self, vpn_container: str):
         with self._lock:
             self._dynamic_vpn_nodes.pop(vpn_container, None)
@@ -1184,7 +1289,16 @@ class State:
                 previous[key] = value
 
             self._dynamic_vpn_nodes[vpn_container] = previous
-            return dict(previous)
+            result = dict(previous)
+
+        self.broadcast_state_change(
+            "vpn_node_lifecycle",
+            {
+                "vpn_container": vpn_container,
+                "lifecycle": normalized_lifecycle,
+            },
+        )
+        return result
 
     def is_vpn_node_draining(self, vpn_container: Optional[str]) -> bool:
         if not vpn_container:
@@ -1322,6 +1436,13 @@ class State:
             session.merge(EngineRow(**engine_payload))
 
         self._enqueue_db_task(db_work)
+        self.broadcast_state_change(
+            "engine_docker_event",
+            {
+                "container_id": container_id,
+                "action": normalized_action,
+            },
+        )
     
     def set_forwarded_engine(self, container_id: str):
         """Mark an engine as the forwarded engine and clear forwarded flag from others.

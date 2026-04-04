@@ -5,8 +5,10 @@ that users should be able to review for transparency and traceability.
 """
 
 import logging
+import threading
+import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any, List, Literal
+from typing import Optional, Dict, Any, List, Literal, Callable
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
@@ -26,6 +28,42 @@ class EventLogger:
     
     # Age threshold for automatic cleanup (days)
     MAX_AGE_DAYS = 30
+
+    def __init__(self):
+        self._subscribers_lock = threading.RLock()
+        self._subscribers: Dict[str, Callable[[Dict[str, Any]], None]] = {}
+        self._event_seq = 0
+
+    def subscribe(self, callback: Callable[[Dict[str, Any]], None]) -> Callable[[], None]:
+        """Subscribe to newly logged events and return an unsubscribe callback."""
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+
+        token = str(uuid.uuid4())
+        with self._subscribers_lock:
+            self._subscribers[token] = callback
+
+        def _unsubscribe():
+            with self._subscribers_lock:
+                self._subscribers.pop(token, None)
+
+        return _unsubscribe
+
+    def _broadcast_event(self, event_payload: Dict[str, Any]):
+        with self._subscribers_lock:
+            self._event_seq += 1
+            seq = self._event_seq
+            subscribers = list(self._subscribers.values())
+
+        payload = {
+            "seq": seq,
+            **dict(event_payload or {}),
+        }
+        for callback in subscribers:
+            try:
+                callback(payload)
+            except Exception as e:
+                logger.debug(f"Event logger subscriber callback failed: {e}")
     
     def log_event(
         self,
@@ -64,6 +102,18 @@ class EventLogger:
                 session.add(event)
                 session.commit()
                 session.refresh(event)
+
+                self._broadcast_event(
+                    {
+                        "id": event.id,
+                        "timestamp": event.timestamp.isoformat() if event.timestamp else None,
+                        "event_type": event.event_type,
+                        "category": event.category,
+                        "message": event.message,
+                        "container_id": event.container_id,
+                        "stream_id": event.stream_id,
+                    }
+                )
                 
                 # Async cleanup in background if needed
                 self._cleanup_old_events_if_needed(session)

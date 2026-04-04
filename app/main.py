@@ -1,5 +1,6 @@
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI, HTTPException, Query, Depends, BackgroundTasks, Request, APIRouter
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
@@ -80,6 +81,111 @@ from .proxy.constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mo
 logger = logging.getLogger(__name__)
 
 setup()
+
+
+def _format_sse_message(payload: Dict[str, Any], *, event_name: Optional[str] = None, event_id: Optional[str] = None) -> str:
+    chunks: List[str] = []
+    if event_name:
+        chunks.append(f"event: {event_name}\n")
+    if event_id:
+        chunks.append(f"id: {event_id}\n")
+
+    data = json.dumps(payload, separators=(",", ":"), default=str)
+    for line in data.splitlines() or [data]:
+        chunks.append(f"data: {line}\n")
+    chunks.append("\n")
+    return "".join(chunks)
+
+
+def _build_sse_payload() -> Dict[str, Any]:
+    engines = state.list_engines()
+    streams = state.list_streams_with_stats(status="started")
+    engine_docker_stats = docker_stats_collector.get_all_stats()
+
+    total_peers = 0
+    total_speed_down = 0
+    total_speed_up = 0
+    for stream in streams:
+        try:
+            total_peers += int(stream.peers or 0)
+        except Exception:
+            pass
+        try:
+            total_speed_down += int(stream.speed_down or 0)
+        except Exception:
+            pass
+        try:
+            total_speed_up += int(stream.speed_up or 0)
+        except Exception:
+            pass
+
+    try:
+        vpn_status = get_vpn_status()
+    except Exception:
+        vpn_status = {"enabled": False}
+
+    try:
+        orchestrator_status = get_orchestrator_status()
+    except Exception:
+        orchestrator_status = None
+
+    return {
+        "engines": jsonable_encoder(engines),
+        "engine_docker_stats": jsonable_encoder(engine_docker_stats),
+        "streams": jsonable_encoder(streams),
+        "vpn_status": jsonable_encoder(vpn_status),
+        "orchestrator_status": jsonable_encoder(orchestrator_status),
+        "kpis": {
+            "total_engines": len(engines),
+            "active_streams": len(streams),
+            "healthy_engines": sum(1 for e in engines if (e.health_status or "").lower() == "healthy"),
+            "total_peers": total_peers,
+            "total_speed_down": total_speed_down,
+            "total_speed_up": total_speed_up,
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _validate_sse_api_key(request: Request, api_key: Optional[str]):
+    """Validate SSE clients where EventSource cannot send custom auth headers."""
+    if not cfg.API_KEY:
+        return
+
+    token = (api_key or "").strip()
+    if not token:
+        authorization = str(request.headers.get("Authorization") or "")
+        if authorization.startswith("Bearer "):
+            token = authorization.split(" ", 1)[1].strip()
+
+    if token != cfg.API_KEY:
+        raise HTTPException(status_code=401, detail="missing or invalid SSE API key")
+
+
+def _serialize_event_row(event_row) -> Dict[str, Any]:
+    timestamp = event_row.timestamp
+    if timestamp and getattr(timestamp, "tzinfo", None) is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+
+    return {
+        "id": event_row.id,
+        "timestamp": timestamp,
+        "event_type": event_row.event_type,
+        "category": event_row.category,
+        "message": event_row.message,
+        "details": event_row.details or {},
+        "container_id": event_row.container_id,
+        "stream_id": event_row.stream_id,
+    }
+
+
+def _build_events_sse_payload(limit: int, event_type: Optional[str]) -> Dict[str, Any]:
+    rows = event_logger.get_events(limit=limit, event_type=event_type)
+    return {
+        "events": jsonable_encoder([_serialize_event_row(row) for row in rows]),
+        "stats": jsonable_encoder(event_logger.get_event_stats()),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 class WireguardParseRequest(BaseModel):
@@ -987,6 +1093,186 @@ def ev_stream_ended(evt: StreamEndedEvent, bg: BackgroundTasks):
                 
         bg.add_task(_auto)
     return {"updated": bool(st), "stream": st}
+
+
+@app.get("/api/v1/events/stream")
+async def stream_realtime_events(request: Request, api_key: Optional[str] = Query(None)):
+    """Server-Sent Events endpoint for low-latency dashboard updates."""
+    _validate_sse_api_key(request, api_key)
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=8)
+    loop = asyncio.get_running_loop()
+
+    def _on_state_change(event: Dict[str, object]):
+        def _enqueue():
+            if queue.full():
+                with suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+            queue.put_nowait(dict(event))
+
+        with suppress(RuntimeError):
+            loop.call_soon_threadsafe(_enqueue)
+
+    unsubscribe = state.subscribe_state_changes(_on_state_change)
+
+    async def _event_generator():
+        try:
+            initial_payload = {
+                "type": "full_sync",
+                "payload": _build_sse_payload(),
+                "meta": {
+                    "reason": "initial_sync",
+                    "seq": state.get_state_change_seq(),
+                },
+            }
+            yield _format_sse_message(
+                initial_payload,
+                event_name="full_sync",
+                event_id=str(state.get_state_change_seq()),
+            )
+
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+
+                message = {
+                    "type": "full_sync",
+                    "payload": _build_sse_payload(),
+                    "meta": {
+                        "reason": event.get("change_type"),
+                        "seq": event.get("seq"),
+                        "at": event.get("at"),
+                    },
+                }
+                yield _format_sse_message(
+                    message,
+                    event_name="full_sync",
+                    event_id=str(event.get("seq") or ""),
+                )
+        finally:
+            unsubscribe()
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_event_generator(), media_type="text/event-stream", headers=headers)
+
+
+@app.get("/api/v1/events/live")
+async def stream_live_event_log(
+    request: Request,
+    limit: int = Query(100, ge=1, le=1000),
+    event_type: Optional[str] = Query(None),
+    api_key: Optional[str] = Query(None),
+):
+    """SSE endpoint for event log updates used by the Events page."""
+    _validate_sse_api_key(request, api_key)
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=16)
+    loop = asyncio.get_running_loop()
+
+    def _on_event(event: Dict[str, object]):
+        if event_type and str(event.get("event_type") or "") != event_type:
+            return
+
+        def _enqueue():
+            if queue.full():
+                with suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+            queue.put_nowait(dict(event))
+
+        with suppress(RuntimeError):
+            loop.call_soon_threadsafe(_enqueue)
+
+    unsubscribe = event_logger.subscribe(_on_event)
+
+    async def _event_generator():
+        try:
+            initial_payload = {
+                "type": "events_snapshot",
+                "payload": _build_events_sse_payload(limit=limit, event_type=event_type),
+                "meta": {"reason": "initial_sync"},
+            }
+            yield _format_sse_message(initial_payload, event_name="events_snapshot")
+
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=20.0)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+
+                message = {
+                    "type": "events_snapshot",
+                    "payload": _build_events_sse_payload(limit=limit, event_type=event_type),
+                    "meta": {
+                        "reason": "event_logged",
+                        "seq": event.get("seq"),
+                        "event_type": event.get("event_type"),
+                    },
+                }
+                yield _format_sse_message(
+                    message,
+                    event_name="events_snapshot",
+                    event_id=str(event.get("seq") or ""),
+                )
+        finally:
+            unsubscribe()
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_event_generator(), media_type="text/event-stream", headers=headers)
+
+
+@app.get("/api/v1/metrics/stream")
+async def stream_live_metrics(
+    request: Request,
+    window_seconds: int = Query(cfg.DASHBOARD_DEFAULT_WINDOW_S, ge=60, le=604800),
+    max_points: int = Query(360, ge=30, le=2000),
+    api_key: Optional[str] = Query(None),
+):
+    """SSE endpoint for dashboard metrics snapshots."""
+    _validate_sse_api_key(request, api_key)
+
+    async def _event_generator():
+        while True:
+            if await request.is_disconnected():
+                break
+
+            payload = update_custom_metrics(window_seconds=window_seconds, max_points=max_points)
+            message = {
+                "type": "metrics_snapshot",
+                "payload": jsonable_encoder(payload),
+                "meta": {
+                    "window_seconds": window_seconds,
+                    "max_points": max_points,
+                },
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            yield _format_sse_message(message, event_name="metrics_snapshot")
+
+            await asyncio.sleep(2.0)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_event_generator(), media_type="text/event-stream", headers=headers)
 
 # Read APIs
 @app.get("/engines", response_model=List[EngineState])
@@ -2242,19 +2528,7 @@ def get_events(
     )
     
     # Convert EventRow to EventLog schema
-    return [
-        EventLog(
-            id=e.id,
-            timestamp=e.timestamp if e.timestamp.tzinfo else e.timestamp.replace(tzinfo=timezone.utc),
-            event_type=e.event_type,
-            category=e.category,
-            message=e.message,
-            details=e.details or {},
-            container_id=e.container_id,
-            stream_id=e.stream_id
-        )
-        for e in events
-    ]
+    return [EventLog(**_serialize_event_row(e)) for e in events]
 
 @app.get("/events/stats")
 def get_event_stats():

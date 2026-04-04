@@ -86,11 +86,73 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
   }, [orchUrl, apiKey, filterType, displayLimit])
 
   useEffect(() => {
-    fetchEvents()
-    // Refresh events every 5 seconds
-    const interval = setInterval(fetchEvents, 5000)
-    return () => clearInterval(interval)
-  }, [fetchEvents])
+    let eventSource = null
+    let reconnectTimer = null
+    let closed = false
+
+    const connect = () => {
+      if (closed) {
+        return
+      }
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchEvents()
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/events/live`)
+      streamUrl.searchParams.set('limit', String(displayLimit))
+      if (filterType !== 'all') {
+        streamUrl.searchParams.set('event_type', filterType)
+      }
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleEventsSnapshot = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          const payload = parsed?.payload || {}
+          setEvents(Array.isArray(payload.events) ? payload.events : [])
+          setStats(payload.stats || null)
+          setError(null)
+          setLoading(false)
+        } catch (err) {
+          console.error('Failed to parse events SSE payload:', err)
+        }
+      }
+
+      eventSource.addEventListener('events_snapshot', handleEventsSnapshot)
+      eventSource.onmessage = handleEventsSnapshot
+
+      eventSource.onerror = () => {
+        setLoading(false)
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    setLoading(true)
+    connect()
+
+    return () => {
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
+    }
+  }, [orchUrl, apiKey, filterType, displayLimit, fetchEvents])
 
   const formatTimestamp = (timestamp) => {
     try {

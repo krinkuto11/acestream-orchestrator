@@ -35,10 +35,6 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 
-// Simple in-memory cache for engine stats to prevent flickering
-const statsCache = new Map()
-const STATS_CACHE_TTL = 3000 // 3 seconds
-
 const normalizeLifecycle = (value) => {
   return String(value || '').trim().toLowerCase() === 'draining' ? 'draining' : 'active'
 }
@@ -84,13 +80,9 @@ const resolveEngineLifecycle = (engine, drainingVpnContainers) => {
   return 'active'
 }
 
-function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMode = null, drainingVpnContainers }) {
+function EngineTableRow({ engine, onDelete, showVpnLabel = false, vpnMode = null, drainingVpnContainers }) {
   const [isExpanded, setIsExpanded] = useState(false)
-  const [stats, setStats] = useState(() => {
-    // Initialize with cached stats if available
-    const cached = statsCache.get(engine.container_id)
-    return cached?.data || null
-  })
+  const [stats, setStats] = useState(engine?.docker_stats || null)
   
   const healthColors = {
     healthy: 'success',
@@ -103,43 +95,10 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
   const lifecycle = resolveEngineLifecycle(engine, drainingVpnContainers)
   const isDraining = lifecycle === 'draining'
 
-  // Fetch Docker stats continuously
+  // Stats are delivered by the global SSE snapshot payload.
   useEffect(() => {
-    const fetchStats = async () => {
-      // Check cache first
-      const cached = statsCache.get(engine.container_id)
-      const now = Date.now()
-      
-      if (cached && (now - cached.timestamp) < STATS_CACHE_TTL) {
-        // Use cached data
-        setStats(cached.data)
-        return
-      }
-      
-      try {
-        const response = await fetch(`${orchUrl}/api/v1/engines/${engine.container_id}/stats`)
-        if (response.ok) {
-          const data = await response.json()
-          setStats(data)
-          // Update cache
-          statsCache.set(engine.container_id, {
-            data,
-            timestamp: now
-          })
-        }
-      } catch (err) {
-        console.error('Failed to fetch engine stats:', err)
-      }
-    }
-    
-    // Fetch immediately
-    fetchStats()
-    
-    // Refresh stats every 3 seconds
-    const interval = setInterval(fetchStats, 3000)
-    
-    return () => clearInterval(interval)
-  }, [engine.container_id, orchUrl])
+    setStats(engine?.docker_stats || null)
+  }, [engine?.docker_stats])
 
   // Format CPU and RAM as text
   const cpuText = stats ? `${stats.cpu_percent.toFixed(1)}%` : 'N/A'
@@ -359,7 +318,7 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
   )
 }
 
-function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUrl, vpnMode = null, vpnStatus = null }) {
+function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, vpnMode = null, vpnStatus = null }) {
   // State for sorting
   const [sortColumn, setSortColumn] = useState(null)
   const [sortDirection, setSortDirection] = useState('asc')
@@ -517,7 +476,6 @@ function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUr
                   engine={engine}
                   onDelete={onDeleteEngine}
                   showVpnLabel={showVpnLabel}
-                  orchUrl={orchUrl}
                   vpnMode={vpnMode}
                   drainingVpnContainers={drainingVpnContainers}
                 />

@@ -83,7 +83,6 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const [extendedStatsError, setExtendedStatsError] = useState(null)
   const [clients, setClients] = useState([])
   const [clientsLoading, setClientsLoading] = useState(false)
-  const [streamStatus, setStreamStatus] = useState(null) // For tracking AceStream stat URL status
   const [seekValue, setSeekValue] = useState(null)
   const [seekLoading, setSeekLoading] = useState(false)
   const [seekError, setSeekError] = useState(null)
@@ -108,8 +107,8 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     setIsPaused(Boolean(stream.paused))
   }, [stream.paused])
 
-  // Determine if stream is prebuffering based on stat URL response
-  const isPrebuffering = streamStatus === 'prebuf'
+  // Use latest status text from stream labels for prebuffering indicator.
+  const isPrebuffering = String(stream?.labels?.['stream.status_text'] || '').toLowerCase().includes('prebuf')
 
   const fetchStats = useCallback(async () => {
     if (!stream || !isExpanded) return
@@ -216,54 +215,20 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     }
   }, [stream, orchUrl, isExpanded])
 
-  const fetchStreamStatus = useCallback(async () => {
-    if (!stream || !stream.stat_url || !isActive) return
-
-    try {
-      const response = await fetch(stream.stat_url)
-
-      if (response.ok) {
-        const data = await response.json()
-        // AceStream stat response can have status in various places
-        // Check common paths: status, response.status, etc.
-        const status = data.status || data.response?.status || null
-        setStreamStatus(status)
-      }
-    } catch (err) {
-      console.error('Failed to fetch stream status from stat URL:', err)
-      // Keep existing status on error
-    }
-  }, [stream, isActive])
-
-  const refreshData = useCallback(() => {
-    fetchStats()
-    fetchClients()
-    fetchStreamStatus()
-  }, [fetchStats, fetchClients, fetchStreamStatus])
-
   useEffect(() => {
     if (isExpanded && isActive) {
       fetchStats()
       fetchExtendedStats() // Initial fetch
       fetchClients()
-      fetchStreamStatus()
-      const interval = setInterval(refreshData, 10000)
-      return () => clearInterval(interval)
     }
-  }, [refreshData, fetchStats, fetchExtendedStats, fetchClients, fetchStreamStatus, isExpanded, isActive])
+  }, [fetchStats, fetchExtendedStats, fetchClients, isExpanded, isActive])
 
-  // Also fetch stream status periodically even when not expanded, for active streams
+  // Fetch lightweight extended metadata for active streams so titles are visible collapsed.
   useEffect(() => {
     if (isActive) {
-      fetchStreamStatus()
-      fetchExtendedStats() // Initial fetch for active streams to show title
-      const interval = setInterval(() => {
-        fetchStreamStatus()
-        // Removed fetchExtendedStats() from polling interval
-      }, 10000) // Check every 10 seconds
-      return () => clearInterval(interval)
+      fetchExtendedStats()
     }
-  }, [fetchStreamStatus, fetchExtendedStats, isActive])
+  }, [fetchExtendedStats, isActive])
 
   const chartData = {
     labels: stats.map(s => new Date(s.ts).toLocaleTimeString()),
