@@ -38,6 +38,7 @@ class StreamGenerator:
         # Rate tracking
         self.last_stats_time = time.time()
         self.last_stats_bytes = 0
+        self.last_stats_chunks = 0
         self.current_rate = 0.0
         
         # TTL refresh
@@ -48,7 +49,6 @@ class StreamGenerator:
         """Generator function that produces stream content for the client"""
         # Local import avoids creating import cycles at module import time.
         from ..services.metrics import observe_proxy_egress_bytes
-        from ..services.client_tracker import client_tracking_service
 
         self.stream_start_time = time.time()
         self.bytes_sent = 0
@@ -88,18 +88,6 @@ class StreamGenerator:
                         chunk_len = len(chunk)
                         self.bytes_sent += chunk_len
                         observe_proxy_egress_bytes("TS", chunk_len)
-                        client_tracking_service.record_activity(
-                            client_id=str(self.client_id),
-                            stream_id=str(self.content_id),
-                            bytes_delta=float(chunk_len),
-                            protocol="TS",
-                            ip_address=str(self.client_ip or "unknown"),
-                            user_agent=str(self.client_user_agent or "unknown"),
-                            request_kind="segment",
-                            chunks_delta=1,
-                            now=time.time(),
-                            worker_id="ts_proxy",
-                        )
                         self.chunks_sent += 1
                     
                     # Update local index
@@ -244,18 +232,37 @@ class StreamGenerator:
         return True
     
     def _update_stats(self):
-        """Update streaming statistics"""
+        """Update streaming statistics and flush aggregated tracker deltas."""
+        from ..services.client_tracker import client_tracking_service
+
         now = time.time()
         elapsed = now - self.last_stats_time
         
         if elapsed > 0:
             bytes_since_last = self.bytes_sent - self.last_stats_bytes
+            chunks_since_last = self.chunks_sent - self.last_stats_chunks
+
+            if bytes_since_last > 0 or chunks_since_last > 0:
+                client_tracking_service.record_activity(
+                    client_id=str(self.client_id),
+                    stream_id=str(self.content_id),
+                    bytes_delta=float(bytes_since_last),
+                    protocol="TS",
+                    ip_address=str(self.client_ip or "unknown"),
+                    user_agent=str(self.client_user_agent or "unknown"),
+                    request_kind="stream",
+                    chunks_delta=int(chunks_since_last),
+                    now=now,
+                    worker_id="ts_proxy",
+                )
+
             self.current_rate = bytes_since_last / elapsed / 1024  # KB/s
             
             logger.debug(f"[{self.client_id}] Rate: {self.current_rate:.1f} KB/s, Total: {self.bytes_sent / 1024 / 1024:.1f} MB")
             
             self.last_stats_time = now
             self.last_stats_bytes = self.bytes_sent
+            self.last_stats_chunks = self.chunks_sent
             
             # Update bytes_sent in Redis
             if hasattr(self, 'client_manager') and self.client_manager:
