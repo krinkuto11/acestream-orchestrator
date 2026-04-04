@@ -66,6 +66,7 @@ from .services.cache import start_cleanup_task, stop_cleanup_task, invalidate_ca
 from .services.stream_loop_detector import stream_loop_detector
 from .services.looping_streams import looping_streams_tracker
 from .services.vpn_controller import vpn_controller
+from .services.db_maintenance import db_maintenance_service
 from .services.cache_monitoring_service import start_cache_monitoring
 from .services.legacy_stream_monitoring import legacy_stream_monitoring_service
 from .services.hls_segmenter import hls_segmenter_service
@@ -445,6 +446,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
     asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
     asyncio.create_task(looping_streams_tracker.start())  # Start looping streams tracker
+    asyncio.create_task(db_maintenance_service.start())  # Start daily DB pruning and vacuum
     
     # Start engine cache manager background tasks
     from .services.engine_cache_manager import engine_cache_manager
@@ -473,6 +475,7 @@ async def lifespan(app: FastAPI):
     await docker_event_watcher.stop()  # Stop Docker event watcher
     await stream_loop_detector.stop()  # Stop stream loop detector
     await looping_streams_tracker.stop()  # Stop looping streams tracker
+    await db_maintenance_service.stop()  # Stop DB maintenance loop
     await legacy_stream_monitoring_service.stop_all()  # Stop legacy monitor sessions
     await stop_cleanup_task()  # Stop cache cleanup
     
