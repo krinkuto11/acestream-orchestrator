@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import EngineList from '@/components/EngineList'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -36,6 +36,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const [isReprovisioning, setIsReprovisioning] = useState(false)
   const [showSuccessMessage, setShowSuccessMessage] = useState(false)
   const [showErrorMessage, setShowErrorMessage] = useState(false)
+  const reprovisionInProgressRef = useRef(false)
 
   // Engine settings state
   const [engineSettings, setEngineSettings] = useState({
@@ -97,35 +98,42 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
-  // Poll for reprovision status
+  const applyReprovisionStatus = useCallback((status) => {
+    const wasReprovisioning = Boolean(reprovisionInProgressRef.current)
+    const inProgress = status?.in_progress === true || status?.status === 'in_progress'
+
+    setReprovisionStatus(status)
+    setIsReprovisioning(inProgress)
+    reprovisionInProgressRef.current = inProgress
+
+    if (inProgress) {
+      setShowSuccessMessage(false)
+      setShowErrorMessage(false)
+    }
+
+    if (wasReprovisioning && !inProgress) {
+      setReprovisionStatus((prev) => ({
+        ...prev,
+        status: 'success',
+        message: 'Reprovisioning completed successfully.'
+      }))
+      setShowSuccessMessage(true)
+      setTimeout(() => setShowSuccessMessage(false), 10000)
+    }
+  }, [])
+
   useEffect(() => {
+    let eventSource = null
+    let reconnectTimer = null
+    let fallbackInterval = null
+    let closed = false
+
     const checkReprovisionStatus = async () => {
       try {
         const status = await fetchJSON(`${orchUrl}/api/v1/custom-variant/reprovision/status`)
-        const wasReprovisioning = isReprovisioning
-        const inProgress = status?.in_progress === true || status?.status === 'in_progress'
-
-        setReprovisionStatus(status)
-        setIsReprovisioning(inProgress)
-
-        if (inProgress) {
-          setShowSuccessMessage(false)
-          setShowErrorMessage(false)
-        }
-
-        // When reprovisioning completes, show success/error message briefly
-        if (wasReprovisioning && !inProgress) {
-          setReprovisionStatus((prev) => ({
-            ...prev,
-            status: 'success',
-            message: 'Reprovisioning completed successfully.'
-          }))
-          setShowSuccessMessage(true)
-          // Auto-dismiss success message after 10 seconds
-          setTimeout(() => setShowSuccessMessage(false), 10000)
-        }
+        applyReprovisionStatus(status)
       } catch (err) {
-        if (isReprovisioning) {
+        if (reprovisionInProgressRef.current) {
           setReprovisionStatus((prev) => ({
             ...prev,
             status: 'error',
@@ -137,13 +145,63 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
       }
     }
 
-    // Initial check
-    checkReprovisionStatus()
+    const connect = () => {
+      if (closed) {
+        return
+      }
 
-    // Poll every 2 seconds
-    const interval = setInterval(checkReprovisionStatus, 2000)
-    return () => clearInterval(interval)
-  }, [orchUrl, fetchJSON, isReprovisioning])
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        checkReprovisionStatus()
+        fallbackInterval = setInterval(checkReprovisionStatus, 2000)
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/custom-variant/reprovision/status/stream`)
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleStatusUpdate = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          applyReprovisionStatus(parsed?.payload || null)
+        } catch (err) {
+          console.error('Failed to parse reprovision SSE payload:', err)
+        }
+      }
+
+      eventSource.addEventListener('reprovision_status', handleStatusUpdate)
+      eventSource.onmessage = handleStatusUpdate
+
+      eventSource.onerror = () => {
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (fallbackInterval) {
+        clearInterval(fallbackInterval)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
+    }
+  }, [orchUrl, fetchJSON, applyReprovisionStatus, apiKey])
 
   // Clear success/error message when component unmounts (user navigates away)
   useEffect(() => {
@@ -151,6 +209,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
       // Clear the status when leaving the page
       setReprovisionStatus(null)
       setIsReprovisioning(false)
+      reprovisionInProgressRef.current = false
       setShowSuccessMessage(false)
       setShowErrorMessage(false)
     }
@@ -431,6 +490,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                           }
                         }).then(() => {
                           setIsReprovisioning(true)
+                          reprovisionInProgressRef.current = true
                           setShowSuccessMessage(false)
                           setShowErrorMessage(false)
                           setReprovisionStatus((prev) => ({

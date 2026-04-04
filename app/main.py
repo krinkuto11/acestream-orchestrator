@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
 from fastapi.routing import APIRoute
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel
 import asyncio
 import io
@@ -957,6 +957,40 @@ def get_container(container_id: str):
         raise HTTPException(status_code=404, detail="container not found")
 
 
+def _fetch_container_logs_payload(
+    container_id: str,
+    *,
+    tail: int,
+    since_seconds: Optional[int],
+    timestamps: bool,
+) -> Dict[str, Any]:
+    client = get_client(timeout=20)
+    container = client.containers.get(container_id)
+
+    since = None
+    if since_seconds is not None:
+        since = int(time.time()) - since_seconds
+
+    logs_raw = container.logs(
+        stdout=True,
+        stderr=True,
+        tail=tail,
+        since=since,
+        timestamps=timestamps,
+    )
+
+    logs_text = logs_raw.decode("utf-8", errors="replace") if isinstance(logs_raw, (bytes, bytearray)) else str(logs_raw)
+
+    return {
+        "container_id": container_id,
+        "tail": tail,
+        "since_seconds": since_seconds,
+        "timestamps": timestamps,
+        "logs": logs_text,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @app.get("/containers/{container_id}/logs", dependencies=[Depends(require_api_key)])
 def get_container_logs(
     container_id: str,
@@ -974,36 +1008,93 @@ def get_container_logs(
     This endpoint is intended for live tailing in the panel by polling at short intervals.
     """
     try:
-        client = get_client(timeout=20)
-        container = client.containers.get(container_id)
-
-        since = None
-        if since_seconds is not None:
-            since = int(time.time()) - since_seconds
-
-        logs_raw = container.logs(
-            stdout=True,
-            stderr=True,
+        return _fetch_container_logs_payload(
+            container_id,
             tail=tail,
-            since=since,
+            since_seconds=since_seconds,
             timestamps=timestamps,
         )
-
-        logs_text = logs_raw.decode("utf-8", errors="replace") if isinstance(logs_raw, (bytes, bytearray)) else str(logs_raw)
-
-        return {
-            "container_id": container_id,
-            "tail": tail,
-            "since_seconds": since_seconds,
-            "timestamps": timestamps,
-            "logs": logs_text,
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-        }
     except NotFound:
         raise HTTPException(status_code=404, detail="container not found")
     except Exception as exc:
         logger.error(f"Failed to fetch logs for container {container_id[:12]}: {exc}")
         raise HTTPException(status_code=500, detail=f"failed_to_fetch_logs: {exc}")
+
+
+@app.get("/api/v1/containers/{container_id}/logs/stream")
+async def stream_container_logs(
+    request: Request,
+    container_id: str,
+    tail: int = Query(300, ge=1, le=2000),
+    since_seconds: Optional[int] = Query(1200, ge=1, le=86400),
+    timestamps: bool = Query(False),
+    interval_seconds: float = Query(2.5, ge=0.5, le=10.0),
+    api_key: Optional[str] = Query(None),
+):
+    """SSE endpoint for near-real-time container logs updates."""
+    _validate_sse_api_key(request, api_key)
+
+    async def _event_generator():
+        last_logs_text: Optional[str] = None
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            try:
+                payload = _fetch_container_logs_payload(
+                    container_id,
+                    tail=tail,
+                    since_seconds=since_seconds,
+                    timestamps=timestamps,
+                )
+            except NotFound:
+                message = {
+                    "type": "container_logs_error",
+                    "payload": {
+                        "container_id": container_id,
+                        "status_code": 404,
+                        "detail": "container not found",
+                    },
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                yield _format_sse_message(message, event_name="container_logs_error")
+                break
+            except Exception as exc:
+                logger.debug(f"Logs SSE fetch failed for {container_id[:12]}: {exc}")
+                message = {
+                    "type": "container_logs_error",
+                    "payload": {
+                        "container_id": container_id,
+                        "status_code": 500,
+                        "detail": f"failed_to_fetch_logs: {exc}",
+                    },
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                yield _format_sse_message(message, event_name="container_logs_error")
+                await asyncio.sleep(interval_seconds)
+                continue
+
+            logs_text = str(payload.get("logs") or "")
+            if logs_text != last_logs_text:
+                last_logs_text = logs_text
+                message = {
+                    "type": "container_logs_snapshot",
+                    "payload": jsonable_encoder(payload),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                yield _format_sse_message(message, event_name="container_logs_snapshot")
+            else:
+                yield ": keep-alive\n\n"
+
+            await asyncio.sleep(interval_seconds)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_event_generator(), media_type="text/event-stream", headers=headers)
 
 # Events
 @app.post("/events/stream_started", response_model=StreamState, dependencies=[Depends(require_api_key)])
@@ -1266,6 +1357,276 @@ async def stream_live_metrics(
             yield _format_sse_message(message, event_name="metrics_snapshot")
 
             await asyncio.sleep(2.0)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_event_generator(), media_type="text/event-stream", headers=headers)
+
+
+@app.get("/api/v1/ace/monitor/legacy/stream")
+async def stream_legacy_monitor_sessions(
+    request: Request,
+    include_recent_status: bool = Query(
+        True,
+        description="Include recent_status history in monitor payloads.",
+    ),
+    api_key: Optional[str] = Query(None),
+):
+    """SSE endpoint for legacy monitor session updates."""
+    _validate_sse_api_key(request, api_key)
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=24)
+    loop = asyncio.get_running_loop()
+
+    def _shape_event_payload(event: Dict[str, object]) -> Dict[str, object]:
+        payload = dict(event or {})
+        monitor_payload = payload.get("monitor")
+        if include_recent_status or not isinstance(monitor_payload, dict):
+            return payload
+
+        compact_monitor = dict(monitor_payload)
+        compact_monitor.pop("recent_status", None)
+        payload["monitor"] = compact_monitor
+        return payload
+
+    def _on_update(event: Dict[str, object]):
+        shaped = _shape_event_payload(event)
+
+        def _enqueue():
+            if queue.full():
+                with suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+            queue.put_nowait(shaped)
+
+        with suppress(RuntimeError):
+            loop.call_soon_threadsafe(_enqueue)
+
+    unsubscribe = legacy_stream_monitoring_service.subscribe_updates(_on_update)
+
+    async def _event_generator():
+        try:
+            initial_items = await legacy_stream_monitoring_service.list_monitors(
+                include_recent_status=include_recent_status,
+            )
+            initial_payload = {
+                "type": "legacy_monitor_snapshot",
+                "payload": {
+                    "items": jsonable_encoder(initial_items),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                "meta": {"reason": "initial_sync"},
+            }
+            yield _format_sse_message(initial_payload, event_name="legacy_monitor_snapshot")
+
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=20.0)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+
+                message = {
+                    "type": "legacy_monitor_event",
+                    "payload": jsonable_encoder(event),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                yield _format_sse_message(
+                    message,
+                    event_name="legacy_monitor_event",
+                    event_id=str(event.get("seq") or ""),
+                )
+        finally:
+            unsubscribe()
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_event_generator(), media_type="text/event-stream", headers=headers)
+
+
+@app.get("/api/v1/custom-variant/reprovision/status/stream")
+async def stream_reprovision_status(
+    request: Request,
+    interval_seconds: float = Query(1.0, ge=0.5, le=10.0),
+    api_key: Optional[str] = Query(None),
+):
+    """SSE endpoint for custom variant reprovision status."""
+    _validate_sse_api_key(request, api_key)
+
+    async def _event_generator():
+        last_digest: Optional[str] = None
+        while True:
+            if await request.is_disconnected():
+                break
+
+            payload = jsonable_encoder(get_reprovision_status())
+            digest = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str)
+
+            if digest != last_digest:
+                last_digest = digest
+                message = {
+                    "type": "reprovision_status",
+                    "payload": payload,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                yield _format_sse_message(message, event_name="reprovision_status")
+            else:
+                yield ": keep-alive\n\n"
+
+            await asyncio.sleep(interval_seconds)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_event_generator(), media_type="text/event-stream", headers=headers)
+
+
+@app.get("/api/v1/vpn/leases/stream")
+async def stream_vpn_lease_summary(
+    request: Request,
+    interval_seconds: float = Query(5.0, ge=1.0, le=30.0),
+    api_key: Optional[str] = Query(None),
+):
+    """SSE endpoint for VPN credential lease summary updates."""
+    _validate_sse_api_key(request, api_key)
+
+    async def _event_generator():
+        last_digest: Optional[str] = None
+        while True:
+            if await request.is_disconnected():
+                break
+
+            try:
+                payload = jsonable_encoder(await credential_manager.summary())
+                digest = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str)
+
+                if digest != last_digest:
+                    last_digest = digest
+                    message = {
+                        "type": "vpn_leases_snapshot",
+                        "payload": payload,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                    yield _format_sse_message(message, event_name="vpn_leases_snapshot")
+                else:
+                    yield ": keep-alive\n\n"
+            except Exception as exc:
+                message = {
+                    "type": "vpn_leases_error",
+                    "payload": {
+                        "detail": f"vpn_lease_summary_error: {exc}",
+                    },
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                yield _format_sse_message(message, event_name="vpn_leases_error")
+
+            await asyncio.sleep(interval_seconds)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_event_generator(), media_type="text/event-stream", headers=headers)
+
+
+@app.get("/api/v1/streams/{stream_id}/details/stream")
+async def stream_stream_details(
+    request: Request,
+    stream_id: str,
+    since_seconds: int = Query(3600, ge=60, le=86400),
+    interval_seconds: float = Query(2.0, ge=0.5, le=10.0),
+    api_key: Optional[str] = Query(None),
+):
+    """SSE endpoint that streams detail payloads for a single stream row."""
+    _validate_sse_api_key(request, api_key)
+
+    from .services.client_tracker import client_tracking_service
+    from .proxy.config_helper import Config as ProxyConfig
+
+    async def _event_generator():
+        last_digest: Optional[str] = None
+        cached_extended_stats: Optional[Dict[str, Any]] = None
+        next_extended_refresh_monotonic = 0.0
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            stream_state = state.get_stream(stream_id)
+            if not stream_state:
+                message = {
+                    "type": "stream_details_error",
+                    "payload": {
+                        "stream_id": stream_id,
+                        "status_code": 404,
+                        "detail": "stream_not_found",
+                    },
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                yield _format_sse_message(message, event_name="stream_details_error")
+                break
+
+            now_monotonic = time.monotonic()
+            if now_monotonic >= next_extended_refresh_monotonic:
+                try:
+                    cached_extended_stats = await get_stream_extended_stats(stream_id)
+                except HTTPException as exc:
+                    if exc.status_code != 404:
+                        logger.debug(f"Extended stats refresh failed for stream {stream_id[:12]}: {exc.detail}")
+                except Exception as exc:
+                    logger.debug(f"Extended stats refresh failed for stream {stream_id[:12]}: {exc}")
+
+                next_extended_refresh_monotonic = now_monotonic + max(10.0, interval_seconds * 2.0)
+
+            cutoff = datetime.now(timezone.utc) - timedelta(seconds=since_seconds)
+            stream_stats = [snap for snap in state.get_stream_stats(stream_id) if snap.ts >= cutoff]
+
+            clients: List[Dict[str, Any]] = []
+            stream_key = str(getattr(stream_state, "key", "") or "")
+            if stream_key:
+                with suppress(Exception):
+                    client_tracking_service.prune_stale_clients(float(ProxyConfig.CLIENT_RECORD_TTL))
+                    clients = client_tracking_service.get_stream_clients(stream_key)
+
+            payload = jsonable_encoder(
+                {
+                    "stream_id": stream_id,
+                    "status": getattr(stream_state, "status", None),
+                    "stats": stream_stats,
+                    "extended_stats": cached_extended_stats,
+                    "clients": clients,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
+            digest = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str)
+            if digest != last_digest:
+                last_digest = digest
+                message = {
+                    "type": "stream_details_snapshot",
+                    "payload": payload,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                yield _format_sse_message(
+                    message,
+                    event_name="stream_details_snapshot",
+                    event_id=str(int(time.time() * 1000)),
+                )
+            else:
+                yield ": keep-alive\n\n"
+
+            await asyncio.sleep(interval_seconds)
 
     headers = {
         "Cache-Control": "no-cache",

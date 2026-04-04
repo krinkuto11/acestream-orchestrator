@@ -111,7 +111,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
   const isPrebuffering = String(stream?.labels?.['stream.status_text'] || '').toLowerCase().includes('prebuf')
 
   const fetchStats = useCallback(async () => {
-    if (!stream || !isExpanded) return
+    if (!stream?.id || !isExpanded) return
 
     // Only show loading if we don't have data yet
     if (!hasStatsDataRef.current) {
@@ -141,10 +141,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     } finally {
       setLoading(false)
     }
-  }, [stream, orchUrl, apiKey, isExpanded])
+  }, [stream?.id, orchUrl, apiKey, isExpanded])
 
   const fetchExtendedStats = useCallback(async () => {
-    if (!stream) return
+    if (!stream?.id) return
     // Only fetch if expanded OR if active (to show title in collapsed state)
     if (!isExpanded && !isActive) return
 
@@ -181,10 +181,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     } finally {
       setExtendedStatsLoading(false)
     }
-  }, [stream, orchUrl, apiKey, isExpanded, isActive])
+  }, [stream?.id, orchUrl, apiKey, isExpanded, isActive])
 
   const fetchClients = useCallback(async () => {
-    if (!stream || !isExpanded || !stream.key) return
+    if (!stream?.key || !isExpanded) return
 
     // Only show loading indicator if we don't have any data yet
     if (!hasClientsDataRef.current) {
@@ -213,22 +213,132 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
     } finally {
       setClientsLoading(false)
     }
-  }, [stream, orchUrl, isExpanded])
+  }, [stream?.key, orchUrl, isExpanded])
 
   useEffect(() => {
-    if (isExpanded && isActive) {
-      fetchStats()
-      fetchExtendedStats() // Initial fetch
-      fetchClients()
+    if (!(isExpanded && isActive && stream?.id)) {
+      return undefined
     }
-  }, [fetchStats, fetchExtendedStats, fetchClients, isExpanded, isActive])
 
-  // Fetch lightweight extended metadata for active streams so titles are visible collapsed.
-  useEffect(() => {
-    if (isActive) {
-      fetchExtendedStats()
+    let eventSource = null
+    let reconnectTimer = null
+    let closed = false
+
+    const applySnapshot = (payload = {}) => {
+      const nextStats = Array.isArray(payload.stats) ? payload.stats : []
+      const nextClients = Array.isArray(payload.clients) ? payload.clients : []
+
+      setStats(nextStats)
+      hasStatsDataRef.current = true
+      setLoading(false)
+
+      setClients(nextClients)
+      hasClientsDataRef.current = true
+      setClientsLoading(false)
+
+      if (payload.extended_stats && typeof payload.extended_stats === 'object') {
+        setExtendedStats(payload.extended_stats)
+        hasExtendedStatsDataRef.current = true
+        setExtendedStatsError(null)
+      }
+      setExtendedStatsLoading(false)
     }
-  }, [fetchExtendedStats, isActive])
+
+    const fetchDetailsFallback = async () => {
+      await Promise.all([
+        fetchStats(),
+        fetchExtendedStats(),
+        fetchClients(),
+      ])
+    }
+
+    const connect = () => {
+      if (closed) {
+        return
+      }
+
+      if (!hasStatsDataRef.current) {
+        setLoading(true)
+      }
+      if (!hasClientsDataRef.current) {
+        setClientsLoading(true)
+      }
+      if (!hasExtendedStatsDataRef.current) {
+        setExtendedStatsLoading(true)
+      }
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchDetailsFallback()
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/details/stream`)
+      streamUrl.searchParams.set('since_seconds', '3600')
+      streamUrl.searchParams.set('interval_seconds', '2.0')
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleDetailsSnapshot = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          applySnapshot(parsed?.payload || {})
+        } catch (err) {
+          console.error('Failed to parse stream-details SSE payload:', err)
+          setExtendedStatsError('Failed to parse stream details payload')
+        }
+      }
+
+      const handleDetailsError = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          setExtendedStatsError(parsed?.payload?.detail || 'stream_details_error')
+        } catch {
+          setExtendedStatsError('stream_details_error')
+        }
+        setLoading(false)
+        setClientsLoading(false)
+        setExtendedStatsLoading(false)
+      }
+
+      eventSource.addEventListener('stream_details_snapshot', handleDetailsSnapshot)
+      eventSource.addEventListener('stream_details_error', handleDetailsError)
+      eventSource.onmessage = handleDetailsSnapshot
+
+      eventSource.onerror = () => {
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
+    }
+  }, [
+    isExpanded,
+    isActive,
+    stream?.id,
+    orchUrl,
+    apiKey,
+    fetchStats,
+    fetchExtendedStats,
+    fetchClients,
+  ])
 
   const chartData = {
     labels: stats.map(s => new Date(s.ts).toLocaleTimeString()),

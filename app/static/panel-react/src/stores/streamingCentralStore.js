@@ -207,6 +207,56 @@ export const useStreamingCentralStore = create((set, get) => ({
     set({ selectedEngineId: null })
   },
 
+  setContainerLogsSnapshot: ({ containerId, payload }) => {
+    if (!containerId || !payload) return
+
+    const lines = String(payload.logs || '')
+      .split('\n')
+      .filter(Boolean)
+
+    set((state) => ({
+      logsByContainerId: {
+        ...state.logsByContainerId,
+        [containerId]: {
+          lines,
+          fetchedAt: payload.fetched_at || new Date().toISOString(),
+        },
+      },
+      logsLoadingByContainerId: {
+        ...state.logsLoadingByContainerId,
+        [containerId]: false,
+      },
+      logsErrorByContainerId: {
+        ...state.logsErrorByContainerId,
+        [containerId]: null,
+      },
+    }))
+  },
+
+  setContainerLogsLoading: ({ containerId, loading }) => {
+    if (!containerId) return
+    set((state) => ({
+      logsLoadingByContainerId: {
+        ...state.logsLoadingByContainerId,
+        [containerId]: Boolean(loading),
+      },
+    }))
+  },
+
+  setContainerLogsError: ({ containerId, error }) => {
+    if (!containerId) return
+    set((state) => ({
+      logsErrorByContainerId: {
+        ...state.logsErrorByContainerId,
+        [containerId]: error ? String(error) : null,
+      },
+      logsLoadingByContainerId: {
+        ...state.logsLoadingByContainerId,
+        [containerId]: false,
+      },
+    }))
+  },
+
   fetchContainerLogs: async ({ orchUrl, apiKey, containerId }) => {
     if (!orchUrl || !containerId) return
 

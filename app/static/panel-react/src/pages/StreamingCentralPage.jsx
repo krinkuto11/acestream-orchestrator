@@ -163,6 +163,9 @@ export function StreamingCentralPage({
     refreshBackendTelemetry,
     openEngineLogs,
     closeEngineLogs,
+    setContainerLogsSnapshot,
+    setContainerLogsLoading,
+    setContainerLogsError,
     fetchContainerLogs,
   } = useStreamingCentralStore((state) => state)
 
@@ -350,7 +353,10 @@ export function StreamingCentralPage({
   }, [orchUrl, apiKey, setEngineStartEvents])
 
   useEffect(() => {
-    let isCancelled = false
+    let eventSource = null
+    let reconnectTimer = null
+    let fallbackInterval = null
+    let closed = false
 
     const fetchVpnLeases = async () => {
       try {
@@ -358,34 +364,198 @@ export function StreamingCentralPage({
         const response = await fetch(`${orchUrl}/api/v1/vpn/leases`, { headers })
         if (!response.ok) return
         const payload = await response.json()
-        if (!isCancelled) {
-          setVpnLeaseSummary(payload)
-        }
+        setVpnLeaseSummary(payload)
       } catch {
-        // Best-effort telemetry: do not disrupt dashboard polling.
+        // Best-effort telemetry update.
       }
     }
 
-    fetchVpnLeases()
-    const interval = window.setInterval(fetchVpnLeases, 10000)
+    const connect = () => {
+      if (closed) {
+        return
+      }
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchVpnLeases()
+        fallbackInterval = window.setInterval(fetchVpnLeases, 10000)
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/vpn/leases/stream`)
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleLeaseSnapshot = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          setVpnLeaseSummary(parsed?.payload || null)
+        } catch {
+          // Ignore malformed frame and keep latest summary.
+        }
+      }
+
+      eventSource.addEventListener('vpn_leases_snapshot', handleLeaseSnapshot)
+      eventSource.onmessage = handleLeaseSnapshot
+
+      eventSource.onerror = () => {
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    connect()
+
     return () => {
-      isCancelled = true
-      window.clearInterval(interval)
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (fallbackInterval) {
+        window.clearInterval(fallbackInterval)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
     }
   }, [orchUrl, apiKey])
 
   useEffect(() => {
     if (!selectedEngineId) return undefined
 
-    fetchContainerLogs({ orchUrl, apiKey, containerId: selectedEngineId })
-    const interval = window.setInterval(() => {
+    let eventSource = null
+    let reconnectTimer = null
+    let fallbackInterval = null
+    let closed = false
+
+    const fetchLogsFallback = () => {
       fetchContainerLogs({ orchUrl, apiKey, containerId: selectedEngineId })
-    }, 2500)
+    }
+
+    const connect = () => {
+      if (closed) {
+        return
+      }
+
+      setContainerLogsLoading({ containerId: selectedEngineId, loading: true })
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchLogsFallback()
+        fallbackInterval = window.setInterval(fetchLogsFallback, 2500)
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/containers/${encodeURIComponent(selectedEngineId)}/logs/stream`)
+      streamUrl.searchParams.set('tail', '300')
+      streamUrl.searchParams.set('since_seconds', '1200')
+      streamUrl.searchParams.set('interval_seconds', '2.5')
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleLogsSnapshot = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          setContainerLogsSnapshot({
+            containerId: selectedEngineId,
+            payload: parsed?.payload || {},
+          })
+        } catch {
+          setContainerLogsError({
+            containerId: selectedEngineId,
+            error: 'Failed to parse logs stream payload',
+          })
+        }
+      }
+
+      const handleLogsErrorEvent = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          setContainerLogsError({
+            containerId: selectedEngineId,
+            error: parsed?.payload?.detail || 'logs_stream_error',
+          })
+        } catch {
+          setContainerLogsError({
+            containerId: selectedEngineId,
+            error: 'logs_stream_error',
+          })
+        }
+      }
+
+      eventSource.addEventListener('container_logs_snapshot', handleLogsSnapshot)
+      eventSource.addEventListener('container_logs_error', handleLogsErrorEvent)
+
+      eventSource.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          const eventType = String(parsed?.type || '')
+          if (eventType === 'container_logs_snapshot') {
+            setContainerLogsSnapshot({
+              containerId: selectedEngineId,
+              payload: parsed?.payload || {},
+            })
+          } else if (eventType === 'container_logs_error') {
+            setContainerLogsError({
+              containerId: selectedEngineId,
+              error: parsed?.payload?.detail || 'logs_stream_error',
+            })
+          }
+        } catch {
+          setContainerLogsError({
+            containerId: selectedEngineId,
+            error: 'Failed to parse logs stream payload',
+          })
+        }
+      }
+
+      eventSource.onerror = () => {
+        setContainerLogsLoading({ containerId: selectedEngineId, loading: false })
+
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    connect()
 
     return () => {
-      window.clearInterval(interval)
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (fallbackInterval) {
+        window.clearInterval(fallbackInterval)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
     }
-  }, [selectedEngineId, orchUrl, apiKey, fetchContainerLogs])
+  }, [
+    selectedEngineId,
+    orchUrl,
+    apiKey,
+    fetchContainerLogs,
+    setContainerLogsSnapshot,
+    setContainerLogsLoading,
+    setContainerLogsError,
+  ])
 
   const vpnIncident =
     (vpnStatus?.mode === 'redundant' && (!vpnStatus?.vpn1?.connected || !vpnStatus?.vpn2?.connected)) ||

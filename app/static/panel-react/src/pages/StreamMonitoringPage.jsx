@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -243,7 +243,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
     setActiveProxyKeys(keys)
   }, [streams])
 
-  const fetchMonitorsNow = async (showLoading = false) => {
+  const fetchMonitorsNow = useCallback(async (showLoading = false) => {
     if (showLoading) {
       setLoading(true)
     }
@@ -274,24 +274,140 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [orchUrl, apiKey])
+
+  const applyMonitorSnapshot = useCallback((items) => {
+    setMonitors(Array.isArray(items) ? items : [])
+    setError(null)
+    setLoading(false)
+  }, [])
+
+  const applyMonitorEvent = useCallback((eventPayload) => {
+    const payload = eventPayload || {}
+    const changeType = String(payload?.change_type || '').toLowerCase()
+    const monitorId = String(payload?.monitor_id || '')
+    const monitor = payload?.monitor
+
+    if (!monitorId) {
+      return
+    }
+
+    if (changeType === 'deleted') {
+      setMonitors((prev) => prev.filter((entry) => entry?.monitor_id !== monitorId))
+      return
+    }
+
+    if (changeType === 'upsert' && monitor && typeof monitor === 'object') {
+      setMonitors((prev) => {
+        const next = Array.isArray(prev) ? [...prev] : []
+        const idx = next.findIndex((entry) => entry?.monitor_id === monitorId)
+        if (idx >= 0) {
+          next[idx] = monitor
+        } else {
+          next.push(monitor)
+        }
+        return next
+      })
+    }
+  }, [])
 
   useEffect(() => {
-    let cancelled = false
-
-    const fetchLoop = async (showLoading = false) => {
-      if (cancelled) return
-      await fetchMonitorsNow(showLoading)
+    if (!apiKey) {
+      setMonitors([])
+      setError('Set API key in Settings to view stream monitoring sessions')
+      setLoading(false)
+      return undefined
     }
 
-    fetchLoop(true)
-    const interval = setInterval(() => fetchLoop(false), 1000)
+    let eventSource = null
+    let reconnectTimer = null
+    let fallbackInterval = null
+    let closed = false
+
+    const connect = () => {
+      if (closed) {
+        return
+      }
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchMonitorsNow(true)
+        fallbackInterval = window.setInterval(() => fetchMonitorsNow(false), 1000)
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/ace/monitor/legacy/stream`)
+      streamUrl.searchParams.set('include_recent_status', 'true')
+      streamUrl.searchParams.set('api_key', apiKey)
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleSnapshot = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          applyMonitorSnapshot(parsed?.payload?.items || [])
+        } catch (err) {
+          console.error('Failed to parse monitor snapshot SSE payload:', err)
+        }
+      }
+
+      const handleMonitorEvent = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          applyMonitorEvent(parsed?.payload || {})
+          setError(null)
+          setLoading(false)
+        } catch (err) {
+          console.error('Failed to parse monitor event SSE payload:', err)
+        }
+      }
+
+      eventSource.addEventListener('legacy_monitor_snapshot', handleSnapshot)
+      eventSource.addEventListener('legacy_monitor_event', handleMonitorEvent)
+
+      eventSource.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          const eventType = String(parsed?.type || '')
+          if (eventType === 'legacy_monitor_snapshot') {
+            applyMonitorSnapshot(parsed?.payload?.items || [])
+          } else if (eventType === 'legacy_monitor_event') {
+            applyMonitorEvent(parsed?.payload || {})
+            setError(null)
+            setLoading(false)
+          }
+        } catch (err) {
+          console.error('Failed to parse monitor SSE payload:', err)
+        }
+      }
+
+      eventSource.onerror = () => {
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    setLoading(true)
+    connect()
 
     return () => {
-      cancelled = true
-      clearInterval(interval)
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (fallbackInterval) {
+        window.clearInterval(fallbackInterval)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
     }
-  }, [orchUrl, apiKey])
+  }, [orchUrl, apiKey, fetchMonitorsNow, applyMonitorEvent, applyMonitorSnapshot])
 
   const handleStartMonitor = async () => {
     if (!apiKey) {

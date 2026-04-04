@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 import os
 from urllib.parse import urlparse
 
@@ -37,6 +38,42 @@ class LegacyStreamMonitoringService:
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._stop_events: Dict[str, asyncio.Event] = {}
         self._stuck_no_movement_seconds = 20.0
+        self._subscribers_lock = threading.RLock()
+        self._subscribers: Dict[str, Callable[[Dict[str, Any]], None]] = {}
+        self._update_seq = 0
+
+    def subscribe_updates(self, callback: Callable[[Dict[str, Any]], None]) -> Callable[[], None]:
+        """Subscribe to monitor-session update events and return an unsubscribe callback."""
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+
+        token = str(uuid.uuid4())
+        with self._subscribers_lock:
+            self._subscribers[token] = callback
+
+        def _unsubscribe() -> None:
+            with self._subscribers_lock:
+                self._subscribers.pop(token, None)
+
+        return _unsubscribe
+
+    def _broadcast_update(self, event_payload: Dict[str, Any]) -> None:
+        with self._subscribers_lock:
+            self._update_seq += 1
+            seq = self._update_seq
+            subscribers = list(self._subscribers.values())
+
+        payload = {
+            "seq": seq,
+            "at": self._utc_iso(),
+            **dict(event_payload or {}),
+        }
+
+        for callback in subscribers:
+            try:
+                callback(payload)
+            except Exception:
+                logger.debug("Legacy monitor subscriber callback failed", exc_info=True)
 
     @staticmethod
     def _utc_iso() -> str:
@@ -169,7 +206,15 @@ class LegacyStreamMonitoringService:
 
     def _publish_session_state(self, monitor_id: str, raw: Dict[str, Any]) -> None:
         try:
-            state.upsert_monitor_session(monitor_id, self._serialize_session(monitor_id, raw))
+            serialized = self._serialize_session(monitor_id, raw)
+            state.upsert_monitor_session(monitor_id, serialized)
+            self._broadcast_update(
+                {
+                    "change_type": "upsert",
+                    "monitor_id": monitor_id,
+                    "monitor": serialized,
+                }
+            )
         except Exception:
             logger.debug("Failed to publish monitor session state for %s", monitor_id, exc_info=True)
 
@@ -873,6 +918,7 @@ class LegacyStreamMonitoringService:
             if session and not session.get("ended_at"):
                 session["ended_at"] = self._utc_iso()
                 session["status"] = "stopped"
+                self._publish_session_state(monitor_id, session)
         hls_segmenter_service.stop_segmenter_nowait(monitor_id)
         return True
 
@@ -887,6 +933,7 @@ class LegacyStreamMonitoringService:
 
     async def delete_monitor(self, monitor_id: str) -> bool:
         monitor_exists = False
+        deleted_payload: Optional[Dict[str, Any]] = None
         async with self._lock:
             monitor_exists = monitor_id in self._sessions or monitor_id in self._stop_events
         if not monitor_exists:
@@ -895,10 +942,23 @@ class LegacyStreamMonitoringService:
         await self.stop_monitor(monitor_id)
 
         async with self._lock:
-            self._sessions.pop(monitor_id, None)
+            removed = self._sessions.pop(monitor_id, None)
             self._tasks.pop(monitor_id, None)
             self._stop_events.pop(monitor_id, None)
+            if removed:
+                deleted_payload = self._serialize_session(
+                    monitor_id,
+                    removed,
+                    include_recent_status=False,
+                )
         state.remove_monitor_session(monitor_id)
+        self._broadcast_update(
+            {
+                "change_type": "deleted",
+                "monitor_id": monitor_id,
+                "monitor": deleted_payload,
+            }
+        )
         hls_segmenter_service.stop_segmenter_nowait(monitor_id)
 
         return True
