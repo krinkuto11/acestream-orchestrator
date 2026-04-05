@@ -94,6 +94,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [expertOpen, setExpertOpen] = useState(false)
   const [dialogLoading, setDialogLoading] = useState(false)
+  const [vpnToggleLoading, setVpnToggleLoading] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
 
   // Per-Credential Settings
@@ -109,6 +110,8 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
   const sheetProviderNormalized = useMemo(() => normalizeProvider(credentialProvider), [credentialProvider])
   const sheetProviderSupportsForwarding = useMemo(() => isForwardingSupported(sheetProviderNormalized), [sheetProviderNormalized])
+  const hasCredentials = credentials.length > 0
+  const vpnToggleDisabled = vpnToggleLoading || (!hasCredentials && !draft.enabled)
   
   const leasesByCredentialId = useMemo(() => {
     const byCredentialId = new Map()
@@ -255,6 +258,50 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     setDraft((prev) => ({ ...prev, [field]: value }))
     setError('')
     setMessage('')
+  }
+
+  const applyVpnEnabled = async (value) => {
+    const enabled = Boolean(value)
+
+    if (enabled && !hasCredentials) {
+      setError('Add at least one VPN credential before enabling VPN routing')
+      return
+    }
+
+    if (authRequired && !String(apiKey || '').trim()) {
+      setError('API key required by server to toggle VPN routing')
+      return
+    }
+
+    setVpnToggleLoading(true)
+    setError('')
+    setMessage('')
+
+    try {
+      const headers = { 'Content-Type': 'application/json' }
+      if (String(apiKey || '').trim()) {
+        headers.Authorization = `Bearer ${String(apiKey).trim()}`
+      }
+
+      const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ enabled }),
+      })
+
+      if (!response.ok) {
+        const failure = await response.json().catch(() => ({}))
+        throw new Error(failure?.detail || `HTTP ${response.status}`)
+      }
+
+      setDraft((prev) => ({ ...prev, enabled }))
+      setInitialState((prev) => ({ ...prev, enabled }))
+      setMessage(`VPN routing ${enabled ? 'enabled' : 'disabled'} and applied immediately`)
+    } catch (toggleError) {
+      setError(`Failed to toggle VPN routing: ${toggleError.message || String(toggleError)}`)
+    } finally {
+      setVpnToggleLoading(false)
+    }
   }
 
   const handleDragOver = (e) => {
@@ -415,8 +462,16 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           <CardDescription>Static VPN controller behavior participates in global save and unsaved-change protection.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <SettingRow label="Enable VPN Routing" description="Route engine traffic through managed VPN nodes.">
-            <Switch checked={Boolean(draft.enabled)} onCheckedChange={(value) => update('enabled', Boolean(value))} />
+          <SettingRow
+            label="Enable VPN Routing"
+            description="Route engine traffic through managed VPN nodes."
+            warning={!hasCredentials ? 'Add at least one credential in the pool to enable routing.' : undefined}
+          >
+            <Switch
+              checked={Boolean(draft.enabled)}
+              disabled={vpnToggleDisabled}
+              onCheckedChange={applyVpnEnabled}
+            />
           </SettingRow>
 
           <SettingRow label="Preferred Engines per VPN Node" description="Scheduler hint for desired VPN node count.">
@@ -557,7 +612,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
       </Card>
 
       <Sheet open={dialogOpen} onOpenChange={setDialogOpen}>
-        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto">
+        <SheetContent side="right" className="dark w-[400px] sm:w-[540px] overflow-y-auto">
           <SheetHeader className="mb-6">
             <SheetTitle>Add VPN Credential</SheetTitle>
             <SheetDescription>
@@ -569,7 +624,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
             <SettingRow label="Provider" description="VPN service provider.">
               <Select value={credentialProvider} onValueChange={setCredentialProvider}>
                 <SelectTrigger className="w-full"><SelectValue placeholder="Select provider" /></SelectTrigger>
-                <SelectContent>
+                <SelectContent className="dark">
                   {PROVIDER_OPTIONS.map((option) => (
                     <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                   ))}
@@ -580,7 +635,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
             <SettingRow label="Protocol" description="Protocol type for this credential.">
               <Select value={credentialMode} onValueChange={setCredentialMode}>
                 <SelectTrigger className="w-full"><SelectValue placeholder="Select protocol" /></SelectTrigger>
-                <SelectContent>
+                <SelectContent className="dark">
                   <SelectItem value="wireguard">Wireguard (.conf text)</SelectItem>
                   <SelectItem value="openvpn">OpenVPN (username/password)</SelectItem>
                 </SelectContent>
