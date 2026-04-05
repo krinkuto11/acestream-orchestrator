@@ -98,6 +98,16 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
   const providerNormalized = useMemo(() => normalizeProvider(draft.provider), [draft.provider])
   const providerSupportsForwarding = useMemo(() => isForwardingSupported(providerNormalized), [providerNormalized])
+  const leasesByCredentialId = useMemo(() => {
+    const byCredentialId = new Map()
+    const leases = Array.isArray(leaseSummary?.leases) ? leaseSummary.leases : []
+    for (const lease of leases) {
+      const credentialId = String(lease?.credential_id || '').trim()
+      if (!credentialId) continue
+      byCredentialId.set(credentialId, lease)
+    }
+    return byCredentialId
+  }, [leaseSummary])
 
   const fetchLeases = async () => {
     try {
@@ -453,6 +463,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
                 <TableRow>
                   <TableHead>Provider/Protocol</TableHead>
                   <TableHead>Identifier</TableHead>
+                  <TableHead>Usage Status</TableHead>
                   <TableHead>Port Forwarding</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -460,13 +471,17 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
               <TableBody>
                 {credentials.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">No credentials configured.</TableCell>
+                    <TableCell colSpan={5} className="py-6 text-center text-sm text-muted-foreground">No credentials configured.</TableCell>
                   </TableRow>
                 ) : (
                   credentials.map((credential) => {
                     const protocol = String(credential?.protocol || 'wireguard').toLowerCase()
                     const provider = normalizeProvider(credential?.provider || draft.provider)
                     const hasForwarding = Boolean(credential?.port_forwarding) && isForwardingSupported(provider)
+                    const credentialId = String(credential?.id || '').trim()
+                    const lease = credentialId ? leasesByCredentialId.get(credentialId) : null
+                    const inUse = Boolean(lease)
+                    const containerLabel = String(lease?.container_id || '').trim()
                     const identifier = protocol === 'wireguard'
                       ? `Key ${mask(credential?.private_key || credential?.wireguard_private_key)}`
                       : `User ${mask(credential?.openvpn_user || credential?.username, 3, 2)}`
@@ -478,6 +493,18 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
                           <div className="text-xs uppercase text-muted-foreground">{protocol}</div>
                         </TableCell>
                         <TableCell className="text-sm">{identifier}</TableCell>
+                        <TableCell>
+                          {inUse ? (
+                            <div className="space-y-1">
+                              <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">In Use</Badge>
+                              <p className="text-xs text-muted-foreground">
+                                Node: {containerLabel || 'unknown'}
+                              </p>
+                            </div>
+                          ) : (
+                            <Badge variant="outline">Available</Badge>
+                          )}
+                        </TableCell>
                         <TableCell>
                           {hasForwarding ? (
                             <Badge variant="success"><Zap className="mr-1 h-3.5 w-3.5" />Enabled</Badge>
