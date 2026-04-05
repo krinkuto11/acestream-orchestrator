@@ -18,6 +18,7 @@ import hashlib
 import re
 import httpx
 import threading
+from uuid import uuid4
 from types import SimpleNamespace
 import time
 from docker.errors import NotFound
@@ -2574,6 +2575,15 @@ def get_orchestrator_status():
     cache.set(cache_key, result, ttl=0.5)
     
     return result
+
+
+@app.get("/auth/status")
+def get_auth_status():
+    """Return whether API-key authentication is currently enforced by the server."""
+    return {
+        "required": bool(cfg.API_KEY),
+        "mode": "bearer" if cfg.API_KEY else "none",
+    }
 
 # Custom Engine Variant endpoints
 from .services.custom_variant_config import (
@@ -5525,6 +5535,122 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
         logger.warning("Failed to persist VPN settings")
 
     return {"message": "VPN settings updated and persisted", **current}
+
+
+class VPNCredentialUpsert(BaseModel):
+    """Single VPN credential payload for dedicated credential lifecycle endpoints."""
+
+    id: Optional[str] = None
+    provider: Optional[str] = None
+    protocol: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    openvpn_user: Optional[str] = None
+    openvpn_password: Optional[str] = None
+    private_key: Optional[str] = None
+    wireguard_private_key: Optional[str] = None
+    addresses: Optional[str] = None
+    wireguard_addresses: Optional[str] = None
+    endpoint: Optional[str] = None
+    endpoints: Optional[str] = None
+    wireguard_endpoints: Optional[str] = None
+    source: Optional[str] = None
+    port_forwarding: Optional[bool] = True
+
+
+def _load_vpn_settings_for_credential_ops() -> Dict[str, Any]:
+    from .services.settings_persistence import SettingsPersistence
+
+    return SettingsPersistence.load_vpn_config() or {
+        "enabled": False,
+        "dynamic_vpn_management": True,
+        "preferred_engines_per_vpn": int(cfg.PREFERRED_ENGINES_PER_VPN),
+        "protocol": str(cfg.VPN_PROTOCOL or "wireguard"),
+        "provider": str(cfg.VPN_PROVIDER or "protonvpn"),
+        "regions": [],
+        "credentials": [],
+        "api_port": cfg.GLUETUN_API_PORT,
+        "health_check_interval_s": cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S,
+        "port_cache_ttl_s": cfg.GLUETUN_PORT_CACHE_TTL_S,
+        "restart_engines_on_reconnect": cfg.VPN_RESTART_ENGINES_ON_RECONNECT,
+        "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
+    }
+
+
+@app.post("/settings/vpn/credentials", dependencies=[Depends(require_api_key)])
+async def add_vpn_credential(credential: VPNCredentialUpsert):
+    """Add a single VPN credential and persist immediately."""
+    from .services.settings_persistence import SettingsPersistence
+
+    current = _load_vpn_settings_for_credential_ops()
+    credentials = list(current.get("credentials") or [])
+
+    payload = credential.model_dump(exclude_none=True)
+    payload["id"] = str(payload.get("id") or uuid4())
+
+    provider = str(payload.get("provider") or current.get("provider") or cfg.VPN_PROVIDER or "").strip().lower()
+    if provider:
+        payload["provider"] = provider
+
+    protocol = str(payload.get("protocol") or current.get("protocol") or cfg.VPN_PROTOCOL or "wireguard").strip().lower()
+    if protocol not in ("wireguard", "openvpn"):
+        raise HTTPException(status_code=400, detail="protocol must be 'wireguard' or 'openvpn'")
+    payload["protocol"] = protocol
+
+    credentials.append(payload)
+    current["credentials"] = credential_manager.normalize_credentials_for_storage(credentials)
+
+    provider_value = str(current.get("provider") or "").strip().lower()
+    providers = [provider_value] if provider_value else []
+    await credential_manager.configure(
+        dynamic_vpn_management=True,
+        providers=providers,
+        protocol=current.get("protocol"),
+        regions=current.get("regions", []),
+        credentials=current.get("credentials", []),
+    )
+
+    if not SettingsPersistence.save_vpn_config(current):
+        raise HTTPException(status_code=500, detail="failed to persist vpn credential")
+
+    return {
+        "message": "VPN credential added",
+        "credential": payload,
+        "credentials_count": len(current.get("credentials", [])),
+    }
+
+
+@app.delete("/settings/vpn/credentials/{credential_id}", dependencies=[Depends(require_api_key)])
+async def delete_vpn_credential(credential_id: str):
+    """Delete a VPN credential by ID and persist immediately."""
+    from .services.settings_persistence import SettingsPersistence
+
+    current = _load_vpn_settings_for_credential_ops()
+    credentials = list(current.get("credentials") or [])
+    remaining = [c for c in credentials if str(c.get("id") or "") != credential_id]
+
+    if len(remaining) == len(credentials):
+        raise HTTPException(status_code=404, detail="credential not found")
+
+    current["credentials"] = credential_manager.normalize_credentials_for_storage(remaining)
+
+    provider_value = str(current.get("provider") or "").strip().lower()
+    providers = [provider_value] if provider_value else []
+    await credential_manager.configure(
+        dynamic_vpn_management=True,
+        providers=providers,
+        protocol=current.get("protocol"),
+        regions=current.get("regions", []),
+        credentials=current.get("credentials", []),
+    )
+
+    if not SettingsPersistence.save_vpn_config(current):
+        raise HTTPException(status_code=500, detail="failed to persist vpn credential changes")
+
+    return {
+        "message": "VPN credential deleted",
+        "credentials_count": len(current.get("credentials", [])),
+    }
 
 
 # ============================================================================

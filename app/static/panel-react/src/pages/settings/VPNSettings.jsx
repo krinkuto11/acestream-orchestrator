@@ -1,51 +1,23 @@
-import React, { useState, useEffect, useMemo } from 'react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import React, { useEffect, useMemo, useState } from 'react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  AlertCircle,
-  AlertTriangle,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  FileUp,
-  Info,
-  ShieldCheck,
-  ShieldOff,
-  Trash2,
-  Upload,
-  Zap,
-  ZapOff,
-} from 'lucide-react'
-
-const DEFAULTS = {
-  enabled: false,
-  api_port: 8001,
-  health_check_interval_s: 5,
-  port_cache_ttl_s: 60,
-  restart_engines_on_reconnect: true,
-  unhealthy_restart_timeout_s: 60,
-  dynamic_vpn_management: true,
-  preferred_engines_per_vpn: 10,
-  protocol: 'wireguard',
-  provider: 'protonvpn',
-  regions: [],
-  credentials: [],
-}
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { AlertCircle, Plus, ShieldCheck, ShieldOff, Trash2, Zap, ZapOff } from 'lucide-react'
+import { SettingRow } from '@/components/settings/SettingRow'
+import { useSettingsForm } from '@/context/SettingsFormContext'
 
 const PROVIDER_OPTIONS = [
   { value: 'protonvpn', label: 'ProtonVPN' },
@@ -64,746 +36,458 @@ const PORT_FORWARDING_SUPPORTED = new Set([
   'privatevpn',
 ])
 
-function normalizeProvider(provider) {
+const DEFAULTS = {
+  enabled: false,
+  api_port: 8001,
+  health_check_interval_s: 5,
+  port_cache_ttl_s: 60,
+  restart_engines_on_reconnect: true,
+  unhealthy_restart_timeout_s: 60,
+  preferred_engines_per_vpn: 10,
+  protocol: 'wireguard',
+  provider: 'protonvpn',
+  regionsText: '',
+}
+
+const toNumber = (value, fallback = 0) => {
+  const next = Number(value)
+  return Number.isFinite(next) ? next : fallback
+}
+
+const normalizeProvider = (provider) => {
   const value = String(provider || '').trim().toLowerCase()
   if (value === 'pia') return 'private internet access'
   return value
 }
 
-function isForwardingSupported(provider) {
-  return PORT_FORWARDING_SUPPORTED.has(normalizeProvider(provider))
-}
+const isForwardingSupported = (provider) => PORT_FORWARDING_SUPPORTED.has(normalizeProvider(provider))
 
-function providerLabel(provider) {
-  const normalized = normalizeProvider(provider)
-  const option = PROVIDER_OPTIONS.find((item) => item.value === normalized)
-  return option ? option.label : provider || 'Unknown'
-}
-
-function generateCredentialId() {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  return `cred-${Date.now()}-${Math.random().toString(16).slice(2)}`
-}
-
-function maskText(value, visibleStart = 4, visibleEnd = 3) {
+const mask = (value, left = 4, right = 3) => {
   const text = String(value || '').trim()
   if (!text) return 'N/A'
-  if (text.length <= visibleStart + visibleEnd) return text
-  return `${text.slice(0, visibleStart)}...${text.slice(-visibleEnd)}`
+  if (text.length <= left + right) return text
+  return `${text.slice(0, left)}...${text.slice(-right)}`
 }
 
-function credentialIdentifier(credential) {
-  if (credential.protocol === 'wireguard') {
-    return `Key ${maskText(credential.private_key || credential.wireguard_private_key)}`
-  }
-  return `User ${maskText(credential.username || credential.openvpn_user, 3, 2)}`
-}
+const parseRegionsInput = (value) => String(value || '')
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean)
 
-function parseRegionsInput(value) {
-  return String(value || '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
+export function VPNSettings({ apiKey, orchUrl, authRequired }) {
+  const sectionId = 'vpn'
+  const { registerSection, unregisterSection, setSectionDirty, setSectionSaving } = useSettingsForm()
 
-function coerceBoolean(value, fallback = false) {
-  if (typeof value === 'boolean') return value
-  if (value === null || value === undefined) return fallback
-  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase())
-}
-
-function normalizeCredentialsWithIds(items) {
-  if (!Array.isArray(items)) return []
-  return items
-    .filter((item) => item && typeof item === 'object')
-    .map((item) => {
-      const existingId = String(item.id || '').trim()
-      return {
-        ...item,
-        id: existingId || generateCredentialId(),
-        port_forwarding: coerceBoolean(item.port_forwarding, true),
-      }
-    })
-}
-
-export function VPNSettings({ apiKey, orchUrl }) {
-  const [loading, setLoading] = useState(false)
-  const [loadingLeases, setLoadingLeases] = useState(false)
-  const [message, setMessage] = useState(null)
-  const [error, setError] = useState(null)
-  const [showExpert, setShowExpert] = useState(false)
-  const [wireguardInput, setWireguardInput] = useState('')
-  const [isDropActive, setIsDropActive] = useState(false)
-  const [isParsingWireguard, setIsParsingWireguard] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [initialState, setInitialState] = useState(DEFAULTS)
+  const [draft, setDraft] = useState(DEFAULTS)
+  const [credentials, setCredentials] = useState([])
   const [leaseSummary, setLeaseSummary] = useState(null)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
 
-  // Basic settings
-  const [enabled, setEnabled] = useState(DEFAULTS.enabled)
-  const [apiPort, setApiPort] = useState(DEFAULTS.api_port)
-
-  // Expert settings
-  const [healthCheckIntervalS, setHealthCheckIntervalS] = useState(DEFAULTS.health_check_interval_s)
-  const [portCacheTtlS, setPortCacheTtlS] = useState(DEFAULTS.port_cache_ttl_s)
-  const [restartEnginesOnReconnect, setRestartEnginesOnReconnect] = useState(DEFAULTS.restart_engines_on_reconnect)
-  const [unhealthyRestartTimeoutS, setUnhealthyRestartTimeoutS] = useState(DEFAULTS.unhealthy_restart_timeout_s)
-
-  // Dynamic VPN wizard state
-  const [preferredEnginesPerVpn, setPreferredEnginesPerVpn] = useState(DEFAULTS.preferred_engines_per_vpn)
-  const [protocol, setProtocol] = useState(DEFAULTS.protocol)
-  const [selectedProvider, setSelectedProvider] = useState(DEFAULTS.provider)
-  const [regionsText, setRegionsText] = useState('')
-  const [credentials, setCredentials] = useState(DEFAULTS.credentials)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [credentialMode, setCredentialMode] = useState('wireguard')
   const [credentialPortForwarding, setCredentialPortForwarding] = useState(true)
+  const [wgText, setWgText] = useState('')
+  const [openvpnUser, setOpenvpnUser] = useState('')
+  const [openvpnPassword, setOpenvpnPassword] = useState('')
+  const [dialogLoading, setDialogLoading] = useState(false)
 
-  // Conditional OpenVPN + PIA fields
-  const [piaUsername, setPiaUsername] = useState('')
-  const [piaPassword, setPiaPassword] = useState('')
+  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(initialState), [draft, initialState])
 
-  const forwardingSupported = isForwardingSupported(selectedProvider)
-
-  useEffect(() => {
-    if (!forwardingSupported) {
-      setCredentialPortForwarding(false)
-    }
-  }, [forwardingSupported])
-
-  const leasesByCredentialId = useMemo(() => {
-    const leaseMap = new Map()
-    const leases = Array.isArray(leaseSummary?.leases) ? leaseSummary.leases : []
-    for (const lease of leases) {
-      const credentialId = String(lease?.credential_id || '').trim()
-      if (!credentialId) continue
-      leaseMap.set(credentialId, lease)
-    }
-    return leaseMap
-  }, [leaseSummary])
-
-  useEffect(() => {
-    fetchConfig()
-  }, [orchUrl])
+  const providerNormalized = useMemo(() => normalizeProvider(draft.provider), [draft.provider])
+  const providerSupportsForwarding = useMemo(() => isForwardingSupported(providerNormalized), [providerNormalized])
 
   const fetchLeases = async () => {
     try {
-      setLoadingLeases(true)
       const response = await fetch(`${orchUrl}/api/v1/vpn/leases`)
       if (!response.ok) return
-      const data = await response.json()
-      setLeaseSummary(data)
-    } catch (err) {
-      console.error('Failed to fetch VPN lease summary:', err)
-    } finally {
-      setLoadingLeases(false)
+      const payload = await response.json()
+      setLeaseSummary(payload)
+    } catch {
+      // non-blocking
     }
   }
 
   const fetchConfig = async () => {
+    setLoading(true)
+    setError('')
     try {
       const response = await fetch(`${orchUrl}/api/v1/settings/vpn`)
-      if (response.ok) {
-        const data = await response.json()
-        setEnabled(data.enabled ?? DEFAULTS.enabled)
-        setApiPort(data.api_port ?? DEFAULTS.api_port)
-        setHealthCheckIntervalS(data.health_check_interval_s ?? DEFAULTS.health_check_interval_s)
-        setPortCacheTtlS(data.port_cache_ttl_s ?? DEFAULTS.port_cache_ttl_s)
-        setRestartEnginesOnReconnect(data.restart_engines_on_reconnect ?? DEFAULTS.restart_engines_on_reconnect)
-        setUnhealthyRestartTimeoutS(data.unhealthy_restart_timeout_s ?? DEFAULTS.unhealthy_restart_timeout_s)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const payload = await response.json()
 
-        setPreferredEnginesPerVpn(Math.max(1, Number(data.preferred_engines_per_vpn ?? DEFAULTS.preferred_engines_per_vpn) || DEFAULTS.preferred_engines_per_vpn))
-
-        const loadedProtocol = String(data.protocol || DEFAULTS.protocol).toLowerCase()
-        setProtocol(loadedProtocol === 'openvpn' ? 'openvpn' : 'wireguard')
-
-        const loadedProvider = normalizeProvider(data.provider || DEFAULTS.provider)
-        setSelectedProvider(loadedProvider || DEFAULTS.provider)
-
-        const loadedRegions = Array.isArray(data.regions) ? data.regions : []
-        setRegionsText(loadedRegions.join(', '))
-
-        const loadedCredentials = normalizeCredentialsWithIds(data.credentials)
-        setCredentials(loadedCredentials)
+      const normalized = {
+        enabled: Boolean(payload?.enabled),
+        api_port: toNumber(payload?.api_port, DEFAULTS.api_port),
+        health_check_interval_s: toNumber(payload?.health_check_interval_s, DEFAULTS.health_check_interval_s),
+        port_cache_ttl_s: toNumber(payload?.port_cache_ttl_s, DEFAULTS.port_cache_ttl_s),
+        restart_engines_on_reconnect: Boolean(payload?.restart_engines_on_reconnect),
+        unhealthy_restart_timeout_s: toNumber(payload?.unhealthy_restart_timeout_s, DEFAULTS.unhealthy_restart_timeout_s),
+        preferred_engines_per_vpn: toNumber(payload?.preferred_engines_per_vpn, DEFAULTS.preferred_engines_per_vpn),
+        protocol: String(payload?.protocol || DEFAULTS.protocol).toLowerCase(),
+        provider: normalizeProvider(payload?.provider || DEFAULTS.provider),
+        regionsText: Array.isArray(payload?.regions) ? payload.regions.join(', ') : '',
       }
+
+      setInitialState(normalized)
+      setDraft(normalized)
+      setCredentials(Array.isArray(payload?.credentials) ? payload.credentials : [])
+      setSectionDirty(sectionId, false)
       await fetchLeases()
-    } catch (err) {
-      console.error('Failed to fetch VPN config:', err)
-    }
-  }
-
-  const addOpenVpnPiaCredential = () => {
-    const username = piaUsername.trim()
-    const password = piaPassword.trim()
-    if (!username || !password) {
-      setError('Username and password are required for OpenVPN + PIA credential')
-      return
-    }
-
-    const provider = normalizeProvider(selectedProvider)
-    const credential = {
-      id: generateCredentialId(),
-      provider,
-      protocol: 'openvpn',
-      username,
-      password,
-      openvpn_user: username,
-      openvpn_password: password,
-      port_forwarding: Boolean(credentialPortForwarding && isForwardingSupported(provider)),
-    }
-
-    setCredentials((prev) => [...prev, credential])
-    setPiaUsername('')
-    setPiaPassword('')
-    setMessage('OpenVPN credential added to pool')
-    setError(null)
-  }
-
-  const addParsedWireguardCredential = (parsed, source = 'uploaded.conf') => {
-    const provider = normalizeProvider(selectedProvider || 'custom')
-    const address = parsed.address || (Array.isArray(parsed.addresses) ? parsed.addresses.join(',') : '')
-    const privateKey = parsed.private_key
-    const parsedPortForwarding = coerceBoolean(parsed?.port_forwarding, true)
-
-    const credential = {
-      id: generateCredentialId(),
-      provider,
-      protocol: 'wireguard',
-      private_key: privateKey,
-      wireguard_private_key: privateKey,
-      addresses: address,
-      wireguard_addresses: address,
-      endpoint: parsed.endpoint,
-      endpoints: parsed.endpoint,
-      wireguard_endpoints: parsed.endpoint,
-      source,
-      port_forwarding: Boolean(
-        parsedPortForwarding && credentialPortForwarding && isForwardingSupported(provider)
-      ),
-    }
-
-    setCredentials((prev) => [...prev, credential])
-    setMessage('Wireguard credential parsed and added to pool')
-    setError(null)
-  }
-
-  const parseWireguardText = async (fileContent, sourceLabel) => {
-    setIsParsingWireguard(true)
-    setError(null)
-    try {
-      const response = await fetch(`${orchUrl}/api/v1/vpn/parse-wireguard`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ file_content: fileContent }),
-      })
-
-      const data = await response.json()
-      if (!response.ok) {
-        const detail = data?.detail
-        const detailMessage = typeof detail === 'string' ? detail : detail?.message
-        throw new Error(detailMessage || 'Could not parse Wireguard configuration')
-      }
-
-      setProtocol('wireguard')
-      addParsedWireguardCredential(data, sourceLabel)
-    } catch (err) {
-      setError(`Wireguard parse failed: ${err.message}`)
-    } finally {
-      setIsParsingWireguard(false)
-    }
-  }
-
-  const handleWireguardFile = async (file) => {
-    if (!file) return
-    const text = await file.text()
-    await parseWireguardText(text, file.name || 'uploaded.conf')
-  }
-
-  const handleDrop = async (event) => {
-    event.preventDefault()
-    setIsDropActive(false)
-
-    const file = event.dataTransfer?.files?.[0]
-    if (!file) return
-    await handleWireguardFile(file)
-  }
-
-  const deleteCredential = (credentialId) => {
-    setCredentials((prev) => prev.filter((credential) => credential.id !== credentialId))
-  }
-
-  const saveConfig = async () => {
-    if (!apiKey) {
-      setError('API Key is required to update settings')
-      return
-    }
-    setLoading(true)
-    setMessage(null)
-    setError(null)
-
-    const normalizedCredentials = normalizeCredentialsWithIds(credentials)
-    setCredentials(normalizedCredentials)
-
-    const payload = {
-      enabled,
-      api_port: apiPort,
-      health_check_interval_s: healthCheckIntervalS,
-      port_cache_ttl_s: portCacheTtlS,
-      restart_engines_on_reconnect: restartEnginesOnReconnect,
-      unhealthy_restart_timeout_s: unhealthyRestartTimeoutS,
-      dynamic_vpn_management: true,
-      preferred_engines_per_vpn: Math.max(1, Number(preferredEnginesPerVpn) || DEFAULTS.preferred_engines_per_vpn),
-      protocol,
-      provider: selectedProvider ? normalizeProvider(selectedProvider) : '',
-      regions: parseRegionsInput(regionsText),
-      credentials: normalizedCredentials,
-    }
-
-    try {
-      const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(payload),
-      })
-      if (response.ok) {
-        const data = await response.json()
-        setMessage(data.message || 'VPN settings saved successfully')
-        await fetchConfig()
-        await fetchLeases()
-      } else {
-        const errorData = await response.json()
-        setError(errorData.detail || 'Failed to update VPN configuration')
-      }
-    } catch (err) {
-      setError('Failed to save VPN configuration: ' + err.message)
+    } catch (fetchError) {
+      setError(`Failed to load VPN settings: ${fetchError.message || String(fetchError)}`)
     } finally {
       setLoading(false)
     }
   }
 
+  useEffect(() => {
+    fetchConfig()
+  }, [orchUrl])
+
+  useEffect(() => {
+    const save = async () => {
+      if (authRequired && !String(apiKey || '').trim()) {
+        throw new Error('API key required by server for VPN settings updates')
+      }
+
+      setSectionSaving(sectionId, true)
+      setError('')
+      setMessage('')
+
+      try {
+        const headers = { 'Content-Type': 'application/json' }
+        if (String(apiKey || '').trim()) {
+          headers.Authorization = `Bearer ${String(apiKey).trim()}`
+        }
+
+        const payload = {
+          enabled: Boolean(draft.enabled),
+          api_port: toNumber(draft.api_port, DEFAULTS.api_port),
+          health_check_interval_s: toNumber(draft.health_check_interval_s, DEFAULTS.health_check_interval_s),
+          port_cache_ttl_s: toNumber(draft.port_cache_ttl_s, DEFAULTS.port_cache_ttl_s),
+          restart_engines_on_reconnect: Boolean(draft.restart_engines_on_reconnect),
+          unhealthy_restart_timeout_s: toNumber(draft.unhealthy_restart_timeout_s, DEFAULTS.unhealthy_restart_timeout_s),
+          preferred_engines_per_vpn: Math.max(1, toNumber(draft.preferred_engines_per_vpn, DEFAULTS.preferred_engines_per_vpn)),
+          protocol: String(draft.protocol || DEFAULTS.protocol).toLowerCase(),
+          provider: normalizeProvider(draft.provider || DEFAULTS.provider),
+          regions: parseRegionsInput(draft.regionsText),
+          credentials,
+        }
+
+        const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        })
+
+        if (!response.ok) {
+          const failure = await response.json().catch(() => ({}))
+          throw new Error(failure?.detail || `HTTP ${response.status}`)
+        }
+
+        setInitialState({ ...draft })
+        setSectionDirty(sectionId, false)
+        setMessage('VPN settings saved')
+        await fetchLeases()
+      } finally {
+        setSectionSaving(sectionId, false)
+      }
+    }
+
+    const discard = () => {
+      setDraft(initialState)
+      setSectionDirty(sectionId, false)
+      setError('')
+      setMessage('')
+    }
+
+    registerSection(sectionId, {
+      title: 'VPN',
+      requiresAuth: true,
+      save,
+      discard,
+    })
+
+    return () => unregisterSection(sectionId)
+  }, [
+    apiKey,
+    authRequired,
+    credentials,
+    draft,
+    initialState,
+    orchUrl,
+    registerSection,
+    setSectionDirty,
+    setSectionSaving,
+    unregisterSection,
+  ])
+
+  useEffect(() => {
+    setSectionDirty(sectionId, dirty)
+  }, [dirty, setSectionDirty])
+
+  const update = (field, value) => {
+    setDraft((prev) => ({ ...prev, [field]: value }))
+    setError('')
+    setMessage('')
+  }
+
+  const addCredential = async () => {
+    if (authRequired && !String(apiKey || '').trim()) {
+      setError('API key required by server to add VPN credentials')
+      return
+    }
+
+    setDialogLoading(true)
+    setError('')
+    setMessage('')
+
+    try {
+      let payload = {
+        provider: providerNormalized,
+        protocol: credentialMode,
+        port_forwarding: Boolean(credentialPortForwarding && providerSupportsForwarding),
+      }
+
+      if (credentialMode === 'wireguard') {
+        const confText = String(wgText || '').trim()
+        if (!confText) {
+          throw new Error('Wireguard .conf content is required')
+        }
+
+        const parseResponse = await fetch(`${orchUrl}/api/v1/vpn/parse-wireguard`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_content: confText }),
+        })
+        const parsed = await parseResponse.json().catch(() => null)
+        if (!parseResponse.ok) {
+          throw new Error(parsed?.detail?.message || parsed?.detail || `HTTP ${parseResponse.status}`)
+        }
+
+        payload = {
+          ...payload,
+          private_key: parsed?.private_key,
+          addresses: parsed?.address || (Array.isArray(parsed?.addresses) ? parsed.addresses.join(',') : ''),
+          endpoint: parsed?.endpoint,
+          source: 'dialog-paste.conf',
+        }
+      } else {
+        const username = String(openvpnUser || '').trim()
+        const password = String(openvpnPassword || '').trim()
+        if (!username || !password) {
+          throw new Error('OpenVPN username and password are required')
+        }
+
+        payload = {
+          ...payload,
+          openvpn_user: username,
+          openvpn_password: password,
+          username,
+          password,
+        }
+      }
+
+      const headers = { 'Content-Type': 'application/json' }
+      if (String(apiKey || '').trim()) {
+        headers.Authorization = `Bearer ${String(apiKey).trim()}`
+      }
+
+      const response = await fetch(`${orchUrl}/api/v1/settings/vpn/credentials`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      })
+
+      const result = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(result?.detail || `HTTP ${response.status}`)
+      }
+
+      setMessage('Credential added and saved immediately')
+      setDialogOpen(false)
+      setWgText('')
+      setOpenvpnUser('')
+      setOpenvpnPassword('')
+      await fetchConfig()
+    } catch (addError) {
+      setError(`Failed to add credential: ${addError.message || String(addError)}`)
+    } finally {
+      setDialogLoading(false)
+    }
+  }
+
+  const removeCredential = async (credentialId) => {
+    if (authRequired && !String(apiKey || '').trim()) {
+      setError('API key required by server to remove VPN credentials')
+      return
+    }
+
+    try {
+      const headers = {}
+      if (String(apiKey || '').trim()) {
+        headers.Authorization = `Bearer ${String(apiKey).trim()}`
+      }
+
+      const response = await fetch(`${orchUrl}/api/v1/settings/vpn/credentials/${encodeURIComponent(String(credentialId))}`, {
+        method: 'DELETE',
+        headers,
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(payload?.detail || `HTTP ${response.status}`)
+      }
+
+      setMessage('Credential removed and saved immediately')
+      await fetchConfig()
+    } catch (removeError) {
+      setError(`Failed to remove credential: ${removeError.message || String(removeError)}`)
+    }
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="py-10 text-sm text-muted-foreground">Loading VPN settings...</CardContent>
+      </Card>
+    )
+  }
+
   return (
-    <div className="space-y-6">
-      {/* Master VPN toggle */}
+    <div className="space-y-5">
+      {message && <p className="text-sm text-emerald-600 dark:text-emerald-400">{message}</p>}
+      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            {enabled
-              ? <ShieldCheck className="h-5 w-5 text-green-500" />
-              : <ShieldOff className="h-5 w-5 text-muted-foreground" />
-            }
-            VPN Integration (Gluetun)
+            {draft.enabled ? <ShieldCheck className="h-5 w-5 text-emerald-500" /> : <ShieldOff className="h-5 w-5 text-slate-400" />}
+            VPN Controller Settings
           </CardTitle>
-          <CardDescription>
-            Connect to a Gluetun VPN container for routing engine traffic through a VPN.
-            When disabled, engines connect directly without VPN.
-          </CardDescription>
+          <CardDescription>Static VPN controller behavior participates in global save and unsaved-change protection.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-3">
-            <Switch
-              id="vpn-enabled"
-              checked={enabled}
-              onCheckedChange={setEnabled}
-            />
-            <div>
-              <Label htmlFor="vpn-enabled" className="text-base font-medium">
-                {enabled ? 'VPN Enabled' : 'VPN Disabled'}
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                {enabled
-                  ? 'Engines will route traffic through the configured Gluetun container.'
-                  : 'Engines connect directly — no VPN routing.'}
-              </p>
-            </div>
-          </div>
+        <CardContent className="space-y-3">
+          <SettingRow label="Enable VPN Routing" description="Route engine traffic through managed VPN nodes.">
+            <Switch checked={Boolean(draft.enabled)} onCheckedChange={(value) => update('enabled', Boolean(value))} />
+          </SettingRow>
+
+          <SettingRow label="Protocol" description="Primary protocol for dynamically managed VPN nodes.">
+            <Select value={String(draft.protocol)} onValueChange={(value) => update('protocol', String(value).toLowerCase())}>
+              <SelectTrigger className="max-w-sm"><SelectValue placeholder="Select protocol" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="wireguard">Wireguard</SelectItem>
+                <SelectItem value="openvpn">OpenVPN</SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingRow>
+
+          <SettingRow label="Provider" description="Provider used for credential leases and node scheduling.">
+            <Select value={String(draft.provider)} onValueChange={(value) => update('provider', normalizeProvider(value))}>
+              <SelectTrigger className="max-w-sm"><SelectValue placeholder="Select provider" /></SelectTrigger>
+              <SelectContent>
+                {PROVIDER_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SettingRow>
+
+          <SettingRow label="Preferred Engines per VPN Node" description="Scheduler hint for desired VPN node count.">
+            <Input type="number" min={1} max={100} value={draft.preferred_engines_per_vpn} onChange={(e) => update('preferred_engines_per_vpn', toNumber(e.target.value, DEFAULTS.preferred_engines_per_vpn))} className="max-w-xs" />
+          </SettingRow>
+
+          <SettingRow label="Preferred Regions" description="Comma-separated preferred regions for lease and scheduling decisions.">
+            <Input value={draft.regionsText} onChange={(e) => update('regionsText', e.target.value)} placeholder="us-east, nl, region:paris" className="max-w-lg" />
+          </SettingRow>
+
+          <SettingRow label="Gluetun API Port" description="Must match Gluetun HTTP control server port.">
+            <Input type="number" min={1} max={65535} value={draft.api_port} onChange={(e) => update('api_port', toNumber(e.target.value, DEFAULTS.api_port))} className="max-w-xs" />
+          </SettingRow>
+
+          <SettingRow label="Health Check Interval (s)" description="VPN health polling cadence.">
+            <Input type="number" min={1} max={120} value={draft.health_check_interval_s} onChange={(e) => update('health_check_interval_s', toNumber(e.target.value, DEFAULTS.health_check_interval_s))} className="max-w-xs" />
+          </SettingRow>
+
+          <SettingRow label="Port Cache TTL (s)" description="Forwarded-port cache TTL.">
+            <Input type="number" min={1} max={300} value={draft.port_cache_ttl_s} onChange={(e) => update('port_cache_ttl_s', toNumber(e.target.value, DEFAULTS.port_cache_ttl_s))} className="max-w-xs" />
+          </SettingRow>
+
+          <SettingRow label="Unhealthy Restart Timeout (s)" description="Restart VPN node after this unhealthy duration.">
+            <Input type="number" min={10} max={600} value={draft.unhealthy_restart_timeout_s} onChange={(e) => update('unhealthy_restart_timeout_s', toNumber(e.target.value, DEFAULTS.unhealthy_restart_timeout_s))} className="max-w-xs" />
+          </SettingRow>
+
+          <SettingRow label="Restart Engines on VPN Reconnect" description="Restart engines when VPN node reconnects to refresh routes.">
+            <Switch checked={Boolean(draft.restart_engines_on_reconnect)} onCheckedChange={(value) => update('restart_engines_on_reconnect', Boolean(value))} />
+          </SettingRow>
         </CardContent>
       </Card>
 
-      {/* VPN connection config — only when enabled */}
-      {enabled && (
-        <>
-          <Card>
-            <CardHeader>
-              <CardTitle>Smart VPN Wizard</CardTitle>
-              <CardDescription>
-                Configure protocol/provider combinations and build a credential pool for orchestrator-managed dynamic VPN nodes.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="space-y-2 max-w-xs">
-                <Label htmlFor="preferred-engines-per-vpn">Preferred Engines per VPN Node</Label>
-                <Input
-                  id="preferred-engines-per-vpn"
-                  type="number"
-                  min={1}
-                  value={preferredEnginesPerVpn}
-                  onChange={(e) => setPreferredEnginesPerVpn(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Scheduler target used by the controller to estimate how many VPN nodes should be active.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="vpn-protocol">Protocol</Label>
-                  <Select value={protocol} onValueChange={setProtocol}>
-                    <SelectTrigger id="vpn-protocol">
-                      <SelectValue placeholder="Select VPN protocol" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="wireguard">Wireguard</SelectItem>
-                      <SelectItem value="openvpn">OpenVPN</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="vpn-provider">Provider</Label>
-                  <Select value={selectedProvider} onValueChange={setSelectedProvider}>
-                    <SelectTrigger id="vpn-provider">
-                      <SelectValue placeholder="Select VPN provider" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PROVIDER_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {forwardingSupported ? (
-                    <Badge className="bg-green-600 hover:bg-green-600 text-white">
-                      <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-                      Port Forwarding Supported
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="bg-yellow-500/20 text-yellow-700 dark:text-yellow-300">
-                      <AlertTriangle className="h-3.5 w-3.5 mr-1" />
-                      Provider does not support native port forwarding
-                    </Badge>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="vpn-regions">Preferred Regions (comma-separated)</Label>
-                <Input
-                  id="vpn-regions"
-                  value={regionsText}
-                  onChange={(e) => setRegionsText(e.target.value)}
-                  placeholder="us-east, nl, region:paris"
-                />
-              </div>
-
-              <div className="flex items-start gap-3 rounded-md border p-3">
-                <Switch
-                  id="credential-port-forwarding"
-                  checked={credentialPortForwarding}
-                  disabled={!forwardingSupported}
-                  onCheckedChange={setCredentialPortForwarding}
-                />
-                <div>
-                  <Label htmlFor="credential-port-forwarding">Supports Port Forwarding (P2P)</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Set per credential. Disable for keys that connect but do not expose a forwarded port.
-                  </p>
-                  {!forwardingSupported && (
-                    <p className="text-xs text-yellow-700 dark:text-yellow-300">
-                      Disabled because the selected provider does not support native port forwarding.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {protocol === 'openvpn' && normalizeProvider(selectedProvider) === 'private internet access' && (
-                <Card className="border-border/60">
-                  <CardHeader>
-                    <CardTitle className="text-base">OpenVPN + PIA Credentials</CardTitle>
-                    <CardDescription>
-                      Add username/password credentials to the pool for dynamic node provisioning.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <Label htmlFor="pia-username">Username</Label>
-                        <Input
-                          id="pia-username"
-                          value={piaUsername}
-                          onChange={(e) => setPiaUsername(e.target.value)}
-                          placeholder="PIA username"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="pia-password">Password</Label>
-                        <Input
-                          id="pia-password"
-                          type="password"
-                          value={piaPassword}
-                          onChange={(e) => setPiaPassword(e.target.value)}
-                          placeholder="PIA password"
-                        />
-                      </div>
-                    </div>
-                    <Button type="button" onClick={addOpenVpnPiaCredential}>Add Credential</Button>
-                  </CardContent>
-                </Card>
-              )}
-
-              {protocol === 'wireguard' && (
-                <Card className="border-border/60">
-                  <CardHeader>
-                    <CardTitle className="text-base">Wireguard Configuration</CardTitle>
-                    <CardDescription>
-                      Drop a .conf file to parse and add credentials automatically.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div
-                      onDragOver={(event) => {
-                        event.preventDefault()
-                        setIsDropActive(true)
-                      }}
-                      onDragLeave={() => setIsDropActive(false)}
-                      onDrop={handleDrop}
-                      className={[
-                        'rounded-lg border-2 border-dashed p-6 transition-colors',
-                        isDropActive ? 'border-blue-500 bg-blue-500/10' : 'border-border bg-muted/20',
-                      ].join(' ')}
-                    >
-                      <div className="flex flex-col items-center gap-3 text-center">
-                        <FileUp className="h-8 w-8 text-muted-foreground" />
-                        <div>
-                          <p className="text-sm font-medium">Drag and drop a Wireguard .conf file here</p>
-                          <p className="text-xs text-muted-foreground">or upload manually using the picker below</p>
-                        </div>
-                        <Label htmlFor="wg-file" className="cursor-pointer">
-                          <div className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
-                            <Upload className="h-4 w-4" />
-                            Select File
-                          </div>
-                        </Label>
-                        <Input
-                          id="wg-file"
-                          type="file"
-                          accept=".conf,text/plain"
-                          className="hidden"
-                          onChange={async (event) => {
-                            const file = event.target.files?.[0]
-                            if (file) await handleWireguardFile(file)
-                            event.target.value = ''
-                          }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="wireguard-text">Or paste .conf content</Label>
-                      <Textarea
-                        id="wireguard-text"
-                        value={wireguardInput}
-                        onChange={(event) => setWireguardInput(event.target.value)}
-                        placeholder="[Interface]\nPrivateKey = ...\nAddress = ...\n\n[Peer]\nEndpoint = ..."
-                        rows={8}
-                      />
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={isParsingWireguard || !wireguardInput.trim()}
-                        onClick={() => parseWireguardText(wireguardInput, 'pasted.conf')}
-                      >
-                        {isParsingWireguard ? 'Parsing...' : 'Parse and Add to Pool'}
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Expert Toggle */}
-          <button
-            type="button"
-            onClick={() => setShowExpert(!showExpert)}
-            className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {showExpert ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            {showExpert ? 'Hide Expert Settings' : 'Show Expert Settings'}
-          </button>
-
-          {showExpert && (
-            <>
-              {/* Health & Recovery */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Health & Recovery Settings</CardTitle>
-                  <CardDescription>How the orchestrator monitors VPN health and recovers from failures</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <Label htmlFor="api-port">Gluetun HTTP API Port</Label>
-                      <Input
-                        id="api-port"
-                        type="number"
-                        min={1}
-                        max={65535}
-                        value={apiPort}
-                        onChange={(e) => setApiPort(parseInt(e.target.value, 10) || 8001)}
-                        className="max-w-xs"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Must match HTTP_CONTROL_SERVER_ADDRESS in Gluetun. Default: 8001
-                      </p>
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label htmlFor="health-check-interval">Health Check Interval (seconds)</Label>
-                      <Input
-                        id="health-check-interval"
-                        type="number"
-                        min={1} max={60}
-                        value={healthCheckIntervalS}
-                        onChange={(e) => setHealthCheckIntervalS(parseInt(e.target.value) || 5)}
-                        className="max-w-xs"
-                      />
-                      <p className="text-xs text-muted-foreground">How often to check VPN health. Default: 5s</p>
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label htmlFor="port-cache-ttl">Port Cache TTL (seconds)</Label>
-                      <Input
-                        id="port-cache-ttl"
-                        type="number"
-                        min={1} max={300}
-                        value={portCacheTtlS}
-                        onChange={(e) => setPortCacheTtlS(parseInt(e.target.value) || 60)}
-                        className="max-w-xs"
-                      />
-                      <p className="text-xs text-muted-foreground">How long to cache forwarded port info. Default: 60s</p>
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label htmlFor="unhealthy-restart-timeout">Unhealthy Restart Timeout (seconds)</Label>
-                      <Input
-                        id="unhealthy-restart-timeout"
-                        type="number"
-                        min={10} max={600}
-                        value={unhealthyRestartTimeoutS}
-                        onChange={(e) => setUnhealthyRestartTimeoutS(parseInt(e.target.value) || 60)}
-                        className="max-w-xs"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Force-restart VPN container after being unhealthy for this long. Default: 60s
-                      </p>
-                    </div>
-
-                    <div className="flex items-start gap-3 pt-1">
-                      <Switch
-                        id="restart-engines"
-                        checked={restartEnginesOnReconnect}
-                        onCheckedChange={setRestartEnginesOnReconnect}
-                      />
-                      <div>
-                        <Label htmlFor="restart-engines">Restart Engines on VPN Reconnect</Label>
-                        <p className="text-xs text-muted-foreground">
-                          Restart engine containers when VPN reconnects to refresh their network routes. Default: on
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </>
-          )}
-        </>
-      )}
-
       <Card>
         <CardHeader>
-          <CardTitle>Credential Pool</CardTitle>
-          <CardDescription>
-            Credentials are leased to dynamic VPN nodes and released when nodes are removed.
-          </CardDescription>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle>Credential Pool</CardTitle>
+              <CardDescription>
+                Operational credentials apply immediately and bypass global settings save state.
+              </CardDescription>
+            </div>
+            <Button type="button" onClick={() => setDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Credential
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <Badge variant="secondary">Total: {credentials.length}</Badge>
             <Badge variant="secondary">Leased: {leaseSummary?.leased ?? 0}</Badge>
             <Badge variant="secondary">Available: {leaseSummary?.available ?? 0}</Badge>
-            {loadingLeases && <span>Refreshing lease data...</span>}
           </div>
 
           <div className="rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Provider / Protocol</TableHead>
+                  <TableHead>Provider/Protocol</TableHead>
                   <TableHead>Identifier</TableHead>
-                  <TableHead>P2P PF</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead>Port Forwarding</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {credentials.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-6">
-                      No credentials in pool yet.
-                    </TableCell>
+                    <TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">No credentials configured.</TableCell>
                   </TableRow>
                 ) : (
                   credentials.map((credential) => {
-                    const credentialId = String(credential.id || '').trim()
-                    const lease = credentialId ? leasesByCredentialId.get(credentialId) : null
-                    const inUse = Boolean(lease)
-                    const statusText = inUse
-                      ? `In Use (Node: ${lease.container_id || 'unknown'})`
-                      : 'Available'
-                    const providerSupports = isForwardingSupported(credential.provider || selectedProvider)
-                    const credentialSupports = coerceBoolean(credential.port_forwarding, true)
-                    const hasPortForwarding = providerSupports && credentialSupports
+                    const protocol = String(credential?.protocol || 'wireguard').toLowerCase()
+                    const provider = normalizeProvider(credential?.provider || draft.provider)
+                    const hasForwarding = Boolean(credential?.port_forwarding) && isForwardingSupported(provider)
+                    const identifier = protocol === 'wireguard'
+                      ? `Key ${mask(credential?.private_key || credential?.wireguard_private_key)}`
+                      : `User ${mask(credential?.openvpn_user || credential?.username, 3, 2)}`
 
                     return (
-                      <TableRow key={credential.id}>
+                      <TableRow key={String(credential?.id || Math.random())}>
                         <TableCell>
-                          <div className="font-medium">{providerLabel(credential.provider || selectedProvider)}</div>
-                          <div className="text-xs text-muted-foreground uppercase">{credential.protocol || protocol}</div>
+                          <div className="font-medium">{provider || 'Unknown'}</div>
+                          <div className="text-xs uppercase text-muted-foreground">{protocol}</div>
                         </TableCell>
-                        <TableCell className="text-sm">{credentialIdentifier(credential)}</TableCell>
+                        <TableCell className="text-sm">{identifier}</TableCell>
                         <TableCell>
-                          {hasPortForwarding ? (
-                            <Badge className="bg-green-600 hover:bg-green-600 text-white">
-                              <Zap className="h-3.5 w-3.5 mr-1" />
-                              Enabled
-                            </Badge>
+                          {hasForwarding ? (
+                            <Badge variant="success"><Zap className="mr-1 h-3.5 w-3.5" />Enabled</Badge>
                           ) : (
-                            <Badge variant="secondary" className="bg-muted text-muted-foreground">
-                              <ZapOff className="h-3.5 w-3.5 mr-1" />
-                              Disabled
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {inUse ? (
-                            <Badge className="bg-green-600 hover:bg-green-600 text-white">{statusText}</Badge>
-                          ) : (
-                            <Badge variant="outline">{statusText}</Badge>
+                            <Badge variant="secondary"><ZapOff className="mr-1 h-3.5 w-3.5" />Disabled</Badge>
                           )}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => deleteCredential(credential.id)}
-                            aria-label="Delete credential"
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
+                          <Button type="button" variant="ghost" size="icon" onClick={() => removeCredential(credential?.id)}>
+                            <Trash2 className="h-4 w-4 text-red-500" />
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -816,37 +500,54 @@ export function VPNSettings({ apiKey, orchUrl }) {
         </CardContent>
       </Card>
 
-      {/* Save Button */}
-      <div className="pt-2">
-        <Button onClick={saveConfig} disabled={loading || !apiKey}>
-          {loading ? 'Saving...' : 'Save VPN Settings'}
-        </Button>
-        {!apiKey && (
-          <p className="text-xs text-destructive mt-2">API Key is required to update settings</p>
-        )}
-      </div>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Add VPN Credential</DialogTitle>
+            <DialogDescription>
+              Credential operations are committed immediately to backend storage.
+            </DialogDescription>
+          </DialogHeader>
 
-      {message && (
-        <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/30 rounded-md">
-          <CheckCircle2 className="h-4 w-4 text-green-500" />
-          <span className="text-sm text-green-600 dark:text-green-400">{message}</span>
-        </div>
-      )}
+          <div className="space-y-3">
+            <SettingRow label="Credential Type" description="Choose parsing mode for this credential.">
+              <Select value={credentialMode} onValueChange={setCredentialMode}>
+                <SelectTrigger className="max-w-sm"><SelectValue placeholder="Select type" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="wireguard">Wireguard (.conf text)</SelectItem>
+                  <SelectItem value="openvpn">OpenVPN (username/password)</SelectItem>
+                </SelectContent>
+              </Select>
+            </SettingRow>
 
-      {error && (
-        <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive rounded-md">
-          <AlertCircle className="h-4 w-4 text-destructive" />
-          <span className="text-sm text-destructive">{error}</span>
-        </div>
-      )}
+            <SettingRow label="Port Forwarding" description="Enable only if credential/provider supports forwarded ports.">
+              <Switch checked={credentialPortForwarding && providerSupportsForwarding} disabled={!providerSupportsForwarding} onCheckedChange={setCredentialPortForwarding} />
+            </SettingRow>
 
-      <Alert>
-        <Info className="h-4 w-4" />
-        <AlertDescription>
-          VPN settings are persisted and applied immediately through the dynamic controller and Docker events.
-          Existing engines are not restarted unless Restart Engines on VPN Reconnect is enabled.
-        </AlertDescription>
-      </Alert>
+            {credentialMode === 'wireguard' ? (
+              <SettingRow label="Wireguard .conf Content" description="Paste full [Interface]/[Peer] configuration.">
+                <Textarea value={wgText} onChange={(e) => setWgText(e.target.value)} rows={10} placeholder="[Interface]\nPrivateKey = ...\nAddress = ...\n\n[Peer]\nEndpoint = ..." />
+              </SettingRow>
+            ) : (
+              <>
+                <SettingRow label="OpenVPN Username" description="Credential username.">
+                  <Input value={openvpnUser} onChange={(e) => setOpenvpnUser(e.target.value)} className="max-w-sm" />
+                </SettingRow>
+                <SettingRow label="OpenVPN Password" description="Credential password.">
+                  <Input type="password" value={openvpnPassword} onChange={(e) => setOpenvpnPassword(e.target.value)} className="max-w-sm" />
+                </SettingRow>
+              </>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button type="button" onClick={addCredential} disabled={dialogLoading}>
+              {dialogLoading ? <><AlertCircle className="mr-2 h-4 w-4" />Saving...</> : <><Plus className="mr-2 h-4 w-4" />Add Credential</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -1,40 +1,52 @@
-import React, { useState, useEffect, useRef } from 'react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import React, { useEffect, useMemo, useState } from 'react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Button } from '@/components/ui/button'
-import { AlertCircle, CheckCircle2, Info } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { AlertCircle, FlaskConical, Loader2 } from 'lucide-react'
+import { SettingRow } from '@/components/settings/SettingRow'
+import { useSettingsForm } from '@/context/SettingsFormContext'
 
-// Constants
-const DEFAULT_MAX_STREAMS_PER_ENGINE = 3
-const LIVE_CACHE_TYPE_PARAM = '--live-cache-type'
+const DEFAULTS = {
+  initial_data_wait_timeout: 10,
+  initial_data_check_interval: 0.2,
+  no_data_timeout_checks: 60,
+  no_data_check_interval: 1,
+  connection_timeout: 10,
+  stream_timeout: 60,
+  channel_shutdown_delay: 5,
+  max_streams_per_engine: 3,
+  stream_mode: 'TS',
+  control_mode: 'http',
+  hls_max_segments: 20,
+  hls_initial_segments: 3,
+  hls_window_size: 6,
+  hls_buffer_ready_timeout: 30,
+  hls_first_segment_timeout: 30,
+  hls_initial_buffer_seconds: 10,
+  hls_max_initial_segments: 10,
+  hls_segment_fetch_interval: 0.5,
+}
+
 const PREFLIGHT_INPUT_OPTIONS = {
-  content_id: {
-    label: 'Content ID (PID/content_id)',
-    param: 'id',
-    placeholder: 'PID or acestream content_id',
-  },
-  infohash: {
-    label: 'Infohash',
-    param: 'infohash',
-    placeholder: '40-char infohash',
-  },
-  torrent_url: {
-    label: 'Torrent URL',
-    param: 'torrent_url',
-    placeholder: 'https://example.com/file.torrent',
-  },
-  direct_url: {
-    label: 'Direct URL',
-    param: 'direct_url',
-    placeholder: 'magnet:?xt=... or https://media.example/stream',
-  },
-  raw_data: {
-    label: 'Raw Torrent Data',
-    param: 'raw_data',
-    placeholder: 'Base64/raw torrent payload',
-  },
+  content_id: { label: 'Content ID', param: 'id', placeholder: 'PID or acestream content_id' },
+  infohash: { label: 'Infohash', param: 'infohash', placeholder: '40-char infohash' },
+  torrent_url: { label: 'Torrent URL', param: 'torrent_url', placeholder: 'https://example.com/file.torrent' },
+  direct_url: { label: 'Direct URL', param: 'direct_url', placeholder: 'magnet:?xt=... or https://media.example/stream' },
+  raw_data: { label: 'Raw Torrent Data', param: 'raw_data', placeholder: 'Base64/raw torrent payload' },
+}
+
+const toNumber = (value, fallback = 0) => {
+  const next = Number(value)
+  return Number.isFinite(next) ? next : fallback
 }
 
 const normalizeControlMode = (value) => {
@@ -45,1023 +57,369 @@ const normalizeControlMode = (value) => {
 
 const extractLoadRespFiles = (payload) => {
   const files = payload?.result?.loadresp?.files
-  if (!Array.isArray(files)) {
-    return []
-  }
+  if (!Array.isArray(files)) return []
 
   return files.map((entry, idx) => {
-    let fileIndex = idx
-    if (entry && typeof entry === 'object') {
-      const candidates = [entry.index, entry.file_index, entry.i, entry.id]
-      for (const candidate of candidates) {
-        if (typeof candidate === 'number' && Number.isInteger(candidate) && candidate >= 0) {
-          fileIndex = candidate
-          break
-        }
-        if (typeof candidate === 'string' && /^\d+$/.test(candidate.trim())) {
-          fileIndex = Number(candidate.trim())
-          break
-        }
-      }
-    }
-
-    let label = ''
-    if (typeof entry === 'string') {
-      label = entry
-    } else if (entry && typeof entry === 'object') {
-      label = entry.filename || entry.name || entry.path || entry.title || entry.label || ''
-      if (!label) {
-        try {
-          label = JSON.stringify(entry)
-        } catch {
-          label = `File ${idx}`
-        }
-      }
-    } else {
-      label = `File ${idx}`
-    }
-
-    return {
-      index: fileIndex,
-      label,
-    }
+    const label = typeof entry === 'string' ? entry : (entry?.filename || entry?.name || `File ${idx}`)
+    const indexRaw = entry?.index ?? entry?.file_index ?? idx
+    const index = Number.isFinite(Number(indexRaw)) ? Number(indexRaw) : idx
+    return { index, label }
   })
 }
 
-export function ProxySettings({ apiKey, orchUrl, externalSaveSignal = 0, onSavingChange }) {
-  const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState(null)
-  const [error, setError] = useState(null)
+export function ProxySettings({ apiKey, orchUrl, authRequired }) {
+  const sectionId = 'proxy'
+  const { registerSection, unregisterSection, setSectionDirty, setSectionSaving } = useSettingsForm()
 
-  // Proxy config state
-  const [initialDataWaitTimeout, setInitialDataWaitTimeout] = useState(10)
-  const [initialDataCheckInterval, setInitialDataCheckInterval] = useState(0.2)
-  const [noDataTimeoutChecks, setNoDataTimeoutChecks] = useState(60)
-  const [noDataCheckInterval, setNoDataCheckInterval] = useState(1)
-  const [connectionTimeout, setConnectionTimeout] = useState(10)
-  const [streamTimeout, setStreamTimeout] = useState(60)
-  const [channelShutdownDelay, setChannelShutdownDelay] = useState(5)
-  const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(DEFAULT_MAX_STREAMS_PER_ENGINE)
-  const [streamMode, setStreamMode] = useState('TS')
-  const [controlMode, setControlMode] = useState('http')
-  const [engineVariant, setEngineVariant] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [initialState, setInitialState] = useState(DEFAULTS)
+  const [draft, setDraft] = useState(DEFAULTS)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
 
-  // HLS-specific state
-  const [hlsMaxSegments, setHlsMaxSegments] = useState(20)
-  const [hlsInitialSegments, setHlsInitialSegments] = useState(3)
-  const [hlsWindowSize, setHlsWindowSize] = useState(6)
-  const [hlsBufferReadyTimeout, setHlsBufferReadyTimeout] = useState(30)
-  const [hlsFirstSegmentTimeout, setHlsFirstSegmentTimeout] = useState(30)
-  const [hlsInitialBufferSeconds, setHlsInitialBufferSeconds] = useState(10)
-  const [hlsMaxInitialSegments, setHlsMaxInitialSegments] = useState(10)
-  const [hlsSegmentFetchInterval, setHlsSegmentFetchInterval] = useState(0.5)
-  const [defaultLiveDelay, setDefaultLiveDelay] = useState(0)
+  const [diagOpen, setDiagOpen] = useState(false)
+  const [diagType, setDiagType] = useState('content_id')
+  const [diagInput, setDiagInput] = useState('')
+  const [diagFileIndexes, setDiagFileIndexes] = useState('0')
+  const [diagTier, setDiagTier] = useState('light')
+  const [diagRunning, setDiagRunning] = useState(false)
+  const [diagError, setDiagError] = useState('')
+  const [diagResult, setDiagResult] = useState(null)
 
-  // Read-only config for display
-  const [vlcUserAgent, setVlcUserAgent] = useState('')
-  const [chunkSize, setChunkSize] = useState(0)
-  const [bufferChunkSize, setBufferChunkSize] = useState(0)
-
-  // Custom variant state
-  const [customVariantEnabled, setCustomVariantEnabled] = useState(false)
-  const [customVariantCacheType, setCustomVariantCacheType] = useState('')
-  const [variantDisplayName, setVariantDisplayName] = useState('')
-
-  // Preflight diagnostics state
-  const [preflightInputType, setPreflightInputType] = useState('content_id')
-  const [preflightContentId, setPreflightContentId] = useState('')
-  const [preflightFileIndexes, setPreflightFileIndexes] = useState('0')
-  const [preflightTier, setPreflightTier] = useState('light')
-  const [preflightLoading, setPreflightLoading] = useState(false)
-  const [preflightResult, setPreflightResult] = useState(null)
-  const [preflightError, setPreflightError] = useState(null)
-  const lastExternalSaveSignal = useRef(0)
-
-  // Check if HLS is supported - double check both variant and cache type
-  const isAceServeVariant = engineVariant.startsWith('AceServe')
-  const hasCompatibleCache = !customVariantEnabled || (customVariantCacheType !== 'memory')
-  const hlsSupported = isAceServeVariant && hasCompatibleCache
+  const dirty = useMemo(
+    () => JSON.stringify(draft) !== JSON.stringify(initialState),
+    [draft, initialState],
+  )
 
   useEffect(() => {
-    fetchProxyConfig()
-    fetchCustomVariantInfo()
-    fetchOrchestratorSettings()
+    const fetchConfig = async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const response = await fetch(`${orchUrl}/api/v1/proxy/config`)
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const payload = await response.json()
+        const normalized = {
+          ...DEFAULTS,
+          ...payload,
+          control_mode: normalizeControlMode(payload?.control_mode),
+        }
+        setInitialState(normalized)
+        setDraft(normalized)
+        setSectionDirty(sectionId, false)
+      } catch (fetchError) {
+        setError(`Failed to load proxy settings: ${fetchError.message || String(fetchError)}`)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchConfig()
   }, [orchUrl])
 
-  // Poll for custom variant changes (e.g., after user changes settings in another tab/page)
   useEffect(() => {
-    // Initial fetch is done in the first useEffect
-    // This effect sets up periodic polling to detect changes
-    const pollInterval = setInterval(() => {
-      fetchCustomVariantInfo()
-    }, 5000) // Poll every 5 seconds
-
-    return () => clearInterval(pollInterval)
-  }, [orchUrl]) // Only restart polling when orchUrl changes
-
-  useEffect(() => {
-    if (typeof onSavingChange === 'function') {
-      onSavingChange(loading)
-    }
-  }, [loading, onSavingChange])
-
-  useEffect(() => {
-    if (externalSaveSignal > 0 && externalSaveSignal !== lastExternalSaveSignal.current) {
-      lastExternalSaveSignal.current = externalSaveSignal
-      saveProxyConfig()
-    }
-  }, [externalSaveSignal])
-
-  const fetchProxyConfig = async () => {
-    try {
-      const response = await fetch(`${orchUrl}/api/v1/proxy/config`)
-      if (response.ok) {
-        const data = await response.json()
-        setInitialDataWaitTimeout(data.initial_data_wait_timeout)
-        setInitialDataCheckInterval(data.initial_data_check_interval)
-        setNoDataTimeoutChecks(data.no_data_timeout_checks)
-        setNoDataCheckInterval(data.no_data_check_interval)
-        setConnectionTimeout(data.connection_timeout)
-        setStreamTimeout(data.stream_timeout)
-        setChannelShutdownDelay(data.channel_shutdown_delay)
-        setMaxStreamsPerEngine(data.max_streams_per_engine || DEFAULT_MAX_STREAMS_PER_ENGINE)
-        setStreamMode(data.stream_mode || 'TS')
-        setControlMode(normalizeControlMode(data.control_mode || 'http'))
-        setEngineVariant(data.engine_variant || '')
-        setVlcUserAgent(data.vlc_user_agent)
-        setChunkSize(data.chunk_size)
-        setBufferChunkSize(data.buffer_chunk_size)
-        // HLS-specific settings
-        setHlsMaxSegments(data.hls_max_segments || 20)
-        setHlsInitialSegments(data.hls_initial_segments || 3)
-        setHlsWindowSize(data.hls_window_size || 6)
-        setHlsBufferReadyTimeout(data.hls_buffer_ready_timeout || 30)
-        setHlsFirstSegmentTimeout(data.hls_first_segment_timeout || 30)
-        setHlsInitialBufferSeconds(data.hls_initial_buffer_seconds || 10)
-        setHlsMaxInitialSegments(data.hls_max_initial_segments || 10)
-        setHlsSegmentFetchInterval(data.hls_segment_fetch_interval || 0.5)
+    const save = async () => {
+      if (authRequired && !String(apiKey || '').trim()) {
+        throw new Error('API key required by server for proxy settings updates')
       }
-    } catch (err) {
-      console.error('Failed to fetch proxy config:', err)
+
+      setSectionSaving(sectionId, true)
+      setError('')
+      setMessage('')
+
+      try {
+        const headers = {}
+        if (String(apiKey || '').trim()) {
+          headers.Authorization = `Bearer ${String(apiKey).trim()}`
+        }
+
+        const params = new URLSearchParams()
+        params.set('initial_data_wait_timeout', String(toNumber(draft.initial_data_wait_timeout, DEFAULTS.initial_data_wait_timeout)))
+        params.set('initial_data_check_interval', String(toNumber(draft.initial_data_check_interval, DEFAULTS.initial_data_check_interval)))
+        params.set('no_data_timeout_checks', String(toNumber(draft.no_data_timeout_checks, DEFAULTS.no_data_timeout_checks)))
+        params.set('no_data_check_interval', String(toNumber(draft.no_data_check_interval, DEFAULTS.no_data_check_interval)))
+        params.set('connection_timeout', String(toNumber(draft.connection_timeout, DEFAULTS.connection_timeout)))
+        params.set('stream_timeout', String(toNumber(draft.stream_timeout, DEFAULTS.stream_timeout)))
+        params.set('channel_shutdown_delay', String(toNumber(draft.channel_shutdown_delay, DEFAULTS.channel_shutdown_delay)))
+        params.set('max_streams_per_engine', String(toNumber(draft.max_streams_per_engine, DEFAULTS.max_streams_per_engine)))
+        params.set('stream_mode', String(draft.stream_mode || DEFAULTS.stream_mode))
+        params.set('control_mode', String(normalizeControlMode(draft.control_mode)))
+        params.set('hls_max_segments', String(toNumber(draft.hls_max_segments, DEFAULTS.hls_max_segments)))
+        params.set('hls_initial_segments', String(toNumber(draft.hls_initial_segments, DEFAULTS.hls_initial_segments)))
+        params.set('hls_window_size', String(toNumber(draft.hls_window_size, DEFAULTS.hls_window_size)))
+        params.set('hls_buffer_ready_timeout', String(toNumber(draft.hls_buffer_ready_timeout, DEFAULTS.hls_buffer_ready_timeout)))
+        params.set('hls_first_segment_timeout', String(toNumber(draft.hls_first_segment_timeout, DEFAULTS.hls_first_segment_timeout)))
+        params.set('hls_initial_buffer_seconds', String(toNumber(draft.hls_initial_buffer_seconds, DEFAULTS.hls_initial_buffer_seconds)))
+        params.set('hls_max_initial_segments', String(toNumber(draft.hls_max_initial_segments, DEFAULTS.hls_max_initial_segments)))
+        params.set('hls_segment_fetch_interval', String(toNumber(draft.hls_segment_fetch_interval, DEFAULTS.hls_segment_fetch_interval)))
+
+        const response = await fetch(`${orchUrl}/api/v1/proxy/config?${params.toString()}`, {
+          method: 'POST',
+          headers,
+        })
+
+        if (!response.ok) {
+          const failure = await response.json().catch(() => ({}))
+          throw new Error(failure?.detail || `HTTP ${response.status}`)
+        }
+
+        const payload = await response.json().catch(() => ({}))
+        setInitialState({ ...draft })
+        setSectionDirty(sectionId, false)
+        setMessage(payload?.message || 'Proxy settings saved')
+      } finally {
+        setSectionSaving(sectionId, false)
+      }
     }
+
+    const discard = () => {
+      setDraft(initialState)
+      setSectionDirty(sectionId, false)
+      setError('')
+      setMessage('')
+    }
+
+    registerSection(sectionId, {
+      title: 'Proxy',
+      requiresAuth: true,
+      save,
+      discard,
+    })
+
+    return () => unregisterSection(sectionId)
+  }, [
+    apiKey,
+    authRequired,
+    draft,
+    initialState,
+    orchUrl,
+    registerSection,
+    setSectionDirty,
+    setSectionSaving,
+    unregisterSection,
+  ])
+
+  useEffect(() => {
+    setSectionDirty(sectionId, dirty)
+  }, [dirty, setSectionDirty])
+
+  const update = (field, value) => {
+    setDraft((prev) => ({ ...prev, [field]: value }))
+    setError('')
+    setMessage('')
   }
 
-  const fetchOrchestratorSettings = async () => {
-    try {
-      const response = await fetch(`${orchUrl}/api/v1/settings/orchestrator`)
-      if (response.ok) {
-        const data = await response.json()
-        setDefaultLiveDelay(Number(data.ace_live_edge_delay || 0))
-      }
-    } catch (err) {
-      console.error('Failed to fetch orchestrator settings:', err)
-    }
-  }
-
-  const fetchCustomVariantInfo = async () => {
-    try {
-      const response = await fetch(`${orchUrl}/api/v1/custom-variant/config`)
-      if (!response.ok) {
-        console.error('Failed to fetch custom variant config, status:', response.status)
-        setVariantDisplayName(engineVariant)
-        return
-      }
-
-      const data = await response.json()
-      setCustomVariantEnabled(data.enabled || false)
-
-      // Find live-cache-type parameter
-      const liveCacheParam = data.parameters?.find(p => p.name === LIVE_CACHE_TYPE_PARAM)
-      const cacheType = liveCacheParam?.enabled ? liveCacheParam.value : ''
-      setCustomVariantCacheType(cacheType)
-
-      // Determine variant display name
-      if (data.enabled) {
-        setVariantDisplayName('custom variant')
-      } else {
-        setVariantDisplayName(engineVariant)
-      }
-
-      // Auto-switch to TS if custom variant has memory-only cache and HLS is selected
-      if (data.enabled && cacheType === 'memory' && streamMode === 'HLS') {
-        setStreamMode('TS')
-        setMessage('Stream mode automatically switched to MPEG-TS because custom variant uses memory-only cache (HLS requires disk or hybrid cache)')
-      }
-    } catch (err) {
-      console.error('Failed to fetch custom variant info:', err)
-      // Fallback to using engineVariant
-      setVariantDisplayName(engineVariant)
-    }
-  }
-
-  const saveProxyConfig = async () => {
-    if (!apiKey) {
-      setError('API Key is required to update settings')
+  const runDiagnostics = async () => {
+    const selected = PREFLIGHT_INPUT_OPTIONS[diagType] || PREFLIGHT_INPUT_OPTIONS.content_id
+    const normalizedInput = String(diagInput || '').trim()
+    if (!normalizedInput) {
+      setDiagError(`${selected.label} is required`)
+      setDiagResult(null)
       return
     }
 
-    setLoading(true)
-    setMessage(null)
-    setError(null)
-
-    try {
-      const params = new URLSearchParams()
-      params.append('initial_data_wait_timeout', initialDataWaitTimeout)
-      params.append('initial_data_check_interval', initialDataCheckInterval)
-      params.append('no_data_timeout_checks', noDataTimeoutChecks)
-      params.append('no_data_check_interval', noDataCheckInterval)
-      params.append('connection_timeout', connectionTimeout)
-      params.append('stream_timeout', streamTimeout)
-      params.append('channel_shutdown_delay', channelShutdownDelay)
-      params.append('max_streams_per_engine', maxStreamsPerEngine)
-      params.append('stream_mode', streamMode)
-      params.append('control_mode', controlMode)
-      // HLS-specific parameters
-      params.append('hls_max_segments', hlsMaxSegments)
-      params.append('hls_initial_segments', hlsInitialSegments)
-      params.append('hls_window_size', hlsWindowSize)
-      params.append('hls_buffer_ready_timeout', hlsBufferReadyTimeout)
-      params.append('hls_first_segment_timeout', hlsFirstSegmentTimeout)
-      params.append('hls_initial_buffer_seconds', hlsInitialBufferSeconds)
-      params.append('hls_max_initial_segments', hlsMaxInitialSegments)
-      params.append('hls_segment_fetch_interval', hlsSegmentFetchInterval)
-
-      const response = await fetch(`${orchUrl}/api/v1/proxy/config?${params}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`
-        }
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-
-        let liveDelayUpdateError = null
-        try {
-          const orchestratorResponse = await fetch(`${orchUrl}/api/v1/settings/orchestrator`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-              ace_live_edge_delay: Math.max(0, parseInt(String(defaultLiveDelay), 10) || 0),
-            }),
-          })
-
-          if (!orchestratorResponse.ok) {
-            const orchestratorError = await orchestratorResponse.json().catch(() => ({}))
-            liveDelayUpdateError = orchestratorError.detail || `HTTP ${orchestratorResponse.status}`
-          }
-        } catch (orchestratorErr) {
-          liveDelayUpdateError = orchestratorErr.message || String(orchestratorErr)
-        }
-
-        if (liveDelayUpdateError) {
-          setMessage(data.message || 'Proxy configuration updated')
-          setError(`Proxy settings saved, but default live delay could not be updated: ${liveDelayUpdateError}`)
-        } else {
-          setMessage('Proxy and default live delay settings saved')
-        }
-
-        await fetchProxyConfig()
-        await fetchOrchestratorSettings()
-      } else {
-        const errorData = await response.json()
-        setError(errorData.detail || 'Failed to update configuration')
-      }
-    } catch (err) {
-      setError('Failed to save configuration: ' + err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const runPreflight = async () => {
-    const contentId = preflightContentId.trim()
-    const normalizedFileIndexes = (preflightFileIndexes || '').trim() || '0'
-    const selectedInput = PREFLIGHT_INPUT_OPTIONS[preflightInputType] || PREFLIGHT_INPUT_OPTIONS.content_id
-    if (!contentId) {
-      setPreflightError(`${selectedInput.label} is required.`)
-      setPreflightResult(null)
-      return
-    }
-
-    setPreflightLoading(true)
-    setPreflightError(null)
-    setPreflightResult(null)
+    setDiagRunning(true)
+    setDiagError('')
+    setDiagResult(null)
 
     try {
       const headers = {}
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
+      if (String(apiKey || '').trim()) {
+        headers.Authorization = `Bearer ${String(apiKey).trim()}`
       }
 
-      const queryParam = selectedInput.param
       const params = new URLSearchParams()
-      params.set(queryParam, contentId)
-      params.set('file_indexes', normalizedFileIndexes)
-      params.set('tier', preflightTier)
+      params.set(selected.param, normalizedInput)
+      params.set('file_indexes', String(diagFileIndexes || '0').trim() || '0')
+      params.set('tier', diagTier)
 
       const response = await fetch(`${orchUrl}/api/v1/ace/preflight?${params.toString()}`, { headers })
-
-      let payload = null
-      try {
-        payload = await response.json()
-      } catch {
-        payload = null
-      }
-
+      const payload = await response.json().catch(() => null)
       if (!response.ok) {
-        const detail = payload?.detail || `HTTP ${response.status}: ${response.statusText}`
-        throw new Error(detail)
+        throw new Error(payload?.detail || `HTTP ${response.status}`)
       }
-
-      setPreflightResult(payload)
-    } catch (err) {
-      setPreflightError(err.message || String(err))
+      setDiagResult(payload)
+    } catch (diagFailure) {
+      setDiagError(diagFailure.message || String(diagFailure))
     } finally {
-      setPreflightLoading(false)
+      setDiagRunning(false)
     }
   }
 
-  const copyResolvedInfohash = async () => {
-    const infohash = preflightResult?.result?.infohash
-    if (!infohash) return
-
-    try {
-      await navigator.clipboard.writeText(infohash)
-      setMessage('Resolved infohash copied to clipboard')
-    } catch (err) {
-      setError('Failed to copy infohash: ' + (err.message || String(err)))
-    }
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="py-10 text-sm text-muted-foreground">Loading proxy settings...</CardContent>
+      </Card>
+    )
   }
 
-  const preflightFiles = extractLoadRespFiles(preflightResult)
+  const preflightFiles = extractLoadRespFiles(diagResult)
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Stream Mode</CardTitle>
-          <CardDescription>
-            Choose between MPEG-TS and HLS streaming modes
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="stream-mode">Stream Mode</Label>
-            <Select
-              value={streamMode}
-              onValueChange={(value) => {
-                // Prevent switching to HLS if not supported
-                if (value === 'HLS' && !hlsSupported) {
-                  setError('HLS mode is not available with current engine configuration. Use an AceServe variant with disk or hybrid cache.')
-                  return
-                }
-                setStreamMode(value)
-                setError(null)
-              }}
-              disabled={!hlsSupported && streamMode === 'TS'}
-            >
-              <SelectTrigger id="stream-mode">
-                <SelectValue placeholder="Select stream mode" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="TS">MPEG-TS (Transport Stream)</SelectItem>
-                <SelectItem value="HLS" disabled={!hlsSupported}>
-                  HLS (HTTP Live Streaming) {!hlsSupported && '- Not available'}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              The /ace/getstream endpoint will return streams in the selected mode.
-              {!hlsSupported && (
-                <>
-                  <br />
-                  <span className="text-amber-600 dark:text-amber-500 font-semibold">
-                    ⚠️ HLS mode is not available. Requirements:
-                    <br />
-                    • Engine variant must be AceServe (current: {variantDisplayName || engineVariant || 'Unknown'})
-                    {customVariantEnabled && customVariantCacheType === 'memory' && (
-                      <>
-                        <br />
-                        • Live cache type must be disk or hybrid (current: memory)
-                      </>
-                    )}
-                  </span>
-                </>
-              )}
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="control-mode">Engine Control Mode</Label>
-            <Select
-              value={controlMode}
-              onValueChange={(value) => {
-                setControlMode(normalizeControlMode(value))
-                setError(null)
-              }}
-            >
-              <SelectTrigger id="control-mode">
-                <SelectValue placeholder="Select control mode" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="http">HTTP Mode (default)</SelectItem>
-                <SelectItem value="api">API Mode (socket control)</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              HTTP mode uses /ace/getstream JSON control flow. API mode uses the AceStream API port
-              for HELLOBG/READY/LOADASYNC/START control. HLS playback is supported in both modes.
-            </p>
-          </div>
-
-        </CardContent>
-      </Card>
+    <div className="space-y-5">
+      {message && <p className="text-sm text-emerald-600 dark:text-emerald-400">{message}</p>}
+      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       <Card>
         <CardHeader>
-          <CardTitle>Preflight Diagnostics</CardTitle>
-          <CardDescription>
-            Validate content availability using the current control mode before opening a client playback session.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="preflight-input-type">Input Type</Label>
-            <Select value={preflightInputType} onValueChange={setPreflightInputType}>
-              <SelectTrigger id="preflight-input-type">
-                <SelectValue placeholder="Select input type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="content_id">Content ID</SelectItem>
-                <SelectItem value="infohash">Infohash</SelectItem>
-                <SelectItem value="torrent_url">Torrent URL</SelectItem>
-                <SelectItem value="direct_url">Direct URL</SelectItem>
-                <SelectItem value="raw_data">Raw Torrent Data</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="preflight-content-id">{(PREFLIGHT_INPUT_OPTIONS[preflightInputType] || PREFLIGHT_INPUT_OPTIONS.content_id).label}</Label>
-            <Input
-              id="preflight-content-id"
-              type="text"
-              placeholder={(PREFLIGHT_INPUT_OPTIONS[preflightInputType] || PREFLIGHT_INPUT_OPTIONS.content_id).placeholder}
-              value={preflightContentId}
-              onChange={(e) => setPreflightContentId(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="preflight-file-indexes">File Index</Label>
-            <Input
-              id="preflight-file-indexes"
-              type="number"
-              min="0"
-              step="1"
-              value={preflightFileIndexes}
-              onChange={(e) => {
-                const rawValue = e.target.value
-                if (!rawValue) {
-                  setPreflightFileIndexes('0')
-                  return
-                }
-                const parsed = parseInt(rawValue, 10)
-                setPreflightFileIndexes(Number.isFinite(parsed) && parsed >= 0 ? String(parsed) : '0')
-              }}
-            />
-            <p className="text-xs text-muted-foreground">
-              Choose which file inside a multi-file torrent to start. Default is index 0.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="preflight-tier">Preflight Tier</Label>
-            <Select value={preflightTier} onValueChange={setPreflightTier}>
-              <SelectTrigger id="preflight-tier">
-                <SelectValue placeholder="Select preflight tier" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="light">light (resolve only)</SelectItem>
-                <SelectItem value="deep">deep (resolve + start + status sample + stop)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Button onClick={runPreflight} disabled={preflightLoading}>
-              {preflightLoading ? 'Running Preflight...' : 'Run Preflight'}
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle>Routing Controls</CardTitle>
+              <CardDescription>Proxy mode, engine control path, and stream density limits.</CardDescription>
+            </div>
+            <Button type="button" variant="outline" onClick={() => setDiagOpen(true)}>
+              <FlaskConical className="mr-2 h-4 w-4" />
+              Preflight Diagnostics
             </Button>
-            <p className="text-xs text-muted-foreground">
-              Current mode: <strong>{controlMode}</strong>
-            </p>
           </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <SettingRow label="Stream Mode" description="Output protocol for playback endpoint.">
+            <Select value={String(draft.stream_mode)} onValueChange={(value) => update('stream_mode', value)}>
+              <SelectTrigger className="max-w-sm"><SelectValue placeholder="Select stream mode" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="TS">MPEG-TS</SelectItem>
+                <SelectItem value="HLS">HLS</SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingRow>
 
-          {preflightError && (
-            <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive rounded-md">
-              <AlertCircle className="h-4 w-4 text-destructive" />
-              <span className="text-sm text-destructive">{preflightError}</span>
-            </div>
-          )}
+          <SettingRow label="Engine Control Mode" description="Command plane for engine lifecycle control.">
+            <Select value={String(draft.control_mode)} onValueChange={(value) => update('control_mode', normalizeControlMode(value))}>
+              <SelectTrigger className="max-w-sm"><SelectValue placeholder="Select control mode" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="http">HTTP Mode</SelectItem>
+                <SelectItem value="api">API Mode</SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingRow>
 
-          {preflightResult && (
-            <div className="space-y-3 rounded-md border p-3 bg-muted/30">
-              <div className="flex flex-wrap gap-2">
-                <span className={`text-xs px-2 py-1 rounded border ${preflightResult?.result?.available ? 'bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400'}`}>
-                  {preflightResult?.result?.available ? 'AVAILABLE' : 'UNAVAILABLE'}
-                </span>
-                <span className="text-xs px-2 py-1 rounded border bg-background/50">
-                  tier: {preflightResult?.tier || preflightTier}
-                </span>
-                <span className="text-xs px-2 py-1 rounded border bg-background/50">
-                  mode: {preflightResult?.control_mode || controlMode}
-                </span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-xs text-muted-foreground">Availability</p>
-                  <p className="font-semibold">
-                    {preflightResult?.result?.available ? 'Available' : 'Unavailable'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Resolved Infohash</p>
-                  <p className="font-mono break-all">{preflightResult?.result?.infohash || 'N/A'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Selected File Index</p>
-                  <p>{preflightResult?.file_indexes || preflightFileIndexes || '0'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Control Mode</p>
-                  <p>{preflightResult?.control_mode || controlMode}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Status Probe</p>
-                  <p>{preflightResult?.result?.status_probe?.status_text || 'N/A'}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={copyResolvedInfohash}
-                  disabled={!preflightResult?.result?.infohash}
-                >
-                  Copy Resolved Infohash
-                </Button>
-              </div>
-              {preflightFiles.length > 0 && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-2">Files returned by LOADRESP (click to select)</p>
-                  <div className="space-y-1 max-h-56 overflow-y-auto rounded border bg-background p-2">
-                    {preflightFiles.map((file, idx) => (
-                      <button
-                        key={`${file.index}-${idx}`}
-                        type="button"
-                        onClick={() => setPreflightFileIndexes(String(file.index))}
-                        className="w-full rounded border px-2 py-1 text-left text-xs hover:bg-muted"
-                      >
-                        <span className="font-mono mr-2">#{file.index}</span>
-                        <span>{file.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Raw Response</p>
-                <pre className="text-xs overflow-x-auto rounded bg-background p-2 border">
-                  {JSON.stringify(preflightResult, null, 2)}
-                </pre>
-              </div>
-            </div>
-          )}
-
-          <p className="text-xs text-muted-foreground">
-            Tip: use <strong>light</strong> for fast checks and <strong>deep</strong> when investigating prebuffering,
-            peer discovery, or status parsing behavior.
-          </p>
+          <SettingRow label="Max Streams per Engine" description="Scale-out threshold per engine replica.">
+            <Input type="number" min={1} max={20} value={draft.max_streams_per_engine} onChange={(e) => update('max_streams_per_engine', toNumber(e.target.value, DEFAULTS.max_streams_per_engine))} className="max-w-xs" />
+          </SettingRow>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Stream Buffer Settings</CardTitle>
-          <CardDescription>
-            Configure how the proxy handles stream buffering and initial data waiting
-          </CardDescription>
+          <CardTitle>Timeout and Buffering</CardTitle>
+          <CardDescription>Startup wait, no-data detection, and shutdown grace controls.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="initial-data-wait-timeout">Initial Data Wait Timeout (seconds)</Label>
-            <Input
-              id="initial-data-wait-timeout"
-              type="number"
-              min="1"
-              max="60"
-              value={initialDataWaitTimeout}
-              onChange={(e) => setInitialDataWaitTimeout(parseInt(e.target.value) || 10)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Maximum time to wait for initial data before starting client streaming.
-              This prevents "no data" errors when clients connect before the HTTP streamer has fetched data.
-              <br /><strong>Range:</strong> 1-60 seconds. <strong>Default:</strong> 10 seconds.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="initial-data-check-interval">Initial Data Check Interval (seconds)</Label>
-            <Input
-              id="initial-data-check-interval"
-              type="number"
-              min="0.1"
-              max="2.0"
-              step="0.1"
-              value={initialDataCheckInterval}
-              onChange={(e) => setInitialDataCheckInterval(parseFloat(e.target.value) || 0.2)}
-            />
-            <p className="text-xs text-muted-foreground">
-              How often to check if initial data has arrived in the buffer.
-              <br /><strong>Range:</strong> 0.1-2.0 seconds. <strong>Default:</strong> 0.2 seconds.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="no-data-timeout-checks">No Data Timeout Checks</Label>
-            <Input
-              id="no-data-timeout-checks"
-              type="number"
-              min="5"
-              max="600"
-              value={noDataTimeoutChecks}
-              onChange={(e) => setNoDataTimeoutChecks(parseInt(e.target.value) || 30)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Number of consecutive empty buffer checks before declaring stream ended.
-              Total timeout = checks × interval. Example: 60 checks × 1s = 60s timeout.
-              <br /><strong>Range:</strong> 5-600 checks. <strong>Default:</strong> 60 checks.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="no-data-check-interval">No Data Check Interval (seconds)</Label>
-            <Input
-              id="no-data-check-interval"
-              type="number"
-              min="0.01"
-              max="1.0"
-              step="0.01"
-              value={noDataCheckInterval}
-              onChange={(e) => setNoDataCheckInterval(parseFloat(e.target.value) || 0.1)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Seconds between buffer checks when no data is available during streaming.
-              For unstable streams, increase timeout checks or interval. Example: 100 checks × 1s = 100s tolerance.
-              <br /><strong>Range:</strong> 0.01-1.0 seconds. <strong>Default:</strong> 1 second.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center gap-1">
-              <Label htmlFor="default-live-delay">Default Live Delay (seconds)</Label>
-              <Info
-                className="h-3.5 w-3.5 text-muted-foreground"
-                title="Starts live streams slightly behind the live edge to improve buffer stability. 0 disables this feature."
-              />
-            </div>
-            <Input
-              id="default-live-delay"
-              type="number"
-              min="0"
-              step="1"
-              value={defaultLiveDelay}
-              onChange={(e) => setDefaultLiveDelay(parseInt(e.target.value, 10) || 0)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Global live stream startup delay used for normal playback sessions.
-              <br /><strong>Range:</strong> 0+ seconds. <strong>Default:</strong> 0 seconds.
-            </p>
-          </div>
+        <CardContent className="space-y-3">
+          <SettingRow label="Initial Data Wait Timeout (s)" description="Maximum wait for first bytes.">
+            <Input type="number" min={1} max={60} value={draft.initial_data_wait_timeout} onChange={(e) => update('initial_data_wait_timeout', toNumber(e.target.value, DEFAULTS.initial_data_wait_timeout))} className="max-w-xs" />
+          </SettingRow>
+          <SettingRow label="Initial Data Check Interval (s)" description="Poll cadence while waiting for data.">
+            <Input type="number" min={0.1} max={2} step={0.1} value={draft.initial_data_check_interval} onChange={(e) => update('initial_data_check_interval', toNumber(e.target.value, DEFAULTS.initial_data_check_interval))} className="max-w-xs" />
+          </SettingRow>
+          <SettingRow label="No Data Timeout Checks" description="Consecutive misses before stream termination.">
+            <Input type="number" min={5} max={600} value={draft.no_data_timeout_checks} onChange={(e) => update('no_data_timeout_checks', toNumber(e.target.value, DEFAULTS.no_data_timeout_checks))} className="max-w-xs" />
+          </SettingRow>
+          <SettingRow label="No Data Check Interval (s)" description="Poll cadence after no-data state.">
+            <Input type="number" min={0.01} max={1} step={0.01} value={draft.no_data_check_interval} onChange={(e) => update('no_data_check_interval', toNumber(e.target.value, DEFAULTS.no_data_check_interval))} className="max-w-xs" />
+          </SettingRow>
+          <SettingRow label="Connection Timeout (s)" description="Upstream socket connect timeout.">
+            <Input type="number" min={5} max={60} value={draft.connection_timeout} onChange={(e) => update('connection_timeout', toNumber(e.target.value, DEFAULTS.connection_timeout))} className="max-w-xs" />
+          </SettingRow>
+          <SettingRow label="Stream Timeout (s)" description="Overall stream request timeout.">
+            <Input type="number" min={10} max={300} value={draft.stream_timeout} onChange={(e) => update('stream_timeout', toNumber(e.target.value, DEFAULTS.stream_timeout))} className="max-w-xs" />
+          </SettingRow>
+          <SettingRow label="Idle Channel Shutdown Delay (s)" description="Grace delay before terminating idle channel.">
+            <Input type="number" min={1} max={60} value={draft.channel_shutdown_delay} onChange={(e) => update('channel_shutdown_delay', toNumber(e.target.value, DEFAULTS.channel_shutdown_delay))} className="max-w-xs" />
+          </SettingRow>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Connection & Timeout Settings</CardTitle>
-          <CardDescription>
-            Configure connection timeouts and stream behavior
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="connection-timeout">Connection Timeout (seconds)</Label>
-            <Input
-              id="connection-timeout"
-              type="number"
-              min="5"
-              max="60"
-              value={connectionTimeout}
-              onChange={(e) => setConnectionTimeout(parseInt(e.target.value) || 10)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Timeout for establishing connections to AceStream engines.
-              <br /><strong>Range:</strong> 5-60 seconds. <strong>Default:</strong> 10 seconds.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="stream-timeout">Stream Timeout (seconds)</Label>
-            <Input
-              id="stream-timeout"
-              type="number"
-              min="10"
-              max="300"
-              value={streamTimeout}
-              onChange={(e) => setStreamTimeout(parseInt(e.target.value) || 60)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Overall stream timeout for inactive streams.
-              <br /><strong>Range:</strong> 10-300 seconds. <strong>Default:</strong> 60 seconds.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="channel-shutdown-delay">Idle Stream Shutdown Delay (seconds)</Label>
-            <Input
-              id="channel-shutdown-delay"
-              type="number"
-              min="1"
-              max="60"
-              value={channelShutdownDelay}
-              onChange={(e) => setChannelShutdownDelay(parseInt(e.target.value) || 5)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Delay before shutting down streams with no active clients.
-              <br /><strong>Range:</strong> 1-60 seconds. <strong>Default:</strong> 5 seconds.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Engine Provisioning Settings</CardTitle>
-          <CardDescription>
-            Configure how the orchestrator provisions new engines based on stream load
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="max-streams-per-engine">Maximum Streams Per Engine</Label>
-            <Input
-              id="max-streams-per-engine"
-              type="number"
-              min="1"
-              max="20"
-              value={maxStreamsPerEngine}
-              onChange={(e) => setMaxStreamsPerEngine(parseInt(e.target.value) || 3)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Maximum number of streams per engine before provisioning a new engine.
-              When all engines reach this threshold minus one (e.g., 2 streams for max of 3),
-              the orchestrator will automatically provision a new engine.
-              <br /><strong>Range:</strong> 1-20 streams. <strong>Default:</strong> 3 streams.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {streamMode === 'HLS' && (
+      {String(draft.stream_mode) === 'HLS' && (
         <Card>
           <CardHeader>
-            <CardTitle>HLS Buffering Settings</CardTitle>
-            <CardDescription>
-              Configure HLS segment buffering and playback parameters
-            </CardDescription>
+            <CardTitle>HLS Parameters</CardTitle>
+            <CardDescription>Segment window and startup buffering controls.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="hls-max-segments">Max Segments to Buffer</Label>
-                <Input
-                  id="hls-max-segments"
-                  type="number"
-                  min="5"
-                  max="100"
-                  value={hlsMaxSegments}
-                  onChange={(e) => setHlsMaxSegments(parseInt(e.target.value) || 20)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Maximum number of segments to keep in buffer.
-                  <br /><strong>Range:</strong> 5-100. <strong>Default:</strong> 20.
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="hls-initial-segments">Initial Segments</Label>
-                <Input
-                  id="hls-initial-segments"
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={hlsInitialSegments}
-                  onChange={(e) => setHlsInitialSegments(parseInt(e.target.value) || 3)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Minimum segments before starting playback.
-                  <br /><strong>Range:</strong> 1-10. <strong>Default:</strong> 3.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="hls-window-size">Manifest Window Size</Label>
-                <Input
-                  id="hls-window-size"
-                  type="number"
-                  min="3"
-                  max="20"
-                  value={hlsWindowSize}
-                  onChange={(e) => setHlsWindowSize(parseInt(e.target.value) || 6)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Number of segments in manifest window.
-                  <br /><strong>Range:</strong> 3-20. <strong>Default:</strong> 6.
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="hls-initial-buffer-seconds">Initial Buffer Duration (sec)</Label>
-                <Input
-                  id="hls-initial-buffer-seconds"
-                  type="number"
-                  min="5"
-                  max="60"
-                  value={hlsInitialBufferSeconds}
-                  onChange={(e) => setHlsInitialBufferSeconds(parseInt(e.target.value) || 10)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Target duration for initial buffer.
-                  <br /><strong>Range:</strong> 5-60s. <strong>Default:</strong> 10s.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="hls-buffer-ready-timeout">Buffer Ready Timeout (sec)</Label>
-                <Input
-                  id="hls-buffer-ready-timeout"
-                  type="number"
-                  min="5"
-                  max="120"
-                  value={hlsBufferReadyTimeout}
-                  onChange={(e) => setHlsBufferReadyTimeout(parseInt(e.target.value) || 30)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Timeout for initial buffer to be ready.
-                  <br /><strong>Range:</strong> 5-120s. <strong>Default:</strong> 30s.
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="hls-first-segment-timeout">First Segment Timeout (sec)</Label>
-                <Input
-                  id="hls-first-segment-timeout"
-                  type="number"
-                  min="5"
-                  max="120"
-                  value={hlsFirstSegmentTimeout}
-                  onChange={(e) => setHlsFirstSegmentTimeout(parseInt(e.target.value) || 30)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Timeout for first segment to be available.
-                  <br /><strong>Range:</strong> 5-120s. <strong>Default:</strong> 30s.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="hls-max-initial-segments">Max Initial Segments</Label>
-                <Input
-                  id="hls-max-initial-segments"
-                  type="number"
-                  min="1"
-                  max="20"
-                  value={hlsMaxInitialSegments}
-                  onChange={(e) => setHlsMaxInitialSegments(parseInt(e.target.value) || 10)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Maximum segments to fetch during initial buffering.
-                  <br /><strong>Range:</strong> 1-20. <strong>Default:</strong> 10.
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="hls-segment-fetch-interval">Fetch Interval Multiplier</Label>
-                <Input
-                  id="hls-segment-fetch-interval"
-                  type="number"
-                  min="0.1"
-                  max="2.0"
-                  step="0.1"
-                  value={hlsSegmentFetchInterval}
-                  onChange={(e) => setHlsSegmentFetchInterval(parseFloat(e.target.value) || 0.5)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Multiplier for manifest fetch interval (× segment duration).
-                  <br /><strong>Range:</strong> 0.1-2.0. <strong>Default:</strong> 0.5.
-                </p>
-              </div>
-            </div>
+          <CardContent className="space-y-3">
+            <SettingRow label="Max Segments" description="Maximum retained HLS segments.">
+              <Input type="number" min={5} max={100} value={draft.hls_max_segments} onChange={(e) => update('hls_max_segments', toNumber(e.target.value, DEFAULTS.hls_max_segments))} className="max-w-xs" />
+            </SettingRow>
+            <SettingRow label="Initial Segments" description="Segments required before client playback.">
+              <Input type="number" min={1} max={10} value={draft.hls_initial_segments} onChange={(e) => update('hls_initial_segments', toNumber(e.target.value, DEFAULTS.hls_initial_segments))} className="max-w-xs" />
+            </SettingRow>
+            <SettingRow label="Manifest Window Size" description="Segments advertised in active playlist window.">
+              <Input type="number" min={3} max={20} value={draft.hls_window_size} onChange={(e) => update('hls_window_size', toNumber(e.target.value, DEFAULTS.hls_window_size))} className="max-w-xs" />
+            </SettingRow>
           </CardContent>
         </Card>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Read-Only Configuration</CardTitle>
-          <CardDescription>
-            Current proxy configuration (cannot be changed via UI)
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>User Agent</Label>
-            <div className="px-3 py-2 bg-muted rounded-md font-mono text-sm">
-              {vlcUserAgent || 'Loading...'}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              User agent used when fetching streams from AceStream engines
-            </p>
+      <Dialog open={diagOpen} onOpenChange={setDiagOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Proxy Preflight Diagnostics</DialogTitle>
+            <DialogDescription>
+              Operational tool. Runs immediately and does not participate in global settings dirty state.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <SettingRow label="Input Type" description="Content identifier format used for diagnostics.">
+              <Select value={diagType} onValueChange={setDiagType}>
+                <SelectTrigger className="max-w-sm"><SelectValue placeholder="Select input type" /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(PREFLIGHT_INPUT_OPTIONS).map(([value, option]) => (
+                    <SelectItem key={value} value={value}>{option.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingRow>
+
+            <SettingRow label={(PREFLIGHT_INPUT_OPTIONS[diagType] || PREFLIGHT_INPUT_OPTIONS.content_id).label} description="Resource selector for this preflight request.">
+              <Input value={diagInput} onChange={(e) => setDiagInput(e.target.value)} placeholder={(PREFLIGHT_INPUT_OPTIONS[diagType] || PREFLIGHT_INPUT_OPTIONS.content_id).placeholder} />
+            </SettingRow>
+
+            <SettingRow label="File Index" description="Index for multi-file torrents.">
+              <Input value={diagFileIndexes} type="number" min={0} step={1} onChange={(e) => setDiagFileIndexes(e.target.value)} className="max-w-xs" />
+            </SettingRow>
+
+            <SettingRow label="Tier" description="light resolves only; deep performs start/status/stop.">
+              <Select value={diagTier} onValueChange={setDiagTier}>
+                <SelectTrigger className="max-w-sm"><SelectValue placeholder="Select tier" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="light">light</SelectItem>
+                  <SelectItem value="deep">deep</SelectItem>
+                </SelectContent>
+              </Select>
+            </SettingRow>
+
+            {diagError && <p className="text-sm text-red-600 dark:text-red-400">{diagError}</p>}
+
+            {diagResult && (
+              <div className="rounded-md border p-3 text-sm">
+                <p className="font-semibold">Availability: {diagResult?.result?.available ? 'Available' : 'Unavailable'}</p>
+                <p className="text-xs text-muted-foreground">Control Mode: {diagResult?.control_mode || draft.control_mode}</p>
+                <p className="text-xs text-muted-foreground break-all">Infohash: {diagResult?.result?.infohash || 'N/A'}</p>
+                {preflightFiles.length > 0 && (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    <p className="font-medium text-foreground">Files:</p>
+                    <ul className="space-y-1">
+                      {preflightFiles.slice(0, 8).map((entry) => (
+                        <li key={`${entry.index}-${entry.label}`}>[{entry.index}] {entry.label}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Chunk Size</Label>
-              <div className="px-3 py-2 bg-muted rounded-md font-mono text-sm">
-                {chunkSize} bytes
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Buffer Chunk Size</Label>
-              <div className="px-3 py-2 bg-muted rounded-md font-mono text-sm">
-                {bufferChunkSize > 0 ? (bufferChunkSize / 1024).toFixed(0) : '0'} KB
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="pt-4">
-        <Button
-          onClick={saveProxyConfig}
-          disabled={loading || !apiKey}
-        >
-          {loading ? 'Saving...' : 'Save Proxy Settings'}
-        </Button>
-        {!apiKey && (
-          <p className="text-xs text-destructive mt-2">
-            API Key is required to update settings
-          </p>
-        )}
-      </div>
-
-      {message && (
-        <div className="flex items-center gap-2 p-3 bg-success/10 border border-success rounded-md">
-          <CheckCircle2 className="h-4 w-4 text-success" />
-          <span className="text-sm text-success">{message}</span>
-        </div>
-      )}
-
-      {error && (
-        <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive rounded-md">
-          <AlertCircle className="h-4 w-4 text-destructive" />
-          <span className="text-sm text-destructive">{error}</span>
-        </div>
-      )}
-
-      <div className="flex items-start gap-2 p-3 bg-blue-500/10 border border-blue-500/20 rounded-md">
-        <Info className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
-        <div className="text-xs text-blue-500">
-          <strong>Note:</strong> Changes to proxy settings affect new streams only.
-          Existing active streams will continue using their original settings.
-          Settings are persisted to a JSON file and will be restored on restart.
-          <br />
-          <strong>Stream Mode:</strong> The /ace/getstream endpoint will return streams in {streamMode} format.
-          {streamMode === 'HLS' && ' HLS manifests (.m3u8) and segments will be served.'}
-          {streamMode === 'TS' && ' MPEG-TS (video/mp2t) streams will be served.'}
-        </div>
-      </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDiagOpen(false)}>Close</Button>
+            <Button type="button" onClick={runDiagnostics} disabled={diagRunning}>
+              {diagRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertCircle className="mr-2 h-4 w-4" />}
+              {diagRunning ? 'Running...' : 'Run Preflight'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

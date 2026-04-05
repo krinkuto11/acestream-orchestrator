@@ -157,6 +157,14 @@ export function BackupSettings({ apiKey, orchUrl }) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertTitle>Immediate Actions</AlertTitle>
+            <AlertDescription className="text-sm">
+              Export and import operations are operational tools. They execute immediately and do not participate in the global unsaved changes workflow.
+            </AlertDescription>
+          </Alert>
+
           {/* Export Section */}
           <div className="space-y-4">
             <div>
