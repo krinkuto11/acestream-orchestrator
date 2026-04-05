@@ -8,14 +8,19 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { AlertCircle, Plus, ShieldCheck, ShieldOff, Trash2, Zap, ZapOff } from 'lucide-react'
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import { AlertCircle, Plus, ShieldCheck, ShieldOff, Trash2, Zap, ZapOff, UploadCloud, ChevronDown, ChevronUp } from 'lucide-react'
 import { SettingRow } from '@/components/settings/SettingRow'
 import { useSettingsForm } from '@/context/SettingsFormContext'
 
@@ -87,17 +92,24 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const [message, setMessage] = useState('')
 
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [expertOpen, setExpertOpen] = useState(false)
+  const [dialogLoading, setDialogLoading] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
+
+  // Per-Credential Settings
+  const [credentialProvider, setCredentialProvider] = useState('protonvpn')
   const [credentialMode, setCredentialMode] = useState('wireguard')
+  const [credentialRegions, setCredentialRegions] = useState('')
   const [credentialPortForwarding, setCredentialPortForwarding] = useState(true)
   const [wgText, setWgText] = useState('')
   const [openvpnUser, setOpenvpnUser] = useState('')
   const [openvpnPassword, setOpenvpnPassword] = useState('')
-  const [dialogLoading, setDialogLoading] = useState(false)
 
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(initialState), [draft, initialState])
 
-  const providerNormalized = useMemo(() => normalizeProvider(draft.provider), [draft.provider])
-  const providerSupportsForwarding = useMemo(() => isForwardingSupported(providerNormalized), [providerNormalized])
+  const sheetProviderNormalized = useMemo(() => normalizeProvider(credentialProvider), [credentialProvider])
+  const sheetProviderSupportsForwarding = useMemo(() => isForwardingSupported(sheetProviderNormalized), [sheetProviderNormalized])
+  
   const leasesByCredentialId = useMemo(() => {
     const byCredentialId = new Map()
     const leases = Array.isArray(leaseSummary?.leases) ? leaseSummary.leases : []
@@ -181,9 +193,9 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           restart_engines_on_reconnect: Boolean(draft.restart_engines_on_reconnect),
           unhealthy_restart_timeout_s: toNumber(draft.unhealthy_restart_timeout_s, DEFAULTS.unhealthy_restart_timeout_s),
           preferred_engines_per_vpn: Math.max(1, toNumber(draft.preferred_engines_per_vpn, DEFAULTS.preferred_engines_per_vpn)),
-          protocol: String(draft.protocol || DEFAULTS.protocol).toLowerCase(),
-          provider: normalizeProvider(draft.provider || DEFAULTS.provider),
-          regions: parseRegionsInput(draft.regionsText),
+          protocol: draft.protocol, // preserving backend schema
+          provider: draft.provider, // preserving backend schema
+          regions: parseRegionsInput(draft.regionsText), // preserving backend schema
           credentials,
         }
 
@@ -245,6 +257,28 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     setMessage('')
   }
 
+  const handleDragOver = (e) => {
+    e.preventDefault()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e) => {
+    e.preventDefault()
+    setIsDragging(false)
+  }
+
+  const handleDrop = async (e) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const file = e.dataTransfer.files[0]
+    if (file && (file.name.endsWith('.conf') || file.type === 'text/plain' || file.name.endsWith('.txt'))) {
+      const text = await file.text()
+      setWgText(text)
+    } else {
+      setError('Please drop a valid .conf or text file.')
+    }
+  }
+
   const addCredential = async () => {
     if (authRequired && !String(apiKey || '').trim()) {
       setError('API key required by server to add VPN credentials')
@@ -257,9 +291,10 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
     try {
       let payload = {
-        provider: providerNormalized,
+        provider: sheetProviderNormalized,
         protocol: credentialMode,
-        port_forwarding: Boolean(credentialPortForwarding && providerSupportsForwarding),
+        regions: parseRegionsInput(credentialRegions),
+        port_forwarding: Boolean(credentialPortForwarding && sheetProviderSupportsForwarding),
       }
 
       if (credentialMode === 'wireguard') {
@@ -283,7 +318,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           private_key: parsed?.private_key,
           addresses: parsed?.address || (Array.isArray(parsed?.addresses) ? parsed.addresses.join(',') : ''),
           endpoint: parsed?.endpoint,
-          source: 'dialog-paste.conf',
+          source: 'sheet-paste.conf',
         }
       } else {
         const username = String(openvpnUser || '').trim()
@@ -384,54 +419,44 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
             <Switch checked={Boolean(draft.enabled)} onCheckedChange={(value) => update('enabled', Boolean(value))} />
           </SettingRow>
 
-          <SettingRow label="Protocol" description="Primary protocol for dynamically managed VPN nodes.">
-            <Select value={String(draft.protocol)} onValueChange={(value) => update('protocol', String(value).toLowerCase())}>
-              <SelectTrigger className="max-w-sm"><SelectValue placeholder="Select protocol" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="wireguard">Wireguard</SelectItem>
-                <SelectItem value="openvpn">OpenVPN</SelectItem>
-              </SelectContent>
-            </Select>
-          </SettingRow>
-
-          <SettingRow label="Provider" description="Provider used for credential leases and node scheduling.">
-            <Select value={String(draft.provider)} onValueChange={(value) => update('provider', normalizeProvider(value))}>
-              <SelectTrigger className="max-w-sm"><SelectValue placeholder="Select provider" /></SelectTrigger>
-              <SelectContent>
-                {PROVIDER_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </SettingRow>
-
           <SettingRow label="Preferred Engines per VPN Node" description="Scheduler hint for desired VPN node count.">
             <Input type="number" min={1} max={100} value={draft.preferred_engines_per_vpn} onChange={(e) => update('preferred_engines_per_vpn', toNumber(e.target.value, DEFAULTS.preferred_engines_per_vpn))} className="max-w-xs" />
           </SettingRow>
 
-          <SettingRow label="Preferred Regions" description="Comma-separated preferred regions for lease and scheduling decisions.">
-            <Input value={draft.regionsText} onChange={(e) => update('regionsText', e.target.value)} placeholder="us-east, nl, region:paris" className="max-w-lg" />
-          </SettingRow>
+          <Collapsible open={expertOpen} onOpenChange={setExpertOpen} className="w-full">
+            <div className="flex items-center mt-6 mb-2">
+              <div className="flex-grow border-t border-muted"></div>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="mx-2 text-xs uppercase tracking-wider text-muted-foreground hover:bg-transparent">
+                  {expertOpen ? 'Hide Expert Settings' : 'Show Expert Settings'}
+                  {expertOpen ? <ChevronUp className="ml-2 h-3 w-3" /> : <ChevronDown className="ml-2 h-3 w-3" />}
+                </Button>
+              </CollapsibleTrigger>
+              <div className="flex-grow border-t border-muted"></div>
+            </div>
+            
+            <CollapsibleContent className="space-y-3 pt-2">
+              <SettingRow label="Gluetun API Port" description="Must match Gluetun HTTP control server port.">
+                <Input type="number" min={1} max={65535} value={draft.api_port} onChange={(e) => update('api_port', toNumber(e.target.value, DEFAULTS.api_port))} className="max-w-xs" />
+              </SettingRow>
 
-          <SettingRow label="Gluetun API Port" description="Must match Gluetun HTTP control server port.">
-            <Input type="number" min={1} max={65535} value={draft.api_port} onChange={(e) => update('api_port', toNumber(e.target.value, DEFAULTS.api_port))} className="max-w-xs" />
-          </SettingRow>
+              <SettingRow label="Health Check Interval (s)" description="VPN health polling cadence.">
+                <Input type="number" min={1} max={120} value={draft.health_check_interval_s} onChange={(e) => update('health_check_interval_s', toNumber(e.target.value, DEFAULTS.health_check_interval_s))} className="max-w-xs" />
+              </SettingRow>
 
-          <SettingRow label="Health Check Interval (s)" description="VPN health polling cadence.">
-            <Input type="number" min={1} max={120} value={draft.health_check_interval_s} onChange={(e) => update('health_check_interval_s', toNumber(e.target.value, DEFAULTS.health_check_interval_s))} className="max-w-xs" />
-          </SettingRow>
+              <SettingRow label="Port Cache TTL (s)" description="Forwarded-port cache TTL.">
+                <Input type="number" min={1} max={300} value={draft.port_cache_ttl_s} onChange={(e) => update('port_cache_ttl_s', toNumber(e.target.value, DEFAULTS.port_cache_ttl_s))} className="max-w-xs" />
+              </SettingRow>
 
-          <SettingRow label="Port Cache TTL (s)" description="Forwarded-port cache TTL.">
-            <Input type="number" min={1} max={300} value={draft.port_cache_ttl_s} onChange={(e) => update('port_cache_ttl_s', toNumber(e.target.value, DEFAULTS.port_cache_ttl_s))} className="max-w-xs" />
-          </SettingRow>
+              <SettingRow label="Unhealthy Restart Timeout (s)" description="Restart VPN node after this unhealthy duration.">
+                <Input type="number" min={10} max={600} value={draft.unhealthy_restart_timeout_s} onChange={(e) => update('unhealthy_restart_timeout_s', toNumber(e.target.value, DEFAULTS.unhealthy_restart_timeout_s))} className="max-w-xs" />
+              </SettingRow>
 
-          <SettingRow label="Unhealthy Restart Timeout (s)" description="Restart VPN node after this unhealthy duration.">
-            <Input type="number" min={10} max={600} value={draft.unhealthy_restart_timeout_s} onChange={(e) => update('unhealthy_restart_timeout_s', toNumber(e.target.value, DEFAULTS.unhealthy_restart_timeout_s))} className="max-w-xs" />
-          </SettingRow>
-
-          <SettingRow label="Restart Engines on VPN Reconnect" description="Restart engines when VPN node reconnects to refresh routes.">
-            <Switch checked={Boolean(draft.restart_engines_on_reconnect)} onCheckedChange={(value) => update('restart_engines_on_reconnect', Boolean(value))} />
-          </SettingRow>
+              <SettingRow label="Restart Engines on VPN Reconnect" description="Restart engines when VPN node reconnects to refresh routes.">
+                <Switch checked={Boolean(draft.restart_engines_on_reconnect)} onCheckedChange={(value) => update('restart_engines_on_reconnect', Boolean(value))} />
+              </SettingRow>
+            </CollapsibleContent>
+          </Collapsible>
         </CardContent>
       </Card>
 
@@ -476,12 +501,13 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
                 ) : (
                   credentials.map((credential) => {
                     const protocol = String(credential?.protocol || 'wireguard').toLowerCase()
-                    const provider = normalizeProvider(credential?.provider || draft.provider)
+                    const provider = normalizeProvider(credential?.provider || 'Unknown')
                     const hasForwarding = Boolean(credential?.port_forwarding) && isForwardingSupported(provider)
                     const credentialId = String(credential?.id || '').trim()
                     const lease = credentialId ? leasesByCredentialId.get(credentialId) : null
                     const inUse = Boolean(lease)
                     const containerLabel = String(lease?.container_id || '').trim()
+                    
                     const identifier = protocol === 'wireguard'
                       ? `Key ${mask(credential?.private_key || credential?.wireguard_private_key)}`
                       : `User ${mask(credential?.openvpn_user || credential?.username, 3, 2)}`
@@ -489,8 +515,11 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
                     return (
                       <TableRow key={String(credential?.id || Math.random())}>
                         <TableCell>
-                          <div className="font-medium">{provider || 'Unknown'}</div>
-                          <div className="text-xs uppercase text-muted-foreground">{protocol}</div>
+                          <div className="font-medium">{provider}</div>
+                          <div className="text-xs uppercase text-muted-foreground">
+                            {protocol}
+                            {credential?.regions && credential.regions.length > 0 && ` • ${credential.regions.join(', ')}`}
+                          </div>
                         </TableCell>
                         <TableCell className="text-sm">{identifier}</TableCell>
                         <TableCell>
@@ -527,19 +556,30 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         </CardContent>
       </Card>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Add VPN Credential</DialogTitle>
-            <DialogDescription>
+      <Sheet open={dialogOpen} onOpenChange={setDialogOpen}>
+        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto">
+          <SheetHeader className="mb-6">
+            <SheetTitle>Add VPN Credential</SheetTitle>
+            <SheetDescription>
               Credential operations are committed immediately to backend storage.
-            </DialogDescription>
-          </DialogHeader>
+            </SheetDescription>
+          </SheetHeader>
 
-          <div className="space-y-3">
-            <SettingRow label="Credential Type" description="Choose parsing mode for this credential.">
+          <div className="space-y-6">
+            <SettingRow label="Provider" description="VPN service provider.">
+              <Select value={credentialProvider} onValueChange={setCredentialProvider}>
+                <SelectTrigger className="w-full"><SelectValue placeholder="Select provider" /></SelectTrigger>
+                <SelectContent>
+                  {PROVIDER_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingRow>
+
+            <SettingRow label="Protocol" description="Protocol type for this credential.">
               <Select value={credentialMode} onValueChange={setCredentialMode}>
-                <SelectTrigger className="max-w-sm"><SelectValue placeholder="Select type" /></SelectTrigger>
+                <SelectTrigger className="w-full"><SelectValue placeholder="Select protocol" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="wireguard">Wireguard (.conf text)</SelectItem>
                   <SelectItem value="openvpn">OpenVPN (username/password)</SelectItem>
@@ -547,34 +587,53 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
               </Select>
             </SettingRow>
 
+            <SettingRow label="Preferred Regions" description="Comma-separated preferred regions (e.g. us-east, nl).">
+              <Input value={credentialRegions} onChange={(e) => setCredentialRegions(e.target.value)} placeholder="us-east, nl, region:paris" className="w-full" />
+            </SettingRow>
+
             <SettingRow label="Port Forwarding" description="Enable only if credential/provider supports forwarded ports.">
-              <Switch checked={credentialPortForwarding && providerSupportsForwarding} disabled={!providerSupportsForwarding} onCheckedChange={setCredentialPortForwarding} />
+              <Switch checked={credentialPortForwarding && sheetProviderSupportsForwarding} disabled={!sheetProviderSupportsForwarding} onCheckedChange={setCredentialPortForwarding} />
             </SettingRow>
 
             {credentialMode === 'wireguard' ? (
-              <SettingRow label="Wireguard .conf Content" description="Paste full [Interface]/[Peer] configuration.">
-                <Textarea value={wgText} onChange={(e) => setWgText(e.target.value)} rows={10} placeholder="[Interface]\nPrivateKey = ...\nAddress = ...\n\n[Peer]\nEndpoint = ..." />
-              </SettingRow>
+              <div className="space-y-4">
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer ${
+                    isDragging ? 'border-primary bg-primary/10' : 'border-muted-foreground/25 hover:border-primary/50'
+                  }`}
+                >
+                  <UploadCloud className="mx-auto h-8 w-8 text-muted-foreground mb-3" />
+                  <p className="text-sm font-medium">Drag & drop your .conf file here</p>
+                  <p className="text-xs text-muted-foreground mt-1">or paste the content below</p>
+                </div>
+                
+                <SettingRow label="Wireguard .conf Content" description="Paste full [Interface]/[Peer] configuration.">
+                  <Textarea value={wgText} onChange={(e) => setWgText(e.target.value)} rows={10} placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;&#10;[Peer]&#10;Endpoint = ..." />
+                </SettingRow>
+              </div>
             ) : (
-              <>
+              <div className="space-y-4">
                 <SettingRow label="OpenVPN Username" description="Credential username.">
-                  <Input value={openvpnUser} onChange={(e) => setOpenvpnUser(e.target.value)} className="max-w-sm" />
+                  <Input value={openvpnUser} onChange={(e) => setOpenvpnUser(e.target.value)} className="w-full" />
                 </SettingRow>
                 <SettingRow label="OpenVPN Password" description="Credential password.">
-                  <Input type="password" value={openvpnPassword} onChange={(e) => setOpenvpnPassword(e.target.value)} className="max-w-sm" />
+                  <Input type="password" value={openvpnPassword} onChange={(e) => setOpenvpnPassword(e.target.value)} className="w-full" />
                 </SettingRow>
-              </>
+              </div>
             )}
           </div>
 
-          <DialogFooter>
+          <SheetFooter className="mt-8">
             <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
             <Button type="button" onClick={addCredential} disabled={dialogLoading}>
               {dialogLoading ? <><AlertCircle className="mr-2 h-4 w-4" />Saving...</> : <><Plus className="mr-2 h-4 w-4" />Add Credential</>}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }
