@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState, useMemo } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -8,11 +8,15 @@ import { Progress } from '@/components/ui/progress'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Radio, PlayCircle, StopCircle, MoveRight, Trash2, ChevronDown, ChevronUp, Activity, Gauge, Users, Play, ListVideo, PlusCircle } from 'lucide-react'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Radio, PlayCircle, StopCircle, MoveRight, Trash2, ChevronDown, ChevronUp, Activity, Gauge, Users, Play, ListVideo, PlusCircle, LayoutGrid, List, Filter } from 'lucide-react'
 import { formatBytesPerSecond, formatBytes } from '@/utils/formatters'
+import { toast } from 'sonner' // Assuming sonner is used based on your components.json/UI standard
 
 // --- Utility Functions ---
-
+// (Keep existing formatAge, movementVariant, movementLabel, statusVariant, statusAccent, toInt, normalizeContentRef, buildSeries)
 function formatAge(ts) {
   if (!ts) return 'n/a'
   const parsed = Date.parse(ts)
@@ -85,9 +89,9 @@ function buildSeries(samples, keyPath) {
 
 function Sparkline({ values, color = '#0ea5e9', label = 'series' }) {
   const clean = values.filter((v) => v != null)
-  if (clean.length < 2) return <p className="text-xs text-muted-foreground">No {label} trend yet</p>
+  if (clean.length < 2) return <p className="text-xs text-muted-foreground">Waiting for data...</p>
 
-  const width = 240, height = 56
+  const width = 240, height = 40
   const min = Math.min(...clean)
   const max = Math.max(...clean)
   const span = max - min || 1
@@ -100,8 +104,8 @@ function Sparkline({ values, color = '#0ea5e9', label = 'series' }) {
   }).filter(Boolean).join(' ')
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-14 w-full" preserveAspectRatio="none" aria-label={label}>
-      <polyline fill="none" stroke={color} strokeWidth="2" points={points} />
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-10 w-full" preserveAspectRatio="none" aria-label={label}>
+      <polyline fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" points={points} />
     </svg>
   )
 }
@@ -112,45 +116,33 @@ function BufferWindowBar({ livepos }) {
   const pos = toInt(livepos?.pos)
 
   if (first == null || last == null || pos == null || last <= first) {
-    return <p className="text-xs text-muted-foreground">Buffer window unavailable</p>
+    return <p className="text-xs text-muted-foreground">Unavailable</p>
   }
 
   const totalSeconds = Math.max(0, last - first)
-  const posSeconds = Math.max(0, pos - first)
   const leadSeconds = Math.max(0, last - pos)
-
-  const desiredGapRatio = 0.25
-  const minWindowFromGap = 8
-  const maxWindowFromGap = 240
-  const windowFromGap = leadSeconds > 0 ? Math.ceil(leadSeconds / desiredGapRatio) : minWindowFromGap
-  const adaptiveWindowSeconds = Math.min(totalSeconds, Math.max(minWindowFromGap, Math.min(maxWindowFromGap, windowFromGap)))
+  const adaptiveWindowSeconds = Math.min(totalSeconds, Math.max(8, Math.min(240, leadSeconds > 0 ? Math.ceil(leadSeconds / 0.25) : 8)))
 
   const viewportStart = Math.max(first, last - adaptiveWindowSeconds)
   const viewportSpan = Math.max(1, last - viewportStart)
   const viewportPosRatio = Math.max(0, Math.min(1, (pos - viewportStart) / viewportSpan))
-  const viewportStartOffset = viewportStart - first
 
   return (
-    <div className="space-y-1">
-      <div className="relative h-2 w-full rounded-full bg-slate-200 dark:bg-slate-700">
-        <div className="absolute inset-y-0 left-0 rounded-full bg-sky-300/60" style={{ width: '100%' }} />
-        <div className="absolute -top-1 h-4 w-1 -translate-x-1/2 rounded bg-emerald-700 dark:bg-emerald-300" style={{ left: `${viewportPosRatio * 100}%` }} title="pos" />
-        <div className="absolute -top-1 h-4 w-1 -translate-x-1/2 rounded bg-sky-700 dark:bg-sky-300" style={{ left: '100%' }} title="last_ts" />
+    <div className="space-y-1 w-full">
+      <div className="relative h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+        <div className="absolute inset-y-0 left-0 rounded-full bg-sky-400/30" style={{ width: '100%' }} />
+        <div className="absolute top-0 h-full w-1.5 -translate-x-1/2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" style={{ left: `${viewportPosRatio * 100}%` }} title="Current Position" />
+        <div className="absolute top-0 h-full w-1.5 -translate-x-1/2 rounded-full bg-sky-500" style={{ left: '100%' }} title="Live Edge" />
       </div>
-      <div className="flex justify-between text-[11px] text-muted-foreground">
-        <span>{viewportStartOffset}s</span>
-        <span>pos: {posSeconds}s</span>
-        <span>{totalSeconds}s</span>
-      </div>
-      <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
-        <span>adaptive window: {adaptiveWindowSeconds}s</span>
-        <span>gap: {leadSeconds}s</span>
+      <div className="flex justify-between text-[10px] font-medium text-muted-foreground">
+        <span>Gap: {leadSeconds}s</span>
+        <span>Window: {adaptiveWindowSeconds}s</span>
       </div>
     </div>
   )
 }
 
-function MonitorItem({ monitor, isExpanded, isCompact, isSelected, isPlayingInProxy, isStopping, isDeleting, onToggleExpand, onToggleSelect, onStop, onDelete }) {
+function MonitorCard({ monitor, isExpanded, isSelected, isPlayingInProxy, isStopping, isDeleting, onToggleExpand, onToggleSelect, onStop, onDelete }) {
   const latest = monitor._derived.latest || {}
   const movement = monitor.livepos_movement || {}
   const statusText = latest.status_text || latest.status || 'unknown'
@@ -159,125 +151,98 @@ function MonitorItem({ monitor, isExpanded, isCompact, isSelected, isPlayingInPr
   
   const posSeries = buildSeries(monitor.recent_status || [], ['livepos', 'pos'])
   const lastTsSeries = buildSeries(monitor.recent_status || [], ['livepos', 'last_ts'])
-  
-  const engineId = monitor.engine?.container_id || 'n/a'
-  const engineShortId = engineId !== 'n/a' ? engineId.slice(0, 12) : 'n/a'
+  const engineShortId = monitor.engine?.container_id ? monitor.engine.container_id.slice(0, 12) : 'n/a'
 
   return (
     <Collapsible open={isExpanded} onOpenChange={(open) => onToggleExpand(monitor.monitor_id, open)}>
-      <div className={`rounded-xl border shadow-sm transition-colors ${isCompact ? 'p-2' : 'p-3'} ${statusAccent(monitor.status)}`}>
-        <div className="flex items-start gap-2">
+      <div className={`group rounded-xl border shadow-sm transition-all hover:shadow-md p-4 ${statusAccent(monitor.status)}`}>
+        <div className="flex items-start gap-3">
           <Checkbox checked={isSelected} onCheckedChange={(checked) => onToggleSelect(monitor.monitor_id, Boolean(checked))} className="mt-1" />
 
           <CollapsibleTrigger asChild>
-            <button type="button" className="w-full text-left">
-              <div className={`flex items-start justify-between gap-3 ${isCompact ? 'flex-wrap' : ''}`}>
+            <button type="button" className="w-full text-left outline-none">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  {monitor.stream_name ? (
-                    <>
-                      <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{monitor.stream_name}</p>
-                      <p className="truncate text-[11px] text-muted-foreground">{monitor.content_id}</p>
-                    </>
-                  ) : (
-                    <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{monitor.content_id}</p>
-                  )}
-                  <div className={`mt-2 flex flex-wrap items-center gap-2 ${isCompact ? 'text-[11px]' : ''}`}>
-                    <Badge variant={statusVariant(monitor.status)}>{monitor.status}</Badge>
+                  <div className="flex items-center gap-2 mb-1">
+                    <Badge variant={statusVariant(monitor.status)} className="uppercase tracking-wider text-[10px]">{monitor.status}</Badge>
+                    {isPlayingInProxy && <Badge variant="default" className="px-1.5 bg-indigo-500"><Play className="h-3 w-3 mr-1" /> Proxy</Badge>}
+                  </div>
+                  <p className="truncate text-base font-semibold text-slate-900 dark:text-slate-100">
+                    {monitor.stream_name || monitor.content_id}
+                  </p>
+                  {monitor.stream_name && <p className="truncate text-xs font-mono text-muted-foreground mt-0.5">{monitor.content_id}</p>}
+                  
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
                     <Badge variant={movementVariant(movement, monitor.status)}>{movementLabel(movement, monitor.status)}</Badge>
-                    <Badge variant="info" className="gap-1"><Users className="h-3 w-3" /> peers {peers}</Badge>
-                    <Badge variant="secondary" className="gap-1"><Gauge className="h-3 w-3" /> {formatBytesPerSecond((speedDown || 0) * 1024)}</Badge>
-                    <Badge variant="outline">engine {engineShortId}</Badge>
-                    {isPlayingInProxy && <Badge variant="default" className="px-1.5" title="Playing in proxy"><Play className="h-3 w-3" /></Badge>}
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-white dark:bg-slate-900 px-2 py-0.5 rounded-full border">
+                      <Users className="h-3 w-3 text-sky-500" /> {peers} peers
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-white dark:bg-slate-900 px-2 py-0.5 rounded-full border">
+                      <Gauge className="h-3 w-3 text-emerald-500" /> {formatBytesPerSecond((speedDown || 0) * 1024)}
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex flex-col items-end gap-1">
+                <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-2 w-full sm:w-auto mt-2 sm:mt-0">
                   <span className="text-xs text-muted-foreground">{formatAge(monitor.last_collected_at)}</span>
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <span>{isExpanded ? 'Collapse' : 'Expand'}</span>
+                  <div className="flex items-center justify-center h-8 w-8 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
                     {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                   </div>
                 </div>
-              </div>
-
-              <div className={`mt-3 grid gap-2 ${isCompact ? 'grid-cols-2 lg:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
-                <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-                  <p className="text-[11px] text-muted-foreground">Status</p>
-                  <p className="mt-1 text-sm font-medium">{statusText}</p>
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-                  <p className="text-[11px] text-muted-foreground">Down / Up</p>
-                  <p className="mt-1 text-sm font-medium">{formatBytesPerSecond((speedDown || 0) * 1024)} / {formatBytesPerSecond((speedUp || 0) * 1024)}</p>
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-                  <p className="text-[11px] text-muted-foreground">Progress</p>
-                  <p className="mt-1 text-sm font-medium">{progress}%</p>
-                  <Progress className="mt-1 h-1.5 bg-slate-200 dark:bg-slate-800" value={Math.max(0, Math.min(100, Number(progress) || 0))} />
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-                  <p className="text-[11px] text-muted-foreground">Movement events</p>
-                  <p className="mt-1 text-sm font-medium">{movement.movement_events ?? 0} / {movement.sample_points ?? 0}</p>
-                </div>
-                {isCompact && (
-                  <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-                    <p className="text-[11px] text-muted-foreground">ID</p>
-                    <p className="mt-1 truncate text-sm font-medium">{monitor.monitor_id.slice(0, 8)}</p>
-                  </div>
-                )}
               </div>
             </button>
           </CollapsibleTrigger>
         </div>
 
         <CollapsibleContent>
-          {monitor.status === 'dead' && (
-            <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/20">
-              dead reason: {monitor.dead_reason || monitor.last_error || 'unknown'}
-            </p>
-          )}
+          <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700/50">
+            {monitor.status === 'dead' && (
+              <div className="mb-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30">
+                <span className="font-semibold mr-2">Reason:</span> {monitor.dead_reason || monitor.last_error || 'unknown'}
+              </div>
+            )}
 
-          <div className="mt-3 grid gap-2 md:grid-cols-2 lg:grid-cols-4 text-xs">
-            <div className="rounded-lg border bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-              <p className="text-muted-foreground">Position Delta</p>
-              <p className="mt-1 flex items-center gap-1 font-medium"><MoveRight className="h-3 w-3" /> {movement.pos_delta ?? 'n/a'}</p>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-4">
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Engine Node</p>
+                <p className="text-sm font-mono">{engineShortId}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Up / Down Speed</p>
+                <p className="text-sm font-medium">{formatBytesPerSecond((speedUp || 0) * 1024)} / {formatBytesPerSecond((speedDown || 0) * 1024)}</p>
+              </div>
+              <div className="space-y-1 lg:col-span-2">
+                <p className="text-xs text-muted-foreground flex justify-between">
+                  <span>Buffer Progress</span>
+                  <span>{progress}%</span>
+                </p>
+                <Progress className="h-2" value={Math.max(0, Math.min(100, Number(progress) || 0))} />
+              </div>
             </div>
-            <div className="rounded-lg border bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-              <p className="text-muted-foreground">Live TS Delta</p>
-              <p className="mt-1 font-medium">{movement.last_ts_delta ?? 'n/a'}</p>
-            </div>
-            <div className="rounded-lg border bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-              <p className="text-muted-foreground">Downloaded Delta</p>
-              <p className="mt-1 font-medium">{movement.downloaded_delta != null ? formatBytes(movement.downloaded_delta) : 'n/a'}</p>
-            </div>
-            <div className="rounded-lg border bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-              <p className="text-muted-foreground">Current Timeline</p>
-              <p className="mt-1 font-medium">pos {movement.current_pos ?? 'n/a'} / ts {movement.current_last_ts ?? 'n/a'}</p>
-            </div>
-          </div>
 
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 dark:border-emerald-900 dark:bg-emerald-950/20">
-              <p className="mb-1 text-xs text-emerald-700 dark:text-emerald-300">POS movement (sliding trend)</p>
-              <Sparkline values={posSeries} color="#22c55e" label="pos trend" />
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-lg bg-white p-3 dark:bg-slate-900/40 border">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Live Buffer</p>
+                <BufferWindowBar livepos={livepos} />
+              </div>
+              <div className="rounded-lg bg-white p-3 dark:bg-slate-900/40 border">
+                <p className="text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-1">Pos Trend</p>
+                <Sparkline values={posSeries} color="#10b981" label="pos" />
+              </div>
+              <div className="rounded-lg bg-white p-3 dark:bg-slate-900/40 border">
+                <p className="text-[10px] uppercase tracking-wider text-sky-600 dark:text-sky-400 mb-1">Last_TS Trend</p>
+                <Sparkline values={lastTsSeries} color="#0ea5e9" label="last_ts" />
+              </div>
             </div>
-            <div className="rounded-lg border border-sky-200 bg-sky-50 p-2 dark:border-sky-900 dark:bg-sky-950/20">
-              <p className="mb-1 text-xs text-sky-700 dark:text-sky-300">last_ts movement (sliding trend)</p>
-              <Sparkline values={lastTsSeries} color="#0ea5e9" label="last_ts trend" />
+
+            <div className="mt-4 flex flex-wrap items-center gap-2 justify-end">
+              <Button variant="secondary" size="sm" onClick={() => onStop(monitor.monitor_id)} disabled={isStopping || monitor.status === 'dead'}>
+                <StopCircle className="mr-2 h-4 w-4" /> {isStopping ? 'Stopping...' : 'Stop Monitoring'}
+              </Button>
+              <Button variant="destructive" size="sm" onClick={() => onDelete(monitor.monitor_id)} disabled={isDeleting}>
+                <Trash2 className="mr-2 h-4 w-4" /> {isDeleting ? 'Deleting...' : 'Delete Record'}
+              </Button>
             </div>
-          </div>
-
-          <div className="mt-3 rounded-lg border bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-            <p className="mb-1 text-xs text-muted-foreground">Live buffer window (first_ts -&gt; pos -&gt; last_ts)</p>
-            <BufferWindowBar livepos={livepos} />
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => onStop(monitor.monitor_id)} disabled={isStopping || monitor.status === 'dead'}>
-              <StopCircle className="mr-1 h-3 w-3" /> {isStopping ? 'Stopping...' : 'Stop'}
-            </Button>
-            <Button variant="destructive" size="sm" onClick={() => onDelete(monitor.monitor_id)} disabled={isDeleting}>
-              <Trash2 className="mr-1 h-3 w-3" /> {isDeleting ? 'Deleting...' : 'Delete'}
-            </Button>
           </div>
         </CollapsibleContent>
       </div>
@@ -288,30 +253,28 @@ function MonitorItem({ monitor, isExpanded, isCompact, isSelected, isPlayingInPr
 // --- Main Page Component ---
 
 export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
-  const uiPrefsStorageKey = 'stream-monitoring-ui-prefs-v1'
+  const uiPrefsStorageKey = 'stream-monitoring-ui-prefs-v2' // Bumped version for new schema
   
   // Data State
   const [monitors, setMonitors] = useState([])
   const [activeProxyKeys, setActiveProxyKeys] = useState(new Set())
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [isLive, setIsLive] = useState(false)
   
   // UI Preferences State
-  const [viewMode, setViewMode] = useState('cards')
+  const [viewMode, setViewMode] = useState('cards') // 'cards' | 'table'
   const [sortMode, setSortMode] = useState('status_then_recent')
-  const [groupByStatus, setGroupByStatus] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
+  const [isAddSheetOpen, setIsAddSheetOpen] = useState(false)
   
   // Selection & Expansion State
   const [expandedById, setExpandedById] = useState({})
   const [selectedById, setSelectedById] = useState({})
   
   // Action/Form State
-  const [actionError, setActionError] = useState(null)
   const [starting, setStarting] = useState(false)
   const [stoppingById, setStoppingById] = useState({})
   const [deletingById, setDeletingById] = useState({})
-  const [batchBusy, setBatchBusy] = useState(false)
   
   // M3U Form State
   const [m3uFileName, setM3uFileName] = useState('')
@@ -319,7 +282,6 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
   const [m3uEntries, setM3uEntries] = useState([])
   const [m3uSelectedById, setM3uSelectedById] = useState({})
   const [m3uParsing, setM3uParsing] = useState(false)
-  const [m3uStarting, setM3uStarting] = useState(false)
   const [newMonitor, setNewMonitor] = useState({ content_id: '', live_delay: '', interval_s: '1.0', run_seconds: '0' })
 
   // --- Initialization & Prefs ---
@@ -328,16 +290,15 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
       const parsed = JSON.parse(window.localStorage.getItem(uiPrefsStorageKey) || '{}')
       if (typeof parsed.viewMode === 'string') setViewMode(parsed.viewMode)
       if (typeof parsed.sortMode === 'string') setSortMode(parsed.sortMode)
-      if (typeof parsed.groupByStatus === 'boolean') setGroupByStatus(parsed.groupByStatus)
       if (typeof parsed.statusFilter === 'string') setStatusFilter(parsed.statusFilter)
     } catch { /* ignored */ }
   }, [])
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(uiPrefsStorageKey, JSON.stringify({ viewMode, sortMode, groupByStatus, statusFilter }))
+      window.localStorage.setItem(uiPrefsStorageKey, JSON.stringify({ viewMode, sortMode, statusFilter }))
     } catch { /* ignored */ }
-  }, [viewMode, sortMode, groupByStatus, statusFilter])
+  }, [viewMode, sortMode, statusFilter])
 
   useEffect(() => {
     setActiveProxyKeys(new Set((Array.isArray(streams) ? streams : []).map((s) => normalizeContentRef(s?.key)).filter(Boolean)))
@@ -347,9 +308,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
   const fetchMonitorsNow = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true)
     if (!apiKey) {
-      setMonitors([])
-      setError('Set API key in Settings to view stream monitoring sessions')
-      setLoading(false)
+      setMonitors([]); setLoading(false)
       return
     }
     try {
@@ -357,9 +316,8 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
       const payload = await response.json()
       setMonitors(Array.isArray(payload?.items) ? payload.items : [])
-      setError(null)
     } catch (err) {
-      setError(err?.message || 'Failed to fetch sessions')
+      toast.error('Failed to fetch sessions', { description: err.message })
     } finally {
       setLoading(false)
     }
@@ -367,7 +325,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
 
   useEffect(() => {
     if (!apiKey) {
-      setMonitors([]); setError('Set API key in Settings'); setLoading(false)
+      setMonitors([]); setLoading(false)
       return
     }
     let eventSource = null, reconnectTimer = null, fallbackInterval = null, closed = false
@@ -376,7 +334,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
       if (closed) return
       if (typeof window === 'undefined' || !window.EventSource) {
         fetchMonitorsNow(true)
-        fallbackInterval = window.setInterval(() => fetchMonitorsNow(false), 1000)
+        fallbackInterval = window.setInterval(() => fetchMonitorsNow(false), 2000)
         return
       }
 
@@ -385,11 +343,13 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
       streamUrl.searchParams.set('api_key', apiKey)
       eventSource = new EventSource(streamUrl.toString())
 
+      eventSource.onopen = () => setIsLive(true)
+      
       eventSource.onmessage = (event) => {
         try {
           const parsed = JSON.parse(event.data)
           if (parsed?.type === 'legacy_monitor_snapshot') {
-            setMonitors(parsed?.payload?.items || []); setError(null); setLoading(false)
+            setMonitors(parsed?.payload?.items || []); setLoading(false)
           } else if (parsed?.type === 'legacy_monitor_event') {
             const payload = parsed?.payload || {}
             if (!payload.monitor_id) return
@@ -403,11 +363,12 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
                 return next
               })
             }
-            setError(null); setLoading(false)
+            setLoading(false)
           }
         } catch { /* ignored */ }
       }
       eventSource.onerror = () => {
+        setIsLive(false)
         if (eventSource) { eventSource.close(); eventSource = null }
         if (!closed) reconnectTimer = window.setTimeout(connect, 2000)
       }
@@ -422,8 +383,11 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
 
   // --- Handlers ---
   const handleStartMonitor = async () => {
-    if (!apiKey || !newMonitor.content_id.trim()) { setActionError('content_id and API key required'); return }
-    setStarting(true); setActionError(null)
+    if (!apiKey || !newMonitor.content_id.trim()) { 
+      toast.error('Missing Information', { description: 'Content ID and API key are required' })
+      return 
+    }
+    setStarting(true)
     try {
       const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/start`, {
         method: 'POST',
@@ -431,9 +395,15 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
         body: JSON.stringify({ ...newMonitor, stream_name: null, live_delay: Number(newMonitor.live_delay||0), interval_s: Number(newMonitor.interval_s||1), run_seconds: Number(newMonitor.run_seconds||0) }),
       })
       if (!response.ok) throw new Error(await response.json().then(p=>p.detail).catch(()=>'Failed'))
+      toast.success('Session Started', { description: `Monitoring ${newMonitor.content_id.slice(0, 8)}...` })
       setNewMonitor((prev) => ({ ...prev, content_id: '' }))
+      setIsAddSheetOpen(false)
       fetchMonitorsNow(false)
-    } catch (err) { setActionError(err.message) } finally { setStarting(false) }
+    } catch (err) { 
+      toast.error('Failed to start', { description: err.message })
+    } finally { 
+      setStarting(false) 
+    }
   }
 
   const handleAction = async (monitorId, actionType) => {
@@ -448,20 +418,27 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
         method: 'DELETE', headers: { Authorization: `Bearer ${apiKey}` },
       })
       if (!response.ok) throw new Error('Action failed')
+      toast.success(`Session ${isStop ? 'Stopped' : 'Deleted'}`)
       fetchMonitorsNow(false)
-    } catch (err) { setActionError(err.message) } finally { setActionState((prev) => ({ ...prev, [monitorId]: false })) }
+    } catch (err) { 
+      toast.error(`Failed to ${actionType}`, { description: err.message })
+    } finally { 
+      setActionState((prev) => ({ ...prev, [monitorId]: false })) 
+    }
   }
 
   const handleM3uFilePicked = async (e) => {
     const file = e.target.files?.[0]; if (!file) return
     try {
       setM3uFileName(file.name || 'playlist.m3u'); setM3uContent(await file.text())
-      setM3uEntries([]); setM3uSelectedById({}); setActionError(null)
-    } catch { setActionError('Failed to read file') }
+      setM3uEntries([]); setM3uSelectedById({})
+    } catch { 
+      toast.error('File Error', { description: 'Failed to read the selected file.' })
+    }
   }
 
   const handleParseM3u = async () => {
-    setM3uParsing(true); setActionError(null)
+    setM3uParsing(true)
     try {
       const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/parse-m3u`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
@@ -472,7 +449,12 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
       setM3uEntries(items)
       const initialSel = {}; items.forEach(i => i.content_id && (initialSel[i.content_id] = true))
       setM3uSelectedById(initialSel)
-    } catch (err) { setActionError(err.message) } finally { setM3uParsing(false) }
+      toast.success('Playlist Parsed', { description: `Found ${items.length} AceStream links.` })
+    } catch (err) { 
+      toast.error('Parse Error', { description: err.message }) 
+    } finally { 
+      setM3uParsing(false) 
+    }
   }
 
   // --- Memoized Derived State ---
@@ -493,7 +475,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
     }
   }), [monitors])
 
-  const { filteredMonitors, sortedMonitors, groupedMonitors, stats } = useMemo(() => {
+  const { sortedMonitors, stats } = useMemo(() => {
     let filtered = parsedMonitors
     if (statusFilter !== 'all') {
       filtered = parsedMonitors.filter(m => statusFilter === 'active' ? ['running', 'starting', 'stuck', 'reconnecting'].includes(m.status) : m.status === statusFilter)
@@ -508,216 +490,335 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
       return aRank !== bRank ? aRank - bRank : b._derived.lastCollectedAtMs - a._derived.lastCollectedAtMs
     })
 
-    const grouped = groupByStatus ? [
-      { key: 'running', label: 'Running', items: sorted.filter(m => m.status === 'running') },
-      { key: 'starting', label: 'Starting', items: sorted.filter(m => m.status === 'starting') },
-      { key: 'stuck', label: 'Stuck', items: sorted.filter(m => m.status === 'stuck') },
-      { key: 'reconnecting', label: 'Reconnecting', items: sorted.filter(m => m.status === 'reconnecting') },
-      { key: 'stopped', label: 'Stopped', items: sorted.filter(m => m.status === 'stopped') },
-      { key: 'dead', label: 'Dead', items: sorted.filter(m => m.status === 'dead') },
-      { key: 'other', label: 'Other', items: sorted.filter(m => !statusRank.hasOwnProperty(m.status)) },
-    ].filter(g => g.items.length > 0) : [{ key: 'all', label: 'All Sessions', items: sorted }]
-
     return {
-      filteredMonitors: filtered,
       sortedMonitors: sorted,
-      groupedMonitors: grouped,
       stats: {
         active: parsedMonitors.filter(m => ['running', 'starting', 'stuck', 'reconnecting'].includes(m.status)).length,
         running: parsedMonitors.filter(m => m.status === 'running').length,
         dead: parsedMonitors.filter(m => m.status === 'dead').length,
         stuck: parsedMonitors.filter(m => m.status === 'stuck').length,
-        avgProg: parsedMonitors.length ? Math.round(parsedMonitors.reduce((acc, m) => acc + m._derived.progressValue, 0) / parsedMonitors.length) : 0,
         totalDl: parsedMonitors.reduce((acc, m) => acc + m._derived.speedDownKbps, 0)
       }
     }
-  }, [parsedMonitors, statusFilter, sortMode, groupByStatus])
+  }, [parsedMonitors, statusFilter, sortMode])
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-8">
+      {/* Page Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Stream Monitoring</h1>
-          <p className="text-muted-foreground mt-1">Broadcast-like status sessions with livepos movement telemetry</p>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold tracking-tight">Stream Monitoring</h1>
+            <Badge variant={isLive ? 'success' : 'secondary'} className="h-6">
+              {isLive && <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />}
+              {isLive ? 'Live' : 'Offline'}
+            </Badge>
+          </div>
+          <p className="text-muted-foreground mt-1 text-sm">Telemetry, buffer analysis, and active connections.</p>
         </div>
-        <Badge variant={stats.active > 0 ? 'success' : 'secondary'}>{stats.active} active</Badge>
+        <Button onClick={() => setIsAddSheetOpen(true)} className="shrink-0 shadow-sm">
+          <PlusCircle className="mr-2 h-4 w-4" /> Add Monitor
+        </Button>
       </div>
-
-      {/* Modernized Add Monitor Panel using Tabs */}
-      <Card className="border-slate-200 bg-gradient-to-br from-white via-slate-50 to-sky-50 dark:border-slate-800 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900/70">
-        <Tabs defaultValue="manual" className="w-full">
-          <CardHeader className="pb-3 border-b border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Radio className="h-4 w-4 text-primary" />
-                New Session
-              </CardTitle>
-              <TabsList className="grid w-full max-w-[400px] grid-cols-2">
-                <TabsTrigger value="manual" className="text-xs"><PlusCircle className="mr-2 h-3.5 w-3.5" /> Manual Entry</TabsTrigger>
-                <TabsTrigger value="m3u" className="text-xs"><ListVideo className="mr-2 h-3.5 w-3.5" /> M3U Import</TabsTrigger>
-              </TabsList>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <TabsContent value="manual" className="m-0 space-y-4">
-              <div className="grid gap-4 md:grid-cols-6">
-                <Input className="md:col-span-3" placeholder="content_id / infohash" value={newMonitor.content_id} onChange={(e) => setNewMonitor(p => ({ ...p, content_id: e.target.value }))} />
-                <Input type="number" min="0" placeholder="live_delay" title="Starts live streams slightly behind the live edge to improve buffer stability." value={newMonitor.live_delay} onChange={(e) => setNewMonitor(p => ({ ...p, live_delay: e.target.value }))} />
-                <Input type="number" min="0.5" step="0.5" placeholder="interval_s" value={newMonitor.interval_s} onChange={(e) => setNewMonitor(p => ({ ...p, interval_s: e.target.value }))} />
-                <Input type="number" min="0" placeholder="run_seconds" value={newMonitor.run_seconds} onChange={(e) => setNewMonitor(p => ({ ...p, run_seconds: e.target.value }))} />
-              </div>
-              <div className="flex items-center gap-2">
-                <Button onClick={handleStartMonitor} disabled={starting || !apiKey} size="sm">
-                  <PlayCircle className="mr-2 h-4 w-4" /> {starting ? 'Starting...' : 'Start Monitor'}
-                </Button>
-                <span className="text-xs text-muted-foreground">live_delay 0 disables seekback, interval defaults to 1s, run_seconds 0 means continuous</span>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="m3u" className="m-0 space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <Input type="file" accept=".m3u,.m3u8,text/plain" onChange={handleM3uFilePicked} className="max-w-md cursor-pointer" />
-                <Button size="sm" variant="secondary" onClick={handleParseM3u} disabled={m3uParsing || !m3uContent || !apiKey}>
-                  {m3uParsing ? 'Parsing...' : 'Extract AceStream Links'}
-                </Button>
-                {m3uFileName && <span className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-2">{m3uFileName}</span>}
-              </div>
-
-              {m3uEntries.length > 0 && (
-                <div className="rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 p-4">
-                  <div className="mb-3 flex items-center justify-between">
-                    <span className="text-sm font-medium">Found {m3uEntries.length} AceStream links</span>
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" variant="outline" onClick={() => { const n = {}; m3uEntries.forEach(e => n[e.content_id] = true); setM3uSelectedById(n) }}>Select all</Button>
-                      <Button size="sm" variant="outline" onClick={() => setM3uSelectedById({})}>Clear</Button>
-                      <Button size="sm" onClick={() => { /* Reuse your handleStartSelectedM3uEntries logic here */ }} disabled={m3uStarting || !apiKey}>
-                        <PlayCircle className="mr-2 h-4 w-4" /> Start {Object.values(m3uSelectedById).filter(Boolean).length} Selected
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="max-h-64 space-y-1 overflow-y-auto pr-2">
-                    {m3uEntries.map(entry => (
-                      <div key={entry.content_id} className="flex items-center justify-between rounded border px-3 py-2 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40">
-                        <div className="flex items-center gap-3">
-                          <Checkbox checked={Boolean(m3uSelectedById[entry.content_id])} onCheckedChange={(c) => setM3uSelectedById(p => ({ ...p, [entry.content_id]: Boolean(c) }))} />
-                          <div>
-                            <p className="text-sm font-medium">{entry.name || 'Unnamed stream'}</p>
-                            <p className="text-xs text-muted-foreground font-mono">{entry.content_id}</p>
-                          </div>
-                        </div>
-                        <Button size="sm" variant="ghost" onClick={() => { setNewMonitor(p => ({ ...p, content_id: entry.content_id })); document.querySelector('[value="manual"]').click() }}>Use ID</Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </TabsContent>
-            
-            {actionError && <p className="mt-4 text-sm font-medium text-destructive">{actionError}</p>}
-          </CardContent>
-        </Tabs>
-      </Card>
 
       {/* KPI Stats Overview */}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/20">
-          <p className="text-xs font-medium uppercase tracking-wider text-emerald-700 dark:text-emerald-300">Running Streams</p>
-          <p className="mt-1 text-2xl font-bold text-emerald-900 dark:text-emerald-100">{stats.running}</p>
-        </div>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/20">
-          <p className="text-xs font-medium uppercase tracking-wider text-amber-700 dark:text-amber-300">Stuck Sessions</p>
-          <p className="mt-1 text-2xl font-bold text-amber-900 dark:text-amber-100">{stats.stuck}</p>
-        </div>
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 dark:border-rose-900 dark:bg-rose-950/20">
-          <p className="text-xs font-medium uppercase tracking-wider text-rose-700 dark:text-rose-300">Dead Sessions</p>
-          <p className="mt-1 text-2xl font-bold text-rose-900 dark:text-rose-100">{stats.dead}</p>
-        </div>
-        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 dark:border-sky-900 dark:bg-sky-950/20">
-          <p className="text-xs font-medium uppercase tracking-wider text-sky-700 dark:text-sky-300">Aggregate Downlink</p>
-          <p className="mt-1 text-2xl font-bold text-sky-900 dark:text-sky-100">{formatBytesPerSecond(stats.totalDl * 1024)}</p>
-        </div>
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+        <Card className="shadow-sm">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Active / Running</p>
+              <p className="text-2xl font-bold text-slate-900 dark:text-white">
+                {stats.active} <span className="text-muted-foreground text-lg font-normal">/ {stats.running}</span>
+              </p>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+              <Play className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card className="shadow-sm">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Stuck</p>
+              <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{stats.stuck}</p>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+              <Activity className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card className="shadow-sm">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Dead</p>
+              <p className="text-2xl font-bold text-rose-600 dark:text-rose-400">{stats.dead}</p>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-rose-100 dark:bg-rose-900/30 flex items-center justify-center">
+              <Trash2 className="h-5 w-5 text-rose-600 dark:text-rose-400" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-sm">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Total Downlink</p>
+              <p className="text-2xl font-bold text-sky-600 dark:text-sky-400">{formatBytesPerSecond(stats.totalDl * 1024)}</p>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center">
+              <Gauge className="h-5 w-5 text-sky-600 dark:text-sky-400" />
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* List / Table Area */}
-      <Card className="border-slate-200 bg-gradient-to-b from-white to-slate-50 dark:border-slate-800 dark:from-slate-950 dark:to-slate-900/60">
-        <CardHeader>
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Activity className="h-4 w-4 text-primary" />
-              Active Sessions
-            </CardTitle>
-            <div className="flex flex-wrap items-center gap-2">
-              <Select value={sortMode} onValueChange={setSortMode}>
-                <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue placeholder="Sort sessions" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="status_then_recent">Status then recent</SelectItem>
-                  <SelectItem value="recent">Most recent first</SelectItem>
-                  <SelectItem value="speed">Highest downlink</SelectItem>
-                  <SelectItem value="progress">Highest progress</SelectItem>
-                  <SelectItem value="content">Content ID A-Z</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button size="sm" variant={groupByStatus ? 'secondary' : 'ghost'} onClick={() => setGroupByStatus(p => !p)}>Grouped</Button>
-              <Button size="sm" variant={viewMode === 'table' ? 'secondary' : 'ghost'} onClick={() => setViewMode(p => p === 'cards' ? 'table' : 'cards')}>Compact</Button>
-            </div>
+      {/* Main List Area */}
+      <div className="flex flex-col gap-4">
+        {/* Toolbar */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white dark:bg-slate-900/50 p-3 rounded-lg border shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300 ml-1">Sessions</span>
+            <Badge variant="secondary" className="font-mono">{sortedMonitors.length}</Badge>
           </div>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8 shadow-none">
+                  <Filter className="mr-2 h-3.5 w-3.5" />
+                  {statusFilter === 'all' ? 'All Status' : statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuRadioGroup value={statusFilter} onValueChange={setStatusFilter}>
+                  <DropdownMenuRadioItem value="all">All Sessions</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="active">Active Only</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="running">Running</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="stuck">Stuck</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="dead">Dead</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-          <div className="flex flex-wrap items-center gap-2 pt-2">
-            <Button size="sm" variant="outline" onClick={() => { const n = {}; sortedMonitors.forEach(m => n[m.monitor_id] = true); setExpandedById(n) }}>Expand all</Button>
-            <Button size="sm" variant="outline" onClick={() => setExpandedById({})}>Collapse all</Button>
-            <div className="mx-2 h-4 w-px bg-slate-200 dark:bg-slate-700" />
-            
-            {['all', 'active', 'running', 'stuck', 'dead'].map(f => (
-              <Button key={f} size="sm" variant={statusFilter === f ? 'default' : 'outline'} className="capitalize" onClick={() => setStatusFilter(f)}>
-                {f}
+            <Select value={sortMode} onValueChange={setSortMode}>
+              <SelectTrigger className="h-8 w-[140px] text-xs shadow-none"><SelectValue placeholder="Sort by" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="status_then_recent">Status Rank</SelectItem>
+                <SelectItem value="recent">Most Recent</SelectItem>
+                <SelectItem value="speed">Highest Speed</SelectItem>
+                <SelectItem value="progress">Most Progress</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <div className="flex items-center rounded-md border p-0.5 ml-1">
+              <Button 
+                variant={viewMode === 'cards' ? 'secondary' : 'ghost'} 
+                size="icon" 
+                className="h-7 w-7" 
+                onClick={() => setViewMode('cards')}
+                title="Card View"
+              >
+                <LayoutGrid className="h-4 w-4" />
               </Button>
-            ))}
-            
-            <div className="mx-2 h-4 w-px bg-slate-200 dark:bg-slate-700" />
-            <Button size="sm" variant="outline" disabled={batchBusy || !apiKey} onClick={() => { /* Add batch stop logic here */ }}>Batch stop</Button>
-            <Button size="sm" variant="destructive" disabled={batchBusy || !apiKey} onClick={() => { /* Add batch delete logic here */ }}>Batch delete</Button>
-          </div>
-        </CardHeader>
-        
-        <CardContent>
-          {loading ? (
-            <p className="text-sm text-muted-foreground animate-pulse">Loading stream sessions...</p>
-          ) : error ? (
-            <p className="text-sm text-destructive">{error}</p>
-          ) : sortedMonitors.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No sessions matching criteria.</p>
-          ) : (
-            <div className="space-y-4">
-              {groupedMonitors.map((group) => (
-                <div key={group.key} className="space-y-2">
-                  {groupByStatus && (
-                    <div className="flex items-center justify-between rounded bg-slate-100/50 px-3 py-1.5 dark:bg-slate-800/50">
-                      <span className="text-sm font-medium">{group.label}</span>
-                      <Badge variant="secondary">{group.items.length}</Badge>
-                    </div>
-                  )}
-                  {group.items.map((monitor) => (
-                    <MonitorItem 
-                      key={monitor.monitor_id}
-                      monitor={monitor}
-                      isExpanded={Boolean(expandedById[monitor.monitor_id])}
-                      isCompact={viewMode === 'table'}
-                      isSelected={Boolean(selectedById[monitor.monitor_id])}
-                      isPlayingInProxy={activeProxyKeys.has(normalizeContentRef(monitor.content_id))}
-                      isStopping={Boolean(stoppingById[monitor.monitor_id])}
-                      isDeleting={Boolean(deletingById[monitor.monitor_id])}
-                      onToggleExpand={(id, state) => setExpandedById(p => ({ ...p, [id]: state }))}
-                      onToggleSelect={(id, state) => setSelectedById(p => ({ ...p, [id]: state }))}
-                      onStop={(id) => handleAction(id, 'stop')}
-                      onDelete={(id) => handleAction(id, 'delete')}
-                    />
-                  ))}
-                </div>
-              ))}
+              <Button 
+                variant={viewMode === 'table' ? 'secondary' : 'ghost'} 
+                size="icon" 
+                className="h-7 w-7" 
+                onClick={() => setViewMode('table')}
+                title="Table View"
+              >
+                <List className="h-4 w-4" />
+              </Button>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        </div>
+
+        {/* Content Area */}
+        {loading && sortedMonitors.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+            <Activity className="h-8 w-8 mb-4 animate-pulse" />
+            <p>Loading sessions...</p>
+          </div>
+        ) : sortedMonitors.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground border rounded-lg border-dashed bg-slate-50/50 dark:bg-slate-900/20">
+            <Radio className="h-10 w-10 mb-4 opacity-20" />
+            <p className="text-lg font-medium text-slate-600 dark:text-slate-400">No monitoring sessions found</p>
+            <p className="text-sm mt-1">Adjust your filters or add a new stream to begin.</p>
+            <Button variant="outline" className="mt-6" onClick={() => setIsAddSheetOpen(true)}>
+              <PlusCircle className="mr-2 h-4 w-4" /> Add Session
+            </Button>
+          </div>
+        ) : viewMode === 'table' ? (
+          <div className="rounded-md border bg-white dark:bg-slate-950 shadow-sm overflow-hidden">
+            <Table>
+              <TableHeader className="bg-slate-50 dark:bg-slate-900/50">
+                <TableRow>
+                  <TableHead className="w-[40px]"></TableHead>
+                  <TableHead>Stream</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Peers</TableHead>
+                  <TableHead>Speed</TableHead>
+                  <TableHead>Progress</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sortedMonitors.map((m) => (
+                  <TableRow key={m.monitor_id} className="group">
+                    <TableCell>
+                      <Checkbox checked={Boolean(selectedById[m.monitor_id])} onCheckedChange={(c) => setSelectedById(p => ({ ...p, [m.monitor_id]: Boolean(c) }))} />
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium text-slate-900 dark:text-slate-100 max-w-[200px] truncate" title={m.stream_name || m.content_id}>
+                        {m.stream_name || m.content_id}
+                      </div>
+                      {m.stream_name && <div className="text-xs text-muted-foreground font-mono truncate max-w-[200px]">{m.content_id}</div>}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariant(m.status)} className="text-[10px] uppercase">{m.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{m._derived.peers}</TableCell>
+                    <TableCell className="font-mono text-xs">{formatBytesPerSecond(m._derived.speedDownKbps * 1024)}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2 max-w-[100px]">
+                        <span className="text-xs w-8">{m._derived.progressValue}%</span>
+                        <Progress value={m._derived.progressValue} className="h-1.5" />
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-slate-900" onClick={() => handleAction(m.monitor_id, 'stop')} disabled={stoppingById[m.monitor_id] || m.status === 'dead'} title="Stop">
+                          <StopCircle className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950" onClick={() => handleAction(m.monitor_id, 'delete')} disabled={deletingById[m.monitor_id]} title="Delete">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {sortedMonitors.map((monitor) => (
+              <MonitorCard 
+                key={monitor.monitor_id}
+                monitor={monitor}
+                isExpanded={Boolean(expandedById[monitor.monitor_id])}
+                isSelected={Boolean(selectedById[monitor.monitor_id])}
+                isPlayingInProxy={activeProxyKeys.has(normalizeContentRef(monitor.content_id))}
+                isStopping={Boolean(stoppingById[monitor.monitor_id])}
+                isDeleting={Boolean(deletingById[monitor.monitor_id])}
+                onToggleExpand={(id, state) => setExpandedById(p => ({ ...p, [id]: state }))}
+                onToggleSelect={(id, state) => setSelectedById(p => ({ ...p, [id]: state }))}
+                onStop={(id) => handleAction(id, 'stop')}
+                onDelete={(id) => handleAction(id, 'delete')}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Slide-out Sheet for "Add Session" */}
+      <Sheet open={isAddSheetOpen} onOpenChange={setIsAddSheetOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto bg-slate-50 dark:bg-slate-950 p-0 border-l">
+          <div className="p-6 bg-white dark:bg-slate-900 border-b sticky top-0 z-10">
+            <SheetHeader>
+              <SheetTitle>Add Monitoring Session</SheetTitle>
+              <SheetDescription>
+                Manually track stream telemetry or extract links from an M3U playlist.
+              </SheetDescription>
+            </SheetHeader>
+          </div>
+          
+          <div className="p-6">
+            <Tabs defaultValue="manual" className="w-full">
+              <TabsList className="grid w-full grid-cols-2 mb-6">
+                <TabsTrigger value="manual"><PlusCircle className="mr-2 h-4 w-4" /> Manual</TabsTrigger>
+                <TabsTrigger value="m3u"><ListVideo className="mr-2 h-4 w-4" /> M3U Import</TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="manual" className="space-y-6 mt-0">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Content ID / Infohash</label>
+                    <Input placeholder="acestream://..." value={newMonitor.content_id} onChange={(e) => setNewMonitor(p => ({ ...p, content_id: e.target.value }))} />
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-muted-foreground flex justify-between">Live Delay <span>(s)</span></label>
+                      <Input type="number" min="0" placeholder="0" value={newMonitor.live_delay} onChange={(e) => setNewMonitor(p => ({ ...p, live_delay: e.target.value }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-muted-foreground flex justify-between">Interval <span>(s)</span></label>
+                      <Input type="number" min="0.5" step="0.5" placeholder="1.0" value={newMonitor.interval_s} onChange={(e) => setNewMonitor(p => ({ ...p, interval_s: e.target.value }))} />
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-muted-foreground flex justify-between">Run Duration <span>(s)</span></label>
+                    <Input type="number" min="0" placeholder="0 (Continuous)" value={newMonitor.run_seconds} onChange={(e) => setNewMonitor(p => ({ ...p, run_seconds: e.target.value }))} />
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t">
+                  <Button onClick={handleStartMonitor} disabled={starting || !apiKey} className="w-full">
+                    <PlayCircle className="mr-2 h-4 w-4" /> {starting ? 'Starting...' : 'Start Monitoring'}
+                  </Button>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="m3u" className="space-y-6 mt-0">
+                <div className="space-y-4">
+                  <div className="rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-700 p-6 flex flex-col items-center justify-center text-center hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors">
+                    <ListVideo className="h-8 w-8 text-muted-foreground mb-3" />
+                    <p className="text-sm font-medium mb-1">Upload Playlist</p>
+                    <p className="text-xs text-muted-foreground mb-4">.m3u, .m3u8, or .txt</p>
+                    <Input type="file" accept=".m3u,.m3u8,text/plain" onChange={handleM3uFilePicked} className="max-w-[250px]" />
+                  </div>
+
+                  <Button variant="secondary" className="w-full" onClick={handleParseM3u} disabled={m3uParsing || !m3uContent || !apiKey}>
+                    {m3uParsing ? 'Parsing File...' : 'Extract AceStream Links'}
+                  </Button>
+                </div>
+
+                {m3uEntries.length > 0 && (
+                  <div className="pt-6 border-t space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Select Streams ({Object.values(m3uSelectedById).filter(Boolean).length}/{m3uEntries.length})</span>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { const n = {}; m3uEntries.forEach(e => n[e.content_id] = true); setM3uSelectedById(n) }}>All</Button>
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setM3uSelectedById({})}>None</Button>
+                      </div>
+                    </div>
+                    
+                    <div className="max-h-[300px] overflow-y-auto space-y-2 pr-2 border rounded-md p-2 bg-white dark:bg-slate-900">
+                      {m3uEntries.map(entry => (
+                        <div key={entry.content_id} className="flex items-start gap-3 rounded p-2 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                          <Checkbox className="mt-1" checked={Boolean(m3uSelectedById[entry.content_id])} onCheckedChange={(c) => setM3uSelectedById(p => ({ ...p, [entry.content_id]: Boolean(c) }))} />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium truncate" title={entry.name}>{entry.name || 'Unnamed stream'}</p>
+                            <p className="text-xs text-muted-foreground font-mono truncate" title={entry.content_id}>{entry.content_id}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <Button className="w-full" onClick={() => { /* Start M3U logic */ }} disabled={m3uStarting || !apiKey || Object.values(m3uSelectedById).filter(Boolean).length === 0}>
+                      <PlayCircle className="mr-2 h-4 w-4" /> Start Selected ({Object.values(m3uSelectedById).filter(Boolean).length})
+                    </Button>
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }
