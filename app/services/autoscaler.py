@@ -276,10 +276,19 @@ class EngineController:
 
         desired = state.get_desired_replica_count()
         engines = state.list_engines()
-        actual = len(engines)
+        serving_engines = [
+            engine for engine in engines
+            if not state.is_engine_draining(engine.container_id)
+        ]
+        draining_engines = [
+            engine for engine in engines
+            if state.is_engine_draining(engine.container_id)
+        ]
 
-        if actual < desired:
-            deficit = desired - actual
+        actual_serving = len(serving_engines)
+
+        if actual_serving < desired:
+            deficit = desired - actual_serving
             for _ in range(deficit):
                 intent = state.emit_scaling_intent(
                     intent_type="create_request",
@@ -287,15 +296,15 @@ class EngineController:
                         "requested_by": "engine_controller",
                         "scheduler_request": True,
                         "desired": desired,
-                        "actual": actual,
+                        "actual": actual_serving,
                     },
                 )
                 await self._execute_create_intent(intent)
-                actual += 1
+                actual_serving += 1
 
-        elif actual > desired:
-            excess = actual - desired
-            candidates = self._build_termination_candidates(engines)
+        elif actual_serving > desired:
+            excess = actual_serving - desired
+            candidates = self._build_termination_candidates(serving_engines)
             removed = 0
 
             for engine in candidates:
@@ -310,13 +319,31 @@ class EngineController:
                     details={
                         "requested_by": "engine_controller",
                         "desired": desired,
-                        "actual": actual,
+                        "actual": actual_serving,
                         "container_id": engine.container_id,
                     },
                 )
                 await self._execute_terminate_intent(intent, engine.container_id)
                 removed += 1
-                actual -= 1
+                actual_serving -= 1
+
+        # Draining engines are excluded from placement and should be removed
+        # as soon as they become safe to stop.
+        for engine in self._build_termination_candidates(draining_engines):
+            if not can_stop_engine(engine.container_id, bypass_grace_period=False):
+                continue
+
+            intent = state.emit_scaling_intent(
+                intent_type="terminate_request",
+                details={
+                    "requested_by": "engine_controller",
+                    "eviction_reason": "draining_cleanup",
+                    "desired": desired,
+                    "actual": actual_serving,
+                    "container_id": engine.container_id,
+                },
+            )
+            await self._execute_terminate_intent(intent, engine.container_id)
 
     async def _enqueue_outdated_engine_termination_intents(self):
         target = state.get_target_engine_config()

@@ -5552,6 +5552,10 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
             "Graceful VPN migration requested: marked_non_vpn_engines_draining=%s",
             migration_marked,
         )
+        if migration_marked > 0:
+            engine_controller.request_reconcile(
+                reason=f"vpn_migration_toggle:{'enabled' if target_vpn_enabled else 'disabled'}"
+            )
 
     if SettingsPersistence.save_vpn_config(current):
         logger.info("VPN settings persisted")
