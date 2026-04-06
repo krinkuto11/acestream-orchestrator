@@ -127,12 +127,16 @@ class VPNController:
         self._sync_dynamic_nodes_to_state(current_nodes)
 
         preferred_engines_per_vpn = self._get_preferred_engines_per_vpn(settings)
-        total_engines = len(state.list_engines())
+
+        # Only VPN-bound engines contribute to VPN node demand. During graceful
+        # migration we can have overlapping legacy internet engines that should
+        # not inflate desired VPN capacity.
+        total_vpn_engines = sum(1 for e in state.list_engines() if getattr(e, "vpn_container", None))
         desired_engines = max(0, int(state.get_desired_replica_count()))
         # Bootstrap dynamic VPN nodes from desired engine demand as well.
         # Using only existing engines causes a startup deadlock:
         # no engines -> no VPN nodes -> engine provisioning blocked.
-        engine_demand = max(total_engines, desired_engines)
+        engine_demand = max(total_vpn_engines, desired_engines)
         required_vpns = 0
         if engine_demand > 0 and preferred_engines_per_vpn > 0:
             required_vpns = math.ceil(engine_demand / preferred_engines_per_vpn)
@@ -142,8 +146,8 @@ class VPNController:
 
         logger.debug(
             "VPN controller desired nodes computed "
-            "(engines=%s, desired_engines=%s, demand=%s, preferred=%s, credentials=%s, desired_vpns=%s)",
-            total_engines,
+            "(vpn_engines=%s, desired_engines=%s, demand=%s, preferred=%s, credentials=%s, desired_vpns=%s)",
+            total_vpn_engines,
             desired_engines,
             engine_demand,
             preferred_engines_per_vpn,

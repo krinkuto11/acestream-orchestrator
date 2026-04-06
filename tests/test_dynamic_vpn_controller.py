@@ -99,7 +99,8 @@ def test_vpn_controller_caps_desired_vpns_by_credentials():
     }), \
          patch("app.services.vpn_controller.credential_manager.summary", new=AsyncMock(return_value={"total_credentials": 2})), \
          patch("app.services.vpn_controller.vpn_provisioner.list_managed_nodes", new=AsyncMock(side_effect=[[], []])), \
-         patch("app.services.state.state.list_engines", return_value=[object(), object(), object(), object(), object()]), \
+         patch("app.services.state.state.list_engines", return_value=[]), \
+         patch("app.services.state.state.get_desired_replica_count", return_value=5), \
          patch.object(controller, "_sync_dynamic_nodes_to_state"), \
          patch.object(controller, "_heal_notready_nodes", new=AsyncMock()), \
          patch.object(controller, "_scale_down_idle_nodes", new=AsyncMock()), \
