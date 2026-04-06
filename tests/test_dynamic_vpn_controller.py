@@ -164,22 +164,38 @@ def test_scheduler_no_vpn_enabled_ignores_dynamic_config_when_disabled():
     assert "network" in spec.network_config
 
 
-def test_vpn_controller_skips_when_vpn_disabled_even_if_dynamic_flag_set():
+def test_vpn_controller_disables_vpn_by_draining_and_cleaning_nodes():
     controller = VPNController()
+    nodes = [
+        {
+            "container_name": "gluetun-dyn-test",
+            "status": "running",
+            "provider": "protonvpn",
+            "protocol": "wireguard",
+            "credential_id": "cred-1",
+        }
+    ]
 
     with patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={
         "enabled": False,
         "dynamic_vpn_management": True,
     }), \
-         patch("app.services.vpn_controller.vpn_provisioner.list_managed_nodes", new=AsyncMock()) as list_nodes_mock, \
-         patch.object(controller, "_heal_notready_nodes", new=AsyncMock()) as heal_mock, \
+         patch("app.services.vpn_controller.vpn_provisioner.list_managed_nodes", new=AsyncMock(side_effect=[nodes, []])) as list_nodes_mock, \
+         patch.object(controller, "_sync_dynamic_nodes_to_state") as sync_mock, \
+         patch.object(controller, "_mark_node_draining", new=AsyncMock()) as mark_draining_mock, \
+         patch.object(controller, "_migrate_streams_on_draining_nodes", new=AsyncMock()) as migrate_mock, \
+         patch.object(controller, "_garbage_collect_draining_nodes", new=AsyncMock()) as gc_mock, \
          patch.object(controller, "_provision_one", new=AsyncMock()) as provision_mock:
         asyncio.run(controller._reconcile_once())
 
     assert state.get_desired_vpn_node_count() == 0
-    assert list_nodes_mock.await_count == 0
-    assert heal_mock.await_count == 0
+    assert list_nodes_mock.await_count == 2
+    sync_mock.assert_called_once()
+    mark_draining_mock.assert_awaited_once_with("gluetun-dyn-test", reason="vpn_disabled")
+    migrate_mock.assert_awaited_once()
+    gc_mock.assert_awaited_once()
     assert provision_mock.await_count == 0
+    assert controller._stop.is_set()
 
 
 def test_vpn_controller_does_not_restore_leases_during_reconcile_tick():

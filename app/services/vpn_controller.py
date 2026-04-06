@@ -101,6 +101,23 @@ class VPNController:
         vpn_enabled = bool(settings.get("enabled", False))
         if not vpn_enabled:
             state.set_desired_vpn_node_count(0)
+            current_nodes = await vpn_provisioner.list_managed_nodes(include_stopped=True)
+            self._sync_dynamic_nodes_to_state(current_nodes)
+
+            for node in current_nodes:
+                vpn_name = str(node.get("container_name") or "").strip()
+                if not vpn_name:
+                    continue
+                await self._mark_node_draining(vpn_name, reason="vpn_disabled")
+
+            await self._migrate_streams_on_draining_nodes()
+            await self._garbage_collect_draining_nodes()
+
+            remaining_nodes = await vpn_provisioner.list_managed_nodes(include_stopped=True)
+            if not remaining_nodes:
+                logger.info("VPN disabled cleanup complete; stopping VPN controller")
+                self._stop.set()
+                self._reconcile_signal.set()
             return
 
         current_nodes = await vpn_provisioner.list_managed_nodes(include_stopped=True)

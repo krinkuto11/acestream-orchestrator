@@ -5526,10 +5526,12 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
             await vpn_controller.start()
             logger.info("Dynamic VPN controller started after VPN settings update")
     else:
-        if vpn_controller.is_running():
-            await vpn_controller.stop()
-            state.set_desired_vpn_node_count(0)
-            logger.info("Dynamic VPN controller stopped after VPN settings update")
+        state.set_desired_vpn_node_count(0)
+        if not vpn_controller.is_running():
+            await vpn_controller.start()
+            logger.info("Dynamic VPN controller started for disable cleanup")
+        vpn_controller.request_reconcile(reason="vpn_disabled_cleanup")
+        logger.info("Dynamic VPN controller reconcile requested for disable cleanup")
 
     migration_marked = 0
     migration_requested = bool(getattr(settings, "trigger_migration", False))

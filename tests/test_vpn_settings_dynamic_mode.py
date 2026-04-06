@@ -69,7 +69,7 @@ def test_update_vpn_settings_enabled_always_uses_dynamic_controller():
     stop_mock.assert_not_awaited()
 
 
-def test_update_vpn_settings_disabled_stops_controller():
+def test_update_vpn_settings_disabled_requests_cleanup_reconcile():
     from app import main
 
     settings = _vpn_payload(main, enabled=False, dynamic_vpn_management=False)
@@ -84,14 +84,14 @@ def test_update_vpn_settings_disabled_stops_controller():
          })), \
          patch.object(main.vpn_controller, "is_running", return_value=True), \
          patch.object(main.vpn_controller, "start", new=AsyncMock()) as start_mock, \
-         patch.object(main.vpn_controller, "stop", new=AsyncMock()) as stop_mock, \
+         patch.object(main.vpn_controller, "request_reconcile") as request_reconcile, \
          patch.object(main.state, "set_desired_vpn_node_count") as set_desired:
         response = asyncio.run(main.update_vpn_settings(settings))
 
     assert response["enabled"] is False
     assert response["dynamic_vpn_management"] is True
     start_mock.assert_not_awaited()
-    stop_mock.assert_awaited_once()
+    request_reconcile.assert_called_once_with(reason="vpn_disabled_cleanup")
     set_desired.assert_called_once_with(0)
 
 
@@ -208,7 +208,7 @@ def test_update_vpn_settings_trigger_migration_on_disable_marks_vpn_engines_drai
              "leased": 0,
          })), \
          patch.object(main.vpn_controller, "is_running", return_value=True), \
-         patch.object(main.vpn_controller, "stop", new=AsyncMock()), \
+         patch.object(main.vpn_controller, "request_reconcile") as request_reconcile, \
          patch.object(main.state, "set_desired_vpn_node_count") as set_desired, \
          patch.object(main.state, "list_engines", return_value=engines), \
          patch.object(main.state, "mark_engine_draining", return_value=True) as mark_draining:
@@ -217,4 +217,5 @@ def test_update_vpn_settings_trigger_migration_on_disable_marks_vpn_engines_drai
     assert response["migration_requested"] is True
     assert response["migration_marked_engines"] == 1
     set_desired.assert_called_once_with(0)
+    request_reconcile.assert_called_once_with(reason="vpn_disabled_cleanup")
     mark_draining.assert_called_once_with("engine-vpn", reason="vpn_enable_migration")
