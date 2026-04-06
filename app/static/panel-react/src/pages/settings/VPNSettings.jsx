@@ -95,7 +95,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const [expertOpen, setExpertOpen] = useState(false)
   const [dialogLoading, setDialogLoading] = useState(false)
   const [vpnToggleLoading, setVpnToggleLoading] = useState(false)
-  const [triggerMigrationOnEnable, setTriggerMigrationOnEnable] = useState(true)
+  const [triggerMigrationOnToggle, setTriggerMigrationOnToggle] = useState(true)
   const [isDragging, setIsDragging] = useState(false)
 
   // Per-Credential Settings
@@ -160,7 +160,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
       setInitialState(normalized)
       setDraft(normalized)
       setCredentials(Array.isArray(payload?.credentials) ? payload.credentials : [])
-      setTriggerMigrationOnEnable(true)
+      setTriggerMigrationOnToggle(true)
       setSectionDirty(sectionId, false)
       await fetchLeases()
     } catch (fetchError) {
@@ -264,8 +264,8 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
   const applyVpnEnabled = async (value) => {
     const enabled = Boolean(value)
-    const turningOnFromOff = enabled && !Boolean(initialState.enabled)
-    const shouldTriggerMigration = Boolean(turningOnFromOff && triggerMigrationOnEnable)
+    const vpnStateChanged = enabled !== Boolean(initialState.enabled)
+    const shouldTriggerMigration = Boolean(vpnStateChanged && triggerMigrationOnToggle)
 
     if (enabled && !hasCredentials) {
       setError('Add at least one VPN credential before enabling VPN routing')
@@ -319,7 +319,8 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
       const marked = Math.max(0, Number(result?.migration_marked_engines || 0))
       if (shouldTriggerMigration) {
-        setMessage(`VPN routing enabled and applied immediately; marked ${marked} non-VPN engine(s) as draining`)
+        const targetText = enabled ? 'VPN-backed engines' : 'normal internet engines'
+        setMessage(`VPN routing ${enabled ? 'enabled' : 'disabled'} and applied immediately; marked ${marked} engine(s) as draining for migration to ${targetText}`)
       } else {
         setMessage(`VPN routing ${enabled ? 'enabled' : 'disabled'} and applied immediately`)
       }
@@ -490,7 +491,11 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         <CardContent className="space-y-3">
           <SettingRow
             label="Enable VPN Routing"
-            description="Route engine traffic through managed VPN nodes."
+            description={
+              Boolean(initialState.enabled)
+                ? 'Disable to stop new engine scheduling on managed VPN nodes.'
+                : 'Route new engine traffic through managed VPN nodes.'
+            }
             warning={!hasCredentials ? 'Add at least one credential in the pool to enable routing.' : undefined}
           >
             <Switch
@@ -500,13 +505,17 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
             />
           </SettingRow>
 
-          {!draft.enabled && hasCredentials && (
+          {(Boolean(initialState.enabled) || hasCredentials) && (
             <div className="rounded-lg border border-slate-200/70 bg-slate-50/60 p-3 dark:border-slate-800 dark:bg-slate-900/40">
               <SettingRow
-                label="Gracefully migrate existing engines when enabling"
-                description="Marks current non-VPN engines as draining so new stream placement moves to VPN engines without dropping active streams."
+                label="Gracefully migrate engines on VPN toggle"
+                description={
+                  Boolean(initialState.enabled)
+                    ? 'When disabling VPN routing, marks current VPN engines as draining so new streams move to normal internet engines without dropping active streams.'
+                    : 'When enabling VPN routing, marks current non-VPN engines as draining so new streams move to VPN-backed engines without dropping active streams.'
+                }
               >
-                <Switch checked={triggerMigrationOnEnable} onCheckedChange={setTriggerMigrationOnEnable} />
+                <Switch checked={triggerMigrationOnToggle} onCheckedChange={setTriggerMigrationOnToggle} />
               </SettingRow>
             </div>
           )}
@@ -649,7 +658,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
       </Card>
 
       <Sheet open={dialogOpen} onOpenChange={setDialogOpen}>
-        <SheetContent side="right" className="dark w-[400px] sm:w-[540px] overflow-y-auto">
+        <SheetContent side="right" className="dark text-foreground w-[400px] sm:w-[540px] overflow-y-auto">
           <SheetHeader className="mb-6">
             <SheetTitle>Add VPN Credential</SheetTitle>
             <SheetDescription>
@@ -660,7 +669,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           <div className="space-y-6">
             <SettingRow label="Provider" description="VPN service provider.">
               <Select value={credentialProvider} onValueChange={setCredentialProvider}>
-                <SelectTrigger className="w-full"><SelectValue placeholder="Select provider" /></SelectTrigger>
+                <SelectTrigger className="w-full text-foreground"><SelectValue placeholder="Select provider" /></SelectTrigger>
                 <SelectContent className="dark">
                   {PROVIDER_OPTIONS.map((option) => (
                     <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
@@ -671,7 +680,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
             <SettingRow label="Protocol" description="Protocol type for this credential.">
               <Select value={credentialMode} onValueChange={setCredentialMode}>
-                <SelectTrigger className="w-full"><SelectValue placeholder="Select protocol" /></SelectTrigger>
+                <SelectTrigger className="w-full text-foreground"><SelectValue placeholder="Select protocol" /></SelectTrigger>
                 <SelectContent className="dark">
                   <SelectItem value="wireguard">Wireguard (.conf text)</SelectItem>
                   <SelectItem value="openvpn">OpenVPN (username/password)</SelectItem>
@@ -719,7 +728,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           </div>
 
           <SheetFooter className="mt-8">
-            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button type="button" variant="outline" className="text-foreground" onClick={() => setDialogOpen(false)}>Cancel</Button>
             <Button type="button" onClick={addCredential} disabled={dialogLoading}>
               {dialogLoading ? <><AlertCircle className="mr-2 h-4 w-4" />Saving...</> : <><Plus className="mr-2 h-4 w-4" />Add Credential</>}
             </Button>

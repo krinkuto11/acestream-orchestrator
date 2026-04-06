@@ -5533,10 +5533,12 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
 
     migration_marked = 0
     migration_requested = bool(getattr(settings, "trigger_migration", False))
-    migration_should_run = migration_requested and dynamic_enabled and not previously_enabled
+    migration_should_run = migration_requested and dynamic_enabled != previously_enabled
     if migration_should_run:
+        target_vpn_enabled = dynamic_enabled
         for engine_state in state.list_engines():
-            if engine_state.vpn_container:
+            engine_is_vpn_bound = bool(engine_state.vpn_container)
+            if engine_is_vpn_bound == target_vpn_enabled:
                 continue
 
             container_id = str(engine_state.container_id or "").strip()

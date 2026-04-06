@@ -66,7 +66,7 @@ Request fields (all optional):
 - `protocol` (`wireguard` or `openvpn`)
 - `regions` (list of regions/countries/cities, can be prefixed as `country:`, `city:`, `region:`, `hostname:`)
 - `credentials` (list of JSON objects used for dynamic VPN node provisioning)
-- `trigger_migration` (optional bool; when enabling VPN, marks current non-VPN engines as draining so new streams migrate to VPN-backed engines without dropping active sessions)
+- `trigger_migration` (optional bool; when toggling VPN state, marks engines that do not match the new target state as draining so new streams migrate without dropping active sessions)
 
 Example dynamic request payload:
 
