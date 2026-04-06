@@ -25,7 +25,7 @@ const DEFAULTS = {
   channel_shutdown_delay: 5,
   max_streams_per_engine: 3,
   stream_mode: 'TS',
-  control_mode: 'http',
+  control_mode: 'api',
   hls_max_segments: 20,
   hls_initial_segments: 3,
   hls_window_size: 6,

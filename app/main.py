@@ -3120,7 +3120,7 @@ def _resolve_live_delay(seekback: Optional[int], live_delay: Optional[int]) -> i
 
 def _resolve_control_mode(mode: Optional[str]) -> str:
     """Normalize control mode to canonical values (http/api) with legacy aliases."""
-    return normalize_proxy_mode(mode, default=PROXY_MODE_HTTP) or PROXY_MODE_HTTP
+    return normalize_proxy_mode(mode, default=PROXY_MODE_API) or PROXY_MODE_API
 
 
 def _build_stream_key(input_type: str, input_value: str, file_indexes: str = "0", seekback: int = 0) -> str:
@@ -4914,7 +4914,7 @@ def update_proxy_config(
         channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
         max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
         stream_mode: Stream mode - 'TS' for MPEG-TS or 'HLS' for HLS streaming
-        control_mode: Engine control mode - 'http' (default) or 'api'
+        control_mode: Engine control mode - 'api' (default) or 'http'
         legacy_api_preflight_tier: Legacy API preflight tier - 'light' or 'deep'
         hls_max_segments: Maximum HLS segments to buffer (min: 5, max: 100)
         hls_initial_segments: Minimum HLS segments before playback (min: 1, max: 10)

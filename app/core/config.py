@@ -84,7 +84,7 @@ class Cfg(BaseModel):
     ACE_HTTP_RANGE: str = os.getenv("ACE_HTTP_RANGE", "40000-44999")
     ACE_HTTPS_RANGE: str = os.getenv("ACE_HTTPS_RANGE", "45000-49999")
     ACE_MAP_HTTPS: bool = os.getenv("ACE_MAP_HTTPS", "false").lower() == "true"
-    PROXY_CONTROL_MODE: str = normalize_proxy_mode(os.getenv("PROXY_CONTROL_MODE", PROXY_MODE_HTTP), default=PROXY_MODE_HTTP)
+    PROXY_CONTROL_MODE: str = normalize_proxy_mode(os.getenv("PROXY_CONTROL_MODE", PROXY_MODE_API), default=PROXY_MODE_API)
     ACE_LIVE_EDGE_DELAY: int = int(os.getenv("ACE_LIVE_EDGE_DELAY", "0"))
     
     # Engine resource limits

@@ -206,7 +206,7 @@ Orchestrator-managed dynamic VPN provisioning is the recommended mode.
 | Variable | Default | Description |
 |---|---|---|
 | `PROXY_STREAM_MODE` | `TS` | **[UI]** Stream delivery mode: `TS` (MPEG-TS) or `HLS`. |
-| `PROXY_CONTROL_MODE` | `http` | **[UI]** Stream control path: `http` or `api`. Legacy aliases (`LEGACY_HTTP`, `LEGACY_API`) are accepted and normalized. |
+| `PROXY_CONTROL_MODE` | `api` | **[UI]** Stream control path: `http` or `api`. Legacy aliases (`LEGACY_HTTP`, `LEGACY_API`) are accepted and normalized. |
 | `PROXY_LEGACY_API_PREFLIGHT_TIER` | `light` | **[UI]** Preflight depth: `light` (resolve only) or `deep` (resolve + probe + stop). |
 | `PROXY_CONNECTION_TIMEOUT` | `10` | Seconds before a connection attempt to an engine times out. |
 | `PROXY_CLIENT_WAIT_TIMEOUT` | `30` | Seconds a client waits for an engine to accept the stream. |

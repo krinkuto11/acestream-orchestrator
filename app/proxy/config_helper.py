@@ -64,7 +64,7 @@ class Config:
     # Engine control mode
     # http: JSON-over-HTTP control flow
     # api: telnet-style AceStream API control flow (optional)
-    CONTROL_MODE = normalize_proxy_mode(os.getenv('PROXY_CONTROL_MODE', PROXY_MODE_HTTP), default=PROXY_MODE_HTTP)
+    CONTROL_MODE = normalize_proxy_mode(os.getenv('PROXY_CONTROL_MODE', PROXY_MODE_API), default=PROXY_MODE_API)
 
     # API-mode preflight tier used before START when proxy control mode is api.
     # light: resolve/canonicalize only
