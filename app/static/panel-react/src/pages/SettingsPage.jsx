@@ -273,7 +273,7 @@ function SettingsPageInner({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setTabWarningOpen(false)}>Stay Here</Button>
+            <Button variant="outline" className="text-foreground dark:text-slate-100" onClick={() => setTabWarningOpen(false)}>Stay Here</Button>
             <Button onClick={proceedTabChange}>Continue to Tab</Button>
           </DialogFooter>
         </DialogContent>

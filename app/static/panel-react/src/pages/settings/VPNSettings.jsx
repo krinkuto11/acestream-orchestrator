@@ -95,7 +95,6 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const [expertOpen, setExpertOpen] = useState(false)
   const [dialogLoading, setDialogLoading] = useState(false)
   const [vpnToggleLoading, setVpnToggleLoading] = useState(false)
-  const [triggerMigrationOnToggle, setTriggerMigrationOnToggle] = useState(true)
   const [isDragging, setIsDragging] = useState(false)
 
   // Per-Credential Settings
@@ -160,7 +159,6 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
       setInitialState(normalized)
       setDraft(normalized)
       setCredentials(Array.isArray(payload?.credentials) ? payload.credentials : [])
-      setTriggerMigrationOnToggle(true)
       setSectionDirty(sectionId, false)
       await fetchLeases()
     } catch (fetchError) {
@@ -265,7 +263,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const applyVpnEnabled = async (value) => {
     const enabled = Boolean(value)
     const vpnStateChanged = enabled !== Boolean(initialState.enabled)
-    const shouldTriggerMigration = Boolean(vpnStateChanged && triggerMigrationOnToggle)
+    const shouldTriggerMigration = Boolean(vpnStateChanged)
 
     if (enabled && !hasCredentials) {
       setError('Add at least one VPN credential before enabling VPN routing')
@@ -504,21 +502,6 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
               onCheckedChange={applyVpnEnabled}
             />
           </SettingRow>
-
-          {(Boolean(initialState.enabled) || hasCredentials) && (
-            <div className="rounded-lg border border-slate-200/70 bg-slate-50/60 p-3 dark:border-slate-800 dark:bg-slate-900/40">
-              <SettingRow
-                label="Gracefully migrate engines on VPN toggle"
-                description={
-                  Boolean(initialState.enabled)
-                    ? 'When disabling VPN routing, marks current VPN engines as draining so new streams move to normal internet engines without dropping active streams.'
-                    : 'When enabling VPN routing, marks current non-VPN engines as draining so new streams move to VPN-backed engines without dropping active streams.'
-                }
-              >
-                <Switch checked={triggerMigrationOnToggle} onCheckedChange={setTriggerMigrationOnToggle} />
-              </SettingRow>
-            </div>
-          )}
 
           <SettingRow label="Preferred Engines per VPN Node" description="Scheduler hint for desired VPN node count.">
             <Input type="number" min={1} max={100} value={draft.preferred_engines_per_vpn} onChange={(e) => update('preferred_engines_per_vpn', toNumber(e.target.value, DEFAULTS.preferred_engines_per_vpn))} className="max-w-xs" />

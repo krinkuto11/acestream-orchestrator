@@ -23,12 +23,42 @@ logger = logging.getLogger(__name__)
 # Forwarded-port cache: container_name -> (port, cached_at)
 _FORWARDED_PORT_CACHE: Dict[str, Tuple[int, datetime]] = {}
 
+# Host public-IP cache to avoid repeated external lookups during frequent status polling.
+_HOST_PUBLIC_IP_CACHE: Tuple[Optional[str], datetime] | None = None
+
 
 def _cache_ttl_seconds() -> int:
     try:
         return max(1, int(getattr(cfg, "GLUETUN_PORT_CACHE_TTL_S", 60)))
     except Exception:
         return 60
+
+
+def _host_public_ip_cache_ttl_seconds() -> int:
+    # Keep this much longer than VPN status cache since it changes infrequently.
+    return 120
+
+
+def _get_cached_host_public_ip() -> Optional[str]:
+    global _HOST_PUBLIC_IP_CACHE
+
+    if not _HOST_PUBLIC_IP_CACHE:
+        return None
+
+    public_ip, cached_at = _HOST_PUBLIC_IP_CACHE
+    age = (datetime.now(timezone.utc) - cached_at).total_seconds()
+    if age > _host_public_ip_cache_ttl_seconds():
+        _HOST_PUBLIC_IP_CACHE = None
+        return None
+    return public_ip
+
+
+def _set_cached_host_public_ip(public_ip: Optional[str]) -> Optional[str]:
+    global _HOST_PUBLIC_IP_CACHE
+
+    normalized = str(public_ip or "").strip() or None
+    _HOST_PUBLIC_IP_CACHE = (normalized, datetime.now(timezone.utc))
+    return normalized
 
 
 def _state_node(container_name: str) -> Optional[Dict[str, object]]:
@@ -360,6 +390,43 @@ def get_vpn_public_ip(container_name: Optional[str] = None) -> Optional[str]:
     return info.get("public_ip") if info else None
 
 
+def get_host_public_ip() -> Optional[str]:
+    cached = _get_cached_host_public_ip()
+    if cached:
+        return cached
+
+    endpoints = [
+        "https://api.ipify.org?format=json",
+        "https://ifconfig.me/ip",
+    ]
+
+    for endpoint in endpoints:
+        try:
+            with httpx.Client(timeout=5) as client:
+                response = client.get(endpoint)
+                response.raise_for_status()
+                if endpoint.endswith("format=json"):
+                    data = response.json() or {}
+                    candidate = str(data.get("ip") or data.get("public_ip") or "").strip()
+                else:
+                    candidate = str(response.text or "").strip()
+
+                if candidate:
+                    return _set_cached_host_public_ip(candidate)
+        except Exception as exc:
+            logger.debug("Failed to fetch host public IP from '%s': %s", endpoint, exc)
+
+    # Cache miss/failure to avoid hammering external services on repeated polls.
+    return _set_cached_host_public_ip(None)
+
+
+def get_effective_public_ip(container_name: Optional[str] = None) -> Optional[str]:
+    vpn_ip = get_vpn_public_ip(container_name)
+    if vpn_ip:
+        return vpn_ip
+    return get_host_public_ip()
+
+
 def _single_vpn_status(container_name: str) -> Dict[str, object]:
     node = _state_node(container_name)
     state_health = bool(node.get("healthy")) if node is not None else None
@@ -406,6 +473,7 @@ def get_vpn_status() -> Dict[str, object]:
             "health": "unknown",
             "connected": False,
             "forwarded_port": None,
+            "public_ip": get_host_public_ip(),
             "last_check": None,
             "last_check_at": None,
             "vpn1": {},
@@ -432,6 +500,7 @@ def get_vpn_status() -> Dict[str, object]:
         "health": "healthy" if any_healthy else "unhealthy",
         "connected": any_healthy,
         "forwarded_port": vpn1_status.get("forwarded_port"),
+        "public_ip": vpn1_status.get("public_ip") or vpn2_status.get("public_ip"),
         "last_check": datetime.now(timezone.utc).isoformat(),
         "last_check_at": datetime.now(timezone.utc).isoformat(),
         "vpn1": vpn1_status,

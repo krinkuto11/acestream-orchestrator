@@ -2394,13 +2394,13 @@ async def get_vpn_credential_leases():
 
 @app.get("/vpn/publicip")
 def get_vpn_publicip_endpoint():
-    """Get VPN public IP address."""
-    from .services.gluetun import get_vpn_public_ip
-    public_ip = get_vpn_public_ip()
+    """Get effective public IP address (VPN egress when enabled, host egress otherwise)."""
+    from .services.gluetun import get_effective_public_ip
+    public_ip = get_effective_public_ip()
     if public_ip:
         return {"public_ip": public_ip}
     else:
-        raise HTTPException(status_code=503, detail="Unable to retrieve VPN public IP")
+        raise HTTPException(status_code=503, detail="Unable to retrieve public IP")
 
 @app.get("/health/status")
 def get_health_status_endpoint():

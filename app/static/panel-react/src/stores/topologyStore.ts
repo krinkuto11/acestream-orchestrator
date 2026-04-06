@@ -376,6 +376,8 @@ const buildSnapshot = (
   const edges: Edge[] = []
   const internetNodeId = 'internet'
   const proxyNodeId = 'proxy-core'
+  const vpnStatusAny = (vpnStatus || {}) as Record<string, unknown>
+  const directPublicIp = String(vpnStatusAny.public_ip || '').trim()
 
   const failoverEngines: string[] = []
 
@@ -516,7 +518,7 @@ const buildSnapshot = (
         lifecycle: 'active',
         metadata: {
           connected: true,
-          publicIp: 'Direct route',
+          publicIp: directPublicIp || 'Unavailable',
           provider: 'WAN',
           country: null,
         },
