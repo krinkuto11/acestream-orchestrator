@@ -172,6 +172,7 @@ class VPNSettingsUpdate(BaseModel):
     port_cache_ttl_s: Optional[int] = None
     restart_engines_on_reconnect: Optional[bool] = None
     unhealthy_restart_timeout_s: Optional[int] = None
+    trigger_migration: Optional[bool] = False
 
 class OrchestratorStatusResponse(BaseModel):
     """

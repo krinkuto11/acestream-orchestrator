@@ -95,6 +95,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const [expertOpen, setExpertOpen] = useState(false)
   const [dialogLoading, setDialogLoading] = useState(false)
   const [vpnToggleLoading, setVpnToggleLoading] = useState(false)
+  const [triggerMigrationOnEnable, setTriggerMigrationOnEnable] = useState(true)
   const [isDragging, setIsDragging] = useState(false)
 
   // Per-Credential Settings
@@ -159,6 +160,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
       setInitialState(normalized)
       setDraft(normalized)
       setCredentials(Array.isArray(payload?.credentials) ? payload.credentials : [])
+      setTriggerMigrationOnEnable(true)
       setSectionDirty(sectionId, false)
       await fetchLeases()
     } catch (fetchError) {
@@ -262,6 +264,8 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
   const applyVpnEnabled = async (value) => {
     const enabled = Boolean(value)
+    const turningOnFromOff = enabled && !Boolean(initialState.enabled)
+    const shouldTriggerMigration = Boolean(turningOnFromOff && triggerMigrationOnEnable)
 
     if (enabled && !hasCredentials) {
       setError('Add at least one VPN credential before enabling VPN routing')
@@ -283,20 +287,42 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         headers.Authorization = `Bearer ${String(apiKey).trim()}`
       }
 
+      const payload = {
+        enabled,
+        api_port: toNumber(draft.api_port, DEFAULTS.api_port),
+        health_check_interval_s: toNumber(draft.health_check_interval_s, DEFAULTS.health_check_interval_s),
+        port_cache_ttl_s: toNumber(draft.port_cache_ttl_s, DEFAULTS.port_cache_ttl_s),
+        restart_engines_on_reconnect: Boolean(draft.restart_engines_on_reconnect),
+        unhealthy_restart_timeout_s: toNumber(draft.unhealthy_restart_timeout_s, DEFAULTS.unhealthy_restart_timeout_s),
+        preferred_engines_per_vpn: Math.max(1, toNumber(draft.preferred_engines_per_vpn, DEFAULTS.preferred_engines_per_vpn)),
+        protocol: draft.protocol,
+        provider: draft.provider,
+        regions: parseRegionsInput(draft.regionsText),
+        credentials,
+        trigger_migration: shouldTriggerMigration,
+      }
+
       const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify(payload),
       })
 
+      const result = await response.json().catch(() => null)
+
       if (!response.ok) {
-        const failure = await response.json().catch(() => ({}))
-        throw new Error(failure?.detail || `HTTP ${response.status}`)
+        throw new Error(result?.detail || `HTTP ${response.status}`)
       }
 
       setDraft((prev) => ({ ...prev, enabled }))
       setInitialState((prev) => ({ ...prev, enabled }))
-      setMessage(`VPN routing ${enabled ? 'enabled' : 'disabled'} and applied immediately`)
+
+      const marked = Math.max(0, Number(result?.migration_marked_engines || 0))
+      if (shouldTriggerMigration) {
+        setMessage(`VPN routing enabled and applied immediately; marked ${marked} non-VPN engine(s) as draining`)
+      } else {
+        setMessage(`VPN routing ${enabled ? 'enabled' : 'disabled'} and applied immediately`)
+      }
     } catch (toggleError) {
       setError(`Failed to toggle VPN routing: ${toggleError.message || String(toggleError)}`)
     } finally {
@@ -473,6 +499,17 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
               onCheckedChange={applyVpnEnabled}
             />
           </SettingRow>
+
+          {!draft.enabled && hasCredentials && (
+            <div className="rounded-lg border border-slate-200/70 bg-slate-50/60 p-3 dark:border-slate-800 dark:bg-slate-900/40">
+              <SettingRow
+                label="Gracefully migrate existing engines when enabling"
+                description="Marks current non-VPN engines as draining so new stream placement moves to VPN engines without dropping active streams."
+              >
+                <Switch checked={triggerMigrationOnEnable} onCheckedChange={setTriggerMigrationOnEnable} />
+              </SettingRow>
+            </div>
+          )}
 
           <SettingRow label="Preferred Engines per VPN Node" description="Scheduler hint for desired VPN node count.">
             <Input type="number" min={1} max={100} value={draft.preferred_engines_per_vpn} onChange={(e) => update('preferred_engines_per_vpn', toNumber(e.target.value, DEFAULTS.preferred_engines_per_vpn))} className="max-w-xs" />

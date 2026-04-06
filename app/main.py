@@ -5422,6 +5422,8 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
         "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
     }
 
+    previously_enabled = bool(current.get("enabled", False))
+
     for legacy_key in ("vpn_mode", "container_name", "container_name_2", "port_range_1", "port_range_2"):
         current.pop(legacy_key, None)
 
@@ -5529,12 +5531,37 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
             state.set_desired_vpn_node_count(0)
             logger.info("Dynamic VPN controller stopped after VPN settings update")
 
+    migration_marked = 0
+    migration_requested = bool(getattr(settings, "trigger_migration", False))
+    migration_should_run = migration_requested and dynamic_enabled and not previously_enabled
+    if migration_should_run:
+        for engine_state in state.list_engines():
+            if engine_state.vpn_container:
+                continue
+
+            container_id = str(engine_state.container_id or "").strip()
+            if not container_id:
+                continue
+
+            if state.mark_engine_draining(container_id, reason="vpn_enable_migration"):
+                migration_marked += 1
+
+        logger.info(
+            "Graceful VPN migration requested: marked_non_vpn_engines_draining=%s",
+            migration_marked,
+        )
+
     if SettingsPersistence.save_vpn_config(current):
         logger.info("VPN settings persisted")
     else:
         logger.warning("Failed to persist VPN settings")
 
-    return {"message": "VPN settings updated and persisted", **current}
+    return {
+        "message": "VPN settings updated and persisted",
+        "migration_requested": migration_requested,
+        "migration_marked_engines": migration_marked,
+        **current,
+    }
 
 
 class VPNCredentialUpsert(BaseModel):

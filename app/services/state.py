@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 ACTIVE_MONITOR_SESSION_STATUSES: Set[str] = {"starting", "running", "stuck", "reconnecting"}
 VPN_NODE_LIFECYCLE_ACTIVE = "active"
 VPN_NODE_LIFECYCLE_DRAINING = "draining"
+ENGINE_LIFECYCLE_LABEL = "acestream.lifecycle"
+ENGINE_DRAIN_REASON_LABEL = "acestream.drain_reason"
+ENGINE_DRAIN_REQUESTED_AT_LABEL = "acestream.drain_requested_at"
 
 class State:
     def __init__(self):
@@ -806,6 +809,52 @@ class State:
 
             self._enqueue_db_task(db_work)
 
+    def mark_engine_draining(self, container_id: str, reason: str = "manual") -> bool:
+        """Mark an engine as draining so it is excluded from new stream placement."""
+        update_payload = None
+
+        with self._lock:
+            eng = self.engines.get(container_id)
+            if not eng:
+                return False
+
+            labels = dict(eng.labels or {})
+            lifecycle = str(
+                labels.get(ENGINE_LIFECYCLE_LABEL)
+                or labels.get("engine.lifecycle")
+                or ""
+            ).strip().lower()
+            if lifecycle == "draining":
+                return False
+
+            now = self.now().isoformat()
+            labels[ENGINE_LIFECYCLE_LABEL] = "draining"
+            labels[ENGINE_DRAIN_REASON_LABEL] = str(reason or "manual")
+            labels[ENGINE_DRAIN_REQUESTED_AT_LABEL] = now
+            eng.labels = labels
+
+            update_payload = {
+                "container_id": str(container_id),
+                "labels": dict(labels),
+            }
+
+        if update_payload:
+            def db_work(session):
+                engine_row = session.get(EngineRow, update_payload["container_id"])
+                if engine_row:
+                    engine_row.labels = dict(update_payload["labels"])
+
+            self._enqueue_db_task(db_work)
+            self.broadcast_state_change(
+                "engine_marked_draining",
+                {
+                    "container_id": str(container_id),
+                    "reason": str(reason or "manual"),
+                },
+            )
+
+        return True
+
     def get_engines_by_vpn(self, vpn_container: str) -> List[EngineState]:
         """Get all engines assigned to a specific VPN container."""
         with self._lock:
@@ -1324,8 +1373,21 @@ class State:
     def is_engine_draining(self, container_id: str) -> bool:
         with self._lock:
             engine = self.engines.get(container_id)
-            if not engine or not engine.vpn_container:
+            if not engine:
                 return False
+
+            labels = engine.labels or {}
+            lifecycle = str(
+                labels.get(ENGINE_LIFECYCLE_LABEL)
+                or labels.get("engine.lifecycle")
+                or ""
+            ).strip().lower()
+            if lifecycle == "draining":
+                return True
+
+            if not engine.vpn_container:
+                return False
+
             node = self._dynamic_vpn_nodes.get(engine.vpn_container)
             if not node:
                 return False
