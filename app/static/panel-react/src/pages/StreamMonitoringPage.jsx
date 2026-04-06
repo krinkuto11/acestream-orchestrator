@@ -13,7 +13,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Radio, PlayCircle, StopCircle, MoveRight, Trash2, ChevronDown, ChevronUp, Activity, Gauge, Users, Play, ListVideo, PlusCircle, LayoutGrid, List, Filter } from 'lucide-react'
 import { formatBytesPerSecond, formatBytes } from '@/utils/formatters'
+import { useTheme } from '@/components/ThemeProvider'
 import { toast } from 'sonner' // Assuming sonner is used based on your components.json/UI standard
+
+const ACTIVE_MONITOR_STATUSES = ['running', 'starting', 'stuck', 'reconnecting']
+const ALLOWED_VIEW_MODES = new Set(['cards', 'table'])
+const ALLOWED_SORT_MODES = new Set(['status_then_recent', 'recent', 'speed', 'progress', 'content'])
+const ALLOWED_STATUS_FILTERS = new Set(['all', 'active', 'running', 'starting', 'stuck', 'reconnecting', 'stopped', 'dead'])
 
 // --- Utility Functions ---
 // (Keep existing formatAge, movementVariant, movementLabel, statusVariant, statusAccent, toInt, normalizeContentRef, buildSeries)
@@ -254,6 +260,8 @@ function MonitorCard({ monitor, isExpanded, isSelected, isPlayingInProxy, isStop
 
 export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
   const uiPrefsStorageKey = 'stream-monitoring-ui-prefs-v2' // Bumped version for new schema
+  const { resolvedTheme } = useTheme()
+  const isDarkTheme = resolvedTheme === 'dark'
   
   // Data State
   const [monitors, setMonitors] = useState([])
@@ -288,9 +296,15 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
   useEffect(() => {
     try {
       const parsed = JSON.parse(window.localStorage.getItem(uiPrefsStorageKey) || '{}')
-      if (typeof parsed.viewMode === 'string') setViewMode(parsed.viewMode)
-      if (typeof parsed.sortMode === 'string') setSortMode(parsed.sortMode)
-      if (typeof parsed.statusFilter === 'string') setStatusFilter(parsed.statusFilter)
+      if (typeof parsed.viewMode === 'string' && ALLOWED_VIEW_MODES.has(parsed.viewMode)) {
+        setViewMode(parsed.viewMode)
+      }
+      if (typeof parsed.sortMode === 'string' && ALLOWED_SORT_MODES.has(parsed.sortMode)) {
+        setSortMode(parsed.sortMode)
+      }
+      if (typeof parsed.statusFilter === 'string' && ALLOWED_STATUS_FILTERS.has(parsed.statusFilter)) {
+        setStatusFilter(parsed.statusFilter)
+      }
     } catch { /* ignored */ }
   }, [])
 
@@ -478,7 +492,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
   const { sortedMonitors, stats } = useMemo(() => {
     let filtered = parsedMonitors
     if (statusFilter !== 'all') {
-      filtered = parsedMonitors.filter(m => statusFilter === 'active' ? ['running', 'starting', 'stuck', 'reconnecting'].includes(m.status) : m.status === statusFilter)
+      filtered = parsedMonitors.filter((m) => (statusFilter === 'active' ? ACTIVE_MONITOR_STATUSES.includes(m.status) : m.status === statusFilter))
     }
 
     const sorted = [...filtered].sort((a, b) => {
@@ -493,7 +507,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
     return {
       sortedMonitors: sorted,
       stats: {
-        active: parsedMonitors.filter(m => ['running', 'starting', 'stuck', 'reconnecting'].includes(m.status)).length,
+        active: parsedMonitors.filter((m) => ACTIVE_MONITOR_STATUSES.includes(m.status)).length,
         running: parsedMonitors.filter(m => m.status === 'running').length,
         dead: parsedMonitors.filter(m => m.status === 'dead').length,
         stuck: parsedMonitors.filter(m => m.status === 'stuck').length,
@@ -586,12 +600,12 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
           <div className="flex flex-wrap items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8 shadow-none">
+                <Button variant="outline" size="sm" className="h-8 shadow-none text-foreground bg-background">
                   <Filter className="mr-2 h-3.5 w-3.5" />
                   {statusFilter === 'all' ? 'All Status' : statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)}
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuContent align="end" className={`w-40 text-foreground ${isDarkTheme ? 'dark' : ''}`}>
                 <DropdownMenuRadioGroup value={statusFilter} onValueChange={setStatusFilter}>
                   <DropdownMenuRadioItem value="all">All Sessions</DropdownMenuRadioItem>
                   <DropdownMenuRadioItem value="active">Active Only</DropdownMenuRadioItem>
@@ -603,8 +617,8 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
             </DropdownMenu>
 
             <Select value={sortMode} onValueChange={setSortMode}>
-              <SelectTrigger className="h-8 w-[140px] text-xs shadow-none"><SelectValue placeholder="Sort by" /></SelectTrigger>
-              <SelectContent>
+              <SelectTrigger className="h-8 w-[140px] text-xs shadow-none text-foreground bg-background"><SelectValue placeholder="Sort by" /></SelectTrigger>
+              <SelectContent className={`text-foreground ${isDarkTheme ? 'dark' : ''}`}>
                 <SelectItem value="status_then_recent">Status Rank</SelectItem>
                 <SelectItem value="recent">Most Recent</SelectItem>
                 <SelectItem value="speed">Highest Speed</SelectItem>
@@ -725,8 +739,8 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
 
       {/* Slide-out Sheet for "Add Session" */}
       <Sheet open={isAddSheetOpen} onOpenChange={setIsAddSheetOpen}>
-        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto bg-slate-50 dark:bg-slate-950 p-0 border-l">
-          <div className="p-6 bg-white dark:bg-slate-900 border-b sticky top-0 z-10">
+        <SheetContent side="right" className={`w-full sm:max-w-lg overflow-y-auto p-0 border-l bg-background text-foreground ${isDarkTheme ? 'dark' : ''}`}>
+          <div className="p-6 bg-background border-b sticky top-0 z-10">
             <SheetHeader>
               <SheetTitle>Add Monitoring Session</SheetTitle>
               <SheetDescription>
