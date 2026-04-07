@@ -45,20 +45,51 @@ export function TopologyEdge({
   const bandwidth = (data?.bandwidthMbps || 0) + (data?.uploadMbps || 0)
   const isActive = bandwidth > 0.1
   
-  // The store dictates the base stroke color. 
-  // We ensure it's visible and high-contrast.
-  const finalStyle = {
+  // Estimate length of the step path for drawing animation
+  const pathLength = Math.abs(targetX - sourceX) + Math.abs(targetY - sourceY) + 100
+  const baseStrokeWidth = (style.strokeWidth as number || 2.2) * 1.2
+  const safeMaskId = `mask-sweep-${id.replace(/[^a-zA-Z0-9_-]/g, '')}`
+
+  // Background empty pipe
+  const trackStyle = {
     ...style,
-    stroke: isActive ? ((isFailover || isMonitoringRoute || isDrainingRoute) ? '#f59e0b' : '#22c55e') : '#64748b',
-    strokeWidth: (style.strokeWidth as number || 2.2) * 1.2, // Slightly thicker for better visibility
-    strokeOpacity: isActive ? 1 : 0.4,
+    stroke: '#64748b',
+    strokeWidth: baseStrokeWidth,
+    strokeOpacity: 0.3,
     strokeDasharray: (isDrainingRoute || isFailover) ? '8 5' : style.strokeDasharray,
-    transition: 'all 0.3s ease',
+  }
+
+  // Foreground colored dashed pipe, revealed by the sweeping mask
+  const fillStyle = {
+    ...style,
+    stroke: (isFailover || isMonitoringRoute || isDrainingRoute) ? '#f59e0b' : '#22c55e',
+    strokeWidth: baseStrokeWidth,
+    strokeOpacity: 1,
+    strokeDasharray: '8 6', // Always dashed
+    mask: `url(#${safeMaskId})`,
   }
 
   return (
     <>
-      <BaseEdge path={edgePath} markerEnd={markerEnd} style={finalStyle} />
+      <defs>
+        <mask id={safeMaskId}>
+          <path
+            d={edgePath}
+            fill="none"
+            stroke="white"
+            strokeWidth={baseStrokeWidth * 3} // Ensure the mask fully envelopes the path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{
+              strokeDasharray: pathLength,
+              strokeDashoffset: isActive ? 0 : pathLength,
+              transition: 'stroke-dashoffset 0.5s ease-in-out',
+            }}
+          />
+        </mask>
+      </defs>
+      <BaseEdge path={edgePath} markerEnd={markerEnd} style={trackStyle} />
+      <BaseEdge path={edgePath} style={fillStyle} />
       <EdgeLabelRenderer>
         <div
           style={{
