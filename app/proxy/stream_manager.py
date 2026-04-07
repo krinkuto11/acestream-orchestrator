@@ -1214,25 +1214,29 @@ class StreamManager:
                 timeout_threshold = min(5.0, float(ConfigHelper.connection_timeout()))
                 
                 if inactivity_duration > timeout_threshold and self.connected:
-                    if self.healthy:
-                        logger.warning(
-                            f"Stream unhealthy - no data for {inactivity_duration:.1f}s. "
-                            "Force-killing socket to trigger failover."
-                        )
-                        self.healthy = False
-
-                    if self.http_reader:
+                    # IF we are already waiting for a Control Plane failover, ignore the timeout!
+                    if hasattr(self, 'control_plane_wait_event') and not self.control_plane_wait_event.is_set():
+                        pass
+                    else:
+                        if self.healthy:
+                            logger.warning(
+                                f"Stream unhealthy - no data for {inactivity_duration:.1f}s. "
+                                "Force-killing socket to trigger failover."
+                            )
+                            self.healthy = False
+    
+                        if self.http_reader:
+                            try:
+                                self.http_reader.stop()
+                            except Exception:
+                                pass
+    
                         try:
-                            self.http_reader.stop()
+                            if self.socket:
+                                self.socket.close()
                         except Exception:
                             pass
-
-                    try:
-                        if self.socket:
-                            self.socket.close()
-                    except Exception:
-                        pass
-                    self.connected = False
+                        self.connected = False
                 elif self.connected and not self.healthy:
                     logger.info("Stream health restored")
                     self.healthy = True
