@@ -689,7 +689,7 @@ const buildSnapshot = (
       type: 'topologyEdge',
       source: sourceNodeId,
       target: engine.container_id,
-      animated: false,
+      animated: vpnEngineFlowActive,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: bandwidthMbps,
@@ -718,7 +718,7 @@ const buildSnapshot = (
       type: 'topologyEdge',
       source: engine.container_id,
       target: proxyNodeId,
-      animated: false,
+      animated: engineProxyFlowActive,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: proxyIngressMbps,
@@ -826,20 +826,22 @@ const buildSnapshot = (
       },
     })
 
+    const clientEdgeId = `${proxyNodeId}->${cNodeId}`
+    const clientFlowActive = resolveEdgeFlowActive(
+      previousEdgeFlowById.get(clientEdgeId) ?? false,
+      rawClientBw,
+    )
     edges.push({
-      id: `${proxyNodeId}->${cNodeId}`,
+      id: clientEdgeId,
       type: 'topologyEdge',
       source: proxyNodeId,
       target: cNodeId,
-      animated: false,
+      animated: clientFlowActive,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: clientBwMbps,
         protocol: client.type,
-        flowActive: resolveEdgeFlowActive(
-          previousEdgeFlowById.get(`${proxyNodeId}->${cNodeId}`) ?? false,
-          rawClientBw,
-        ),
+        flowActive: clientFlowActive,
       },
       style: {
         stroke: '#22c55e',
