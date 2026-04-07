@@ -490,6 +490,20 @@ class StreamManager:
                 "new_container_id": new_container_id,
             }
 
+        # --- ROBUST FAILOVER FIX: Capture position before reconnecting ---
+        try:
+            probe = self.collect_legacy_stats_probe(force=False)
+            if probe and "livepos" in probe:
+                pos = probe["livepos"].get("pos")
+                live_last = probe["livepos"].get("last_ts") or probe["livepos"].get("live_last")
+                
+                if pos and live_last:
+                    self.seekback = max(0, int(live_last) - int(pos))
+                    logger.info(f"Hot swap / Failover triggered. Updating seekback to {self.seekback}s to resume at last known position.")
+        except Exception as e:
+            logger.debug(f"Failed to calculate resume position during failover: {e}")
+        # -----------------------------------------------------------------
+
         # Resuming directly at the live edge is far more stable against P2P swarm starvation.
         target_pos = 0
 
@@ -739,6 +753,18 @@ class StreamManager:
                 raise RuntimeError("Legacy API session is not active")
 
             issued = self.ace_api_client.seek_stream(int(target_timestamp))
+            
+            # --- ROBUST SEEK FIX: Update internal seekback ---
+            if self.legacy_status_probe and "livepos" in self.legacy_status_probe:
+                livepos = self.legacy_status_probe["livepos"]
+                live_last = livepos.get("last_ts") or livepos.get("live_last")
+                
+                if live_last:
+                    new_seekback = max(0, int(live_last) - int(target_timestamp))
+                    self.seekback = new_seekback
+                    logger.info(f"Seek requested. Updated internal seekback to {new_seekback}s to survive failovers.")
+            # -------------------------------------------------
+
         finally:
             self._legacy_api_lock.release()
 
