@@ -141,7 +141,11 @@ def handle_stream_data_plane_failed(evt: StreamDataPlaneFailedEvent) -> Optional
                 logger.info(f"Stream {stream_id} transitioned to pending_failover (reason: {evt.reason})")
                 
                 # Trigger background recovery task
-                recover_stream(stream_id)
+                dead_vpn = None
+                dead_engine = state.engines.get(st.container_id) if st.container_id else None
+                if dead_engine:
+                    dead_vpn = dead_engine.vpn_container
+                recover_stream(stream_id, dead_vpn=dead_vpn)
                 
                 return st
             else:

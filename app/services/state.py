@@ -417,7 +417,7 @@ class State:
                     # DO NOT remove from memory, trigger background recovery directly
                     try:
                         from ..services.recovery import recover_stream
-                        recover_stream(s_id)
+                        recover_stream(s_id, dead_vpn=removed_engine.vpn_container)
                     except Exception as e:
                         logger.error(f"Failed to trigger recovery for orphaned stream {s_id}: {e}")
         

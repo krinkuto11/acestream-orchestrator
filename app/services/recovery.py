@@ -5,7 +5,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-def recover_stream(stream_id: str):
+def recover_stream(stream_id: str, dead_vpn: Optional[str] = None):
     """
     Background recovery task orchestration.
     Queries the global state to decouple from dead engines, finds a healthy replacement, 
@@ -33,7 +33,7 @@ def recover_stream(stream_id: str):
             
             # Lookup the dead engine to find its VPN for blacklisting
             dead_engine = state.get_engine(dead_container_id) if dead_container_id else None
-            dead_vpn = dead_engine.vpn_container if dead_engine else None
+            dead_vpn = dead_vpn or (dead_engine.vpn_container if dead_engine else None)
             
             logger.info(f"Initiating Control Plane recovery for stream {stream_id} (previous engine: {dead_container_id}, previous VPN: {dead_vpn or 'N/A'})")
 
