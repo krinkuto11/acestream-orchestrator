@@ -120,6 +120,8 @@ class HTTPStreamReader:
                         except OSError as e:
                             logger.error(f"Pipe write error: {e}")
                             break
+            except requests.exceptions.ChunkedEncodingError as e:
+                logger.info(f"HTTP stream ended prematurely (ChunkedEncodingError) after {chunk_count} chunks")
             except requests.exceptions.ConnectionError as e:
                 # Handle read timeouts and connection errors during streaming
                 # This is common when the upstream source stops sending data or times out

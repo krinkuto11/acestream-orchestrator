@@ -31,9 +31,8 @@ def recover_stream(stream_id: str, dead_vpn: Optional[str] = None):
 
             dead_container_id = stream_state.container_id
             
-            # Lookup the dead engine to find its VPN for blacklisting
-            dead_engine = state.get_engine(dead_container_id) if dead_container_id else None
-            resolved_dead_vpn = dead_vpn or (dead_engine.vpn_container if dead_engine else None)
+            # Only blacklist the VPN if it was explicitly marked as dead by the Control Plane
+            resolved_dead_vpn = dead_vpn
             
             logger.info(f"Initiating Control Plane recovery for stream {stream_id} (previous engine: {dead_container_id}, previous VPN: {resolved_dead_vpn or 'N/A'})")
 
