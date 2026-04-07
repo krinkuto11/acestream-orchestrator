@@ -225,11 +225,15 @@ function MonitorCard({ monitor, isExpanded, isSelected, isPlayingInProxy, isStop
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-4">
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Engine Node</p>
-                <p className="text-sm font-mono">{engineShortId}</p>
+                <p className="text-sm font-mono text-slate-900 dark:text-slate-100">{engineShortId}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Up / Down Speed</p>
-                <p className="text-sm font-medium">{formatBytesPerSecond((speedUp || 0) * 1024)} / {formatBytesPerSecond((speedDown || 0) * 1024)}</p>
+                <p className="text-sm font-medium">
+                  <span className="text-rose-700 dark:text-rose-300">{formatBytesPerSecond((speedUp || 0) * 1024)}</span>
+                  <span className="mx-1 text-slate-400 dark:text-slate-500">/</span>
+                  <span className="text-emerald-700 dark:text-emerald-300">{formatBytesPerSecond((speedDown || 0) * 1024)}</span>
+                </p>
               </div>
               <div className="space-y-1 lg:col-span-2">
                 <p className="text-xs text-muted-foreground flex justify-between">
@@ -306,6 +310,10 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
   const [m3uParsing, setM3uParsing] = useState(false)
   const [m3uStarting, setM3uStarting] = useState(false)
   const [newMonitor, setNewMonitor] = useState({ content_id: '', live_delay: '', interval_s: '1.0', run_seconds: '0' })
+  const normalizedApiKey = String(apiKey || '').trim()
+  const authHeaders = useMemo(() => (normalizedApiKey ? { Authorization: `Bearer ${normalizedApiKey}` } : {}), [normalizedApiKey])
+  const normalizedManualContentId = useMemo(() => normalizeMonitorContentId(newMonitor.content_id), [newMonitor.content_id])
+  const canStartManualMonitor = Boolean(normalizedManualContentId) && !starting
 
   // --- Initialization & Prefs ---
   useEffect(() => {
@@ -336,12 +344,8 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
   // --- API / SSE ---
   const fetchMonitorsNow = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true)
-    if (!apiKey) {
-      setMonitors([]); setLoading(false)
-      return
-    }
     try {
-      const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy`, { headers: { Authorization: `Bearer ${apiKey}` } })
+      const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy`, { headers: authHeaders })
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
       const payload = await response.json()
       setMonitors(Array.isArray(payload?.items) ? payload.items : [])
@@ -350,13 +354,9 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
     } finally {
       setLoading(false)
     }
-  }, [orchUrl, apiKey])
+  }, [orchUrl, authHeaders])
 
   useEffect(() => {
-    if (!apiKey) {
-      setMonitors([]); setLoading(false)
-      return
-    }
     let eventSource = null, reconnectTimer = null, fallbackInterval = null, closed = false
 
     const connect = () => {
@@ -369,7 +369,9 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
 
       const streamUrl = new URL(`${orchUrl}/api/v1/ace/monitor/legacy/stream`)
       streamUrl.searchParams.set('include_recent_status', 'true')
-      streamUrl.searchParams.set('api_key', apiKey)
+      if (normalizedApiKey) {
+        streamUrl.searchParams.set('api_key', normalizedApiKey)
+      }
       eventSource = new EventSource(streamUrl.toString())
 
       eventSource.onopen = () => setIsLive(true)
@@ -423,20 +425,20 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
       closed = true
       clearTimeout(reconnectTimer); clearInterval(fallbackInterval); if (eventSource) eventSource.close()
     }
-  }, [orchUrl, apiKey, fetchMonitorsNow])
+  }, [orchUrl, normalizedApiKey, fetchMonitorsNow])
 
   // --- Handlers ---
   const handleStartMonitor = async () => {
     const normalizedContentId = normalizeMonitorContentId(newMonitor.content_id)
-    if (!apiKey || !normalizedContentId) {
-      toast.error('Missing Information', { description: 'Content ID and API key are required' })
+    if (!normalizedContentId) {
+      toast.error('Missing Information', { description: 'Content ID is required' })
       return 
     }
     setStarting(true)
     try {
       const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
           ...newMonitor,
           content_id: normalizedContentId,
@@ -459,7 +461,6 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
   }
 
   const handleAction = async (monitorId, actionType) => {
-    if (!apiKey) return
     const isStop = actionType === 'stop'
     const setActionState = isStop ? setStoppingById : setDeletingById
     const endpoint = isStop ? '' : '/entry'
@@ -467,7 +468,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
     setActionState((prev) => ({ ...prev, [monitorId]: true }))
     try {
       const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/${encodeURIComponent(monitorId)}${endpoint}`, {
-        method: 'DELETE', headers: { Authorization: `Bearer ${apiKey}` },
+        method: 'DELETE', headers: authHeaders,
       })
       if (!response.ok) throw new Error('Action failed')
       toast.success(`Session ${isStop ? 'Stopped' : 'Deleted'}`)
@@ -493,7 +494,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
     setM3uParsing(true)
     try {
       const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/parse-m3u`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ m3u_content: m3uContent }),
       })
       if (!response.ok) throw new Error('Failed to parse')
@@ -510,8 +511,6 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
   }
 
   const handleStartSelectedM3u = async () => {
-    if (!apiKey) return
-
     const selectedEntries = m3uEntries
       .filter((entry) => Boolean(m3uSelectedById[entry.content_id]))
       .map((entry) => ({ ...entry, content_id: normalizeMonitorContentId(entry.content_id) }))
@@ -527,7 +526,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
       const startRequests = selectedEntries.map(async (entry) => {
         const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/start`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
           body: JSON.stringify({
             content_id: entry.content_id,
             stream_name: entry.name || null,
@@ -835,8 +834,8 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
 
       {/* Slide-out Sheet for "Add Session" */}
       <Sheet open={isAddSheetOpen} onOpenChange={setIsAddSheetOpen}>
-        <SheetContent side="right" className={`w-full sm:max-w-lg overflow-y-auto p-0 border-l bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 ${isDarkTheme ? 'dark' : ''}`}>
-          <div className="p-6 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10">
+        <SheetContent side="right" className={`w-full sm:max-w-lg overflow-y-auto p-0 border-l bg-background text-foreground ${isDarkTheme ? 'dark' : ''}`}>
+          <div className="p-6 bg-background border-b border-border sticky top-0 z-10">
             <SheetHeader>
               <SheetTitle>Add Monitoring Session</SheetTitle>
               <SheetDescription>
@@ -877,7 +876,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
                 </div>
 
                 <div className="pt-4 border-t">
-                  <Button onClick={handleStartMonitor} disabled={starting || !apiKey} className="w-full bg-emerald-600 text-white hover:bg-emerald-500 dark:bg-emerald-500 dark:text-white dark:hover:bg-emerald-400 disabled:bg-slate-400 disabled:text-white">
+                  <Button type="button" onClick={() => { if (!canStartManualMonitor) return; handleStartMonitor() }} disabled={!canStartManualMonitor} aria-disabled={!canStartManualMonitor} className="w-full bg-emerald-600 text-white hover:bg-emerald-500 dark:bg-emerald-500 dark:text-white dark:hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-500 disabled:text-white dark:disabled:bg-slate-700">
                     <PlayCircle className="mr-2 h-4 w-4" /> {starting ? 'Starting...' : 'Start Monitoring'}
                   </Button>
                 </div>
@@ -892,7 +891,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
                     <Input type="file" accept=".m3u,.m3u8,text/plain" onChange={handleM3uFilePicked} className="max-w-[250px]" />
                   </div>
 
-                  <Button variant="secondary" className="w-full bg-slate-800 text-white hover:bg-slate-700 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white disabled:bg-slate-500 disabled:text-white" onClick={handleParseM3u} disabled={m3uParsing || !m3uContent || !apiKey}>
+                  <Button variant="secondary" className="w-full bg-slate-800 text-white hover:bg-slate-700 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white disabled:bg-slate-500 disabled:text-white" onClick={handleParseM3u} disabled={m3uParsing || !m3uContent}>
                     {m3uParsing ? 'Parsing File...' : 'Extract AceStream Links'}
                   </Button>
                 </div>
@@ -919,7 +918,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
                       ))}
                     </div>
 
-                    <Button className="w-full bg-emerald-600 text-white hover:bg-emerald-500 dark:bg-emerald-500 dark:text-white dark:hover:bg-emerald-400 disabled:bg-slate-500 disabled:text-white" onClick={handleStartSelectedM3u} disabled={m3uStarting || !apiKey || Object.values(m3uSelectedById).filter(Boolean).length === 0}>
+                    <Button className="w-full bg-emerald-600 text-white hover:bg-emerald-500 dark:bg-emerald-500 dark:text-white dark:hover:bg-emerald-400 disabled:bg-slate-500 disabled:text-white" onClick={handleStartSelectedM3u} disabled={m3uStarting || Object.values(m3uSelectedById).filter(Boolean).length === 0}>
                       <PlayCircle className="mr-2 h-4 w-4" /> Start Selected ({Object.values(m3uSelectedById).filter(Boolean).length})
                     </Button>
                   </div>
