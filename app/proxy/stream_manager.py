@@ -490,17 +490,8 @@ class StreamManager:
                 "new_container_id": new_container_id,
             }
 
+        # Resuming directly at the live edge is far more stable against P2P swarm starvation.
         target_pos = 0
-        current_probe = self.collect_legacy_stats_probe(force=False)
-        if current_probe and current_probe.get("livepos"):
-            try:
-                pos_val = current_probe["livepos"].get("pos")
-                if pos_val is not None:
-                    target_pos = int(float(pos_val))
-            except (TypeError, ValueError):
-                target_pos = 0
-
-        target_pos = max(0, target_pos)
 
         if self._is_api_mode():
             session = self._request_stream_session_api_for_engine(new_host, int(new_api_port or 62062), absolute_seek=target_pos)
