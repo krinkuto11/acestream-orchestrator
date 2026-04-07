@@ -144,107 +144,6 @@ class StreamManager:
         
         logger.info(f"StreamManager initialized for content_id={content_id}")
 
-    def _cleanup_failed_engine_after_transition(self, previous_engine_container_id: Optional[str]) -> None:
-        """Best-effort cleanup for a failed source engine after a successful transition."""
-        previous_id = str(previous_engine_container_id or "").strip()
-        if not previous_id:
-            return
-        if previous_id == str(self.engine_container_id or "").strip():
-            return
-
-        try:
-            from ..services.state import state
-
-            active_streams = state.list_streams(status="started", container_id=previous_id)
-            if active_streams:
-                logger.debug(
-                    "Skipping cleanup for previous engine %s; %s active stream(s) still attached",
-                    previous_id[:12],
-                    len(active_streams),
-                )
-                return
-
-            old_engine = state.get_engine(previous_id)
-            if not old_engine:
-                return
-
-            old_vpn = str(old_engine.vpn_container or "").strip()
-            vpn_failed_or_draining = False
-            if old_vpn:
-                vpn_failed_or_draining = state.is_vpn_node_draining(old_vpn)
-                if not vpn_failed_or_draining:
-                    for node in state.list_vpn_nodes():
-                        node_name = str(node.get("container_name") or "").strip()
-                        if node_name != old_vpn:
-                            continue
-
-                        status = str(node.get("status") or "").strip().lower()
-                        condition = str(node.get("condition") or "").strip().lower()
-                        healthy = bool(node.get("healthy", True))
-                        if (not healthy) or condition == "notready" or status in {"dead", "exited", "down"}:
-                            vpn_failed_or_draining = True
-                        break
-
-            engine_unhealthy = str(old_engine.health_status or "").strip().lower() == "unhealthy"
-            if not vpn_failed_or_draining and not engine_unhealthy:
-                logger.debug(
-                    "Skipping cleanup for previous engine %s; not marked failed/draining",
-                    previous_id[:12],
-                )
-                return
-
-            from ..services.provisioner import stop_container
-
-            stop_container(previous_id, force=True)
-            state.remove_engine(previous_id)
-
-            logger.info(
-                "Cleaned up failed source engine after transition: old=%s new=%s",
-                previous_id[:12],
-                str(self.engine_container_id or "unknown")[:12],
-            )
-        except Exception as e:
-            logger.warning(
-                "Failed to cleanup previous engine %s after transition: %s",
-                previous_id[:12],
-                e,
-            )
-
-    def _failover_to_new_engine(self):
-        """Dynamically fetch a new healthy engine during a retry/failover."""
-        try:
-            previous_engine_container_id = str(self.engine_container_id or "").strip()
-            penalties = {self.engine_container_id: 999} if self.engine_container_id else None
-            new_engine, _ = select_best_engine(additional_load_by_engine=penalties)
-
-            self.engine_host = new_engine.host
-            self.engine_port = int(new_engine.port)
-            self.engine_api_port = int(new_engine.api_port or 62062)
-            self.engine_container_id = new_engine.container_id
-
-            # Force a brand-new session request on the selected engine.
-            self.playback_url = None
-            self.playback_session_id = None
-            self.stat_url = ""
-            self.command_url = ""
-            self.existing_session = {}
-            self.ace_api_client = None
-            self.legacy_status_probe = None
-            self._legacy_probe_cache = None
-            self._legacy_probe_cache_ts = 0.0
-            self.owns_engine_session = True
-
-            logger.info(
-                "Failover successful: swapped target to engine %s (%s:%s)",
-                str(self.engine_container_id or "unknown")[:12],
-                self.engine_host,
-                self.engine_port,
-            )
-            self._cleanup_failed_engine_after_transition(previous_engine_container_id)
-            return True
-        except Exception as e:
-            logger.error(f"Failover engine selection failed: {e}")
-            return False
 
     def _build_legacy_http_params(self):
         """Build engine query params for HTTP mode based on source input type."""
@@ -627,6 +526,9 @@ class StreamManager:
 
         with self._reader_lock:
             self._pending_engine_swap_info = pending_payload
+
+        if hasattr(self, 'control_plane_wait_event'):
+            self.control_plane_wait_event.set()
 
         logger.info(
             "Queued TS hot swap for content_id=%s old_engine=%s new_engine=%s",
@@ -1096,90 +998,105 @@ class StreamManager:
         return True
     
     def run(self):
-        """Main execution loop with resilient hot-failover support"""
+        """Main execution loop stripped for Control Plane failover model"""
         stream_end_reason = "normal"
-        self.retry_count = 0
+        if not hasattr(self, 'control_plane_wait_event'):
+            self.control_plane_wait_event = threading.Event()
         
         try:
             # Start health monitor (Once)
             health_thread = threading.Thread(target=self._monitor_health, daemon=True)
             health_thread.start()
             
-            
-            while self.running and self.retry_count < self.max_retries:
+            while self.running:
                 try:
-                    logger.info(f"Connecting to stream (Attempt {self.retry_count + 1}/{self.max_retries}) for content_id={self.content_id}")
+                    logger.info(f"Connecting to stream for content_id={self.content_id}")
                     self._stream_exit_reason = None
                     
-                    # Request stream from engine (if not connected/reconnecting)
-                    # We always request a new session on reconnect to get updated URLs
                     if not self.connected:
-                        # On retry attempts, proactively select a new engine target.
-                        if self.retry_count > 0 and not self._failover_to_new_engine():
-                            raise RuntimeError("Failover engine selection failed")
-
                         reused_existing = self._apply_existing_session()
                         if not reused_existing:
                             if not self.request_stream_from_engine():
                                 logger.error("Failed to request stream from engine")
                                 raise RuntimeError("Engine request failed")
                         
-                        # Send stream started event to orchestrator
                         self._send_stream_started_event()
+
+                    # Apply pending hot swap before restarting stream if present
+                    if self._pending_engine_swap_info:
+                        self._apply_pending_seek_switch()
+                    elif not self.connected:
+                        if not self.start_stream():
+                            logger.error("Failed to start stream")
+                            raise RuntimeError("Stream start failed")
                     
-                    # Start streaming
-                    if not self.start_stream():
-                        logger.error("Failed to start stream")
-                        raise RuntimeError("Stream start failed")
-                    
-                    # Reset retry count on successful stream start & initial read
-                    # Wait, we let _process_stream_data do the reading
-                    
-                    # Process stream data (blocks until EOF or error)
                     self._process_stream_data()
                     
-                    # If we exit _process_stream_data and are still running, it's a dropout
                     if self.running:
-                        if self._stream_exit_reason == "eof":
+                        active_clients = 0
+                        try:
+                            active_clients = int(self.client_manager.get_total_client_count())
+                        except Exception:
                             active_clients = 0
-                            try:
-                                active_clients = int(self.client_manager.get_total_client_count())
-                            except Exception:
-                                active_clients = 0
 
-                            if active_clients <= 0:
-                                logger.info("Stream ended with EOF and no active clients; skipping failover.")
-                                break
+                        if self._stream_exit_reason == "eof" and active_clients <= 0:
+                            logger.info("Stream ended with EOF and no active clients; skipping failover.")
+                            break
 
-                        logger.warning("Stream read loop exited prematurely. Triggering failover.")
-                        raise RuntimeError("Stream dropout")
+                        logger.warning("Stream read loop exited prematurely. Waiting for Control Plane recovery.")
+                        
+                        from ..models.schemas import StreamDataPlaneFailedEvent
+                        from ..services.internal_events import handle_stream_data_plane_failed
+
+                        self.control_plane_wait_event.clear()
+                        
+                        if self.stream_id and not self.stream_id.startswith("temp-") and not self.stream_id.startswith("error-"):
+                            handle_stream_data_plane_failed(StreamDataPlaneFailedEvent(
+                                stream_id=self.stream_id,
+                                container_id=self.engine_container_id,
+                                reason=self._stream_exit_reason or "unknown"
+                            ))
+                        else:
+                            logger.error("No valid stream_id available for Control Plane recovery.")
+                            break
+                            
+                        awoken = self.control_plane_wait_event.wait(timeout=30.0)
+                        if not awoken:
+                            logger.error("Control plane failed to recover stream within 30 seconds. Aborting.")
+                            stream_end_reason = "failover_timeout"
+                            break
                     else:
                         break # Normal exit
                     
                 except Exception as e:
-                    self.retry_count += 1
-                    logger.error(f"Stream error on attempt {self.retry_count}/{self.max_retries}: {e}")
+                    logger.error(f"Stream error: {e}")
 
                     if self._last_request_failure_type == "preflight_failed":
-                        logger.warning(
-                            "Preflight rejected stream; aborting without further retries: "
-                            f"content_id={self.content_id}"
-                        )
+                        logger.warning(f"Preflight rejected stream; aborting: content_id={self.content_id}")
                         stream_end_reason = "preflight_failed"
                         break
                     
-                    if self.retry_count >= self.max_retries:
-                        logger.error("Max retries reached, aborting stream")
+                    logger.warning("Stream error hit. Waiting for Control Plane recovery.")
+                    from ..models.schemas import StreamDataPlaneFailedEvent
+                    from ..services.internal_events import handle_stream_data_plane_failed
+
+                    self.control_plane_wait_event.clear()
+                    
+                    if self.stream_id and not self.stream_id.startswith("temp-") and not self.stream_id.startswith("error-"):
+                        handle_stream_data_plane_failed(StreamDataPlaneFailedEvent(
+                            stream_id=self.stream_id,
+                            container_id=self.engine_container_id,
+                            reason="error"
+                        ))
+                        awoken = self.control_plane_wait_event.wait(timeout=30.0)
+                        if not awoken:
+                            logger.error("Control plane failed to recover stream within 30 seconds. Aborting.")
+                            stream_end_reason = "failover_timeout"
+                            break
+                    else:
+                        logger.error("No valid stream_id available for recovery. Aborting.")
                         stream_end_reason = "error"
                         break
-                    
-                    # Exponential Backoff
-                    backoff = min(2 * self.retry_count, 10)
-                    logger.info(f"Backoff for {backoff}s before reconnecting...")
-                    
-                    # Cleanup before retry
-                    self._cleanup_for_retry()
-                    time.sleep(backoff)
                     
         except Exception as e:
             logger.error(f"Fatal stream manager error: {e}", exc_info=True)
@@ -1365,45 +1282,7 @@ class StreamManager:
         # Send ended event (will check if already sent)
         self._send_stream_ended_event(reason="stopped")
     
-    def _cleanup_for_retry(self):
-        """Cleanup resources for retry, sending ended event for current session ID"""
-        self.connected = False
-        
-        # Send ended event for the current session ID so it doesn't dangle in orchestrator UI
-        self._send_stream_ended_event(reason="failover")
-        self._ended_event_sent = False  # Reset for the next reconnect attempt
-        
-        if self.http_reader:
-            try:
-                self.http_reader.stop()
-            except Exception as e:
-                logger.debug(f"Error stopping http_reader during retry cleanup: {e}")
-                
-        if self.socket:
-            try:
-                self.socket.close()
-            except Exception as e:
-                logger.debug(f"Error closing socket during retry cleanup: {e}")
 
-        if self.ace_api_client:
-            try:
-                with self._legacy_api_lock:
-                    if self.ace_api_client:
-                        self.ace_api_client.shutdown()
-            except Exception as e:
-                logger.debug(f"Error closing legacy API client during retry cleanup: {e}")
-            self.ace_api_client = None
-        self.legacy_status_probe = None
-        self._legacy_probe_cache = None
-        self._legacy_probe_cache_ts = 0.0
-        self._pending_seek_start_info = None
-        self._pending_engine_swap_info = None
-        self.playback_url = None
-        self.playback_session_id = None
-        self.stat_url = ""
-        self.command_url = ""
-        self.existing_session = {}
-        self.owns_engine_session = True
 
     def _cleanup(self):
         """Cleanup resources"""

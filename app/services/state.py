@@ -399,14 +399,12 @@ class State:
         with self._lock:
             removed_engine = self.engines.pop(container_id, None)
             if removed_engine:
-                # Remove any associated streams from memory (consistent with immediate removal behavior)
-                # First, mark them as ended in the database for historical tracking
-                streams_to_remove = [s_id for s_id, stream in self.streams.items() 
-                                   if stream.container_id == container_id]
-                for s_id in streams_to_remove:
+                # Transition associated streams to pending_failover for Control Plane recovery
+                streams_to_failover = [s_id for s_id, stream in self.streams.items() 
+                                   if stream.container_id == container_id and stream.status == "started"]
+                for s_id in streams_to_failover:
                     stream = self.streams[s_id]
-                    stream.status = "ended"
-                    stream.ended_at = self.now()
+                    stream.status = "pending_failover"
 
                     ended_stream_updates.append(
                         {
@@ -416,10 +414,12 @@ class State:
                         }
                     )
                     
-                    # Now remove from memory (consistent with on_stream_ended behavior)
-                    del self.streams[s_id]
-                    if s_id in self.stream_stats:
-                        del self.stream_stats[s_id]
+                    # DO NOT remove from memory, trigger background recovery directly
+                    try:
+                        from ..services.recovery import recover_stream
+                        recover_stream(s_id)
+                    except Exception as e:
+                        logger.error(f"Failed to trigger recovery for orphaned stream {s_id}: {e}")
         
         # Remove from database as well (if database is available)
         if removed_engine:
@@ -499,7 +499,7 @@ class State:
             source_engine = self.engines.get(normalized_old) if normalized_old else None
 
             for stream in self.streams.values():
-                if stream.status != "started":
+                if stream.status not in {"started", "pending_failover"}:
                     continue
                 if stream.key != normalized_key:
                     continue

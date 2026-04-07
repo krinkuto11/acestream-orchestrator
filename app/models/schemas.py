@@ -35,6 +35,11 @@ class StreamEndedEvent(BaseModel):
     stream_id: Optional[str] = None
     reason: Optional[str] = None
 
+class StreamDataPlaneFailedEvent(BaseModel):
+    stream_id: str
+    container_id: Optional[str] = None
+    reason: Optional[str] = None
+
 class EngineState(BaseModel):
     container_id: str
     container_name: Optional[str] = None
@@ -89,7 +94,7 @@ class StreamState(BaseModel):
     is_live: bool
     started_at: datetime
     ended_at: Optional[datetime] = None
-    status: Literal["started", "ended"] = "started"
+    status: Literal["started", "ended", "pending_failover"] = "started"
     paused: bool = False
     # Latest stats from the most recent snapshot
     peers: Optional[int] = None

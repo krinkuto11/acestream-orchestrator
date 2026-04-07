@@ -14,8 +14,9 @@ HTTP endpoints in main.py (/events/stream_started, /events/stream_ended).
 
 import logging
 from typing import Optional
-from ..models.schemas import StreamStartedEvent, StreamEndedEvent, StreamState
+from ..models.schemas import StreamStartedEvent, StreamEndedEvent, StreamState, StreamDataPlaneFailedEvent
 from .state import state
+from .recovery import recover_stream
 from .event_logger import event_logger
 
 logger = logging.getLogger(__name__)
@@ -112,4 +113,41 @@ def handle_stream_ended(evt: StreamEndedEvent) -> Optional[StreamState]:
         
     except Exception as e:
         logger.error(f"Failed to handle internal stream ended event: {e}", exc_info=True)
+        raise
+
+def handle_stream_data_plane_failed(evt: StreamDataPlaneFailedEvent) -> Optional[StreamState]:
+    """
+    Handle data plane failure reported by the proxy and trigger Control Plane recovery.
+    """
+    try:
+        stream_id = evt.stream_id
+        
+        with state._lock:
+            st = state.streams.get(stream_id)
+            if not st:
+                logger.warning(f"Data plane failed event for unknown stream: {stream_id}")
+                return None
+            
+            if st.status != "pending_failover":
+                st.status = "pending_failover"
+                
+                def db_work(session):
+                    from ..models.db_models import StreamRow
+                    row = session.get(StreamRow, stream_id)
+                    if row:
+                        row.status = "pending_failover"
+                state._enqueue_db_task(db_work)
+                
+                logger.info(f"Stream {stream_id} transitioned to pending_failover (reason: {evt.reason})")
+                
+                # Trigger background recovery task
+                recover_stream(stream_id)
+                
+                return st
+            else:
+                logger.debug(f"Stream {stream_id} is already in pending_failover state.")
+                return st
+                
+    except Exception as e:
+        logger.error(f"Failed to handle stream data plane failed event: {e}", exc_info=True)
         raise
