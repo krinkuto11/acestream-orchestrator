@@ -45,6 +45,12 @@ export function TopologyEdge({
   
   const rawBandwidth = (data?.bandwidthMbps || 0) + (data?.uploadMbps || 0)
   const [isActive, setIsActive] = useState(rawBandwidth > 0.1)
+  const [isMounted, setIsMounted] = useState(false)
+
+  // Set mounted state exclusively to suppress CSS animations on first render
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
 
   // Debounce the inactive state to smooth out network bursts and polling glitches
   useEffect(() => {
@@ -94,7 +100,7 @@ export function TopologyEdge({
             style={{
               strokeDasharray: pathLength,
               strokeDashoffset: isActive ? 0 : pathLength,
-              transition: 'stroke-dashoffset 0.5s ease-in-out',
+              transition: isMounted ? 'stroke-dashoffset 0.5s ease-in-out' : 'none',
             }}
           />
         </mask>
