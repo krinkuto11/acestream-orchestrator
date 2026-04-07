@@ -30,12 +30,20 @@ def recover_stream(stream_id: str):
                 return
 
             dead_container_id = stream_state.container_id
-            logger.info(f"Initiating Control Plane recovery for stream {stream_id} (previous engine: {dead_container_id})")
+            
+            # Lookup the dead engine to find its VPN for blacklisting
+            dead_engine = state.get_engine(dead_container_id) if dead_container_id else None
+            dead_vpn = dead_engine.vpn_container if dead_engine else None
+            
+            logger.info(f"Initiating Control Plane recovery for stream {stream_id} (previous engine: {dead_container_id}, previous VPN: {dead_vpn or 'N/A'})")
 
             # Try to select a new engine, heavily penalizing the dead one
             penalties = {dead_container_id: 999} if dead_container_id else None
             try:
-                new_engine, _ = select_best_engine(additional_load_by_engine=penalties)
+                new_engine, _ = select_best_engine(
+                    additional_load_by_engine=penalties,
+                    exclude_vpn=dead_vpn
+                )
             except Exception as e:
                 logger.error(f"Failed to find a replacement engine for stream {stream_id}: {e}")
                 # If we cannot find a new engine, fail the stream cleanly

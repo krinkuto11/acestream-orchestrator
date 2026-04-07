@@ -37,6 +37,7 @@ def select_best_engine(
     additional_load_by_engine: Optional[Dict[str, int]] = None,
     reserve_pending: bool = False,
     not_found_error: str = "engine_not_found",
+    exclude_vpn: Optional[str] = None,
 ) -> Tuple[EngineState, int]:
     """Select the best available engine using the same proxy balancing algorithm.
 
@@ -47,9 +48,13 @@ def select_best_engine(
     if not engines:
         raise HTTPException(status_code=503, detail="No engines available")
 
-    engines = [engine for engine in engines if not state.is_engine_draining(engine.container_id)]
+    engines = [
+        engine for engine in engines 
+        if not state.is_engine_draining(engine.container_id)
+        and (exclude_vpn is None or engine.vpn_container != exclude_vpn)
+    ]
     if not engines:
-        raise HTTPException(status_code=503, detail="No non-draining engines available")
+        raise HTTPException(status_code=503, detail="No non-draining engines available (or all excluded by VPN restriction)")
 
     if requested_container_id:
         selected = next((e for e in engines if e.container_id == requested_container_id), None)
