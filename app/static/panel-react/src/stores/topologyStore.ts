@@ -82,6 +82,8 @@ const jitter = (value: number, ratio = 0.16, floor = 0): number => {
 const INTERPOLATION_ALPHA = 0.35
 const INTERPOLATION_EPSILON = 0.05
 const FLOW_DEADBAND_Mbps = 0.35
+const EDGE_FLOW_ACTIVATE_THRESHOLD_Mbps = 0.12
+const EDGE_FLOW_DEACTIVATE_THRESHOLD_Mbps = 0.05
 
 type NodeFlowTarget = {
   bandwidthMbps: number
@@ -125,6 +127,16 @@ const applyDeadband = (
 
 const shouldBypassNodeSmoothing = (kind: TopologyNodeKind | undefined): boolean => {
   return kind === 'vpn' || kind === 'proxy'
+}
+
+const resolveEdgeFlowActive = (
+  previousActive: boolean,
+  currentTotalMbps: number,
+): boolean => {
+  if (previousActive) {
+    return currentTotalMbps > EDGE_FLOW_DEACTIVATE_THRESHOLD_Mbps
+  }
+  return currentTotalMbps > EDGE_FLOW_ACTIVATE_THRESHOLD_Mbps
 }
 
 
@@ -380,6 +392,13 @@ const buildSnapshot = (
   const directPublicIp = String(vpnStatusAny.public_ip || '').trim()
 
   const failoverEngines: string[] = []
+  const previousEdgeFlowById = new Map<string, boolean>()
+
+  if (prevState) {
+    prevState.edges.forEach((edge) => {
+      previousEdgeFlowById.set(edge.id, edge.data?.flowActive === true)
+    })
+  }
 
   const vpnNodes = extractVpnNodes(vpnStatus, orchestratorStatus, workingEngines, isMockMode)
   const tunnelConnectivity: Record<string, boolean> = {}
@@ -659,8 +678,14 @@ const buildSnapshot = (
     // VPN → Engine edge: shows both download (P2P ingress) and upload (P2P seeding) bandwidth
     const edgeUploadBw = measuredUpMbps > 0 ? measuredUpMbps : (isMockMode ? randomBetween(2, 12) : 0)
     const edgeIsDraining = engineLifecycle === 'draining' || vpnLifecycleByTunnel[sourceNodeId] === 'draining'
+    const vpnEngineEdgeId = `${sourceNodeId}->${engine.container_id}`
+    const vpnEngineFlowSignal = bandwidthMbps + edgeUploadBw
+    const vpnEngineFlowActive = resolveEdgeFlowActive(
+      previousEdgeFlowById.get(vpnEngineEdgeId) ?? false,
+      vpnEngineFlowSignal,
+    )
     edges.push({
-      id: `${sourceNodeId}->${engine.container_id}`,
+      id: vpnEngineEdgeId,
       type: 'topologyEdge',
       source: sourceNodeId,
       target: engine.container_id,
@@ -672,6 +697,7 @@ const buildSnapshot = (
         labelPosition: 'near-target',
         monitoringActive: hasMonitoringSession,
         drainingRoute: edgeIsDraining,
+        flowActive: vpnEngineFlowActive,
       },
       style: {
         stroke: (failoverActive || hasMonitoringSession || edgeIsDraining) ? '#f59e0b' : '#64748b',
@@ -682,8 +708,13 @@ const buildSnapshot = (
 
     // Engine → Proxy edge: shows upload bandwidth (proxy ingress)
     const proxyRouteDraining = engineLifecycle === 'draining'
+    const engineProxyEdgeId = `${engine.container_id}->${proxyNodeId}`
+    const engineProxyFlowActive = resolveEdgeFlowActive(
+      previousEdgeFlowById.get(engineProxyEdgeId) ?? false,
+      proxyIngressMbps,
+    )
     edges.push({
-      id: `${engine.container_id}->${proxyNodeId}`,
+      id: engineProxyEdgeId,
       type: 'topologyEdge',
       source: engine.container_id,
       target: proxyNodeId,
@@ -693,6 +724,7 @@ const buildSnapshot = (
         bandwidthMbps: proxyIngressMbps,
         labelPosition: 'near-source',
         drainingRoute: proxyRouteDraining,
+        flowActive: engineProxyFlowActive,
       },
       style: {
         stroke: proxyRouteDraining ? '#f59e0b' : '#60a5fa',
@@ -804,6 +836,10 @@ const buildSnapshot = (
       data: {
         bandwidthMbps: clientBwMbps,
         protocol: client.type,
+        flowActive: resolveEdgeFlowActive(
+          previousEdgeFlowById.get(`${proxyNodeId}->${cNodeId}`) ?? false,
+          rawClientBw,
+        ),
       },
       style: {
         stroke: '#22c55e',

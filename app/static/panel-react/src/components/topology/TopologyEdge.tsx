@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { BaseEdge, EdgeLabelRenderer, EdgeProps, getSmoothStepPath } from 'reactflow'
 import { cn } from '@/lib/utils'
 
@@ -42,25 +42,34 @@ export function TopologyEdge({
   const isFailover = style.strokeDasharray != null
   const isMonitoringRoute = data?.monitoringActive === true
   const isDrainingRoute = data?.drainingRoute === true
-  
+
   const rawBandwidth = (data?.bandwidthMbps || 0) + (data?.uploadMbps || 0)
-  const [isActive, setIsActive] = useState(rawBandwidth > 0.1)
+  const flowActive = data?.flowActive === undefined ? rawBandwidth > 0.1 : data.flowActive === true
   const [isMounted, setIsMounted] = useState(false)
+  const [shouldAnimateFlowChange, setShouldAnimateFlowChange] = useState(false)
+  const previousFlowActiveRef = useRef(flowActive)
 
   // Set mounted state exclusively to suppress CSS animations on first render
   useEffect(() => {
     setIsMounted(true)
   }, [])
 
-  // Debounce the inactive state to smooth out network bursts and polling glitches
+  // Only animate mask sweeps when flow flips on/off; ignore regular throughput/layout updates.
   useEffect(() => {
-    if (rawBandwidth > 0.05) {
-      setIsActive(true)
-    } else {
-      const timer = setTimeout(() => setIsActive(false), 2500)
-      return () => clearTimeout(timer)
+    if (!isMounted) {
+      previousFlowActiveRef.current = flowActive
+      return
     }
-  }, [rawBandwidth])
+
+    if (previousFlowActiveRef.current === flowActive) {
+      return
+    }
+
+    previousFlowActiveRef.current = flowActive
+    setShouldAnimateFlowChange(true)
+    const timer = setTimeout(() => setShouldAnimateFlowChange(false), 520)
+    return () => clearTimeout(timer)
+  }, [flowActive, isMounted])
   
   // Estimate length of the step path for drawing animation
   const pathLength = useMemo(() => {
@@ -74,9 +83,9 @@ export function TopologyEdge({
   // which crashes the WebKit/Blink transition engines and forces spammy re-animations.
   const maskStyle = useMemo(() => ({
     strokeDasharray: pathLength,
-    strokeDashoffset: isActive ? 0 : pathLength,
-    transition: isMounted ? 'stroke-dashoffset 0.5s ease-in-out' : 'none',
-  }), [isActive, isMounted, pathLength])
+    strokeDashoffset: flowActive ? 0 : pathLength,
+    transition: (isMounted && shouldAnimateFlowChange) ? 'stroke-dashoffset 0.5s ease-in-out' : 'none',
+  }), [flowActive, isMounted, pathLength, shouldAnimateFlowChange])
 
   // Background empty pipe
   const trackStyle = {
@@ -130,7 +139,7 @@ export function TopologyEdge({
               "px-2 py-0.5 rounded-md border text-[11px] font-semibold transition-colors duration-300 shadow-md flex items-center gap-2",
               (isFailover || isMonitoringRoute || isDrainingRoute)
                 ? "border-amber-400 bg-[#020617] text-amber-400" 
-                : isActive 
+                : flowActive 
                   ? "border-emerald-400 bg-[#020617] text-emerald-400" 
                   : "border-slate-600 bg-[#020617] text-slate-400"
             )}
