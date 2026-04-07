@@ -78,6 +78,20 @@ function normalizeContentRef(value) {
   return trimmed.startsWith('acestream://') ? trimmed.slice('acestream://'.length) : trimmed
 }
 
+function normalizeMonitorContentId(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+
+  const lowered = raw.toLowerCase()
+  if (lowered.startsWith('acestream://')) {
+    const withoutScheme = raw.slice('acestream://'.length)
+    const normalized = withoutScheme.split('?')[0].split('/')[0].trim()
+    return normalized
+  }
+
+  return raw
+}
+
 function buildSeries(samples, keyPath) {
   const values = []
   for (const sample of samples || []) {
@@ -290,6 +304,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
   const [m3uEntries, setM3uEntries] = useState([])
   const [m3uSelectedById, setM3uSelectedById] = useState({})
   const [m3uParsing, setM3uParsing] = useState(false)
+  const [m3uStarting, setM3uStarting] = useState(false)
   const [newMonitor, setNewMonitor] = useState({ content_id: '', live_delay: '', interval_s: '1.0', run_seconds: '0' })
 
   // --- Initialization & Prefs ---
@@ -358,32 +373,47 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
       eventSource = new EventSource(streamUrl.toString())
 
       eventSource.onopen = () => setIsLive(true)
-      
-      eventSource.onmessage = (event) => {
+
+      const handleMonitorPayload = (parsed) => {
+        if (parsed?.type === 'legacy_monitor_snapshot') {
+          setMonitors(parsed?.payload?.items || [])
+          setLoading(false)
+          return
+        }
+
+        if (parsed?.type === 'legacy_monitor_event') {
+          const payload = parsed?.payload || {}
+          if (!payload.monitor_id) return
+          if (payload.change_type === 'deleted') {
+            setMonitors((prev) => prev.filter((m) => m.monitor_id !== payload.monitor_id))
+          } else if (payload.change_type === 'upsert' && payload.monitor) {
+            setMonitors((prev) => {
+              const next = [...prev]
+              const idx = next.findIndex((m) => m.monitor_id === payload.monitor_id)
+              if (idx >= 0) next[idx] = payload.monitor; else next.push(payload.monitor)
+              return next
+            })
+          }
+          setLoading(false)
+        }
+      }
+
+      const handleSseEvent = (event) => {
         try {
           const parsed = JSON.parse(event.data)
-          if (parsed?.type === 'legacy_monitor_snapshot') {
-            setMonitors(parsed?.payload?.items || []); setLoading(false)
-          } else if (parsed?.type === 'legacy_monitor_event') {
-            const payload = parsed?.payload || {}
-            if (!payload.monitor_id) return
-            if (payload.change_type === 'deleted') {
-              setMonitors((prev) => prev.filter((m) => m.monitor_id !== payload.monitor_id))
-            } else if (payload.change_type === 'upsert' && payload.monitor) {
-              setMonitors((prev) => {
-                const next = [...prev]
-                const idx = next.findIndex((m) => m.monitor_id === payload.monitor_id)
-                if (idx >= 0) next[idx] = payload.monitor; else next.push(payload.monitor)
-                return next
-              })
-            }
-            setLoading(false)
-          }
+          handleMonitorPayload(parsed)
         } catch { /* ignored */ }
       }
+
+      // Backend emits named events; keep onmessage for compatibility with unnamed SSE payloads.
+      eventSource.addEventListener('legacy_monitor_snapshot', handleSseEvent)
+      eventSource.addEventListener('legacy_monitor_event', handleSseEvent)
+      eventSource.onmessage = handleSseEvent
+
       eventSource.onerror = () => {
         setIsLive(false)
         if (eventSource) { eventSource.close(); eventSource = null }
+        fetchMonitorsNow(false)
         if (!closed) reconnectTimer = window.setTimeout(connect, 2000)
       }
     }
@@ -397,7 +427,8 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
 
   // --- Handlers ---
   const handleStartMonitor = async () => {
-    if (!apiKey || !newMonitor.content_id.trim()) { 
+    const normalizedContentId = normalizeMonitorContentId(newMonitor.content_id)
+    if (!apiKey || !normalizedContentId) {
       toast.error('Missing Information', { description: 'Content ID and API key are required' })
       return 
     }
@@ -406,10 +437,17 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
       const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ ...newMonitor, stream_name: null, live_delay: Number(newMonitor.live_delay||0), interval_s: Number(newMonitor.interval_s||1), run_seconds: Number(newMonitor.run_seconds||0) }),
+        body: JSON.stringify({
+          ...newMonitor,
+          content_id: normalizedContentId,
+          stream_name: null,
+          live_delay: Number(newMonitor.live_delay || 0),
+          interval_s: Number(newMonitor.interval_s || 1),
+          run_seconds: Number(newMonitor.run_seconds || 0)
+        }),
       })
       if (!response.ok) throw new Error(await response.json().then(p=>p.detail).catch(()=>'Failed'))
-      toast.success('Session Started', { description: `Monitoring ${newMonitor.content_id.slice(0, 8)}...` })
+      toast.success('Session Started', { description: `Monitoring ${normalizedContentId.slice(0, 8)}...` })
       setNewMonitor((prev) => ({ ...prev, content_id: '' }))
       setIsAddSheetOpen(false)
       fetchMonitorsNow(false)
@@ -468,6 +506,64 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
       toast.error('Parse Error', { description: err.message }) 
     } finally { 
       setM3uParsing(false) 
+    }
+  }
+
+  const handleStartSelectedM3u = async () => {
+    if (!apiKey) return
+
+    const selectedEntries = m3uEntries
+      .filter((entry) => Boolean(m3uSelectedById[entry.content_id]))
+      .map((entry) => ({ ...entry, content_id: normalizeMonitorContentId(entry.content_id) }))
+      .filter((entry) => Boolean(entry.content_id))
+
+    if (selectedEntries.length === 0) {
+      toast.error('No streams selected', { description: 'Select at least one valid stream entry.' })
+      return
+    }
+
+    setM3uStarting(true)
+    try {
+      const startRequests = selectedEntries.map(async (entry) => {
+        const response = await fetch(`${orchUrl}/api/v1/ace/monitor/legacy/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            content_id: entry.content_id,
+            stream_name: entry.name || null,
+            live_delay: Number(newMonitor.live_delay || 0),
+            interval_s: Number(newMonitor.interval_s || 1),
+            run_seconds: Number(newMonitor.run_seconds || 0)
+          }),
+        })
+
+        if (!response.ok) {
+          const detail = await response.json().then((p) => p?.detail || 'Failed').catch(() => 'Failed')
+          throw new Error(`${entry.content_id}: ${detail}`)
+        }
+        return entry.content_id
+      })
+
+      const settled = await Promise.allSettled(startRequests)
+      const successCount = settled.filter((r) => r.status === 'fulfilled').length
+      const failed = settled
+        .filter((r) => r.status === 'rejected')
+        .map((r) => r.reason?.message || 'Unknown error')
+
+      if (successCount > 0) {
+        toast.success('Sessions Started', { description: `${successCount} stream${successCount === 1 ? '' : 's'} started.` })
+        fetchMonitorsNow(false)
+      }
+
+      if (failed.length > 0) {
+        toast.error('Some streams failed', { description: failed.slice(0, 2).join(' | ') })
+      }
+
+      if (failed.length === 0) {
+        setIsAddSheetOpen(false)
+      }
+    } finally {
+      setM3uStarting(false)
     }
   }
 
@@ -739,8 +835,8 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
 
       {/* Slide-out Sheet for "Add Session" */}
       <Sheet open={isAddSheetOpen} onOpenChange={setIsAddSheetOpen}>
-        <SheetContent side="right" className={`w-full sm:max-w-lg overflow-y-auto p-0 border-l bg-background text-foreground ${isDarkTheme ? 'dark' : ''}`}>
-          <div className="p-6 bg-background border-b sticky top-0 z-10">
+        <SheetContent side="right" className={`w-full sm:max-w-lg overflow-y-auto p-0 border-l bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 ${isDarkTheme ? 'dark' : ''}`}>
+          <div className="p-6 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10">
             <SheetHeader>
               <SheetTitle>Add Monitoring Session</SheetTitle>
               <SheetDescription>
@@ -760,28 +856,28 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Content ID / Infohash</label>
-                    <Input placeholder="acestream://..." value={newMonitor.content_id} onChange={(e) => setNewMonitor(p => ({ ...p, content_id: e.target.value }))} />
+                    <Input className="bg-white text-slate-900 border-slate-300 placeholder:text-slate-500 dark:bg-slate-900 dark:text-slate-100 dark:border-slate-700" placeholder="acestream://..." value={newMonitor.content_id} onChange={(e) => setNewMonitor(p => ({ ...p, content_id: e.target.value }))} />
                   </div>
                   
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-muted-foreground flex justify-between">Live Delay <span>(s)</span></label>
-                      <Input type="number" min="0" placeholder="0" value={newMonitor.live_delay} onChange={(e) => setNewMonitor(p => ({ ...p, live_delay: e.target.value }))} />
+                      <Input className="bg-white text-slate-900 border-slate-300 placeholder:text-slate-500 dark:bg-slate-900 dark:text-slate-100 dark:border-slate-700" type="number" min="0" placeholder="0" value={newMonitor.live_delay} onChange={(e) => setNewMonitor(p => ({ ...p, live_delay: e.target.value }))} />
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-muted-foreground flex justify-between">Interval <span>(s)</span></label>
-                      <Input type="number" min="0.5" step="0.5" placeholder="1.0" value={newMonitor.interval_s} onChange={(e) => setNewMonitor(p => ({ ...p, interval_s: e.target.value }))} />
+                      <Input className="bg-white text-slate-900 border-slate-300 placeholder:text-slate-500 dark:bg-slate-900 dark:text-slate-100 dark:border-slate-700" type="number" min="0.5" step="0.5" placeholder="1.0" value={newMonitor.interval_s} onChange={(e) => setNewMonitor(p => ({ ...p, interval_s: e.target.value }))} />
                     </div>
                   </div>
                   
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-muted-foreground flex justify-between">Run Duration <span>(s)</span></label>
-                    <Input type="number" min="0" placeholder="0 (Continuous)" value={newMonitor.run_seconds} onChange={(e) => setNewMonitor(p => ({ ...p, run_seconds: e.target.value }))} />
+                    <Input className="bg-white text-slate-900 border-slate-300 placeholder:text-slate-500 dark:bg-slate-900 dark:text-slate-100 dark:border-slate-700" type="number" min="0" placeholder="0 (Continuous)" value={newMonitor.run_seconds} onChange={(e) => setNewMonitor(p => ({ ...p, run_seconds: e.target.value }))} />
                   </div>
                 </div>
 
                 <div className="pt-4 border-t">
-                  <Button onClick={handleStartMonitor} disabled={starting || !apiKey} className="w-full">
+                  <Button onClick={handleStartMonitor} disabled={starting || !apiKey} className="w-full bg-emerald-600 text-white hover:bg-emerald-500 dark:bg-emerald-500 dark:text-white dark:hover:bg-emerald-400 disabled:bg-slate-400 disabled:text-white">
                     <PlayCircle className="mr-2 h-4 w-4" /> {starting ? 'Starting...' : 'Start Monitoring'}
                   </Button>
                 </div>
@@ -796,7 +892,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
                     <Input type="file" accept=".m3u,.m3u8,text/plain" onChange={handleM3uFilePicked} className="max-w-[250px]" />
                   </div>
 
-                  <Button variant="secondary" className="w-full" onClick={handleParseM3u} disabled={m3uParsing || !m3uContent || !apiKey}>
+                  <Button variant="secondary" className="w-full bg-slate-800 text-white hover:bg-slate-700 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white disabled:bg-slate-500 disabled:text-white" onClick={handleParseM3u} disabled={m3uParsing || !m3uContent || !apiKey}>
                     {m3uParsing ? 'Parsing File...' : 'Extract AceStream Links'}
                   </Button>
                 </div>
@@ -823,7 +919,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
                       ))}
                     </div>
 
-                    <Button className="w-full" onClick={() => { /* Start M3U logic */ }} disabled={m3uStarting || !apiKey || Object.values(m3uSelectedById).filter(Boolean).length === 0}>
+                    <Button className="w-full bg-emerald-600 text-white hover:bg-emerald-500 dark:bg-emerald-500 dark:text-white dark:hover:bg-emerald-400 disabled:bg-slate-500 disabled:text-white" onClick={handleStartSelectedM3u} disabled={m3uStarting || !apiKey || Object.values(m3uSelectedById).filter(Boolean).length === 0}>
                       <PlayCircle className="mr-2 h-4 w-4" /> Start Selected ({Object.values(m3uSelectedById).filter(Boolean).length})
                     </Button>
                   </div>
