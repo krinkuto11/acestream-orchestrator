@@ -328,13 +328,20 @@ class AceLegacyApiClient:
                 break
 
             if cmd == "EVENT" and len(parts) > 1 and parts[1] == "livepos":
-                # Seek confirmed by livepos – this engine variant does not send
-                # a second START.  Exit immediately to avoid unnecessary delay.
-                logger.debug(
-                    "LIVESEEK confirmed via EVENT livepos; skipping second-START wait"
-                )
-                self._handle_async(cmd, parts)
-                break
+                # Parse the event to check the is_live flag
+                parsed_event = self.parse_event_line(" ".join(parts))
+                
+                # Only break if is_live=0, proving the seek actually executed
+                if parsed_event.get("is_live") == "0":
+                    logger.debug(
+                        "LIVESEEK confirmed via EVENT livepos (is_live=0); skipping second-START wait"
+                    )
+                    self._handle_async(cmd, parts)
+                    break
+                else:
+                    logger.debug("Ignoring stale pre-seek livepos event during seek confirmation wait")
+                    self._handle_async(cmd, parts)
+                    continue
 
             # Forward any other async events so stop notifications are not lost.
             self._handle_async(cmd, parts)
