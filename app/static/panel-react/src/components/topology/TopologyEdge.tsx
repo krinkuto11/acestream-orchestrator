@@ -84,6 +84,7 @@ export function TopologyEdge({
   const maskStyle = useMemo(() => ({
     strokeDasharray: pathLength,
     strokeDashoffset: flowActive ? 0 : pathLength,
+    animation: 'none',
     transition: (isMounted && shouldAnimateFlowChange) ? 'stroke-dashoffset 0.5s ease-in-out' : 'none',
   }), [flowActive, isMounted, pathLength, shouldAnimateFlowChange])
 
@@ -93,6 +94,7 @@ export function TopologyEdge({
     stroke: '#64748b',
     strokeWidth: baseStrokeWidth,
     strokeOpacity: 0.3,
+    animation: 'none',
     strokeDasharray: (isDrainingRoute || isFailover) ? '8 5' : style.strokeDasharray,
   }
 
@@ -102,6 +104,7 @@ export function TopologyEdge({
     stroke: (isFailover || isMonitoringRoute || isDrainingRoute) ? '#f59e0b' : '#22c55e',
     strokeWidth: baseStrokeWidth,
     strokeOpacity: 1,
+    animation: 'none',
     strokeDasharray: '8 6', // Always dashed
     mask: `url(#${safeMaskId})`,
   }

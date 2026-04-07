@@ -689,7 +689,7 @@ const buildSnapshot = (
       type: 'topologyEdge',
       source: sourceNodeId,
       target: engine.container_id,
-      animated: true,
+      animated: false,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: bandwidthMbps,
@@ -718,7 +718,7 @@ const buildSnapshot = (
       type: 'topologyEdge',
       source: engine.container_id,
       target: proxyNodeId,
-      animated: true,
+      animated: false,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: proxyIngressMbps,
@@ -831,7 +831,7 @@ const buildSnapshot = (
       type: 'topologyEdge',
       source: proxyNodeId,
       target: cNodeId,
-      animated: true,
+      animated: false,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: clientBwMbps,
@@ -1016,8 +1016,9 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
         
         const styleChanged = JSON.stringify(existingEdge.style) !== JSON.stringify(nextEdge.style)
         const labelChanged = existingEdge.label !== nextEdge.label
+        const flowStateChanged = (existingEdge.data?.flowActive === true) !== (nextEdge.data?.flowActive === true)
         
-        if (!styleChanged && !labelChanged) return existingEdge
+        if (!styleChanged && !labelChanged && !flowStateChanged) return existingEdge
 
         const currentBandwidth = Number(existingEdge.data?.bandwidthMbps ?? nextEdge.data?.bandwidthMbps ?? 0)
         const currentUpload =
