@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { BaseEdge, EdgeLabelRenderer, EdgeProps, getSmoothStepPath } from 'reactflow'
 import { cn } from '@/lib/utils'
 
@@ -63,9 +63,20 @@ export function TopologyEdge({
   }, [rawBandwidth])
   
   // Estimate length of the step path for drawing animation
-  const pathLength = Math.abs(targetX - sourceX) + Math.abs(targetY - sourceY) + 100
+  const pathLength = useMemo(() => {
+    return Math.abs(targetX - sourceX) + Math.abs(targetY - sourceY) + 100
+  }, [targetX, sourceX, targetY, sourceY])
+
   const baseStrokeWidth = (style.strokeWidth as number || 2.2) * 1.2
   const safeMaskId = `mask-sweep-${id.replace(/[^a-zA-Z0-9_-]/g, '')}`
+
+  // Memoize mask style so React avoids mutating the SVG <defs> 60x a second during bandwidth updates, 
+  // which crashes the WebKit/Blink transition engines and forces spammy re-animations.
+  const maskStyle = useMemo(() => ({
+    strokeDasharray: pathLength,
+    strokeDashoffset: isActive ? 0 : pathLength,
+    transition: isMounted ? 'stroke-dashoffset 0.5s ease-in-out' : 'none',
+  }), [isActive, isMounted, pathLength])
 
   // Background empty pipe
   const trackStyle = {
@@ -97,11 +108,7 @@ export function TopologyEdge({
             strokeWidth={baseStrokeWidth * 3} // Ensure the mask fully envelopes the path
             strokeLinecap="round"
             strokeLinejoin="round"
-            style={{
-              strokeDasharray: pathLength,
-              strokeDashoffset: isActive ? 0 : pathLength,
-              transition: isMounted ? 'stroke-dashoffset 0.5s ease-in-out' : 'none',
-            }}
+            style={maskStyle}
           />
         </mask>
       </defs>
