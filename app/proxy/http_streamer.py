@@ -100,26 +100,38 @@ class HTTPStreamReader:
 
             # Stream chunks to pipe
             chunk_count = 0
+            ts_buffer = bytearray() # Buffer for 188-byte alignment
+            
             try:
-                for chunk in self.response.iter_content(chunk_size=self.chunk_size):
+                # Change chunk_size to a multiple of 188 (e.g., 188 * 44 = 8272)
+                for chunk in self.response.iter_content(chunk_size=8272):
                     # Check if we should stop before processing chunk
                     if not self.running:
                         logger.debug("HTTP reader stopping (running=False)")
                         break
 
                     if chunk:
-                        try:
-                            # Write binary data to pipe
-                            os.write(self.pipe_write, chunk)
-                            observe_proxy_ingress_bytes("TS", len(chunk))
-                            chunk_count += 1
-
-                            # Log progress periodically
-                            if chunk_count % 1000 == 0:
-                                logger.debug(f"HTTP reader streamed {chunk_count} chunks")
-                        except OSError as e:
-                            logger.error(f"Pipe write error: {e}")
-                            break
+                        ts_buffer.extend(chunk)
+                        
+                        # Calculate the largest multiple of 188 we have buffered
+                        valid_length = (len(ts_buffer) // 188) * 188
+                        
+                        if valid_length > 0:
+                            try:
+                                # Only write perfectly aligned TS packets
+                                os.write(self.pipe_write, ts_buffer[:valid_length])
+                                observe_proxy_ingress_bytes("TS", valid_length)
+                                chunk_count += 1
+                                
+                                # Keep the remainder (incomplete packet) for the next iteration
+                                del ts_buffer[:valid_length]
+                                
+                                # Log progress periodically
+                                if chunk_count % 1000 == 0:
+                                    logger.debug(f"HTTP reader streamed {chunk_count} chunks")
+                            except OSError as e:
+                                logger.error(f"Pipe write error: {e}")
+                                break
             except requests.exceptions.ChunkedEncodingError as e:
                 logger.info(f"HTTP stream ended prematurely (ChunkedEncodingError) after {chunk_count} chunks")
             except requests.exceptions.ConnectionError as e:
