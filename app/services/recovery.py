@@ -39,14 +39,22 @@ def recover_stream(stream_id: str, dead_vpn: Optional[str] = None):
 
             # Try to select a new engine, heavily penalizing the dead one
             penalties = {dead_container_id: 999} if dead_container_id else None
-            try:
-                new_engine, _ = select_best_engine(
-                    additional_load_by_engine=penalties,
-                    exclude_vpn=resolved_dead_vpn
-                )
-            except Exception as e:
-                logger.error(f"Failed to find a replacement engine for stream {stream_id}: {e}")
-                # If we cannot find a new engine, fail the stream cleanly
+            new_engine = None
+            max_retries = 15
+            
+            for attempt in range(max_retries):
+                try:
+                    new_engine, _ = select_best_engine(
+                        additional_load_by_engine=penalties,
+                        exclude_vpn=resolved_dead_vpn
+                    )
+                    break
+                except Exception as e:
+                    logger.warning(f"Engine selection failed for stream {stream_id} (attempt {attempt + 1}/{max_retries}): {e}. Waiting for capacity...")
+                    time.sleep(2.0)
+            
+            if not new_engine:
+                logger.error(f"Exhausted all retries waiting for a replacement engine for stream {stream_id}.")
                 from ..models.schemas import StreamEndedEvent
                 from .internal_events import handle_stream_ended
                 handle_stream_ended(StreamEndedEvent(stream_id=stream_id, container_id=dead_container_id, reason="failover_exhausted"))
