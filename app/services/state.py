@@ -1407,7 +1407,7 @@ class State:
         """Apply Docker lifecycle events to in-memory engine state immediately."""
         normalized_action = action.strip().lower()
 
-        if normalized_action == "destroy":
+        if normalized_action in {"destroy", "stop"}:
             self.remove_engine(container_id)
             return
 
