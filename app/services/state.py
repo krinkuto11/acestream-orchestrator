@@ -1468,12 +1468,16 @@ class State:
             elif normalized_action == "health_status: healthy":
                 if engine:
                     engine.last_seen = now
-                    logger.debug(f"Ignoring Docker health event for engine {container_id[:12]}: {normalized_action}")
+                    engine.health_status = "healthy"
+                    engine.last_health_check = now
+                    logger.info(f"Engine {container_id[:12]} marked healthy via Docker event")
 
             elif normalized_action == "health_status: unhealthy":
                 if engine:
                     engine.last_seen = now
-                    logger.debug(f"Ignoring Docker health event for engine {container_id[:12]}: {normalized_action}")
+                    engine.health_status = "unhealthy"
+                    engine.last_health_check = now
+                    logger.warning(f"Engine {container_id[:12]} marked unhealthy via Docker event")
 
             if engine:
                 engine_snapshot = engine.model_copy(deep=True)
