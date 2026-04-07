@@ -31,6 +31,7 @@ export const useStreamingCentralStore = create((set, get) => ({
   engines: [],
   streams: [],
   vpnStatus: null,
+  vpnLeaseSummary: null,
   orchestratorStatus: null,
   dashboardSnapshot: null,
   engineStatsById: {},
@@ -143,6 +144,12 @@ export const useStreamingCentralStore = create((set, get) => ({
   setEngineStartEvents: (engineStartEvents) => {
     set({
       engineStartEvents: Array.isArray(engineStartEvents) ? engineStartEvents : [],
+    })
+  },
+
+  setVpnLeaseSummary: (vpnLeaseSummary) => {
+    set({
+      vpnLeaseSummary: vpnLeaseSummary || null,
     })
   },
 

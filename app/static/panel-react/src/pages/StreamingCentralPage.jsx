@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo } from 'react'
 import ReactECharts from 'echarts-for-react'
 import { AlertTriangle, GaugeCircle, KeyRound, Network, Server, ShieldAlert, Tv, Waves, Workflow } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -144,10 +144,10 @@ export function StreamingCentralPage({
   orchUrl,
   apiKey,
 }) {
-  const [vpnLeaseSummary, setVpnLeaseSummary] = useState(null)
   const { resolvedTheme } = useTheme()
   const {
     kpiHistory,
+    vpnLeaseSummary,
     dashboardSnapshot,
     engineStatsById,
     engineInspectById,
@@ -160,6 +160,7 @@ export function StreamingCentralPage({
     ingestLiveSnapshot,
     setDashboardSnapshot,
     setEngineStartEvents,
+    setVpnLeaseSummary,
     refreshBackendTelemetry,
     openEngineLogs,
     closeEngineLogs,
