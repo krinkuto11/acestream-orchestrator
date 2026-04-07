@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { BaseEdge, EdgeLabelRenderer, EdgeProps, getSmoothStepPath } from 'reactflow'
 import { cn } from '@/lib/utils'
 
@@ -42,8 +42,19 @@ export function TopologyEdge({
   const isFailover = style.strokeDasharray != null
   const isMonitoringRoute = data?.monitoringActive === true
   const isDrainingRoute = data?.drainingRoute === true
-  const bandwidth = (data?.bandwidthMbps || 0) + (data?.uploadMbps || 0)
-  const isActive = bandwidth > 0.1
+  
+  const rawBandwidth = (data?.bandwidthMbps || 0) + (data?.uploadMbps || 0)
+  const [isActive, setIsActive] = useState(rawBandwidth > 0.1)
+
+  // Debounce the inactive state to smooth out network bursts and polling glitches
+  useEffect(() => {
+    if (rawBandwidth > 0.05) {
+      setIsActive(true)
+    } else {
+      const timer = setTimeout(() => setIsActive(false), 2500)
+      return () => clearTimeout(timer)
+    }
+  }, [rawBandwidth])
   
   // Estimate length of the step path for drawing animation
   const pathLength = Math.abs(targetX - sourceX) + Math.abs(targetY - sourceY) + 100
