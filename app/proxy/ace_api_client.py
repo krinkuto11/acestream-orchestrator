@@ -245,11 +245,17 @@ class AceLegacyApiClient:
         stream_type: str = "output_format=http",
         file_indexes: str = "0",
         seekback: int = 0,
+        absolute_seek: int = 0,
     ) -> Dict[str, str]:
         """Start stream and return parsed START key/value response."""
         normalized_mode = self._normalize_input_mode(mode)
         normalized_file_indexes = self._normalize_file_indexes(file_indexes)
         normalized_seekback = self._normalize_seekback(seekback)
+        
+        try:
+            absolute_seek = int(float(absolute_seek)) if absolute_seek is not None else 0
+        except (TypeError, ValueError):
+            absolute_seek = 0
 
         if normalized_mode == "content_id":
             cmd = f"START PID {content_id} {normalized_file_indexes} {stream_type}"
@@ -268,7 +274,7 @@ class AceLegacyApiClient:
         _, parts, _ = self._wait_for("START", timeout=self.response_timeout * 3)
         first_start_info = self._parse_start_params(parts)
 
-        if normalized_seekback <= 0:
+        if normalized_seekback <= 0 and absolute_seek <= 0:
             return first_start_info
 
         # Startup catch-up bootstrap:
@@ -287,7 +293,11 @@ class AceLegacyApiClient:
                 % (normalized_seekback, livepos_event)
             )
 
-        target_timestamp = max(0, int(last_ts) - normalized_seekback)
+        if absolute_seek > 0:
+            target_timestamp = absolute_seek
+        else:
+            target_timestamp = max(0, int(last_ts) - normalized_seekback)
+            
         self.seek_stream(target_timestamp)
 
         # Dynamic post-seek wait: some engine variants never send a second START

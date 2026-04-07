@@ -516,7 +516,7 @@ class StreamManager:
             "ace_api_client": None,
         }
 
-    def _request_stream_session_api_for_engine(self, engine_host: str, engine_api_port: int) -> Dict[str, Any]:
+    def _request_stream_session_api_for_engine(self, engine_host: str, engine_api_port: int, absolute_seek: int = 0) -> Dict[str, Any]:
         """Request a new API-mode AceStream session from a specific engine."""
         client = AceLegacyApiClient(
             host=engine_host,
@@ -552,6 +552,7 @@ class StreamManager:
                 mode=start_mode,
                 file_indexes=self.file_indexes,
                 seekback=self.seekback,
+                absolute_seek=absolute_seek,
             )
 
             playback_url = start_info.get("url")
@@ -590,8 +591,20 @@ class StreamManager:
                 "new_container_id": new_container_id,
             }
 
+        target_pos = 0
+        current_probe = self.collect_legacy_stats_probe(force=False)
+        if current_probe and current_probe.get("livepos"):
+            try:
+                pos_val = current_probe["livepos"].get("pos")
+                if pos_val is not None:
+                    target_pos = int(float(pos_val))
+            except (TypeError, ValueError):
+                target_pos = 0
+
+        target_pos = max(0, target_pos)
+
         if self._is_api_mode():
-            session = self._request_stream_session_api_for_engine(new_host, int(new_api_port or 62062))
+            session = self._request_stream_session_api_for_engine(new_host, int(new_api_port or 62062), absolute_seek=target_pos)
         else:
             session = self._request_stream_session_http_for_engine(new_host, int(new_port))
 
