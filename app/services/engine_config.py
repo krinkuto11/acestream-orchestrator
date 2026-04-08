@@ -28,6 +28,18 @@ RESTRICTED_FLAGS = {
     "--bind-all",
 }
 
+MANDATORY_ENGINE_FLAGS = (
+    "--disable-sentry",
+    "--log-stdout",
+    "--disable-upnp",
+)
+
+CONTROLLED_ENGINE_FLAGS = {
+    "--live-cache-type",
+    "--live-mem-cache-size",
+    *MANDATORY_ENGINE_FLAGS,
+}
+
 
 class EngineParameter(BaseModel):
     """Advanced CLI parameter for AceStream engine startup."""
@@ -203,21 +215,24 @@ def build_engine_customization_args(config: EngineConfig) -> List[str]:
         "--download-limit", str(int(config.download_limit)),
         "--upload-limit", str(int(config.upload_limit)),
         "--live-buffer", str(int(config.buffer_time)),
-        "--disable-sentry",
-        "--log-stdout",
-        "--disable-upnp",
     ]
 
     if config.live_cache_type == "disk":
         args.extend(["--live-cache-type", "disk", "--cache-dir", "/dev/shm/.ACEStream"])
     else:
-        args.extend(["--live-cache-type", "memory"])
+        args.extend(["--live-cache-type", "memory", "--live-mem-cache-size", "104857600"])
 
     for parameter in config.parameters:
         try:
+            if parameter.name in CONTROLLED_ENGINE_FLAGS:
+                logger.warning("Ignoring advanced parameter %s because it is orchestrator-controlled", parameter.name)
+                continue
             args.extend(_parameter_to_cli_tokens(parameter))
         except Exception as exc:
             logger.warning("Skipping invalid advanced parameter %s: %s", parameter.name, exc)
+
+    for flag in MANDATORY_ENGINE_FLAGS:
+        args.append(flag)
 
     return args
 

@@ -690,6 +690,7 @@ def start_acestream(req: AceProvisionRequest, engine_spec: Optional[EngineSpec] 
     import time
     from .engine_config import (
         DEFAULT_TORRENT_FOLDER_PATH,
+        EngineConfig,
         build_engine_customization_args,
         detect_platform,
         get_config as get_engine_config,
@@ -703,7 +704,7 @@ def start_acestream(req: AceProvisionRequest, engine_spec: Optional[EngineSpec] 
     engine_platform = detect_platform()
     engine_image = resolve_engine_image(engine_platform)
     engine_variant_name = f"global-{engine_platform}"
-    engine_config = get_engine_config()
+    engine_config = get_engine_config() or EngineConfig()
 
     # Determine memory limit to apply.
     # Priority: global engine config > global env config
@@ -764,8 +765,7 @@ def start_acestream(req: AceProvisionRequest, engine_spec: Optional[EngineSpec] 
     if p2p_port:
         cmd.extend(["--port", str(p2p_port)])
 
-    if engine_config:
-        cmd.extend(build_engine_customization_args(engine_config))
+    cmd.extend(build_engine_customization_args(engine_config))
 
     # Generate a meaningful container name with retry logic for conflicts
     container_name = generate_container_name("acestream")

@@ -61,6 +61,41 @@ def test_variant_adapter_uses_runtime_platform_and_global_config(mock_get_config
 
 
 @patch('app.services.engine_config.detect_platform', return_value='amd64')
+@patch('app.services.engine_config.get_config', return_value=EngineConfig(live_cache_type='memory'))
+def test_variant_adapter_enforces_memory_cache_runtime_flags(mock_get_config, mock_detect):
+    """Memory cache mode should include mandatory flags and fixed live mem cache size."""
+    from app.services.provisioner import get_variant_config
+
+    variant_config = get_variant_config('global')
+    base_cmd = variant_config.get('base_cmd', [])
+
+    assert '--disable-sentry' in base_cmd
+    assert '--log-stdout' in base_cmd
+    assert '--disable-upnp' in base_cmd
+    assert '--live-cache-type' in base_cmd
+    assert 'memory' in base_cmd
+    assert '--live-mem-cache-size' in base_cmd
+    assert '104857600' in base_cmd
+
+
+@patch('app.services.engine_config.detect_platform', return_value='amd64')
+@patch('app.services.engine_config.get_config', return_value=EngineConfig(live_cache_type='disk'))
+def test_variant_adapter_omits_live_mem_size_for_disk_cache(mock_get_config, mock_detect):
+    """Disk cache mode should keep mandatory flags but omit live mem cache size."""
+    from app.services.provisioner import get_variant_config
+
+    variant_config = get_variant_config('global')
+    base_cmd = variant_config.get('base_cmd', [])
+
+    assert '--disable-sentry' in base_cmd
+    assert '--log-stdout' in base_cmd
+    assert '--disable-upnp' in base_cmd
+    assert '--live-cache-type' in base_cmd
+    assert 'disk' in base_cmd
+    assert '--live-mem-cache-size' not in base_cmd
+
+
+@patch('app.services.engine_config.detect_platform', return_value='amd64')
 @patch('app.services.engine_config.get_config', return_value=EngineConfig())
 def test_orchestrator_appends_ports_to_base_command(mock_get_config, mock_detect):
     """Provisioner model: base command plus orchestrator-managed port args."""
