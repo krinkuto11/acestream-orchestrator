@@ -25,7 +25,7 @@ function getClientInitial(client) {
   return source.charAt(0).toUpperCase() || '?'
 }
 
-export default function StreamTimelineGraphic({
+function StreamTimelineGraphic({
   livepos,
   clients = [],
   isLive = false,
@@ -153,3 +153,7 @@ export default function StreamTimelineGraphic({
     </div>
   )
 }
+
+StreamTimelineGraphic.displayName = 'StreamTimelineGraphic'
+
+export default StreamTimelineGraphic
