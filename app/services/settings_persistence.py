@@ -89,6 +89,7 @@ class SettingsPersistence:
             "connection_timeout": 10,
             "stream_timeout": 60,
             "channel_shutdown_delay": 5,
+            "proxy_prebuffer_seconds": 0,
             "max_streams_per_engine": int(getattr(cfg, "MAX_STREAMS_PER_ENGINE", 3)),
             "stream_mode": "TS",
             "control_mode": "api",
@@ -103,6 +104,62 @@ class SettingsPersistence:
             "hls_max_initial_segments": 10,
             "hls_segment_fetch_interval": 0.5,
         }
+
+    @staticmethod
+    def normalize_proxy_config(config: Dict[str, Any]) -> Dict[str, Any]:
+        """Backfill and sanitize proxy settings for schema evolution compatibility."""
+        defaults = SettingsPersistence._default_proxy_settings()
+        normalized = {**defaults, **dict(config or {})}
+
+        int_fields = (
+            "initial_data_wait_timeout",
+            "no_data_timeout_checks",
+            "connection_timeout",
+            "stream_timeout",
+            "channel_shutdown_delay",
+            "proxy_prebuffer_seconds",
+            "max_streams_per_engine",
+            "ace_live_edge_delay",
+            "hls_max_segments",
+            "hls_initial_segments",
+            "hls_window_size",
+            "hls_buffer_ready_timeout",
+            "hls_first_segment_timeout",
+            "hls_initial_buffer_seconds",
+            "hls_max_initial_segments",
+        )
+        float_fields = (
+            "initial_data_check_interval",
+            "no_data_check_interval",
+            "hls_segment_fetch_interval",
+        )
+
+        for key in int_fields:
+            try:
+                normalized[key] = int(normalized.get(key, defaults[key]))
+            except Exception:
+                normalized[key] = int(defaults[key])
+
+        for key in float_fields:
+            try:
+                normalized[key] = float(normalized.get(key, defaults[key]))
+            except Exception:
+                normalized[key] = float(defaults[key])
+
+        normalized["proxy_prebuffer_seconds"] = max(0, int(normalized.get("proxy_prebuffer_seconds", 0)))
+        normalized["ace_live_edge_delay"] = max(0, int(normalized.get("ace_live_edge_delay", 0)))
+        normalized["max_streams_per_engine"] = max(1, int(normalized.get("max_streams_per_engine", defaults["max_streams_per_engine"])))
+
+        stream_mode = str(normalized.get("stream_mode") or defaults["stream_mode"]).strip().upper()
+        normalized["stream_mode"] = stream_mode if stream_mode in {"TS", "HLS"} else defaults["stream_mode"]
+
+        control_mode = str(normalized.get("control_mode") or defaults["control_mode"]).strip().lower()
+        normalized["control_mode"] = control_mode if control_mode in {"http", "api"} else defaults["control_mode"]
+
+        tier = str(normalized.get("legacy_api_preflight_tier") or defaults["legacy_api_preflight_tier"]).strip().lower()
+        normalized["legacy_api_preflight_tier"] = tier if tier in {"light", "deep"} else defaults["legacy_api_preflight_tier"]
+
+        return normalized
 
     @staticmethod
     def _default_loop_detection_settings() -> Dict[str, Any]:
@@ -273,7 +330,7 @@ class SettingsPersistence:
         engine_config = cls._deepcopy(row.engine_config) or cls._default_engine_config()
         engine_settings = cls._deepcopy(row.engine_settings) or cls._default_engine_settings()
         orchestrator_settings = cls._deepcopy(row.orchestrator_settings) or cls._default_orchestrator_settings()
-        proxy_settings = cls._deepcopy(row.proxy_settings) or cls._default_proxy_settings()
+        proxy_settings = cls.normalize_proxy_config(cls._deepcopy(row.proxy_settings) or cls._default_proxy_settings())
         vpn_settings = cls.normalize_vpn_config(cls._deepcopy(row.vpn_settings) or cls._default_vpn_settings())
         loop_detection_settings = cls._deepcopy(row.loop_detection_settings) or cls._default_loop_detection_settings()
 
@@ -294,6 +351,23 @@ class SettingsPersistence:
         }
 
     @classmethod
+    def _migrate_runtime_settings_row(cls, session, row: RuntimeSettingsRow) -> bool:
+        """Apply schema backfills to RuntimeSettings and persist if anything changed."""
+        migrated = False
+
+        proxy_before = cls._deepcopy(row.proxy_settings)
+        proxy_after = cls.normalize_proxy_config(proxy_before)
+        if proxy_after != proxy_before:
+            row.proxy_settings = proxy_after
+            migrated = True
+
+        if migrated:
+            row.updated_at = datetime.now(timezone.utc)
+            session.add(row)
+
+        return migrated
+
+    @classmethod
     def initialize_cache(cls, force_reload: bool = False) -> None:
         with cls._lock:
             if cls._cache_initialized and not force_reload:
@@ -302,6 +376,7 @@ class SettingsPersistence:
             try:
                 with get_session() as session:
                     row = cls._ensure_settings_row(session)
+                    cls._migrate_runtime_settings_row(session, row)
                     session.commit()
                     cls._cache = cls._row_to_cache(session, row)
                     cls._cache_initialized = True
@@ -379,6 +454,10 @@ class SettingsPersistence:
                         row.vpn_settings = {k: v for k, v in normalized.items() if k != "credentials"}
                         cls._upsert_credentials(session, row.id, credentials)
                         cls._cache["vpn_settings"] = {**normalized, "credentials": credentials}
+                    elif category == "proxy_settings":
+                        normalized_proxy = cls.normalize_proxy_config(payload)
+                        row.proxy_settings = normalized_proxy
+                        cls._cache[category] = normalized_proxy
                     else:
                         cleaned = cls._deepcopy(payload)
                         setattr(row, category, cleaned)

@@ -86,6 +86,7 @@ class RuntimeSettingsRow(Base):
     engine_config: Mapped[dict] = mapped_column(JSON, default=dict)
     engine_settings: Mapped[dict] = mapped_column(JSON, default=dict)
     orchestrator_settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    # proxy_settings stores dynamic proxy config including proxy_prebuffer_seconds.
     proxy_settings: Mapped[dict] = mapped_column(JSON, default=dict)
     vpn_settings: Mapped[dict] = mapped_column(JSON, default=dict)
     loop_detection_settings: Mapped[dict] = mapped_column(JSON, default=dict)

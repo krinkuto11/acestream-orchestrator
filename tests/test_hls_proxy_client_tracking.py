@@ -92,3 +92,27 @@ def test_hls_client_manager_cleanup_inactive_uses_client_last_active():
     assert len(clients) == 1
     assert clients[0]["client_id"] == "10.0.0.1:new"
     assert manager.last_activity["10.0.0.1"] == pytest.approx(now - 5.0, abs=0.01)
+
+
+def test_hls_client_manager_tracks_buffer_seconds_behind():
+    from app.services.client_tracker import client_tracking_service
+
+    stream_id = "test-hls-buffer-seconds"
+    client_tracking_service.unregister_stream(stream_id=stream_id, protocol="HLS")
+    manager = ClientManager(stream_id=stream_id)
+
+    manager.record_activity(
+        client_ip="10.0.0.2",
+        client_id="10.0.0.2:ua2",
+        user_agent="UA/2.0",
+        request_kind="manifest",
+        bytes_sent=256,
+        buffer_seconds_behind=6.75,
+        now=2000.0,
+    )
+
+    clients = manager.list_clients()
+    matching = [c for c in clients if c.get("client_id") == "10.0.0.2:ua2"]
+
+    assert len(matching) == 1
+    assert matching[0]["buffer_seconds_behind"] == pytest.approx(6.75, abs=0.001)

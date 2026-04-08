@@ -81,6 +81,7 @@ class ClientTrackingService:
                     "user_agent": str(user_agent or "unknown"),
                     "protocol": normalized_protocol,
                     "bytes_sent": 0.0,
+                    "buffer_seconds_behind": 0.0,
                     "connected_at": now,
                     "last_active": now,
                     "bps": 0.0,
@@ -123,6 +124,7 @@ class ClientTrackingService:
         request_kind: str = "",
         chunks_delta: int = 0,
         sequence: Optional[int] = None,
+        buffer_seconds_behind: Optional[float] = None,
         now: Optional[float] = None,
         idle_timeout_s: Optional[float] = None,
         worker_id: Optional[str] = None,
@@ -166,6 +168,9 @@ class ClientTrackingService:
             current["requests_total"] = self._safe_int(current.get("requests_total"), 0) + 1
             current["stats_updated_at"] = ts
 
+            if buffer_seconds_behind is not None:
+                current["buffer_seconds_behind"] = max(0.0, self._safe_float(buffer_seconds_behind, default=0.0))
+
             if idle_timeout_s is not None:
                 current["idle_timeout_s"] = self._safe_float(idle_timeout_s, default=0.0)
             if worker_id is not None:
@@ -195,6 +200,31 @@ class ClientTrackingService:
                 current["bps"] = 0.0
             self._rate_state[key] = (self._safe_float(current.get("bytes_sent"), 0.0), ts)
 
+            return dict(current)
+
+    def update_client_position(
+        self,
+        *,
+        client_id: str,
+        stream_id: str,
+        protocol: str,
+        seconds_behind: float,
+        now: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Update buffer lag for an existing client without incrementing request counters."""
+        ts = self._safe_float(now, default=time.time())
+        normalized_protocol = self._normalize_protocol(protocol)
+        normalized_client_id = str(client_id or "unknown")
+        normalized_stream_id = str(stream_id or "")
+        key = self._key(normalized_protocol, normalized_stream_id, normalized_client_id)
+
+        with self._lock:
+            current = self._clients.get(key)
+            if current is None:
+                return {}
+
+            current["buffer_seconds_behind"] = max(0.0, self._safe_float(seconds_behind, default=0.0))
+            current["stats_updated_at"] = ts
             return dict(current)
 
     def prune_stale_clients(self, timeout_s: float) -> int:
@@ -315,6 +345,7 @@ class ClientTrackingService:
             "protocol": protocol,
             "bps": self._safe_float(row.get("bps"), default=0.0),
             "bytes_sent": self._safe_float(row.get("bytes_sent"), default=0.0),
+            "buffer_seconds_behind": self._safe_float(row.get("buffer_seconds_behind"), default=0.0),
             "connected_at": self._safe_float(row.get("connected_at"), default=now),
             "last_active": last_active,
             "inactive_seconds": max(0.0, now - last_active),

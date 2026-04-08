@@ -57,6 +57,9 @@ class Config:
     # Initial data wait settings
     INITIAL_DATA_WAIT_TIMEOUT: int = 10
     INITIAL_DATA_CHECK_INTERVAL: float = 0.2
+
+    # Unified prebuffer for TS/HLS startup holdback (seconds)
+    PROXY_PREBUFFER_SECONDS: int = 0
     
     # Stream mode (TS or HLS)
     STREAM_MODE: str = 'TS'  # Default to MPEG-TS for backwards compatibility
@@ -269,10 +272,26 @@ class ConfigHelper:
     def hls_first_segment_timeout():
         """Get timeout in seconds for first HLS segment to be available."""
         return ConfigHelper._get_proxy_value("hls_first_segment_timeout", Config.HLS_FIRST_SEGMENT_TIMEOUT)
+
+    @staticmethod
+    def proxy_prebuffer_seconds():
+        """Get unified proxy prebuffer holdback duration in seconds (0 disables)."""
+        try:
+            value = int(ConfigHelper._get_proxy_value("proxy_prebuffer_seconds", Config.PROXY_PREBUFFER_SECONDS))
+        except Exception:
+            value = int(Config.PROXY_PREBUFFER_SECONDS)
+        return max(0, value)
     
     @staticmethod
     def hls_initial_buffer_seconds():
-        """Get target duration in seconds for HLS initial buffer."""
+        """Get target duration in seconds for HLS initial buffer.
+
+        Unified behavior: when proxy_prebuffer_seconds is set (>0), HLS uses that
+        same value to keep TS and HLS startup holdback aligned.
+        """
+        unified_prebuffer = ConfigHelper.proxy_prebuffer_seconds()
+        if unified_prebuffer > 0:
+            return unified_prebuffer
         return ConfigHelper._get_proxy_value("hls_initial_buffer_seconds", Config.HLS_INITIAL_BUFFER_SECONDS)
     
     @staticmethod

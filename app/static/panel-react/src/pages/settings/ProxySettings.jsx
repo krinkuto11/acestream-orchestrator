@@ -23,6 +23,7 @@ const DEFAULTS = {
   connection_timeout: 10,
   stream_timeout: 60,
   channel_shutdown_delay: 5,
+  proxy_prebuffer_seconds: 0,
   ace_live_edge_delay: 0,
   max_streams_per_engine: 3,
   stream_mode: 'TS',
@@ -154,6 +155,7 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
         params.set('connection_timeout', String(toNumber(draft.connection_timeout, DEFAULTS.connection_timeout)))
         params.set('stream_timeout', String(toNumber(draft.stream_timeout, DEFAULTS.stream_timeout)))
         params.set('channel_shutdown_delay', String(toNumber(draft.channel_shutdown_delay, DEFAULTS.channel_shutdown_delay)))
+        params.set('proxy_prebuffer_seconds', String(Math.max(0, toNumber(draft.proxy_prebuffer_seconds, DEFAULTS.proxy_prebuffer_seconds))))
         params.set('ace_live_edge_delay', String(toNumber(draft.ace_live_edge_delay, DEFAULTS.ace_live_edge_delay)))
         params.set('max_streams_per_engine', String(toNumber(draft.max_streams_per_engine, DEFAULTS.max_streams_per_engine)))
         params.set('stream_mode', String(draft.stream_mode || DEFAULTS.stream_mode))
@@ -338,6 +340,19 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
           </SettingRow>
           <SettingRow label="Stream Timeout (s)" description="Overall stream request timeout.">
             <Input type="number" min={10} max={300} value={draft.stream_timeout} onChange={(e) => update('stream_timeout', toNumber(e.target.value, DEFAULTS.stream_timeout))} className="max-w-xs" />
+          </SettingRow>
+          <SettingRow
+            label="Proxy Prebuffer (Seconds)"
+            description="How many seconds of video the proxy should hold in memory before sending data to the player. Higher values provide a safety net for seamless engine failovers, but increase stream startup time. Set to 0 to disable."
+          >
+            <Input
+              type="number"
+              min={0}
+              max={300}
+              value={draft.proxy_prebuffer_seconds}
+              onChange={(e) => update('proxy_prebuffer_seconds', Math.max(0, toNumber(e.target.value, DEFAULTS.proxy_prebuffer_seconds)))}
+              className="max-w-xs"
+            />
           </SettingRow>
           <SettingRow label="Live Edge Delay" description="Default live edge offset used to stabilize live playback.">
             <Input type="number" min={0} max={1200} value={draft.ace_live_edge_delay} onChange={(e) => update('ace_live_edge_delay', toNumber(e.target.value, DEFAULTS.ace_live_edge_delay))} className="max-w-xs" />

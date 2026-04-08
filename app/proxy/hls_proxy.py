@@ -73,6 +73,7 @@ class ClientManager:
         self.stream_id = str(stream_id or f"__hls_local_{id(self)}")
         self.worker_id = f"hls_proxy:{id(self)}"
         self.last_activity: Dict[str, float] = {}
+        self.clients: Dict[str, Dict[str, Any]] = {}
         self.lock = threading.Lock()
 
     @staticmethod
@@ -84,14 +85,18 @@ class ClientManager:
 
     def _sync_last_activity_from_clients(self, clients: List[Dict[str, Any]]) -> None:
         rebuilt_activity: Dict[str, float] = {}
+        rebuilt_clients: Dict[str, Dict[str, Any]] = {}
         now = time.time()
         for payload in clients:
             ip = str(payload.get("ip_address") or payload.get("ip") or "unknown")
+            client_id = str(payload.get("client_id") or payload.get("id") or ip)
             ts = self._safe_float(payload.get("last_active"), default=now)
             previous = rebuilt_activity.get(ip)
             if previous is None or ts > previous:
                 rebuilt_activity[ip] = ts
+            rebuilt_clients[client_id] = dict(payload)
         self.last_activity = rebuilt_activity
+        self.clients = rebuilt_clients
 
     def record_activity(
         self,
@@ -102,6 +107,7 @@ class ClientManager:
         bytes_sent: Optional[float] = None,
         chunks_sent: Optional[int] = None,
         sequence: Optional[int] = None,
+        buffer_seconds_behind: Optional[float] = None,
         now: Optional[float] = None,
     ):
         """Record client activity and transfer counters in the central tracker."""
@@ -136,6 +142,7 @@ class ClientManager:
             request_kind=request_kind,
             chunks_delta=chunks_delta,
             sequence=sequence,
+            buffer_seconds_behind=buffer_seconds_behind,
             now=ts,
             worker_id=self.worker_id,
         )
@@ -143,6 +150,16 @@ class ClientManager:
         with self.lock:
             previous_ip_activity = self.last_activity.get(normalized_ip)
             self.last_activity[normalized_ip] = ts if previous_ip_activity is None else max(previous_ip_activity, ts)
+            client_payload = dict(self.clients.get(normalized_client_id) or {})
+            client_payload.update({
+                "client_id": normalized_client_id,
+                "ip_address": normalized_ip,
+                "user_agent": normalized_ua,
+                "last_active": ts,
+                "last_request_kind": str(request_kind or "").strip().lower(),
+                "buffer_seconds_behind": max(0.0, self._safe_float(buffer_seconds_behind, default=client_payload.get("buffer_seconds_behind", 0.0))),
+            })
+            self.clients[normalized_client_id] = client_payload
 
         if tracked.get("requests_total") == 1:
             logger.info(f"New client connected: {normalized_ip} ({normalized_client_id})")
@@ -303,6 +320,7 @@ class StreamManager:
         self.buffer_ready = threading.Event()
         self.initial_buffering = True
         self.buffered_duration = 0.0
+        self.last_manifest_buffer_seconds_behind = 0.0
         
         # Orchestrator event tracking
         self.stream_id = None  # Will be set after sending start event
@@ -964,6 +982,7 @@ class HLSProxyServer:
         bytes_sent: Optional[float] = None,
         chunks_sent: Optional[int] = None,
         sequence: Optional[int] = None,
+        buffer_seconds_behind: Optional[float] = None,
     ):
         """Record client activity for a channel (called on each manifest/segment request)"""
         if channel_id in self.client_managers:
@@ -975,7 +994,18 @@ class HLSProxyServer:
                 bytes_sent=bytes_sent,
                 chunks_sent=chunks_sent,
                 sequence=sequence,
+                buffer_seconds_behind=buffer_seconds_behind,
             )
+
+    def get_manifest_buffer_seconds_behind(self, channel_id: str) -> float:
+        """Return latest manifest window lag estimate for a channel."""
+        manager = self.stream_managers.get(channel_id)
+        if not manager:
+            return 0.0
+        try:
+            return max(0.0, float(getattr(manager, "last_manifest_buffer_seconds_behind", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            return 0.0
     
     def stop_stream_by_key(self, channel_id: str):
         """
@@ -1167,6 +1197,11 @@ class HLSProxyServer:
             min_seq = min(available)
         else:
             min_seq = max(min(available), max_seq - HLSConfig.WINDOW_SIZE() + 1)
+
+        manager.last_manifest_buffer_seconds_behind = max(
+            0.0,
+            float(max_seq - min_seq) * float(manager.target_duration or 0.0),
+        )
         
         # Generate manifest lines
         manifest_lines = [

@@ -113,6 +113,7 @@ class ClientMetadataField:
     CONNECTED_AT = "connected_at"
     LAST_ACTIVE = "last_active"
     BYTES_SENT = "bytes_sent"
+    BUFFER_SECONDS_BEHIND = "buffer_seconds_behind"
     AVG_RATE_KBPS = "avg_rate_KBps"
     CURRENT_RATE_KBPS = "current_rate_KBps"
     IP_ADDRESS = "ip_address"

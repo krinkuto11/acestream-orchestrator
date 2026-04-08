@@ -828,6 +828,7 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                             <TableHead className="text-white">IP Address</TableHead>
                             <TableHead className="text-white">Connected At</TableHead>
                             <TableHead className="text-right text-white">Bytes Sent</TableHead>
+                            <TableHead className="text-right text-white">Buffer Lag</TableHead>
                             <TableHead className="text-white">User Agent</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -853,6 +854,12 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                               </TableCell>
                               <TableCell className="text-right text-sm text-white">
                                 {client.bytes_sent !== undefined ? formatBytes(client.bytes_sent) : 'N/A'}
+                              </TableCell>
+                              <TableCell className="text-right text-sm text-white">
+                                {Number.isFinite(Number(client.buffer_seconds_behind))
+                                  ? `${Number(client.buffer_seconds_behind).toFixed(1)}s`
+                                  : 'N/A'
+                                }
                               </TableCell>
                               <TableCell className="font-mono text-xs text-white">
                                 <span className="truncate max-w-[300px] block" title={client.user_agent}>

@@ -307,6 +307,8 @@ async def lifespan(app: FastAPI):
                 ProxyConfig.STREAM_TIMEOUT = proxy_settings['stream_timeout']
             if 'channel_shutdown_delay' in proxy_settings:
                 ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_settings['channel_shutdown_delay']
+            if 'proxy_prebuffer_seconds' in proxy_settings:
+                ProxyConfig.PROXY_PREBUFFER_SECONDS = max(0, int(proxy_settings['proxy_prebuffer_seconds']))
             if 'max_streams_per_engine' in proxy_settings:
                 cfg.MAX_STREAMS_PER_ENGINE = proxy_settings['max_streams_per_engine']
             if 'stream_mode' in proxy_settings:
@@ -3490,6 +3492,7 @@ async def ace_getstream(
                     try:
                         manifest_content = await hls_proxy.get_manifest_async(stream_key)
                         manifest_bytes = manifest_content.encode('utf-8')
+                        manifest_seconds_behind = hls_proxy.get_manifest_buffer_seconds_behind(stream_key)
                         hls_proxy.record_client_activity(
                             stream_key,
                             client_ip,
@@ -3497,6 +3500,7 @@ async def ace_getstream(
                             user_agent=user_agent,
                             request_kind="manifest",
                             bytes_sent=len(manifest_bytes),
+                            buffer_seconds_behind=manifest_seconds_behind,
                         )
 
                         elapsed = time.perf_counter() - request_started_at
@@ -3609,6 +3613,7 @@ async def ace_getstream(
 
                     manifest_content = await hls_proxy.get_manifest_async(stream_key)
                     manifest_bytes = manifest_content.encode('utf-8')
+                    manifest_seconds_behind = hls_proxy.get_manifest_buffer_seconds_behind(stream_key)
                     hls_proxy.record_client_activity(
                         stream_key,
                         client_ip,
@@ -3616,6 +3621,7 @@ async def ace_getstream(
                         user_agent=user_agent,
                         request_kind="manifest",
                         bytes_sent=len(manifest_bytes),
+                        buffer_seconds_behind=manifest_seconds_behind,
                     )
 
                     elapsed = time.perf_counter() - request_started_at
@@ -4710,6 +4716,7 @@ def get_proxy_config():
         "buffer_chunk_size": ProxyConfig.BUFFER_CHUNK_SIZE,
         "redis_chunk_ttl": ProxyConfig.REDIS_CHUNK_TTL,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+        "proxy_prebuffer_seconds": ConfigHelper.proxy_prebuffer_seconds(),
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
@@ -4736,6 +4743,7 @@ def update_proxy_config(
     connection_timeout: Optional[int] = None,
     stream_timeout: Optional[int] = None,
     channel_shutdown_delay: Optional[int] = None,
+    proxy_prebuffer_seconds: Optional[int] = None,
     max_streams_per_engine: Optional[int] = None,
     stream_mode: Optional[str] = None,
     control_mode: Optional[str] = None,
@@ -4762,6 +4770,7 @@ def update_proxy_config(
         connection_timeout: Connection timeout in seconds (min: 5, max: 60)
         stream_timeout: Stream timeout in seconds (min: 10, max: 300)
         channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
+        proxy_prebuffer_seconds: Unified TS/HLS prebuffer holdback in seconds (min: 0, max: 300, 0 disables)
         max_streams_per_engine: Maximum streams per engine before provisioning new engine (min: 1, max: 20)
         stream_mode: Stream mode - 'TS' for MPEG-TS or 'HLS' for HLS streaming
         control_mode: Engine control mode - 'api' (default) or 'http'
@@ -4817,6 +4826,11 @@ def update_proxy_config(
         if channel_shutdown_delay < 1 or channel_shutdown_delay > 60:
             raise HTTPException(status_code=400, detail="channel_shutdown_delay must be between 1 and 60 seconds")
         ProxyConfig.CHANNEL_SHUTDOWN_DELAY = channel_shutdown_delay
+
+    if proxy_prebuffer_seconds is not None:
+        if proxy_prebuffer_seconds < 0 or proxy_prebuffer_seconds > 300:
+            raise HTTPException(status_code=400, detail="proxy_prebuffer_seconds must be between 0 and 300 seconds")
+        ProxyConfig.PROXY_PREBUFFER_SECONDS = int(proxy_prebuffer_seconds)
     
     if max_streams_per_engine is not None:
         if max_streams_per_engine < 1 or max_streams_per_engine > 20:
@@ -4897,6 +4911,7 @@ def update_proxy_config(
         f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
         f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
+        f"proxy_prebuffer_seconds={ConfigHelper.proxy_prebuffer_seconds()}, "
         f"max_streams_per_engine={cfg.MAX_STREAMS_PER_ENGINE}, "
         f"stream_mode={ProxyConfig.STREAM_MODE}, "
         f"control_mode={_resolve_control_mode(ProxyConfig.CONTROL_MODE)}, "
@@ -4914,6 +4929,7 @@ def update_proxy_config(
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+        "proxy_prebuffer_seconds": ConfigHelper.proxy_prebuffer_seconds(),
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
@@ -4930,7 +4946,7 @@ def update_proxy_config(
         "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
     }
     if SettingsPersistence.save_proxy_config(config_to_save):
-        logger.info("Proxy configuration persisted to JSON file")
+        logger.info("Proxy configuration persisted to RuntimeSettings DB")
     
     return {
         "message": "Proxy configuration updated and persisted",
@@ -4941,6 +4957,7 @@ def update_proxy_config(
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+        "proxy_prebuffer_seconds": ConfigHelper.proxy_prebuffer_seconds(),
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
@@ -5541,6 +5558,8 @@ def update_settings_bundle(payload: SettingsBundleUpdate):
             ProxyConfig.STREAM_TIMEOUT = proxy_settings['stream_timeout']
         if 'channel_shutdown_delay' in proxy_settings:
             ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_settings['channel_shutdown_delay']
+        if 'proxy_prebuffer_seconds' in proxy_settings:
+            ProxyConfig.PROXY_PREBUFFER_SECONDS = max(0, int(proxy_settings['proxy_prebuffer_seconds']))
         if 'stream_mode' in proxy_settings:
             ProxyConfig.STREAM_MODE = proxy_settings['stream_mode']
         if 'control_mode' in proxy_settings:
@@ -5970,7 +5989,7 @@ async def export_settings(api_key_param: str = Depends(require_api_key)):
             
             # Export proxy settings
             try:
-                from .proxy.config_helper import Config as ProxyConfig
+                from .proxy.config_helper import Config as ProxyConfig, ConfigHelper
                 proxy_settings = {
                     "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
                     "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
@@ -5979,6 +5998,7 @@ async def export_settings(api_key_param: str = Depends(require_api_key)):
                     "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
                     "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
                     "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
+                    "proxy_prebuffer_seconds": ConfigHelper.proxy_prebuffer_seconds(),
                     "stream_mode": ProxyConfig.STREAM_MODE,
                 }
                 proxy_json = json.dumps(proxy_settings, indent=2)

@@ -223,6 +223,7 @@ class ClientManager:
             "connected_at": current_time,
             "last_active": current_time,
             "initial_index": str(initial_index),
+            ClientMetadataField.BUFFER_SECONDS_BEHIND: "0.0",
             "worker_id": self.worker_id or "unknown"
         }
         
@@ -403,6 +404,27 @@ class ClientManager:
             self.redis_client.hset(client_key, "stats_updated_at", str(time.time()))
         except Exception as e:
             logger.error(f"Error updating client bytes_sent: {e}")
+
+    def update_client_position(self, client_id, seconds_behind: float):
+        """Update client lag position (seconds behind live edge) in Redis and tracker cache."""
+        try:
+            normalized_seconds = max(0.0, float(seconds_behind or 0.0))
+            if self.redis_client:
+                client_key = RedisKeys.client_metadata(self.content_id, client_id)
+                self.redis_client.hset(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND, f"{normalized_seconds:.3f}")
+                self.redis_client.hset(client_key, ClientMetadataField.STATS_UPDATED_AT, str(time.time()))
+
+            from ..services.client_tracker import client_tracking_service
+
+            client_tracking_service.update_client_position(
+                client_id=str(client_id),
+                stream_id=str(self.content_id or ""),
+                protocol="TS",
+                seconds_behind=normalized_seconds,
+                now=time.time(),
+            )
+        except Exception as e:
+            logger.error(f"Error updating client buffer position: {e}")
     
     def refresh_client_ttl(self):
         """Refresh TTL for active clients to prevent expiration"""

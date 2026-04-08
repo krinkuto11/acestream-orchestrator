@@ -302,6 +302,30 @@ def test_stream_generator_initialization_ignores_preflight_rejection_in_http_mod
     assert sleep_calls["count"] == 0
 
 
+def test_hls_initial_buffer_prefers_unified_proxy_prebuffer(monkeypatch):
+    from app.proxy.config_helper import ConfigHelper
+
+    monkeypatch.setattr("app.proxy.config_helper.ConfigHelper.proxy_prebuffer_seconds", lambda: 12)
+    monkeypatch.setattr(
+        "app.proxy.config_helper.ConfigHelper._get_proxy_value",
+        lambda key, fallback: 9 if key == "hls_initial_buffer_seconds" else fallback,
+    )
+
+    assert ConfigHelper.hls_initial_buffer_seconds() == 12
+
+
+def test_hls_initial_buffer_falls_back_when_unified_prebuffer_disabled(monkeypatch):
+    from app.proxy.config_helper import ConfigHelper
+
+    monkeypatch.setattr("app.proxy.config_helper.ConfigHelper.proxy_prebuffer_seconds", lambda: 0)
+    monkeypatch.setattr(
+        "app.proxy.config_helper.ConfigHelper._get_proxy_value",
+        lambda key, fallback: 9 if key == "hls_initial_buffer_seconds" else fallback,
+    )
+
+    assert ConfigHelper.hls_initial_buffer_seconds() == 9
+
+
 def test_api_key_is_passed_to_stream_manager():
     """Test that API key from environment is passed to StreamManager"""
     from app.proxy.server import ProxyServer

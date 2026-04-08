@@ -44,6 +44,10 @@ class StreamGenerator:
         # TTL refresh
         self.last_ttl_refresh = time.time()
         self.ttl_refresh_interval = 3
+
+        # Debounced client buffer-position tracking
+        self.last_position_update_time = 0.0
+        self.position_update_interval = 2.5
     
     def generate(self):
         """Generator function that produces stream content for the client"""
@@ -93,6 +97,7 @@ class StreamGenerator:
                     # Update local index
                     self.local_index += len(chunks)
                     self.consecutive_empty = 0
+                    self._maybe_update_client_position()
                     
                     # Update stats periodically
                     if time.time() - self.last_stats_time >= 5:
@@ -164,18 +169,23 @@ class StreamGenerator:
         playback URL and fetch the first chunks. Without this wait, clients will
         see an empty buffer and disconnect prematurely.
         """
-        timeout = ConfigHelper.initial_data_wait_timeout()
+        prebuffer_seconds = max(0.0, float(ConfigHelper.proxy_prebuffer_seconds()))
+        required_chunks = max(1, int(prebuffer_seconds * 128.0))
+        timeout = max(float(ConfigHelper.initial_data_wait_timeout()), prebuffer_seconds + 15.0)
         check_interval = ConfigHelper.initial_data_check_interval()
         start_time = time.time()
         baseline_index = max(0, int(min_index or 0))
+        target_index = baseline_index + required_chunks
         
         logger.info(
-            f"[{self.client_id}] Waiting for initial data in buffer (timeout: {timeout}s, baseline_index: {baseline_index})..."
+            f"[{self.client_id}] Waiting for initial data in buffer "
+            f"(timeout: {timeout:.1f}s, prebuffer_seconds: {prebuffer_seconds:.1f}, "
+            f"required_chunks: {required_chunks}, baseline_index: {baseline_index}, target_index: {target_index})..."
         )
         
         while time.time() - start_time < timeout:
             # Wait for fresh data beyond baseline index to avoid stale chunk reuse
-            if self.buffer.index > baseline_index:
+            if self.buffer.index >= target_index:
                 elapsed = time.time() - start_time
                 logger.info(f"[{self.client_id}] Initial data available after {elapsed:.2f}s (buffer index: {self.buffer.index})")
                 return True
@@ -186,9 +196,28 @@ class StreamGenerator:
         
         # Timeout - no data arrived
         logger.error(
-            f"[{self.client_id}] Timeout waiting for initial data (buffer index: {self.buffer.index}, baseline_index: {baseline_index}, waited: {timeout}s)"
+            f"[{self.client_id}] Timeout waiting for initial data "
+            f"(buffer index: {self.buffer.index}, baseline_index: {baseline_index}, "
+            f"target_index: {target_index}, waited: {timeout:.1f}s)"
         )
         return False
+
+    def _maybe_update_client_position(self):
+        """Publish client lag behind live edge with debounce to avoid Redis write storms."""
+        if not hasattr(self, 'client_manager') or self.client_manager is None:
+            return
+
+        now = time.time()
+        if (now - self.last_position_update_time) < self.position_update_interval:
+            return
+
+        try:
+            chunks_behind = max(0, int(self.buffer.index) - int(self.local_index))
+            seconds_behind = max(0.0, float(chunks_behind) / 128.0)
+            self.client_manager.update_client_position(self.client_id, seconds_behind)
+            self.last_position_update_time = now
+        except Exception as e:
+            logger.debug(f"[{self.client_id}] Failed to update client position: {e}")
     
     def _setup_streaming(self):
         """Setup streaming parameters"""
