@@ -21,6 +21,8 @@ const DEFAULTS = {
   no_data_timeout_checks: 60,
   no_data_check_interval: 1,
   connection_timeout: 10,
+  upstream_connect_timeout: 3,
+  upstream_read_timeout: 5,
   stream_timeout: 60,
   channel_shutdown_delay: 5,
   proxy_prebuffer_seconds: 0,
@@ -153,6 +155,8 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
         params.set('no_data_timeout_checks', String(toNumber(draft.no_data_timeout_checks, DEFAULTS.no_data_timeout_checks)))
         params.set('no_data_check_interval', String(toNumber(draft.no_data_check_interval, DEFAULTS.no_data_check_interval)))
         params.set('connection_timeout', String(toNumber(draft.connection_timeout, DEFAULTS.connection_timeout)))
+        params.set('upstream_connect_timeout', String(toNumber(draft.upstream_connect_timeout, DEFAULTS.upstream_connect_timeout)))
+        params.set('upstream_read_timeout', String(toNumber(draft.upstream_read_timeout, DEFAULTS.upstream_read_timeout)))
         params.set('stream_timeout', String(toNumber(draft.stream_timeout, DEFAULTS.stream_timeout)))
         params.set('channel_shutdown_delay', String(toNumber(draft.channel_shutdown_delay, DEFAULTS.channel_shutdown_delay)))
         params.set('proxy_prebuffer_seconds', String(Math.max(0, toNumber(draft.proxy_prebuffer_seconds, DEFAULTS.proxy_prebuffer_seconds))))
@@ -335,8 +339,14 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
           <SettingRow label="No Data Check Interval (s)" description="Poll cadence after no-data state.">
             <Input type="number" min={0.01} max={1} step={0.01} value={draft.no_data_check_interval} onChange={(e) => update('no_data_check_interval', toNumber(e.target.value, DEFAULTS.no_data_check_interval))} className="max-w-xs" />
           </SettingRow>
-          <SettingRow label="Connection Timeout (s)" description="Upstream socket connect timeout.">
+          <SettingRow label="Connection Timeout (s)" description="Health monitor inactivity threshold before forcing reconnect.">
             <Input type="number" min={5} max={60} value={draft.connection_timeout} onChange={(e) => update('connection_timeout', toNumber(e.target.value, DEFAULTS.connection_timeout))} className="max-w-xs" />
+          </SettingRow>
+          <SettingRow label="Upstream Connect Timeout (s)" description="Timeout for connecting to upstream playback/API endpoints.">
+            <Input type="number" min={1} max={60} value={draft.upstream_connect_timeout} onChange={(e) => update('upstream_connect_timeout', toNumber(e.target.value, DEFAULTS.upstream_connect_timeout))} className="max-w-xs" />
+          </SettingRow>
+          <SettingRow label="Upstream Read Timeout (s)" description="Per-read timeout while receiving upstream stream data.">
+            <Input type="number" min={1} max={120} value={draft.upstream_read_timeout} onChange={(e) => update('upstream_read_timeout', toNumber(e.target.value, DEFAULTS.upstream_read_timeout))} className="max-w-xs" />
           </SettingRow>
           <SettingRow label="Stream Timeout (s)" description="Overall stream request timeout.">
             <Input type="number" min={10} max={300} value={draft.stream_timeout} onChange={(e) => update('stream_timeout', toNumber(e.target.value, DEFAULTS.stream_timeout))} className="max-w-xs" />

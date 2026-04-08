@@ -38,9 +38,23 @@ logger = get_logger()
 # Timeout for stream event handlers (in seconds)
 # This prevents blocking if internal event handling is slow (e.g., Docker API calls)
 STREAM_EVENT_HANDLER_TIMEOUT = 2.0
-FAST_CONNECT_TIMEOUT_S = 3.0
-FAST_READ_TIMEOUT_S = 5.0
-FAST_HTTP_TIMEOUT = (FAST_CONNECT_TIMEOUT_S, FAST_READ_TIMEOUT_S)
+DEFAULT_UPSTREAM_CONNECT_TIMEOUT_S = 3.0
+DEFAULT_UPSTREAM_READ_TIMEOUT_S = 5.0
+
+
+def _upstream_timeouts() -> tuple[float, float]:
+    """Get upstream connect/read timeouts as (connect, read) tuple in seconds."""
+    try:
+        connect_timeout = float(ConfigHelper.upstream_connect_timeout())
+    except Exception:
+        connect_timeout = DEFAULT_UPSTREAM_CONNECT_TIMEOUT_S
+
+    try:
+        read_timeout = float(ConfigHelper.upstream_read_timeout())
+    except Exception:
+        read_timeout = DEFAULT_UPSTREAM_READ_TIMEOUT_S
+
+    return max(0.5, connect_timeout), max(0.5, read_timeout)
 
 
 class StreamManager:
@@ -248,8 +262,10 @@ class StreamManager:
                 f"Input type: {self.source_input_type}, Container: {self.engine_container_id}"
             )
             logger.debug(f"Generated PID: {params.get('pid')}")
+
+            upstream_timeouts = _upstream_timeouts()
             
-            response = requests.get(url, params=params, timeout=FAST_HTTP_TIMEOUT)
+            response = requests.get(url, params=params, timeout=upstream_timeouts)
             
             # Log response details in debug mode
             logger.debug(f"AceStream response status: {response.status_code}")
@@ -318,8 +334,8 @@ class StreamManager:
             client = AceLegacyApiClient(
                 host=self.engine_host,
                 port=self.engine_api_port,
-                connect_timeout=FAST_CONNECT_TIMEOUT_S,
-                response_timeout=FAST_READ_TIMEOUT_S,
+                connect_timeout=_upstream_timeouts()[0],
+                response_timeout=_upstream_timeouts()[1],
             )
             client.connect()
             client.authenticate()
@@ -395,7 +411,7 @@ class StreamManager:
             url = f"http://{engine_host}:{engine_port}/ace/getstream"
 
         params = self._build_legacy_http_params()
-        response = requests.get(url, params=params, timeout=FAST_HTTP_TIMEOUT)
+        response = requests.get(url, params=params, timeout=_upstream_timeouts())
         response.raise_for_status()
 
         data = response.json()
@@ -422,8 +438,8 @@ class StreamManager:
         client = AceLegacyApiClient(
             host=engine_host,
             port=engine_api_port,
-            connect_timeout=FAST_CONNECT_TIMEOUT_S,
-            response_timeout=FAST_READ_TIMEOUT_S,
+            connect_timeout=_upstream_timeouts()[0],
+            response_timeout=_upstream_timeouts()[1],
         )
         client.connect()
         client.authenticate()

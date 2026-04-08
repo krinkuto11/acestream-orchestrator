@@ -7,6 +7,7 @@ import threading
 import os
 import requests
 from requests.adapters import HTTPAdapter
+from .config_helper import ConfigHelper
 from .utils import get_logger
 from .constants import VLC_USER_AGENT
 
@@ -66,13 +67,17 @@ class HTTPStreamReader:
             self.session.mount('http://', adapter)
             self.session.mount('https://', adapter)
 
+            connect_timeout = max(0.5, float(ConfigHelper.upstream_connect_timeout()))
+            read_timeout = max(0.5, float(ConfigHelper.upstream_read_timeout()))
+            timeout_pair = (connect_timeout, read_timeout)
+
             # Stream the URL
-            logger.debug("Initiating HTTP GET request with timeout=(3.0, 5.0)")
+            logger.debug(f"Initiating HTTP GET request with timeout={timeout_pair}")
             self.response = self.session.get(
                 self.url,
                 headers=headers,
                 stream=True,
-                timeout=(3.0, 5.0)
+                timeout=timeout_pair
             )
 
             logger.debug(f"HTTP response status: {self.response.status_code}")

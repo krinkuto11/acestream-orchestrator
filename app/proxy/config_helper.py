@@ -13,6 +13,8 @@ class Config:
     
     # Connection timeouts
     CONNECTION_TIMEOUT: int = 10
+    UPSTREAM_CONNECT_TIMEOUT: int = 3
+    UPSTREAM_READ_TIMEOUT: int = 5
     CLIENT_WAIT_TIMEOUT: int = 30
     STREAM_TIMEOUT: int = 60
     CHUNK_TIMEOUT: int = 5
@@ -137,6 +139,16 @@ class ConfigHelper:
     def connection_timeout():
         """Get connection timeout in seconds."""
         return ConfigHelper._get_proxy_value("connection_timeout", Config.CONNECTION_TIMEOUT)
+
+    @staticmethod
+    def upstream_connect_timeout():
+        """Get upstream connect timeout in seconds for HTTP/API engine calls."""
+        return ConfigHelper._get_proxy_value("upstream_connect_timeout", Config.UPSTREAM_CONNECT_TIMEOUT)
+
+    @staticmethod
+    def upstream_read_timeout():
+        """Get upstream read timeout in seconds for HTTP/API engine calls."""
+        return ConfigHelper._get_proxy_value("upstream_read_timeout", Config.UPSTREAM_READ_TIMEOUT)
     
     @staticmethod
     def client_wait_timeout():

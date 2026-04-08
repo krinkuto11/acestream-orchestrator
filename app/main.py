@@ -327,6 +327,10 @@ async def lifespan(app: FastAPI):
                 ProxyConfig.NO_DATA_CHECK_INTERVAL = proxy_settings['no_data_check_interval']
             if 'connection_timeout' in proxy_settings:
                 ProxyConfig.CONNECTION_TIMEOUT = proxy_settings['connection_timeout']
+            if 'upstream_connect_timeout' in proxy_settings:
+                ProxyConfig.UPSTREAM_CONNECT_TIMEOUT = proxy_settings['upstream_connect_timeout']
+            if 'upstream_read_timeout' in proxy_settings:
+                ProxyConfig.UPSTREAM_READ_TIMEOUT = proxy_settings['upstream_read_timeout']
             if 'stream_timeout' in proxy_settings:
                 ProxyConfig.STREAM_TIMEOUT = proxy_settings['stream_timeout']
             if 'channel_shutdown_delay' in proxy_settings:
@@ -4715,6 +4719,8 @@ def get_proxy_config():
         "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
         "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
+        "upstream_connect_timeout": ProxyConfig.UPSTREAM_CONNECT_TIMEOUT,
+        "upstream_read_timeout": ProxyConfig.UPSTREAM_READ_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "chunk_size": ProxyConfig.CHUNK_SIZE,
         "buffer_chunk_size": ProxyConfig.BUFFER_CHUNK_SIZE,
@@ -4745,6 +4751,8 @@ def update_proxy_config(
     no_data_timeout_checks: Optional[int] = None,
     no_data_check_interval: Optional[float] = None,
     connection_timeout: Optional[int] = None,
+    upstream_connect_timeout: Optional[int] = None,
+    upstream_read_timeout: Optional[int] = None,
     stream_timeout: Optional[int] = None,
     channel_shutdown_delay: Optional[int] = None,
     proxy_prebuffer_seconds: Optional[int] = None,
@@ -4771,7 +4779,9 @@ def update_proxy_config(
         initial_data_check_interval: Seconds between buffer checks (min: 0.1, max: 2.0)
         no_data_timeout_checks: Number of consecutive empty checks before declaring stream ended (min: 5, max: 600)
         no_data_check_interval: Seconds between checks when no data is available (min: 0.01, max: 1.0)
-        connection_timeout: Connection timeout in seconds (min: 5, max: 60)
+        connection_timeout: Stream health timeout in seconds (min: 5, max: 60)
+        upstream_connect_timeout: Upstream connect timeout in seconds (min: 1, max: 60)
+        upstream_read_timeout: Upstream read timeout in seconds (min: 1, max: 120)
         stream_timeout: Stream timeout in seconds (min: 10, max: 300)
         channel_shutdown_delay: Delay before shutting down idle streams in seconds (min: 1, max: 60)
         proxy_prebuffer_seconds: Unified TS/HLS prebuffer holdback in seconds (min: 0, max: 300, 0 disables)
@@ -4820,6 +4830,16 @@ def update_proxy_config(
         if connection_timeout < 5 or connection_timeout > 60:
             raise HTTPException(status_code=400, detail="connection_timeout must be between 5 and 60 seconds")
         ProxyConfig.CONNECTION_TIMEOUT = connection_timeout
+
+    if upstream_connect_timeout is not None:
+        if upstream_connect_timeout < 1 or upstream_connect_timeout > 60:
+            raise HTTPException(status_code=400, detail="upstream_connect_timeout must be between 1 and 60 seconds")
+        ProxyConfig.UPSTREAM_CONNECT_TIMEOUT = upstream_connect_timeout
+
+    if upstream_read_timeout is not None:
+        if upstream_read_timeout < 1 or upstream_read_timeout > 120:
+            raise HTTPException(status_code=400, detail="upstream_read_timeout must be between 1 and 120 seconds")
+        ProxyConfig.UPSTREAM_READ_TIMEOUT = upstream_read_timeout
     
     if stream_timeout is not None:
         if stream_timeout < 10 or stream_timeout > 300:
@@ -4913,6 +4933,8 @@ def update_proxy_config(
         f"no_data_timeout_checks={ProxyConfig.NO_DATA_TIMEOUT_CHECKS}, "
         f"no_data_check_interval={ProxyConfig.NO_DATA_CHECK_INTERVAL}, "
         f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
+        f"upstream_connect_timeout={ProxyConfig.UPSTREAM_CONNECT_TIMEOUT}, "
+        f"upstream_read_timeout={ProxyConfig.UPSTREAM_READ_TIMEOUT}, "
         f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
         f"proxy_prebuffer_seconds={int(ProxyConfig.PROXY_PREBUFFER_SECONDS)}, "
@@ -4931,6 +4953,8 @@ def update_proxy_config(
         "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
         "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
+        "upstream_connect_timeout": ProxyConfig.UPSTREAM_CONNECT_TIMEOUT,
+        "upstream_read_timeout": ProxyConfig.UPSTREAM_READ_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "proxy_prebuffer_seconds": int(ProxyConfig.PROXY_PREBUFFER_SECONDS),
@@ -4959,6 +4983,8 @@ def update_proxy_config(
         "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
         "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
+        "upstream_connect_timeout": ProxyConfig.UPSTREAM_CONNECT_TIMEOUT,
+        "upstream_read_timeout": ProxyConfig.UPSTREAM_READ_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
         "proxy_prebuffer_seconds": int(ProxyConfig.PROXY_PREBUFFER_SECONDS),
