@@ -290,6 +290,19 @@ class ClientTrackingService:
         normalized_stream_id = str(stream_id or "")
         key = self._key(normalized_protocol, normalized_stream_id, normalized_client_id)
 
+        # Position updates can arrive while tracker rows are briefly missing
+        # during reconnect/failover races. Recreate a minimal row so runway
+        # telemetry is never dropped.
+        if key not in self._clients:
+            self.register_client(
+                client_id=normalized_client_id,
+                stream_id=normalized_stream_id,
+                ip_address="unknown",
+                user_agent="unknown",
+                protocol=normalized_protocol,
+                connected_at=ts,
+            )
+
         with self._lock:
             current = self._clients.get(key)
             if current is None:

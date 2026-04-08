@@ -108,6 +108,158 @@ def _prune_client_tracker_if_due(*, ttl_s: float, min_interval_s: float = 3.0) -
         _CLIENT_TRACKER_LAST_PRUNE_MONOTONIC = now_monotonic
 
 
+def _merge_clients_with_redis_runway(stream_key: str, tracker_clients: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Overlay tracker client rows with freshest runway telemetry from Redis.
+
+    Stream failover tolerance uses Redis-backed runway data in StreamManager.
+    During reconnect races the in-memory tracker can briefly miss rows, which
+    makes UI runway appear stuck at 0.0. This reconciler keeps API output aligned
+    with the source-of-truth runway telemetry.
+    """
+    normalized_key = str(stream_key or "").strip()
+    if not normalized_key:
+        return list(tracker_clients or [])
+
+    try:
+        from .proxy.manager import ProxyManager
+        from .proxy.redis_keys import RedisKeys
+        from .proxy.constants import ClientMetadataField
+
+        proxy_server = ProxyManager.get_instance()
+        redis_client = getattr(proxy_server, "redis_client", None)
+        if not redis_client:
+            return list(tracker_clients or [])
+
+        def _to_str(value: Any) -> str:
+            if isinstance(value, bytes):
+                return value.decode("utf-8", errors="ignore")
+            return str(value or "")
+
+        def _to_float(value: Any, default: float = 0.0) -> float:
+            try:
+                return float(_to_str(value))
+            except Exception:
+                return default
+
+        merged_by_id: Dict[str, Dict[str, Any]] = {}
+        passthrough_rows: List[Dict[str, Any]] = []
+
+        for row in list(tracker_clients or []):
+            item = dict(row or {})
+            cid = str(item.get("client_id") or item.get("id") or "").strip()
+            if cid:
+                merged_by_id[cid] = item
+            else:
+                passthrough_rows.append(item)
+
+        now = time.time()
+        client_ids = redis_client.smembers(RedisKeys.clients(normalized_key)) or []
+        for raw_client_id in client_ids:
+            client_id = _to_str(raw_client_id).strip()
+            if not client_id:
+                continue
+
+            client_key = RedisKeys.client_metadata(normalized_key, client_id)
+            if hasattr(redis_client, "hmget"):
+                values = redis_client.hmget(
+                    client_key,
+                    [
+                        ClientMetadataField.CLIENT_RUNWAY_SECONDS,
+                        ClientMetadataField.BUFFER_SECONDS_BEHIND,
+                        ClientMetadataField.POSITION_SOURCE,
+                        ClientMetadataField.POSITION_CONFIDENCE,
+                        ClientMetadataField.POSITION_OBSERVED_AT,
+                        ClientMetadataField.STATS_UPDATED_AT,
+                        ClientMetadataField.LAST_ACTIVE,
+                        ClientMetadataField.IP_ADDRESS,
+                        ClientMetadataField.USER_AGENT,
+                    ],
+                )
+            else:
+                values = [
+                    redis_client.hget(client_key, ClientMetadataField.CLIENT_RUNWAY_SECONDS),
+                    redis_client.hget(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND),
+                    redis_client.hget(client_key, ClientMetadataField.POSITION_SOURCE),
+                    redis_client.hget(client_key, ClientMetadataField.POSITION_CONFIDENCE),
+                    redis_client.hget(client_key, ClientMetadataField.POSITION_OBSERVED_AT),
+                    redis_client.hget(client_key, ClientMetadataField.STATS_UPDATED_AT),
+                    redis_client.hget(client_key, ClientMetadataField.LAST_ACTIVE),
+                    redis_client.hget(client_key, ClientMetadataField.IP_ADDRESS),
+                    redis_client.hget(client_key, ClientMetadataField.USER_AGENT),
+                ]
+
+            if not values:
+                continue
+
+            (
+                runway_raw,
+                legacy_runway_raw,
+                source_raw,
+                confidence_raw,
+                observed_raw,
+                stats_updated_raw,
+                last_active_raw,
+                ip_raw,
+                ua_raw,
+            ) = values
+
+            runway = _to_float(runway_raw, default=float("nan"))
+            if runway != runway:
+                runway = _to_float(legacy_runway_raw, default=float("nan"))
+            if runway != runway:
+                continue
+            runway = max(0.0, runway)
+
+            observed_at = _to_float(observed_raw, default=0.0)
+            if observed_at <= 0.0:
+                observed_at = _to_float(stats_updated_raw, default=0.0)
+            if observed_at <= 0.0:
+                observed_at = now
+
+            row = dict(merged_by_id.get(client_id) or {
+                "id": client_id,
+                "client_id": client_id,
+                "stream_id": normalized_key,
+                "protocol": "TS",
+                "type": "TS",
+                "ip_address": _to_str(ip_raw) or "unknown",
+                "ip": _to_str(ip_raw) or "unknown",
+                "user_agent": _to_str(ua_raw) or "unknown",
+                "ua": _to_str(ua_raw) or "unknown",
+                "connected_at": observed_at,
+                "last_active": observed_at,
+            })
+
+            existing_observed = _to_float(row.get("position_observed_at"), default=0.0)
+            existing_runway = _to_float(row.get("client_runway_seconds"), default=0.0)
+
+            if observed_at >= existing_observed or existing_runway <= 0.0:
+                row["client_runway_seconds"] = runway
+                row["buffer_seconds_behind"] = runway
+                row["position_source"] = _to_str(source_raw) or str(row.get("position_source") or "")
+                row["position_confidence"] = max(0.0, min(1.0, _to_float(confidence_raw, default=0.0)))
+                row["position_observed_at"] = observed_at
+
+            last_active = _to_float(last_active_raw, default=0.0)
+            if last_active > 0.0:
+                row["last_active"] = max(last_active, _to_float(row.get("last_active"), default=last_active))
+
+            if not row.get("ip_address"):
+                row["ip_address"] = _to_str(ip_raw) or "unknown"
+                row["ip"] = row["ip_address"]
+            if not row.get("user_agent"):
+                row["user_agent"] = _to_str(ua_raw) or "unknown"
+                row["ua"] = row["user_agent"]
+
+            merged_by_id[client_id] = row
+
+        merged_rows = list(merged_by_id.values()) + passthrough_rows
+        merged_rows.sort(key=lambda item: float(item.get("last_active") or 0.0), reverse=True)
+        return merged_rows
+    except Exception:
+        return list(tracker_clients or [])
+
+
 def _format_sse_message(payload: Dict[str, Any], *, event_name: Optional[str] = None, event_id: Optional[str] = None) -> str:
     chunks: List[str] = []
     if event_name:
@@ -1649,6 +1801,7 @@ async def stream_stream_details(
                 with suppress(Exception):
                     _prune_client_tracker_if_due(ttl_s=float(ProxyConfig.CLIENT_RECORD_TTL), min_interval_s=3.0)
                     clients = client_tracking_service.get_stream_clients(stream_key)
+                    clients = _merge_clients_with_redis_runway(stream_key, clients)
 
             payload = jsonable_encoder(
                 {

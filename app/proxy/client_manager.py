@@ -426,6 +426,13 @@ class ClientManager:
                 self.redis_client.hset(client_key, ClientMetadataField.POSITION_CONFIDENCE, f"{clamped_confidence:.3f}")
                 self.redis_client.hset(client_key, ClientMetadataField.POSITION_OBSERVED_AT, str(observed_ts))
                 self.redis_client.hset(client_key, ClientMetadataField.STATS_UPDATED_AT, str(observed_ts))
+                self.redis_client.hset(client_key, ClientMetadataField.LAST_ACTIVE, str(observed_ts))
+
+                # Keep metadata and client membership alive even if heartbeat
+                # cadence is briefly interrupted during failover/reconnect.
+                self.redis_client.expire(client_key, self.client_ttl)
+                self.redis_client.sadd(self.client_set_key, client_id)
+                self.redis_client.expire(self.client_set_key, self.client_ttl)
 
             from ..services.client_tracker import client_tracking_service
 
