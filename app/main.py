@@ -210,6 +210,25 @@ def _trigger_engine_generation_rollout(reason: str) -> Dict[str, Any]:
         engine_controller.request_reconcile(reason=f"config_rollout:{reason}")
     return result
 
+
+def _mark_engines_draining_for_reprovision(reason: str = "engine_settings_reprovision") -> int:
+    """Mark managed engines as draining so they are replaced during reconcile."""
+    marked = 0
+
+    for engine_state in state.list_engines():
+        labels = getattr(engine_state, "labels", None)
+        if isinstance(labels, dict) and str(labels.get("manual") or "").strip().lower() == "true":
+            continue
+
+        container_id = str(getattr(engine_state, "container_id", "") or "").strip()
+        if not container_id:
+            continue
+
+        if state.mark_engine_draining(container_id, reason=reason):
+            marked += 1
+
+    return marked
+
 def _init_proxy_server():
     """Initialize ProxyServer and HLSProxyServer in background thread during startup.
     
@@ -2665,11 +2684,16 @@ async def reprovision_all_engines():
     """
     Trigger a declarative rolling update by bumping target engine config generation.
     """
+    marked = _mark_engines_draining_for_reprovision(reason="engine_settings_reprovision")
+    if marked > 0:
+        engine_controller.request_reconcile(reason="engine_settings_reprovision")
+
     rollout = _trigger_engine_generation_rollout(reason="custom_variant_reprovision")
     changed = bool(rollout.get("changed"))
 
     return {
         "message": "Rolling update scheduled" if changed else "No config change detected; rollout not required",
+        "reprovision_marked_engines": marked,
         "rolling_update": {
             "changed": changed,
             "target_generation": rollout.get("generation"),

@@ -72,6 +72,22 @@ def test_custom_variant_reprovision_endpoint_triggers_rolling_update_payload():
     assert response["rolling_update"]["target_hash"] == "abc123"
 
 
+def test_reprovision_marks_engines_draining_like_vpn_migration():
+    from app import main
+
+    engines = [_engine("e-1", "old-hash"), _engine("e-2", "old-hash")]
+
+    with patch("app.main._trigger_engine_generation_rollout", return_value={"changed": False, "generation": 5, "config_hash": "abc123"}), \
+         patch.object(main.state, "list_engines", return_value=engines), \
+         patch.object(main.state, "mark_engine_draining", side_effect=[True, False]) as mark_draining, \
+         patch.object(main.engine_controller, "request_reconcile") as request_reconcile:
+        response = asyncio.run(main.reprovision_all_engines())
+
+    assert mark_draining.call_count == 2
+    assert response["reprovision_marked_engines"] == 1
+    request_reconcile.assert_called_once_with(reason="engine_settings_reprovision")
+
+
 def test_custom_variant_reprovision_status_is_computed_declaratively():
     from app import main
 
