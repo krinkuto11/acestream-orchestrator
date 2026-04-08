@@ -230,7 +230,6 @@ function StreamTimelineGraphic({
         liveEdge: 0,
         engineLag: Number.isFinite(engineLag) ? Math.max(0, engineLag) : null,
         streamWindow: Number.isFinite(streamWindow) ? Math.max(0, streamWindow) : null,
-        engineBand: Number.isFinite(engineLag) ? [0, Math.max(0, engineLag)] : null,
       }
       clientKeys.forEach((key) => {
         const value = toNumber(point[key])
@@ -385,7 +384,7 @@ function StreamTimelineGraphic({
                   {...props}
                   payload={(props?.payload || []).filter((entry) => {
                     const key = String(entry?.dataKey || '')
-                    return !key.endsWith('__band') && key !== 'engineBand'
+                    return !key.endsWith('__band')
                   })}
                   labelFormatter={(label) => formatClock(label)}
                   formatter={(value, name) => {
@@ -399,43 +398,25 @@ function StreamTimelineGraphic({
 
             <Area
               type="monotone"
-              dataKey="engineBand"
-              stroke="none"
-              fill={chartConfig.engineLag?.color || 'hsl(var(--chart-1, 221 83% 53%))'}
-              fillOpacity={0.14}
+              dataKey="engineLag"
+              name="engineLag"
+              stroke="var(--color-engineLag)"
+              fill="var(--color-engineLag)"
+              fillOpacity={0.15}
+              strokeWidth={2}
               connectNulls={false}
               isAnimationActive={false}
               dot={false}
               activeDot={false}
-            />
-
-            <ReferenceLine
-              y={0}
-              stroke={chartConfig.liveEdge?.color || 'hsl(var(--chart-3, 32 95% 44%))'}
-              strokeWidth={1.4}
-              strokeOpacity={0.9}
-              ifOverflow="extendDomain"
             />
 
             <Line
               type="linear"
               dataKey="liveEdge"
               name="liveEdge"
-              stroke={chartConfig.liveEdge?.color || 'hsl(var(--chart-3, 32 95% 44%))'}
-              strokeWidth={1.8}
-              connectNulls
-              isAnimationActive={false}
-              dot={false}
-              activeDot={false}
-            />
-
-            <Line
-              type="monotone"
-              dataKey="engineLag"
-              name="engineLag"
-              stroke={chartConfig.engineLag?.color || 'hsl(var(--chart-1, 221 83% 53%))'}
+              stroke="var(--color-liveEdge)"
               strokeWidth={2}
-              connectNulls={false}
+              connectNulls
               isAnimationActive={false}
               dot={false}
               activeDot={false}
@@ -445,7 +426,7 @@ function StreamTimelineGraphic({
               type="monotone"
               dataKey="streamWindow"
               name="streamWindow"
-              stroke={chartConfig.streamWindow?.color || 'hsl(var(--chart-5, 348 83% 47%))'}
+              stroke="var(--color-streamWindow)"
               strokeWidth={1.5}
               strokeDasharray="4 3"
               connectNulls={false}
@@ -457,10 +438,10 @@ function StreamTimelineGraphic({
             {clientKeys.map((key, index) => (
               <React.Fragment key={key}>
                 <Area
-                  type="monotone"
+                  type="linear"
                   dataKey={`${key}__band`}
                   stroke="none"
-                  fill={chartConfig[key]?.color || CLIENT_COLOR_PALETTE[index % CLIENT_COLOR_PALETTE.length]}
+                  fill={`var(--color-${key})`}
                   fillOpacity={0.09}
                   connectNulls={false}
                   isAnimationActive={false}
@@ -472,7 +453,7 @@ function StreamTimelineGraphic({
                   type="monotone"
                   dataKey={key}
                   name={key}
-                  stroke={chartConfig[key]?.color || CLIENT_COLOR_PALETTE[index % CLIENT_COLOR_PALETTE.length]}
+                  stroke={`var(--color-${key})`}
                   strokeWidth={1.5}
                   connectNulls={false}
                   isAnimationActive={false}
