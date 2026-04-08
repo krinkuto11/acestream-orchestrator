@@ -275,7 +275,7 @@ function StreamTimelineGraphic({
     const config = {
       engineLag: {
         label: 'Engine lag',
-        color: 'hsl(var(--primary))',
+        color: 'hsl(var(--primary, 221 83% 53%))',
       },
       streamWindow: {
         label: 'Stream window',
@@ -283,7 +283,7 @@ function StreamTimelineGraphic({
       },
       liveEdge: {
         label: 'Live edge',
-        color: 'hsl(var(--ring))',
+        color: 'hsl(var(--ring, 32 95% 44%))',
       },
     }
 
