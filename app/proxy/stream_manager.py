@@ -1305,7 +1305,23 @@ class StreamManager:
             try:
                 now = time.time()
                 inactivity_duration = now - self.last_data_time
-                timeout_threshold = min(5.0, float(ConfigHelper.connection_timeout()))
+
+                # Respect user-configured timeout without an artificial upper cap.
+                # Fall back to 5.0s when configuration is unavailable/invalid,
+                # and enforce a minimum to avoid tight failover loops.
+                try:
+                    configured_timeout = float(ConfigHelper.connection_timeout())
+                except Exception:
+                    configured_timeout = 5.0
+
+                if (
+                    configured_timeout != configured_timeout
+                    or configured_timeout in (float('inf'), float('-inf'))
+                    or configured_timeout <= 0
+                ):
+                    configured_timeout = 5.0
+
+                timeout_threshold = max(1.0, configured_timeout)
                 
                 if inactivity_duration > timeout_threshold and self.connected:
                     # IF we are already waiting for a Control Plane failover, ignore the timeout!
