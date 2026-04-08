@@ -5,12 +5,10 @@
   "platform": "arm64",
   "arm_version": null,
   "amd64_version": null,
-  "p2p_port": null,
   "download_limit": 0,
   "upload_limit": 0,
-  "live_cache_type": "disk",
+  "live_cache_type": "memory",
   "buffer_time": 10,
-  "stats_interval": 1,
   "memory_limit": null,
   "parameters": [
     {

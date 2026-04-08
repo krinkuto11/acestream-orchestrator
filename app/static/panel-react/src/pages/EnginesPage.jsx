@@ -335,7 +335,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
             value="configuration"
             className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50"
           >
-            Engine Configuration
+            Engine Settings
           </TabsTrigger>
         </TabsList>
 
@@ -354,7 +354,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Settings2 className="h-5 w-5" />
-                Engine Configuration
+                  Engine Settings
               </CardTitle>
               <CardDescription>
                 Configure engine variant, replica counts, and automatic cleanup settings

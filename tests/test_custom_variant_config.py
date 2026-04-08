@@ -25,8 +25,7 @@ def test_config_instantiation():
     config = CustomVariantConfig()
     
     assert config.enabled is False
-    assert config.p2p_port is None
-    assert config.live_cache_type == "disk"
+    assert config.live_cache_type == "memory"
     print("✅ Valid configuration passed validation")
     
     # Invalid cache type
@@ -52,8 +51,7 @@ def test_config_save_load():
     try:
         config = CustomVariantConfig(
             enabled=True,
-            name="Test Engine",
-            p2p_port=9000
+            name="Test Engine"
         )
         
         # Save
@@ -66,7 +64,7 @@ def test_config_save_load():
         loaded = load_config(temp_path)
         assert loaded is not None, "Failed to load config"
         assert loaded.enabled == config.enabled, "enabled mismatch"
-        assert loaded.p2p_port == config.p2p_port, "p2p_port mismatch"
+        assert loaded.live_cache_type == config.live_cache_type, "live_cache_type mismatch"
         print("✅ Configuration loaded successfully")
         
         # Verify JSON structure
@@ -74,7 +72,7 @@ def test_config_save_load():
             data = json.load(f)
         assert 'enabled' in data, "JSON missing enabled"
         assert 'name' in data, "JSON missing name"
-        assert 'p2p_port' in data, "JSON missing p2p_port"
+        assert 'live_cache_type' in data, "JSON missing live_cache_type"
         print("✅ JSON structure correct")
         
     finally:
@@ -94,20 +92,17 @@ def test_build_variant_config():
     with unittest.mock.patch('app.services.custom_variant_config.detect_platform', return_value='arm64'):
         config = CustomVariantConfig(
             enabled=True,
-            p2p_port=1234,
             download_limit=1000,
             upload_limit=500,
             live_cache_type="disk",
-            buffer_time=10,
-            stats_interval=5
+            buffer_time=10
         )
         
         variant = build_variant_config_from_custom(config)
         
         assert variant['config_type'] == 'cmd'
         assert 'python' in variant['base_cmd']
-        assert '--port' in variant['base_cmd']
-        assert '1234' in variant['base_cmd']
+        assert '--port' not in variant['base_cmd']
         assert '--download-limit' in variant['base_cmd']
         assert '1000' in variant['base_cmd']
         assert '--upload-limit' in variant['base_cmd']
@@ -115,6 +110,7 @@ def test_build_variant_config():
         assert '--live-cache-type' in variant['base_cmd']
         assert 'disk' in variant['base_cmd']
         assert '--cache-dir' in variant['base_cmd']
+        assert '--stats-report-interval' not in variant['base_cmd']
         
         print("✅ Custom variant config built correctly")
 

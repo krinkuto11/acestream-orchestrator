@@ -299,6 +299,8 @@ async def lifespan(app: FastAPI):
     from .services.settings_persistence import SettingsPersistence
     from .proxy.config_helper import Config as ProxyConfig
     
+    _loaded_live_edge_from_proxy = False
+
     # Load proxy settings
     try:
         proxy_settings = SettingsPersistence.load_proxy_config()
@@ -330,6 +332,12 @@ async def lifespan(app: FastAPI):
                 tier = str(proxy_settings['legacy_api_preflight_tier']).strip().lower()
                 if tier in ['light', 'deep']:
                     ProxyConfig.LEGACY_API_PREFLIGHT_TIER = tier
+            if 'ace_live_edge_delay' in proxy_settings:
+                try:
+                    cfg.ACE_LIVE_EDGE_DELAY = max(0, int(proxy_settings['ace_live_edge_delay']))
+                    _loaded_live_edge_from_proxy = True
+                except Exception:
+                    logger.warning("Invalid ace_live_edge_delay in persisted proxy settings; keeping current value")
             logger.debug("Proxy settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
@@ -440,7 +448,6 @@ async def lifespan(app: FastAPI):
                 'port_range_host': 'PORT_RANGE_HOST',
                 'ace_http_range': 'ACE_HTTP_RANGE',
                 'ace_https_range': 'ACE_HTTPS_RANGE',
-                'ace_live_edge_delay': 'ACE_LIVE_EDGE_DELAY',
                 'debug_mode': 'DEBUG_MODE',
             }
             for _json_key, _cfg_attr in _orch_field_map.items():
@@ -450,6 +457,16 @@ async def lifespan(app: FastAPI):
                         # Keep collector cadence fast so frontend topology interpolation has fresh targets.
                         _value = 1
                     setattr(cfg, _cfg_attr, _value)
+
+            # Backward compatibility: older releases persisted live edge under orchestrator settings.
+            if not _loaded_live_edge_from_proxy and 'ace_live_edge_delay' in orchestrator_settings:
+                try:
+                    cfg.ACE_LIVE_EDGE_DELAY = max(0, int(orchestrator_settings['ace_live_edge_delay']))
+                    logger.info(
+                        "Loaded legacy ace_live_edge_delay from orchestrator settings and migrated runtime ownership to proxy"
+                    )
+                except Exception:
+                    logger.warning("Invalid legacy ace_live_edge_delay in orchestrator settings; keeping current value")
             logger.debug("Orchestrator settings loaded from persistent storage")
     except Exception as e:
         logger.warning(f"Failed to load persisted orchestrator settings: {e}")
@@ -4866,6 +4883,7 @@ def get_proxy_config():
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
         "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
+        "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         "engine_variant": cfg.ENGINE_VARIANT,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
@@ -4891,6 +4909,7 @@ def update_proxy_config(
     stream_mode: Optional[str] = None,
     control_mode: Optional[str] = None,
     legacy_api_preflight_tier: Optional[str] = None,
+    ace_live_edge_delay: Optional[int] = None,
     # HLS-specific parameters
     hls_max_segments: Optional[int] = None,
     hls_initial_segments: Optional[int] = None,
@@ -4916,6 +4935,7 @@ def update_proxy_config(
         stream_mode: Stream mode - 'TS' for MPEG-TS or 'HLS' for HLS streaming
         control_mode: Engine control mode - 'api' (default) or 'http'
         legacy_api_preflight_tier: Legacy API preflight tier - 'light' or 'deep'
+        ace_live_edge_delay: Live edge delay in seconds (min: 0)
         hls_max_segments: Maximum HLS segments to buffer (min: 5, max: 100)
         hls_initial_segments: Minimum HLS segments before playback (min: 1, max: 10)
         hls_window_size: Number of segments in HLS manifest window (min: 3, max: 20)
@@ -4991,6 +5011,11 @@ def update_proxy_config(
             raise HTTPException(status_code=400, detail="legacy_api_preflight_tier must be either 'light' or 'deep'")
         ProxyConfig.LEGACY_API_PREFLIGHT_TIER = normalized_tier
 
+    if ace_live_edge_delay is not None:
+        if ace_live_edge_delay < 0:
+            raise HTTPException(status_code=400, detail="ace_live_edge_delay must be >= 0")
+        cfg.ACE_LIVE_EDGE_DELAY = ace_live_edge_delay
+
     # HLS-specific settings validation and updates
     if hls_max_segments is not None:
         if hls_max_segments < 5 or hls_max_segments > 100:
@@ -5044,7 +5069,8 @@ def update_proxy_config(
         f"max_streams_per_engine={cfg.MAX_STREAMS_PER_ENGINE}, "
         f"stream_mode={ProxyConfig.STREAM_MODE}, "
         f"control_mode={_resolve_control_mode(ProxyConfig.CONTROL_MODE)}, "
-        f"legacy_api_preflight_tier={ConfigHelper.legacy_api_preflight_tier()}"
+        f"legacy_api_preflight_tier={ConfigHelper.legacy_api_preflight_tier()}, "
+        f"ace_live_edge_delay={cfg.ACE_LIVE_EDGE_DELAY}"
     )
     
     # Persist settings to JSON file
@@ -5061,6 +5087,7 @@ def update_proxy_config(
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
         "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
+        "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
@@ -5087,6 +5114,7 @@ def update_proxy_config(
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
         "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
+        "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
@@ -5126,7 +5154,6 @@ class OrchestratorSettingsUpdate(BaseModel):
     port_range_host: Optional[str] = None
     ace_http_range: Optional[str] = None
     ace_https_range: Optional[str] = None
-    ace_live_edge_delay: Optional[int] = None
     debug_mode: Optional[bool] = None
 
 
@@ -5156,7 +5183,6 @@ def get_orchestrator_settings():
         "port_range_host": cfg.PORT_RANGE_HOST,
         "ace_http_range": cfg.ACE_HTTP_RANGE,
         "ace_https_range": cfg.ACE_HTTPS_RANGE,
-        "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         "debug_mode": cfg.DEBUG_MODE,
     }
 
@@ -5164,6 +5190,7 @@ def get_orchestrator_settings():
     if persisted:
         merged = {**defaults, **persisted}
         merged["collect_interval_s"] = 1
+        merged.pop("ace_live_edge_delay", None)
         return merged
 
     # Return defaults from runtime cfg
@@ -5201,9 +5228,9 @@ async def update_orchestrator_settings(settings: OrchestratorSettingsUpdate):
         "port_range_host": cfg.PORT_RANGE_HOST,
         "ace_http_range": cfg.ACE_HTTP_RANGE,
         "ace_https_range": cfg.ACE_HTTPS_RANGE,
-        "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         "debug_mode": cfg.DEBUG_MODE,
     }
+    current.pop("ace_live_edge_delay", None)
     current["collect_interval_s"] = 1
 
     def _validate_port_range(v: str, field: str):
@@ -5333,12 +5360,6 @@ async def update_orchestrator_settings(settings: OrchestratorSettingsUpdate):
         _validate_port_range(settings.ace_https_range, "ace_https_range")
         current["ace_https_range"] = settings.ace_https_range
         cfg.ACE_HTTPS_RANGE = settings.ace_https_range
-
-    if settings.ace_live_edge_delay is not None:
-        if settings.ace_live_edge_delay < 0:
-            raise HTTPException(status_code=400, detail="ace_live_edge_delay must be >= 0")
-        current["ace_live_edge_delay"] = settings.ace_live_edge_delay
-        cfg.ACE_LIVE_EDGE_DELAY = settings.ace_live_edge_delay
 
     if settings.debug_mode is not None:
         current["debug_mode"] = settings.debug_mode

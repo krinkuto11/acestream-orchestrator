@@ -26,7 +26,6 @@ const DEFAULTS = {
   port_range_host: '19000-19999',
   ace_http_range: '40000-44999',
   ace_https_range: '45000-49999',
-  ace_live_edge_delay: 0,
   debug_mode: false,
 }
 
@@ -120,7 +119,6 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
             circuit_breaker_replacement_timeout_s: toNumber(draft.circuit_breaker_replacement_timeout_s, DEFAULTS.circuit_breaker_replacement_timeout_s),
             max_concurrent_provisions: toNumber(draft.max_concurrent_provisions, DEFAULTS.max_concurrent_provisions),
             min_provision_interval_s: toNumber(draft.min_provision_interval_s, DEFAULTS.min_provision_interval_s),
-            ace_live_edge_delay: toNumber(draft.ace_live_edge_delay, DEFAULTS.ace_live_edge_delay),
             debug_mode: Boolean(draft.debug_mode),
           }),
         })
@@ -294,9 +292,6 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
           </SettingRow>
           <SettingRow label="Ace HTTPS Range" description="Internal Ace HTTPS port range." warning="Applies to newly provisioned engines.">
             <Input value={draft.ace_https_range} onChange={(e) => update('ace_https_range', e.target.value)} className="max-w-sm" />
-          </SettingRow>
-          <SettingRow label="Default Live Edge Delay (s)" description="Default buffer offset for live playback stabilization.">
-            <Input value={draft.ace_live_edge_delay} type="number" min={0} max={120} onChange={(e) => update('ace_live_edge_delay', toNumber(e.target.value, DEFAULTS.ace_live_edge_delay))} className="max-w-xs" />
           </SettingRow>
           <SettingRow label="Debug Mode" description="Enables verbose orchestration logs for diagnostics.">
             <Switch checked={Boolean(draft.debug_mode)} onCheckedChange={(value) => update('debug_mode', Boolean(value))} />

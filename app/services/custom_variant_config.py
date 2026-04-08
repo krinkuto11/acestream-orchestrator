@@ -35,12 +35,10 @@ class CustomVariantConfig(BaseModel):
     amd64_version: Optional[str] = None
     
     # User facing parameters
-    p2p_port: Optional[int] = None
     download_limit: int = 0
     upload_limit: int = 0
-    live_cache_type: str = "disk"  # "memory" or "disk"
+    live_cache_type: str = "memory"  # "memory" or "disk"
     buffer_time: int = 10
-    stats_interval: int = 1
     
     # Advanced parameters
     memory_limit: Optional[str] = None
@@ -175,10 +173,6 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
         cmd = ["python", "main.py"]
         
     # Append requested parameters
-    if config.p2p_port:
-        cmd.extend(["--port", str(config.p2p_port)])
-
-        
     cmd.extend(["--download-limit", str(config.download_limit)])
     cmd.extend(["--upload-limit", str(config.upload_limit)])
     
@@ -190,7 +184,6 @@ def build_variant_config_from_custom(config: CustomVariantConfig) -> Dict[str, A
         cmd.extend(["--live-cache-type", "memory"])
         
     cmd.extend(["--live-buffer-time", str(config.buffer_time)])
-    cmd.extend(["--stats-report-interval", str(config.stats_interval)])
     
     result["base_cmd"] = cmd
     return result

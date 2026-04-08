@@ -23,6 +23,7 @@ const DEFAULTS = {
   connection_timeout: 10,
   stream_timeout: 60,
   channel_shutdown_delay: 5,
+  ace_live_edge_delay: 0,
   max_streams_per_engine: 3,
   stream_mode: 'TS',
   control_mode: 'api',
@@ -102,6 +103,7 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
         const normalized = {
           ...DEFAULTS,
           ...payload,
+          ace_live_edge_delay: toNumber(payload?.ace_live_edge_delay, DEFAULTS.ace_live_edge_delay),
           control_mode: normalizeControlMode(payload?.control_mode),
         }
         setInitialState(normalized)
@@ -141,6 +143,7 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
         params.set('connection_timeout', String(toNumber(draft.connection_timeout, DEFAULTS.connection_timeout)))
         params.set('stream_timeout', String(toNumber(draft.stream_timeout, DEFAULTS.stream_timeout)))
         params.set('channel_shutdown_delay', String(toNumber(draft.channel_shutdown_delay, DEFAULTS.channel_shutdown_delay)))
+        params.set('ace_live_edge_delay', String(toNumber(draft.ace_live_edge_delay, DEFAULTS.ace_live_edge_delay)))
         params.set('max_streams_per_engine', String(toNumber(draft.max_streams_per_engine, DEFAULTS.max_streams_per_engine)))
         params.set('stream_mode', String(draft.stream_mode || DEFAULTS.stream_mode))
         params.set('control_mode', String(normalizeControlMode(draft.control_mode)))
@@ -324,6 +327,9 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
           </SettingRow>
           <SettingRow label="Stream Timeout (s)" description="Overall stream request timeout.">
             <Input type="number" min={10} max={300} value={draft.stream_timeout} onChange={(e) => update('stream_timeout', toNumber(e.target.value, DEFAULTS.stream_timeout))} className="max-w-xs" />
+          </SettingRow>
+          <SettingRow label="Live Edge Delay" description="Default live edge offset used to stabilize live playback.">
+            <Input type="number" min={0} max={1200} value={draft.ace_live_edge_delay} onChange={(e) => update('ace_live_edge_delay', toNumber(e.target.value, DEFAULTS.ace_live_edge_delay))} className="max-w-xs" />
           </SettingRow>
           <SettingRow label="Idle Channel Shutdown Delay (s)" description="Grace delay before terminating idle channel.">
             <Input type="number" min={1} max={60} value={draft.channel_shutdown_delay} onChange={(e) => update('channel_shutdown_delay', toNumber(e.target.value, DEFAULTS.channel_shutdown_delay))} className="max-w-xs" />

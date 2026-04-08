@@ -15,12 +15,10 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
 
     // Form state
     const [formData, setFormData] = useState({
-        p2p_port: '',
         download_limit: 0,
         upload_limit: 0,
-        live_cache_type: 'disk',
+        live_cache_type: 'memory',
         buffer_time: 10,
-        stats_interval: 1
     })
 
     useEffect(() => {
@@ -42,21 +40,17 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
     const handleEdit = () => {
         if (customConfig) {
             setFormData({
-                p2p_port: customConfig.p2p_port ?? '',
                 download_limit: customConfig.download_limit ?? 0,
                 upload_limit: customConfig.upload_limit ?? 0,
-                live_cache_type: customConfig.live_cache_type ?? 'disk',
+                live_cache_type: customConfig.live_cache_type ?? 'memory',
                 buffer_time: customConfig.buffer_time ?? 10,
-                stats_interval: customConfig.stats_interval ?? 1
             })
         } else {
             setFormData({
-                p2p_port: '',
                 download_limit: 0,
                 upload_limit: 0,
-                live_cache_type: 'disk',
+                live_cache_type: 'memory',
                 buffer_time: 10,
-                stats_interval: 1
             })
         }
         setExpanded(true)
@@ -71,7 +65,6 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
                 name: "Custom Engine",
                 icon: "server",
                 ...formData,
-                p2p_port: formData.p2p_port === '' ? null : parseInt(formData.p2p_port)
             }
 
             await fetchJSON(`${orchUrl}/api/v1/custom-variant/config`, {
@@ -203,9 +196,6 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
                             </div>
                             <div className="mt-4 flex flex-wrap gap-2">
                                 <span className="text-xs border border-border px-2 py-1 rounded-md text-muted-foreground font-medium flex items-center gap-1">
-                                    P2P: {customConfig.p2p_port || 'Auto'}
-                                </span>
-                                <span className="text-xs border border-border px-2 py-1 rounded-md text-muted-foreground font-medium flex items-center gap-1">
                                     <MemoryStick className="h-3 w-3" /> {customConfig.live_cache_type}
                                 </span>
                             </div>
@@ -219,8 +209,8 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
                         <div className="h-10 w-10 rounded-full bg-secondary flex items-center justify-center mb-3 text-muted-foreground">
                             <Plus className="h-5 w-5" />
                         </div>
-                        <h3 className="font-semibold">Create new Engine</h3>
-                        <p className="text-xs text-muted-foreground mt-1">Configure custom ports & limits</p>
+                        <h3 className="font-semibold">Create Engine Settings</h3>
+                        <p className="text-xs text-muted-foreground mt-1">Configure limits and cache strategy</p>
                     </Card>
                 )}
             </div>
@@ -229,24 +219,12 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
             {expanded && (
                 <Card className="border-primary/20 bg-primary/5">
                     <CardHeader className="pb-3">
-                        <CardTitle className="text-lg">Configure Custom Engine</CardTitle>
+                        <CardTitle className="text-lg">Engine Settings</CardTitle>
                         <CardDescription>Set explicit AceServe parameters. Leave limits at 0 to uncap.</CardDescription>
                     </CardHeader>
                     <CardContent>
                         <div className="grid gap-6">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="space-y-2 flex flex-col justify-end">
-                                    <div className="flex justify-between items-center">
-                                        <Label>P2P Port</Label>
-                                    </div>
-                                    <Input
-                                        type="number"
-                                        placeholder="Leave open for VPN Auto-assignment"
-                                        value={formData.p2p_port}
-                                        onChange={e => setFormData({ ...formData, p2p_port: e.target.value })}
-                                    />
-                                    <p className="text-xs text-muted-foreground mt-1">Leave empty to permit your VPN provider to manage the port translation.</p>
-                                </div>
+                            <div className="grid grid-cols-1 gap-4">
                                 <div className="space-y-2">
                                     <Label>Live Cache Type</Label>
                                     <Select value={formData.live_cache_type} onValueChange={v => setFormData({ ...formData, live_cache_type: v })}>
@@ -254,8 +232,8 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
                                             <SelectValue />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="disk">Disk (Recommended)</SelectItem>
-                                            <SelectItem value="memory">Memory</SelectItem>
+                                            <SelectItem value="memory">Memory (Recommended)</SelectItem>
+                                            <SelectItem value="disk">Disk</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -272,20 +250,16 @@ export function CustomEngineBlocks({ orchUrl, apiKey, fetchJSON, engineSettings,
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 gap-4">
                                 <div className="space-y-2">
                                     <Label>Buffer Time (s)</Label>
                                     <Input type="number" value={formData.buffer_time} onChange={e => setFormData({ ...formData, buffer_time: parseInt(e.target.value) || 0 })} />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>Stats Interval (s)</Label>
-                                    <Input type="number" value={formData.stats_interval} onChange={e => setFormData({ ...formData, stats_interval: parseInt(e.target.value) || 0 })} />
                                 </div>
                             </div>
 
                             <div className="flex justify-end gap-2 pt-2 border-t">
                                 <Button variant="outline" onClick={() => setExpanded(false)}>Cancel</Button>
-                                <Button onClick={handleSave}>Save Engine Configuration</Button>
+                                <Button onClick={handleSave}>Save Engine Settings</Button>
                             </div>
                         </div>
                     </CardContent>
