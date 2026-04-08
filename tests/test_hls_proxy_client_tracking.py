@@ -115,7 +115,8 @@ def test_hls_client_manager_tracks_buffer_seconds_behind():
     matching = [c for c in clients if c.get("client_id") == "10.0.0.2:ua2"]
 
     assert len(matching) == 1
-    assert matching[0]["buffer_seconds_behind"] == pytest.approx(6.75, abs=0.001)
+    # Manifest requests track stream window only; runway remains segment-authoritative.
+    assert matching[0]["buffer_seconds_behind"] == pytest.approx(0.0, abs=0.001)
     assert matching[0]["stream_buffer_window_seconds"] == pytest.approx(6.75, abs=0.001)
 
 

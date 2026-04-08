@@ -51,6 +51,7 @@ class StreamBuffer:
         self.stopping = False
         self.fill_timers = []
         self.last_fetch_end_index = 0
+        self.last_upstream_write_time = 0.0
         
         # REPLACED: gevent.event.Event with threading.Condition
         # Condition supports Wait/Notify semantics ideal for producer/consumer buffering
@@ -60,10 +61,13 @@ class StreamBuffer:
         """Add data with optimized Redis storage and TS packet alignment"""
         if not chunk:
             return False
+
+        now = time.time()
         
         try:
             # LOCK PROTECTED: Prevent race conditions when appending to static buffers concurrently
             with self.lock:
+                self.last_upstream_write_time = now
                 # Accumulate partial packets between chunks
                 if not hasattr(self, '_partial_packet'):
                     self._partial_packet = bytearray()
@@ -201,6 +205,61 @@ class StreamBuffer:
         except Exception as e:
             logger.error(f"Error getting chunks from buffer: {e}", exc_info=True)
             return [], None
+
+    def is_upstream_fresh(self, max_silence_seconds: float = 15.0) -> bool:
+        """Return True when upstream has written data recently."""
+        last_write = float(getattr(self, "last_upstream_write_time", 0.0) or 0.0)
+        if last_write <= 0.0:
+            return False
+        silence_s = max(0.0, time.time() - last_write)
+        return silence_s <= max(0.1, float(max_silence_seconds))
+
+    def purge_stale_cache(self, reason: str = "stale_upstream") -> int:
+        """Delete buffered Redis chunks and reset in-memory indices.
+
+        Used by reconnect guard when a warm cache is present but upstream has
+        been silent long enough that serving cached data would mask dead input.
+        """
+        deleted_keys = 0
+
+        try:
+            if self.redis_client and self.content_id:
+                pattern = f"{self.buffer_prefix}*"
+                if hasattr(self.redis_client, "scan_iter"):
+                    batch = []
+                    for key in self.redis_client.scan_iter(match=pattern, count=200):
+                        batch.append(key)
+                        if len(batch) >= 200:
+                            deleted_keys += int(self.redis_client.delete(*batch) or 0)
+                            batch = []
+                    if batch:
+                        deleted_keys += int(self.redis_client.delete(*batch) or 0)
+                else:
+                    current_index = int(self.redis_client.get(self.buffer_index_key) or 0)
+                    for idx in range(1, current_index + 1):
+                        chunk_key = RedisKeys.buffer_chunk(self.content_id, idx)
+                        deleted_keys += int(self.redis_client.delete(chunk_key) or 0)
+
+                self.redis_client.delete(self.buffer_index_key)
+
+            with self.lock:
+                self.index = 0
+                self.last_fetch_end_index = 0
+                self.last_upstream_write_time = 0.0
+                self._write_buffer = bytearray()
+                if hasattr(self, '_partial_packet'):
+                    self._partial_packet = bytearray()
+
+            logger.warning(
+                "Purged stale stream cache for content_id=%s (reason=%s, deleted_keys=%s)",
+                self.content_id,
+                reason,
+                deleted_keys,
+            )
+        except Exception as e:
+            logger.error("Failed to purge stale stream cache for content_id=%s: %s", self.content_id, e)
+
+        return deleted_keys
 
     def get_chunks_with_cursor(self, start_index=None):
         """Get chunks and a call-scoped fetched end cursor."""

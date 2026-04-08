@@ -102,6 +102,7 @@ function StreamTimelineGraphic({
   streamId,
   livepos,
   clients = [],
+  dynamicThresholdSeconds = null,
   eventMarkers = [],
   isLive = false,
   compact = false,
@@ -188,10 +189,19 @@ function StreamTimelineGraphic({
       liveEdge: 0,
       engineLag,
       streamWindow: effectiveStreamWindow,
+      dynamicThreshold: Number.isFinite(toNumber(dynamicThresholdSeconds))
+        ? Math.max(0, toNumber(dynamicThresholdSeconds))
+        : null,
       ...clientValues,
     }
 
     setHistory((prev) => {
+      if (!Number.isFinite(tick.dynamicThreshold) && prev.length > 0) {
+        const previousThreshold = toNumber(prev[prev.length - 1]?.dynamicThreshold)
+        if (Number.isFinite(previousThreshold)) {
+          tick.dynamicThreshold = Math.max(0, previousThreshold)
+        }
+      }
       const next = [...prev, tick].slice(-MAX_HISTORY_POINTS)
       setClientLabels((prevLabels) => {
         const mergedLabels = { ...prevLabels, ...nextLabels }
@@ -200,7 +210,7 @@ function StreamTimelineGraphic({
       })
       return next
     })
-  }, [clients, livepos?.last_ts, livepos?.live_last, livepos?.pos, storageKey])
+  }, [clients, dynamicThresholdSeconds, livepos?.last_ts, livepos?.live_last, livepos?.pos, storageKey])
 
   const model = useMemo(() => {
     if (!history.length) return null
@@ -230,6 +240,9 @@ function StreamTimelineGraphic({
         liveEdge: 0,
         engineLag: Number.isFinite(engineLag) ? Math.max(0, engineLag) : null,
         streamWindow: Number.isFinite(streamWindow) ? Math.max(0, streamWindow) : null,
+        dynamicThreshold: Number.isFinite(toNumber(point.dynamicThreshold))
+          ? Math.max(0, toNumber(point.dynamicThreshold))
+          : null,
       }
       clientKeys.forEach((key) => {
         const value = toNumber(point[key])
@@ -251,6 +264,10 @@ function StreamTimelineGraphic({
       const streamWindow = toNumber(point.streamWindow)
       if (Number.isFinite(streamWindow)) {
         nextMax = Math.max(nextMax, streamWindow)
+      }
+      const dynamicThreshold = toNumber(point.dynamicThreshold)
+      if (Number.isFinite(dynamicThreshold)) {
+        nextMax = Math.max(nextMax, dynamicThreshold)
       }
       clientKeys.forEach((key) => {
         const lag = toNumber(point[key])
@@ -279,6 +296,10 @@ function StreamTimelineGraphic({
       streamWindow: {
         label: 'Stream window',
         color: 'hsl(var(--chart-5, 348 83% 47%))',
+      },
+      dynamicThreshold: {
+        label: 'Dynamic threshold',
+        color: 'hsl(var(--destructive, 0 84% 60%))',
       },
       liveEdge: {
         label: 'Live edge',
@@ -427,6 +448,19 @@ function StreamTimelineGraphic({
               stroke="var(--color-streamWindow)"
               strokeWidth={1.5}
               strokeDasharray="4 3"
+              connectNulls={false}
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
+            />
+
+            <Line
+              type="linear"
+              dataKey="dynamicThreshold"
+              name="dynamicThreshold"
+              stroke="var(--color-dynamicThreshold)"
+              strokeWidth={2.4}
+              strokeOpacity={0.75}
               connectNulls={false}
               isAnimationActive={false}
               dot={false}

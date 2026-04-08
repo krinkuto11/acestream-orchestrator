@@ -94,6 +94,16 @@ function mergeStreamSnapshot(baseStream, payload) {
     next.paused = payload.paused
   }
 
+  const dynamicThresholdSeconds = toNumber(payload?.dynamic_threshold_seconds)
+  if (Number.isFinite(dynamicThresholdSeconds)) {
+    next.dynamic_threshold_seconds = Math.max(0, dynamicThresholdSeconds)
+  }
+
+  const currentClientBufferSeconds = toNumber(payload?.current_client_buffer_seconds)
+  if (Number.isFinite(currentClientBufferSeconds)) {
+    next.current_client_buffer_seconds = Math.max(0, currentClientBufferSeconds)
+  }
+
   return next
 }
 
@@ -683,6 +693,7 @@ function StreamCard({
                 livepos={localStream.livepos}
                 clients={clients}
                 isLive={streamIsLive}
+                dynamicThresholdSeconds={localStream?.dynamic_threshold_seconds}
                 eventMarkers={eventMarkers}
                 compact
               />
@@ -701,6 +712,7 @@ function StreamCard({
                 livepos={localStream.livepos}
                 clients={clients}
                 isLive={streamIsLive}
+                dynamicThresholdSeconds={localStream?.dynamic_threshold_seconds}
                 eventMarkers={eventMarkers}
               />
             </div>

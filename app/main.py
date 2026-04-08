@@ -260,6 +260,77 @@ def _merge_clients_with_redis_runway(stream_key: str, tracker_clients: List[Dict
         return list(tracker_clients or [])
 
 
+def _read_stream_dynamic_threshold(stream_key: str) -> Dict[str, float]:
+    """Read dynamic failover threshold telemetry for one stream from Redis."""
+    normalized_key = str(stream_key or "").strip()
+    if not normalized_key:
+        return {}
+
+    try:
+        from .proxy.manager import ProxyManager
+        from .proxy.redis_keys import RedisKeys
+        from .proxy.constants import StreamMetadataField
+
+        proxy_server = ProxyManager.get_instance()
+        redis_client = getattr(proxy_server, "redis_client", None)
+        if not redis_client:
+            return {}
+
+        metadata_key = RedisKeys.stream_metadata(normalized_key)
+        fields = [
+            StreamMetadataField.DYNAMIC_THRESHOLD_SECONDS,
+            StreamMetadataField.CURRENT_CLIENT_BUFFER_SECONDS,
+            StreamMetadataField.MAX_TOLERANCE_SECONDS,
+            StreamMetadataField.STREAM_INACTIVITY_SECONDS,
+            StreamMetadataField.DYNAMIC_THRESHOLD_UPDATED_AT,
+        ]
+
+        if hasattr(redis_client, "hmget"):
+            values = redis_client.hmget(metadata_key, fields)
+        else:
+            values = [redis_client.hget(metadata_key, field) for field in fields]
+        if not values:
+            return {}
+
+        def _to_str(value: Any) -> str:
+            if isinstance(value, bytes):
+                return value.decode("utf-8", errors="ignore")
+            return str(value or "")
+
+        def _to_float(value: Any) -> float:
+            try:
+                return float(_to_str(value))
+            except Exception:
+                return 0.0
+
+        (
+            dynamic_threshold_raw,
+            current_buffer_raw,
+            max_tolerance_raw,
+            inactivity_raw,
+            updated_at_raw,
+        ) = values
+
+        dynamic_threshold = max(0.0, _to_float(dynamic_threshold_raw))
+        current_buffer = max(0.0, _to_float(current_buffer_raw))
+        max_tolerance = max(0.0, _to_float(max_tolerance_raw))
+        inactivity = max(0.0, _to_float(inactivity_raw))
+        updated_at = max(0.0, _to_float(updated_at_raw))
+
+        if dynamic_threshold <= 0.0 and current_buffer <= 0.0 and max_tolerance <= 0.0:
+            return {}
+
+        return {
+            "dynamic_threshold_seconds": dynamic_threshold,
+            "current_client_buffer_seconds": current_buffer,
+            "max_tolerance_seconds": max_tolerance,
+            "stream_inactivity_seconds": inactivity,
+            "dynamic_threshold_updated_at": updated_at,
+        }
+    except Exception:
+        return {}
+
+
 def _format_sse_message(payload: Dict[str, Any], *, event_name: Optional[str] = None, event_id: Optional[str] = None) -> str:
     chunks: List[str] = []
     if event_name:
@@ -1803,11 +1874,13 @@ async def stream_stream_details(
 
             clients: List[Dict[str, Any]] = []
             stream_key = str(getattr(stream_state, "key", "") or "")
+            threshold_payload: Dict[str, float] = {}
             if stream_key:
                 with suppress(Exception):
                     _prune_client_tracker_if_due(ttl_s=float(ProxyConfig.CLIENT_RECORD_TTL), min_interval_s=3.0)
                     clients = client_tracking_service.get_stream_clients(stream_key)
                     clients = _merge_clients_with_redis_runway(stream_key, clients)
+                threshold_payload = _read_stream_dynamic_threshold(stream_key)
 
             payload = jsonable_encoder(
                 {
@@ -1816,6 +1889,7 @@ async def stream_stream_details(
                     "stats": stream_stats,
                     "extended_stats": cached_extended_stats,
                     "clients": clients,
+                    **threshold_payload,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             )

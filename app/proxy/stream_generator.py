@@ -211,14 +211,24 @@ class StreamGenerator:
             chunk_rate = max(0.1, float(self.chunk_rate_ema or 1.0))
             required_prebuffer_chunks = max(1, int(math.ceil(prebuffer_seconds * chunk_rate)))
             if initial_fresh_chunks >= required_prebuffer_chunks:
-                self.chunk_rate_ema = max(chunk_rate, float(self.chunk_rate_ema or 0.0))
-                logger.info(
-                    f"[{self.client_id}] Hot stream detected: Bypassing prebuffer wait "
+                if getattr(self.buffer, "is_upstream_fresh", None) and self.buffer.is_upstream_fresh(15.0):
+                    self.chunk_rate_ema = max(chunk_rate, float(self.chunk_rate_ema or 0.0))
+                    logger.info(
+                        f"[{self.client_id}] Hot stream detected: Bypassing prebuffer wait "
+                        f"(buffer index: {self.buffer.index}, baseline_index: {baseline_index}, "
+                        f"fresh_chunks: {initial_fresh_chunks}, required_chunks: {required_prebuffer_chunks}, "
+                        f"chunk_rate_ema: {self.chunk_rate_ema:.2f} chunks/s)"
+                    )
+                    return True
+
+                logger.warning(
+                    f"[{self.client_id}] Warm cache detected but upstream is stale; forcing cache purge "
                     f"(buffer index: {self.buffer.index}, baseline_index: {baseline_index}, "
-                    f"fresh_chunks: {initial_fresh_chunks}, required_chunks: {required_prebuffer_chunks}, "
-                    f"chunk_rate_ema: {self.chunk_rate_ema:.2f} chunks/s)"
+                    f"fresh_chunks: {initial_fresh_chunks}, required_chunks: {required_prebuffer_chunks})"
                 )
-                return True
+                if getattr(self.buffer, "purge_stale_cache", None):
+                    self.buffer.purge_stale_cache(reason="hot_reconnect_stale_upstream")
+                baseline_index = max(0, int(self.buffer.index))
         
         logger.info(
             f"[{self.client_id}] Waiting for initial data in buffer "

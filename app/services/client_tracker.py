@@ -233,8 +233,6 @@ class ClientTrackingService:
                     0.0,
                     self._safe_float(buffer_seconds_behind, default=0.0),
                 )
-                if self._safe_float(current.get("buffer_seconds_behind"), default=0.0) <= 0.0:
-                    current["buffer_seconds_behind"] = self._safe_float(current.get("stream_buffer_window_seconds"), default=0.0)
 
             if inferred_source:
                 current["position_source"] = inferred_source

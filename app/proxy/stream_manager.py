@@ -154,6 +154,8 @@ class StreamManager:
         self._last_runway_estimate_s = 0.0
         self._last_runway_estimate_ts = 0.0
         self._start_time = 0.0
+        self._last_threshold_publish_ts = 0.0
+        self._last_threshold_publish_value = None
         
         # Orchestrator event tracking
         self.stream_id = None  # Will be set after sending start event
@@ -1293,29 +1295,48 @@ class StreamManager:
                 return 0.0
 
             client_ids = redis_client.smembers(client_set_key) or []
-            for client_id in client_ids:
-                normalized_client_id = client_id.decode("utf-8") if isinstance(client_id, bytes) else str(client_id)
-                client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
+            fields = [
+                ClientMetadataField.CLIENT_RUNWAY_SECONDS,
+                ClientMetadataField.BUFFER_SECONDS_BEHIND,
+                ClientMetadataField.POSITION_CONFIDENCE,
+                ClientMetadataField.POSITION_OBSERVED_AT,
+                ClientMetadataField.STATS_UPDATED_AT,
+            ]
 
-                if hasattr(redis_client, "hmget"):
-                    values = redis_client.hmget(
-                        client_key,
-                        [
-                            ClientMetadataField.CLIENT_RUNWAY_SECONDS,
-                            ClientMetadataField.BUFFER_SECONDS_BEHIND,
-                            ClientMetadataField.POSITION_CONFIDENCE,
-                            ClientMetadataField.POSITION_OBSERVED_AT,
-                            ClientMetadataField.STATS_UPDATED_AT,
-                        ],
-                    )
-                else:
-                    values = [
-                        redis_client.hget(client_key, ClientMetadataField.CLIENT_RUNWAY_SECONDS),
-                        redis_client.hget(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND),
-                        redis_client.hget(client_key, ClientMetadataField.POSITION_CONFIDENCE),
-                        redis_client.hget(client_key, ClientMetadataField.POSITION_OBSERVED_AT),
-                        redis_client.hget(client_key, ClientMetadataField.STATS_UPDATED_AT),
-                    ]
+            normalized_client_ids = [
+                client_id.decode("utf-8") if isinstance(client_id, bytes) else str(client_id)
+                for client_id in client_ids
+            ]
+
+            prefetched_values = []
+            if hasattr(redis_client, "pipeline") and hasattr(redis_client, "hmget"):
+                pipe = redis_client.pipeline(transaction=False)
+                for normalized_client_id in normalized_client_ids:
+                    client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
+                    pipe.hmget(client_key, fields)
+                prefetched_values = pipe.execute() or []
+
+            if prefetched_values:
+                values_iterator = zip(normalized_client_ids, prefetched_values)
+            else:
+                values_iterator = []
+                fallback_rows = []
+                for normalized_client_id in normalized_client_ids:
+                    client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
+                    if hasattr(redis_client, "hmget"):
+                        values = redis_client.hmget(client_key, fields)
+                    else:
+                        values = [
+                            redis_client.hget(client_key, ClientMetadataField.CLIENT_RUNWAY_SECONDS),
+                            redis_client.hget(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND),
+                            redis_client.hget(client_key, ClientMetadataField.POSITION_CONFIDENCE),
+                            redis_client.hget(client_key, ClientMetadataField.POSITION_OBSERVED_AT),
+                            redis_client.hget(client_key, ClientMetadataField.STATS_UPDATED_AT),
+                        ]
+                    fallback_rows.append((normalized_client_id, values))
+                values_iterator = fallback_rows
+
+            for normalized_client_id, values in values_iterator:
                 if not values:
                     continue
 
@@ -1375,6 +1396,39 @@ class StreamManager:
         self._last_runway_estimate_ts = now
 
         return conservative_runway
+
+    def _publish_dynamic_tolerance(self, dynamic_threshold: float, current_buffer: float, max_tolerance: float, inactivity_duration: float):
+        """Persist current dynamic threshold values for dashboard visualization."""
+        try:
+            redis_client = getattr(self.buffer, "redis_client", None)
+            if not redis_client:
+                return
+
+            now = time.time()
+            last_publish_ts = float(getattr(self, "_last_threshold_publish_ts", 0.0) or 0.0)
+            last_publish_value = getattr(self, "_last_threshold_publish_value", None)
+            if (
+                last_publish_value is not None
+                and abs(float(last_publish_value) - float(dynamic_threshold)) < 0.02
+                and (now - last_publish_ts) < 1.0
+            ):
+                return
+
+            metadata_key = RedisKeys.stream_metadata(self.content_id)
+            redis_client.hset(
+                metadata_key,
+                mapping={
+                    StreamMetadataField.DYNAMIC_THRESHOLD_SECONDS: f"{max(0.0, float(dynamic_threshold)):.3f}",
+                    StreamMetadataField.CURRENT_CLIENT_BUFFER_SECONDS: f"{max(0.0, float(current_buffer)):.3f}",
+                    StreamMetadataField.MAX_TOLERANCE_SECONDS: f"{max(0.0, float(max_tolerance)):.3f}",
+                    StreamMetadataField.STREAM_INACTIVITY_SECONDS: f"{max(0.0, float(inactivity_duration)):.3f}",
+                    StreamMetadataField.DYNAMIC_THRESHOLD_UPDATED_AT: str(now),
+                },
+            )
+            self._last_threshold_publish_ts = now
+            self._last_threshold_publish_value = float(dynamic_threshold)
+        except Exception as e:
+            logger.debug("Failed to publish dynamic threshold telemetry for %s: %s", self.content_id, e)
 
     def _get_dynamic_tolerance(self) -> tuple[float, float, float]:
         """Calculate starvation tolerance from client runway.
@@ -1467,7 +1521,8 @@ class StreamManager:
                 now = time.time()
                 inactivity_duration = now - self.last_data_time
 
-                dynamic_threshold, current_buffer, _ = self._get_dynamic_tolerance()
+                dynamic_threshold, current_buffer, max_tolerance = self._get_dynamic_tolerance()
+                self._publish_dynamic_tolerance(dynamic_threshold, current_buffer, max_tolerance, inactivity_duration)
 
                 if inactivity_duration > dynamic_threshold and self.connected:
                     # Event set => steady state; cleared => waiting for control-plane recovery.

@@ -103,6 +103,11 @@ class StreamMetadataField:
     # Buffer and data tracking
     BUFFER_CHUNKS = "buffer_chunks"
     TOTAL_BYTES = "total_bytes"
+    DYNAMIC_THRESHOLD_SECONDS = "dynamic_threshold_seconds"
+    CURRENT_CLIENT_BUFFER_SECONDS = "current_client_buffer_seconds"
+    MAX_TOLERANCE_SECONDS = "max_tolerance_seconds"
+    STREAM_INACTIVITY_SECONDS = "stream_inactivity_seconds"
+    DYNAMIC_THRESHOLD_UPDATED_AT = "dynamic_threshold_updated_at"
     
     # AceStream specific
     IS_LIVE = "is_live"

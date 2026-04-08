@@ -1012,6 +1012,21 @@ class HLSProxyServer:
     ):
         """Record client activity for a channel (called on each manifest/segment request)"""
         if channel_id in self.client_managers:
+            normalized_request_kind = str(request_kind or "").strip().lower()
+
+            effective_buffer_seconds_behind = buffer_seconds_behind
+            effective_stream_buffer_window_seconds = stream_buffer_window_seconds
+            effective_client_runway_seconds = client_runway_seconds
+
+            # Semantic split guard:
+            # - manifest updates stream-level window only
+            # - segment updates client runway only
+            if normalized_request_kind == "manifest":
+                effective_buffer_seconds_behind = None
+                effective_client_runway_seconds = None
+            elif normalized_request_kind == "segment" and effective_client_runway_seconds is None:
+                effective_client_runway_seconds = buffer_seconds_behind
+
             self.client_managers[channel_id].record_activity(
                 client_ip=client_ip,
                 client_id=client_id,
@@ -1020,9 +1035,9 @@ class HLSProxyServer:
                 bytes_sent=bytes_sent,
                 chunks_sent=chunks_sent,
                 sequence=sequence,
-                buffer_seconds_behind=buffer_seconds_behind,
-                stream_buffer_window_seconds=stream_buffer_window_seconds,
-                client_runway_seconds=client_runway_seconds,
+                buffer_seconds_behind=effective_buffer_seconds_behind,
+                stream_buffer_window_seconds=effective_stream_buffer_window_seconds,
+                client_runway_seconds=effective_client_runway_seconds,
                 position_source=position_source,
                 position_confidence=position_confidence,
             )
