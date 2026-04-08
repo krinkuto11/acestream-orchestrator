@@ -101,6 +101,7 @@ function StreamTimelineGraphic({
   streamId,
   livepos,
   clients = [],
+  eventMarkers = [],
   isLive = false,
   compact = false,
   className,
@@ -189,13 +190,20 @@ function StreamTimelineGraphic({
     const clientKeys = Array.from(clientKeysSet)
 
     const normalizedHistory = history.map((point) => {
+      const engineLag = toNumber(point.engineLag)
       const normalized = {
         time: point.time,
-        engineLag: toNumber(point.engineLag) ?? null,
+        engineLag: Number.isFinite(engineLag) ? Math.max(0, engineLag) : null,
+        engineBand: Number.isFinite(engineLag) ? [0, Math.max(0, engineLag)] : null,
       }
       clientKeys.forEach((key) => {
         const value = toNumber(point[key])
-        normalized[key] = Number.isFinite(value) ? Math.max(0, value) : null
+        const normalizedValue = Number.isFinite(value) ? Math.max(0, value) : null
+        normalized[key] = normalizedValue
+        normalized[`${key}__band`] =
+          Number.isFinite(normalizedValue) && Number.isFinite(engineLag)
+            ? [Math.min(Math.max(0, engineLag), normalizedValue), Math.max(Math.max(0, engineLag), normalizedValue)]
+            : null
       })
       return normalized
     })
@@ -265,6 +273,25 @@ function StreamTimelineGraphic({
   }
 
   const { chartData, clientKeys, yMax } = model
+  const normalizedEventMarkers = useMemo(() => {
+    if (!Array.isArray(eventMarkers) || eventMarkers.length === 0) {
+      return []
+    }
+
+    return eventMarkers
+      .map((marker, index) => {
+        const parsedTime = Number.parseInt(String(marker?.time ?? ''), 10)
+        if (!Number.isFinite(parsedTime) || parsedTime <= 0) return null
+        return {
+          id: String(marker?.id || `event-${index}-${parsedTime}`),
+          time: parsedTime,
+          label: String(marker?.label || 'Recovery').trim() || 'Recovery',
+          type: String(marker?.type || 'recovery').trim().toLowerCase() || 'recovery',
+        }
+      })
+      .filter(Boolean)
+      .slice(-24)
+  }, [eventMarkers])
 
   return (
     <div className={cn('space-y-2', className)}>
@@ -308,8 +335,13 @@ function StreamTimelineGraphic({
 
             <ChartTooltip
               cursor={false}
-              content={(
+              content={(props) => (
                 <ChartTooltipContent
+                  {...props}
+                  payload={(props?.payload || []).filter((entry) => {
+                    const key = String(entry?.dataKey || '')
+                    return !key.endsWith('__band') && key !== 'engineBand'
+                  })}
                   labelFormatter={(label) => formatClock(label)}
                   formatter={(value, name) => {
                     if (!Number.isFinite(Number(value))) return 'N/A'
@@ -320,33 +352,69 @@ function StreamTimelineGraphic({
               )}
             />
 
-            <ReferenceLine y={0} stroke="var(--color-liveEdge)" strokeDasharray="4 4" strokeWidth={1.5} />
+            <ReferenceLine y={0} stroke="var(--color-liveEdge)" strokeWidth={1.8} />
 
             <Area
+              type="monotone"
+              dataKey="engineBand"
+              stroke="none"
+              fill="var(--color-engineLag)"
+              fillOpacity={0.14}
+              connectNulls={false}
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
+            />
+
+            <Line
               type="monotone"
               dataKey="engineLag"
               name="engineLag"
               stroke="var(--color-engineLag)"
-              fill="var(--color-engineLag)"
-              fillOpacity={0.22}
               strokeWidth={2}
               connectNulls={false}
               isAnimationActive={false}
               dot={compact ? false : { r: 1.5 }}
+              activeDot={{ r: 3 }}
             />
 
             {clientKeys.map((key, index) => (
-              <Line
-                key={key}
-                type="monotone"
-                dataKey={key}
-                name={key}
-                stroke={chartConfig[key]?.color || CLIENT_COLOR_PALETTE[index % CLIENT_COLOR_PALETTE.length]}
-                strokeWidth={1.5}
-                connectNulls={false}
-                isAnimationActive={false}
-                dot={{ r: 2 }}
-                activeDot={{ r: 3.5 }}
+              <React.Fragment key={key}>
+                <Area
+                  type="monotone"
+                  dataKey={`${key}__band`}
+                  stroke="none"
+                  fill={chartConfig[key]?.color || CLIENT_COLOR_PALETTE[index % CLIENT_COLOR_PALETTE.length]}
+                  fillOpacity={0.09}
+                  connectNulls={false}
+                  isAnimationActive={false}
+                  dot={false}
+                  activeDot={false}
+                />
+
+                <Line
+                  type="monotone"
+                  dataKey={key}
+                  name={key}
+                  stroke={chartConfig[key]?.color || CLIENT_COLOR_PALETTE[index % CLIENT_COLOR_PALETTE.length]}
+                  strokeWidth={1.5}
+                  connectNulls={false}
+                  isAnimationActive={false}
+                  dot={{ r: 2 }}
+                  activeDot={{ r: 3.5 }}
+                />
+              </React.Fragment>
+            ))}
+
+            {normalizedEventMarkers.map((marker) => (
+              <ReferenceLine
+                key={marker.id}
+                x={marker.time}
+                stroke={marker.type === 'engine_switch' ? 'hsl(var(--chart-4, 262 83% 58%))' : marker.type === 'recovery' ? 'hsl(var(--warning, 38 92% 50%))' : 'hsl(var(--muted-foreground))'}
+                strokeWidth={1.4}
+                strokeOpacity={compact ? 0.6 : 0.8}
+                ifOverflow="extendDomain"
+                strokeDasharray={marker.type === 'engine_switch' ? '4 2' : undefined}
               />
             ))}
           </ComposedChart>

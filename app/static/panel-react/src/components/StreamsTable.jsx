@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
@@ -162,6 +162,88 @@ function getStreamDisplayId(stream) {
   return firstSegment || rawId || 'N/A'
 }
 
+function parseTimestampMs(value) {
+  const parsed = new Date(value || 0).getTime()
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeIdentityToken(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  return isLikelyInfohash(raw) ? raw.toLowerCase() : raw
+}
+
+function getCanonicalStreamIdentity(stream) {
+  const fromResolved = normalizeIdentityToken(stream?.labels?.['stream.resolved_infohash'])
+  if (fromResolved) return fromResolved
+
+  const fromKey = normalizeIdentityToken(stream?.key)
+  if (fromKey) return fromKey
+
+  const rawId = String(stream?.id || '').trim()
+  const [firstSegment] = rawId.split('|')
+  const fromIdPrefix = normalizeIdentityToken(firstSegment)
+  if (fromIdPrefix) return fromIdPrefix
+
+  return normalizeIdentityToken(rawId) || 'unknown-stream'
+}
+
+function buildRecoveryMarker({ timestampMs, rawId, reason = 'Recovery' }) {
+  const ts = Number.isFinite(timestampMs) && timestampMs > 0 ? timestampMs : Date.now()
+  const safeRawId = String(rawId || '').trim() || 'unknown'
+  return {
+    id: `${safeRawId}-${ts}`,
+    time: ts,
+    label: reason,
+    type: String(reason || '').toLowerCase().includes('engine') ? 'engine_switch' : 'recovery',
+  }
+}
+
+function mergeDuplicateStreams(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return null
+  }
+
+  const sorted = [...entries].sort((a, b) => parseTimestampMs(a?.started_at) - parseTimestampMs(b?.started_at))
+  const latest = sorted[sorted.length - 1]
+  const mergedLabels = sorted.reduce((acc, item) => ({ ...acc, ...(item?.labels || {}) }), {})
+
+  const merged = {
+    ...latest,
+    labels: mergedLabels,
+    __identity: getCanonicalStreamIdentity(latest),
+  }
+
+  if (sorted.some((item) => String(item?.status || '').toLowerCase() === 'started')) {
+    merged.status = 'started'
+  }
+
+  const seenIds = new Set()
+  const recoveryMarkers = []
+  sorted.forEach((item, index) => {
+    const rawId = String(item?.id || '').trim()
+    if (!rawId || seenIds.has(rawId)) return
+    seenIds.add(rawId)
+    if (index === 0) return
+
+    const previous = sorted[index - 1] || {}
+    const previousContainer = String(previous?.container_id || '').trim()
+    const nextContainer = String(item?.container_id || '').trim()
+    const switchedEngine = Boolean(previousContainer && nextContainer && previousContainer !== nextContainer)
+
+    recoveryMarkers.push(
+      buildRecoveryMarker({
+        timestampMs: parseTimestampMs(item?.started_at),
+        rawId,
+        reason: switchedEngine ? 'Engine switch' : 'Recovery',
+      }),
+    )
+  })
+
+  merged.__recoveryMarkers = recoveryMarkers
+  return merged
+}
+
 function StreamStatusBadge({ isActive, isPaused, isPrebuffering, isDownloadStopped }) {
   if (isDownloadStopped) {
     return <Badge variant="destructive">DOWNLOAD STOPPED</Badge>
@@ -212,7 +294,18 @@ function ClientSession({ client }) {
   )
 }
 
-function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isSelected, onToggleSelect, selectable }) {
+function StreamCard({
+  stream,
+  streamIdentity,
+  eventMarkers = [],
+  orchUrl,
+  apiKey,
+  onStopStream,
+  onDeleteEngine,
+  isSelected,
+  onToggleSelect,
+  selectable,
+}) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [localStream, setLocalStream] = useState(stream)
   const [extendedStats, setExtendedStats] = useState(null)
@@ -512,10 +605,11 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
 
             {isActive && !isExpanded && (
               <StreamTimelineGraphic
-                streamId={localStream.id}
+                streamId={streamIdentity || localStream.id}
                 livepos={localStream.livepos}
                 clients={clients}
                 isLive={streamIsLive}
+                eventMarkers={eventMarkers}
                 compact
               />
             )}
@@ -529,10 +623,11 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
             <div className="space-y-2">
               <p className="text-sm font-semibold text-foreground">Stream timeline & client positions</p>
               <StreamTimelineGraphic
-                streamId={localStream.id}
+                streamId={streamIdentity || localStream.id}
                 livepos={localStream.livepos}
                 clients={clients}
                 isLive={streamIsLive}
+                eventMarkers={eventMarkers}
               />
             </div>
           )}
@@ -672,18 +767,67 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
 }
 
 function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }) {
-  const activeStreams = streams.filter((s) => s.status === 'started')
-  const endedStreams = streams.filter((s) => s.status === 'ended')
+  const canonicalStreams = useMemo(() => {
+    const groups = new Map()
+    ;(Array.isArray(streams) ? streams : []).forEach((stream) => {
+      const identity = getCanonicalStreamIdentity(stream)
+      if (!groups.has(identity)) {
+        groups.set(identity, [])
+      }
+      groups.get(identity).push(stream)
+    })
+
+    return Array.from(groups.values())
+      .map((entries) => mergeDuplicateStreams(entries))
+      .filter(Boolean)
+  }, [streams])
+
+  const activeStreams = canonicalStreams.filter((s) => s.status === 'started')
+  const endedStreams = canonicalStreams.filter((s) => s.status === 'ended')
 
   const [selectedStreams, setSelectedStreams] = useState(new Set())
   const [endedStreamsOpen, setEndedStreamsOpen] = useState(false)
   const [batchStopping, setBatchStopping] = useState(false)
+  const [runtimeRecoveryMarkersByIdentity, setRuntimeRecoveryMarkersByIdentity] = useState({})
+  const lastSeenByIdentityRef = useRef(new Map())
+
+  useEffect(() => {
+    setRuntimeRecoveryMarkersByIdentity((prev) => {
+      let changed = false
+      const next = { ...prev }
+
+      canonicalStreams.forEach((stream) => {
+        const identity = String(stream?.__identity || getCanonicalStreamIdentity(stream))
+        const rawId = String(stream?.id || '').trim()
+        const containerId = String(stream?.container_id || '').trim()
+        if (!identity || !rawId) return
+
+        const previous = lastSeenByIdentityRef.current.get(identity)
+        if (previous?.rawId && previous.rawId !== rawId) {
+          const switchedEngine = Boolean(previous.containerId && containerId && previous.containerId !== containerId)
+          const marker = buildRecoveryMarker({
+            timestampMs: Date.now(),
+            rawId,
+            reason: switchedEngine ? 'Engine switch' : 'Recovery',
+          })
+          next[identity] = [...(next[identity] || []), marker].slice(-20)
+          changed = true
+        }
+
+        lastSeenByIdentityRef.current.set(identity, { rawId, containerId })
+      })
+
+      return changed ? next : prev
+    })
+  }, [canonicalStreams])
+
+  const getSelectionKey = useCallback((stream) => String(stream?.__identity || getCanonicalStreamIdentity(stream)), [])
 
   const allSelected = activeStreams.length > 0 && selectedStreams.size === activeStreams.length
 
   const handleSelectAll = (checked) => {
     if (checked) {
-      setSelectedStreams(new Set(activeStreams.map((s) => s.id)))
+      setSelectedStreams(new Set(activeStreams.map((s) => getSelectionKey(s))))
     } else {
       setSelectedStreams(new Set())
     }
@@ -703,7 +847,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
     setBatchStopping(true)
     try {
       const commandUrls = activeStreams
-        .filter((s) => selectedStreams.has(s.id))
+        .filter((s) => selectedStreams.has(getSelectionKey(s)))
         .map((s) => s.command_url)
         .filter(Boolean)
       if (commandUrls.length === 0) return
@@ -755,17 +899,29 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
         ) : (
           <div className="space-y-3">
             {sortedActiveStreams.map((stream) => (
+              (() => {
+                const identity = stream.__identity || getCanonicalStreamIdentity(stream)
+                const eventMarkers = [
+                  ...(stream.__recoveryMarkers || []),
+                  ...(runtimeRecoveryMarkersByIdentity[identity] || []),
+                ]
+                const selectionKey = getSelectionKey(stream)
+                return (
               <StreamCard
-                key={stream.id}
+                key={identity}
                 stream={stream}
+                streamIdentity={identity}
+                eventMarkers={eventMarkers}
                 orchUrl={orchUrl}
                 apiKey={apiKey}
                 onStopStream={onStopStream}
                 onDeleteEngine={onDeleteEngine}
-                isSelected={selectedStreams.has(stream.id)}
-                onToggleSelect={() => handleToggleSelect(stream.id)}
+                isSelected={selectedStreams.has(selectionKey)}
+                onToggleSelect={() => handleToggleSelect(selectionKey)}
                 selectable
               />
+                )
+              })()
             ))}
           </div>
         )}
@@ -781,14 +937,25 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-4 space-y-3">
             {sortedEndedStreams.map((stream) => (
+              (() => {
+                const identity = stream.__identity || getCanonicalStreamIdentity(stream)
+                const eventMarkers = [
+                  ...(stream.__recoveryMarkers || []),
+                  ...(runtimeRecoveryMarkersByIdentity[identity] || []),
+                ]
+                return (
               <StreamCard
-                key={stream.id}
+                key={identity}
                 stream={stream}
+                streamIdentity={identity}
+                eventMarkers={eventMarkers}
                 orchUrl={orchUrl}
                 apiKey={apiKey}
                 onStopStream={onStopStream}
                 onDeleteEngine={onDeleteEngine}
               />
+                )
+              })()
             ))}
           </CollapsibleContent>
         </Collapsible>
