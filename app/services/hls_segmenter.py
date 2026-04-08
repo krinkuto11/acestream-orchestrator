@@ -210,6 +210,7 @@ class HLSSegmenterService:
         bytes_sent: Optional[float] = None,
         chunks_sent: Optional[int] = None,
         sequence: Optional[int] = None,
+        buffer_seconds_behind: Optional[float] = None,
         now: Optional[float] = None,
     ) -> None:
         from .client_tracker import client_tracking_service
@@ -247,11 +248,84 @@ class HLSSegmenterService:
             request_kind=request_kind,
             chunks_delta=chunks_delta,
             sequence=sequence,
+            buffer_seconds_behind=buffer_seconds_behind,
             now=ts,
             idle_timeout_s=self._client_record_ttl_s,
             worker_id="api_hls_segmenter",
         )
         session.last_activity = ts
+
+    @staticmethod
+    def _manifest_segment_sequences(manifest_content: str) -> List[int]:
+        sequences: List[int] = []
+        for raw_line in str(manifest_content or "").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            match = re.search(r"(\d+)", line)
+            if not match:
+                continue
+            try:
+                sequences.append(int(match.group(1)))
+            except (TypeError, ValueError):
+                continue
+        return sequences
+
+    def _latest_manifest_sequence(self, monitor_id: str) -> Optional[int]:
+        key = self._sanitize_monitor_id(monitor_id)
+        session = self._sessions.get(key)
+        if not session:
+            return None
+
+        try:
+            if not session.manifest_path.exists():
+                return None
+            manifest_content = session.manifest_path.read_text("utf-8")
+        except Exception:
+            return None
+
+        sequences = self._manifest_segment_sequences(manifest_content)
+        if not sequences:
+            return None
+        return max(sequences)
+
+    def estimate_manifest_buffer_seconds_behind(self, monitor_id: str) -> float:
+        """Estimate lag based on the FFmpeg HLS playlist window depth."""
+        key = self._sanitize_monitor_id(monitor_id)
+        session = self._sessions.get(key)
+        if not session:
+            return 0.0
+
+        try:
+            if not session.manifest_path.exists():
+                return 0.0
+            manifest_content = session.manifest_path.read_text("utf-8")
+        except Exception:
+            return 0.0
+
+        sequences = self._manifest_segment_sequences(manifest_content)
+        if len(sequences) <= 1:
+            return 0.0
+
+        lag_segments = max(0, max(sequences) - min(sequences))
+        return max(0.0, float(lag_segments) * float(self._hls_segment_time_s))
+
+    def estimate_segment_buffer_seconds_behind(self, monitor_id: str, sequence: Optional[int]) -> float:
+        """Estimate per-client lag from requested segment sequence vs latest playlist sequence."""
+        if sequence is None:
+            return self.estimate_manifest_buffer_seconds_behind(monitor_id)
+
+        latest_sequence = self._latest_manifest_sequence(monitor_id)
+        if latest_sequence is None:
+            return self.estimate_manifest_buffer_seconds_behind(monitor_id)
+
+        try:
+            current_sequence = int(sequence)
+        except (TypeError, ValueError):
+            return self.estimate_manifest_buffer_seconds_behind(monitor_id)
+
+        lag_segments = max(0, int(latest_sequence) - current_sequence)
+        return max(0.0, float(lag_segments) * float(self._hls_segment_time_s))
 
     def list_clients(self, monitor_id: str, max_idle_seconds: Optional[int] = None) -> List[Dict[str, Any]]:
         from .client_tracker import client_tracking_service

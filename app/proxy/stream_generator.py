@@ -244,6 +244,20 @@ class StreamGenerator:
         # Add client with starting position
         self.client_manager.add_client(self.client_id, self.client_ip, self.client_user_agent, initial_index=start_index)
 
+        # Register an initial TS client row immediately so lag updates do not wait
+        # for the first periodic stats flush.
+        from ..services.client_tracker import client_tracking_service
+
+        client_tracking_service.register_client(
+            client_id=str(self.client_id),
+            stream_id=str(self.content_id),
+            ip_address=str(self.client_ip or "unknown"),
+            user_agent=str(self.client_user_agent or "unknown"),
+            protocol="TS",
+            connected_at=time.time(),
+            worker_id="ts_proxy",
+        )
+
         # Capture the current index before waiting so startup only accepts
         # fresh data for this session, not stale Redis chunks.
         start_index = self.buffer.index
@@ -254,8 +268,15 @@ class StreamGenerator:
             # Error already logged in _wait_for_initial_data
             return False
         
-        # Start from current buffer position
-        self.local_index = self.buffer.index
+        # Keep playback behind live edge when unified prebuffer is configured.
+        prebuffer_seconds = max(0.0, float(ConfigHelper.proxy_prebuffer_seconds()))
+        if prebuffer_seconds > 0.0:
+            self.local_index = max(0, int(start_index))
+        else:
+            self.local_index = self.buffer.index
+
+        # Publish an initial lag sample right after startup completes.
+        self._maybe_update_client_position()
         
         logger.info(f"[{self.client_id}] Starting from buffer index {self.local_index}")
         return True

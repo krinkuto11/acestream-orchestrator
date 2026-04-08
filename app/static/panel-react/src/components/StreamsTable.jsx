@@ -267,6 +267,10 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
         setExtendedStatsLoading(true)
       }
 
+      // Prime clients quickly while SSE subscription is being established.
+      // This avoids waiting for the first stream-details snapshot.
+      fetchClients()
+
       if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
         fetchDetailsFallback()
         return
@@ -857,7 +861,12 @@ function StreamTableRow({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine,
                               </TableCell>
                               <TableCell className="text-right text-sm text-white">
                                 {Number.isFinite(Number(client.buffer_seconds_behind))
-                                  ? `${Number(client.buffer_seconds_behind).toFixed(1)}s`
+                                  ? (() => {
+                                      const lagSeconds = Math.max(0, Number(client.buffer_seconds_behind))
+                                      if (lagSeconds === 0) return '0.0s'
+                                      if (lagSeconds < 0.1) return `${Math.round(lagSeconds * 1000)}ms`
+                                      return `${lagSeconds.toFixed(2)}s`
+                                    })()
                                   : 'N/A'
                                 }
                               </TableCell>

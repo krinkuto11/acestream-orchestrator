@@ -84,6 +84,30 @@ logger = logging.getLogger(__name__)
 setup()
 
 
+_CLIENT_TRACKER_PRUNE_LOCK = threading.Lock()
+_CLIENT_TRACKER_LAST_PRUNE_MONOTONIC = 0.0
+
+
+def _prune_client_tracker_if_due(*, ttl_s: float, min_interval_s: float = 3.0) -> None:
+    """Prune stale tracker rows with throttling to keep hot endpoints responsive."""
+    if ttl_s <= 0:
+        return
+
+    global _CLIENT_TRACKER_LAST_PRUNE_MONOTONIC
+    now_monotonic = time.monotonic()
+    if (now_monotonic - _CLIENT_TRACKER_LAST_PRUNE_MONOTONIC) < max(0.25, float(min_interval_s)):
+        return
+
+    with _CLIENT_TRACKER_PRUNE_LOCK:
+        now_monotonic = time.monotonic()
+        if (now_monotonic - _CLIENT_TRACKER_LAST_PRUNE_MONOTONIC) < max(0.25, float(min_interval_s)):
+            return
+        from .services.client_tracker import client_tracking_service
+
+        client_tracking_service.prune_stale_clients(float(ttl_s))
+        _CLIENT_TRACKER_LAST_PRUNE_MONOTONIC = now_monotonic
+
+
 def _format_sse_message(payload: Dict[str, Any], *, event_name: Optional[str] = None, event_id: Optional[str] = None) -> str:
     chunks: List[str] = []
     if event_name:
@@ -1562,6 +1586,7 @@ async def stream_stream_details(
         last_digest: Optional[str] = None
         cached_extended_stats: Optional[Dict[str, Any]] = None
         next_extended_refresh_monotonic = 0.0
+        extended_refresh_task: Optional[asyncio.Task] = None
 
         while True:
             if await request.is_disconnected():
@@ -1581,17 +1606,35 @@ async def stream_stream_details(
                 yield _format_sse_message(message, event_name="stream_details_error")
                 break
 
+            stat_url = str(getattr(stream_state, "stat_url", "") or "").strip()
+            supports_extended_stats = bool(stat_url)
+
             now_monotonic = time.monotonic()
-            if now_monotonic >= next_extended_refresh_monotonic:
+            if supports_extended_stats and now_monotonic >= next_extended_refresh_monotonic and (extended_refresh_task is None or extended_refresh_task.done()):
+                extended_refresh_task = asyncio.create_task(get_stream_extended_stats(stream_id))
+                next_extended_refresh_monotonic = now_monotonic + max(10.0, interval_seconds * 2.0)
+            elif not supports_extended_stats:
+                if cached_extended_stats is None:
+                    cached_extended_stats = {
+                        "available": False,
+                        "reason": "extended_stats_disabled_in_api_mode",
+                    }
+                if extended_refresh_task is not None and not extended_refresh_task.done():
+                    extended_refresh_task.cancel()
+                    with suppress(asyncio.CancelledError, Exception):
+                        await extended_refresh_task
+                    extended_refresh_task = None
+
+            if extended_refresh_task is not None and extended_refresh_task.done():
                 try:
-                    cached_extended_stats = await get_stream_extended_stats(stream_id)
+                    cached_extended_stats = extended_refresh_task.result()
                 except HTTPException as exc:
                     if exc.status_code != 404:
                         logger.debug(f"Extended stats refresh failed for stream {stream_id[:12]}: {exc.detail}")
                 except Exception as exc:
                     logger.debug(f"Extended stats refresh failed for stream {stream_id[:12]}: {exc}")
-
-                next_extended_refresh_monotonic = now_monotonic + max(10.0, interval_seconds * 2.0)
+                finally:
+                    extended_refresh_task = None
 
             cutoff = datetime.now(timezone.utc) - timedelta(seconds=since_seconds)
             stream_stats = [snap for snap in state.get_stream_stats(stream_id) if snap.ts >= cutoff]
@@ -1600,7 +1643,7 @@ async def stream_stream_details(
             stream_key = str(getattr(stream_state, "key", "") or "")
             if stream_key:
                 with suppress(Exception):
-                    client_tracking_service.prune_stale_clients(float(ProxyConfig.CLIENT_RECORD_TTL))
+                    _prune_client_tracker_if_due(ttl_s=float(ProxyConfig.CLIENT_RECORD_TTL), min_interval_s=3.0)
                     clients = client_tracking_service.get_stream_clients(stream_key)
 
             payload = jsonable_encoder(
@@ -1631,6 +1674,11 @@ async def stream_stream_details(
                 yield ": keep-alive\n\n"
 
             await asyncio.sleep(interval_seconds)
+
+        if extended_refresh_task is not None and not extended_refresh_task.done():
+            extended_refresh_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await extended_refresh_task
 
     headers = {
         "Cache-Control": "no-cache",
@@ -1904,10 +1952,10 @@ def get_stream_stats(stream_id: str, since: Optional[datetime] = None):
 @app.get("/streams/{stream_id}/extended-stats")
 async def get_stream_extended_stats(stream_id: str):
     """
-    Get extended statistics for a stream by querying the AceStream analyze_content API.
-    This returns additional metadata like content_type, title, is_live, mime, categories, etc.
+    Get extended statistics for a stream when stat_url is available (HTTP control mode).
+    For API mode streams, extended stats gathering is intentionally disabled.
     """
-    from .utils.acestream_api import get_stream_extended_stats, fetch_extended_content_info
+    from .utils.acestream_api import get_stream_extended_stats
     from .services.cache import get_cache
     
     # Check cache first to avoid hammering the AceStream engine
@@ -1922,6 +1970,15 @@ async def get_stream_extended_stats(stream_id: str):
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
 
+    # API mode streams don't provide stat_url; skip expensive metadata probes.
+    if not str(getattr(stream, "stat_url", "") or "").strip():
+        unavailable = {
+            "available": False,
+            "reason": "extended_stats_disabled_in_api_mode",
+        }
+        cache.set(cache_key, unavailable, ttl=300.0)
+        return unavailable
+
     # Additional stable cache key to share results across stream session IDs
     # for the same content (e.g. infohash|legacy-<session>). This keeps the
     # panel fast during reconnects/failovers.
@@ -1931,63 +1988,7 @@ async def get_stream_extended_stats(stream_id: str):
         cache.set(cache_key, cached_content_stats, ttl=3600.0)
         return cached_content_stats
     
-    extended_stats = None
-
-    # Preferred path: stat URL available (legacy HTTP flow)
-    if stream.stat_url:
-        extended_stats = await get_stream_extended_stats(stream.stat_url)
-    else:
-        # Legacy API compatibility path: no stat URL/command URL available.
-        # Resolve infohash from stream key or API port, then query analyze_content directly.
-        engine_state = state.get_engine(stream.container_id)
-        if engine_state:
-            infohash = stream.key if stream.key_type == "infohash" else None
-
-            # Fast path: legacy stream IDs usually have infohash prefix
-            # (<infohash>|legacy-<session>). Use it directly to avoid an API
-            # connect/auth/resolve round-trip on request path.
-            if not infohash and "|" in stream_id:
-                maybe_infohash = stream_id.split("|", 1)[0].strip().lower()
-                if len(maybe_infohash) == 40 and all(c in "0123456789abcdef" for c in maybe_infohash):
-                    infohash = maybe_infohash
-
-            if not infohash and engine_state.api_port:
-                def _resolve_infohash_via_legacy_api() -> Optional[str]:
-                    client = AceLegacyApiClient(
-                        host=engine_state.host,
-                        port=engine_state.api_port or 62062,
-                        connect_timeout=2,
-                        response_timeout=2,
-                    )
-                    try:
-                        client.connect()
-                        client.authenticate()
-                        loadresp, _ = client.resolve_content(stream.key, session_id="0")
-                        return loadresp.get("infohash")
-                    except Exception:
-                        return None
-                    finally:
-                        try:
-                            client.shutdown()
-                        except Exception:
-                            pass
-
-                try:
-                    infohash = await asyncio.wait_for(
-                        asyncio.to_thread(_resolve_infohash_via_legacy_api),
-                        timeout=3.0,
-                    )
-                except asyncio.TimeoutError:
-                    infohash = None
-
-            if infohash:
-                extended_stats = await fetch_extended_content_info(
-                    engine_state.host,
-                    engine_state.port,
-                    infohash,
-                )
-                if isinstance(extended_stats, dict) and "infohash" not in extended_stats:
-                    extended_stats["infohash"] = infohash
+    extended_stats = await get_stream_extended_stats(stream.stat_url)
 
     # Avoid noisy panel failures for streams where metadata cannot be resolved.
     if extended_stats is None:
@@ -3674,6 +3675,7 @@ async def ace_getstream(
                         user_agent,
                         request_kind="manifest",
                         bytes_sent=len(manifest_bytes),
+                        buffer_seconds_behind=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key),
                     )
 
                     elapsed = time.perf_counter() - request_started_at
@@ -3866,6 +3868,7 @@ async def ace_getstream(
                     user_agent,
                     request_kind="manifest",
                     bytes_sent=len(manifest_bytes),
+                    buffer_seconds_behind=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key),
                 )
 
                 elapsed = time.perf_counter() - request_started_at
@@ -4237,6 +4240,7 @@ async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: 
             bytes_sent=segment_size,
             chunks_sent=1,
             sequence=sequence,
+            buffer_seconds_behind=hls_segmenter_service.estimate_segment_buffer_seconds_behind(monitor_id, sequence),
         )
         observe_proxy_egress_bytes("HLS", segment_size)
 
@@ -4499,7 +4503,7 @@ async def get_stream_clients(stream_key: str):
     from .proxy.config_helper import Config as ProxyConfig
     
     try:
-        client_tracking_service.prune_stale_clients(float(ProxyConfig.CLIENT_RECORD_TTL))
+        _prune_client_tracker_if_due(ttl_s=float(ProxyConfig.CLIENT_RECORD_TTL), min_interval_s=3.0)
         clients = client_tracking_service.get_stream_clients(stream_key)
         return {"clients": clients}
         
