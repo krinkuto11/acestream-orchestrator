@@ -179,7 +179,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
             </div>
 
             {isActive && (
-              <StreamTimelineGraphic livepos={stream.livepos} clients={clients} isLive compact />
+              <StreamTimelineGraphic livepos={stream.livepos} clients={clients} isLive={Boolean(stream.livepos?.live_last)} compact />
             )}
           </div>
         </div>

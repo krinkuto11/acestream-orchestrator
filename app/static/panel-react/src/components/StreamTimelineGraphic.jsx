@@ -1,6 +1,9 @@
 import React from 'react'
 import { Badge } from '@/components/ui/badge'
 
+const CLIENT_CLUSTER_BUCKETS_PER_PERCENT = 2
+const CLIENT_MARKER_TOP = '78%'
+
 function toNumber(value) {
   const parsed = Number.parseFloat(String(value ?? ''))
   return Number.isFinite(parsed) ? parsed : null
@@ -65,7 +68,7 @@ export default function StreamTimelineGraphic({
 
   const clusterMap = new Map()
   normalizedClients.forEach((entry) => {
-    const key = String(Math.round(entry.percent * 2) / 2)
+    const key = String(Math.round(entry.percent * CLIENT_CLUSTER_BUCKETS_PER_PERCENT) / CLIENT_CLUSTER_BUCKETS_PER_PERCENT)
     if (!clusterMap.has(key)) {
       clusterMap.set(key, {
         percent: entry.percent,
@@ -120,8 +123,8 @@ export default function StreamTimelineGraphic({
             return (
               <div
                 key={`cluster-${index}-${cluster.percent}`}
-                className="absolute top-[78%] z-20 -translate-x-1/2"
-                style={{ left: `${cluster.percent}%` }}
+                className="absolute z-20 -translate-x-1/2"
+                style={{ left: `${cluster.percent}%`, top: CLIENT_MARKER_TOP }}
                 title={title}
               >
                 {count > 1 ? (
