@@ -117,8 +117,30 @@ function StreamTimelineGraphic({
 
   useEffect(() => {
     const loaded = readHistoryFromStorage(storageKey)
-    setHistory(Array.isArray(loaded.points) ? loaded.points : [])
-    setClientLabels(loaded.labels || {})
+    const loadedPoints = Array.isArray(loaded.points) ? loaded.points : []
+    const loadedLabels = loaded.labels || {}
+
+    // Rehydrate recent client samples from persisted history so a quick page
+    // reload does not produce a transient null-gap before live snapshots resume.
+    const seededSamples = {}
+    const seedTimestamp = Date.now()
+    for (let i = loadedPoints.length - 1; i >= 0; i -= 1) {
+      const point = loadedPoints[i] || {}
+      Object.keys(point).forEach((key) => {
+        if (!key.startsWith('client_') || seededSamples[key]) return
+        const value = toNumber(point[key])
+        if (!Number.isFinite(value)) return
+        seededSamples[key] = {
+          value: Math.max(0, value),
+          label: String(loadedLabels[key] || key),
+          updatedAt: seedTimestamp,
+        }
+      })
+    }
+
+    lastClientSamplesRef.current = seededSamples
+    setHistory(loadedPoints)
+    setClientLabels(loadedLabels)
     setHydrated(true)
   }, [storageKey])
 
@@ -250,6 +272,9 @@ function StreamTimelineGraphic({
         engineLag__band: Number.isFinite(normalizedEngineLag) ? [0, normalizedEngineLag] : null,
         streamWindow: Number.isFinite(streamWindow) ? Math.max(0, streamWindow) : null,
         dynamicThreshold: Number.isFinite(toNumber(point.dynamicThreshold))
+          ? Math.max(0, toNumber(point.dynamicThreshold))
+          : null,
+        dynamicThreshold__overlay: Number.isFinite(toNumber(point.dynamicThreshold))
           ? Math.max(0, toNumber(point.dynamicThreshold))
           : null,
       }
@@ -416,7 +441,7 @@ function StreamTimelineGraphic({
                   {...props}
                   payload={(props?.payload || []).filter((entry) => {
                     const key = String(entry?.dataKey || '')
-                    return !key.endsWith('__band')
+                    return !key.endsWith('__band') && !key.endsWith('__overlay')
                   })}
                   labelFormatter={(label) => formatClock(label)}
                   formatter={(value, name) => {
@@ -510,20 +535,6 @@ function StreamTimelineGraphic({
               activeDot={false}
             />
 
-            <Line
-              type="linear"
-              dataKey="dynamicThreshold"
-              name="dynamicThreshold"
-              stroke="var(--color-dynamicThreshold)"
-              strokeWidth={2.8}
-              strokeOpacity={0.95}
-              strokeDasharray="6 3"
-              connectNulls={false}
-              isAnimationActive={false}
-              dot={false}
-              activeDot={false}
-            />
-
             {normalizedEventMarkers.map((marker) => (
               <ReferenceLine
                 key={marker.id}
@@ -543,6 +554,33 @@ function StreamTimelineGraphic({
                 strokeDasharray={marker.type === 'engine_switch' || marker.type === 'failover' ? '4 2' : undefined}
               />
             ))}
+
+            <Line
+              type="linear"
+              dataKey="dynamicThreshold__overlay"
+              name="dynamicThreshold__overlay"
+              stroke="hsl(var(--background))"
+              strokeWidth={4.8}
+              strokeOpacity={0.9}
+              connectNulls={false}
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
+            />
+
+            <Line
+              type="linear"
+              dataKey="dynamicThreshold"
+              name="dynamicThreshold"
+              stroke="var(--color-dynamicThreshold)"
+              strokeWidth={3}
+              strokeOpacity={1}
+              strokeDasharray="6 3"
+              connectNulls={false}
+              isAnimationActive={false}
+              dot={false}
+              activeDot={{ r: 3, stroke: 'var(--color-dynamicThreshold)', strokeWidth: 1.2 }}
+            />
           </ComposedChart>
         </ResponsiveContainer>
       </ChartContainer>
