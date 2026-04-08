@@ -52,6 +52,7 @@ class StreamGenerator:
         # Runtime chunk-rate estimate (chunks/sec) used for lag-to-seconds conversion.
         self.chunk_rate_ema = None
         self.last_chunk_rate_update_time = time.time()
+        self.last_chunk_sent_time = time.time()
     
     def generate(self):
         """Generator function that produces stream content for the client"""
@@ -61,6 +62,7 @@ class StreamGenerator:
         self.stream_start_time = time.time()
         self.bytes_sent = 0
         self.chunks_sent = 0
+        self.last_chunk_sent_time = time.time()
         
         try:
             logger.info(f"[{self.client_id}] Stream generator started, stream_ready={not self.stream_initializing}")
@@ -101,12 +103,13 @@ class StreamGenerator:
                         self.bytes_sent += chunk_len
                         observe_proxy_egress_bytes("TS", chunk_len)
                         self.chunks_sent += 1
+                        self.last_chunk_sent_time = time.time()
                     
                     # Update local index
                     self._advance_local_index(len(chunks), fetched_end_index=fetched_end_index)
                     self.consecutive_empty = 0
                     self._update_chunk_rate_estimate(len(chunks))
-                    self._maybe_update_client_position()
+                    self._maybe_update_client_position(source="ts_cursor_ema")
                     
                     # Update stats periodically
                     if time.time() - self.last_stats_time >= 5:
@@ -115,6 +118,10 @@ class StreamGenerator:
                 else:
                     # No data available
                     self.consecutive_empty += 1
+
+                    # Keep runway telemetry fresh during starvation so failover
+                    # logic does not rely on stale runway samples.
+                    self._maybe_update_client_position(force=True, source="ts_starvation_decay")
                     
                     # Check if stream has ended (no data for too long)
                     if self.consecutive_empty > no_data_max_checks:
@@ -254,13 +261,13 @@ class StreamGenerator:
             return
         self.local_index += int(max(0, chunks_received))
 
-    def _maybe_update_client_position(self):
-        """Publish client lag behind live edge with debounce to avoid Redis write storms."""
+    def _maybe_update_client_position(self, force: bool = False, source: str = "ts_cursor_ema"):
+        """Publish client runway estimate with debounce and freshness metadata."""
         if not hasattr(self, 'client_manager') or self.client_manager is None:
             return
 
         now = time.time()
-        if (now - self.last_position_update_time) < self.position_update_interval:
+        if not force and (now - self.last_position_update_time) < self.position_update_interval:
             return
 
         try:
@@ -269,7 +276,25 @@ class StreamGenerator:
             if chunk_rate <= 0.0:
                 chunk_rate = 1.0
             seconds_behind = max(0.0, float(chunks_behind) / chunk_rate)
-            self.client_manager.update_client_position(self.client_id, seconds_behind)
+
+            normalized_source = str(source or "ts_cursor_ema")
+            confidence = 0.75 if self.chunk_rate_ema else 0.55
+
+            if normalized_source == "ts_starvation_decay":
+                # With no chunks sent, player's local buffer drains over time.
+                elapsed_since_chunk = max(0.0, now - float(self.last_chunk_sent_time or now))
+                seconds_behind = max(0.0, seconds_behind - elapsed_since_chunk)
+                confidence = 0.45
+            elif normalized_source == "ts_startup":
+                confidence = 0.60
+
+            self.client_manager.update_client_position(
+                self.client_id,
+                seconds_behind,
+                source=normalized_source,
+                confidence=confidence,
+                observed_at=now,
+            )
             self.last_position_update_time = now
         except Exception as e:
             logger.debug(f"[{self.client_id}] Failed to update client position: {e}")
@@ -330,8 +355,8 @@ class StreamGenerator:
         else:
             self.local_index = self.buffer.index
 
-        # Publish an initial lag sample right after startup completes.
-        self._maybe_update_client_position()
+        # Publish an initial runway sample right after startup completes.
+        self._maybe_update_client_position(force=True, source="ts_startup")
         
         logger.info(f"[{self.client_id}] Starting from buffer index {self.local_index}")
         return True

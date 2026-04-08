@@ -211,6 +211,10 @@ class HLSSegmenterService:
         chunks_sent: Optional[int] = None,
         sequence: Optional[int] = None,
         buffer_seconds_behind: Optional[float] = None,
+        stream_buffer_window_seconds: Optional[float] = None,
+        client_runway_seconds: Optional[float] = None,
+        position_source: Optional[str] = None,
+        position_confidence: Optional[float] = None,
         now: Optional[float] = None,
     ) -> None:
         from .client_tracker import client_tracking_service
@@ -249,6 +253,10 @@ class HLSSegmenterService:
             chunks_delta=chunks_delta,
             sequence=sequence,
             buffer_seconds_behind=buffer_seconds_behind,
+            stream_buffer_window_seconds=stream_buffer_window_seconds,
+            client_runway_seconds=client_runway_seconds,
+            position_source=position_source,
+            position_confidence=position_confidence,
             now=ts,
             idle_timeout_s=self._client_record_ttl_s,
             worker_id="api_hls_segmenter",

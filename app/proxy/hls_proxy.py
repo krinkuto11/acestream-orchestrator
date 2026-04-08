@@ -108,6 +108,10 @@ class ClientManager:
         chunks_sent: Optional[int] = None,
         sequence: Optional[int] = None,
         buffer_seconds_behind: Optional[float] = None,
+        stream_buffer_window_seconds: Optional[float] = None,
+        client_runway_seconds: Optional[float] = None,
+        position_source: Optional[str] = None,
+        position_confidence: Optional[float] = None,
         now: Optional[float] = None,
     ):
         """Record client activity and transfer counters in the central tracker."""
@@ -143,6 +147,10 @@ class ClientManager:
             chunks_delta=chunks_delta,
             sequence=sequence,
             buffer_seconds_behind=buffer_seconds_behind,
+            stream_buffer_window_seconds=stream_buffer_window_seconds,
+            client_runway_seconds=client_runway_seconds,
+            position_source=position_source,
+            position_confidence=position_confidence,
             now=ts,
             worker_id=self.worker_id,
         )
@@ -157,7 +165,21 @@ class ClientManager:
                 "user_agent": normalized_ua,
                 "last_active": ts,
                 "last_request_kind": str(request_kind or "").strip().lower(),
-                "buffer_seconds_behind": max(0.0, self._safe_float(buffer_seconds_behind, default=client_payload.get("buffer_seconds_behind", 0.0))),
+                "buffer_seconds_behind": max(
+                    0.0,
+                    self._safe_float(
+                        client_runway_seconds if client_runway_seconds is not None else buffer_seconds_behind,
+                        default=client_payload.get("buffer_seconds_behind", 0.0),
+                    ),
+                ),
+                "client_runway_seconds": max(
+                    0.0,
+                    self._safe_float(client_runway_seconds, default=client_payload.get("client_runway_seconds", 0.0)),
+                ),
+                "stream_buffer_window_seconds": max(
+                    0.0,
+                    self._safe_float(stream_buffer_window_seconds, default=client_payload.get("stream_buffer_window_seconds", 0.0)),
+                ),
             })
             self.clients[normalized_client_id] = client_payload
 
@@ -983,6 +1005,10 @@ class HLSProxyServer:
         chunks_sent: Optional[int] = None,
         sequence: Optional[int] = None,
         buffer_seconds_behind: Optional[float] = None,
+        stream_buffer_window_seconds: Optional[float] = None,
+        client_runway_seconds: Optional[float] = None,
+        position_source: Optional[str] = None,
+        position_confidence: Optional[float] = None,
     ):
         """Record client activity for a channel (called on each manifest/segment request)"""
         if channel_id in self.client_managers:
@@ -995,6 +1021,10 @@ class HLSProxyServer:
                 chunks_sent=chunks_sent,
                 sequence=sequence,
                 buffer_seconds_behind=buffer_seconds_behind,
+                stream_buffer_window_seconds=stream_buffer_window_seconds,
+                client_runway_seconds=client_runway_seconds,
+                position_source=position_source,
+                position_confidence=position_confidence,
             )
 
     def get_manifest_buffer_seconds_behind(self, channel_id: str) -> float:
@@ -1006,6 +1036,29 @@ class HLSProxyServer:
             return max(0.0, float(getattr(manager, "last_manifest_buffer_seconds_behind", 0.0) or 0.0))
         except (TypeError, ValueError):
             return 0.0
+
+    def get_segment_buffer_seconds_behind(self, channel_id: str, sequence: Optional[int]) -> float:
+        """Estimate per-client HLS runway from requested segment vs current head."""
+        manager = self.stream_managers.get(channel_id)
+        buffer = self.stream_buffers.get(channel_id)
+        if not manager or not buffer:
+            return self.get_manifest_buffer_seconds_behind(channel_id)
+
+        if sequence is None:
+            return self.get_manifest_buffer_seconds_behind(channel_id)
+
+        try:
+            requested_seq = int(sequence)
+        except (TypeError, ValueError):
+            return self.get_manifest_buffer_seconds_behind(channel_id)
+
+        available = buffer.keys()
+        if not available:
+            return 0.0
+
+        latest_seq = max(available)
+        lag_segments = max(0, int(latest_seq) - requested_seq)
+        return max(0.0, float(lag_segments) * float(manager.target_duration or 0.0))
     
     def stop_stream_by_key(self, channel_id: str):
         """

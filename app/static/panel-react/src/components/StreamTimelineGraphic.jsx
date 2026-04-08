@@ -129,12 +129,19 @@ function StreamTimelineGraphic({
     const timestamp = Date.now()
     const nextLabels = {}
     const clientValues = {}
+    let streamWindowMax = 0
 
     ;(Array.isArray(clients) ? clients : []).forEach((client, index) => {
-      const lag = toNumber(client?.buffer_seconds_behind)
-      if (!Number.isFinite(lag)) return
+      const runway = toNumber(client?.client_runway_seconds ?? client?.buffer_seconds_behind)
+      const streamWindow = toNumber(client?.stream_buffer_window_seconds)
+
+      if (Number.isFinite(streamWindow)) {
+        streamWindowMax = Math.max(streamWindowMax, Math.max(0, streamWindow))
+      }
+
+      if (!Number.isFinite(runway)) return
       const key = getClientSeriesKey(client, index)
-      clientValues[key] = Math.max(0, lag)
+      clientValues[key] = Math.max(0, runway)
       nextLabels[key] = getClientLabel(client, index)
     })
 
@@ -142,6 +149,7 @@ function StreamTimelineGraphic({
       time: timestamp,
       liveEdge: 0,
       engineLag,
+      streamWindow: streamWindowMax,
       ...clientValues,
     }
 
@@ -178,10 +186,12 @@ function StreamTimelineGraphic({
 
     const normalizedHistory = history.map((point) => {
       const engineLag = toNumber(point.engineLag)
+      const streamWindow = toNumber(point.streamWindow)
       const normalized = {
         time: point.time,
         liveEdge: 0,
         engineLag: Number.isFinite(engineLag) ? Math.max(0, engineLag) : null,
+        streamWindow: Number.isFinite(streamWindow) ? Math.max(0, streamWindow) : null,
         engineBand: Number.isFinite(engineLag) ? [0, Math.max(0, engineLag)] : null,
       }
       clientKeys.forEach((key) => {
@@ -201,6 +211,10 @@ function StreamTimelineGraphic({
       const engineLag = toNumber(point.engineLag)
       if (Number.isFinite(engineLag)) {
         nextMax = Math.max(nextMax, engineLag)
+      }
+      const streamWindow = toNumber(point.streamWindow)
+      if (Number.isFinite(streamWindow)) {
+        nextMax = Math.max(nextMax, streamWindow)
       }
       clientKeys.forEach((key) => {
         const lag = toNumber(point[key])
@@ -225,6 +239,10 @@ function StreamTimelineGraphic({
       engineLag: {
         label: 'Engine lag',
         color: 'hsl(var(--primary))',
+      },
+      streamWindow: {
+        label: 'Stream window',
+        color: 'hsl(var(--chart-5, 348 83% 47%))',
       },
       liveEdge: {
         label: 'Live edge',
@@ -288,7 +306,7 @@ function StreamTimelineGraphic({
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={isLive ? 'success' : 'secondary'}>{isLive ? 'LIVE' : 'Not live'}</Badge>
           <Badge variant="outline">History {chartData.length} ticks</Badge>
-          <span className="text-xs text-muted-foreground">Y: Seconds behind live edge</span>
+          <span className="text-xs text-muted-foreground">Y: Seconds (runway/window/engine lag)</span>
         </div>
       )}
 
@@ -379,6 +397,19 @@ function StreamTimelineGraphic({
               name="engineLag"
               stroke={chartConfig.engineLag?.color || 'hsl(var(--chart-1, 221 83% 53%))'}
               strokeWidth={2}
+              connectNulls={false}
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
+            />
+
+            <Line
+              type="monotone"
+              dataKey="streamWindow"
+              name="streamWindow"
+              stroke={chartConfig.streamWindow?.color || 'hsl(var(--chart-5, 348 83% 47%))'}
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
               connectNulls={false}
               isAnimationActive={false}
               dot={false}

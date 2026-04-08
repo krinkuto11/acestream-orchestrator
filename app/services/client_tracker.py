@@ -82,6 +82,11 @@ class ClientTrackingService:
                     "protocol": normalized_protocol,
                     "bytes_sent": 0.0,
                     "buffer_seconds_behind": 0.0,
+                    "client_runway_seconds": 0.0,
+                    "stream_buffer_window_seconds": 0.0,
+                    "position_source": "",
+                    "position_confidence": 0.0,
+                    "position_observed_at": now,
                     "connected_at": now,
                     "last_active": now,
                     "bps": 0.0,
@@ -100,6 +105,11 @@ class ClientTrackingService:
                 current["ip_address"] = str(ip_address or current.get("ip_address") or "unknown")
                 current["user_agent"] = str(user_agent or current.get("user_agent") or "unknown")
                 current["protocol"] = normalized_protocol
+                current.setdefault("client_runway_seconds", self._safe_float(current.get("buffer_seconds_behind"), default=0.0))
+                current.setdefault("stream_buffer_window_seconds", 0.0)
+                current.setdefault("position_source", "")
+                current.setdefault("position_confidence", 0.0)
+                current.setdefault("position_observed_at", now)
                 if worker_id is not None:
                     current["worker_id"] = str(worker_id)
                 if idle_timeout_s is not None:
@@ -125,6 +135,11 @@ class ClientTrackingService:
         chunks_delta: int = 0,
         sequence: Optional[int] = None,
         buffer_seconds_behind: Optional[float] = None,
+        client_runway_seconds: Optional[float] = None,
+        stream_buffer_window_seconds: Optional[float] = None,
+        position_source: Optional[str] = None,
+        position_confidence: Optional[float] = None,
+        position_observed_at: Optional[float] = None,
         now: Optional[float] = None,
         idle_timeout_s: Optional[float] = None,
         worker_id: Optional[str] = None,
@@ -168,15 +183,69 @@ class ClientTrackingService:
             current["requests_total"] = self._safe_int(current.get("requests_total"), 0) + 1
             current["stats_updated_at"] = ts
 
-            if buffer_seconds_behind is not None:
-                current["buffer_seconds_behind"] = max(0.0, self._safe_float(buffer_seconds_behind, default=0.0))
+            normalized_request_kind = str(request_kind or "").strip().lower()
+
+            inferred_source = str(position_source or "").strip().lower()
+            if not inferred_source:
+                if normalized_request_kind == "segment":
+                    inferred_source = "hls_segment_delta"
+                elif normalized_request_kind == "manifest":
+                    inferred_source = "hls_manifest_window"
+                elif normalized_request_kind == "stream":
+                    inferred_source = "ts_cursor_ema"
+
+            observed_at_ts = self._safe_float(position_observed_at, default=ts)
+            if observed_at_ts <= 0:
+                observed_at_ts = ts
+
+            confidence = self._safe_float(position_confidence, default=-1.0)
+            if confidence < 0.0:
+                if inferred_source == "hls_segment_delta":
+                    confidence = 0.85
+                elif inferred_source == "hls_manifest_window":
+                    confidence = 0.35
+                elif inferred_source == "ts_cursor_ema":
+                    confidence = 0.75
+                else:
+                    confidence = 0.60
+            confidence = max(0.0, min(1.0, confidence))
+
+            if stream_buffer_window_seconds is not None:
+                current["stream_buffer_window_seconds"] = max(
+                    0.0,
+                    self._safe_float(stream_buffer_window_seconds, default=0.0),
+                )
+
+            runway_value = None
+            if client_runway_seconds is not None:
+                runway_value = max(0.0, self._safe_float(client_runway_seconds, default=0.0))
+            elif buffer_seconds_behind is not None and normalized_request_kind in {"segment", "stream"}:
+                runway_value = max(0.0, self._safe_float(buffer_seconds_behind, default=0.0))
+
+            if runway_value is not None:
+                current["client_runway_seconds"] = runway_value
+                # Keep legacy field for backward compatibility with existing UI/API clients.
+                current["buffer_seconds_behind"] = runway_value
+            elif buffer_seconds_behind is not None and normalized_request_kind == "manifest":
+                # Legacy compatibility for callers that still pass manifest lag
+                # through buffer_seconds_behind.
+                current["stream_buffer_window_seconds"] = max(
+                    0.0,
+                    self._safe_float(buffer_seconds_behind, default=0.0),
+                )
+                if self._safe_float(current.get("buffer_seconds_behind"), default=0.0) <= 0.0:
+                    current["buffer_seconds_behind"] = self._safe_float(current.get("stream_buffer_window_seconds"), default=0.0)
+
+            if inferred_source:
+                current["position_source"] = inferred_source
+            current["position_confidence"] = confidence
+            current["position_observed_at"] = observed_at_ts
 
             if idle_timeout_s is not None:
                 current["idle_timeout_s"] = self._safe_float(idle_timeout_s, default=0.0)
             if worker_id is not None:
                 current["worker_id"] = str(worker_id)
 
-            normalized_request_kind = str(request_kind or "").strip().lower()
             if normalized_request_kind:
                 current["last_request_kind"] = normalized_request_kind
 
@@ -209,6 +278,9 @@ class ClientTrackingService:
         stream_id: str,
         protocol: str,
         seconds_behind: float,
+        source: Optional[str] = None,
+        confidence: Optional[float] = None,
+        observed_at: Optional[float] = None,
         now: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Update buffer lag for an existing client without incrementing request counters."""
@@ -223,7 +295,21 @@ class ClientTrackingService:
             if current is None:
                 return {}
 
-            current["buffer_seconds_behind"] = max(0.0, self._safe_float(seconds_behind, default=0.0))
+            normalized_seconds = max(0.0, self._safe_float(seconds_behind, default=0.0))
+            current["buffer_seconds_behind"] = normalized_seconds
+            current["client_runway_seconds"] = normalized_seconds
+
+            normalized_source = str(source or "").strip().lower()
+            if normalized_source:
+                current["position_source"] = normalized_source
+
+            if confidence is not None:
+                current["position_confidence"] = max(0.0, min(1.0, self._safe_float(confidence, default=0.0)))
+
+            observed_ts = self._safe_float(observed_at, default=ts)
+            if observed_ts > 0:
+                current["position_observed_at"] = observed_ts
+
             current["stats_updated_at"] = ts
             return dict(current)
 
@@ -346,6 +432,11 @@ class ClientTrackingService:
             "bps": self._safe_float(row.get("bps"), default=0.0),
             "bytes_sent": self._safe_float(row.get("bytes_sent"), default=0.0),
             "buffer_seconds_behind": self._safe_float(row.get("buffer_seconds_behind"), default=0.0),
+            "client_runway_seconds": self._safe_float(row.get("client_runway_seconds"), default=self._safe_float(row.get("buffer_seconds_behind"), default=0.0)),
+            "stream_buffer_window_seconds": self._safe_float(row.get("stream_buffer_window_seconds"), default=0.0),
+            "position_source": str(row.get("position_source") or ""),
+            "position_confidence": self._safe_float(row.get("position_confidence"), default=0.0),
+            "position_observed_at": self._safe_float(row.get("position_observed_at"), default=last_active),
             "connected_at": self._safe_float(row.get("connected_at"), default=now),
             "last_active": last_active,
             "inactive_seconds": max(0.0, now - last_active),

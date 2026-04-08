@@ -151,6 +151,8 @@ class StreamManager:
         self.last_data_time = time.time()
         self.health_check_interval = 2.0
         self.consecutive_eof_retries = 0
+        self._last_runway_estimate_s = 0.0
+        self._last_runway_estimate_ts = 0.0
         
         # Orchestrator event tracking
         self.stream_id = None  # Will be set after sending start event
@@ -1249,8 +1251,26 @@ class StreamManager:
                     pass
 
     def _get_max_client_buffer_seconds(self) -> float:
-        """Return max client runway from Redis metadata for this stream."""
-        max_buffer_sec = 0.0
+        """Return conservative effective client runway from Redis metadata.
+
+        This value is used to drive failover tolerance. The aggregation is
+        intentionally conservative and freshness-aware:
+        - stale samples are ignored,
+        - runway is decayed by sample age,
+        - low-confidence sources are down-weighted,
+        - final runway uses lower-tail (p10) selection.
+        """
+        now = time.time()
+        max_sample_age_s = 8.0
+        confidence_floor = 0.15
+        candidate_values = []
+
+        def _safe_float(value, default=0.0):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
         try:
             redis_client = getattr(self.client_manager, "redis_client", None)
             client_set_key = getattr(self.client_manager, "client_set_key", None)
@@ -1261,16 +1281,85 @@ class StreamManager:
             for client_id in client_ids:
                 normalized_client_id = client_id.decode("utf-8") if isinstance(client_id, bytes) else str(client_id)
                 client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
-                raw_value = redis_client.hget(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND)
-                if raw_value is None:
+
+                if hasattr(redis_client, "hmget"):
+                    values = redis_client.hmget(
+                        client_key,
+                        [
+                            ClientMetadataField.CLIENT_RUNWAY_SECONDS,
+                            ClientMetadataField.BUFFER_SECONDS_BEHIND,
+                            ClientMetadataField.POSITION_CONFIDENCE,
+                            ClientMetadataField.POSITION_OBSERVED_AT,
+                            ClientMetadataField.STATS_UPDATED_AT,
+                        ],
+                    )
+                else:
+                    values = [
+                        redis_client.hget(client_key, ClientMetadataField.CLIENT_RUNWAY_SECONDS),
+                        redis_client.hget(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND),
+                        redis_client.hget(client_key, ClientMetadataField.POSITION_CONFIDENCE),
+                        redis_client.hget(client_key, ClientMetadataField.POSITION_OBSERVED_AT),
+                        redis_client.hget(client_key, ClientMetadataField.STATS_UPDATED_AT),
+                    ]
+                if not values:
                     continue
 
-                decoded = raw_value.decode("utf-8") if isinstance(raw_value, bytes) else str(raw_value)
-                max_buffer_sec = max(max_buffer_sec, float(decoded))
+                runway_raw, legacy_runway_raw, confidence_raw, observed_at_raw, stats_updated_at_raw = values
+
+                runway_value_raw = runway_raw if runway_raw is not None else legacy_runway_raw
+                if runway_value_raw is None:
+                    continue
+
+                runway_value = _safe_float(
+                    runway_value_raw.decode("utf-8") if isinstance(runway_value_raw, bytes) else runway_value_raw,
+                    default=0.0,
+                )
+                runway_value = max(0.0, runway_value)
+
+                observed_raw = observed_at_raw if observed_at_raw is not None else stats_updated_at_raw
+                observed_ts = _safe_float(
+                    observed_raw.decode("utf-8") if isinstance(observed_raw, bytes) else observed_raw,
+                    default=0.0,
+                )
+                if observed_ts <= 0:
+                    observed_ts = now
+
+                age_s = max(0.0, now - observed_ts)
+                if age_s > max_sample_age_s:
+                    continue
+
+                confidence = _safe_float(
+                    confidence_raw.decode("utf-8") if isinstance(confidence_raw, bytes) else confidence_raw,
+                    default=0.70,
+                )
+                confidence = max(0.0, min(1.0, confidence))
+
+                # Decay runway by sample age, then down-weight low-confidence
+                # samples to protect failover from optimistic telemetry.
+                effective_runway = max(0.0, runway_value - age_s)
+                confidence_weight = max(confidence_floor, 0.5 + (0.5 * confidence))
+                confidence_adjusted = effective_runway * confidence_weight
+                candidate_values.append(confidence_adjusted)
         except Exception as e:
             logger.debug("Failed to calculate max client buffer for EOF retry: %s", e)
+            return 0.0
 
-        return max(0.0, float(max_buffer_sec))
+        if not candidate_values:
+            # Gracefully decay the previous estimate for a short period to avoid
+            # abrupt tolerance collapse if telemetry briefly disappears.
+            if self._last_runway_estimate_ts > 0.0 and self._last_runway_estimate_s > 0.0:
+                decayed = max(0.0, self._last_runway_estimate_s - max(0.0, now - self._last_runway_estimate_ts))
+                return float(decayed)
+            return 0.0
+
+        candidate_values.sort()
+        p10_index = int((len(candidate_values) - 1) * 0.10)
+        conservative_runway = max(0.0, float(candidate_values[p10_index]))
+
+        self._last_runway_estimate_s = conservative_runway
+        self._last_runway_estimate_ts = now
+
+        return conservative_runway
 
     def _get_dynamic_tolerance(self) -> tuple[float, float, float]:
         """Calculate starvation tolerance from client runway.

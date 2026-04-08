@@ -121,6 +121,11 @@ class ClientMetadataField:
     WORKER_ID = "worker_id"
     CHUNKS_SENT = "chunks_sent"
     STATS_UPDATED_AT = "stats_updated_at"
+    CLIENT_RUNWAY_SECONDS = "client_runway_seconds"
+    STREAM_BUFFER_WINDOW_SECONDS = "stream_buffer_window_seconds"
+    POSITION_SOURCE = "position_source"
+    POSITION_CONFIDENCE = "position_confidence"
+    POSITION_OBSERVED_AT = "position_observed_at"
 
 # TS packet constants (keep these as AceStream uses MPEG-TS format)
 TS_PACKET_SIZE = 188

@@ -3505,7 +3505,9 @@ async def ace_getstream(
                             user_agent=user_agent,
                             request_kind="manifest",
                             bytes_sent=len(manifest_bytes),
-                            buffer_seconds_behind=manifest_seconds_behind,
+                            stream_buffer_window_seconds=manifest_seconds_behind,
+                            position_source="hls_manifest_window",
+                            position_confidence=0.35,
                         )
 
                         elapsed = time.perf_counter() - request_started_at
@@ -3626,7 +3628,9 @@ async def ace_getstream(
                         user_agent=user_agent,
                         request_kind="manifest",
                         bytes_sent=len(manifest_bytes),
-                        buffer_seconds_behind=manifest_seconds_behind,
+                        stream_buffer_window_seconds=manifest_seconds_behind,
+                        position_source="hls_manifest_window",
+                        position_confidence=0.35,
                     )
 
                     elapsed = time.perf_counter() - request_started_at
@@ -3679,7 +3683,9 @@ async def ace_getstream(
                         user_agent,
                         request_kind="manifest",
                         bytes_sent=len(manifest_bytes),
-                        buffer_seconds_behind=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key),
+                        stream_buffer_window_seconds=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key),
+                        position_source="hls_manifest_window",
+                        position_confidence=0.35,
                     )
 
                     elapsed = time.perf_counter() - request_started_at
@@ -3872,7 +3878,9 @@ async def ace_getstream(
                     user_agent,
                     request_kind="manifest",
                     bytes_sent=len(manifest_bytes),
-                    buffer_seconds_behind=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key),
+                    stream_buffer_window_seconds=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key),
+                    position_source="hls_manifest_window",
+                    position_confidence=0.35,
                 )
 
                 elapsed = time.perf_counter() - request_started_at
@@ -4165,6 +4173,10 @@ async def ace_hls_segment(
             bytes_sent=len(segment_data),
             chunks_sent=1,
             sequence=sequence,
+            stream_buffer_window_seconds=hls_proxy.get_manifest_buffer_seconds_behind(content_id),
+            client_runway_seconds=hls_proxy.get_segment_buffer_seconds_behind(content_id, sequence),
+            position_source="hls_segment_delta",
+            position_confidence=0.85,
         )
         observe_proxy_egress_bytes("HLS", len(segment_data))
         
@@ -4244,7 +4256,10 @@ async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: 
             bytes_sent=segment_size,
             chunks_sent=1,
             sequence=sequence,
-            buffer_seconds_behind=hls_segmenter_service.estimate_segment_buffer_seconds_behind(monitor_id, sequence),
+            stream_buffer_window_seconds=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(monitor_id),
+            client_runway_seconds=hls_segmenter_service.estimate_segment_buffer_seconds_behind(monitor_id, sequence),
+            position_source="hls_segment_delta",
+            position_confidence=0.85,
         )
         observe_proxy_egress_bytes("HLS", segment_size)
 

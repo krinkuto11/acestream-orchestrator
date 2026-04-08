@@ -2,6 +2,8 @@
 
 from unittest.mock import Mock
 
+import pytest
+
 import app.proxy.stream_manager as stream_manager_module
 
 
@@ -24,6 +26,68 @@ def _build_manager():
         api_key="test_key",
     )
     return manager
+
+
+def test_get_max_client_buffer_seconds_uses_conservative_freshness(monkeypatch):
+    manager = _build_manager()
+
+    now = {"value": 1000.0}
+    monkeypatch.setattr(stream_manager_module.time, "time", lambda: now["value"])
+
+    class _FakeRedis:
+        def smembers(self, _key):
+            return {b"client-a", b"client-b"}
+
+        def hmget(self, key, _fields):
+            if "client-a" in key:
+                # High runway but older sample.
+                return [b"20.0", b"20.0", b"1.0", b"998.0", b"998.0"]
+            # Lower runway newer sample; conservative p10 should pick this lane.
+            return [b"5.0", b"5.0", b"0.9", b"999.0", b"999.0"]
+
+    manager.client_manager.redis_client = _FakeRedis()
+    manager.client_manager.client_set_key = "stream:clients"
+
+    runway = manager._get_max_client_buffer_seconds()
+
+    # client-a effective: (20 - 2) * 1.0 = 18.0
+    # client-b effective: (5 - 1) * 0.95 = 3.8
+    # conservative p10 with 2 samples -> lower sample
+    assert runway == pytest.approx(3.8, abs=0.001)
+
+
+def test_get_max_client_buffer_seconds_decays_last_estimate_when_samples_disappear(monkeypatch):
+    manager = _build_manager()
+
+    now = {"value": 1000.0}
+    monkeypatch.setattr(stream_manager_module.time, "time", lambda: now["value"])
+
+    class _FakeRedis:
+        def __init__(self):
+            self.phase = "fresh"
+
+        def smembers(self, _key):
+            return {b"client-a"}
+
+        def hmget(self, _key, _fields):
+            if self.phase == "fresh":
+                return [b"12.0", b"12.0", b"1.0", b"1000.0", b"1000.0"]
+            # Stale > 8s, so ignored.
+            return [b"12.0", b"12.0", b"1.0", b"980.0", b"980.0"]
+
+    fake_redis = _FakeRedis()
+    manager.client_manager.redis_client = fake_redis
+    manager.client_manager.client_set_key = "stream:clients"
+
+    first = manager._get_max_client_buffer_seconds()
+    assert first == pytest.approx(12.0, abs=0.001)
+
+    fake_redis.phase = "stale"
+    now["value"] = 1002.0
+
+    second = manager._get_max_client_buffer_seconds()
+    # No fresh samples -> decay last estimate by elapsed wall-clock time.
+    assert second == pytest.approx(10.0, abs=0.001)
 
 
 def test_eof_with_no_clients_skips_failover(monkeypatch):

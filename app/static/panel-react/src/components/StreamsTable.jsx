@@ -290,8 +290,10 @@ function StreamStatusBadge({ isActive, isPaused, isPrebuffering, isDownloadStopp
 }
 
 function ClientSession({ client }) {
-  const lag = toNumber(client?.buffer_seconds_behind)
-  const lagClass = Number.isFinite(lag) && lag > 5
+  const runway = toNumber(client?.client_runway_seconds ?? client?.buffer_seconds_behind)
+  const streamWindow = toNumber(client?.stream_buffer_window_seconds)
+
+  const runwayClass = Number.isFinite(runway) && runway > 5
     ? 'bg-amber-500 text-white border-transparent'
     : 'bg-emerald-500 text-white border-transparent'
 
@@ -308,7 +310,14 @@ function ClientSession({ client }) {
             <p className="text-sm font-medium truncate" title={client.ip_address || client.client_id}>
               {client.ip_address || client.client_id || 'Unknown client'}
             </p>
-            <Badge className={`text-[10px] ${lagClass}`}>Lag {formatLagValue(client.buffer_seconds_behind)}</Badge>
+            <Badge className={`text-[10px] ${runwayClass}`}>
+              Runway {formatLagValue(runway)}
+            </Badge>
+            {Number.isFinite(streamWindow) && streamWindow > 0 ? (
+              <Badge variant="outline" className="text-[10px]">
+                Window {formatLagValue(streamWindow)}
+              </Badge>
+            ) : null}
           </div>
           <p className="text-xs text-muted-foreground truncate" title={client.user_agent}>
             {client.user_agent || 'Unknown agent'}
