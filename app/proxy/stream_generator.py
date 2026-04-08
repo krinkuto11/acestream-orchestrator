@@ -54,8 +54,6 @@ class StreamGenerator:
         self.chunk_rate_ema = None
         self.last_chunk_rate_update_time = time.time()
         self.last_chunk_sent_time = time.time()
-        self.last_reported_runway_seconds = 0.0
-        self.last_reported_runway_time = time.time()
         self.last_starvation_update_time = 0.0
     
     def generate(self):
@@ -67,8 +65,6 @@ class StreamGenerator:
         self.bytes_sent = 0
         self.chunks_sent = 0
         self.last_chunk_sent_time = time.time()
-        self.last_reported_runway_seconds = 0.0
-        self.last_reported_runway_time = time.time()
         self.last_starvation_update_time = 0.0
         
         try:
@@ -330,13 +326,6 @@ class StreamGenerator:
             elif normalized_source == "ts_startup":
                 confidence = 0.60
 
-            # Keep runway continuous across sparse Redis ranges/reconnect cursor
-            # jumps by applying a physically plausible decay of the last reported
-            # runway instead of allowing abrupt single-tick collapse to zero.
-            elapsed_since_report = max(0.0, now - float(self.last_reported_runway_time or now))
-            decayed_previous_runway = max(0.0, float(self.last_reported_runway_seconds or 0.0) - elapsed_since_report)
-            seconds_behind = max(seconds_behind, decayed_previous_runway)
-
             self.client_manager.update_client_position(
                 self.client_id,
                 seconds_behind,
@@ -344,8 +333,6 @@ class StreamGenerator:
                 confidence=confidence,
                 observed_at=now,
             )
-            self.last_reported_runway_seconds = seconds_behind
-            self.last_reported_runway_time = now
             self.last_position_update_time = now
         except Exception as e:
             logger.debug(f"[{self.client_id}] Failed to update client position: {e}")
