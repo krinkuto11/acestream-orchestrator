@@ -68,10 +68,12 @@ export default function StreamTimelineGraphic({
 
   const clusterMap = new Map()
   normalizedClients.forEach((entry) => {
-    const key = String(Math.round(entry.percent * CLIENT_CLUSTER_BUCKETS_PER_PERCENT) / CLIENT_CLUSTER_BUCKETS_PER_PERCENT)
+    const bucketIndex = Math.round(entry.percent * CLIENT_CLUSTER_BUCKETS_PER_PERCENT)
+    const clusterPercent = bucketIndex / CLIENT_CLUSTER_BUCKETS_PER_PERCENT
+    const key = String(bucketIndex)
     if (!clusterMap.has(key)) {
       clusterMap.set(key, {
-        percent: entry.percent,
+        percent: clusterPercent,
         clients: [],
       })
     }

@@ -92,7 +92,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
   const [clients, setClients] = useState([])
   const [clientsLoading, setClientsLoading] = useState(false)
   const [isPaused, setIsPaused] = useState(Boolean(stream.paused))
-  const clientsLoadedRef = useRef(false)
+  const hasLoadedClientsRef = useRef(false)
 
   const isActive = stream.status === 'started'
   const labels = stream.labels || {}
@@ -120,13 +120,13 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
 
   const fetchClients = useCallback(async () => {
     if (!stream?.key || !isExpanded) return
-    if (!clientsLoadedRef.current) setClientsLoading(true)
+    if (!hasLoadedClientsRef.current) setClientsLoading(true)
     try {
       const response = await fetch(`${orchUrl}/api/v1/proxy/streams/${encodeURIComponent(stream.key)}/clients`)
       if (response.ok) {
         const data = await response.json()
         setClients(data.clients || [])
-        clientsLoadedRef.current = true
+        hasLoadedClientsRef.current = true
       }
     } catch (err) {
       console.error('Failed to fetch clients:', err)
@@ -138,7 +138,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
   useEffect(() => {
     fetchExtendedStats()
     fetchClients()
-  }, [fetchExtendedStats, fetchClients])
+  }, [isExpanded, fetchExtendedStats, fetchClients])
 
   const title = extendedStats?.title || stream.id
 
