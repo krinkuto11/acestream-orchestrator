@@ -235,10 +235,9 @@ function StreamTimelineGraphic({
         const value = toNumber(point[key])
         const normalizedValue = Number.isFinite(value) ? Math.max(0, value) : null
         normalized[key] = normalizedValue
-        normalized[`${key}__band`] =
-          Number.isFinite(normalizedValue) && Number.isFinite(engineLag)
-            ? [Math.min(Math.max(0, engineLag), normalizedValue), Math.max(Math.max(0, engineLag), normalizedValue)]
-            : null
+        normalized[`${key}__band`] = Number.isFinite(normalizedValue)
+          ? [0, normalizedValue]
+          : null
       })
       return normalized
     })
@@ -275,7 +274,7 @@ function StreamTimelineGraphic({
     const config = {
       engineLag: {
         label: 'Engine lag',
-        color: 'hsl(var(--primary, 221 83% 53%))',
+        color: 'hsl(var(--chart-3, 32 95% 44%))',
       },
       streamWindow: {
         label: 'Stream window',
@@ -442,7 +441,7 @@ function StreamTimelineGraphic({
                   dataKey={`${key}__band`}
                   stroke="none"
                   fill={`var(--color-${key})`}
-                  fillOpacity={0.09}
+                  fillOpacity={0.06}
                   connectNulls={false}
                   isAnimationActive={false}
                   dot={false}
@@ -462,6 +461,18 @@ function StreamTimelineGraphic({
                 />
               </React.Fragment>
             ))}
+
+            <Line
+              type="linear"
+              dataKey="engineLag"
+              name="engineLag"
+              stroke="var(--color-engineLag)"
+              strokeWidth={2.3}
+              connectNulls={false}
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
+            />
 
             {normalizedEventMarkers.map((marker) => (
               <ReferenceLine
