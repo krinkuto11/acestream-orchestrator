@@ -1,8 +1,10 @@
 import React from 'react'
 import { Badge } from '@/components/ui/badge'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { cn } from '@/lib/utils'
 
-const CLIENT_CLUSTER_BUCKETS_PER_PERCENT = 2
-const CLIENT_MARKER_TOP = '78%'
+const MIN_ZOOM_WINDOW_SECONDS = 60
+const CLUSTER_BUCKET_PERCENT = 2
 
 function toNumber(value) {
   const parsed = Number.parseFloat(String(value ?? ''))
@@ -17,7 +19,7 @@ function formatLag(seconds) {
   if (!Number.isFinite(seconds)) return 'N/A'
   if (seconds <= 0) return 'Live'
   if (seconds < 0.1) return `${Math.round(seconds * 1000)}ms`
-  return `${seconds.toFixed(2)}s`
+  return `${seconds.toFixed(1)}s`
 }
 
 function getClientInitial(client) {
@@ -25,19 +27,96 @@ function getClientInitial(client) {
   return source.charAt(0).toUpperCase() || '?'
 }
 
+function getClusterTone(maxLagSeconds) {
+  if (maxLagSeconds > 5) {
+    return {
+      marker: 'border-amber-500/60 bg-amber-500 text-white',
+      line: 'bg-amber-500/70',
+    }
+  }
+
+  return {
+    marker: 'border-emerald-500/60 bg-emerald-500 text-white',
+    line: 'bg-emerald-500/70',
+  }
+}
+
+function buildTimelineModel(livepos, clients) {
+  const liveEdgeTs = toNumber(livepos?.last_ts ?? livepos?.live_last)
+  if (!Number.isFinite(liveEdgeTs)) return null
+
+  const enginePosTs = toNumber(livepos?.pos)
+  const bufferStartTs = toNumber(livepos?.first_ts ?? livepos?.live_first)
+  const bufferEndTs = toNumber(livepos?.last_ts ?? livepos?.live_last)
+
+  const normalizedClients = (Array.isArray(clients) ? clients : [])
+    .map((client, index) => {
+      const lagSeconds = Math.max(0, toNumber(client?.buffer_seconds_behind) ?? 0)
+      const timestamp = liveEdgeTs - lagSeconds
+      return {
+        client,
+        lagSeconds,
+        timestamp,
+        key: client?.client_id || client?.ip_address || `client-${index}`,
+      }
+    })
+
+  const maxClientLag = normalizedClients.reduce((max, entry) => Math.max(max, entry.lagSeconds), 0)
+  const engineLag = Number.isFinite(enginePosTs) ? Math.max(0, liveEdgeTs - enginePosTs) : 0
+  const zoomWindowSeconds = Math.max(
+    MIN_ZOOM_WINDOW_SECONDS,
+    maxClientLag * 1.5,
+    engineLag * 1.15,
+  )
+
+  const windowStartTs = liveEdgeTs - zoomWindowSeconds
+  const toPercent = (timestamp) => clamp(((timestamp - windowStartTs) / zoomWindowSeconds) * 100, 0, 100)
+
+  const clustersByBucket = new Map()
+  normalizedClients.forEach((entry) => {
+    const percent = toPercent(entry.timestamp)
+    const bucket = Math.round(percent / CLUSTER_BUCKET_PERCENT) * CLUSTER_BUCKET_PERCENT
+    const bucketKey = String(bucket)
+    if (!clustersByBucket.has(bucketKey)) {
+      clustersByBucket.set(bucketKey, {
+        percent: bucket,
+        clients: [],
+        maxLagSeconds: 0,
+      })
+    }
+
+    const bucketEntry = clustersByBucket.get(bucketKey)
+    bucketEntry.clients.push({ ...entry, percent })
+    bucketEntry.maxLagSeconds = Math.max(bucketEntry.maxLagSeconds, entry.lagSeconds)
+  })
+
+  const clusters = Array.from(clustersByBucket.values()).sort((a, b) => a.percent - b.percent)
+  const enginePercent = Number.isFinite(enginePosTs) ? toPercent(enginePosTs) : 0
+  const bufferedStartPercent = Number.isFinite(bufferStartTs) ? toPercent(bufferStartTs) : 0
+  const bufferedEndPercent = Number.isFinite(bufferEndTs) ? toPercent(bufferEndTs) : 100
+
+  return {
+    clusters,
+    enginePercent,
+    bufferedStartPercent,
+    bufferedEndPercent,
+    zoomWindowSeconds,
+    maxClientLag,
+    windowStartTs,
+    liveEdgeTs,
+  }
+}
+
 function StreamTimelineGraphic({
   livepos,
   clients = [],
   isLive = false,
   compact = false,
+  className,
 }) {
-  const liveFirst = toNumber(livepos?.live_first ?? livepos?.first_ts)
-  const liveLast = toNumber(livepos?.live_last ?? livepos?.last_ts)
-  const pos = toNumber(livepos?.pos)
-  const lastTs = toNumber(livepos?.last_ts ?? liveLast)
-  const hasWindow = Number.isFinite(liveFirst) && Number.isFinite(liveLast) && liveLast > liveFirst
+  const model = buildTimelineModel(livepos, clients)
 
-  if (!hasWindow) {
+  if (!model) {
     return (
       <div className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
         Timeline unavailable
@@ -45,108 +124,94 @@ function StreamTimelineGraphic({
     )
   }
 
-  const totalRange = liveLast - liveFirst
-  const liveEdgePercent = 100
-  const enginePercent = Number.isFinite(pos) ? clamp(((pos - liveFirst) / totalRange) * 100, 0, 100) : 0
-  const bufferEndPercent = Number.isFinite(lastTs) ? clamp(((lastTs - liveFirst) / totalRange) * 100, 0, 100) : liveEdgePercent
-  const bufferWidthPercent = Math.max(0, bufferEndPercent - enginePercent)
+  const {
+    clusters,
+    enginePercent,
+    bufferedStartPercent,
+    bufferedEndPercent,
+    zoomWindowSeconds,
+    maxClientLag,
+    windowStartTs,
+    liveEdgeTs,
+  } = model
 
-  const normalizedClients = clients
-    .map((client, index) => {
-      const lag = toNumber(client?.buffer_seconds_behind)
-      if (!Number.isFinite(lag)) return null
-      const markerTs = liveLast - Math.max(0, lag)
-      const percent = clamp(((markerTs - liveFirst) / totalRange) * 100, 0, 100)
-      return {
-        client,
-        lag,
-        percent,
-        key: client?.client_id || client?.ip_address || `client-${index}`,
-      }
-    })
-    .filter(Boolean)
-
-  const clusterMap = new Map()
-  normalizedClients.forEach((entry) => {
-    const bucketIndex = Math.round(entry.percent * CLIENT_CLUSTER_BUCKETS_PER_PERCENT)
-    const clusterPercent = bucketIndex / CLIENT_CLUSTER_BUCKETS_PER_PERCENT
-    const key = String(bucketIndex)
-    if (!clusterMap.has(key)) {
-      clusterMap.set(key, {
-        percent: clusterPercent,
-        clients: [],
-      })
-    }
-    clusterMap.get(key).clients.push(entry)
-  })
-
-  const clusters = Array.from(clusterMap.values()).sort((a, b) => a.percent - b.percent)
+  const bufferedLeft = Math.min(bufferedStartPercent, bufferedEndPercent)
+  const bufferedWidth = Math.max(0, Math.abs(bufferedEndPercent - bufferedStartPercent))
 
   return (
-    <div className="space-y-2">
+    <div className={cn('space-y-2', className)}>
       {!compact && (
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={isLive ? 'success' : 'secondary'}>{isLive ? 'LIVE' : 'Not live'}</Badge>
-          <span className="text-xs text-muted-foreground">Engine at {enginePercent.toFixed(1)}% of live window</span>
+          <Badge variant="outline">Zoom {Math.round(zoomWindowSeconds)}s</Badge>
+          <span className="text-xs text-muted-foreground">
+            Max client lag {formatLag(maxClientLag)}
+          </span>
         </div>
       )}
 
-      <div className={`rounded-xl border bg-muted/20 px-3 ${compact ? 'py-2' : 'py-3'}`}>
-        <div className={`relative ${compact ? 'h-8' : 'h-12'}`}>
-          <div className="absolute left-0 right-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-muted" />
+      <div className={cn('rounded-xl border border-border bg-muted/30 px-3', compact ? 'py-2' : 'py-3')}>
+        <div className={cn('relative overflow-hidden', compact ? 'h-14' : 'h-20')}>
+          <div className={cn('absolute left-0 right-0 rounded-full bg-muted', compact ? 'bottom-1 h-2' : 'bottom-2 h-2.5')} />
 
           <div
-            className="absolute top-1/2 h-2 -translate-y-1/2 rounded-full bg-emerald-500/60"
+            className={cn('absolute rounded-full bg-emerald-500/70 transition-all duration-300', compact ? 'bottom-1 h-2' : 'bottom-2 h-2.5')}
             style={{
-              left: `${enginePercent}%`,
-              width: `${bufferWidthPercent}%`,
+              left: `${bufferedLeft}%`,
+              width: `${bufferedWidth}%`,
             }}
           />
 
           <div
-            className="absolute top-1/2 z-10 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-primary shadow"
+            className={cn('absolute z-20 -translate-x-1/2 rounded-full border-2 border-background bg-primary shadow transition-all duration-300', compact ? 'bottom-0.5 h-4 w-4' : 'bottom-1 h-4 w-4')}
             style={{ left: `${enginePercent}%` }}
-            title="Engine buffer position"
+            title="Engine playhead"
           />
 
           <div
-            className="absolute top-1/2 z-10 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-red-500 shadow"
-            style={{ left: `${liveEdgePercent}%` }}
+            className={cn('absolute z-20 -translate-x-1/2 rounded-full border-2 border-background bg-red-500 shadow transition-all duration-300', compact ? 'bottom-0.5 h-4 w-4' : 'bottom-1 h-4 w-4')}
+            style={{ left: '100%' }}
             title="Live edge"
           />
 
           {clusters.map((cluster, index) => {
-            const count = cluster.clients.length
             const first = cluster.clients[0]
+            const tone = getClusterTone(cluster.maxLagSeconds)
             const title = cluster.clients
-              .map(({ client, lag }) => `${client.ip_address || client.client_id || 'client'} · ${formatLag(lag)} behind`)
+              .map(({ client, lagSeconds }) => {
+                const label = client?.ip_address || client?.client_id || 'client'
+                return `${label} - ${formatLag(lagSeconds)} behind`
+              })
               .join('\n')
 
             return (
               <div
-                key={`cluster-${index}-${cluster.percent}`}
-                className="absolute z-20 -translate-x-1/2"
-                style={{ left: `${cluster.percent}%`, top: CLIENT_MARKER_TOP }}
+                key={`${index}-${cluster.percent}`}
+                className="absolute z-30 -translate-x-1/2 transition-all duration-300"
+                style={{ left: `${cluster.percent}%`, top: compact ? 2 : 4 }}
                 title={title}
               >
-                {count > 1 ? (
-                  <div className="flex h-5 min-w-5 items-center justify-center rounded-full border border-border bg-amber-500 px-1 text-[10px] font-semibold text-white shadow">
-                    +{count}
+                {cluster.clients.length > 1 ? (
+                  <div className={cn('flex h-5 min-w-5 items-center justify-center rounded-full border px-1 text-[10px] font-semibold shadow', tone.marker)}>
+                    +{cluster.clients.length}
                   </div>
                 ) : (
-                  <div className="flex h-5 w-5 items-center justify-center rounded-full border border-border bg-sky-600 text-[10px] font-semibold text-white shadow">
-                    {getClientInitial(first.client)}
-                  </div>
+                  <Avatar className="h-5 w-5 border border-border shadow">
+                    <AvatarFallback className={cn('text-[10px] font-semibold', tone.marker)}>
+                      {getClientInitial(first.client)}
+                    </AvatarFallback>
+                  </Avatar>
                 )}
+                <div className={cn('mx-auto mt-1 w-px rounded-full transition-all duration-300', tone.line, compact ? 'h-4' : 'h-6')} />
               </div>
             )
           })}
         </div>
 
         {!compact && (
-          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>Window start</span>
-            <span>Live edge</span>
+          <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+            <span>{new Date(windowStartTs * 1000).toLocaleTimeString()}</span>
+            <span>{new Date(liveEdgeTs * 1000).toLocaleTimeString()} live edge</span>
           </div>
         )}
       </div>
