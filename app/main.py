@@ -288,7 +288,7 @@ async def lifespan(app: FastAPI):
     if migration_result.get("renamed_files"):
         logger.info("Legacy settings migrated to DB and renamed: %s", migration_result.get("renamed_files"))
     elif migration_result.get("seeded_defaults"):
-        logger.info("Runtime settings DB seeded with defaults (no legacy JSON files found)")
+        logger.info("Runtime settings initialized with a new default row (no legacy JSON files found)")
 
     cleanup_on_shutdown()  # Clean any existing state and containers after DB is ready
     

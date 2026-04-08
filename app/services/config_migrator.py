@@ -77,6 +77,12 @@ def _is_db_effectively_empty() -> bool:
         return is_default
 
 
+def _runtime_settings_row_exists() -> bool:
+    with get_session() as session:
+        row = session.get(RuntimeSettingsRow, SettingsPersistence.SETTINGS_ROW_ID)
+        return row is not None
+
+
 def migrate_legacy_json_configs() -> Dict[str, Any]:
     """Migrate legacy settings JSON files into the runtime settings database."""
     mapping: Dict[str, Tuple[str, Callable[[Dict[str, Any]], bool]]] = {
@@ -89,11 +95,15 @@ def migrate_legacy_json_configs() -> Dict[str, Any]:
 
     result: Dict[str, Any] = {
         "db_was_empty": False,
+        "runtime_settings_row_existed": False,
         "migrated": {},
         "renamed_files": [],
         "seeded_defaults": False,
         "errors": [],
     }
+
+    row_existed_before = _runtime_settings_row_exists()
+    result["runtime_settings_row_existed"] = row_existed_before
 
     db_empty = _is_db_effectively_empty()
     result["db_was_empty"] = db_empty
@@ -127,9 +137,10 @@ def migrate_legacy_json_configs() -> Dict[str, Any]:
             result["errors"].append({"file": str(path), "error": str(exc)})
 
     if not migrated_any:
-        # DB is empty and no files existed: seed defaults into DB and cache.
+        # DB is effectively empty and no files existed. Only treat this as
+        # default seeding when the runtime settings row did not exist yet.
         SettingsPersistence.initialize_cache(force_reload=True)
-        result["seeded_defaults"] = True
+        result["seeded_defaults"] = not row_existed_before
     else:
         SettingsPersistence.initialize_cache(force_reload=True)
 
