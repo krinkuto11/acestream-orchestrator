@@ -137,6 +137,15 @@ function StreamTimelineGraphic({
 
   const bufferedLeft = Math.min(bufferedStartPercent, bufferedEndPercent)
   const bufferedWidth = Math.max(0, Math.abs(bufferedEndPercent - bufferedStartPercent))
+  const timelineHeightPx = compact ? 56 : 80
+  const trackHeightPx = compact ? 8 : 10
+  const trackCenterYPx = compact ? 46 : 68
+  const trackTopPx = trackCenterYPx - trackHeightPx / 2
+  const playheadSizePx = compact ? 12 : 14
+  const clientMarkerSizePx = 20
+  const clientMarkerTopPx = compact ? 8 : 10
+  const projectionStartYPx = clientMarkerTopPx + clientMarkerSizePx
+  const projectionHeightPx = Math.max(0, trackCenterYPx - projectionStartYPx)
 
   return (
     <div className={cn('space-y-2', className)}>
@@ -151,26 +160,44 @@ function StreamTimelineGraphic({
       )}
 
       <div className={cn('rounded-xl border border-border bg-muted/30 px-3', compact ? 'py-2' : 'py-3')}>
-        <div className={cn('relative overflow-hidden', compact ? 'h-14' : 'h-20')}>
-          <div className={cn('absolute left-0 right-0 rounded-full bg-muted', compact ? 'bottom-1 h-2' : 'bottom-2 h-2.5')} />
-
+        <div className="relative overflow-hidden" style={{ height: `${timelineHeightPx}px` }}>
           <div
-            className={cn('absolute rounded-full bg-emerald-500/70 transition-all duration-300', compact ? 'bottom-1 h-2' : 'bottom-2 h-2.5')}
+            className="absolute left-0 right-0 rounded-full bg-muted"
             style={{
-              left: `${bufferedLeft}%`,
-              width: `${bufferedWidth}%`,
+              top: `${trackTopPx}px`,
+              height: `${trackHeightPx}px`,
             }}
           />
 
           <div
-            className={cn('absolute z-20 -translate-x-1/2 rounded-full border-2 border-background bg-primary shadow transition-all duration-300', compact ? 'bottom-0.5 h-4 w-4' : 'bottom-1 h-4 w-4')}
-            style={{ left: `${enginePercent}%` }}
+            className="absolute rounded-full bg-emerald-500/70 transition-all duration-300"
+            style={{
+              left: `${bufferedLeft}%`,
+              width: `${bufferedWidth}%`,
+              top: `${trackTopPx}px`,
+              height: `${trackHeightPx}px`,
+            }}
+          />
+
+          <div
+            className="absolute z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-primary shadow transition-all duration-300"
+            style={{
+              left: `${enginePercent}%`,
+              top: `${trackCenterYPx}px`,
+              width: `${playheadSizePx}px`,
+              height: `${playheadSizePx}px`,
+            }}
             title="Engine playhead"
           />
 
           <div
-            className={cn('absolute z-20 -translate-x-1/2 rounded-full border-2 border-background bg-red-500 shadow transition-all duration-300', compact ? 'bottom-0.5 h-4 w-4' : 'bottom-1 h-4 w-4')}
-            style={{ left: '100%' }}
+            className="absolute z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-red-500 shadow transition-all duration-300"
+            style={{
+              left: '100%',
+              top: `${trackCenterYPx}px`,
+              width: `${playheadSizePx}px`,
+              height: `${playheadSizePx}px`,
+            }}
             title="Live edge"
           />
 
@@ -188,21 +215,39 @@ function StreamTimelineGraphic({
               <div
                 key={`${index}-${cluster.percent}`}
                 className="absolute z-30 -translate-x-1/2 transition-all duration-300"
-                style={{ left: `${cluster.percent}%`, top: compact ? 2 : 4 }}
+                style={{ left: `${cluster.percent}%`, top: `${clientMarkerTopPx}px` }}
                 title={title}
               >
                 {cluster.clients.length > 1 ? (
-                  <div className={cn('flex h-5 min-w-5 items-center justify-center rounded-full border px-1 text-[10px] font-semibold shadow', tone.marker)}>
+                  <div
+                    className={cn('flex items-center justify-center rounded-full border px-1 text-[10px] font-semibold shadow', tone.marker)}
+                    style={{
+                      height: `${clientMarkerSizePx}px`,
+                      minWidth: `${clientMarkerSizePx}px`,
+                    }}
+                  >
                     +{cluster.clients.length}
                   </div>
                 ) : (
-                  <Avatar className="h-5 w-5 border border-border shadow">
+                  <Avatar
+                    className="border border-border shadow"
+                    style={{
+                      height: `${clientMarkerSizePx}px`,
+                      width: `${clientMarkerSizePx}px`,
+                    }}
+                  >
                     <AvatarFallback className={cn('text-[10px] font-semibold', tone.marker)}>
                       {getClientInitial(first.client)}
                     </AvatarFallback>
                   </Avatar>
                 )}
-                <div className={cn('mx-auto mt-1 w-px rounded-full transition-all duration-300', tone.line, compact ? 'h-4' : 'h-6')} />
+                <div
+                  className={cn('mx-auto w-px rounded-full transition-all duration-300', tone.line)}
+                  style={{
+                    marginTop: '0px',
+                    height: `${projectionHeightPx}px`,
+                  }}
+                />
               </div>
             )
           })}

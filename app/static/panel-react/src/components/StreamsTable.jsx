@@ -66,9 +66,11 @@ function mergeStreamSnapshot(baseStream, payload) {
   const next = { ...baseStream }
   const stats = Array.isArray(payload?.stats) ? payload.stats : []
   const latest = stats.length > 0 ? stats[stats.length - 1] : null
+  const normalizedStatus = String(payload?.status || '').trim().toLowerCase()
 
-  if (typeof payload?.status === 'string' && payload.status.trim()) {
-    next.status = payload.status
+  // Keep lifecycle state stable (started/ended); avoid replacing it with engine metric status strings.
+  if (normalizedStatus === 'started' || normalizedStatus === 'ended') {
+    next.status = normalizedStatus
   }
 
   if (latest && typeof latest === 'object') {
@@ -79,9 +81,6 @@ function mergeStreamSnapshot(baseStream, payload) {
     next.uploaded = latest.uploaded ?? next.uploaded
     if (latest.livepos && typeof latest.livepos === 'object') {
       next.livepos = latest.livepos
-    }
-    if (typeof latest.status === 'string' && latest.status.trim()) {
-      next.status = latest.status
     }
   }
 
@@ -143,6 +142,24 @@ function formatLagValue(value) {
   if (lag <= 0) return '0.0s'
   if (lag < 0.1) return `${Math.round(lag * 1000)}ms`
   return `${lag.toFixed(2)}s`
+}
+
+function isLikelyInfohash(value) {
+  return /^[a-f0-9]{40}$/i.test(String(value || '').trim())
+}
+
+function getStreamDisplayId(stream) {
+  const fromResolved = String(stream?.labels?.['stream.resolved_infohash'] || '').trim()
+  if (isLikelyInfohash(fromResolved)) return fromResolved
+
+  const fromKey = String(stream?.key || '').trim()
+  if (isLikelyInfohash(fromKey)) return fromKey
+
+  const rawId = String(stream?.id || '').trim()
+  const [firstSegment] = rawId.split('|')
+  if (isLikelyInfohash(firstSegment)) return firstSegment
+
+  return firstSegment || rawId || 'N/A'
 }
 
 function StreamStatusBadge({ isActive, isPaused, isPrebuffering, isDownloadStopped }) {
@@ -233,15 +250,16 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
   }, [localStream?.paused])
 
   useEffect(() => {
-    if (!isExpanded || !stream?.id) return undefined
+    if (!stream?.id || String(stream?.status || '').toLowerCase() !== 'started') return undefined
 
     let eventSource = null
     let reconnectTimer = null
     let closed = false
+    const streamId = stream.id
 
     const applySnapshot = (payload) => {
-      if (!payload || payload.stream_id !== stream.id) return
-      setLocalStream((prev) => mergeStreamSnapshot(prev || stream, payload))
+      if (!payload || payload.stream_id !== streamId) return
+      setLocalStream((prev) => mergeStreamSnapshot(prev, payload))
       if (Array.isArray(payload.clients)) {
         setClients(payload.clients)
         setClientsLoading(false)
@@ -249,7 +267,9 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
       if (payload.extended_stats) {
         setExtendedStats(payload.extended_stats)
       }
-      setDetailsLoading(false)
+      if (isExpanded) {
+        setDetailsLoading(false)
+      }
       setDetailsLive(true)
     }
 
@@ -261,9 +281,11 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
         return
       }
 
-      setDetailsLoading(true)
-      setClientsLoading(true)
-      eventSource = new EventSource(buildStreamDetailsSseUrl({ orchUrl, streamId: stream.id, apiKey }).toString())
+      if (isExpanded) {
+        setDetailsLoading(true)
+      }
+      setClientsLoading((prev) => prev || isExpanded)
+      eventSource = new EventSource(buildStreamDetailsSseUrl({ orchUrl, streamId, apiKey }).toString())
 
       const handleSse = (event) => {
         try {
@@ -271,31 +293,31 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
           const type = String(parsed?.type || event.type || '').trim()
           const payload = parsed?.payload || {}
 
-          if ((type === 'stream_details_snapshot' || !type) && payload?.stream_id === stream.id) {
+          if ((type === 'stream_details_snapshot' || !type) && payload?.stream_id === streamId) {
             applySnapshot(payload)
             return
           }
 
-          if (type === 'stream_metrics' && payload?.stream_id === stream.id) {
-            setLocalStream((prev) => mergeStreamSnapshot(prev || stream, payload))
+          if (type === 'stream_metrics' && payload?.stream_id === streamId) {
+            setLocalStream((prev) => mergeStreamSnapshot(prev, payload))
             return
           }
 
-          if ((type === 'client_connected' || type === 'client_update') && payload?.stream_id === stream.id) {
+          if ((type === 'client_connected' || type === 'client_update') && payload?.stream_id === streamId) {
             const nextClient = payload?.client || payload
             setClients((prev) => upsertClient(prev, nextClient))
             setClientsLoading(false)
             return
           }
 
-          if (type === 'client_disconnected' && payload?.stream_id === stream.id) {
+          if (type === 'client_disconnected' && payload?.stream_id === streamId) {
             setClients((prev) => removeClient(prev, payload))
             return
           }
 
           // Compatibility path for full-sync frames from global streams SSE.
           if (type === 'full_sync' && Array.isArray(payload?.streams)) {
-            const matchingStream = payload.streams.find((item) => item?.id === stream.id)
+            const matchingStream = payload.streams.find((item) => item?.id === streamId)
             if (matchingStream) {
               setLocalStream((prev) => ({ ...prev, ...matchingStream }))
             }
@@ -314,6 +336,9 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
       eventSource.onopen = () => setDetailsLive(true)
       eventSource.onerror = () => {
         setDetailsLive(false)
+        if (isExpanded) {
+          setDetailsLoading(true)
+        }
         if (eventSource) {
           eventSource.close()
           eventSource = null
@@ -335,7 +360,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
         eventSource.close()
       }
     }
-  }, [isExpanded, stream?.id, orchUrl, apiKey, stream])
+  }, [isExpanded, stream?.id, stream?.status, orchUrl, apiKey])
 
   const handlePauseResume = useCallback(async (shouldPause) => {
     if (!apiKey) {
@@ -439,7 +464,8 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
     }
   }, [apiKey, orchUrl, stream.id, savePath, saveIndex, resolvedInfohash])
 
-  const title = extendedStats?.title || localStream.id
+  const displayId = getStreamDisplayId(localStream)
+  const title = extendedStats?.title || displayId
 
   return (
     <Card className="overflow-hidden border-border/80 transition-all duration-300">
@@ -454,7 +480,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-base font-semibold truncate" title={title}>{title}</p>
-                <p className="text-xs text-muted-foreground font-mono truncate" title={localStream.id}>{localStream.id}</p>
+                <p className="text-xs text-muted-foreground font-mono truncate" title={displayId}>{displayId}</p>
               </div>
               <div className="flex items-center gap-2">
                 <StreamStatusBadge
