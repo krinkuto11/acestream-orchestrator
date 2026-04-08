@@ -1,11 +1,18 @@
-import React, { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 const SettingsFormContext = createContext(null)
 
 export function SettingsFormProvider({ children, authRequired = false, authChecked = false }) {
   const [sections, setSections] = useState({})
+  const pendingUnregistersRef = useRef(new Map())
 
   const registerSection = useCallback((sectionId, config) => {
+    const pending = pendingUnregistersRef.current.get(sectionId)
+    if (pending) {
+      clearTimeout(pending)
+      pendingUnregistersRef.current.delete(sectionId)
+    }
+
     setSections((prev) => {
       const previous = prev[sectionId] || {}
       return {
@@ -25,11 +32,29 @@ export function SettingsFormProvider({ children, authRequired = false, authCheck
   }, [])
 
   const unregisterSection = useCallback((sectionId) => {
-    setSections((prev) => {
-      const next = { ...prev }
-      delete next[sectionId]
-      return next
-    })
+    const pending = pendingUnregistersRef.current.get(sectionId)
+    if (pending) {
+      clearTimeout(pending)
+    }
+
+    const timer = setTimeout(() => {
+      pendingUnregistersRef.current.delete(sectionId)
+      setSections((prev) => {
+        if (!prev[sectionId]) return prev
+        const next = { ...prev }
+        delete next[sectionId]
+        return next
+      })
+    }, 0)
+
+    pendingUnregistersRef.current.set(sectionId, timer)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      pendingUnregistersRef.current.forEach((timer) => clearTimeout(timer))
+      pendingUnregistersRef.current.clear()
+    }
   }, [])
 
   const setSectionDirty = useCallback((sectionId, dirty) => {

@@ -247,7 +247,12 @@ function SettingsPageInner({
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={discardAll} disabled={globalSaving || savingAll}>
+            <Button
+              variant="outline"
+              className="text-slate-700 hover:text-slate-900 dark:text-slate-100 dark:hover:text-slate-50"
+              onClick={discardAll}
+              disabled={globalSaving || savingAll}
+            >
               <Undo2 className="mr-2 h-4 w-4" />
               Discard
             </Button>
