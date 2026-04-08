@@ -50,6 +50,7 @@ class StreamBuffer:
         # Track timers for proper cleanup
         self.stopping = False
         self.fill_timers = []
+        self.last_fetch_end_index = 0
         
         # REPLACED: gevent.event.Event with threading.Condition
         # Condition supports Wait/Notify semantics ideal for producer/consumer buffering
@@ -178,9 +179,9 @@ class StreamBuffer:
             if missing_chunks > 0:
                 logger.debug(f"[{request_id}] Missing {missing_chunks}/{len(results)} chunks in Redis")
             
-            # Update local tracking
-            if chunks:
-                self.index = end_id - 1
+            # Track the latest fetched range end so callers can advance
+            # client position even when some chunk IDs are missing.
+            self.last_fetch_end_index = max(0, end_id - 1)
             
             # Final log message
             chunk_sizes = [len(c) for c in chunks]

@@ -99,7 +99,7 @@ class StreamGenerator:
                         self.chunks_sent += 1
                     
                     # Update local index
-                    self.local_index += len(chunks)
+                    self._advance_local_index(len(chunks))
                     self.consecutive_empty = 0
                     self._update_chunk_rate_estimate(len(chunks))
                     self._maybe_update_client_position()
@@ -234,6 +234,19 @@ class StreamGenerator:
 
         alpha = 0.2
         self.chunk_rate_ema = (alpha * instant_rate) + ((1.0 - alpha) * float(self.chunk_rate_ema))
+
+    def _advance_local_index(self, chunks_received: int):
+        """Advance client position by fetched range when available.
+
+        Redis chunk TTL expirations can create sparse ranges (missing chunk IDs).
+        Advancing only by returned chunk count can pin local_index near the
+        initial baseline and make lag appear to increase forever.
+        """
+        fetched_end = getattr(self.buffer, "last_fetch_end_index", None)
+        if isinstance(fetched_end, int) and fetched_end >= self.local_index:
+            self.local_index = int(fetched_end)
+            return
+        self.local_index += int(max(0, chunks_received))
 
     def _maybe_update_client_position(self):
         """Publish client lag behind live edge with debounce to avoid Redis write storms."""
