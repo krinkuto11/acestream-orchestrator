@@ -69,6 +69,17 @@ function ChartTooltipContent({
           const key = item.dataKey || item.name || `value-${index}`
           const cfg = config[key] || config[item.name] || {}
           const entryLabel = cfg.label || item.name || item.dataKey
+          const indicatorColor = [
+            item.color,
+            item.stroke,
+            item.fill,
+            cfg.color,
+            `var(--color-${String(key)})`,
+            item.name ? `var(--color-${String(item.name)})` : null,
+          ].find((candidate) => {
+            const value = String(candidate || '').trim().toLowerCase()
+            return Boolean(value && value !== 'none' && value !== 'transparent')
+          }) || 'currentColor'
 
           let renderedValue = item.value
           if (formatter) {
@@ -83,7 +94,7 @@ function ChartTooltipContent({
               <div className="flex items-center gap-1.5 text-muted-foreground">
                 <span
                   className="inline-block h-2 w-2 rounded-full"
-                  style={{ backgroundColor: item.color || 'currentColor' }}
+                  style={{ backgroundColor: indicatorColor }}
                 />
                 <span>{entryLabel}</span>
               </div>

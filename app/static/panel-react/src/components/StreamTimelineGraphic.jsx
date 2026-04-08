@@ -130,26 +130,34 @@ function StreamTimelineGraphic({
     const nextLabels = {}
     const clientValues = {}
     let streamWindowMax = 0
+    let streamWindowFallbackFromRunway = 0
+    let hasExplicitStreamWindow = false
 
     ;(Array.isArray(clients) ? clients : []).forEach((client, index) => {
       const runway = toNumber(client?.client_runway_seconds ?? client?.buffer_seconds_behind)
       const streamWindow = toNumber(client?.stream_buffer_window_seconds)
 
       if (Number.isFinite(streamWindow)) {
+        hasExplicitStreamWindow = true
         streamWindowMax = Math.max(streamWindowMax, Math.max(0, streamWindow))
       }
 
       if (!Number.isFinite(runway)) return
+      streamWindowFallbackFromRunway = Math.max(streamWindowFallbackFromRunway, Math.max(0, runway))
       const key = getClientSeriesKey(client, index)
       clientValues[key] = Math.max(0, runway)
       nextLabels[key] = getClientLabel(client, index)
     })
 
+    const effectiveStreamWindow = hasExplicitStreamWindow
+      ? streamWindowMax
+      : streamWindowFallbackFromRunway
+
     const tick = {
       time: timestamp,
       liveEdge: 0,
       engineLag,
-      streamWindow: streamWindowMax,
+      streamWindow: effectiveStreamWindow,
       ...clientValues,
     }
 
