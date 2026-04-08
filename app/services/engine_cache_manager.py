@@ -29,15 +29,21 @@ class EngineCacheManager:
             "timestamp": 0
         }
 
+    @staticmethod
+    def _cache_mounts_configured(config) -> bool:
+        return bool(
+            config and (
+                getattr(config, "disk_cache_mount_enabled", False)
+                or getattr(config, "torrent_folder_mount_enabled", False)
+            )
+        )
+
     def is_enabled(self) -> bool:
         """Check if disk cache mounting is configured and enabled."""
-        from .custom_variant_config import get_config
-        custom_config = get_config()
-        if not custom_config or not custom_config.enabled:
-            return False
-            
-        return getattr(custom_config, 'disk_cache_mount_enabled', False) or \
-               getattr(custom_config, 'torrent_folder_mount_enabled', False)
+        from .engine_config import get_config
+
+        engine_config = get_config()
+        return self._cache_mounts_configured(engine_config)
 
     # Maximum length for container name suffix used in volume names
     _CONTAINER_NAME_TRUNCATE_LENGTH = 12
@@ -111,13 +117,14 @@ class EngineCacheManager:
         if not self.is_enabled():
             return None
         
-        from .custom_variant_config import get_config
-        custom_config = get_config()
+        from .engine_config import get_config
+
+        engine_config = get_config()
         
         parent_cache_dir = "/dev/shm/.ACEStream" # Default parent
         
-        if custom_config:
-            for param in custom_config.parameters:
+        if engine_config:
+            for param in engine_config.parameters:
                 if param.name == "--cache-dir" and param.enabled and param.value:
                     val = str(param.value)
                     if val.startswith("~"):
@@ -245,10 +252,11 @@ class EngineCacheManager:
                 await self.purge_orphaned_caches()
                 
                 # 2. Check for periodic purge if enabled
-                from .custom_variant_config import get_config
+                from .engine_config import get_config
+
                 config = get_config()
                 
-                if config and config.enabled and config.disk_cache_mount_enabled:
+                if self._cache_mounts_configured(config) and config.disk_cache_mount_enabled:
                     if config.disk_cache_prune_enabled:
                         # Periodic full purge of content
                         await self.purge_all_contents()
