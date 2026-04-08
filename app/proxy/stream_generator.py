@@ -281,10 +281,13 @@ class StreamGenerator:
             confidence = 0.75 if self.chunk_rate_ema else 0.55
 
             if normalized_source == "ts_starvation_decay":
-                # With no chunks sent, player's local buffer drains over time.
-                elapsed_since_chunk = max(0.0, now - float(self.last_chunk_sent_time or now))
-                seconds_behind = max(0.0, seconds_behind - elapsed_since_chunk)
-                confidence = 0.45
+                # Do not drain runway before first downstream chunk is emitted.
+                if self.chunks_sent > 0:
+                    elapsed_since_chunk = max(0.0, now - float(self.last_chunk_sent_time or now))
+                    seconds_behind = max(0.0, seconds_behind - elapsed_since_chunk)
+                    confidence = 0.45
+                else:
+                    confidence = 0.55
             elif normalized_source == "ts_startup":
                 confidence = 0.60
 
@@ -354,6 +357,9 @@ class StreamGenerator:
             self.local_index = max(0, int(start_index))
         else:
             self.local_index = self.buffer.index
+
+        # Starting playback after prebuffer should reset starvation drain anchor.
+        self.last_chunk_sent_time = time.time()
 
         # Publish an initial runway sample right after startup completes.
         self._maybe_update_client_position(force=True, source="ts_startup")

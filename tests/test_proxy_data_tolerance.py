@@ -303,6 +303,37 @@ def test_stream_generator_position_uses_observed_chunk_rate():
     assert lag_seconds == pytest.approx(5.0, abs=0.01)
 
 
+def test_stream_generator_starvation_decay_keeps_runway_before_first_chunk(monkeypatch):
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    stream_generator.buffer = Mock()
+    stream_generator.buffer.index = 40
+    stream_generator.local_index = 0
+    stream_generator.chunk_rate_ema = 2.0
+    stream_generator.chunks_sent = 0
+    stream_generator.last_chunk_sent_time = 1000.0
+    stream_generator.last_position_update_time = 0.0
+
+    stream_generator.client_manager = Mock()
+    stream_generator.client_manager.update_client_position = Mock()
+
+    monkeypatch.setattr("app.proxy.stream_generator.time.time", lambda: 1020.0)
+
+    stream_generator._maybe_update_client_position(force=True, source="ts_starvation_decay")
+
+    stream_generator.client_manager.update_client_position.assert_called_once()
+    _, lag_seconds = stream_generator.client_manager.update_client_position.call_args.args
+    assert lag_seconds == pytest.approx(20.0, abs=0.01)
+
+
 def test_stream_generator_advances_local_index_with_sparse_ranges():
     from app.proxy.stream_generator import StreamGenerator
 
