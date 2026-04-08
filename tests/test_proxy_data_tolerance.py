@@ -234,6 +234,75 @@ def test_stream_generator_waits_for_fresh_data_not_stale(monkeypatch):
     assert stream_generator._wait_for_initial_data(min_index=36) is True
 
 
+def test_stream_generator_prebuffer_uses_time_holdback(monkeypatch):
+    """Prebuffer should be time-based and not rely on fixed chunk-rate assumptions."""
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    class DummyBuffer:
+        def __init__(self):
+            self.index = 20
+
+    stream_generator.buffer = DummyBuffer()
+
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.proxy_prebuffer_seconds", lambda: 0.05)
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.initial_data_wait_timeout", lambda: 0.01)
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.initial_data_check_interval", lambda: 0.01)
+
+    now = {"value": 1000.0}
+    sleeps = {"count": 0}
+
+    def _time():
+        return now["value"]
+
+    def _sleep(interval):
+        sleeps["count"] += 1
+        now["value"] += interval
+        # Fresh data arrives early, but prebuffer should still wait for elapsed holdback.
+        if sleeps["count"] == 2:
+            stream_generator.buffer.index = 21
+
+    monkeypatch.setattr("app.proxy.stream_generator.time.time", _time)
+    monkeypatch.setattr("app.proxy.stream_generator.time.sleep", _sleep)
+
+    assert stream_generator._wait_for_initial_data(min_index=20) is True
+    assert sleeps["count"] >= 5
+
+
+def test_stream_generator_position_uses_observed_chunk_rate():
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    stream_generator.buffer = Mock()
+    stream_generator.buffer.index = 200
+    stream_generator.local_index = 100
+    stream_generator.chunk_rate_ema = 20.0
+    stream_generator.last_position_update_time = 0.0
+
+    stream_generator.client_manager = Mock()
+    stream_generator.client_manager.update_client_position = Mock()
+
+    stream_generator._maybe_update_client_position()
+
+    stream_generator.client_manager.update_client_position.assert_called_once()
+    _, lag_seconds = stream_generator.client_manager.update_client_position.call_args.args
+    assert lag_seconds == pytest.approx(5.0, abs=0.01)
+
+
 def test_stream_generator_initialization_fails_fast_on_preflight_rejection(monkeypatch):
     from app.proxy.stream_generator import StreamGenerator
 
