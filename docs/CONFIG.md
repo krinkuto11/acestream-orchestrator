@@ -106,7 +106,7 @@ A ready-to-use template with all variables is provided in [`.env.example`](../.e
 | `APP_PORT` | `8000` | Port the orchestrator API listens on inside the container. |
 | `DOCKER_NETWORK` | *(none)* | Docker network to attach engine containers to. |
 | `CONTAINER_LABEL` | `ondemand.app=myservice` | Docker label (`key=value`) applied to managed engine containers. |
-| `DB_URL` | `sqlite:///./orchestrator.db` | SQLAlchemy database URL. |
+| `DB_URL` | `sqlite:///.../app/config/orchestrator.db` | SQLAlchemy database URL. Default resolves to the repository `app/config/orchestrator.db` path (inside container: `/app/app/config/orchestrator.db`), so runtime settings persist on the mounted `./config` volume without extra compose configuration. |
 | `AUTO_DELETE` | `true` | Delete idle engines automatically when `IDLE_TTL_S` elapses. |
 | `M3U_TIMEOUT` | `15` | Seconds to wait when fetching an M3U playlist. |
 | `DEBUG_MODE` | `false` | **[UI]** Enable verbose debug logging. |

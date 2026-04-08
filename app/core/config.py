@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from pydantic import BaseModel, validator, field_validator, model_validator
 from dotenv import load_dotenv
 from ..proxy.constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mode
@@ -13,6 +14,9 @@ if "aarch64" in _machine or "arm64" in _machine:
     _default_variant = "AceServe-arm64"
 elif "arm" in _machine:
     _default_variant = "AceServe-arm32"
+
+_default_db_path = (Path(__file__).resolve().parent.parent / "config" / "orchestrator.db").as_posix()
+_default_db_url = f"sqlite:///{_default_db_path}"
 
 class Cfg(BaseModel):
     APP_PORT: int = int(os.getenv("APP_PORT", 8000))
@@ -93,7 +97,7 @@ class Cfg(BaseModel):
     M3U_TIMEOUT: float = float(os.getenv("M3U_TIMEOUT", "15"))
 
     API_KEY: str | None = os.getenv("API_KEY")
-    DB_URL: str = os.getenv("DB_URL", "sqlite:///./orchestrator.db")
+    DB_URL: str = os.getenv("DB_URL", _default_db_url)
     AUTO_DELETE: bool = True
     DEBUG_MODE: bool = False
     # Stream loop detection configuration

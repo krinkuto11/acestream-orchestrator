@@ -4915,11 +4915,11 @@ def update_proxy_config(
         f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
         f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
         f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
-        f"proxy_prebuffer_seconds={ConfigHelper.proxy_prebuffer_seconds()}, "
+        f"proxy_prebuffer_seconds={int(ProxyConfig.PROXY_PREBUFFER_SECONDS)}, "
         f"max_streams_per_engine={cfg.MAX_STREAMS_PER_ENGINE}, "
         f"stream_mode={ProxyConfig.STREAM_MODE}, "
         f"control_mode={_resolve_control_mode(ProxyConfig.CONTROL_MODE)}, "
-        f"legacy_api_preflight_tier={ConfigHelper.legacy_api_preflight_tier()}, "
+        f"legacy_api_preflight_tier={str(ProxyConfig.LEGACY_API_PREFLIGHT_TIER).strip().lower()}, "
         f"ace_live_edge_delay={cfg.ACE_LIVE_EDGE_DELAY}"
     )
     
@@ -4933,11 +4933,11 @@ def update_proxy_config(
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-        "proxy_prebuffer_seconds": ConfigHelper.proxy_prebuffer_seconds(),
+        "proxy_prebuffer_seconds": int(ProxyConfig.PROXY_PREBUFFER_SECONDS),
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
-        "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
+        "legacy_api_preflight_tier": str(ProxyConfig.LEGACY_API_PREFLIGHT_TIER).strip().lower(),
         "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
@@ -4961,11 +4961,11 @@ def update_proxy_config(
         "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
         "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
         "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-        "proxy_prebuffer_seconds": ConfigHelper.proxy_prebuffer_seconds(),
+        "proxy_prebuffer_seconds": int(ProxyConfig.PROXY_PREBUFFER_SECONDS),
         "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
         "stream_mode": ProxyConfig.STREAM_MODE,
         "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
-        "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
+        "legacy_api_preflight_tier": str(ProxyConfig.LEGACY_API_PREFLIGHT_TIER).strip().lower(),
         "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
