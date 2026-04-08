@@ -284,7 +284,6 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
       if (isExpanded) {
         setDetailsLoading(true)
       }
-      setClientsLoading((prev) => prev || isExpanded)
       eventSource = new EventSource(buildStreamDetailsSseUrl({ orchUrl, streamId, apiKey }).toString())
 
       const handleSse = (event) => {
@@ -466,6 +465,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
 
   const displayId = getStreamDisplayId(localStream)
   const title = extendedStats?.title || displayId
+  const showDisplayIdSubtitle = Boolean(extendedStats?.title)
 
   return (
     <Card className="overflow-hidden border-border/80 transition-all duration-300">
@@ -480,7 +480,9 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-base font-semibold truncate" title={title}>{title}</p>
-                <p className="text-xs text-muted-foreground font-mono truncate" title={displayId}>{displayId}</p>
+                {showDisplayIdSubtitle && (
+                  <p className="text-xs text-muted-foreground font-mono truncate" title={displayId}>{displayId}</p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <StreamStatusBadge
@@ -508,7 +510,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
               {tile('Peers', isActive ? (localStream.peers ?? 'N/A') : '—', <Users className="h-3 w-3" />)}
             </div>
 
-            {isActive && (
+            {isActive && !isExpanded && (
               <StreamTimelineGraphic livepos={localStream.livepos} clients={clients} isLive={streamIsLive} compact />
             )}
           </div>
