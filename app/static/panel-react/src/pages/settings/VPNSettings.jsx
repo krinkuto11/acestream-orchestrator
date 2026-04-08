@@ -86,6 +86,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const [loading, setLoading] = useState(true)
   const [initialState, setInitialState] = useState(DEFAULTS)
   const [draft, setDraft] = useState(DEFAULTS)
+  const [initialCredentials, setInitialCredentials] = useState([])
   const [credentials, setCredentials] = useState([])
   const [leaseSummary, setLeaseSummary] = useState(null)
   const [error, setError] = useState('')
@@ -94,7 +95,6 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [expertOpen, setExpertOpen] = useState(false)
   const [dialogLoading, setDialogLoading] = useState(false)
-  const [vpnToggleLoading, setVpnToggleLoading] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
 
   // Per-Credential Settings
@@ -106,12 +106,15 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const [openvpnUser, setOpenvpnUser] = useState('')
   const [openvpnPassword, setOpenvpnPassword] = useState('')
 
-  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(initialState), [draft, initialState])
+  const dirty = useMemo(() => {
+    return JSON.stringify(draft) !== JSON.stringify(initialState)
+      || JSON.stringify(credentials) !== JSON.stringify(initialCredentials)
+  }, [draft, initialState, credentials, initialCredentials])
 
   const sheetProviderNormalized = useMemo(() => normalizeProvider(credentialProvider), [credentialProvider])
   const sheetProviderSupportsForwarding = useMemo(() => isForwardingSupported(sheetProviderNormalized), [sheetProviderNormalized])
   const hasCredentials = credentials.length > 0
-  const vpnToggleDisabled = vpnToggleLoading || (!hasCredentials && !draft.enabled)
+  const vpnToggleDisabled = !hasCredentials && !draft.enabled
   
   const leasesByCredentialId = useMemo(() => {
     const byCredentialId = new Map()
@@ -168,7 +171,9 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
       setInitialState(normalized)
       setDraft(normalized)
-      setCredentials(Array.isArray(payload?.credentials) ? payload.credentials : [])
+      const loadedCredentials = Array.isArray(payload?.credentials) ? payload.credentials : []
+      setInitialCredentials(loadedCredentials)
+      setCredentials(loadedCredentials)
       setSectionDirty(sectionId, false)
       await fetchLeases()
     } catch (fetchError) {
@@ -210,6 +215,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           provider: draft.provider, // preserving backend schema
           regions: parseRegionsInput(draft.regionsText), // preserving backend schema
           credentials,
+          trigger_migration: Boolean(draft.enabled) !== Boolean(initialState.enabled),
         }
 
         const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
@@ -223,9 +229,17 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           throw new Error(failure?.detail || `HTTP ${response.status}`)
         }
 
+        const result = await response.json().catch(() => null)
         setInitialState({ ...draft })
+        setInitialCredentials([...credentials])
         setSectionDirty(sectionId, false)
-        setMessage('VPN settings saved')
+        const marked = Math.max(0, Number(result?.migration_marked_engines || 0))
+        if (Boolean(draft.enabled) !== Boolean(initialState.enabled)) {
+          const targetText = draft.enabled ? 'VPN-backed engines' : 'normal internet engines'
+          setMessage(`VPN settings saved; marked ${marked} engine(s) for migration to ${targetText}`)
+        } else {
+          setMessage('VPN settings saved')
+        }
         await fetchLeases()
       } finally {
         setSectionSaving(sectionId, false)
@@ -234,6 +248,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
     const discard = () => {
       setDraft(initialState)
+      setCredentials(initialCredentials)
       setSectionDirty(sectionId, false)
       setError('')
       setMessage('')
@@ -270,73 +285,17 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     setMessage('')
   }
 
-  const applyVpnEnabled = async (value) => {
+  const queueVpnEnabled = (value) => {
     const enabled = Boolean(value)
-    const vpnStateChanged = enabled !== Boolean(initialState.enabled)
-    const shouldTriggerMigration = Boolean(vpnStateChanged)
 
     if (enabled && !hasCredentials) {
       setError('Add at least one VPN credential before enabling VPN routing')
       return
     }
 
-    if (authRequired && !String(apiKey || '').trim()) {
-      setError('API key required by server to toggle VPN routing')
-      return
-    }
-
-    setVpnToggleLoading(true)
+    setDraft((prev) => ({ ...prev, enabled }))
     setError('')
-    setMessage('')
-
-    try {
-      const headers = { 'Content-Type': 'application/json' }
-      if (String(apiKey || '').trim()) {
-        headers.Authorization = `Bearer ${String(apiKey).trim()}`
-      }
-
-      const payload = {
-        enabled,
-        api_port: toNumber(draft.api_port, DEFAULTS.api_port),
-        health_check_interval_s: toNumber(draft.health_check_interval_s, DEFAULTS.health_check_interval_s),
-        port_cache_ttl_s: toNumber(draft.port_cache_ttl_s, DEFAULTS.port_cache_ttl_s),
-        restart_engines_on_reconnect: Boolean(draft.restart_engines_on_reconnect),
-        unhealthy_restart_timeout_s: toNumber(draft.unhealthy_restart_timeout_s, DEFAULTS.unhealthy_restart_timeout_s),
-        preferred_engines_per_vpn: Math.max(1, toNumber(draft.preferred_engines_per_vpn, DEFAULTS.preferred_engines_per_vpn)),
-        protocol: draft.protocol,
-        provider: draft.provider,
-        regions: parseRegionsInput(draft.regionsText),
-        credentials,
-        trigger_migration: shouldTriggerMigration,
-      }
-
-      const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-      })
-
-      const result = await response.json().catch(() => null)
-
-      if (!response.ok) {
-        throw new Error(result?.detail || `HTTP ${response.status}`)
-      }
-
-      setDraft((prev) => ({ ...prev, enabled }))
-      setInitialState((prev) => ({ ...prev, enabled }))
-
-      const marked = Math.max(0, Number(result?.migration_marked_engines || 0))
-      if (shouldTriggerMigration) {
-        const targetText = enabled ? 'VPN-backed engines' : 'normal internet engines'
-        setMessage(`VPN routing ${enabled ? 'enabled' : 'disabled'} and applied immediately; marked ${marked} engine(s) as draining for migration to ${targetText}`)
-      } else {
-        setMessage(`VPN routing ${enabled ? 'enabled' : 'disabled'} and applied immediately`)
-      }
-    } catch (toggleError) {
-      setError(`Failed to toggle VPN routing: ${toggleError.message || String(toggleError)}`)
-    } finally {
-      setVpnToggleLoading(false)
-    }
+    setMessage(`VPN routing ${enabled ? 'enabled' : 'disabled'} queued; save changes to apply`)
   }
 
   const handleDragOver = (e) => {
@@ -362,11 +321,6 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   }
 
   const addCredential = async () => {
-    if (authRequired && !String(apiKey || '').trim()) {
-      setError('API key required by server to add VPN credentials')
-      return
-    }
-
     setDialogLoading(true)
     setError('')
     setMessage('')
@@ -418,28 +372,14 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         }
       }
 
-      const headers = { 'Content-Type': 'application/json' }
-      if (String(apiKey || '').trim()) {
-        headers.Authorization = `Bearer ${String(apiKey).trim()}`
-      }
-
-      const response = await fetch(`${orchUrl}/api/v1/settings/vpn/credentials`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-      })
-
-      const result = await response.json().catch(() => null)
-      if (!response.ok) {
-        throw new Error(result?.detail || `HTTP ${response.status}`)
-      }
-
-      setMessage('Credential added and saved immediately')
+      const credentialId = String(payload?.id || `cred-draft-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+      setCredentials((prev) => [...prev, { ...payload, id: credentialId }])
+      setMessage('Credential added to draft; save changes to apply')
       setDialogOpen(false)
       setWgText('')
       setOpenvpnUser('')
       setOpenvpnPassword('')
-      await fetchConfig()
+      setCredentialRegions('')
     } catch (addError) {
       setError(`Failed to add credential: ${addError.message || String(addError)}`)
     } finally {
@@ -447,32 +387,10 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     }
   }
 
-  const removeCredential = async (credentialId) => {
-    if (authRequired && !String(apiKey || '').trim()) {
-      setError('API key required by server to remove VPN credentials')
-      return
-    }
-
-    try {
-      const headers = {}
-      if (String(apiKey || '').trim()) {
-        headers.Authorization = `Bearer ${String(apiKey).trim()}`
-      }
-
-      const response = await fetch(`${orchUrl}/api/v1/settings/vpn/credentials/${encodeURIComponent(String(credentialId))}`, {
-        method: 'DELETE',
-        headers,
-      })
-      const payload = await response.json().catch(() => null)
-      if (!response.ok) {
-        throw new Error(payload?.detail || `HTTP ${response.status}`)
-      }
-
-      setMessage('Credential removed and saved immediately')
-      await fetchConfig()
-    } catch (removeError) {
-      setError(`Failed to remove credential: ${removeError.message || String(removeError)}`)
-    }
+  const removeCredential = (credentialId) => {
+    setCredentials((prev) => prev.filter((c) => String(c?.id || '') !== String(credentialId || '')))
+    setError('')
+    setMessage('Credential removal queued; save changes to apply')
   }
 
   if (loading) {
@@ -509,7 +427,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
             <Switch
               checked={Boolean(draft.enabled)}
               disabled={vpnToggleDisabled}
-              onCheckedChange={applyVpnEnabled}
+              onCheckedChange={queueVpnEnabled}
             />
           </SettingRow>
 
@@ -560,7 +478,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
             <div>
               <CardTitle>Credential Pool</CardTitle>
               <CardDescription>
-                Operational credentials apply immediately and bypass global settings save state.
+                Credential changes are part of the VPN draft and are applied only when you save.
               </CardDescription>
             </div>
             <Button type="button" onClick={() => setDialogOpen(true)}>
@@ -655,7 +573,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           <SheetHeader className="mb-6">
             <SheetTitle>Add VPN Credential</SheetTitle>
             <SheetDescription>
-              Credential operations are committed immediately to backend storage.
+              Credential changes stay local until you save settings.
             </SheetDescription>
           </SheetHeader>
 
