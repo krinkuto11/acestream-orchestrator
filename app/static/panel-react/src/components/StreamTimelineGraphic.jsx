@@ -256,23 +256,6 @@ function StreamTimelineGraphic({
     return config
   }, [model?.clientKeys, clientLabels])
 
-  if (!hydrated) {
-    return (
-      <div className={cn('rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground animate-pulse', className)}>
-        Loading historical timeline...
-      </div>
-    )
-  }
-
-  if (!model || !model.chartData.length) {
-    return (
-      <div className={cn('rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground', className)}>
-        Waiting for stream history...
-      </div>
-    )
-  }
-
-  const { chartData, clientKeys, yMax } = model
   const normalizedEventMarkers = useMemo(() => {
     if (!Array.isArray(eventMarkers) || eventMarkers.length === 0) {
       return []
@@ -292,6 +275,24 @@ function StreamTimelineGraphic({
       .filter(Boolean)
       .slice(-24)
   }, [eventMarkers])
+
+  if (!hydrated) {
+    return (
+      <div className={cn('rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground animate-pulse', className)}>
+        Loading historical timeline...
+      </div>
+    )
+  }
+
+  if (!model || !model.chartData.length) {
+    return (
+      <div className={cn('rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground', className)}>
+        Waiting for stream history...
+      </div>
+    )
+  }
+
+  const { chartData, clientKeys, yMax } = model
 
   return (
     <div className={cn('space-y-2', className)}>
