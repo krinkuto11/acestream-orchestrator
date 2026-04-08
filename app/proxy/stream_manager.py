@@ -602,6 +602,19 @@ class StreamManager:
         Runs in a background daemon thread to avoid blocking stream initialization.
         The stream_id is set to a temporary value immediately so the proxy can proceed.
         """
+        stable_stream_id = str(getattr(self, "stream_id", "") or "").strip()
+        if (
+            stable_stream_id
+            and not self._ended_event_sent
+            and not stable_stream_id.startswith(("temp-", "error-", "fallback-ts-"))
+        ):
+            logger.debug(
+                "Skipping duplicate stream started event for content_id=%s stream_id=%s",
+                self.content_id,
+                stable_stream_id,
+            )
+            return
+
         def _send_event():
             try:
                 # Import here to avoid circular dependencies

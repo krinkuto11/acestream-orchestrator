@@ -284,6 +284,7 @@ class State:
         engine_became_idle = False
         container_id_for_cleanup = None
         stream_id_for_metrics = None
+        ended_stream_payloads: List[Dict[str, object]] = []
         
         with self._lock:
             st: Optional[StreamState] = None
@@ -294,38 +295,57 @@ class State:
                     if s.container_id == (evt.container_id or s.container_id) and s.ended_at is None:
                         st = s; break
             if not st: return None
-            st.ended_at = self.now(); st.status = "ended"
             stream_id_for_metrics = st.id
-            
-            # Remove the stream from the engine's streams list
-            eng = self.engines.get(st.container_id)
-            if eng and st.id in eng.streams:
-                eng.streams.remove(st.id)
-                # Check if engine has no more active streams
-                if len(eng.streams) == 0:
-                    engine_became_idle = True
-                    container_id_for_cleanup = st.container_id
-            
-            # Immediately remove the stream from memory (from both streams dict and stats dict)
-            # This ensures ended streams don't appear in the /streams endpoint
-            # The database record is preserved below for historical tracking
-            if st.id in self.streams:
-                del self.streams[st.id]
-            if st.id in self.stream_stats:
-                del self.stream_stats[st.id]
+
+            # End the primary stream plus any duplicate active rows for the same
+            # content key created by reconnect/hot-swap start-event churn.
+            target_key = str(st.key or "")
+            target_ids = [st.id]
+            for candidate_id, candidate in list(self.streams.items()):
+                if candidate_id == st.id:
+                    continue
+                if candidate.ended_at is not None:
+                    continue
+                if str(candidate.key or "") != target_key:
+                    continue
+                target_ids.append(candidate_id)
+
+            for target_id in target_ids:
+                target_stream = self.streams.get(target_id)
+                if not target_stream:
+                    continue
+
+                target_stream.ended_at = self.now()
+                target_stream.status = "ended"
+                ended_stream_payloads.append(
+                    {
+                        "id": target_stream.id,
+                        "ended_at": target_stream.ended_at,
+                        "status": target_stream.status,
+                    }
+                )
+
+                # Remove the stream from the owning engine's stream list.
+                eng = self.engines.get(target_stream.container_id)
+                if eng and target_stream.id in eng.streams:
+                    eng.streams.remove(target_stream.id)
+                    if len(eng.streams) == 0:
+                        engine_became_idle = True
+                        container_id_for_cleanup = target_stream.container_id
+
+                # Immediately remove stream/session rows from in-memory API state.
+                self.streams.pop(target_stream.id, None)
+                self.stream_stats.pop(target_stream.id, None)
                 
-        if st:
-            stream_end_payload = {
-                "id": st.id,
-                "ended_at": st.ended_at,
-                "status": st.status,
-            }
+        if ended_stream_payloads:
+            payloads_for_db = [dict(item) for item in ended_stream_payloads]
 
             def db_work(session):
-                row = session.get(StreamRow, stream_end_payload["id"])
-                if row:
-                    row.ended_at = stream_end_payload["ended_at"]
-                    row.status = str(stream_end_payload["status"])
+                for payload in payloads_for_db:
+                    row = session.get(StreamRow, str(payload["id"]))
+                    if row:
+                        row.ended_at = payload["ended_at"]
+                        row.status = str(payload["status"])
 
             self._enqueue_db_task(db_work)
         

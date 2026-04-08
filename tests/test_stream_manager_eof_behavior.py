@@ -333,6 +333,25 @@ def test_send_stream_ended_event_idempotent_for_same_stream(monkeypatch):
     assert calls["count"] == 1
 
 
+def test_send_stream_started_event_skips_duplicate_when_stream_id_is_stable(monkeypatch):
+    manager = _build_manager()
+    manager.stream_id = "stable-stream-id"
+    manager._ended_event_sent = False
+
+    calls = {"count": 0}
+
+    def _fake_handle_stream_started(_event):
+        calls["count"] += 1
+        return None
+
+    monkeypatch.setattr("app.services.internal_events.handle_stream_started", _fake_handle_stream_started)
+
+    manager._send_stream_started_event()
+
+    assert calls["count"] == 0
+    assert manager.stream_id == "stable-stream-id"
+
+
 def test_preflight_failure_aborts_without_retry(monkeypatch):
     manager = _build_manager()
 
