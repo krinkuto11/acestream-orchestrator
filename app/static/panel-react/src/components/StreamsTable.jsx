@@ -332,10 +332,6 @@ function ClientSession({ client }) {
   const runway = toNumber(client?.client_runway_seconds ?? client?.buffer_seconds_behind)
   const streamWindow = toNumber(client?.stream_buffer_window_seconds)
 
-  const runwayClass = Number.isFinite(runway) && runway > 5
-    ? 'bg-amber-500 text-white border-transparent'
-    : 'bg-emerald-500 text-white border-transparent'
-
   return (
     <div className="rounded-lg border bg-muted/20 p-3">
       <div className="flex items-start gap-3">
@@ -349,7 +345,7 @@ function ClientSession({ client }) {
             <p className="text-sm font-medium truncate" title={client.ip_address || client.client_id}>
               {client.ip_address || client.client_id || 'Unknown client'}
             </p>
-            <Badge className={`text-[10px] ${runwayClass}`}>
+            <Badge variant="outline" className="text-[10px]">
               Runway {formatLagValue(runway)}
             </Badge>
             {Number.isFinite(streamWindow) && streamWindow > 0 ? (
@@ -672,11 +668,6 @@ function StreamCard({
                 {isPendingFailover && (
                   <Badge className="bg-amber-500 text-white hover:bg-amber-600 border-transparent">FAILOVERING</Badge>
                 )}
-                {isExpanded && (
-                  <Badge variant={detailsLive ? 'success' : 'secondary'} className="hidden md:inline-flex">
-                    {detailsLive ? 'Live updates' : 'Reconnecting'}
-                  </Badge>
-                )}
                 <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => setIsExpanded((v) => !v)}>
                   {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                 </Button>
@@ -756,31 +747,6 @@ function StreamCard({
 
           <div className="sticky bottom-0 z-10 rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/75 space-y-2">
             <div className="flex flex-wrap gap-2">
-              {isApiMode ? (
-                <>
-                  <Button
-                    variant="outline"
-                    disabled={controlLoading || !apiKey}
-                    onClick={() => handlePauseResume(!isPaused)}
-                    className="flex items-center gap-2"
-                  >
-                    {isPaused ? <PlayCircle className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-                    {isPaused ? 'Resume' : 'Pause'}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={controlLoading || !apiKey}
-                    onClick={() => setSaveDialogOpen(true)}
-                    className="flex items-center gap-2"
-                  >
-                    <Save className="h-4 w-4" />
-                    Save
-                  </Button>
-                </>
-              ) : (
-                <Badge variant="outline">Pause/Save require API mode</Badge>
-              )}
-
               <Button
                 variant="destructive"
                 onClick={() => onStopStream(stream.id, stream.container_id)}
@@ -789,68 +755,12 @@ function StreamCard({
                 <StopCircle className="h-4 w-4" />
                 Stop Stream
               </Button>
-              <Button
-                variant="outline"
-                onClick={() => onDeleteEngine(stream.container_id)}
-                className="flex items-center gap-2 text-destructive hover:text-destructive"
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete Engine
-              </Button>
-              {isActive && !controlLoading && (
-                <Badge variant="outline" className="flex items-center gap-1">
-                  {isPaused ? <Pause className="h-3 w-3" /> : <Activity className="h-3 w-3" />}
-                  {isPaused ? 'Paused' : 'Running'}
-                </Badge>
-              )}
             </div>
 
             {detailsLoading && <p className="text-xs text-muted-foreground">Waiting for realtime stream snapshot...</p>}
             {controlLoading && <p className="text-xs text-muted-foreground">Sending control command...</p>}
             {controlMessage && <p className="text-xs text-emerald-600 dark:text-emerald-400">{controlMessage}</p>}
             {controlError && <p className="text-xs text-destructive">{controlError}</p>}
-
-            <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Save Stream File</DialogTitle>
-                  <DialogDescription>
-                    Issue SAVE for this stream to store a file on disk from the active AceStream session.
-                  </DialogDescription>
-                </DialogHeader>
-
-                <div className="space-y-3">
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">Destination path</p>
-                    <Input
-                      value={savePath}
-                      onChange={(event) => setSavePath(event.target.value)}
-                      placeholder="/downloads"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">File index</p>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={saveIndex}
-                      onChange={(event) => setSaveIndex(event.target.value)}
-                      placeholder="0"
-                    />
-                  </div>
-                </div>
-
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button onClick={handleSaveStream} disabled={controlLoading}>
-                    Save Now
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
           </div>
         </CardContent>
       )}
