@@ -345,7 +345,7 @@ function StreamTimelineGraphic({
               type="monotone"
               dataKey="engineBand"
               stroke="none"
-              fill="var(--color-engineLag)"
+              fill={chartConfig.engineLag?.color || 'hsl(var(--chart-1, 221 83% 53%))'}
               fillOpacity={0.14}
               connectNulls={false}
               isAnimationActive={false}
@@ -353,11 +353,19 @@ function StreamTimelineGraphic({
               activeDot={false}
             />
 
+            <ReferenceLine
+              y={0}
+              stroke={chartConfig.liveEdge?.color || 'hsl(var(--chart-3, 32 95% 44%))'}
+              strokeWidth={1.4}
+              strokeOpacity={0.9}
+              ifOverflow="extendDomain"
+            />
+
             <Line
               type="linear"
               dataKey="liveEdge"
               name="liveEdge"
-              stroke="var(--color-liveEdge)"
+              stroke={chartConfig.liveEdge?.color || 'hsl(var(--chart-3, 32 95% 44%))'}
               strokeWidth={1.8}
               connectNulls
               isAnimationActive={false}
@@ -369,7 +377,7 @@ function StreamTimelineGraphic({
               type="monotone"
               dataKey="engineLag"
               name="engineLag"
-              stroke="var(--color-engineLag)"
+              stroke={chartConfig.engineLag?.color || 'hsl(var(--chart-1, 221 83% 53%))'}
               strokeWidth={2}
               connectNulls={false}
               isAnimationActive={false}
