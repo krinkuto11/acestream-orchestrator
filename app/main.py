@@ -255,6 +255,17 @@ def _init_proxy_server():
 async def lifespan(app: FastAPI):
     # Startup - Ensure clean start (dry run)
     Base.metadata.create_all(bind=engine)
+
+    from .services.config_migrator import migrate_legacy_json_configs
+    from .services.settings_persistence import SettingsPersistence
+
+    migration_result = migrate_legacy_json_configs()
+    SettingsPersistence.initialize_cache(force_reload=True)
+    if migration_result.get("renamed_files"):
+        logger.info("Legacy settings migrated to DB and renamed: %s", migration_result.get("renamed_files"))
+    elif migration_result.get("seeded_defaults"):
+        logger.info("Runtime settings DB seeded with defaults (no legacy JSON files found)")
+
     cleanup_on_shutdown()  # Clean any existing state and containers after DB is ready
     
     # Load global engine customization early to ensure provisioning uses persisted values.
@@ -273,7 +284,6 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to load global engine config during startup: {e}")
     
     # Load persisted settings (Proxy and Loop Detection)
-    from .services.settings_persistence import SettingsPersistence
     from .proxy.config_helper import Config as ProxyConfig
     
     _loaded_live_edge_from_proxy = False
@@ -5433,6 +5443,166 @@ class VPNCredentialUpsert(BaseModel):
     wireguard_endpoints: Optional[str] = None
     source: Optional[str] = None
     port_forwarding: Optional[bool] = True
+
+
+class SettingsBundleUpdate(BaseModel):
+    engine_config: Optional[Dict[str, Any]] = None
+    engine_settings: Optional[Dict[str, Any]] = None
+    orchestrator_settings: Optional[Dict[str, Any]] = None
+    proxy_settings: Optional[Dict[str, Any]] = None
+    vpn_settings: Optional[Dict[str, Any]] = None
+
+
+@app.get("/settings")
+def get_settings_bundle():
+    """Return the consolidated DB-backed runtime settings payload."""
+    from .services.settings_persistence import SettingsPersistence
+
+    return SettingsPersistence.load_all_settings()
+
+
+@app.post("/settings", dependencies=[Depends(require_api_key)])
+def update_settings_bundle(payload: SettingsBundleUpdate):
+    """Patch one or more settings categories in a single call."""
+    from .services.settings_persistence import SettingsPersistence
+    from .proxy.config_helper import Config as ProxyConfig
+
+    updates = payload.model_dump(exclude_none=True)
+    applied: Dict[str, bool] = {}
+
+    if "engine_config" in updates:
+        applied["engine_config"] = bool(SettingsPersistence.save_engine_config(updates["engine_config"]))
+    if "engine_settings" in updates:
+        applied["engine_settings"] = bool(SettingsPersistence.save_engine_settings(updates["engine_settings"]))
+    if "orchestrator_settings" in updates:
+        applied["orchestrator_settings"] = bool(SettingsPersistence.save_orchestrator_config(updates["orchestrator_settings"]))
+    if "proxy_settings" in updates:
+        applied["proxy_settings"] = bool(SettingsPersistence.save_proxy_config(updates["proxy_settings"]))
+    if "vpn_settings" in updates:
+        applied["vpn_settings"] = bool(SettingsPersistence.save_vpn_config(updates["vpn_settings"]))
+
+    if any(not ok for ok in applied.values()):
+        raise HTTPException(status_code=500, detail={"message": "failed to persist one or more settings groups", "applied": applied})
+
+    if "engine_settings" in updates:
+        engine_settings = SettingsPersistence.load_engine_settings() or {}
+        if "min_replicas" in engine_settings:
+            cfg.MIN_REPLICAS = int(engine_settings["min_replicas"])
+        if "max_replicas" in engine_settings:
+            cfg.MAX_REPLICAS = int(engine_settings["max_replicas"])
+        if "auto_delete" in engine_settings:
+            cfg.AUTO_DELETE = bool(engine_settings["auto_delete"])
+
+    if "orchestrator_settings" in updates:
+        orchestrator_settings = SettingsPersistence.load_orchestrator_config() or {}
+        _orch_field_map = {
+            'monitor_interval_s': 'MONITOR_INTERVAL_S',
+            'engine_grace_period_s': 'ENGINE_GRACE_PERIOD_S',
+            'autoscale_interval_s': 'AUTOSCALE_INTERVAL_S',
+            'startup_timeout_s': 'STARTUP_TIMEOUT_S',
+            'idle_ttl_s': 'IDLE_TTL_S',
+            'collect_interval_s': 'COLLECT_INTERVAL_S',
+            'stats_history_max': 'STATS_HISTORY_MAX',
+            'health_check_interval_s': 'HEALTH_CHECK_INTERVAL_S',
+            'health_failure_threshold': 'HEALTH_FAILURE_THRESHOLD',
+            'health_unhealthy_grace_period_s': 'HEALTH_UNHEALTHY_GRACE_PERIOD_S',
+            'health_replacement_cooldown_s': 'HEALTH_REPLACEMENT_COOLDOWN_S',
+            'circuit_breaker_failure_threshold': 'CIRCUIT_BREAKER_FAILURE_THRESHOLD',
+            'circuit_breaker_recovery_timeout_s': 'CIRCUIT_BREAKER_RECOVERY_TIMEOUT_S',
+            'circuit_breaker_replacement_threshold': 'CIRCUIT_BREAKER_REPLACEMENT_THRESHOLD',
+            'circuit_breaker_replacement_timeout_s': 'CIRCUIT_BREAKER_REPLACEMENT_TIMEOUT_S',
+            'max_concurrent_provisions': 'MAX_CONCURRENT_PROVISIONS',
+            'min_provision_interval_s': 'MIN_PROVISION_INTERVAL_S',
+            'port_range_host': 'PORT_RANGE_HOST',
+            'ace_http_range': 'ACE_HTTP_RANGE',
+            'ace_https_range': 'ACE_HTTPS_RANGE',
+            'debug_mode': 'DEBUG_MODE',
+        }
+        for _json_key, _cfg_attr in _orch_field_map.items():
+            if _json_key in orchestrator_settings:
+                _value = orchestrator_settings[_json_key]
+                if _json_key == 'collect_interval_s':
+                    _value = 1
+                setattr(cfg, _cfg_attr, _value)
+
+    if "proxy_settings" in updates:
+        proxy_settings = SettingsPersistence.load_proxy_config() or {}
+        if 'initial_data_wait_timeout' in proxy_settings:
+            ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT = proxy_settings['initial_data_wait_timeout']
+        if 'initial_data_check_interval' in proxy_settings:
+            ProxyConfig.INITIAL_DATA_CHECK_INTERVAL = proxy_settings['initial_data_check_interval']
+        if 'no_data_timeout_checks' in proxy_settings:
+            ProxyConfig.NO_DATA_TIMEOUT_CHECKS = proxy_settings['no_data_timeout_checks']
+        if 'no_data_check_interval' in proxy_settings:
+            ProxyConfig.NO_DATA_CHECK_INTERVAL = proxy_settings['no_data_check_interval']
+        if 'connection_timeout' in proxy_settings:
+            ProxyConfig.CONNECTION_TIMEOUT = proxy_settings['connection_timeout']
+        if 'stream_timeout' in proxy_settings:
+            ProxyConfig.STREAM_TIMEOUT = proxy_settings['stream_timeout']
+        if 'channel_shutdown_delay' in proxy_settings:
+            ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_settings['channel_shutdown_delay']
+        if 'stream_mode' in proxy_settings:
+            ProxyConfig.STREAM_MODE = proxy_settings['stream_mode']
+        if 'control_mode' in proxy_settings:
+            ProxyConfig.CONTROL_MODE = _resolve_control_mode(proxy_settings['control_mode'])
+        if 'legacy_api_preflight_tier' in proxy_settings:
+            tier = str(proxy_settings['legacy_api_preflight_tier']).strip().lower()
+            if tier in ['light', 'deep']:
+                ProxyConfig.LEGACY_API_PREFLIGHT_TIER = tier
+        if 'max_streams_per_engine' in proxy_settings:
+            cfg.MAX_STREAMS_PER_ENGINE = int(proxy_settings['max_streams_per_engine'])
+        if 'ace_live_edge_delay' in proxy_settings:
+            cfg.ACE_LIVE_EDGE_DELAY = max(0, int(proxy_settings['ace_live_edge_delay']))
+
+    if "vpn_settings" in updates:
+        vpn_settings = SettingsPersistence.load_vpn_config() or {}
+        if 'api_port' in vpn_settings:
+            cfg.GLUETUN_API_PORT = int(vpn_settings['api_port'])
+        if 'health_check_interval_s' in vpn_settings:
+            cfg.GLUETUN_HEALTH_CHECK_INTERVAL_S = int(vpn_settings['health_check_interval_s'])
+        if 'port_cache_ttl_s' in vpn_settings:
+            cfg.GLUETUN_PORT_CACHE_TTL_S = int(vpn_settings['port_cache_ttl_s'])
+        if 'restart_engines_on_reconnect' in vpn_settings:
+            cfg.VPN_RESTART_ENGINES_ON_RECONNECT = bool(vpn_settings['restart_engines_on_reconnect'])
+        if 'unhealthy_restart_timeout_s' in vpn_settings:
+            cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S = int(vpn_settings['unhealthy_restart_timeout_s'])
+        if 'preferred_engines_per_vpn' in vpn_settings:
+            cfg.PREFERRED_ENGINES_PER_VPN = max(1, int(vpn_settings['preferred_engines_per_vpn']))
+        if 'provider' in vpn_settings:
+            cfg.VPN_PROVIDER = str(vpn_settings['provider'] or cfg.VPN_PROVIDER).strip().lower() or cfg.VPN_PROVIDER
+        if 'protocol' in vpn_settings:
+            cfg.VPN_PROTOCOL = str(vpn_settings['protocol'] or cfg.VPN_PROTOCOL).strip().lower() or cfg.VPN_PROTOCOL
+        cfg.DYNAMIC_VPN_MANAGEMENT = True
+
+    return {
+        "message": "Settings updated",
+        "applied": applied,
+        "settings": SettingsPersistence.load_all_settings(),
+    }
+
+
+@app.get("/vpn/config", response_model=VPNSettingsResponse)
+def get_vpn_config_legacy_alias():
+    """Legacy alias for VPN settings endpoint."""
+    return get_vpn_settings()
+
+
+@app.post("/vpn/config", dependencies=[Depends(require_api_key)])
+async def update_vpn_config_legacy_alias(settings: VPNSettingsUpdate):
+    """Legacy alias for VPN settings endpoint."""
+    return await update_vpn_settings(settings)
+
+
+@app.get("/engine/config")
+def get_engine_config_legacy_alias():
+    """Legacy alias for engine config endpoint."""
+    return get_engine_config_endpoint()
+
+
+@app.post("/engine/config", dependencies=[Depends(require_api_key)])
+def update_engine_config_legacy_alias(config: EngineConfig):
+    """Legacy alias for engine config endpoint."""
+    return update_engine_config_endpoint(config)
 
 
 def _load_vpn_settings_for_credential_ops() -> Dict[str, Any]:

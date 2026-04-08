@@ -1,296 +1,450 @@
-"""
-Settings persistence service for storing runtime configuration to JSON files.
-"""
+"""Database-backed runtime settings persistence with in-memory cache."""
 
-import json
-import os
+from __future__ import annotations
+
+import copy
 import logging
-from pathlib import Path
-from typing import Dict, Optional, Any
+import threading
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
+
+from .db import get_session
+from ..core.config import cfg
+from ..models.db_models import RuntimeSettingsRow, VPNCredentialRow
 
 logger = logging.getLogger(__name__)
 
-# Default config directory - use relative path from this file
-CONFIG_DIR = Path(__file__).parent.parent / "config"
-
-# Config file paths
-PROXY_CONFIG_FILE = CONFIG_DIR / "proxy_settings.json"
-LOOP_DETECTION_CONFIG_FILE = CONFIG_DIR / "loop_detection_settings.json"
-ENGINE_SETTINGS_FILE = CONFIG_DIR / "engine_settings.json"
-ORCHESTRATOR_CONFIG_FILE = CONFIG_DIR / "orchestrator_settings.json"
-VPN_CONFIG_FILE = CONFIG_DIR / "vpn_settings.json"
-
 
 class SettingsPersistence:
-    """Handles persistence of runtime settings to JSON files."""
+    """Persist settings in SQLite and serve reads from a hot in-memory cache."""
+
+    SETTINGS_ROW_ID = 1
+
+    _lock = threading.RLock()
+    _cache_initialized = False
+    _cache: Dict[str, Dict[str, Any]] = {}
+
+    @staticmethod
+    def _default_engine_config() -> Dict[str, Any]:
+        return {
+            "download_limit": 0,
+            "upload_limit": 0,
+            "live_cache_type": "memory",
+            "buffer_time": 10,
+            "memory_limit": None,
+            "parameters": [],
+            "torrent_folder_mount_enabled": False,
+            "torrent_folder_host_path": None,
+            "torrent_folder_container_path": None,
+            "disk_cache_mount_enabled": False,
+            "disk_cache_prune_enabled": False,
+            "disk_cache_prune_interval": 1440,
+        }
+
+    @staticmethod
+    def _default_engine_settings() -> Dict[str, Any]:
+        return {
+            "min_replicas": int(getattr(cfg, "MIN_REPLICAS", 2)),
+            "max_replicas": int(getattr(cfg, "MAX_REPLICAS", 6)),
+            "auto_delete": bool(getattr(cfg, "AUTO_DELETE", True)),
+            "manual_mode": False,
+            "manual_engines": [],
+        }
+
+    @staticmethod
+    def _default_orchestrator_settings() -> Dict[str, Any]:
+        return {
+            "monitor_interval_s": int(getattr(cfg, "MONITOR_INTERVAL_S", 10)),
+            "engine_grace_period_s": int(getattr(cfg, "ENGINE_GRACE_PERIOD_S", 30)),
+            "autoscale_interval_s": int(getattr(cfg, "AUTOSCALE_INTERVAL_S", 30)),
+            "startup_timeout_s": int(getattr(cfg, "STARTUP_TIMEOUT_S", 25)),
+            "idle_ttl_s": int(getattr(cfg, "IDLE_TTL_S", 600)),
+            "collect_interval_s": 1,
+            "stats_history_max": int(getattr(cfg, "STATS_HISTORY_MAX", 720)),
+            "health_check_interval_s": int(getattr(cfg, "HEALTH_CHECK_INTERVAL_S", 20)),
+            "health_failure_threshold": int(getattr(cfg, "HEALTH_FAILURE_THRESHOLD", 3)),
+            "health_unhealthy_grace_period_s": int(getattr(cfg, "HEALTH_UNHEALTHY_GRACE_PERIOD_S", 60)),
+            "health_replacement_cooldown_s": int(getattr(cfg, "HEALTH_REPLACEMENT_COOLDOWN_S", 60)),
+            "circuit_breaker_failure_threshold": int(getattr(cfg, "CIRCUIT_BREAKER_FAILURE_THRESHOLD", 5)),
+            "circuit_breaker_recovery_timeout_s": int(getattr(cfg, "CIRCUIT_BREAKER_RECOVERY_TIMEOUT_S", 300)),
+            "circuit_breaker_replacement_threshold": int(getattr(cfg, "CIRCUIT_BREAKER_REPLACEMENT_THRESHOLD", 3)),
+            "circuit_breaker_replacement_timeout_s": int(getattr(cfg, "CIRCUIT_BREAKER_REPLACEMENT_TIMEOUT_S", 180)),
+            "max_concurrent_provisions": int(getattr(cfg, "MAX_CONCURRENT_PROVISIONS", 5)),
+            "min_provision_interval_s": float(getattr(cfg, "MIN_PROVISION_INTERVAL_S", 0.5)),
+            "port_range_host": str(getattr(cfg, "PORT_RANGE_HOST", "19000-19999")),
+            "ace_http_range": str(getattr(cfg, "ACE_HTTP_RANGE", "40000-44999")),
+            "ace_https_range": str(getattr(cfg, "ACE_HTTPS_RANGE", "45000-49999")),
+            "ace_live_edge_delay": int(getattr(cfg, "ACE_LIVE_EDGE_DELAY", 0)),
+            "debug_mode": bool(getattr(cfg, "DEBUG_MODE", False)),
+        }
+
+    @staticmethod
+    def _default_proxy_settings() -> Dict[str, Any]:
+        return {
+            "initial_data_wait_timeout": 10,
+            "initial_data_check_interval": 0.2,
+            "no_data_timeout_checks": 60,
+            "no_data_check_interval": 1.0,
+            "connection_timeout": 10,
+            "stream_timeout": 60,
+            "channel_shutdown_delay": 5,
+            "max_streams_per_engine": int(getattr(cfg, "MAX_STREAMS_PER_ENGINE", 3)),
+            "stream_mode": "TS",
+            "control_mode": "api",
+            "legacy_api_preflight_tier": "light",
+            "ace_live_edge_delay": int(getattr(cfg, "ACE_LIVE_EDGE_DELAY", 0)),
+            "hls_max_segments": 20,
+            "hls_initial_segments": 3,
+            "hls_window_size": 6,
+            "hls_buffer_ready_timeout": 30,
+            "hls_first_segment_timeout": 30,
+            "hls_initial_buffer_seconds": 10,
+            "hls_max_initial_segments": 10,
+            "hls_segment_fetch_interval": 0.5,
+        }
+
+    @staticmethod
+    def _default_loop_detection_settings() -> Dict[str, Any]:
+        return {
+            "enabled": bool(getattr(cfg, "STREAM_LOOP_DETECTION_ENABLED", False)),
+            "threshold_seconds": int(getattr(cfg, "STREAM_LOOP_DETECTION_THRESHOLD_S", 3600)),
+            "check_interval_seconds": int(getattr(cfg, "STREAM_LOOP_CHECK_INTERVAL_S", 10)),
+            "retention_minutes": int(getattr(cfg, "STREAM_LOOP_RETENTION_MINUTES", 0)),
+        }
+
+    @staticmethod
+    def _default_vpn_settings() -> Dict[str, Any]:
+        return {
+            "enabled": False,
+            "dynamic_vpn_management": True,
+            "preferred_engines_per_vpn": int(getattr(cfg, "PREFERRED_ENGINES_PER_VPN", 10)),
+            "protocol": str(getattr(cfg, "VPN_PROTOCOL", "wireguard") or "wireguard"),
+            "provider": str(getattr(cfg, "VPN_PROVIDER", "protonvpn") or "protonvpn"),
+            "regions": [],
+            "api_port": int(getattr(cfg, "GLUETUN_API_PORT", 8001)),
+            "health_check_interval_s": int(getattr(cfg, "GLUETUN_HEALTH_CHECK_INTERVAL_S", 5)),
+            "port_cache_ttl_s": int(getattr(cfg, "GLUETUN_PORT_CACHE_TTL_S", 60)),
+            "restart_engines_on_reconnect": bool(getattr(cfg, "VPN_RESTART_ENGINES_ON_RECONNECT", True)),
+            "unhealthy_restart_timeout_s": int(getattr(cfg, "VPN_UNHEALTHY_RESTART_TIMEOUT_S", 60)),
+        }
+
+    @staticmethod
+    def _deepcopy(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        return copy.deepcopy(data or {})
+
+    @staticmethod
+    def _normalize_credential_record(
+        credential: Dict[str, Any],
+        *,
+        default_provider: Optional[str],
+        default_protocol: Optional[str],
+    ) -> Dict[str, Any]:
+        item = dict(credential or {})
+        item["id"] = str(item.get("id") or f"cred-{uuid4().hex}")
+
+        provider = str(item.get("provider") or default_provider or "").strip().lower()
+        if provider:
+            item["provider"] = provider
+
+        protocol = str(item.get("protocol") or default_protocol or "").strip().lower()
+        if protocol:
+            item["protocol"] = protocol
+
+        return item
+
+    @staticmethod
+    def _normalize_credentials(
+        credentials: Optional[List[Dict[str, Any]]],
+        *,
+        default_provider: Optional[str],
+        default_protocol: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+        for raw in credentials or []:
+            if not isinstance(raw, dict):
+                continue
+            normalized.append(
+                SettingsPersistence._normalize_credential_record(
+                    raw,
+                    default_provider=default_provider,
+                    default_protocol=default_protocol,
+                )
+            )
+        return normalized
 
     @staticmethod
     def normalize_vpn_config(config: Dict[str, Any]) -> Dict[str, Any]:
         """Backfill missing VPN settings keys for schema evolution compatibility."""
-        normalized = dict(config or {})
-        normalized.setdefault("enabled", False)
-        # Dynamic VPN controller mode is always used when VPN is enabled.
+        defaults = SettingsPersistence._default_vpn_settings()
+        normalized = {**defaults, **dict(config or {})}
+
         normalized["dynamic_vpn_management"] = True
-        normalized.setdefault("preferred_engines_per_vpn", 10)
-        normalized.setdefault("provider", "")
-        normalized.setdefault("protocol", "wireguard")
-        normalized.setdefault("regions", [])
-        normalized.setdefault("credentials", [])
 
-        legacy_providers = normalized.get("providers")
-        if not normalized.get("provider") and isinstance(legacy_providers, list) and legacy_providers:
-            normalized["provider"] = str(legacy_providers[0]).strip()
+        if "providers" in normalized and not normalized.get("provider"):
+            legacy = normalized.get("providers")
+            if isinstance(legacy, list) and legacy:
+                normalized["provider"] = str(legacy[0]).strip()
+        normalized.pop("providers", None)
 
-        if "providers" in normalized:
-            normalized.pop("providers", None)
-
-        # Remove legacy static VPN keys from persisted payloads.
         for legacy_key in ("vpn_mode", "container_name", "container_name_2", "port_range_1", "port_range_2"):
             normalized.pop(legacy_key, None)
 
-        if not isinstance(normalized.get("provider"), str):
-            normalized["provider"] = ""
         if not isinstance(normalized.get("regions"), list):
             normalized["regions"] = []
-        if not isinstance(normalized.get("credentials"), list):
-            normalized["credentials"] = []
 
         try:
             normalized["preferred_engines_per_vpn"] = max(1, int(normalized.get("preferred_engines_per_vpn", 10)))
         except Exception:
             normalized["preferred_engines_per_vpn"] = 10
 
+        normalized["provider"] = str(normalized.get("provider") or defaults["provider"]).strip().lower()
+        normalized["protocol"] = str(normalized.get("protocol") or defaults["protocol"]).strip().lower()
+
+        for int_field in ("api_port", "health_check_interval_s", "port_cache_ttl_s", "unhealthy_restart_timeout_s"):
+            try:
+                normalized[int_field] = int(normalized.get(int_field, defaults[int_field]))
+            except Exception:
+                normalized[int_field] = int(defaults[int_field])
+
+        normalized["enabled"] = bool(normalized.get("enabled", defaults["enabled"]))
+        normalized["restart_engines_on_reconnect"] = bool(
+            normalized.get("restart_engines_on_reconnect", defaults["restart_engines_on_reconnect"])
+        )
+
         return normalized
-    
+
     @staticmethod
     def ensure_config_dir():
-        """Ensure the config directory exists."""
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    
+        """Compatibility no-op retained for legacy callers."""
+        return True
+
+    @classmethod
+    def _ensure_settings_row(cls, session) -> RuntimeSettingsRow:
+        row = session.get(RuntimeSettingsRow, cls.SETTINGS_ROW_ID)
+        if row:
+            return row
+
+        row = RuntimeSettingsRow(
+            id=cls.SETTINGS_ROW_ID,
+            engine_config=cls._default_engine_config(),
+            engine_settings=cls._default_engine_settings(),
+            orchestrator_settings=cls._default_orchestrator_settings(),
+            proxy_settings=cls._default_proxy_settings(),
+            vpn_settings=cls._default_vpn_settings(),
+            loop_detection_settings=cls._default_loop_detection_settings(),
+        )
+        session.add(row)
+        session.flush()
+        return row
+
+    @classmethod
+    def _load_credentials_from_db(cls, session, settings_id: int) -> List[Dict[str, Any]]:
+        rows = (
+            session.query(VPNCredentialRow)
+            .filter(VPNCredentialRow.settings_id == settings_id)
+            .order_by(VPNCredentialRow.created_at.asc())
+            .all()
+        )
+        return [dict(r.payload or {}) for r in rows]
+
+    @classmethod
+    def _upsert_credentials(cls, session, settings_id: int, credentials: List[Dict[str, Any]]) -> None:
+        session.query(VPNCredentialRow).filter(VPNCredentialRow.settings_id == settings_id).delete(synchronize_session=False)
+
+        now = datetime.now(timezone.utc)
+        for item in credentials:
+            provider = str(item.get("provider") or "").strip().lower() or None
+            protocol = str(item.get("protocol") or "").strip().lower() or None
+            session.add(
+                VPNCredentialRow(
+                    id=str(item.get("id") or f"cred-{uuid4().hex}"),
+                    settings_id=settings_id,
+                    provider=provider,
+                    protocol=protocol,
+                    payload=dict(item),
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+
+    @classmethod
+    def _row_to_cache(cls, session, row: RuntimeSettingsRow) -> Dict[str, Dict[str, Any]]:
+        engine_config = cls._deepcopy(row.engine_config) or cls._default_engine_config()
+        engine_settings = cls._deepcopy(row.engine_settings) or cls._default_engine_settings()
+        orchestrator_settings = cls._deepcopy(row.orchestrator_settings) or cls._default_orchestrator_settings()
+        proxy_settings = cls._deepcopy(row.proxy_settings) or cls._default_proxy_settings()
+        vpn_settings = cls.normalize_vpn_config(cls._deepcopy(row.vpn_settings) or cls._default_vpn_settings())
+        loop_detection_settings = cls._deepcopy(row.loop_detection_settings) or cls._default_loop_detection_settings()
+
+        credentials = cls._normalize_credentials(
+            cls._load_credentials_from_db(session, row.id),
+            default_provider=vpn_settings.get("provider"),
+            default_protocol=vpn_settings.get("protocol"),
+        )
+        vpn_settings["credentials"] = credentials
+
+        return {
+            "engine_config": engine_config,
+            "engine_settings": engine_settings,
+            "orchestrator_settings": orchestrator_settings,
+            "proxy_settings": proxy_settings,
+            "vpn_settings": vpn_settings,
+            "loop_detection_settings": loop_detection_settings,
+        }
+
+    @classmethod
+    def initialize_cache(cls, force_reload: bool = False) -> None:
+        with cls._lock:
+            if cls._cache_initialized and not force_reload:
+                return
+
+            try:
+                with get_session() as session:
+                    row = cls._ensure_settings_row(session)
+                    session.commit()
+                    cls._cache = cls._row_to_cache(session, row)
+                    cls._cache_initialized = True
+            except Exception as exc:
+                logger.error("Failed to initialize settings cache: %s", exc)
+                cls._cache = {
+                    "engine_config": cls._default_engine_config(),
+                    "engine_settings": cls._default_engine_settings(),
+                    "orchestrator_settings": cls._default_orchestrator_settings(),
+                    "proxy_settings": cls._default_proxy_settings(),
+                    "vpn_settings": {**cls._default_vpn_settings(), "credentials": []},
+                    "loop_detection_settings": cls._default_loop_detection_settings(),
+                }
+                cls._cache_initialized = True
+
+    @classmethod
+    def has_persisted_runtime_settings(cls) -> bool:
+        """Return True when runtime settings were already persisted in the database."""
+        cls.initialize_cache()
+        with cls._lock:
+            defaults = {
+                "engine_config": cls._default_engine_config(),
+                "engine_settings": cls._default_engine_settings(),
+                "orchestrator_settings": cls._default_orchestrator_settings(),
+                "proxy_settings": cls._default_proxy_settings(),
+                "vpn_settings": cls._default_vpn_settings(),
+                "loop_detection_settings": cls._default_loop_detection_settings(),
+            }
+
+            cached_vpn = cls.normalize_vpn_config(dict(cls._cache.get("vpn_settings") or {}))
+            default_vpn = cls.normalize_vpn_config(dict(defaults["vpn_settings"]))
+            cached_vpn_no_creds = {k: v for k, v in cached_vpn.items() if k != "credentials"}
+            cached_credentials = list((cls._cache.get("vpn_settings") or {}).get("credentials") or [])
+
+            return not (
+                cls._cache.get("engine_config") == defaults["engine_config"]
+                and cls._cache.get("engine_settings") == defaults["engine_settings"]
+                and cls._cache.get("orchestrator_settings") == defaults["orchestrator_settings"]
+                and cls._cache.get("proxy_settings") == defaults["proxy_settings"]
+                and cached_vpn_no_creds == default_vpn
+                and not cached_credentials
+                and cls._cache.get("loop_detection_settings") == defaults["loop_detection_settings"]
+            )
+
+    @classmethod
+    def _get_cached_category(cls, category: str) -> Dict[str, Any]:
+        cls.initialize_cache()
+        with cls._lock:
+            return cls._deepcopy(cls._cache.get(category) or {})
+
+    @classmethod
+    def get_cached_setting(cls, category: str, key: str, default: Any = None) -> Any:
+        """Fast in-memory lookup for hot paths that need a single setting value."""
+        cls.initialize_cache()
+        with cls._lock:
+            category_payload = cls._cache.get(category) or {}
+            return category_payload.get(key, default)
+
+    @classmethod
+    def _save_category(cls, category: str, payload: Dict[str, Any]) -> bool:
+        cls.initialize_cache()
+
+        with cls._lock:
+            try:
+                with get_session() as session:
+                    row = cls._ensure_settings_row(session)
+
+                    if category == "vpn_settings":
+                        normalized = cls.normalize_vpn_config(payload)
+                        credentials = cls._normalize_credentials(
+                            payload.get("credentials") if isinstance(payload, dict) else [],
+                            default_provider=normalized.get("provider"),
+                            default_protocol=normalized.get("protocol"),
+                        )
+                        row.vpn_settings = {k: v for k, v in normalized.items() if k != "credentials"}
+                        cls._upsert_credentials(session, row.id, credentials)
+                        cls._cache["vpn_settings"] = {**normalized, "credentials": credentials}
+                    else:
+                        cleaned = cls._deepcopy(payload)
+                        setattr(row, category, cleaned)
+                        cls._cache[category] = cleaned
+
+                    row.updated_at = datetime.now(timezone.utc)
+                    session.add(row)
+                    session.commit()
+                    return True
+            except Exception as exc:
+                logger.error("Failed saving %s settings: %s", category, exc)
+                return False
+
+    @classmethod
+    def load_all_settings(cls) -> Dict[str, Dict[str, Any]]:
+        cls.initialize_cache()
+        with cls._lock:
+            return copy.deepcopy(cls._cache)
+
     @staticmethod
-    def save_proxy_config(config: Dict[str, Any]) -> bool:
-        """
-        Save proxy configuration to JSON file.
-        
-        Args:
-            config: Dictionary containing proxy configuration
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            SettingsPersistence.ensure_config_dir()
-            
-            with open(PROXY_CONFIG_FILE, 'w') as f:
-                json.dump(config, f, indent=2)
-            
-            logger.debug(f"Proxy configuration saved to {PROXY_CONFIG_FILE}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save proxy configuration: {e}")
-            return False
-    
+    def load_engine_config() -> Optional[Dict[str, Any]]:
+        return SettingsPersistence._get_cached_category("engine_config")
+
+    @staticmethod
+    def save_engine_config(config: Dict[str, Any]) -> bool:
+        return SettingsPersistence._save_category("engine_config", config)
+
     @staticmethod
     def load_proxy_config() -> Optional[Dict[str, Any]]:
-        """
-        Load proxy configuration from JSON file.
-        
-        Returns:
-            Dictionary containing proxy configuration, or None if file doesn't exist or error occurs
-        """
-        try:
-            if not PROXY_CONFIG_FILE.exists():
-                logger.debug(f"Proxy config file not found: {PROXY_CONFIG_FILE}")
-                return None
-            
-            with open(PROXY_CONFIG_FILE, 'r') as f:
-                config = json.load(f)
-            
-            logger.debug(f"Proxy configuration loaded from {PROXY_CONFIG_FILE}")
-            return config
-        except Exception as e:
-            logger.error(f"Failed to load proxy configuration: {e}")
-            return None
-    
+        return SettingsPersistence._get_cached_category("proxy_settings")
+
     @staticmethod
-    def save_loop_detection_config(config: Dict[str, Any]) -> bool:
-        """
-        Save loop detection configuration to JSON file.
-        
-        Args:
-            config: Dictionary containing loop detection configuration
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            SettingsPersistence.ensure_config_dir()
-            
-            with open(LOOP_DETECTION_CONFIG_FILE, 'w') as f:
-                json.dump(config, f, indent=2)
-            
-            logger.debug(f"Loop detection configuration saved to {LOOP_DETECTION_CONFIG_FILE}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save loop detection configuration: {e}")
-            return False
-    
+    def save_proxy_config(config: Dict[str, Any]) -> bool:
+        return SettingsPersistence._save_category("proxy_settings", config)
+
     @staticmethod
     def load_loop_detection_config() -> Optional[Dict[str, Any]]:
-        """
-        Load loop detection configuration from JSON file.
-        
-        Returns:
-            Dictionary containing loop detection configuration, or None if file doesn't exist or error occurs
-        """
-        try:
-            if not LOOP_DETECTION_CONFIG_FILE.exists():
-                logger.debug(f"Loop detection config file not found: {LOOP_DETECTION_CONFIG_FILE}")
-                return None
-            
-            with open(LOOP_DETECTION_CONFIG_FILE, 'r') as f:
-                config = json.load(f)
-            
-            logger.debug(f"Loop detection configuration loaded from {LOOP_DETECTION_CONFIG_FILE}")
-            return config
-        except Exception as e:
-            logger.error(f"Failed to load loop detection configuration: {e}")
-            return None
-    
+        return SettingsPersistence._get_cached_category("loop_detection_settings")
+
     @staticmethod
-    def save_engine_settings(config: Dict[str, Any]) -> bool:
-        """
-        Save engine settings configuration to JSON file.
-        
-        Args:
-            config: Dictionary containing engine settings configuration
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            SettingsPersistence.ensure_config_dir()
-            
-            with open(ENGINE_SETTINGS_FILE, 'w') as f:
-                json.dump(config, f, indent=2)
-            
-            logger.debug(f"Engine settings configuration saved to {ENGINE_SETTINGS_FILE}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save engine settings configuration: {e}")
-            return False
-    
+    def save_loop_detection_config(config: Dict[str, Any]) -> bool:
+        return SettingsPersistence._save_category("loop_detection_settings", config)
+
     @staticmethod
     def load_engine_settings() -> Optional[Dict[str, Any]]:
-        """
-        Load engine settings configuration from JSON file.
-        
-        Returns:
-            Dictionary containing engine settings configuration, or None if file doesn't exist or error occurs
-        """
-        try:
-            if not ENGINE_SETTINGS_FILE.exists():
-                logger.debug(f"Engine settings config file not found: {ENGINE_SETTINGS_FILE}")
-                return None
-            
-            with open(ENGINE_SETTINGS_FILE, 'r') as f:
-                config = json.load(f)
-            
-            logger.debug(f"Engine settings configuration loaded from {ENGINE_SETTINGS_FILE}")
-            return config
-        except Exception as e:
-            logger.error(f"Failed to load engine settings configuration: {e}")
-            return None
+        return SettingsPersistence._get_cached_category("engine_settings")
 
     @staticmethod
-    def save_orchestrator_config(config: Dict[str, Any]) -> bool:
-        """
-        Save orchestrator core configuration to JSON file.
-
-        Args:
-            config: Dictionary containing orchestrator configuration
-
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            SettingsPersistence.ensure_config_dir()
-
-            with open(ORCHESTRATOR_CONFIG_FILE, 'w') as f:
-                json.dump(config, f, indent=2)
-
-            logger.debug(f"Orchestrator configuration saved to {ORCHESTRATOR_CONFIG_FILE}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save orchestrator configuration: {e}")
-            return False
+    def save_engine_settings(config: Dict[str, Any]) -> bool:
+        return SettingsPersistence._save_category("engine_settings", config)
 
     @staticmethod
     def load_orchestrator_config() -> Optional[Dict[str, Any]]:
-        """
-        Load orchestrator core configuration from JSON file.
-
-        Returns:
-            Dictionary containing orchestrator configuration, or None if file doesn't exist or error occurs
-        """
-        try:
-            if not ORCHESTRATOR_CONFIG_FILE.exists():
-                logger.debug(f"Orchestrator config file not found: {ORCHESTRATOR_CONFIG_FILE}")
-                return None
-
-            with open(ORCHESTRATOR_CONFIG_FILE, 'r') as f:
-                config = json.load(f)
-
-            logger.debug(f"Orchestrator configuration loaded from {ORCHESTRATOR_CONFIG_FILE}")
-            return config
-        except Exception as e:
-            logger.error(f"Failed to load orchestrator configuration: {e}")
-            return None
+        return SettingsPersistence._get_cached_category("orchestrator_settings")
 
     @staticmethod
-    def save_vpn_config(config: Dict[str, Any]) -> bool:
-        """
-        Save VPN (Gluetun) configuration to JSON file.
-
-        Args:
-            config: Dictionary containing VPN configuration
-
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            SettingsPersistence.ensure_config_dir()
-            normalized = SettingsPersistence.normalize_vpn_config(config)
-
-            with open(VPN_CONFIG_FILE, 'w') as f:
-                json.dump(normalized, f, indent=2)
-
-            logger.debug(f"VPN configuration saved to {VPN_CONFIG_FILE}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save VPN configuration: {e}")
-            return False
+    def save_orchestrator_config(config: Dict[str, Any]) -> bool:
+        payload = dict(config or {})
+        if "collect_interval_s" in payload:
+            payload["collect_interval_s"] = 1
+        return SettingsPersistence._save_category("orchestrator_settings", payload)
 
     @staticmethod
     def load_vpn_config() -> Optional[Dict[str, Any]]:
-        """
-        Load VPN (Gluetun) configuration from JSON file.
+        return SettingsPersistence._get_cached_category("vpn_settings")
 
-        Returns:
-            Dictionary containing VPN configuration, or None if file doesn't exist or error occurs
-        """
-        try:
-            if not VPN_CONFIG_FILE.exists():
-                logger.debug(f"VPN config file not found: {VPN_CONFIG_FILE}")
-                return None
-
-            with open(VPN_CONFIG_FILE, 'r') as f:
-                config = json.load(f)
-
-            config = SettingsPersistence.normalize_vpn_config(config)
-
-            logger.debug(f"VPN configuration loaded from {VPN_CONFIG_FILE}")
-            return config
-        except Exception as e:
-            logger.error(f"Failed to load VPN configuration: {e}")
-            return None
+    @staticmethod
+    def save_vpn_config(config: Dict[str, Any]) -> bool:
+        return SettingsPersistence._save_category("vpn_settings", config)

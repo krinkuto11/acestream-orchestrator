@@ -1,6 +1,6 @@
 from __future__ import annotations
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import String, Integer, DateTime, Boolean, Text, JSON
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import String, Integer, DateTime, Boolean, Text, JSON, ForeignKey
 from datetime import datetime, timezone
 
 class Base(DeclarativeBase):
@@ -75,3 +75,53 @@ class DashboardMetricSampleRow(Base):
     ttfb_p95_ms: Mapped[float] = mapped_column(default=0.0)
     docker_cpu_percent: Mapped[float] = mapped_column(default=0.0)
     docker_memory_bytes: Mapped[float] = mapped_column(default=0.0)
+
+
+class RuntimeSettingsRow(Base):
+    """Single-row settings aggregate for runtime configuration categories."""
+
+    __tablename__ = "runtime_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    engine_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    engine_settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    orchestrator_settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    proxy_settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    vpn_settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    loop_detection_settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    vpn_credentials: Mapped[list["VPNCredentialRow"]] = relationship(
+        back_populates="settings",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class VPNCredentialRow(Base):
+    """VPN credential records stored separately to model nested credential arrays safely."""
+
+    __tablename__ = "vpn_credentials"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    settings_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("runtime_settings.id", ondelete="CASCADE"),
+        index=True,
+    )
+    provider: Mapped[str | None] = mapped_column(String(128))
+    protocol: Mapped[str | None] = mapped_column(String(64))
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    settings: Mapped[RuntimeSettingsRow] = relationship(back_populates="vpn_credentials")

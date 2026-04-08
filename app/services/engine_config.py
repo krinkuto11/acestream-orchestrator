@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
+# Legacy file constants retained only for one-time fallback migration compatibility.
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config" / "engine_config.json"
 LEGACY_CONFIG_PATH = Path(__file__).parent.parent / "config" / "custom_engine_variant.json"
 DEFAULT_TORRENT_FOLDER_PATH = "/dev/shm/.ACEStream/collected_torrent_files"
@@ -100,8 +101,9 @@ def resolve_engine_image(platform_arch: Optional[str] = None) -> str:
 
 
 def create_default_config(config_path: Path = DEFAULT_CONFIG_PATH) -> EngineConfig:
+    del config_path
     config = EngineConfig()
-    save_config(config, config_path=config_path)
+    save_config(config)
     return config
 
 
@@ -129,36 +131,38 @@ def _normalize_legacy_payload(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Optional[EngineConfig]:
-    """Load engine config, migrating from legacy custom variant file if needed."""
-    path = config_path
-    if not path.exists() and LEGACY_CONFIG_PATH.exists():
+    """Load engine config from DB-backed runtime settings cache."""
+    del config_path
+    from .settings_persistence import SettingsPersistence
+
+    persisted = SettingsPersistence.load_engine_config()
+    if persisted:
+        try:
+            return EngineConfig(**persisted)
+        except Exception as exc:
+            logger.error("Failed to parse persisted engine config: %s", exc)
+
+    if LEGACY_CONFIG_PATH.exists():
         try:
             with open(LEGACY_CONFIG_PATH, "r", encoding="utf-8") as handle:
                 legacy_data = json.load(handle)
             migrated = EngineConfig(**_normalize_legacy_payload(legacy_data))
-            save_config(migrated, config_path=path)
-            logger.info("Migrated legacy custom engine config to engine_config.json")
+            save_config(migrated)
+            logger.info("Migrated legacy custom engine config into runtime settings database")
             return migrated
         except Exception as exc:
             logger.error("Failed to migrate legacy custom engine config: %s", exc)
 
-    if not path.exists():
-        return create_default_config(path)
-
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-        return EngineConfig(**data)
-    except Exception as exc:
-        logger.error("Failed to load engine config: %s", exc)
-        return None
+    return create_default_config()
 
 
 def save_config(config: EngineConfig, config_path: Path = DEFAULT_CONFIG_PATH) -> bool:
+    del config_path
+    from .settings_persistence import SettingsPersistence
+
     try:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(config_path, "w", encoding="utf-8") as handle:
-            json.dump(config.model_dump(mode="json"), handle, indent=2)
+        if not SettingsPersistence.save_engine_config(config.model_dump(mode="json")):
+            return False
 
         global _config_instance
         _config_instance = config

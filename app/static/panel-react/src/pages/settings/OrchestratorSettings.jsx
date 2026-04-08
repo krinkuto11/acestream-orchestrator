@@ -58,11 +58,22 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
     setLoading(true)
     setError('')
     try {
-      const response = await fetch(`${orchUrl}/api/v1/settings/orchestrator`)
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
+      let payload = null
+
+      const consolidated = await fetch(`${orchUrl}/api/v1/settings`)
+      if (consolidated.ok) {
+        const settingsBundle = await consolidated.json().catch(() => ({}))
+        payload = settingsBundle?.orchestrator_settings || null
       }
-      const payload = await response.json()
+
+      if (!payload) {
+        const response = await fetch(`${orchUrl}/api/v1/settings/orchestrator`)
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`)
+        }
+        payload = await response.json()
+      }
+
       const normalized = {
         ...DEFAULTS,
         ...payload,

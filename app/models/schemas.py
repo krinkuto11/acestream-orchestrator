@@ -1,5 +1,5 @@
 from __future__ import annotations
-from pydantic import BaseModel, HttpUrl, ConfigDict, RootModel
+from pydantic import BaseModel, HttpUrl, ConfigDict, RootModel, Field
 from typing import Dict, Optional, Literal, List, Any
 from datetime import datetime
 
@@ -206,3 +206,128 @@ class EventLog(BaseModel):
     details: Optional[Dict[str, Any]] = {}
     container_id: Optional[str] = None
     stream_id: Optional[str] = None
+
+
+class EngineParameterSchema(BaseModel):
+    name: str
+    type: str = "flag"
+    value: Any = True
+    enabled: bool = True
+
+
+class EngineConfigSchema(BaseModel):
+    download_limit: int = 0
+    upload_limit: int = 0
+    live_cache_type: str = "memory"
+    buffer_time: int = 10
+    memory_limit: Optional[str] = None
+    parameters: List[EngineParameterSchema] = Field(default_factory=list)
+    torrent_folder_mount_enabled: bool = False
+    torrent_folder_host_path: Optional[str] = None
+    torrent_folder_container_path: Optional[str] = None
+    disk_cache_mount_enabled: bool = False
+    disk_cache_prune_enabled: bool = False
+    disk_cache_prune_interval: int = 1440
+
+
+class ManualEngineSchema(BaseModel):
+    host: str
+    port: int
+
+
+class EngineSettingsSchema(BaseModel):
+    min_replicas: int = 2
+    max_replicas: int = 6
+    auto_delete: bool = True
+    manual_mode: bool = False
+    manual_engines: List[ManualEngineSchema] = Field(default_factory=list)
+
+
+class OrchestratorSettingsSchema(BaseModel):
+    monitor_interval_s: int = 10
+    engine_grace_period_s: int = 30
+    autoscale_interval_s: int = 30
+    startup_timeout_s: int = 25
+    idle_ttl_s: int = 600
+    collect_interval_s: int = 1
+    stats_history_max: int = 720
+    health_check_interval_s: int = 20
+    health_failure_threshold: int = 3
+    health_unhealthy_grace_period_s: int = 60
+    health_replacement_cooldown_s: int = 60
+    circuit_breaker_failure_threshold: int = 5
+    circuit_breaker_recovery_timeout_s: int = 300
+    circuit_breaker_replacement_threshold: int = 3
+    circuit_breaker_replacement_timeout_s: int = 180
+    max_concurrent_provisions: int = 5
+    min_provision_interval_s: float = 0.5
+    port_range_host: str = "19000-19999"
+    ace_http_range: str = "40000-44999"
+    ace_https_range: str = "45000-49999"
+    ace_live_edge_delay: int = 0
+    debug_mode: bool = False
+
+
+class ProxySettingsSchema(BaseModel):
+    initial_data_wait_timeout: int = 10
+    initial_data_check_interval: float = 0.2
+    no_data_timeout_checks: int = 60
+    no_data_check_interval: float = 1.0
+    connection_timeout: int = 10
+    stream_timeout: int = 60
+    channel_shutdown_delay: int = 5
+    max_streams_per_engine: int = 3
+    stream_mode: str = "TS"
+    control_mode: str = "api"
+    legacy_api_preflight_tier: str = "light"
+    ace_live_edge_delay: int = 0
+    hls_max_segments: int = 20
+    hls_initial_segments: int = 3
+    hls_window_size: int = 6
+    hls_buffer_ready_timeout: int = 30
+    hls_first_segment_timeout: int = 30
+    hls_initial_buffer_seconds: int = 10
+    hls_max_initial_segments: int = 10
+    hls_segment_fetch_interval: float = 0.5
+
+
+class VPNCredentialSchema(BaseModel):
+    id: str
+    provider: Optional[str] = None
+    protocol: Optional[str] = None
+    private_key: Optional[str] = None
+    wireguard_private_key: Optional[str] = None
+    addresses: Optional[str] = None
+    wireguard_addresses: Optional[str] = None
+    endpoint: Optional[str] = None
+    endpoints: Optional[str] = None
+    wireguard_endpoints: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    openvpn_user: Optional[str] = None
+    openvpn_password: Optional[str] = None
+    source: Optional[str] = None
+    port_forwarding: Optional[bool] = True
+
+
+class VPNSettingsSchema(BaseModel):
+    enabled: bool = False
+    dynamic_vpn_management: bool = True
+    preferred_engines_per_vpn: int = 10
+    protocol: str = "wireguard"
+    provider: str = "protonvpn"
+    regions: List[str] = Field(default_factory=list)
+    credentials: List[VPNCredentialSchema] = Field(default_factory=list)
+    api_port: int = 8001
+    health_check_interval_s: int = 5
+    port_cache_ttl_s: int = 60
+    restart_engines_on_reconnect: bool = True
+    unhealthy_restart_timeout_s: int = 60
+
+
+class ConsolidatedSettingsSchema(BaseModel):
+    engine_config: EngineConfigSchema
+    engine_settings: EngineSettingsSchema
+    orchestrator_settings: OrchestratorSettingsSchema
+    proxy_settings: ProxySettingsSchema
+    vpn_settings: VPNSettingsSchema

@@ -139,9 +139,19 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     setLoading(true)
     setError('')
     try {
-      const response = await fetch(`${orchUrl}/api/v1/settings/vpn`)
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const payload = await response.json()
+      let payload = null
+
+      const consolidated = await fetch(`${orchUrl}/api/v1/settings`)
+      if (consolidated.ok) {
+        const settingsBundle = await consolidated.json().catch(() => ({}))
+        payload = settingsBundle?.vpn_settings || null
+      }
+
+      if (!payload) {
+        const response = await fetch(`${orchUrl}/api/v1/settings/vpn`)
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        payload = await response.json()
+      }
 
       const normalized = {
         enabled: Boolean(payload?.enabled),

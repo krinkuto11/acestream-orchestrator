@@ -97,9 +97,20 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
       setLoading(true)
       setError('')
       try {
-        const response = await fetch(`${orchUrl}/api/v1/proxy/config`)
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        const payload = await response.json()
+        let payload = null
+
+        const consolidated = await fetch(`${orchUrl}/api/v1/settings`)
+        if (consolidated.ok) {
+          const settingsBundle = await consolidated.json().catch(() => ({}))
+          payload = settingsBundle?.proxy_settings || null
+        }
+
+        if (!payload) {
+          const response = await fetch(`${orchUrl}/api/v1/proxy/config`)
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          payload = await response.json()
+        }
+
         const normalized = {
           ...DEFAULTS,
           ...payload,
