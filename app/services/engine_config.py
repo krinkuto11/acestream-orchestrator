@@ -198,7 +198,7 @@ def build_engine_customization_args(config: EngineConfig) -> List[str]:
     args: List[str] = [
         "--download-limit", str(int(config.download_limit)),
         "--upload-limit", str(int(config.upload_limit)),
-        "--live-buffer-time", str(int(config.buffer_time)),
+        "--live-buffer", str(int(config.buffer_time)),
         "--disable-sentry",
         "--log-stdout",
         "--disable-upnp",
