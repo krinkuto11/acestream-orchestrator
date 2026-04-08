@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
   Area,
   CartesianGrid,
@@ -110,13 +110,11 @@ function StreamTimelineGraphic({
   const [history, setHistory] = useState([])
   const [clientLabels, setClientLabels] = useState({})
   const [hydrated, setHydrated] = useState(false)
-  const lastSignatureRef = useRef('')
 
   useEffect(() => {
     const loaded = readHistoryFromStorage(storageKey)
     setHistory(Array.isArray(loaded.points) ? loaded.points : [])
     setClientLabels(loaded.labels || {})
-    lastSignatureRef.current = ''
     setHydrated(true)
   }, [storageKey])
 
@@ -140,20 +138,9 @@ function StreamTimelineGraphic({
       nextLabels[key] = getClientLabel(client, index)
     })
 
-    const signature = JSON.stringify({
-      engineLag: Number(engineLag.toFixed(3)),
-      clients: Object.keys(clientValues)
-        .sort()
-        .map((key) => [key, Number(clientValues[key].toFixed(3))]),
-    })
-
-    if (signature === lastSignatureRef.current) {
-      return
-    }
-    lastSignatureRef.current = signature
-
     const tick = {
       time: timestamp,
+      liveEdge: 0,
       engineLag,
       ...clientValues,
     }
@@ -193,6 +180,7 @@ function StreamTimelineGraphic({
       const engineLag = toNumber(point.engineLag)
       const normalized = {
         time: point.time,
+        liveEdge: 0,
         engineLag: Number.isFinite(engineLag) ? Math.max(0, engineLag) : null,
         engineBand: Number.isFinite(engineLag) ? [0, Math.max(0, engineLag)] : null,
       }
@@ -353,8 +341,6 @@ function StreamTimelineGraphic({
               )}
             />
 
-            <ReferenceLine y={0} stroke="var(--color-liveEdge)" strokeWidth={1.8} />
-
             <Area
               type="monotone"
               dataKey="engineBand"
@@ -368,6 +354,18 @@ function StreamTimelineGraphic({
             />
 
             <Line
+              type="linear"
+              dataKey="liveEdge"
+              name="liveEdge"
+              stroke="var(--color-liveEdge)"
+              strokeWidth={1.8}
+              connectNulls
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
+            />
+
+            <Line
               type="monotone"
               dataKey="engineLag"
               name="engineLag"
@@ -375,8 +373,8 @@ function StreamTimelineGraphic({
               strokeWidth={2}
               connectNulls={false}
               isAnimationActive={false}
-              dot={compact ? false : { r: 1.5 }}
-              activeDot={{ r: 3 }}
+              dot={false}
+              activeDot={false}
             />
 
             {clientKeys.map((key, index) => (
@@ -401,8 +399,8 @@ function StreamTimelineGraphic({
                   strokeWidth={1.5}
                   connectNulls={false}
                   isAnimationActive={false}
-                  dot={{ r: 2 }}
-                  activeDot={{ r: 3.5 }}
+                  dot={false}
+                  activeDot={false}
                 />
               </React.Fragment>
             ))}

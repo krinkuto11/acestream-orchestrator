@@ -29,6 +29,7 @@ import StreamTimelineGraphic from './StreamTimelineGraphic'
 const TRUNCATED_CONTAINER_ID_LENGTH = 12
 const TRUNCATED_CLIENT_ID_LENGTH = 16
 const DETAILS_RECONNECT_DELAY_MS = 2000
+const SESSION_GAP_RESET_MS = 15000
 
 function toNumber(value) {
   const parsed = Number.parseFloat(String(value ?? ''))
@@ -297,6 +298,7 @@ function ClientSession({ client }) {
 function StreamCard({
   stream,
   streamIdentity,
+  streamSessionKey,
   eventMarkers = [],
   orchUrl,
   apiKey,
@@ -605,7 +607,7 @@ function StreamCard({
 
             {isActive && !isExpanded && (
               <StreamTimelineGraphic
-                streamId={streamIdentity || localStream.id}
+                streamId={streamSessionKey || streamIdentity || localStream.id}
                 livepos={localStream.livepos}
                 clients={clients}
                 isLive={streamIsLive}
@@ -623,7 +625,7 @@ function StreamCard({
             <div className="space-y-2">
               <p className="text-sm font-semibold text-foreground">Stream timeline & client positions</p>
               <StreamTimelineGraphic
-                streamId={streamIdentity || localStream.id}
+                streamId={streamSessionKey || streamIdentity || localStream.id}
                 livepos={localStream.livepos}
                 clients={clients}
                 isLive={streamIsLive}
@@ -789,7 +791,46 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
   const [endedStreamsOpen, setEndedStreamsOpen] = useState(false)
   const [batchStopping, setBatchStopping] = useState(false)
   const [runtimeRecoveryMarkersByIdentity, setRuntimeRecoveryMarkersByIdentity] = useState({})
+  const [sessionKeyByIdentity, setSessionKeyByIdentity] = useState({})
   const lastSeenByIdentityRef = useRef(new Map())
+
+  useEffect(() => {
+    const now = Date.now()
+
+    setSessionKeyByIdentity((prev) => {
+      let changed = false
+      const next = { ...prev }
+      const activeIdentities = new Set()
+
+      canonicalStreams.forEach((stream) => {
+        const identity = String(stream?.__identity || getCanonicalStreamIdentity(stream))
+        if (!identity) return
+        activeIdentities.add(identity)
+
+        const previousSessionKey = next[identity]
+        const previousSeen = lastSeenByIdentityRef.current.get(identity)
+        const isGapReset = Boolean(previousSeen?.seenAt && now - previousSeen.seenAt > SESSION_GAP_RESET_MS)
+
+        if (!previousSessionKey || isGapReset) {
+          const startedAtMs = parseTimestampMs(stream?.started_at) || now
+          const nextSessionKey = `${identity}:${startedAtMs}`
+          if (previousSessionKey !== nextSessionKey) {
+            next[identity] = nextSessionKey
+            changed = true
+          }
+        }
+      })
+
+      Object.keys(next).forEach((identity) => {
+        if (!activeIdentities.has(identity)) {
+          delete next[identity]
+          changed = true
+        }
+      })
+
+      return changed ? next : prev
+    })
+  }, [canonicalStreams])
 
   useEffect(() => {
     setRuntimeRecoveryMarkersByIdentity((prev) => {
@@ -814,7 +855,18 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
           changed = true
         }
 
-        lastSeenByIdentityRef.current.set(identity, { rawId, containerId })
+        lastSeenByIdentityRef.current.set(identity, { rawId, containerId, seenAt: Date.now() })
+      })
+
+      const activeIdentities = new Set(canonicalStreams.map((stream) => String(stream?.__identity || getCanonicalStreamIdentity(stream))))
+      Array.from(lastSeenByIdentityRef.current.keys()).forEach((identity) => {
+        if (!activeIdentities.has(identity)) {
+          lastSeenByIdentityRef.current.delete(identity)
+          if (next[identity]) {
+            delete next[identity]
+            changed = true
+          }
+        }
       })
 
       return changed ? next : prev
@@ -906,11 +958,13 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
                   ...(runtimeRecoveryMarkersByIdentity[identity] || []),
                 ]
                 const selectionKey = getSelectionKey(stream)
+                const streamSessionKey = sessionKeyByIdentity[identity] || `${identity}:${parseTimestampMs(stream?.started_at) || 0}`
                 return (
               <StreamCard
                 key={identity}
                 stream={stream}
                 streamIdentity={identity}
+                streamSessionKey={streamSessionKey}
                 eventMarkers={eventMarkers}
                 orchUrl={orchUrl}
                 apiKey={apiKey}
@@ -943,11 +997,13 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
                   ...(stream.__recoveryMarkers || []),
                   ...(runtimeRecoveryMarkersByIdentity[identity] || []),
                 ]
+                const streamSessionKey = sessionKeyByIdentity[identity] || `${identity}:${parseTimestampMs(stream?.started_at) || 0}`
                 return (
               <StreamCard
                 key={identity}
                 stream={stream}
                 streamIdentity={identity}
+                streamSessionKey={streamSessionKey}
                 eventMarkers={eventMarkers}
                 orchUrl={orchUrl}
                 apiKey={apiKey}
