@@ -153,6 +153,7 @@ class StreamManager:
         self.consecutive_eof_retries = 0
         self._last_runway_estimate_s = 0.0
         self._last_runway_estimate_ts = 0.0
+        self._start_time = 0.0
         
         # Orchestrator event tracking
         self.stream_id = None  # Will be set after sending start event
@@ -747,6 +748,7 @@ class StreamManager:
             self.socket = os.fdopen(self.socket, 'rb', buffering=0)
             
             self.connected = True
+            self._start_time = time.time()
             logger.info(f"Stream started for content_id={self.content_id}")
             
             return True
@@ -1383,13 +1385,26 @@ class StreamManager:
         min_tolerance = 4.0
         # Keep margin for control-plane swap propagation.
         safety_margin = 3.0
+        startup_grace_s = 30.0
 
         current_buffer = self._get_max_client_buffer_seconds()
 
-        dynamic_threshold = max(
-            min_tolerance,
-            min(max_tolerance, current_buffer - safety_margin),
-        )
+        start_time = float(getattr(self, "_start_time", 0.0) or 0.0)
+        stream_uptime = max(0.0, time.time() - start_time) if start_time > 0.0 else 0.0
+
+        # During startup, tolerate pauses while the engine joins peers and
+        # initial prebuffer fills. Also keep tolerance generous until we see
+        # at least some real client runway.
+        in_startup_grace = stream_uptime < startup_grace_s
+        no_runway_yet = current_buffer <= 0.0
+
+        if in_startup_grace or no_runway_yet:
+            dynamic_threshold = max_tolerance
+        else:
+            dynamic_threshold = max(
+                min_tolerance,
+                min(max_tolerance, current_buffer - safety_margin),
+            )
 
         return float(dynamic_threshold), float(current_buffer), float(max_tolerance)
 

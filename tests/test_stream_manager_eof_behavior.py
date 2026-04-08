@@ -90,6 +90,51 @@ def test_get_max_client_buffer_seconds_decays_last_estimate_when_samples_disappe
     assert second == pytest.approx(10.0, abs=0.001)
 
 
+def test_dynamic_tolerance_uses_max_during_startup_grace(monkeypatch):
+    manager = _build_manager()
+
+    now = {"value": 1000.0}
+    monkeypatch.setattr(stream_manager_module.time, "time", lambda: now["value"])
+    monkeypatch.setattr(manager, "_get_max_client_buffer_seconds", lambda: 12.0)
+
+    manager._start_time = 990.0
+
+    threshold, runway, max_tolerance = manager._get_dynamic_tolerance()
+
+    assert runway == pytest.approx(12.0, abs=0.001)
+    assert threshold == pytest.approx(max_tolerance, abs=0.001)
+
+
+def test_dynamic_tolerance_uses_max_when_no_runway_even_after_grace(monkeypatch):
+    manager = _build_manager()
+
+    now = {"value": 2000.0}
+    monkeypatch.setattr(stream_manager_module.time, "time", lambda: now["value"])
+    monkeypatch.setattr(manager, "_get_max_client_buffer_seconds", lambda: 0.0)
+
+    manager._start_time = 1900.0
+
+    threshold, runway, max_tolerance = manager._get_dynamic_tolerance()
+
+    assert runway == pytest.approx(0.0, abs=0.001)
+    assert threshold == pytest.approx(max_tolerance, abs=0.001)
+
+
+def test_dynamic_tolerance_returns_to_runway_formula_after_grace(monkeypatch):
+    manager = _build_manager()
+
+    now = {"value": 3000.0}
+    monkeypatch.setattr(stream_manager_module.time, "time", lambda: now["value"])
+    monkeypatch.setattr(manager, "_get_max_client_buffer_seconds", lambda: 20.0)
+
+    manager._start_time = 2900.0
+
+    threshold, runway, max_tolerance = manager._get_dynamic_tolerance()
+
+    assert runway == pytest.approx(20.0, abs=0.001)
+    assert threshold == pytest.approx(min(max_tolerance, 17.0), abs=0.001)
+
+
 def test_eof_with_no_clients_skips_failover(monkeypatch):
     manager = _build_manager()
 
