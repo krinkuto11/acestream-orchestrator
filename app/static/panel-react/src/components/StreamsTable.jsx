@@ -29,7 +29,8 @@ import StreamTimelineGraphic from './StreamTimelineGraphic'
 const TRUNCATED_CONTAINER_ID_LENGTH = 12
 const TRUNCATED_CLIENT_ID_LENGTH = 16
 const DETAILS_RECONNECT_DELAY_MS = 2000
-const SESSION_GAP_RESET_MS = 15000
+const SESSION_GAP_RESET_MS = 1 * 60 * 1000
+const SESSION_IDENTITY_RETENTION_MS = 10 * 60 * 1000
 
 function toNumber(value) {
   const parsed = Number.parseFloat(String(value ?? ''))
@@ -831,6 +832,8 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
   const [runtimeRecoveryMarkersByIdentity, setRuntimeRecoveryMarkersByIdentity] = useState({})
   const [sessionKeyByIdentity, setSessionKeyByIdentity] = useState({})
   const lastSeenByIdentityRef = useRef(new Map())
+  const sessionLastSeenByIdentityRef = useRef(new Map())
+  const markerLastSeenByIdentityRef = useRef(new Map())
 
   useEffect(() => {
     const now = Date.now()
@@ -838,16 +841,18 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
     setSessionKeyByIdentity((prev) => {
       let changed = false
       const next = { ...prev }
-      const activeIdentities = new Set()
+      const seenIdentities = new Set()
 
       canonicalStreams.forEach((stream) => {
         const identity = String(stream?.__identity || getCanonicalStreamIdentity(stream))
         if (!identity) return
-        activeIdentities.add(identity)
+        seenIdentities.add(identity)
+
+        const previousSeenAt = sessionLastSeenByIdentityRef.current.get(identity)
+        sessionLastSeenByIdentityRef.current.set(identity, now)
 
         const previousSessionKey = next[identity]
-        const previousSeen = lastSeenByIdentityRef.current.get(identity)
-        const isGapReset = Boolean(previousSeen?.seenAt && now - previousSeen.seenAt > SESSION_GAP_RESET_MS)
+        const isGapReset = Boolean(previousSeenAt && now - previousSeenAt > SESSION_GAP_RESET_MS)
 
         if (!previousSessionKey || isGapReset) {
           const startedAtMs = parseTimestampMs(stream?.started_at) || now
@@ -860,8 +865,13 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
       })
 
       Object.keys(next).forEach((identity) => {
-        if (!activeIdentities.has(identity)) {
+        if (seenIdentities.has(identity)) {
+          return
+        }
+        const lastSeenAt = sessionLastSeenByIdentityRef.current.get(identity)
+        if (!lastSeenAt || now - lastSeenAt > SESSION_IDENTITY_RETENTION_MS) {
           delete next[identity]
+          sessionLastSeenByIdentityRef.current.delete(identity)
           changed = true
         }
       })
@@ -871,6 +881,8 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
   }, [canonicalStreams])
 
   useEffect(() => {
+    const now = Date.now()
+
     setRuntimeRecoveryMarkersByIdentity((prev) => {
       let changed = false
       const next = { ...prev }
@@ -893,17 +905,26 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
           changed = true
         }
 
-        lastSeenByIdentityRef.current.set(identity, { rawId, containerId, seenAt: Date.now() })
+        const seenAt = now
+        lastSeenByIdentityRef.current.set(identity, { rawId, containerId, seenAt })
+        markerLastSeenByIdentityRef.current.set(identity, seenAt)
       })
 
-      const activeIdentities = new Set(canonicalStreams.map((stream) => String(stream?.__identity || getCanonicalStreamIdentity(stream))))
       Array.from(lastSeenByIdentityRef.current.keys()).forEach((identity) => {
-        if (!activeIdentities.has(identity)) {
+        const seen = lastSeenByIdentityRef.current.get(identity)
+        if (!seen?.seenAt || now - seen.seenAt > SESSION_IDENTITY_RETENTION_MS) {
           lastSeenByIdentityRef.current.delete(identity)
+        }
+      })
+
+      Object.keys(next).forEach((identity) => {
+        const lastSeenAt = markerLastSeenByIdentityRef.current.get(identity)
+        if (!lastSeenAt || now - lastSeenAt > SESSION_IDENTITY_RETENTION_MS) {
           if (next[identity]) {
             delete next[identity]
             changed = true
           }
+          markerLastSeenByIdentityRef.current.delete(identity)
         }
       })
 
