@@ -477,11 +477,19 @@ function StreamTimelineGraphic({
               <ReferenceLine
                 key={marker.id}
                 x={marker.time}
-                stroke={marker.type === 'engine_switch' ? 'hsl(var(--chart-4, 262 83% 58%))' : marker.type === 'recovery' ? 'hsl(var(--warning, 38 92% 50%))' : 'hsl(var(--muted-foreground))'}
+                stroke={
+                  marker.type === 'engine_switch'
+                    ? 'hsl(var(--chart-4, 262 83% 58%))'
+                    : marker.type === 'failover'
+                      ? 'hsl(var(--destructive, 0 84% 60%))'
+                      : marker.type === 'recovery'
+                        ? 'hsl(var(--warning, 38 92% 50%))'
+                        : 'hsl(var(--muted-foreground))'
+                }
                 strokeWidth={1.4}
                 strokeOpacity={compact ? 0.6 : 0.8}
                 ifOverflow="extendDomain"
-                strokeDasharray={marker.type === 'engine_switch' ? '4 2' : undefined}
+                strokeDasharray={marker.type === 'engine_switch' || marker.type === 'failover' ? '4 2' : undefined}
               />
             ))}
           </ComposedChart>

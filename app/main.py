@@ -277,6 +277,12 @@ def _format_sse_message(payload: Dict[str, Any], *, event_name: Optional[str] = 
 def _build_sse_payload() -> Dict[str, Any]:
     engines = state.list_engines()
     streams = state.list_streams_with_stats(status="started")
+    pending_failover_streams = state.list_streams_with_stats(status="pending_failover")
+    seen_stream_ids = {str(getattr(stream, "id", "")) for stream in streams}
+    streams = streams + [
+        stream for stream in pending_failover_streams
+        if str(getattr(stream, "id", "")) not in seen_stream_ids
+    ]
     engine_docker_stats = docker_stats_collector.get_all_stats()
 
     total_peers = 0
@@ -2095,8 +2101,8 @@ def get_engine_stats(container_id: str):
     return stats
 
 @app.get("/streams", response_model=List[StreamState])
-def get_streams(status: Optional[str] = Query(None, pattern="^(started|ended)$"), container_id: Optional[str] = None):
-    """Get streams. By default, returns all streams. Use status=started or status=ended to filter."""
+def get_streams(status: Optional[str] = Query(None, pattern="^(started|ended|pending_failover)$"), container_id: Optional[str] = None):
+    """Get streams. By default, returns all streams. Use status=started, status=pending_failover, or status=ended to filter."""
     return state.list_streams_with_stats(status=status, container_id=container_id)
 
 @app.get("/streams/{stream_id}/stats", response_model=List[StreamStatSnapshot])

@@ -55,13 +55,26 @@ function AppContent() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [enginesData, streamsData, vpnData, orchStatus, engineStatsData] = await Promise.all([
+      const [enginesData, startedStreamsData, pendingFailoverStreamsData, vpnData, orchStatus, engineStatsData] = await Promise.all([
         fetchJSON(`${orchUrl}/api/v1/engines`),
         fetchJSON(`${orchUrl}/api/v1/streams?status=started`),
+        fetchJSON(`${orchUrl}/api/v1/streams?status=pending_failover`).catch(() => []),
         fetchJSON(`${orchUrl}/api/v1/vpn/status`).catch(() => ({ enabled: false })),
         fetchJSON(`${orchUrl}/api/v1/orchestrator/status`).catch(() => null),
         fetchJSON(`${orchUrl}/api/v1/engines/stats/all`).catch(() => ({}))
       ])
+
+      const streamsById = new Map()
+      ;(Array.isArray(startedStreamsData) ? startedStreamsData : []).forEach((stream) => {
+        streamsById.set(String(stream?.id || ''), stream)
+      })
+      ;(Array.isArray(pendingFailoverStreamsData) ? pendingFailoverStreamsData : []).forEach((stream) => {
+        const key = String(stream?.id || '')
+        if (!streamsById.has(key)) {
+          streamsById.set(key, stream)
+        }
+      })
+      const streamsData = Array.from(streamsById.values())
 
       const mergedEngines = (Array.isArray(enginesData) ? enginesData : []).map((engine) => ({
         ...engine,

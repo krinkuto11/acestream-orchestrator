@@ -193,11 +193,20 @@ function getCanonicalStreamIdentity(stream) {
 function buildRecoveryMarker({ timestampMs, rawId, reason = 'Recovery' }) {
   const ts = Number.isFinite(timestampMs) && timestampMs > 0 ? timestampMs : Date.now()
   const safeRawId = String(rawId || '').trim() || 'unknown'
+  const normalizedReason = String(reason || '').toLowerCase()
+
+  let markerType = 'recovery'
+  if (normalizedReason.includes('engine')) {
+    markerType = 'engine_switch'
+  } else if (normalizedReason.includes('failover')) {
+    markerType = 'failover'
+  }
+
   return {
     id: `${safeRawId}-${ts}`,
     time: ts,
     label: reason,
-    type: String(reason || '').toLowerCase().includes('engine') ? 'engine_switch' : 'recovery',
+    type: markerType,
   }
 }
 
@@ -234,14 +243,28 @@ function mergeDuplicateStreams(entries) {
     return Math.max(max, parseTimestampMs(item?.started_at))
   }, 0)
 
+  const latestPendingFailoverTs = sorted.reduce((max, item) => {
+    const status = String(item?.status || '').trim().toLowerCase()
+    if (status !== 'pending_failover') return max
+    return Math.max(max, parseTimestampMs(item?.started_at), parseTimestampMs(item?.ended_at))
+  }, 0)
+
   const merged = {
     ...latest,
     labels: mergedLabels,
     __identity: getCanonicalStreamIdentity(latest),
   }
 
+  const latestStatus = String(latest?.status || '').trim().toLowerCase()
+
   // Mark as started only if there is unclosed started evidence newer than the latest ended evidence.
-  if (latestUnclosedStartedTs > 0 && latestUnclosedStartedTs >= latestEndedTs) {
+  if (
+    latestStatus === 'pending_failover'
+    && latestPendingFailoverTs >= latestEndedTs
+    && latestPendingFailoverTs >= latestStartedTs
+  ) {
+    merged.status = 'pending_failover'
+  } else if (latestUnclosedStartedTs > 0 && latestUnclosedStartedTs >= latestEndedTs) {
     merged.status = 'started'
   } else if (latestEndedTs > 0 && latestEndedTs >= latestStartedTs) {
     merged.status = 'ended'
@@ -273,6 +296,11 @@ function mergeDuplicateStreams(entries) {
 
   merged.__recoveryMarkers = recoveryMarkers
   return merged
+}
+
+function isStreamActiveStatus(status) {
+  const normalizedStatus = String(status || '').trim().toLowerCase()
+  return normalizedStatus === 'started' || normalizedStatus === 'pending_failover'
 }
 
 function StreamStatusBadge({ isActive, isPaused, isPrebuffering, isDownloadStopped }) {
@@ -366,7 +394,9 @@ function StreamCard({
     setLocalStream(stream)
   }, [stream])
 
-  const isActive = localStream?.status === 'started'
+  const streamStatus = String(localStream?.status || '').trim().toLowerCase()
+  const isPendingFailover = streamStatus === 'pending_failover'
+  const isActive = isStreamActiveStatus(streamStatus)
   const streamIsLive = Boolean(localStream?.livepos?.live_last || localStream?.livepos?.last_ts)
   const labels = localStream?.labels || {}
   const isPrebuffering = String(labels['stream.status_text'] || '').toLowerCase().includes('prebuf')
@@ -384,7 +414,7 @@ function StreamCard({
   }, [localStream?.paused])
 
   useEffect(() => {
-    if (!stream?.id || String(stream?.status || '').toLowerCase() !== 'started') return undefined
+    if (!stream?.id || !isStreamActiveStatus(stream?.status)) return undefined
 
     let eventSource = null
     let reconnectTimer = null
@@ -625,6 +655,9 @@ function StreamCard({
                   isPrebuffering={isPrebuffering}
                   isDownloadStopped={isDownloadStopped}
                 />
+                {isPendingFailover && (
+                  <Badge className="bg-amber-500 text-white hover:bg-amber-600 border-transparent">FAILOVERING</Badge>
+                )}
                 {isExpanded && (
                   <Badge variant={detailsLive ? 'success' : 'secondary'} className="hidden md:inline-flex">
                     {detailsLive ? 'Live updates' : 'Reconnecting'}
@@ -823,7 +856,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
       .filter(Boolean)
   }, [streams])
 
-  const activeStreams = canonicalStreams.filter((s) => s.status === 'started')
+  const activeStreams = canonicalStreams.filter((s) => isStreamActiveStatus(s?.status))
   const endedStreams = canonicalStreams.filter((s) => s.status === 'ended')
 
   const [selectedStreams, setSelectedStreams] = useState(new Set())
@@ -891,22 +924,32 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
         const identity = String(stream?.__identity || getCanonicalStreamIdentity(stream))
         const rawId = String(stream?.id || '').trim()
         const containerId = String(stream?.container_id || '').trim()
+        const status = String(stream?.status || '').trim().toLowerCase()
         if (!identity || !rawId) return
 
         const previous = lastSeenByIdentityRef.current.get(identity)
-        if (previous?.rawId && previous.rawId !== rawId) {
-          const switchedEngine = Boolean(previous.containerId && containerId && previous.containerId !== containerId)
+
+        let markerReason = null
+        if (previous?.status !== 'pending_failover' && status === 'pending_failover') {
+          markerReason = 'Failover'
+        } else if (previous?.containerId && containerId && previous.containerId !== containerId) {
+          markerReason = 'Engine switch'
+        } else if (previous?.rawId && previous.rawId !== rawId) {
+          markerReason = 'Recovery'
+        }
+
+        if (markerReason) {
           const marker = buildRecoveryMarker({
             timestampMs: Date.now(),
             rawId,
-            reason: switchedEngine ? 'Engine switch' : 'Recovery',
+            reason: markerReason,
           })
           next[identity] = [...(next[identity] || []), marker].slice(-20)
           changed = true
         }
 
         const seenAt = now
-        lastSeenByIdentityRef.current.set(identity, { rawId, containerId, seenAt })
+        lastSeenByIdentityRef.current.set(identity, { rawId, containerId, status, seenAt })
         markerLastSeenByIdentityRef.current.set(identity, seenAt)
       })
 

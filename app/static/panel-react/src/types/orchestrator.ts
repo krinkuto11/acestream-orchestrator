@@ -17,7 +17,7 @@ export type StreamKeyType = z.infer<typeof streamKeyTypeSchema>
 export const engineHealthStatusSchema = z.enum(['healthy', 'unhealthy', 'unknown'])
 export type EngineHealthStatus = z.infer<typeof engineHealthStatusSchema>
 
-export const streamLifecycleStatusSchema = z.enum(['started', 'ended'])
+export const streamLifecycleStatusSchema = z.enum(['started', 'ended', 'pending_failover'])
 export type StreamLifecycleStatus = z.infer<typeof streamLifecycleStatusSchema>
 
 export const proxyRuntimeStateSchema = z.enum([
