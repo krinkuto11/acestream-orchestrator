@@ -56,6 +56,7 @@ class StreamGenerator:
         self.last_chunk_sent_time = time.time()
         self.last_reported_runway_seconds = 0.0
         self.last_reported_runway_time = time.time()
+        self.last_starvation_update_time = 0.0
     
     def generate(self):
         """Generator function that produces stream content for the client"""
@@ -68,6 +69,7 @@ class StreamGenerator:
         self.last_chunk_sent_time = time.time()
         self.last_reported_runway_seconds = 0.0
         self.last_reported_runway_time = time.time()
+        self.last_starvation_update_time = 0.0
         
         try:
             logger.info(f"[{self.client_id}] Stream generator started, stream_ready={not self.stream_initializing}")
@@ -125,8 +127,14 @@ class StreamGenerator:
                     self.consecutive_empty += 1
 
                     # Keep runway telemetry fresh during starvation so failover
-                    # logic does not rely on stale runway samples.
-                    self._maybe_update_client_position(force=True, source="ts_starvation_decay")
+                    # logic does not rely on stale runway samples. Debounce
+                    # forced updates to avoid spamming Redis under short poll
+                    # intervals while still reporting liveness/runway decay.
+                    now = time.time()
+                    starvation_update_interval = max(2.5, float(self.position_update_interval or 2.5))
+                    if (now - float(self.last_starvation_update_time or 0.0)) >= starvation_update_interval:
+                        self._maybe_update_client_position(force=True, source="starvation_tick")
+                        self.last_starvation_update_time = now
                     
                     # Check if stream has ended (no data for too long)
                     if self.consecutive_empty > no_data_max_checks:
@@ -301,7 +309,7 @@ class StreamGenerator:
             normalized_source = str(source or "ts_cursor_ema")
             confidence = 0.75 if self.chunk_rate_ema else 0.55
 
-            if normalized_source == "ts_starvation_decay":
+            if normalized_source in {"ts_starvation_decay", "starvation_tick"}:
                 # Do not drain runway before first downstream chunk is emitted.
                 if self.chunks_sent > 0:
                     elapsed_since_chunk = max(0.0, now - float(self.last_chunk_sent_time or now))
