@@ -58,12 +58,13 @@ function StreamStatusBadge({ isActive, isPaused, isPrebuffering, isDownloadStopp
 }
 
 function ClientSession({ client }) {
-  const avatar = String(client?.ip_address || client?.client_id || '?').charAt(0).toUpperCase()
   return (
     <div className="rounded-lg border bg-muted/20 p-3">
       <div className="flex items-start gap-3">
         <Avatar className="h-8 w-8">
-          <AvatarFallback className="text-xs">{avatar}</AvatarFallback>
+          <AvatarFallback className="text-xs">
+            <Users className="h-4 w-4" />
+          </AvatarFallback>
         </Avatar>
         <div className="min-w-0 space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -95,6 +96,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
   const hasLoadedClientsRef = useRef(false)
 
   const isActive = stream.status === 'started'
+  const streamIsLive = Boolean(stream.livepos?.live_last)
   const labels = stream.labels || {}
   const isPrebuffering = String(labels['stream.status_text'] || '').toLowerCase().includes('prebuf')
   const deadReason = String(stream.dead_reason || stream.last_error || labels['stream.dead_reason'] || '').toLowerCase()
@@ -179,7 +181,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
             </div>
 
             {isActive && (
-              <StreamTimelineGraphic livepos={stream.livepos} clients={clients} isLive={Boolean(stream.livepos?.live_last)} compact />
+              <StreamTimelineGraphic livepos={stream.livepos} clients={clients} isLive={streamIsLive} compact />
             )}
           </div>
         </div>
@@ -190,7 +192,7 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
           {isActive && (
             <div className="space-y-2">
               <p className="text-sm font-semibold text-foreground">Stream timeline & client positions</p>
-              <StreamTimelineGraphic livepos={stream.livepos} clients={clients} isLive={Boolean(stream.livepos?.live_last)} />
+              <StreamTimelineGraphic livepos={stream.livepos} clients={clients} isLive={streamIsLive} />
             </div>
           )}
 

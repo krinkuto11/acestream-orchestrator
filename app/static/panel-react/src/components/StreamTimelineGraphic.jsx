@@ -53,7 +53,7 @@ export default function StreamTimelineGraphic({
 
   const normalizedClients = clients
     .map((client, index) => {
-      const lag = Number.parseFloat(String(client?.buffer_seconds_behind ?? ''))
+      const lag = toNumber(client?.buffer_seconds_behind)
       if (!Number.isFinite(lag)) return null
       const markerTs = liveLast - Math.max(0, lag)
       const percent = clamp(((markerTs - liveFirst) / totalRange) * 100, 0, 100)
