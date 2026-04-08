@@ -39,7 +39,7 @@ logger = get_logger()
 # This prevents blocking if internal event handling is slow (e.g., Docker API calls)
 STREAM_EVENT_HANDLER_TIMEOUT = 2.0
 DEFAULT_UPSTREAM_CONNECT_TIMEOUT_S = 3.0
-DEFAULT_UPSTREAM_READ_TIMEOUT_S = 5.0
+DEFAULT_UPSTREAM_READ_TIMEOUT_S = 60.0
 
 
 def _upstream_timeouts() -> tuple[float, float]:
@@ -1037,6 +1037,8 @@ class StreamManager:
         stream_end_reason = "normal"
         if not hasattr(self, 'control_plane_wait_event'):
             self.control_plane_wait_event = threading.Event()
+        # Start as "not recovering" so health monitor can enforce starvation kills.
+        self.control_plane_wait_event.set()
         
         try:
             # Start health monitor (Once)
@@ -1080,7 +1082,7 @@ class StreamManager:
 
                         if self._stream_exit_reason == "eof":
                             max_buffer_sec = self._get_max_client_buffer_seconds()
-                            if max_buffer_sec > 3.0 and self.consecutive_eof_retries < 5:
+                            if max_buffer_sec > 4.0 and self.consecutive_eof_retries < 5:
                                 self.consecutive_eof_retries += 1
                                 logger.info(
                                     "Stream hit EOF but clients have %.1fs of buffer. "
@@ -1108,10 +1110,13 @@ class StreamManager:
                         else:
                             logger.error("No valid stream_id available for Control Plane recovery.")
                             break
-                            
-                        awoken = self.control_plane_wait_event.wait(timeout=30.0)
+
+                        dyn_thresh, _, _ = self._get_dynamic_tolerance()
+                        safe_wait_time = max(30.0, dyn_thresh + 10.0)
+
+                        awoken = self.control_plane_wait_event.wait(timeout=safe_wait_time)
                         if not awoken:
-                            logger.error("Control plane failed to recover stream within 30 seconds. Aborting.")
+                            logger.error(f"Control plane failed to recover stream within {safe_wait_time:.1f}s. Aborting.")
                             stream_end_reason = "failover_timeout"
                             break
                     else:
@@ -1137,9 +1142,13 @@ class StreamManager:
                             container_id=self.engine_container_id,
                             reason="error"
                         ))
-                        awoken = self.control_plane_wait_event.wait(timeout=30.0)
+
+                        dyn_thresh, _, _ = self._get_dynamic_tolerance()
+                        safe_wait_time = max(30.0, dyn_thresh + 10.0)
+
+                        awoken = self.control_plane_wait_event.wait(timeout=safe_wait_time)
                         if not awoken:
-                            logger.error("Control plane failed to recover stream within 30 seconds. Aborting.")
+                            logger.error(f"Control plane failed to recover stream within {safe_wait_time:.1f}s. Aborting.")
                             stream_end_reason = "failover_timeout"
                             break
                     else:
@@ -1263,6 +1272,38 @@ class StreamManager:
 
         return max(0.0, float(max_buffer_sec))
 
+    def _get_dynamic_tolerance(self) -> tuple[float, float, float]:
+        """Calculate starvation tolerance from client runway.
+
+        Returns:
+            (dynamic_threshold_seconds, current_buffer_seconds, max_tolerance_seconds)
+        """
+        try:
+            max_tolerance = float(ConfigHelper.connection_timeout())
+        except Exception:
+            max_tolerance = 30.0
+
+        if (
+            max_tolerance != max_tolerance
+            or max_tolerance in (float('inf'), float('-inf'))
+            or max_tolerance <= 0
+        ):
+            max_tolerance = 30.0
+
+        # Do not fail over too aggressively during startup or transient jitter.
+        min_tolerance = 4.0
+        # Keep margin for control-plane swap propagation.
+        safety_margin = 3.0
+
+        current_buffer = self._get_max_client_buffer_seconds()
+
+        dynamic_threshold = max(
+            min_tolerance,
+            min(max_tolerance, current_buffer - safety_margin),
+        )
+
+        return float(dynamic_threshold), float(current_buffer), float(max_tolerance)
+
     def _maybe_publish_legacy_stats(self):
         """Deprecated: legacy stats are now gathered by the collector service."""
         return
@@ -1300,55 +1341,48 @@ class StreamManager:
             self._legacy_api_lock.release()
     
     def _monitor_health(self):
-        """Monitor stream health"""
+        """Monitor stream health using dynamic buffer-based timeouts."""
+        # Faster tick keeps failover responsive when tolerance shrinks.
+        self.health_check_interval = 1.0
+
         while self.running:
             try:
                 now = time.time()
                 inactivity_duration = now - self.last_data_time
 
-                # Respect user-configured timeout without an artificial upper cap.
-                # Fall back to 5.0s when configuration is unavailable/invalid,
-                # and enforce a minimum to avoid tight failover loops.
-                try:
-                    configured_timeout = float(ConfigHelper.connection_timeout())
-                except Exception:
-                    configured_timeout = 5.0
+                dynamic_threshold, current_buffer, _ = self._get_dynamic_tolerance()
 
-                if (
-                    configured_timeout != configured_timeout
-                    or configured_timeout in (float('inf'), float('-inf'))
-                    or configured_timeout <= 0
-                ):
-                    configured_timeout = 5.0
+                if inactivity_duration > dynamic_threshold and self.connected:
+                    # Event set => steady state; cleared => waiting for control-plane recovery.
+                    is_recovering = (
+                        hasattr(self, 'control_plane_wait_event')
+                        and not self.control_plane_wait_event.is_set()
+                    )
 
-                timeout_threshold = max(1.0, configured_timeout)
-                
-                if inactivity_duration > timeout_threshold and self.connected:
-                    # IF we are already waiting for a Control Plane failover, ignore the timeout!
-                    if hasattr(self, 'control_plane_wait_event') and not self.control_plane_wait_event.is_set():
-                        pass
-                    else:
+                    if not is_recovering:
                         if self.healthy:
                             logger.warning(
-                                f"Stream unhealthy - no data for {inactivity_duration:.1f}s. "
-                                "Force-killing socket to trigger failover."
+                                f"Stream starved for {inactivity_duration:.1f}s. "
+                                f"[Client Buffer: {current_buffer:.1f}s | Dynamic Threshold: {dynamic_threshold:.1f}s]. "
+                                "Killing socket to trigger immediate failover."
                             )
                             self.healthy = False
-    
+
                         if self.http_reader:
                             try:
                                 self.http_reader.stop()
                             except Exception:
                                 pass
-    
+
                         try:
                             if self.socket:
                                 self.socket.close()
                         except Exception:
                             pass
+
                         self.connected = False
                 elif self.connected and not self.healthy:
-                    logger.info("Stream health restored")
+                    logger.info("Stream health restored. Resuming buffer fill.")
                     self.healthy = True
                 
             except Exception as e:

@@ -12,9 +12,9 @@ class Config:
     """Configuration class using environment variables."""
     
     # Connection timeouts
-    CONNECTION_TIMEOUT: int = 10
+    CONNECTION_TIMEOUT: int = 30
     UPSTREAM_CONNECT_TIMEOUT: int = 3
-    UPSTREAM_READ_TIMEOUT: int = 5
+    UPSTREAM_READ_TIMEOUT: int = 60
     CLIENT_WAIT_TIMEOUT: int = 30
     STREAM_TIMEOUT: int = 60
     CHUNK_TIMEOUT: int = 5

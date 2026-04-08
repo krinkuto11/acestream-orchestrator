@@ -273,7 +273,7 @@ class ProxySettingsSchema(BaseModel):
     initial_data_check_interval: float = 0.2
     no_data_timeout_checks: int = 60
     no_data_check_interval: float = 1.0
-    connection_timeout: int = 10
+    connection_timeout: int = 30
     stream_timeout: int = 60
     channel_shutdown_delay: int = 5
     proxy_prebuffer_seconds: int = 0
