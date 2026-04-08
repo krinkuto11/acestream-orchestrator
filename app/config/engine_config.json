@@ -1,0 +1,14 @@
+{
+  "download_limit": 0,
+  "upload_limit": 0,
+  "live_cache_type": "memory",
+  "buffer_time": 10,
+  "memory_limit": null,
+  "parameters": [],
+  "torrent_folder_mount_enabled": false,
+  "torrent_folder_host_path": null,
+  "torrent_folder_container_path": null,
+  "disk_cache_mount_enabled": false,
+  "disk_cache_prune_enabled": false,
+  "disk_cache_prune_interval": 1440
+}

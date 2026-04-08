@@ -389,21 +389,15 @@ resource_scheduler = ResourceScheduler()
 
 def compute_current_engine_config_hash() -> str:
     """Compute a stable hash for the desired engine runtime configuration."""
-    from .custom_variant_config import get_config as get_custom_config, is_custom_variant_enabled
-    from .template_manager import get_active_template_id
+    from .engine_config import get_config as get_engine_config
 
-    custom_config = None
-    if is_custom_variant_enabled():
-        cfg_obj = get_custom_config()
-        if cfg_obj:
-            custom_config = cfg_obj.model_dump(mode="json")
+    engine_config = None
+    cfg_obj = get_engine_config()
+    if cfg_obj:
+        engine_config = cfg_obj.model_dump(mode="json")
 
     payload = {
-        "engine_variant": cfg.ENGINE_VARIANT,
-        "variant_config": get_variant_config(cfg.ENGINE_VARIANT),
-        "custom_variant_enabled": is_custom_variant_enabled(),
-        "active_template_id": get_active_template_id(),
-        "custom_config": custom_config,
+        "engine_config": engine_config,
         "engine_memory_limit": cfg.ENGINE_MEMORY_LIMIT,
         "ace_map_https": cfg.ACE_MAP_HTTPS,
         "docker_network": cfg.DOCKER_NETWORK,
@@ -667,156 +661,80 @@ def _check_gluetun_health_sync(container_name: Optional[str] = None) -> bool:
     except Exception:
         return False
 
-def get_variant_config(variant: str) -> dict:
-    """
-    Get the Docker image and base command/arguments for a specific variant.
-    
-    Supported standard variants:
-                 - 'AceServe-amd64' (default)
-                 - 'AceServe-arm32'
-                 - 'AceServe-arm64'
-                 - 'custom' (when custom variant is enabled)
-    
-    Returns:
-        dict with keys:
-            - image: Docker image name (always present)
-            - config_type: "env" or "cmd" (always present)
-            - base_args: Base arguments string (for ENV-based AceServe-amd64 variant)
-            - base_cmd: Base command list (for CMD-based arm32/arm64 variants)
-            - is_custom: True if this is a custom variant
-    """
-    # Check if custom variant is enabled and should override
-    from .custom_variant_config import (
-        is_custom_variant_enabled, 
-        get_config, 
-        build_variant_config_from_custom,
-        detect_platform
-    )
-    
-    if is_custom_variant_enabled():
-        try:
-            custom_config = get_config()
-            if custom_config:
-                logger.debug("Using custom engine variant configuration")
-                return build_variant_config_from_custom(custom_config)
-        except Exception as e:
-            logger.error(f"Failed to load custom variant config, falling back to standard variants: {e}")
-    configs = {
-        "AceServe-amd64": {
-            "image": "ghcr.io/krinkuto11/acestream:latest-amd64",
-            "config_type": "cmd",
-            "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "52428800", "--live-buffer", "45", "--disable-sentry", "--log-stdout", "--disable-upnp"],
-        },
-        "AceServe-arm32": {
-            "image": "ghcr.io/krinkuto11/acestream:latest-arm32",
-            "config_type": "cmd",
-            "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--live-buffer", "45", "--disable-sentry", "--log-stdout", "--disable-upnp"],
-        },
-        "AceServe-arm64": {
-            "image": "ghcr.io/krinkuto11/acestream:latest-arm64",
-            "config_type": "cmd",
-            "base_cmd": ["python", "main.py", "--bind-all", "--live-cache-type", "memory", "--live-mem-cache-size", "104857600", "--live-buffer", "45", "--disable-sentry", "--log-stdout", "--disable-upnp"],
-        }
-    }
-    
-    # Determine current platform to ensure compatibility
-    current_platform = detect_platform()
-    
-    # Validation and Fallback Logic:
-    # 1. If variant is not in configs at all, we MUST fallback
-    # 2. If variant is "amd64" but we are on ARM, we MUST fallback
-    
-    needs_fallback = False
-    if variant not in configs:
-        needs_fallback = True
-        logger.warning(f"Engine variant '{variant}' not found")
-    elif current_platform in ["arm64", "arm32"] and "amd64" in variant:
-        needs_fallback = True
-        logger.warning(f"Engine variant '{variant}' is incompatible with platform '{current_platform}'")
-        
-    if needs_fallback:
-        if current_platform == "arm64":
-            fallback = "AceServe-arm64"
-        elif current_platform == "arm32":
-            fallback = "AceServe-arm32"
-        else:
-            fallback = "AceServe-amd64"
-        
-        logger.info(f"Falling back to engine variant '{fallback}' (platform: {current_platform})")
-        return configs[fallback]
-        
-    return configs[variant]
 
-# Alias for backward compatibility with existing tests that import _get_variant_config
-# (test_engine_variants.py, demo_engine_variants.py, test_p2p_port_variants.py)
+def get_variant_config(variant: str = "global") -> dict:
+    """Backward-compatible adapter for legacy tests and tooling."""
+    from .engine_config import (
+        EngineConfig,
+        build_engine_customization_args,
+        detect_platform,
+        get_config as get_engine_config,
+        resolve_engine_image,
+    )
+
+    engine_config = get_engine_config() or EngineConfig()
+    platform_arch = detect_platform()
+    return {
+        "image": resolve_engine_image(platform_arch),
+        "config_type": "cmd",
+        "is_custom": True,
+        "requested_variant": variant,
+        "base_cmd": ["python", "main.py", *build_engine_customization_args(engine_config)],
+    }
+
+
 _get_variant_config = get_variant_config
 
 def start_acestream(req: AceProvisionRequest, engine_spec: Optional[EngineSpec] = None) -> AceProvisionResponse:
     from .naming import generate_container_name
     import time
+    from .engine_config import (
+        DEFAULT_TORRENT_FOLDER_PATH,
+        build_engine_customization_args,
+        detect_platform,
+        get_config as get_engine_config,
+        resolve_engine_image,
+    )
     
     provision_start = time.time()
     
     logger.debug(f"Starting AceStream engine: labels={req.labels}, custom_env={bool(req.env)}")
 
-    # Get variant configuration
-    variant_config = get_variant_config(cfg.ENGINE_VARIANT)
-    
-    # Determine the actual engine variant name (important for custom variants)
-    from .custom_variant_config import is_custom_variant_enabled, get_config
-    from .template_manager import get_active_template_name
-    if is_custom_variant_enabled():
-        # For custom variants, use the template name if available
-        template_name = get_active_template_name()
-        if template_name:
-            engine_variant_name = template_name
-        else:
-            # Fallback to platform if no template name
-            custom_config = get_config()
-            if custom_config:
-                engine_variant_name = f"{custom_config.platform}"
-            else:
-                engine_variant_name = cfg.ENGINE_VARIANT
-    else:
-        # Use the configured variant name
-        engine_variant_name = cfg.ENGINE_VARIANT
+    engine_platform = detect_platform()
+    engine_image = resolve_engine_image(engine_platform)
+    engine_variant_name = f"global-{engine_platform}"
+    engine_config = get_engine_config()
 
-    # Determine memory limit to apply
-    # Priority: custom variant config > global env config
+    # Determine memory limit to apply.
+    # Priority: global engine config > global env config
     memory_limit = None
-    if variant_config.get("is_custom"):
-        from .custom_variant_config import get_config as get_custom_config
-        custom_config = get_custom_config()
-        if custom_config and custom_config.memory_limit:
-            memory_limit = custom_config.memory_limit
-            logger.info(f"Applying custom variant memory limit: {memory_limit}")
+    if engine_config and engine_config.memory_limit:
+        memory_limit = engine_config.memory_limit
+        logger.info(f"Applying engine config memory limit: {memory_limit}")
 
     if not memory_limit and cfg.ENGINE_MEMORY_LIMIT:
         memory_limit = cfg.ENGINE_MEMORY_LIMIT
         logger.info(f"Applying global memory limit: {memory_limit}")
 
-    # Resolve base volumes from variant settings before scheduling.
+    # Resolve base volumes from global engine settings before scheduling.
     volumes = None
-    if variant_config.get("is_custom"):
-        from .custom_variant_config import get_config as get_custom_config, DEFAULT_TORRENT_FOLDER_PATH
-        custom_config = get_custom_config()
-        if custom_config and custom_config.torrent_folder_mount_enabled:
-            if custom_config.torrent_folder_host_path:
-                container_path = custom_config.torrent_folder_container_path or DEFAULT_TORRENT_FOLDER_PATH
-                for param in custom_config.parameters:
-                    if param.name == "--cache-dir" and param.enabled and param.value:
-                        cache_dir = param.value.replace("~", "/dev/shm")
-                        container_path = f"{cache_dir}/collected_torrent_files"
-                        break
-                volumes = {
-                    custom_config.torrent_folder_host_path: {
-                        'bind': container_path,
-                        'mode': 'rw'
-                    }
+    if engine_config and engine_config.torrent_folder_mount_enabled:
+        if engine_config.torrent_folder_host_path:
+            container_path = engine_config.torrent_folder_container_path or DEFAULT_TORRENT_FOLDER_PATH
+            for param in engine_config.parameters:
+                if param.name == "--cache-dir" and param.enabled and param.value:
+                    cache_dir = str(param.value).replace("~", "/dev/shm")
+                    container_path = f"{cache_dir}/collected_torrent_files"
+                    break
+            volumes = {
+                engine_config.torrent_folder_host_path: {
+                    'bind': container_path,
+                    'mode': 'rw'
                 }
-                logger.info(f"Mounting torrent folder: {custom_config.torrent_folder_host_path} -> {container_path}")
-            else:
-                logger.warning("Torrent folder mount enabled but host path not configured")
+            }
+            logger.info(f"Mounting torrent folder: {engine_config.torrent_folder_host_path} -> {container_path}")
+        else:
+            logger.warning("Torrent folder mount enabled but host path not configured")
 
     # Phase 4: accept a fully resolved EngineSpec from the scheduler when provided.
     if engine_spec is None:
@@ -836,42 +754,18 @@ def start_acestream(req: AceProvisionRequest, engine_spec: Optional[EngineSpec] 
     ports = engine_spec.ports
     network_config = dict(engine_spec.network_config)
     
-    # Prepare environment variables and command based on variant type
+    # Prepare environment variables and strict orchestrator-owned command.
     env = {**req.env}
-    cmd = None
-    base_cmd = variant_config.get("base_cmd", [])
-    base_args = variant_config.get("base_args", "")
-    
-    if variant_config["config_type"] == "env":
-        # Legacy ENV-based configuration (mainly for custom variants with base_args)
-        base_args = variant_config.get("base_args", "")
-        port_args = f" --http-port {c_http} --https-port {c_https} --api-port {c_api}"
-        # Add P2P port if available
-        if p2p_port:
-            port_args += f" --port {p2p_port}"
-        env["ACESTREAM_ARGS"] = base_args + port_args
-    else:
-        # CMD-based variants (krinkuto11, AceServe, and all custom variants with base_cmd)
-        
-        # We need to map CMD configuration differently for distinct containers
-        # User requested that AceServe variants in default mode only receive --http-port and --port (P2P)
-        # We check the image name to identify AceServe variants even after platform fallbacks
-        image_name = variant_config.get("image", "").lower()
-        is_aceserve_default = not variant_config.get("is_custom") and ("aceserve" in image_name or "krinkuto11" in image_name)
-        
-        if is_aceserve_default:
-            # Minimal ports for AceServe as per user requirement. AceServe docker images already 
-            # have --bind-all etc. in their default parameters.
-            port_args = ["--http-port", str(c_http), "--api-port", str(c_api)]
-        else:
-            # Standard ports for other variants (including krinkuto11 and custom)
-            port_args = ["--http-port", str(c_http), "--https-port", str(c_https), "--api-port", str(c_api)]
-            
-        # Add P2P port if available
-        if p2p_port:
-            port_args.extend(["--port", str(p2p_port)])
-            
-        cmd = base_cmd + port_args
+    cmd = [
+        "python", "main.py",
+        "--http-port", str(c_http),
+        "--api-port", str(c_api),
+    ]
+    if p2p_port:
+        cmd.extend(["--port", str(p2p_port)])
+
+    if engine_config:
+        cmd.extend(build_engine_customization_args(engine_config))
 
     # Generate a meaningful container name with retry logic for conflicts
     container_name = generate_container_name("acestream")
@@ -880,7 +774,7 @@ def start_acestream(req: AceProvisionRequest, engine_spec: Optional[EngineSpec] 
     
     # Build container arguments, conditionally including ports
     container_args = {
-        "image": variant_config["image"],
+        "image": engine_image,
         "detach": True,
         "name": container_name,
         "environment": env,
@@ -896,9 +790,7 @@ def start_acestream(req: AceProvisionRequest, engine_spec: Optional[EngineSpec] 
     if engine_spec.volumes:
         container_args["volumes"] = dict(engine_spec.volumes)
 
-    # Add command for CMD-based variants
-    if cmd is not None:
-        container_args["command"] = cmd
+    container_args["command"] = cmd
     
     # Only add ports if not using Gluetun (ports are handled by Gluetun container)
     if ports is not None:

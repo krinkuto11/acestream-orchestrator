@@ -238,62 +238,20 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     cleanup_on_shutdown()  # Clean any existing state and containers after DB is ready
     
-    # Load custom variant configuration early to ensure it's available
-    from .services.custom_variant_config import load_config as load_custom_config, save_config as save_custom_config
-    from .services.template_manager import get_active_template_id, get_template, set_active_template, list_templates
+    # Load global engine customization early to ensure provisioning uses persisted values.
+    from .services.engine_config import detect_platform, load_config as load_engine_config
     try:
-        custom_config = load_custom_config()
-        if custom_config and custom_config.enabled:
-            logger.info(f"Loaded custom engine variant configuration (platform: {custom_config.platform})")
-            
-            # If custom variant is enabled, load the active template if one was previously set
-            active_template_id = get_active_template_id()
-            if active_template_id is not None:
-                logger.info(f"Loading previously active template {active_template_id} for custom variant")
-                template = get_template(active_template_id)
-                if template:
-                    # Apply the template configuration, but preserve the enabled state
-                    template_config = template.config.model_copy(deep=True)
-                    template_config.enabled = custom_config.enabled
-                    save_custom_config(template_config)
-                    # Ensure active template is set (in case it was only loaded but not set)
-                    set_active_template(active_template_id)
-                    logger.info(f"Successfully loaded template '{template.name}' (slot {active_template_id})")
-                else:
-                    logger.warning(f"Active template {active_template_id} not found, using current config")
-            else:
-                # Custom variant is enabled but no active template
-                # Try to auto-load the first available template
-                logger.info("Custom variant enabled but no active template, checking for available templates...")
-                templates = list_templates()
-                first_available = next((t for t in templates if t['exists']), None)
-                
-                if first_available:
-                    logger.info(f"Auto-loading first available template (slot {first_available['slot_id']})")
-                    template = get_template(first_available['slot_id'])
-                    if template:
-                        # Apply the template configuration, but preserve the enabled state
-                        template_config = template.config.model_copy(deep=True)
-                        template_config.enabled = custom_config.enabled
-                        save_custom_config(template_config)
-                        # Set as active template
-                        set_active_template(first_available['slot_id'])
-                        logger.info(f"Successfully auto-loaded template '{template.name}' (slot {first_available['slot_id']})")
-                    else:
-                        logger.warning(f"Failed to load template from slot {first_available['slot_id']}")
-                else:
-                    # No templates available - ensure we have a valid platform loaded
-                    logger.info("No templates available, using current custom variant config")
-                    if not custom_config.platform:
-                        logger.warning("Custom variant enabled but no platform set, detecting platform...")
-                        from .services.custom_variant_config import detect_platform
-                        custom_config.platform = detect_platform()
-                        save_custom_config(custom_config)
-                        logger.info(f"Set custom variant platform to detected platform: {custom_config.platform}")
+        engine_config = load_engine_config()
+        if engine_config:
+            logger.info(
+                "Loaded global engine config (platform=%s, cache=%s)",
+                detect_platform(),
+                engine_config.live_cache_type,
+            )
         else:
-            logger.debug("Custom engine variant is disabled or not configured")
+            logger.warning("Global engine config is unavailable; provisioning will use runtime defaults")
     except Exception as e:
-        logger.warning(f"Failed to load custom variant config during startup: {e}")
+        logger.warning(f"Failed to load global engine config during startup: {e}")
     
     # Load persisted settings (Proxy and Loop Detection)
     from .services.settings_persistence import SettingsPersistence
@@ -370,12 +328,6 @@ async def lifespan(app: FastAPI):
                 cfg.MAX_REPLICAS = engine_settings['max_replicas']
             if 'auto_delete' in engine_settings:
                 cfg.AUTO_DELETE = engine_settings['auto_delete']
-            if 'engine_variant' in engine_settings:
-                # Update engine variant preference
-                cfg.ENGINE_VARIANT = engine_settings['engine_variant']
-                # Do NOT override custom_config.enabled from engine_settings
-                # custom_engine_variant.json should be the source of truth for its own enabled state
-                pass
             
             # Load manual engines into state if manual mode is enabled
             if engine_settings.get('manual_mode'):
@@ -399,18 +351,20 @@ async def lifespan(app: FastAPI):
                             health_status="unknown"
                         )
                         
-            logger.info(f"Engine settings loaded from persistent storage: MIN_REPLICAS={cfg.MIN_REPLICAS}, MAX_REPLICAS={cfg.MAX_REPLICAS}, AUTO_DELETE={cfg.AUTO_DELETE}, ENGINE_VARIANT={cfg.ENGINE_VARIANT}, MANUAL_MODE={engine_settings.get('manual_mode', False)}")
+            logger.info(
+                "Engine settings loaded from persistent storage: MIN_REPLICAS=%s, MAX_REPLICAS=%s, AUTO_DELETE=%s, MANUAL_MODE=%s",
+                cfg.MIN_REPLICAS,
+                cfg.MAX_REPLICAS,
+                cfg.AUTO_DELETE,
+                engine_settings.get('manual_mode', False),
+            )
         else:
             # No persisted settings found - create default settings from current config
             logger.info("No persisted engine settings found, creating defaults")
-            from .services.custom_variant_config import detect_platform
             default_settings = {
                 "min_replicas": cfg.MIN_REPLICAS,
                 "max_replicas": cfg.MAX_REPLICAS,
                 "auto_delete": cfg.AUTO_DELETE,
-                "engine_variant": cfg.ENGINE_VARIANT,
-                "use_custom_variant": custom_config.enabled if custom_config else False,
-                "platform": detect_platform(),
                 "manual_mode": False,
                 "manual_engines": [],
             }
@@ -1471,12 +1425,13 @@ async def stream_legacy_monitor_sessions(
 
 
 @app.get("/api/v1/custom-variant/reprovision/status/stream")
+@app.get("/api/v1/settings/engine/reprovision/status/stream")
 async def stream_reprovision_status(
     request: Request,
     interval_seconds: float = Query(1.0, ge=0.5, le=10.0),
     api_key: Optional[str] = Query(None),
 ):
-    """SSE endpoint for custom variant reprovision status."""
+    """SSE endpoint for engine reprovision status."""
     _validate_sse_api_key(request, api_key)
 
     async def _event_generator():
@@ -1785,21 +1740,10 @@ def get_engines():
         # Enrich engines with version info and forwarded port
         for engine in verified_engines:
             # Only set engine_variant if not already set (from labels)
-            # This ensures old engines keep their original variant name until reprovisioned
-            from .services.custom_variant_config import is_custom_variant_enabled
+            # This ensures old engines keep their original label until reprovisioned.
             if not engine.engine_variant:
-                # Engine has no variant set from labels, use current configuration
-                if is_custom_variant_enabled():
-                    # For custom variants, use the template name as engine_variant
-                    template_name = get_active_template_name()
-                    if template_name:
-                        engine.engine_variant = template_name
-                    else:
-                        # Fallback to config if no template name
-                        engine.engine_variant = cfg.ENGINE_VARIANT
-                else:
-                    # For standard variants, use configured variant name
-                    engine.engine_variant = cfg.ENGINE_VARIANT
+                from .services.engine_config import detect_platform
+                engine.engine_variant = f"global-{detect_platform()}"
             
             # Get engine version info
             try:
@@ -2581,7 +2525,7 @@ def get_orchestrator_status():
         "config": {
             "auto_delete": cfg.AUTO_DELETE,
             "grace_period_s": cfg.ENGINE_GRACE_PERIOD_S,
-            "engine_variant": cfg.ENGINE_VARIANT,
+            "engine_variant": f"global-{detect_platform()}",
             "debug_mode": cfg.DEBUG_MODE
         },
         "proxy": get_dashboard_snapshot().get("proxy", {}),
@@ -2602,84 +2546,76 @@ def get_auth_status():
         "mode": "bearer" if cfg.API_KEY else "none",
     }
 
-# Custom Engine Variant endpoints
-from .services.custom_variant_config import (
-    detect_platform, 
-    get_config as get_custom_config, 
-    save_config as save_custom_config,
-    reload_config,
-    CustomVariantConfig
+# Global Engine Configuration endpoints
+from .services.engine_config import (
+    RESTRICTED_FLAGS,
+    EngineConfig,
+    detect_platform,
+    get_config as get_engine_config,
+    reload_config as reload_engine_config,
+    resolve_engine_image,
+    save_config as save_engine_config,
 )
 
-# Template management
-from .services.template_manager import (
-    list_templates,
-    get_template,
-    save_template,
-    delete_template,
-    export_template,
-    import_template,
-    set_active_template,
-    get_active_template_id,
-    get_active_template_name,
-    rename_template
-)
 
-@app.get("/custom-variant/platform")
-def get_platform_info():
-    """Get detected platform information."""
+@app.get("/settings/engine/config")
+def get_engine_config_endpoint():
+    """Get the single global engine customization payload."""
+    engine_config = get_engine_config()
+    if not engine_config:
+        raise HTTPException(status_code=500, detail="Failed to load engine configuration")
+
+    platform_arch = detect_platform()
     return {
-        "platform": detect_platform(),
-        "supported_platforms": ["amd64", "arm32", "arm64"]
+        **engine_config.model_dump(mode="json"),
+        "platform": platform_arch,
+        "image": resolve_engine_image(platform_arch),
     }
 
-@app.get("/custom-variant/config")
-def get_custom_variant_config():
-    """Get current custom variant configuration."""
-    config = get_custom_config()
-    if config:
-        return config.dict()
-    else:
-        raise HTTPException(status_code=500, detail="Failed to load custom variant configuration")
 
-@app.post("/custom-variant/config", dependencies=[Depends(require_api_key)])
-def update_custom_variant_config(config: CustomVariantConfig):
-    """
-    Update custom variant configuration.
-    """
-    
-    # Save the configuration
-    success = save_custom_config(config)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to save configuration")
-    
-    # Sync configuration changes to active template if one exists
-    # This prevents the issue where app restart overwrites custom config with active template data
-    try:
-        from .services.template_manager import get_active_template_id, get_template, save_template
-        active_id = get_active_template_id()
-        if active_id is not None:
-            template = get_template(active_id)
-            if template:
-                # Update the template with the new configuration
-                save_template(active_id, template.name, config)
-                logger.info(f"Synced configuration changes to active template '{template.name}' (slot {active_id})")
-    except Exception as e:
-        logger.warning(f"Failed to sync configuration to active template: {e}")
-    
-    # Reload the configuration to ensure it's active
-    reload_config()
-    rollout = _trigger_engine_generation_rollout(reason="custom_variant_config")
-    
+@app.post("/settings/engine/config", dependencies=[Depends(require_api_key)])
+def update_engine_config_endpoint(config: EngineConfig):
+    """Update the global engine customization payload."""
+    for parameter in config.parameters:
+        if parameter.enabled and parameter.name in RESTRICTED_FLAGS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"restricted parameter '{parameter.name}' is managed by the orchestrator",
+            )
+
+    if not save_engine_config(config):
+        raise HTTPException(status_code=500, detail="Failed to save engine configuration")
+
+    reload_engine_config()
+    rollout = _trigger_engine_generation_rollout(reason="engine_config_update")
     return {
-        "message": "Configuration saved successfully",
-        "config": config.dict(),
+        "message": "Engine configuration saved successfully",
+        "config": config.model_dump(mode="json"),
         "rolling_update": {
             "changed": bool(rollout.get("changed")),
             "target_generation": rollout.get("generation"),
             "target_hash": rollout.get("config_hash"),
         },
     }
+
+
+# Compatibility wrappers for legacy custom-variant routes.
+@app.get("/custom-variant/platform")
+def get_platform_info():
+    return {
+        "platform": detect_platform(),
+        "supported_platforms": ["amd64", "arm32", "arm64"],
+    }
+
+
+@app.get("/custom-variant/config")
+def get_custom_variant_config():
+    return get_engine_config_endpoint()
+
+
+@app.post("/custom-variant/config", dependencies=[Depends(require_api_key)])
+def update_custom_variant_config(config: EngineConfig):
+    return update_engine_config_endpoint(config)
 
 @app.get("/custom-variant/reprovision/status")
 def get_reprovision_status():
@@ -2741,154 +2677,15 @@ async def reprovision_all_engines():
         },
     }
 
-# Template Management Endpoints
-@app.get("/custom-variant/templates")
-def list_all_templates():
-    """List all template slots with metadata."""
-    templates = list_templates()
-    active_template_id = get_active_template_id()
-    
-    return {
-        "templates": templates,
-        "active_template_id": active_template_id
-    }
 
-@app.get("/custom-variant/templates/{slot_id}")
-def get_template_by_id(slot_id: int):
-    """Get a specific template by slot ID."""
-    if slot_id < 1 or slot_id > 10:
-        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
-    
-    template = get_template(slot_id)
-    if not template:
-        raise HTTPException(status_code=404, detail=f"Template {slot_id} not found")
-    
-    return template.to_dict()
+@app.get("/settings/engine/reprovision/status")
+def get_engine_reprovision_status():
+    return get_reprovision_status()
 
-@app.post("/custom-variant/templates/{slot_id}", dependencies=[Depends(require_api_key)])
-def save_template_to_slot(slot_id: int, request: dict):
-    """Save a template to a specific slot."""
-    if slot_id < 1 or slot_id > 10:
-        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
-    
-    if "name" not in request or "config" not in request:
-        raise HTTPException(status_code=400, detail="Request must include 'name' and 'config'")
-    
-    try:
-        config = CustomVariantConfig(**request["config"])
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid config: {str(e)}")
-    
-    # Validate the configuration
-    is_valid, error_msg = validate_config(config)
-    if not is_valid:
-        raise HTTPException(status_code=400, detail=f"Invalid configuration: {error_msg}")
-    
-    success = save_template(slot_id, request["name"], config)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to save template")
-    
-    return {"message": f"Template {slot_id} saved successfully"}
 
-@app.delete("/custom-variant/templates/{slot_id}", dependencies=[Depends(require_api_key)])
-def delete_template_by_id(slot_id: int):
-    """Delete a template from a specific slot."""
-    if slot_id < 1 or slot_id > 10:
-        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
-    
-    # Don't allow deleting the active template
-    if slot_id == get_active_template_id():
-        raise HTTPException(status_code=400, detail="Cannot delete the currently active template")
-    
-    success = delete_template(slot_id)
-    if not success:
-        raise HTTPException(status_code=404, detail=f"Template {slot_id} not found")
-    
-    return {"message": f"Template {slot_id} deleted successfully"}
-
-@app.patch("/custom-variant/templates/{slot_id}/rename", dependencies=[Depends(require_api_key)])
-def rename_template_endpoint(slot_id: int, request: dict):
-    """Rename a template."""
-    if slot_id < 1 or slot_id > 10:
-        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
-    
-    if "name" not in request:
-        raise HTTPException(status_code=400, detail="Request must include 'name'")
-    
-    new_name = request["name"].strip()
-    if not new_name:
-        raise HTTPException(status_code=400, detail="Template name cannot be empty")
-    
-    success = rename_template(slot_id, new_name)
-    if not success:
-        raise HTTPException(status_code=404, detail=f"Template {slot_id} not found or rename failed")
-    
-    return {"message": f"Template {slot_id} renamed to '{new_name}' successfully"}
-
-@app.post("/custom-variant/templates/{slot_id}/activate", dependencies=[Depends(require_api_key)])
-def activate_template(slot_id: int):
-    """Activate a template (load it as current config)."""
-    if slot_id < 1 or slot_id > 10:
-        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
-    
-    template = get_template(slot_id)
-    if not template:
-        raise HTTPException(status_code=404, detail=f"Template {slot_id} not found")
-    
-    # Get current config to preserve enabled state
-    current_config = get_custom_config()
-    current_enabled = current_config.enabled if current_config else False
-    
-    # Save the template config as the current custom variant config, preserving enabled state
-    template_config = template.config.model_copy(deep=True)
-    template_config.enabled = current_enabled
-    success = save_custom_config(template_config)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to activate template")
-    
-    # Reload the configuration
-    reload_config()
-    
-    # Set as active template
-    set_active_template(slot_id)
-    
-    return {
-        "message": f"Template '{template.name}' activated successfully",
-        "template_id": slot_id,
-        "template_name": template.name
-    }
-
-@app.get("/custom-variant/templates/{slot_id}/export")
-def export_template_endpoint(slot_id: int):
-    """Export a template as JSON."""
-    if slot_id < 1 or slot_id > 10:
-        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
-    
-    json_data = export_template(slot_id)
-    if not json_data:
-        raise HTTPException(status_code=404, detail=f"Template {slot_id} not found")
-    
-    from starlette.responses import Response
-    return Response(
-        content=json_data,
-        media_type="application/json",
-        headers={"Content-Disposition": f"attachment; filename=template_{slot_id}.json"}
-    )
-
-@app.post("/custom-variant/templates/{slot_id}/import", dependencies=[Depends(require_api_key)])
-def import_template_endpoint(slot_id: int, request: dict):
-    """Import a template from JSON."""
-    if slot_id < 1 or slot_id > 10:
-        raise HTTPException(status_code=400, detail="Template slot_id must be between 1 and 10")
-    
-    if "json_data" not in request:
-        raise HTTPException(status_code=400, detail="Request must include 'json_data'")
-    
-    success, error_msg = import_template(slot_id, request["json_data"])
-    if not success:
-        raise HTTPException(status_code=400, detail=error_msg)
-    
-    return {"message": f"Template {slot_id} imported successfully"}
+@app.post("/settings/engine/reprovision", dependencies=[Depends(require_api_key)])
+async def reprovision_all_engines_v2():
+    return await reprovision_all_engines()
 
 # Event Logging Endpoints
 @app.get("/events", response_model=List[EventLog])
@@ -4884,7 +4681,7 @@ def get_proxy_config():
         "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
         "legacy_api_preflight_tier": ConfigHelper.legacy_api_preflight_tier(),
         "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
-        "engine_variant": cfg.ENGINE_VARIANT,
+        "engine_variant": f"global-{detect_platform()}",
         # HLS-specific settings
         "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
         "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
@@ -5718,62 +5515,66 @@ class EngineSettingsUpdate(BaseModel):
     min_replicas: Optional[int] = None
     max_replicas: Optional[int] = None
     auto_delete: Optional[bool] = None
-    engine_variant: Optional[str] = None
-    use_custom_variant: Optional[bool] = None
-    platform: Optional[str] = None  # Read-only, just for compatibility
     manual_mode: Optional[bool] = None
     manual_engines: Optional[List[Dict[str, Any]]] = None  # list of {"host": "ip", "port": port}
+
+    # Global engine customization fields
+    download_limit: Optional[int] = None
+    upload_limit: Optional[int] = None
+    live_cache_type: Optional[str] = None
+    buffer_time: Optional[int] = None
+    memory_limit: Optional[str] = None
+    parameters: Optional[List[Dict[str, Any]]] = None
+    torrent_folder_mount_enabled: Optional[bool] = None
+    torrent_folder_host_path: Optional[str] = None
+    torrent_folder_container_path: Optional[str] = None
+    disk_cache_mount_enabled: Optional[bool] = None
+    disk_cache_prune_enabled: Optional[bool] = None
+    disk_cache_prune_interval: Optional[int] = None
 
 @app.get("/settings/engine")
 def get_engine_settings():
     """Get current engine configuration settings."""
-    from .services.custom_variant_config import detect_platform, get_config as get_custom_config
+    from .services.engine_config import (
+        EngineConfig,
+        detect_platform,
+        get_config as get_engine_config,
+        resolve_engine_image,
+    )
     
-    # Try to load from persisted settings first
     from .services.settings_persistence import SettingsPersistence
-    persisted = SettingsPersistence.load_engine_settings()
-    
-    # Detected platform is always real-time
+
+    persisted = SettingsPersistence.load_engine_settings() or {}
     current_platform = detect_platform()
-    
-    # If persisted settings exist, use them but override platform field
-    if persisted:
-        # Update platform in the response to match real-time detection
-        # This ensures the UI always shows the correct architecture
-        persisted["platform"] = current_platform
-        
-        # Ensure variants are compatible with the platform for the UI
-        variant = persisted.get("engine_variant")
-        if current_platform in ["arm64", "arm32"] and (not variant or "amd64" in variant):
-            # Force correction for ARM platforms if they have an amd64 variant configured
-            new_variant = "AceServe-arm64" if current_platform == "arm64" else "AceServe-arm32"
-            persisted["engine_variant"] = new_variant
-            logger.info(f"Corrected incompatible engine variant '{variant}' to '{new_variant}' for platform '{current_platform}'")
-            
-        return persisted
-    
-    # Build default response from current runtime config
-    custom_config = get_custom_config()
-    
+    engine_config = get_engine_config() or EngineConfig()
+
     default_settings = {
         "min_replicas": cfg.MIN_REPLICAS,
         "max_replicas": cfg.MAX_REPLICAS,
         "auto_delete": cfg.AUTO_DELETE,
-        "engine_variant": cfg.ENGINE_VARIANT,
-        "use_custom_variant": custom_config.enabled if custom_config else False,
-        "platform": current_platform,
         "manual_mode": False,
         "manual_engines": [],
     }
-    
-    # Save defaults for future use
+
+    merged = {**default_settings, **persisted}
+    merged.pop("engine_variant", None)
+    merged.pop("use_custom_variant", None)
+    merged.pop("platform", None)
+
+    payload = {
+        **merged,
+        **engine_config.model_dump(mode="json"),
+        "platform": current_platform,
+        "image": resolve_engine_image(current_platform),
+    }
+
     try:
-        if SettingsPersistence.save_engine_settings(default_settings):
+        if not persisted and SettingsPersistence.save_engine_settings(default_settings):
             logger.info("Created default engine settings on first access")
     except Exception as e:
         logger.warning(f"Failed to save default engine settings: {e}")
-    
-    return default_settings
+
+    return payload
 
 @app.post("/settings/engine", dependencies=[Depends(require_api_key)])
 async def update_engine_settings(settings: EngineSettingsUpdate):
@@ -5787,23 +5588,26 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
     Some changes may require reprovisioning engines.
     """
     from .services.settings_persistence import SettingsPersistence
-    from .services.custom_variant_config import detect_platform
-    
-    # Load current persisted settings or use runtime config as base
+    from .services.engine_config import (
+        EngineConfig,
+        RESTRICTED_FLAGS,
+        detect_platform,
+        get_config as get_engine_config,
+        resolve_engine_image,
+        save_config as save_engine_config,
+    )
+
     current_platform = detect_platform()
     current_settings = SettingsPersistence.load_engine_settings() or {
         "min_replicas": cfg.MIN_REPLICAS,
         "max_replicas": cfg.MAX_REPLICAS,
         "auto_delete": cfg.AUTO_DELETE,
-        "engine_variant": cfg.ENGINE_VARIANT,
-        "use_custom_variant": False,
-        "platform": current_platform,
         "manual_mode": False,
         "manual_engines": [],
     }
-    
-    # Always ensure the platform field in persisted settings is corrected to real-time
-    current_settings["platform"] = current_platform
+    current_settings.pop("engine_variant", None)
+    current_settings.pop("use_custom_variant", None)
+    current_settings.pop("platform", None)
     
     # Validation and updates
     if settings.min_replicas is not None:
@@ -5825,20 +5629,6 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
     if settings.auto_delete is not None:
         current_settings["auto_delete"] = settings.auto_delete
         cfg.AUTO_DELETE = settings.auto_delete
-    
-    if settings.engine_variant is not None:
-        current_settings["engine_variant"] = settings.engine_variant
-        # Update cfg.ENGINE_VARIANT at runtime so it takes effect during reprovisioning
-        cfg.ENGINE_VARIANT = settings.engine_variant
-    
-    if settings.use_custom_variant is not None:
-        current_settings["use_custom_variant"] = settings.use_custom_variant
-        # Update custom variant config
-        from .services.custom_variant_config import get_config as get_custom_config, save_config as save_custom_config
-        custom_config = get_custom_config()
-        if custom_config:
-            custom_config.enabled = settings.use_custom_variant
-            save_custom_config(custom_config)
             
     if settings.manual_mode is not None:
         current_settings["manual_mode"] = settings.manual_mode
@@ -5875,6 +5665,43 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
                     )
                 else:
                     existing.last_seen = state.now()
+
+    # Apply global engine customization payload.
+    existing_engine_config = get_engine_config() or EngineConfig()
+    engine_payload = existing_engine_config.model_dump(mode="json")
+
+    for field in (
+        "download_limit",
+        "upload_limit",
+        "live_cache_type",
+        "buffer_time",
+        "memory_limit",
+        "parameters",
+        "torrent_folder_mount_enabled",
+        "torrent_folder_host_path",
+        "torrent_folder_container_path",
+        "disk_cache_mount_enabled",
+        "disk_cache_prune_enabled",
+        "disk_cache_prune_interval",
+    ):
+        incoming = getattr(settings, field)
+        if incoming is not None:
+            engine_payload[field] = incoming
+
+    try:
+        updated_engine_config = EngineConfig(**engine_payload)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid engine configuration: {e}")
+
+    for parameter in updated_engine_config.parameters:
+        if parameter.enabled and parameter.name in RESTRICTED_FLAGS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"restricted parameter '{parameter.name}' is managed by the orchestrator",
+            )
+
+    if not save_engine_config(updated_engine_config):
+        raise HTTPException(status_code=500, detail="failed to persist engine configuration")
     
     # Persist settings to JSON file
     if SettingsPersistence.save_engine_settings(current_settings):
@@ -5902,6 +5729,9 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
     return {
         "message": "Engine settings updated and persisted",
         **current_settings,
+        **updated_engine_config.model_dump(mode="json"),
+        "platform": current_platform,
+        "image": resolve_engine_image(current_platform),
         "rolling_update": {
             "changed": bool(rollout.get("changed")),
             "target_generation": rollout.get("generation"),
@@ -5915,12 +5745,12 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
 # ============================================================================
 
 # Backup format version - increment when backup structure changes
-BACKUP_FORMAT_VERSION = "1.0"
+BACKUP_FORMAT_VERSION = "2.0"
 
 @app.get("/settings/export")
 async def export_settings(api_key_param: str = Depends(require_api_key)):
     """
-    Export all settings (custom engine settings, templates, proxy, loop detection) as a ZIP file.
+    Export all settings (engine config, engine settings, proxy, loop detection) as a ZIP file.
     
     Returns:
         ZIP file containing all settings as JSON files
@@ -5933,38 +5763,16 @@ async def export_settings(api_key_param: str = Depends(require_api_key)):
         zip_buffer = io.BytesIO()
         
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # Export custom engine variant config
+            # Export global engine config
             try:
-                custom_config = get_custom_config()
-                if custom_config:
-                    config_json = json.dumps(custom_config.dict(), indent=2)
-                    zip_file.writestr("custom_engine_variant.json", config_json)
-                    logger.info("Added custom engine variant config to backup")
+                from .services.engine_config import get_config as get_engine_config
+                engine_config = get_engine_config()
+                if engine_config:
+                    config_json = json.dumps(engine_config.model_dump(mode="json"), indent=2)
+                    zip_file.writestr("engine_config.json", config_json)
+                    logger.info("Added global engine config to backup")
             except Exception as e:
-                logger.warning(f"Failed to export custom engine variant config: {e}")
-            
-            # Export all custom templates
-            try:
-                templates_list = list_templates()
-                for template_info in templates_list:
-                    if template_info['exists']:
-                        template = get_template(template_info['slot_id'])
-                        if template:
-                            template_json = json.dumps(template.to_dict(), indent=2)
-                            zip_file.writestr(f"templates/template_{template.slot_id}.json", template_json)
-                logger.info(f"Added {sum(1 for t in templates_list if t['exists'])} templates to backup")
-            except Exception as e:
-                logger.warning(f"Failed to export templates: {e}")
-            
-            # Export active template ID
-            try:
-                active_id = get_active_template_id()
-                if active_id is not None:
-                    active_template_json = json.dumps({"active_template_id": active_id}, indent=2)
-                    zip_file.writestr("active_template.json", active_template_json)
-                    logger.info(f"Added active template ID ({active_id}) to backup")
-            except Exception as e:
-                logger.warning(f"Failed to export active template ID: {e}")
+                logger.warning(f"Failed to export global engine config: {e}")
             
             # Export proxy settings
             try:
@@ -6037,19 +5845,19 @@ async def export_settings(api_key_param: str = Depends(require_api_key)):
 @app.post("/settings/import")
 async def import_settings_data(
     request: Request,
-    import_custom_variant: bool = Query(True),
-    import_templates: bool = Query(True),
+    import_engine_config: bool = Query(True),
     import_proxy: bool = Query(True),
     import_loop_detection: bool = Query(True),
     import_engine: bool = Query(True),
+    import_custom_variant: Optional[bool] = Query(None),
+    import_templates: Optional[bool] = Query(None),
     api_key_param: str = Depends(require_api_key)
 ):
     """
     Import settings from uploaded ZIP file data.
     
     Query Parameters:
-        import_custom_variant: Whether to import custom engine variant config
-        import_templates: Whether to import templates  
+        import_engine_config: Whether to import global engine customization
         import_proxy: Whether to import proxy settings
         import_loop_detection: Whether to import loop detection settings
         import_engine: Whether to import engine settings
@@ -6059,6 +5867,7 @@ async def import_settings_data(
     """
     import zipfile
     import io
+    from .services.engine_config import EngineConfig, reload_config as reload_engine_config, save_config as save_engine_config
     from .services.settings_persistence import SettingsPersistence
     
     try:
@@ -6069,68 +5878,43 @@ async def import_settings_data(
             raise HTTPException(status_code=400, detail="No file data provided")
         
         imported = {
-            "custom_variant": False,
-            "templates": 0,
-            "active_template": False,
+            "engine_config": False,
             "proxy": False,
             "loop_detection": False,
             "engine": False,
             "errors": []
         }
+
+        # Backward compatibility: old clients use import_custom_variant.
+        effective_import_engine_config = bool(import_engine_config)
+        if import_custom_variant is not None:
+            effective_import_engine_config = bool(import_custom_variant)
         
         # Create a BytesIO object from the uploaded data
         zip_buffer = io.BytesIO(file_data)
         
         with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
-            # Import custom engine variant config
-            if import_custom_variant and "custom_engine_variant.json" in zip_file.namelist():
-                try:
-                    config_data = zip_file.read("custom_engine_variant.json").decode('utf-8')
-                    config_dict = json.loads(config_data)
-                    config = CustomVariantConfig(**config_dict)
-                    if save_custom_config(config):
-                        reload_config()
-                        imported["custom_variant"] = True
-                        logger.info("Imported custom engine variant config")
-                except Exception as e:
-                    error_msg = f"Failed to import custom engine variant config: {e}"
-                    logger.error(error_msg)
-                    imported["errors"].append(error_msg)
-            
-            # Import templates
-            if import_templates:
-                template_files = [f for f in zip_file.namelist() if f.startswith("templates/")]
-                for template_file in template_files:
+            # Import global engine config (new format), with fallback to legacy custom file.
+            if effective_import_engine_config:
+                config_filename = None
+                if "engine_config.json" in zip_file.namelist():
+                    config_filename = "engine_config.json"
+                elif "custom_engine_variant.json" in zip_file.namelist():
+                    config_filename = "custom_engine_variant.json"
+
+                if config_filename:
                     try:
-                        template_data = zip_file.read(template_file).decode('utf-8')
-                        template_dict = json.loads(template_data)
-                        
-                        slot_id = template_dict['slot_id']
-                        name = template_dict['name']
-                        config = CustomVariantConfig(**template_dict['config'])
-                        
-                        if save_template(slot_id, name, config):
-                            imported["templates"] += 1
-                            logger.info(f"Imported template {slot_id}: {name}")
+                        config_data = zip_file.read(config_filename).decode("utf-8")
+                        config_dict = json.loads(config_data)
+                        config = EngineConfig(**config_dict)
+                        if save_engine_config(config):
+                            reload_engine_config()
+                            imported["engine_config"] = True
+                            logger.info("Imported global engine config from %s", config_filename)
                     except Exception as e:
-                        error_msg = f"Failed to import template from {template_file}: {e}"
+                        error_msg = f"Failed to import engine config: {e}"
                         logger.error(error_msg)
                         imported["errors"].append(error_msg)
-            
-            # Import active template ID
-            if import_templates and "active_template.json" in zip_file.namelist():
-                try:
-                    active_data = zip_file.read("active_template.json").decode('utf-8')
-                    active_dict = json.loads(active_data)
-                    active_id = active_dict.get('active_template_id')
-                    if active_id is not None:
-                        set_active_template(active_id)
-                        imported["active_template"] = True
-                        logger.info(f"Set active template to {active_id}")
-                except Exception as e:
-                    error_msg = f"Failed to import active template ID: {e}"
-                    logger.error(error_msg)
-                    imported["errors"].append(error_msg)
             
             # Import proxy settings
             if import_proxy and "proxy_settings.json" in zip_file.namelist():
@@ -6327,6 +6111,7 @@ _TAG_BY_SEGMENT = {
     "metrics": "Metrics",
     "cache": "Cache",
     "engine-cache": "Cache",
+    "engine": "Settings",
     "custom-variant": "Settings",
     "stream-loop-detection": "Streams",
     "looping-streams": "Streams",

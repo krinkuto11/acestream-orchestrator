@@ -13,8 +13,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
   const [importing, setImporting] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [importOptions, setImportOptions] = useState({
-    custom_variant: true,
-    templates: true,
+    engine_config: true,
     proxy: true,
     loop_detection: true,
     engine: true,
@@ -86,8 +85,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
       
       // Build query params for import options
       const params = new URLSearchParams({
-        import_custom_variant: importOptions.custom_variant,
-        import_templates: importOptions.templates,
+        import_engine_config: importOptions.engine_config,
         import_proxy: importOptions.proxy,
         import_loop_detection: importOptions.loop_detection,
         import_engine: importOptions.engine,
@@ -110,9 +108,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
       // Show summary of what was imported
       const imported = result.imported
       const messages = []
-      if (imported.custom_variant) messages.push('Custom engine config')
-      if (imported.templates > 0) messages.push(`${imported.templates} template(s)`)
-      if (imported.active_template) messages.push('Active template')
+      if (imported.engine_config) messages.push('Global engine config')
       if (imported.proxy) messages.push('Proxy settings')
       if (imported.loop_detection) messages.push('Loop detection settings')
       if (imported.engine) messages.push('Engine settings')
@@ -152,8 +148,8 @@ export function BackupSettings({ apiKey, orchUrl }) {
             Backup & Restore
           </CardTitle>
           <CardDescription>
-            Export and import your orchestrator settings including custom engine configurations, 
-            templates, proxy settings, and loop detection settings.
+            Export and import your orchestrator settings including global engine configuration,
+            engine runtime settings, proxy settings, and loop detection settings.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -175,15 +171,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
               <ul className="text-sm text-muted-foreground space-y-1 ml-4 mb-4">
                 <li className="flex items-center gap-2">
                   <CheckCircle className="h-3 w-3" />
-                  Custom engine variant configuration
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle className="h-3 w-3" />
-                  All custom engine templates (up to 10 slots)
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle className="h-3 w-3" />
-                  Active template selection
+                  Global engine configuration
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle className="h-3 w-3" />
@@ -224,29 +212,15 @@ export function BackupSettings({ apiKey, orchUrl }) {
               <div className="space-y-3 p-4 border rounded-lg bg-muted/50">
                 <div className="flex items-center space-x-2">
                   <Checkbox
-                    id="import-custom-variant"
-                    checked={importOptions.custom_variant}
-                    onCheckedChange={() => toggleImportOption('custom_variant')}
+                    id="import-engine-config"
+                    checked={importOptions.engine_config}
+                    onCheckedChange={() => toggleImportOption('engine_config')}
                   />
                   <Label
-                    htmlFor="import-custom-variant"
+                    htmlFor="import-engine-config"
                     className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
                   >
-                    Custom Engine Variant Configuration
-                  </Label>
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="import-templates"
-                    checked={importOptions.templates}
-                    onCheckedChange={() => toggleImportOption('templates')}
-                  />
-                  <Label
-                    htmlFor="import-templates"
-                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                  >
-                    Custom Engine Templates & Active Template
+                    Global Engine Configuration
                   </Label>
                 </div>
                 
@@ -327,14 +301,8 @@ export function BackupSettings({ apiKey, orchUrl }) {
                   </AlertTitle>
                   <AlertDescription className="space-y-2">
                     <div className="flex flex-wrap gap-2 mt-2">
-                      {importResult.imported.custom_variant && (
-                        <Badge variant="success">Custom Variant</Badge>
-                      )}
-                      {importResult.imported.templates > 0 && (
-                        <Badge variant="success">{importResult.imported.templates} Template(s)</Badge>
-                      )}
-                      {importResult.imported.active_template && (
-                        <Badge variant="success">Active Template</Badge>
+                      {importResult.imported.engine_config && (
+                        <Badge variant="success">Engine Config</Badge>
                       )}
                       {importResult.imported.engine && (
                         <Badge variant="success">Engine Settings</Badge>
@@ -369,7 +337,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
                 • Importing settings will overwrite your current configuration
               </p>
               <p>
-                • After importing custom engine settings or templates, you may need to reprovision engines for changes to take effect
+                • After importing engine settings/configuration, you may need to reprovision engines for changes to take effect
               </p>
               <p>
                 • It's recommended to export your current settings before importing

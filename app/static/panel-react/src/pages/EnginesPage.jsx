@@ -11,24 +11,8 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { RefreshCw, AlertCircle, CheckCircle, Save, Settings2 } from 'lucide-react'
 import { useNotifications } from '@/context/NotificationContext'
-import { CustomEngineBlocks } from '@/components/CustomEngineBlocks'
+import { EngineConfiguration } from '@/components/CustomEngineBlocks'
 import { ManualEngineList } from '@/components/ManualEngineList'
-
-// Platform-specific variants mapping
-const VARIANT_OPTIONS = {
-  amd64: [
-    { value: 'AceServe-amd64', label: 'AceServe Default (AMD64)' },
-    { value: 'custom', label: 'Custom Engine' }
-  ],
-  arm64: [
-    { value: 'AceServe-arm64', label: 'AceServe Default (ARM64)' },
-    { value: 'custom', label: 'Custom Engine' }
-  ],
-  arm32: [
-    { value: 'AceServe-arm32', label: 'AceServe Default (ARM32)' },
-    { value: 'custom', label: 'Custom Engine' }
-  ]
-}
 
 export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKey, fetchJSON }) {
   const { addNotification } = useNotifications()
@@ -43,9 +27,11 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     min_replicas: 2,
     max_replicas: 6,
     auto_delete: true,
-    engine_variant: '',
-    use_custom_variant: false,
-    platform: '',
+    live_cache_type: 'memory',
+    download_limit: 0,
+    upload_limit: 0,
+    buffer_time: 10,
+    memory_limit: null,
     manual_mode: false,
     manual_engines: []
   })
@@ -130,7 +116,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
 
     const checkReprovisionStatus = async () => {
       try {
-        const status = await fetchJSON(`${orchUrl}/api/v1/custom-variant/reprovision/status`)
+        const status = await fetchJSON(`${orchUrl}/api/v1/settings/engine/reprovision/status`)
         applyReprovisionStatus(status)
       } catch (err) {
         if (reprovisionInProgressRef.current) {
@@ -156,7 +142,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
         return
       }
 
-      const streamUrl = new URL(`${orchUrl}/api/v1/custom-variant/reprovision/status/stream`)
+      const streamUrl = new URL(`${orchUrl}/api/v1/settings/engine/reprovision/status/stream`)
       if (apiKey) {
         streamUrl.searchParams.set('api_key', apiKey)
       }
@@ -357,7 +343,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                   Engine Settings
               </CardTitle>
               <CardDescription>
-                Configure engine variant, replica counts, and automatic cleanup settings
+                Configure global engine customization, replica counts, and automatic cleanup settings
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -384,13 +370,10 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
 
               {!engineSettings.manual_mode ? (
                 <>
-                  {/* Engine Blocks Selection */}
-                  <CustomEngineBlocks
-                    orchUrl={orchUrl}
-                    apiKey={apiKey}
-                    fetchJSON={fetchJSON}
+                  <EngineConfiguration
                     engineSettings={engineSettings}
                     onSettingChange={handleSettingChange}
+                    disabled={loadingSettings}
                   />
 
                   {/* MIN_REPLICAS */}
@@ -483,7 +466,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                       const savePromise = settingsChanged ? handleSaveSettings() : Promise.resolve()
                       savePromise.then(() => {
                         // Trigger reprovision after saving
-                        fetchJSON(`${orchUrl}/api/v1/custom-variant/reprovision`, {
+                        fetchJSON(`${orchUrl}/api/v1/settings/engine/reprovision`, {
                           method: 'POST',
                           headers: {
                             'Authorization': `Bearer ${apiKey}`
