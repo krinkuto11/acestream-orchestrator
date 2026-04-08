@@ -276,6 +276,90 @@ def test_stream_generator_prebuffer_uses_time_holdback(monkeypatch):
     assert sleeps["count"] >= 5
 
 
+def test_stream_generator_hot_stream_bypasses_prebuffer_wait(monkeypatch):
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    class DummyBuffer:
+        def __init__(self):
+            self.index = 60
+
+    stream_generator.buffer = DummyBuffer()
+    stream_generator.chunk_rate_ema = 1.5
+
+    sleep_calls = {"count": 0}
+
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.proxy_prebuffer_seconds", lambda: 20)
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.initial_data_wait_timeout", lambda: 35)
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.initial_data_check_interval", lambda: 0.01)
+    monkeypatch.setattr("app.proxy.stream_generator.time.sleep", lambda _interval: sleep_calls.__setitem__("count", sleep_calls["count"] + 1))
+
+    # Existing warm backlog: 40 chunks over baseline; required is ceil(20 * 1.5) == 30.
+    assert stream_generator._wait_for_initial_data(min_index=20) is True
+    assert sleep_calls["count"] == 0
+
+
+def test_stream_generator_setup_reuses_previous_client_baseline(monkeypatch):
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="stable_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    mock_buffer = Mock()
+    mock_buffer.index = 40
+
+    class FakeRedis:
+        def hget(self, _key, field):
+            if field == "initial_index":
+                return b"3"
+            return None
+
+    mock_client_manager = Mock()
+    mock_client_manager.redis_client = FakeRedis()
+    mock_client_manager.add_client = Mock()
+
+    mock_proxy = Mock()
+    mock_proxy.stream_buffers = {"test_content_id": mock_buffer}
+    mock_proxy.client_managers = {"test_content_id": mock_client_manager}
+
+    wait_args = {"min_index": None}
+
+    def fake_wait_for_initial_data(min_index=None):
+        wait_args["min_index"] = min_index
+        return True
+
+    stream_generator._wait_for_initial_data = fake_wait_for_initial_data
+
+    monkeypatch.setattr("app.proxy.server.ProxyServer.get_instance", lambda: mock_proxy)
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.proxy_prebuffer_seconds", lambda: 20)
+    monkeypatch.setattr(
+        "app.services.client_tracker.client_tracking_service.register_client",
+        lambda **_kwargs: None,
+    )
+
+    assert stream_generator._setup_streaming() is True
+    assert wait_args["min_index"] == 3
+    mock_client_manager.add_client.assert_called_once_with(
+        "stable_client_id",
+        "127.0.0.1",
+        "test_agent",
+        initial_index=3,
+    )
+    assert stream_generator.local_index == 3
+
+
 def test_stream_generator_position_uses_observed_chunk_rate():
     from app.proxy.stream_generator import StreamGenerator
 

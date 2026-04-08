@@ -3506,12 +3506,10 @@ async def ace_getstream(
             }
         )
     
-    # Generate unique client ID
-    client_id = str(uuid4())
-    
     # Get client info
     client_ip = get_client_ip(request) if request else "unknown"
     user_agent = request.headers.get('user-agent', 'unknown') if request else "unknown"
+    client_id = hashlib.md5(f"{client_ip}_{user_agent}_{stream_key}".encode()).hexdigest()
     client_identity = f"{client_ip}:{hashlib.sha1(user_agent.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
 
     reusable_monitor_session = None

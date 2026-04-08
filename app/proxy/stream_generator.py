@@ -8,6 +8,7 @@ NOT gevent. All sleep operations must use time.sleep(), not gevent.sleep().
 
 import time
 import logging
+import math
 
 from .config_helper import ConfigHelper
 from .constants import PROXY_MODE_API, normalize_proxy_mode
@@ -194,6 +195,22 @@ class StreamGenerator:
         check_interval = ConfigHelper.initial_data_check_interval()
         start_time = time.time()
         baseline_index = max(0, int(min_index or 0))
+
+        # Hot reconnect fast-path: if the stream already has enough buffered chunks
+        # for the prebuffer target, skip the startup holdback loop.
+        initial_fresh_chunks = max(0, int(self.buffer.index) - baseline_index)
+        if prebuffer_seconds > 0.0:
+            chunk_rate = max(0.1, float(self.chunk_rate_ema or 1.0))
+            required_prebuffer_chunks = max(1, int(math.ceil(prebuffer_seconds * chunk_rate)))
+            if initial_fresh_chunks >= required_prebuffer_chunks:
+                self.chunk_rate_ema = max(chunk_rate, float(self.chunk_rate_ema or 0.0))
+                logger.info(
+                    f"[{self.client_id}] Hot stream detected: Bypassing prebuffer wait "
+                    f"(buffer index: {self.buffer.index}, baseline_index: {baseline_index}, "
+                    f"fresh_chunks: {initial_fresh_chunks}, required_chunks: {required_prebuffer_chunks}, "
+                    f"chunk_rate_ema: {self.chunk_rate_ema:.2f} chunks/s)"
+                )
+                return True
         
         logger.info(
             f"[{self.client_id}] Waiting for initial data in buffer "
@@ -336,6 +353,32 @@ class StreamGenerator:
         # Capture the current index before registering the client so we can
         # track the client's absolute position in the buffer.
         start_index = self.buffer.index
+
+        # Reuse the existing baseline for deterministic hot reconnects.
+        # This preserves prior runway context instead of forcing a cold start.
+        reconnect_start_index = None
+        try:
+            redis_client = getattr(self.client_manager, "redis_client", None)
+            if redis_client:
+                client_key = RedisKeys.client_metadata(self.content_id, self.client_id)
+                previous_initial_index_raw = redis_client.hget(client_key, "initial_index")
+                if previous_initial_index_raw is not None:
+                    previous_initial_index = int(
+                        previous_initial_index_raw.decode("utf-8")
+                        if isinstance(previous_initial_index_raw, bytes)
+                        else previous_initial_index_raw
+                    )
+                    if 0 <= previous_initial_index <= int(start_index):
+                        reconnect_start_index = previous_initial_index
+        except Exception:
+            reconnect_start_index = None
+
+        if reconnect_start_index is not None:
+            start_index = reconnect_start_index
+            logger.info(
+                f"[{self.client_id}] Reusing previous baseline index {start_index} for hot reconnect "
+                f"(buffer index: {self.buffer.index})"
+            )
         
         # Add client with starting position
         self.client_manager.add_client(self.client_id, self.client_ip, self.client_user_agent, initial_index=start_index)
@@ -354,9 +397,11 @@ class StreamGenerator:
             worker_id="ts_proxy",
         )
 
-        # Capture the current index before waiting so startup only accepts
-        # fresh data for this session, not stale Redis chunks.
-        start_index = self.buffer.index
+        # For first joins, only accept chunks produced after registration.
+        # For deterministic reconnects, keep the recovered baseline so already
+        # buffered data can satisfy startup prebuffer immediately.
+        if reconnect_start_index is None:
+            start_index = self.buffer.index
         
         # Wait for initial data in buffer before starting streaming
         # This gives the HTTP streamer time to fetch data from the playback URL
