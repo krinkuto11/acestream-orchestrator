@@ -205,9 +205,33 @@ function mergeDuplicateStreams(entries) {
     return null
   }
 
-  const sorted = [...entries].sort((a, b) => parseTimestampMs(a?.started_at) - parseTimestampMs(b?.started_at))
+  const sorted = [...entries].sort((a, b) => {
+    const aLifecycleTs = Math.max(parseTimestampMs(a?.started_at), parseTimestampMs(a?.ended_at))
+    const bLifecycleTs = Math.max(parseTimestampMs(b?.started_at), parseTimestampMs(b?.ended_at))
+    return aLifecycleTs - bLifecycleTs
+  })
   const latest = sorted[sorted.length - 1]
   const mergedLabels = sorted.reduce((acc, item) => ({ ...acc, ...(item?.labels || {}) }), {})
+
+  const latestStartedTs = sorted.reduce((max, item) => {
+    const status = String(item?.status || '').trim().toLowerCase()
+    if (status !== 'started') return max
+    return Math.max(max, parseTimestampMs(item?.started_at))
+  }, 0)
+
+  const latestEndedTs = sorted.reduce((max, item) => {
+    const status = String(item?.status || '').trim().toLowerCase()
+    if (status !== 'ended' && !item?.ended_at) return max
+    const endedRefTs = Math.max(parseTimestampMs(item?.ended_at), parseTimestampMs(item?.started_at))
+    return Math.max(max, endedRefTs)
+  }, 0)
+
+  const latestUnclosedStartedTs = sorted.reduce((max, item) => {
+    const status = String(item?.status || '').trim().toLowerCase()
+    if (status !== 'started') return max
+    if (item?.ended_at) return max
+    return Math.max(max, parseTimestampMs(item?.started_at))
+  }, 0)
 
   const merged = {
     ...latest,
@@ -215,8 +239,13 @@ function mergeDuplicateStreams(entries) {
     __identity: getCanonicalStreamIdentity(latest),
   }
 
-  if (sorted.some((item) => String(item?.status || '').toLowerCase() === 'started')) {
+  // Mark as started only if there is unclosed started evidence newer than the latest ended evidence.
+  if (latestUnclosedStartedTs > 0 && latestUnclosedStartedTs >= latestEndedTs) {
     merged.status = 'started'
+  } else if (latestEndedTs > 0 && latestEndedTs >= latestStartedTs) {
+    merged.status = 'ended'
+  } else {
+    merged.status = String(latest?.status || '').trim().toLowerCase() === 'started' ? 'started' : 'ended'
   }
 
   const seenIds = new Set()
