@@ -310,6 +310,9 @@ class ClientTrackingService:
             if observed_ts > 0:
                 current["position_observed_at"] = observed_ts
 
+            # Position updates are valid heartbeat activity even when no bytes
+            # are currently flowing (e.g., short upstream starvation/reconnect).
+            current["last_active"] = max(ts, self._safe_float(current.get("last_active"), default=ts))
             current["stats_updated_at"] = ts
             return dict(current)
 

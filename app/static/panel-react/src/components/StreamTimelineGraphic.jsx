@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Area,
   CartesianGrid,
@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils'
 
 const MAX_HISTORY_POINTS = 120
 const HISTORY_KEY_PREFIX = 'acestream_history_'
+const CLIENT_SAMPLE_HOLD_MS = 30000
 const CLIENT_COLOR_PALETTE = [
   'hsl(var(--chart-1, 221 83% 53%))',
   'hsl(var(--chart-2, 160 84% 39%))',
@@ -110,6 +111,7 @@ function StreamTimelineGraphic({
   const [history, setHistory] = useState([])
   const [clientLabels, setClientLabels] = useState({})
   const [hydrated, setHydrated] = useState(false)
+  const lastClientSamplesRef = useRef({})
 
   useEffect(() => {
     const loaded = readHistoryFromStorage(storageKey)
@@ -129,6 +131,7 @@ function StreamTimelineGraphic({
     const timestamp = Date.now()
     const nextLabels = {}
     const clientValues = {}
+    const seenClientKeys = new Set()
     let streamWindowMax = 0
     let streamWindowFallbackFromRunway = 0
     let hasExplicitStreamWindow = false
@@ -145,8 +148,35 @@ function StreamTimelineGraphic({
       if (!Number.isFinite(runway)) return
       streamWindowFallbackFromRunway = Math.max(streamWindowFallbackFromRunway, Math.max(0, runway))
       const key = getClientSeriesKey(client, index)
+      seenClientKeys.add(key)
       clientValues[key] = Math.max(0, runway)
-      nextLabels[key] = getClientLabel(client, index)
+      const label = getClientLabel(client, index)
+      nextLabels[key] = label
+      lastClientSamplesRef.current[key] = {
+        value: Math.max(0, runway),
+        label,
+        updatedAt: timestamp,
+      }
+    })
+
+    // During short reconnect windows, tracker snapshots can momentarily miss
+    // clients. Keep recent samples alive with gentle decay to avoid chart wipe.
+    Object.entries(lastClientSamplesRef.current || {}).forEach(([key, sample]) => {
+      if (seenClientKeys.has(key)) return
+
+      const ageMs = Math.max(0, timestamp - toNumber(sample?.updatedAt) || 0)
+      if (ageMs > CLIENT_SAMPLE_HOLD_MS) {
+        delete lastClientSamplesRef.current[key]
+        return
+      }
+
+      const lastValue = Math.max(0, toNumber(sample?.value) || 0)
+      const ageSeconds = ageMs / 1000
+      const decayedValue = Math.max(0, lastValue - ageSeconds)
+
+      clientValues[key] = decayedValue
+      nextLabels[key] = String(sample?.label || nextLabels[key] || key)
+      streamWindowFallbackFromRunway = Math.max(streamWindowFallbackFromRunway, decayedValue)
     })
 
     const effectiveStreamWindow = hasExplicitStreamWindow
