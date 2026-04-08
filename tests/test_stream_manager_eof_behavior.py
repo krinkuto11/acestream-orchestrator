@@ -132,7 +132,7 @@ def test_dynamic_tolerance_returns_to_runway_formula_after_grace(monkeypatch):
     threshold, runway, max_tolerance = manager._get_dynamic_tolerance()
 
     assert runway == pytest.approx(20.0, abs=0.001)
-    assert threshold == pytest.approx(min(max_tolerance, 17.0), abs=0.001)
+    assert threshold == pytest.approx(min(max_tolerance, 18.0), abs=0.001)
 
 
 def test_eof_with_no_clients_skips_failover(monkeypatch):

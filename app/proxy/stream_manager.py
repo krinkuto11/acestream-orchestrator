@@ -1451,7 +1451,7 @@ class StreamManager:
         # Do not fail over too aggressively during startup or transient jitter.
         min_tolerance = 4.0
         # Keep margin for control-plane swap propagation.
-        safety_margin = 3.0
+        safety_margin = 2.0
         startup_grace_s = 30.0
 
         current_buffer = self._get_max_client_buffer_seconds()

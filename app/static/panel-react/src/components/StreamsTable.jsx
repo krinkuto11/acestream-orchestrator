@@ -414,6 +414,10 @@ function StreamCard({
   const isDownloadStopped = deadReason.includes('download_stopped') || deadReason.includes('download stopped')
   const streamControlMode = labels['proxy.control_mode'] || null
   const resolvedInfohash = labels['stream.resolved_infohash'] || null
+  const streamModeLabel = String(labels['stream_mode'] || labels['stream.mode'] || '').trim().toUpperCase()
+  const streamSourceLabel = String(labels.source || '').trim().toLowerCase()
+  const isHlsStream = streamModeLabel === 'HLS' || streamSourceLabel === 'hls_proxy'
+  const showStreamWindow = isHlsStream
   const normalizedControlMode = String(streamControlMode || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_')
   const hasApiControlLabel = normalizedControlMode.includes('API')
   const hasNoEngineControlLinks = !localStream?.stat_url && !localStream?.command_url
@@ -693,6 +697,7 @@ function StreamCard({
                 livepos={localStream.livepos}
                 clients={clients}
                 isLive={streamIsLive}
+                showStreamWindow={showStreamWindow}
                 dynamicThresholdSeconds={localStream?.dynamic_threshold_seconds}
                 eventMarkers={eventMarkers}
                 compact
@@ -712,6 +717,7 @@ function StreamCard({
                 livepos={localStream.livepos}
                 clients={clients}
                 isLive={streamIsLive}
+                showStreamWindow={showStreamWindow}
                 dynamicThresholdSeconds={localStream?.dynamic_threshold_seconds}
                 eventMarkers={eventMarkers}
               />

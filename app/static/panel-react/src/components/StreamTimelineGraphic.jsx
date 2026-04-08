@@ -103,6 +103,7 @@ function StreamTimelineGraphic({
   livepos,
   clients = [],
   dynamicThresholdSeconds = null,
+  showStreamWindow = true,
   eventMarkers = [],
   isLive = false,
   compact = false,
@@ -180,15 +181,21 @@ function StreamTimelineGraphic({
       streamWindowFallbackFromRunway = Math.max(streamWindowFallbackFromRunway, decayedValue)
     })
 
-    const effectiveStreamWindow = hasExplicitStreamWindow
-      ? streamWindowMax
-      : streamWindowFallbackFromRunway
+    const effectiveStreamWindow = showStreamWindow
+      ? (
+          hasExplicitStreamWindow
+            ? streamWindowMax
+            : streamWindowFallbackFromRunway
+        )
+      : null
 
     const tick = {
       time: timestamp,
       liveEdge: 0,
       engineLag,
-      streamWindow: effectiveStreamWindow,
+      streamWindow: Number.isFinite(toNumber(effectiveStreamWindow))
+        ? Math.max(0, toNumber(effectiveStreamWindow))
+        : null,
       dynamicThreshold: Number.isFinite(toNumber(dynamicThresholdSeconds))
         ? Math.max(0, toNumber(dynamicThresholdSeconds))
         : null,
@@ -210,7 +217,7 @@ function StreamTimelineGraphic({
       })
       return next
     })
-  }, [clients, dynamicThresholdSeconds, livepos?.last_ts, livepos?.live_last, livepos?.pos, storageKey])
+  }, [clients, dynamicThresholdSeconds, livepos?.last_ts, livepos?.live_last, livepos?.pos, showStreamWindow, storageKey])
 
   const model = useMemo(() => {
     if (!history.length) return null
@@ -235,10 +242,12 @@ function StreamTimelineGraphic({
     const normalizedHistory = history.map((point) => {
       const engineLag = toNumber(point.engineLag)
       const streamWindow = toNumber(point.streamWindow)
+      const normalizedEngineLag = Number.isFinite(engineLag) ? Math.max(0, engineLag) : null
       const normalized = {
         time: point.time,
         liveEdge: 0,
-        engineLag: Number.isFinite(engineLag) ? Math.max(0, engineLag) : null,
+        engineLag: normalizedEngineLag,
+        engineLag__band: Number.isFinite(normalizedEngineLag) ? [0, normalizedEngineLag] : null,
         streamWindow: Number.isFinite(streamWindow) ? Math.max(0, streamWindow) : null,
         dynamicThreshold: Number.isFinite(toNumber(point.dynamicThreshold))
           ? Math.max(0, toNumber(point.dynamicThreshold))
@@ -262,7 +271,7 @@ function StreamTimelineGraphic({
         nextMax = Math.max(nextMax, engineLag)
       }
       const streamWindow = toNumber(point.streamWindow)
-      if (Number.isFinite(streamWindow)) {
+      if (showStreamWindow && Number.isFinite(streamWindow)) {
         nextMax = Math.max(nextMax, streamWindow)
       }
       const dynamicThreshold = toNumber(point.dynamicThreshold)
@@ -285,7 +294,7 @@ function StreamTimelineGraphic({
       clientKeys,
       yMax,
     }
-  }, [history, clientLabels])
+  }, [history, clientLabels, showStreamWindow])
 
   const chartConfig = useMemo(() => {
     const config = {
@@ -293,14 +302,17 @@ function StreamTimelineGraphic({
         label: 'Engine lag',
         color: 'hsl(var(--chart-3, 32 95% 44%))',
       },
-      streamWindow: {
-        label: 'Stream window',
-        color: 'hsl(var(--chart-5, 348 83% 47%))',
-      },
       dynamicThreshold: {
         label: 'Dynamic threshold',
         color: 'hsl(var(--destructive, 0 84% 60%))',
       },
+          if (showStreamWindow) {
+            config.streamWindow = {
+              label: 'Stream window',
+              color: 'hsl(var(--chart-5, 348 83% 47%))',
+            }
+          }
+
       liveEdge: {
         label: 'Live edge',
         color: 'hsl(var(--ring, 32 95% 44%))',
@@ -317,7 +329,7 @@ function StreamTimelineGraphic({
     }
 
     return config
-  }, [model?.clientKeys, clientLabels])
+  }, [model?.clientKeys, clientLabels, showStreamWindow])
 
   const normalizedEventMarkers = useMemo(() => {
     if (!Array.isArray(eventMarkers) || eventMarkers.length === 0) {
@@ -418,7 +430,7 @@ function StreamTimelineGraphic({
 
             <Area
               type="linear"
-              dataKey="engineLag"
+              dataKey="engineLag__band"
               name="engineLag"
               stroke="none"
               fill="var(--color-engineLag)"
@@ -441,31 +453,20 @@ function StreamTimelineGraphic({
               activeDot={false}
             />
 
-            <Line
-              type="monotone"
-              dataKey="streamWindow"
-              name="streamWindow"
-              stroke="var(--color-streamWindow)"
-              strokeWidth={1.5}
-              strokeDasharray="4 3"
-              connectNulls={false}
-              isAnimationActive={false}
-              dot={false}
-              activeDot={false}
-            />
-
-            <Line
-              type="linear"
-              dataKey="dynamicThreshold"
-              name="dynamicThreshold"
-              stroke="var(--color-dynamicThreshold)"
-              strokeWidth={2.4}
-              strokeOpacity={0.75}
-              connectNulls={false}
-              isAnimationActive={false}
-              dot={false}
-              activeDot={false}
-            />
+            {showStreamWindow && (
+              <Line
+                type="monotone"
+                dataKey="streamWindow"
+                name="streamWindow"
+                stroke="var(--color-streamWindow)"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+                connectNulls={false}
+                isAnimationActive={false}
+                dot={false}
+                activeDot={false}
+              />
+            )}
 
             {clientKeys.map((key, index) => (
               <React.Fragment key={key}>
@@ -503,6 +504,20 @@ function StreamTimelineGraphic({
               strokeWidth={1}
               strokeOpacity={0.4}
               strokeDasharray="4 4"
+              connectNulls={false}
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
+            />
+
+            <Line
+              type="linear"
+              dataKey="dynamicThreshold"
+              name="dynamicThreshold"
+              stroke="var(--color-dynamicThreshold)"
+              strokeWidth={2.8}
+              strokeOpacity={0.95}
+              strokeDasharray="6 3"
               connectNulls={false}
               isAnimationActive={false}
               dot={false}
