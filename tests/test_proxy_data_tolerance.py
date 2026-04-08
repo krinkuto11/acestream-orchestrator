@@ -316,11 +316,10 @@ def test_stream_generator_advances_local_index_with_sparse_ranges():
 
     stream_generator.local_index = 100
     stream_generator.buffer = Mock()
-    stream_generator.buffer.last_fetch_end_index = 110
 
     # Sparse Redis range: only 3 chunks returned but cursor should still move
     # to the fetched end index.
-    stream_generator._advance_local_index(3)
+    stream_generator._advance_local_index(3, fetched_end_index=110)
     assert stream_generator.local_index == 110
 
 
@@ -341,6 +340,27 @@ def test_stream_generator_advances_local_index_by_chunk_count_without_fetch_curs
 
     stream_generator._advance_local_index(4)
     assert stream_generator.local_index == 54
+
+
+def test_stream_generator_prefers_call_scoped_fetch_cursor_over_shared_buffer_cursor():
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    stream_generator.local_index = 100
+    stream_generator.buffer = Mock()
+    # Simulate a stale/shared cursor overwritten by another client thread.
+    stream_generator.buffer.last_fetch_end_index = 999
+
+    # This client's own fetch cursor should win.
+    stream_generator._advance_local_index(3, fetched_end_index=110)
+    assert stream_generator.local_index == 110
 
 
 def test_stream_generator_initialization_fails_fast_on_preflight_rejection(monkeypatch):

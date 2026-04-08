@@ -87,7 +87,11 @@ class StreamGenerator:
             
             while True:
                 # Get chunks from buffer
-                chunks = self.buffer.get_chunks(self.local_index)
+                fetched_end_index = None
+                if hasattr(self.buffer, "get_chunks_with_cursor"):
+                    chunks, fetched_end_index = self.buffer.get_chunks_with_cursor(self.local_index)
+                else:
+                    chunks = self.buffer.get_chunks(self.local_index)
                 
                 if chunks:
                     # Send chunks to client
@@ -99,7 +103,7 @@ class StreamGenerator:
                         self.chunks_sent += 1
                     
                     # Update local index
-                    self._advance_local_index(len(chunks))
+                    self._advance_local_index(len(chunks), fetched_end_index=fetched_end_index)
                     self.consecutive_empty = 0
                     self._update_chunk_rate_estimate(len(chunks))
                     self._maybe_update_client_position()
@@ -235,14 +239,16 @@ class StreamGenerator:
         alpha = 0.2
         self.chunk_rate_ema = (alpha * instant_rate) + ((1.0 - alpha) * float(self.chunk_rate_ema))
 
-    def _advance_local_index(self, chunks_received: int):
+    def _advance_local_index(self, chunks_received: int, fetched_end_index=None):
         """Advance client position by fetched range when available.
 
         Redis chunk TTL expirations can create sparse ranges (missing chunk IDs).
         Advancing only by returned chunk count can pin local_index near the
         initial baseline and make lag appear to increase forever.
         """
-        fetched_end = getattr(self.buffer, "last_fetch_end_index", None)
+        fetched_end = fetched_end_index
+        if fetched_end is None:
+            fetched_end = getattr(self.buffer, "last_fetch_end_index", None)
         if isinstance(fetched_end, int) and fetched_end >= self.local_index:
             self.local_index = int(fetched_end)
             return

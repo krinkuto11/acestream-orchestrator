@@ -116,15 +116,21 @@ class StreamBuffer:
             logger.error(f"Error adding chunk to buffer: {e}")
             return False
     
-    def get_chunks(self, start_index=None):
-        """Get chunks from the buffer with detailed logging"""
+    def _get_chunks_internal(self, start_index=None):
+        """Get chunks and return per-call fetched end cursor.
+
+        Returns:
+            tuple[list[bytes], Optional[int]]: chunks and fetched end index for
+            this specific call. The cursor must stay call-scoped to avoid
+            cross-client races when many generators read concurrently.
+        """
         try:
             request_id = f"req_{random.randint(1000, 9999)}"
             logger.debug(f"[{request_id}] get_chunks called with start_index={start_index}")
             
             if not self.redis_client:
                 logger.error("Redis not available, cannot retrieve chunks")
-                return []
+                return [], None
             
             # If no start_index provided, use most recent chunks
             if start_index is None:
@@ -156,7 +162,7 @@ class StreamBuffer:
             
             if start_id >= end_id:
                 logger.debug(f"[{request_id}] No new chunks to fetch (start_id={start_id}, end_id={end_id})")
-                return []
+                return [], None
             
             # Log the range we're retrieving
             logger.debug(f"[{request_id}] Retrieving chunks {start_id} to {end_id-1} (total: {end_id-start_id})")
@@ -181,18 +187,29 @@ class StreamBuffer:
             
             # Track the latest fetched range end so callers can advance
             # client position even when some chunk IDs are missing.
-            self.last_fetch_end_index = max(0, end_id - 1)
+            fetched_end_index = max(0, end_id - 1)
+            # Keep legacy shared cursor for backward compatibility.
+            self.last_fetch_end_index = fetched_end_index
             
             # Final log message
             chunk_sizes = [len(c) for c in chunks]
             total_bytes = sum(chunk_sizes) if chunks else 0
             logger.debug(f"[{request_id}] Returning {len(chunks)} chunks ({total_bytes} bytes)")
             
-            return chunks
+            return chunks, fetched_end_index
             
         except Exception as e:
             logger.error(f"Error getting chunks from buffer: {e}", exc_info=True)
-            return []
+            return [], None
+
+    def get_chunks_with_cursor(self, start_index=None):
+        """Get chunks and a call-scoped fetched end cursor."""
+        return self._get_chunks_internal(start_index)
+
+    def get_chunks(self, start_index=None):
+        """Backward-compatible chunk fetch API returning only data."""
+        chunks, _ = self._get_chunks_internal(start_index)
+        return chunks
     
     def get_chunks_exact(self, start_index, count):
         """Get exactly the requested number of chunks from given index"""
