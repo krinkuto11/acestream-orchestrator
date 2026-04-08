@@ -21,6 +21,7 @@ from .redis_keys import RedisKeys
 from .constants import (
     StreamState,
     EventType,
+    ClientMetadataField,
     StreamMetadataField,
     VLC_USER_AGENT,
     PROXY_MODE_API,
@@ -135,6 +136,7 @@ class StreamManager:
         # Health monitoring
         self.last_data_time = time.time()
         self.health_check_interval = 2.0
+        self.consecutive_eof_retries = 0
         
         # Orchestrator event tracking
         self.stream_id = None  # Will be set after sending start event
@@ -1060,6 +1062,20 @@ class StreamManager:
                             logger.info("Stream ended with EOF and no active clients; skipping failover.")
                             break
 
+                        if self._stream_exit_reason == "eof":
+                            max_buffer_sec = self._get_max_client_buffer_seconds()
+                            if max_buffer_sec > 3.0 and self.consecutive_eof_retries < 5:
+                                self.consecutive_eof_retries += 1
+                                logger.info(
+                                    "Stream hit EOF but clients have %.1fs of buffer. "
+                                    "Attempting local reconnect to same engine (attempt %d/5).",
+                                    max_buffer_sec,
+                                    self.consecutive_eof_retries,
+                                )
+                                self._prepare_local_reconnect()
+                                time.sleep(1.0)
+                                continue
+
                         logger.warning("Stream read loop exited prematurely. Waiting for Control Plane recovery.")
                         
                         from ..models.schemas import StreamDataPlaneFailedEvent
@@ -1171,6 +1187,7 @@ class StreamManager:
                 success = self.buffer.add_chunk(chunk)
                 if success:
                     self.last_data_time = time.time()
+                    self.consecutive_eof_retries = 0
                     chunk_count += 1
                     
                     if chunk_count % 1000 == 0:
@@ -1185,6 +1202,50 @@ class StreamManager:
                 break
         
         logger.info(f"Stream processing ended for content_id={self.content_id}")
+
+    def _prepare_local_reconnect(self):
+        """Tear down current reader/socket so run loop reconnects the same engine session."""
+        self.connected = False
+
+        with self._reader_lock:
+            old_reader = self.http_reader
+            old_socket = self.socket
+
+            if old_reader:
+                try:
+                    old_reader.stop()
+                except Exception as e:
+                    logger.debug("Failed to stop HTTP reader before local reconnect: %s", e)
+
+            if old_socket:
+                try:
+                    old_socket.close()
+                except Exception:
+                    pass
+
+    def _get_max_client_buffer_seconds(self) -> float:
+        """Return max client runway from Redis metadata for this stream."""
+        max_buffer_sec = 0.0
+        try:
+            redis_client = getattr(self.client_manager, "redis_client", None)
+            client_set_key = getattr(self.client_manager, "client_set_key", None)
+            if not redis_client or not client_set_key:
+                return 0.0
+
+            client_ids = redis_client.smembers(client_set_key) or []
+            for client_id in client_ids:
+                normalized_client_id = client_id.decode("utf-8") if isinstance(client_id, bytes) else str(client_id)
+                client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
+                raw_value = redis_client.hget(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND)
+                if raw_value is None:
+                    continue
+
+                decoded = raw_value.decode("utf-8") if isinstance(raw_value, bytes) else str(raw_value)
+                max_buffer_sec = max(max_buffer_sec, float(decoded))
+        except Exception as e:
+            logger.debug("Failed to calculate max client buffer for EOF retry: %s", e)
+
+        return max(0.0, float(max_buffer_sec))
 
     def _maybe_publish_legacy_stats(self):
         """Deprecated: legacy stats are now gathered by the collector service."""

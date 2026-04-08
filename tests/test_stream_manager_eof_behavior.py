@@ -56,13 +56,154 @@ def test_eof_with_no_clients_skips_failover(monkeypatch):
     def _fake_cleanup_for_retry():
         cleanup_for_retry_calls["count"] += 1
 
-    monkeypatch.setattr(manager, "_cleanup_for_retry", _fake_cleanup_for_retry)
+    monkeypatch.setattr(manager, "_cleanup_for_retry", _fake_cleanup_for_retry, raising=False)
     monkeypatch.setattr(manager, "_send_stream_ended_event", lambda reason="normal": None)
     monkeypatch.setattr(manager, "_cleanup", lambda: None)
 
     manager.run()
 
     assert cleanup_for_retry_calls["count"] == 0
+
+
+def test_eof_with_client_buffer_runway_retries_local_reconnect(monkeypatch):
+    manager = _build_manager()
+
+    manager.running = True
+    manager.connected = False
+
+    monkeypatch.setattr(manager, "_monitor_health", lambda: None)
+    monkeypatch.setattr(manager, "request_stream_from_engine", lambda: True)
+    monkeypatch.setattr(manager, "_send_stream_started_event", lambda: None)
+    monkeypatch.setattr(stream_manager_module.time, "sleep", lambda _seconds: None)
+
+    start_calls = {"count": 0}
+    stop_calls = {"count": 0}
+    close_calls = {"count": 0}
+
+    class _FakeReader:
+        def stop(self):
+            stop_calls["count"] += 1
+
+    class _FakeSocket:
+        def close(self):
+            close_calls["count"] += 1
+
+    def _fake_start_stream():
+        start_calls["count"] += 1
+        manager.http_reader = _FakeReader()
+        manager.socket = _FakeSocket()
+        manager.connected = True
+        return True
+
+    monkeypatch.setattr(manager, "start_stream", _fake_start_stream)
+
+    process_calls = {"count": 0}
+
+    def _fake_process_stream_data():
+        process_calls["count"] += 1
+        if process_calls["count"] == 1:
+            manager._stream_exit_reason = "eof"
+            return
+        manager._stream_exit_reason = None
+        manager.running = False
+
+    monkeypatch.setattr(manager, "_process_stream_data", _fake_process_stream_data)
+    monkeypatch.setattr(manager.client_manager, "get_total_client_count", lambda: 2)
+
+    class _FakeRedis:
+        def smembers(self, _key):
+            return {b"client-1", b"client-2"}
+
+        def hget(self, _key, _field):
+            return b"10.0"
+
+    manager.client_manager.redis_client = _FakeRedis()
+    manager.client_manager.client_set_key = "clients:test"
+
+    failover_calls = {"count": 0}
+
+    def _fake_handle_stream_data_plane_failed(_event):
+        failover_calls["count"] += 1
+
+    monkeypatch.setattr(
+        "app.services.internal_events.handle_stream_data_plane_failed",
+        _fake_handle_stream_data_plane_failed,
+    )
+    monkeypatch.setattr(manager, "_send_stream_ended_event", lambda reason="normal": None)
+    monkeypatch.setattr(manager, "_cleanup", lambda: None)
+
+    manager.run()
+
+    assert failover_calls["count"] == 0
+    assert start_calls["count"] == 2
+    assert stop_calls["count"] == 1
+    assert close_calls["count"] == 1
+    assert manager.consecutive_eof_retries == 1
+
+
+def test_eof_local_reconnect_retry_cap_falls_through_to_failover(monkeypatch):
+    manager = _build_manager()
+
+    manager.running = True
+    manager.connected = False
+    manager.stream_id = "stream-1"
+    manager.consecutive_eof_retries = 5
+    manager.control_plane_wait_event = Mock()
+    manager.control_plane_wait_event.wait.return_value = True
+
+    monkeypatch.setattr(manager, "_monitor_health", lambda: None)
+    monkeypatch.setattr(manager, "request_stream_from_engine", lambda: True)
+    monkeypatch.setattr(manager, "_send_stream_started_event", lambda: None)
+
+    start_calls = {"count": 0}
+
+    def _fake_start_stream():
+        start_calls["count"] += 1
+        manager.connected = True
+        return True
+
+    monkeypatch.setattr(manager, "start_stream", _fake_start_stream)
+
+    process_calls = {"count": 0}
+
+    def _fake_process_stream_data():
+        process_calls["count"] += 1
+        if process_calls["count"] == 1:
+            manager._stream_exit_reason = "eof"
+            return
+        manager._stream_exit_reason = None
+        manager.running = False
+
+    monkeypatch.setattr(manager, "_process_stream_data", _fake_process_stream_data)
+    monkeypatch.setattr(manager.client_manager, "get_total_client_count", lambda: 2)
+
+    class _FakeRedis:
+        def smembers(self, _key):
+            return {b"client-1"}
+
+        def hget(self, _key, _field):
+            return b"10.0"
+
+    manager.client_manager.redis_client = _FakeRedis()
+    manager.client_manager.client_set_key = "clients:test"
+
+    failover_calls = {"count": 0}
+
+    def _fake_handle_stream_data_plane_failed(_event):
+        failover_calls["count"] += 1
+
+    monkeypatch.setattr(
+        "app.services.internal_events.handle_stream_data_plane_failed",
+        _fake_handle_stream_data_plane_failed,
+    )
+    monkeypatch.setattr(manager, "_send_stream_ended_event", lambda reason="normal": None)
+    monkeypatch.setattr(manager, "_cleanup", lambda: None)
+
+    manager.run()
+
+    assert failover_calls["count"] == 1
+    assert start_calls["count"] == 1
+    assert manager.consecutive_eof_retries == 5
 
 
 def test_send_stream_ended_event_idempotent_for_same_stream(monkeypatch):
@@ -103,7 +244,7 @@ def test_preflight_failure_aborts_without_retry(monkeypatch):
     def _fake_cleanup_for_retry():
         cleanup_for_retry_calls["count"] += 1
 
-    monkeypatch.setattr(manager, "_cleanup_for_retry", _fake_cleanup_for_retry)
+    monkeypatch.setattr(manager, "_cleanup_for_retry", _fake_cleanup_for_retry, raising=False)
     monkeypatch.setattr(manager, "_send_stream_ended_event", lambda reason="normal": None)
     monkeypatch.setattr(manager, "_cleanup", lambda: None)
 
