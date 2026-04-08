@@ -334,6 +334,77 @@ def test_stream_generator_starvation_decay_keeps_runway_before_first_chunk(monke
     assert lag_seconds == pytest.approx(20.0, abs=0.01)
 
 
+def test_stream_generator_runway_continues_across_sparse_cursor_jump(monkeypatch):
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    stream_generator.buffer = Mock()
+    stream_generator.buffer.index = 140
+    stream_generator.local_index = 100
+    stream_generator.chunk_rate_ema = 2.0
+    stream_generator.last_position_update_time = 0.0
+
+    stream_generator.client_manager = Mock()
+    stream_generator.client_manager.update_client_position = Mock()
+
+    now = {"value": 100.0}
+    monkeypatch.setattr("app.proxy.stream_generator.time.time", lambda: now["value"])
+
+    stream_generator._maybe_update_client_position(force=True, source="ts_cursor_ema")
+
+    # Simulate reconnect/sparse-range catch-up where cursor jumps to the live edge.
+    stream_generator.local_index = 140
+    now["value"] = 101.0
+    stream_generator._maybe_update_client_position(force=True, source="ts_cursor_ema")
+
+    first_lag = stream_generator.client_manager.update_client_position.call_args_list[0].args[1]
+    second_lag = stream_generator.client_manager.update_client_position.call_args_list[1].args[1]
+
+    assert first_lag == pytest.approx(20.0, abs=0.01)
+    # Instead of hard-dropping to 0, runway decays smoothly from prior sample.
+    assert second_lag == pytest.approx(19.0, abs=0.01)
+
+
+def test_stream_generator_runway_decay_eventually_reaches_zero(monkeypatch):
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    stream_generator.buffer = Mock()
+    stream_generator.buffer.index = 140
+    stream_generator.local_index = 100
+    stream_generator.chunk_rate_ema = 2.0
+    stream_generator.last_position_update_time = 0.0
+
+    stream_generator.client_manager = Mock()
+    stream_generator.client_manager.update_client_position = Mock()
+
+    now = {"value": 100.0}
+    monkeypatch.setattr("app.proxy.stream_generator.time.time", lambda: now["value"])
+
+    stream_generator._maybe_update_client_position(force=True, source="ts_cursor_ema")
+
+    stream_generator.local_index = 140
+    now["value"] = 130.0
+    stream_generator._maybe_update_client_position(force=True, source="ts_cursor_ema")
+
+    second_lag = stream_generator.client_manager.update_client_position.call_args_list[1].args[1]
+    assert second_lag == pytest.approx(0.0, abs=0.01)
+
+
 def test_stream_generator_advances_local_index_with_sparse_ranges():
     from app.proxy.stream_generator import StreamGenerator
 

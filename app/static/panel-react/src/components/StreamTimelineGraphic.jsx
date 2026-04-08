@@ -396,13 +396,12 @@ function StreamTimelineGraphic({
             />
 
             <Area
-              type="monotone"
+              type="linear"
               dataKey="engineLag"
               name="engineLag"
-              stroke="var(--color-engineLag)"
+              stroke="none"
               fill="var(--color-engineLag)"
               fillOpacity={0.15}
-              strokeWidth={2}
               connectNulls={false}
               isAnimationActive={false}
               dot={false}
