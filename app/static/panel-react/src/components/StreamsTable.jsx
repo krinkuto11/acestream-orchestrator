@@ -203,7 +203,10 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
             ) : clients.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {clients.map((client, idx) => (
-                  <ClientSession key={client.client_id || `${client.ip_address}-${idx}`} client={client} />
+                  <ClientSession
+                    key={client.client_id || `${client.ip_address || 'unknown'}-${client.connected_at || 'na'}-${client.user_agent || idx}`}
+                    client={client}
+                  />
                 ))}
               </div>
             ) : (
@@ -252,7 +255,6 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
   const [batchStopping, setBatchStopping] = useState(false)
 
   const allSelected = activeStreams.length > 0 && selectedStreams.size === activeStreams.length
-  const someSelected = selectedStreams.size > 0 && selectedStreams.size < activeStreams.length
 
   const handleSelectAll = (checked) => {
     if (checked) {
@@ -308,7 +310,7 @@ function StreamsTable({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine }
             {activeStreams.length > 0 && (
               <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
                 <Checkbox
-                  checked={someSelected ? 'indeterminate' : allSelected}
+                  checked={allSelected}
                   onCheckedChange={handleSelectAll}
                   aria-label="Select all active streams"
                 />
