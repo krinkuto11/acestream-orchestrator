@@ -1,265 +1,357 @@
-import React from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { Badge } from '@/components/ui/badge'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
 import { cn } from '@/lib/utils'
 
-const MIN_ZOOM_WINDOW_SECONDS = 60
-const CLUSTER_BUCKET_PERCENT = 2
+const MAX_HISTORY_POINTS = 120
+const HISTORY_KEY_PREFIX = 'acestream_history_'
+const CLIENT_COLOR_PALETTE = [
+  'hsl(var(--chart-1, 221 83% 53%))',
+  'hsl(var(--chart-2, 160 84% 39%))',
+  'hsl(var(--chart-3, 32 95% 44%))',
+  'hsl(var(--chart-4, 262 83% 58%))',
+  'hsl(var(--chart-5, 348 83% 47%))',
+]
 
 function toNumber(value) {
   const parsed = Number.parseFloat(String(value ?? ''))
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value))
+function formatClock(timestampMs) {
+  if (!Number.isFinite(timestampMs)) return 'N/A'
+  try {
+    return new Date(timestampMs).toLocaleTimeString()
+  } catch {
+    return 'N/A'
+  }
 }
 
-function formatLag(seconds) {
-  if (!Number.isFinite(seconds)) return 'N/A'
-  if (seconds <= 0) return 'Live'
-  if (seconds < 0.1) return `${Math.round(seconds * 1000)}ms`
-  return `${seconds.toFixed(1)}s`
+function sanitizeClientKey(input) {
+  return String(input || 'unknown')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40)
 }
 
-function getClientInitial(client) {
-  const source = String(client?.ip_address || client?.client_id || '?').trim()
-  return source.charAt(0).toUpperCase() || '?'
+function getClientLabel(client, fallbackIndex = 0) {
+  return String(client?.ip_address || client?.client_id || `client-${fallbackIndex + 1}`).trim()
 }
 
-function getClusterTone(maxLagSeconds) {
-  if (maxLagSeconds > 5) {
-    return {
-      marker: 'border-amber-500/60 bg-amber-500 text-white',
-      line: 'bg-amber-500/70',
+function getClientSeriesKey(client, index) {
+  const raw = client?.client_id || client?.ip_address || `client_${index + 1}`
+  return `client_${sanitizeClientKey(raw) || `client_${index + 1}`}`
+}
+
+function buildStorageKey(streamId) {
+  return `${HISTORY_KEY_PREFIX}${String(streamId || 'unknown')}`
+}
+
+function readHistoryFromStorage(storageKey) {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return { points: [], labels: {} }
+  }
+
+  try {
+    const raw = window.localStorage.getItem(storageKey)
+    if (!raw) return { points: [], labels: {} }
+
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      return { points: parsed.slice(-MAX_HISTORY_POINTS), labels: {} }
     }
-  }
 
-  return {
-    marker: 'border-emerald-500/60 bg-emerald-500 text-white',
-    line: 'bg-emerald-500/70',
-  }
-}
-
-function buildTimelineModel(livepos, clients) {
-  const liveEdgeTs = toNumber(livepos?.last_ts ?? livepos?.live_last)
-  if (!Number.isFinite(liveEdgeTs)) return null
-
-  const enginePosTs = toNumber(livepos?.pos)
-  const bufferStartTs = toNumber(livepos?.first_ts ?? livepos?.live_first)
-  const bufferEndTs = toNumber(livepos?.last_ts ?? livepos?.live_last)
-
-  const normalizedClients = (Array.isArray(clients) ? clients : [])
-    .map((client, index) => {
-      const lagSeconds = Math.max(0, toNumber(client?.buffer_seconds_behind) ?? 0)
-      const timestamp = liveEdgeTs - lagSeconds
+    if (parsed && Array.isArray(parsed.points)) {
       return {
-        client,
-        lagSeconds,
-        timestamp,
-        key: client?.client_id || client?.ip_address || `client-${index}`,
+        points: parsed.points.slice(-MAX_HISTORY_POINTS),
+        labels: parsed.labels && typeof parsed.labels === 'object' ? parsed.labels : {},
       }
-    })
-
-  const maxClientLag = normalizedClients.reduce((max, entry) => Math.max(max, entry.lagSeconds), 0)
-  const engineLag = Number.isFinite(enginePosTs) ? Math.max(0, liveEdgeTs - enginePosTs) : 0
-  const zoomWindowSeconds = Math.max(
-    MIN_ZOOM_WINDOW_SECONDS,
-    maxClientLag * 1.5,
-    engineLag * 1.15,
-  )
-
-  const windowStartTs = liveEdgeTs - zoomWindowSeconds
-  const toPercent = (timestamp) => clamp(((timestamp - windowStartTs) / zoomWindowSeconds) * 100, 0, 100)
-
-  const clustersByBucket = new Map()
-  normalizedClients.forEach((entry) => {
-    const percent = toPercent(entry.timestamp)
-    const bucket = Math.round(percent / CLUSTER_BUCKET_PERCENT) * CLUSTER_BUCKET_PERCENT
-    const bucketKey = String(bucket)
-    if (!clustersByBucket.has(bucketKey)) {
-      clustersByBucket.set(bucketKey, {
-        percent: bucket,
-        clients: [],
-        maxLagSeconds: 0,
-      })
     }
+  } catch {
+    // Ignore malformed persisted history.
+  }
 
-    const bucketEntry = clustersByBucket.get(bucketKey)
-    bucketEntry.clients.push({ ...entry, percent })
-    bucketEntry.maxLagSeconds = Math.max(bucketEntry.maxLagSeconds, entry.lagSeconds)
-  })
+  return { points: [], labels: {} }
+}
 
-  const clusters = Array.from(clustersByBucket.values()).sort((a, b) => a.percent - b.percent)
-  const enginePercent = Number.isFinite(enginePosTs) ? toPercent(enginePosTs) : 0
-  const bufferedStartPercent = Number.isFinite(bufferStartTs) ? toPercent(bufferStartTs) : 0
-  const bufferedEndPercent = Number.isFinite(bufferEndTs) ? toPercent(bufferEndTs) : 100
+function persistHistory(storageKey, points, labels) {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return
+  }
 
-  return {
-    clusters,
-    enginePercent,
-    bufferedStartPercent,
-    bufferedEndPercent,
-    zoomWindowSeconds,
-    maxClientLag,
-    windowStartTs,
-    liveEdgeTs,
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify({ points, labels }))
+  } catch {
+    // Best-effort persistence only.
   }
 }
 
 function StreamTimelineGraphic({
+  streamId,
   livepos,
   clients = [],
   isLive = false,
   compact = false,
   className,
 }) {
-  const model = buildTimelineModel(livepos, clients)
+  const storageKey = useMemo(() => buildStorageKey(streamId), [streamId])
+  const [history, setHistory] = useState([])
+  const [clientLabels, setClientLabels] = useState({})
+  const [hydrated, setHydrated] = useState(false)
+  const lastSignatureRef = useRef('')
 
-  if (!model) {
+  useEffect(() => {
+    const loaded = readHistoryFromStorage(storageKey)
+    setHistory(Array.isArray(loaded.points) ? loaded.points : [])
+    setClientLabels(loaded.labels || {})
+    lastSignatureRef.current = ''
+    setHydrated(true)
+  }, [storageKey])
+
+  useEffect(() => {
+    const liveEdgeTs = toNumber(livepos?.last_ts ?? livepos?.live_last)
+    const posTs = toNumber(livepos?.pos)
+    if (!Number.isFinite(liveEdgeTs) || !Number.isFinite(posTs)) {
+      return
+    }
+
+    const engineLag = Math.max(0, liveEdgeTs - posTs)
+    const timestamp = Date.now()
+    const nextLabels = {}
+    const clientValues = {}
+
+    ;(Array.isArray(clients) ? clients : []).forEach((client, index) => {
+      const lag = toNumber(client?.buffer_seconds_behind)
+      if (!Number.isFinite(lag)) return
+      const key = getClientSeriesKey(client, index)
+      clientValues[key] = Math.max(0, lag)
+      nextLabels[key] = getClientLabel(client, index)
+    })
+
+    const signature = JSON.stringify({
+      engineLag: Number(engineLag.toFixed(3)),
+      clients: Object.keys(clientValues)
+        .sort()
+        .map((key) => [key, Number(clientValues[key].toFixed(3))]),
+    })
+
+    if (signature === lastSignatureRef.current) {
+      return
+    }
+    lastSignatureRef.current = signature
+
+    const tick = {
+      time: timestamp,
+      engineLag,
+      ...clientValues,
+    }
+
+    setHistory((prev) => {
+      const next = [...prev, tick].slice(-MAX_HISTORY_POINTS)
+      setClientLabels((prevLabels) => {
+        const mergedLabels = { ...prevLabels, ...nextLabels }
+        persistHistory(storageKey, next, mergedLabels)
+        return mergedLabels
+      })
+      return next
+    })
+  }, [clients, livepos?.last_ts, livepos?.live_last, livepos?.pos, storageKey])
+
+  const model = useMemo(() => {
+    if (!history.length) return null
+
+    const clientKeysSet = new Set()
+    history.forEach((point) => {
+      Object.keys(point).forEach((key) => {
+        if (key.startsWith('client_')) {
+          clientKeysSet.add(key)
+        }
+      })
+    })
+
+    Object.keys(clientLabels || {}).forEach((key) => {
+      if (key.startsWith('client_')) {
+        clientKeysSet.add(key)
+      }
+    })
+
+    const clientKeys = Array.from(clientKeysSet)
+
+    const normalizedHistory = history.map((point) => {
+      const normalized = {
+        time: point.time,
+        engineLag: toNumber(point.engineLag) ?? null,
+      }
+      clientKeys.forEach((key) => {
+        const value = toNumber(point[key])
+        normalized[key] = Number.isFinite(value) ? Math.max(0, value) : null
+      })
+      return normalized
+    })
+
+    const rawMaxLag = normalizedHistory.reduce((max, point) => {
+      let nextMax = max
+      const engineLag = toNumber(point.engineLag)
+      if (Number.isFinite(engineLag)) {
+        nextMax = Math.max(nextMax, engineLag)
+      }
+      clientKeys.forEach((key) => {
+        const lag = toNumber(point[key])
+        if (Number.isFinite(lag)) {
+          nextMax = Math.max(nextMax, lag)
+        }
+      })
+      return nextMax
+    }, 0)
+
+    const yMax = Math.max(2, Math.ceil(rawMaxLag + 2))
+
+    return {
+      chartData: normalizedHistory,
+      clientKeys,
+      yMax,
+    }
+  }, [history, clientLabels])
+
+  const chartConfig = useMemo(() => {
+    const config = {
+      engineLag: {
+        label: 'Engine lag',
+        color: 'hsl(var(--primary))',
+      },
+      liveEdge: {
+        label: 'Live edge',
+        color: 'hsl(var(--ring))',
+      },
+    }
+
+    if (model?.clientKeys?.length) {
+      model.clientKeys.forEach((key, index) => {
+        config[key] = {
+          label: clientLabels[key] || key,
+          color: CLIENT_COLOR_PALETTE[index % CLIENT_COLOR_PALETTE.length],
+        }
+      })
+    }
+
+    return config
+  }, [model?.clientKeys, clientLabels])
+
+  if (!hydrated) {
     return (
-      <div className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-        Timeline unavailable
+      <div className={cn('rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground animate-pulse', className)}>
+        Loading historical timeline...
       </div>
     )
   }
 
-  const {
-    clusters,
-    enginePercent,
-    bufferedStartPercent,
-    bufferedEndPercent,
-    zoomWindowSeconds,
-    maxClientLag,
-    windowStartTs,
-    liveEdgeTs,
-  } = model
+  if (!model || !model.chartData.length) {
+    return (
+      <div className={cn('rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground', className)}>
+        Waiting for stream history...
+      </div>
+    )
+  }
 
-  const bufferedLeft = Math.min(bufferedStartPercent, bufferedEndPercent)
-  const bufferedWidth = Math.max(0, Math.abs(bufferedEndPercent - bufferedStartPercent))
-  const timelineHeightPx = compact ? 56 : 80
-  const trackHeightPx = compact ? 8 : 10
-  const trackCenterYPx = compact ? 46 : 68
-  const trackTopPx = trackCenterYPx - trackHeightPx / 2
-  const playheadSizePx = compact ? 12 : 14
-  const clientMarkerSizePx = 20
-  const clientMarkerTopPx = compact ? 8 : 10
-  const projectionStartYPx = clientMarkerTopPx + clientMarkerSizePx
-  const projectionHeightPx = Math.max(0, trackCenterYPx - projectionStartYPx)
+  const { chartData, clientKeys, yMax } = model
 
   return (
     <div className={cn('space-y-2', className)}>
       {!compact && (
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={isLive ? 'success' : 'secondary'}>{isLive ? 'LIVE' : 'Not live'}</Badge>
-          <Badge variant="outline">Zoom {Math.round(zoomWindowSeconds)}s</Badge>
-          <span className="text-xs text-muted-foreground">
-            Max client lag {formatLag(maxClientLag)}
-          </span>
+          <Badge variant="outline">History {chartData.length} ticks</Badge>
+          <span className="text-xs text-muted-foreground">Y: Seconds behind live edge</span>
         </div>
       )}
 
-      <div className={cn('rounded-xl border border-border bg-muted/30 px-3', compact ? 'py-2' : 'py-3')}>
-        <div className="relative overflow-hidden" style={{ height: `${timelineHeightPx}px` }}>
-          <div
-            className="absolute left-0 right-0 rounded-full bg-muted"
-            style={{
-              top: `${trackTopPx}px`,
-              height: `${trackHeightPx}px`,
-            }}
-          />
+      <ChartContainer
+        config={chartConfig}
+        className={cn('w-full rounded-xl border border-border bg-muted/30 px-2', compact ? 'h-32 py-1' : 'h-44 py-2')}
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 8, right: 10, bottom: 6, left: 10 }}>
+            <CartesianGrid vertical={false} strokeDasharray="3 3" className="opacity-20" />
 
-          <div
-            className="absolute rounded-full bg-emerald-500/70 transition-all duration-300"
-            style={{
-              left: `${bufferedLeft}%`,
-              width: `${bufferedWidth}%`,
-              top: `${trackTopPx}px`,
-              height: `${trackHeightPx}px`,
-            }}
-          />
+            <XAxis
+              type="number"
+              dataKey="time"
+              domain={['dataMin', 'dataMax']}
+              tickLine={false}
+              axisLine={false}
+              tickMargin={6}
+              minTickGap={16}
+              tickFormatter={(value) => formatClock(value)}
+            />
 
-          <div
-            className="absolute z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-primary shadow transition-all duration-300"
-            style={{
-              left: `${enginePercent}%`,
-              top: `${trackCenterYPx}px`,
-              width: `${playheadSizePx}px`,
-              height: `${playheadSizePx}px`,
-            }}
-            title="Engine playhead"
-          />
+            <YAxis
+              type="number"
+              domain={[0, yMax]}
+              reversed
+              tickLine={false}
+              axisLine={false}
+              tickMargin={6}
+              width={36}
+              tickFormatter={(value) => `${Math.round(value)}s`}
+            />
 
-          <div
-            className="absolute z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-red-500 shadow transition-all duration-300"
-            style={{
-              left: '100%',
-              top: `${trackCenterYPx}px`,
-              width: `${playheadSizePx}px`,
-              height: `${playheadSizePx}px`,
-            }}
-            title="Live edge"
-          />
-
-          {clusters.map((cluster, index) => {
-            const first = cluster.clients[0]
-            const tone = getClusterTone(cluster.maxLagSeconds)
-            const title = cluster.clients
-              .map(({ client, lagSeconds }) => {
-                const label = client?.ip_address || client?.client_id || 'client'
-                return `${label} - ${formatLag(lagSeconds)} behind`
-              })
-              .join('\n')
-
-            return (
-              <div
-                key={`${index}-${cluster.percent}`}
-                className="absolute z-30 -translate-x-1/2 transition-all duration-300"
-                style={{ left: `${cluster.percent}%`, top: `${clientMarkerTopPx}px` }}
-                title={title}
-              >
-                {cluster.clients.length > 1 ? (
-                  <div
-                    className={cn('flex items-center justify-center rounded-full border px-1 text-[10px] font-semibold shadow', tone.marker)}
-                    style={{
-                      height: `${clientMarkerSizePx}px`,
-                      minWidth: `${clientMarkerSizePx}px`,
-                    }}
-                  >
-                    +{cluster.clients.length}
-                  </div>
-                ) : (
-                  <Avatar
-                    className="border border-border shadow"
-                    style={{
-                      height: `${clientMarkerSizePx}px`,
-                      width: `${clientMarkerSizePx}px`,
-                    }}
-                  >
-                    <AvatarFallback className={cn('text-[10px] font-semibold', tone.marker)}>
-                      {getClientInitial(first.client)}
-                    </AvatarFallback>
-                  </Avatar>
-                )}
-                <div
-                  className={cn('mx-auto w-px rounded-full transition-all duration-300', tone.line)}
-                  style={{
-                    marginTop: '0px',
-                    height: `${projectionHeightPx}px`,
+            <ChartTooltip
+              cursor={false}
+              content={(
+                <ChartTooltipContent
+                  labelFormatter={(label) => formatClock(label)}
+                  formatter={(value, name) => {
+                    if (!Number.isFinite(Number(value))) return 'N/A'
+                    const prettyName = chartConfig[name]?.label || name
+                    return `${prettyName}: ${Number(value).toFixed(2)}s`
                   }}
                 />
-              </div>
-            )
-          })}
-        </div>
+              )}
+            />
 
-        {!compact && (
-          <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>{new Date(windowStartTs * 1000).toLocaleTimeString()}</span>
-            <span>{new Date(liveEdgeTs * 1000).toLocaleTimeString()} live edge</span>
-          </div>
-        )}
-      </div>
+            <ReferenceLine y={0} stroke="var(--color-liveEdge)" strokeDasharray="4 4" strokeWidth={1.5} />
+
+            <Area
+              type="monotone"
+              dataKey="engineLag"
+              name="engineLag"
+              stroke="var(--color-engineLag)"
+              fill="var(--color-engineLag)"
+              fillOpacity={0.22}
+              strokeWidth={2}
+              connectNulls={false}
+              isAnimationActive={false}
+              dot={compact ? false : { r: 1.5 }}
+            />
+
+            {clientKeys.map((key, index) => (
+              <Line
+                key={key}
+                type="monotone"
+                dataKey={key}
+                name={key}
+                stroke={chartConfig[key]?.color || CLIENT_COLOR_PALETTE[index % CLIENT_COLOR_PALETTE.length]}
+                strokeWidth={1.5}
+                connectNulls={false}
+                isAnimationActive={false}
+                dot={{ r: 2 }}
+                activeDot={{ r: 3.5 }}
+              />
+            ))}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </ChartContainer>
     </div>
   )
 }

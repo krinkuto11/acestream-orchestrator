@@ -511,7 +511,13 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
             </div>
 
             {isActive && !isExpanded && (
-              <StreamTimelineGraphic livepos={localStream.livepos} clients={clients} isLive={streamIsLive} compact />
+              <StreamTimelineGraphic
+                streamId={localStream.id}
+                livepos={localStream.livepos}
+                clients={clients}
+                isLive={streamIsLive}
+                compact
+              />
             )}
           </div>
         </div>
@@ -522,7 +528,12 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, isS
           {isActive && (
             <div className="space-y-2">
               <p className="text-sm font-semibold text-foreground">Stream timeline & client positions</p>
-              <StreamTimelineGraphic livepos={localStream.livepos} clients={clients} isLive={streamIsLive} />
+              <StreamTimelineGraphic
+                streamId={localStream.id}
+                livepos={localStream.livepos}
+                clients={clients}
+                isLive={streamIsLive}
+              />
             </div>
           )}
 

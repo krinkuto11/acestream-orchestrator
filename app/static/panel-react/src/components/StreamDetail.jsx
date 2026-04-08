@@ -715,6 +715,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
         <div className="rounded-xl border bg-muted/30 p-4 space-y-4">
           <p className="text-sm font-semibold">Stream timeline & client positions</p>
           <StreamTimelineGraphic
+            streamId={stream.id}
             livepos={liveposData?.livepos}
             clients={clients}
             isLive={Boolean(liveposData?.is_live)}
