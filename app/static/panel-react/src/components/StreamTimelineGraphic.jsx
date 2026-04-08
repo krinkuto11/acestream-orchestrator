@@ -306,17 +306,17 @@ function StreamTimelineGraphic({
         label: 'Dynamic threshold',
         color: 'hsl(var(--destructive, 0 84% 60%))',
       },
-          if (showStreamWindow) {
-            config.streamWindow = {
-              label: 'Stream window',
-              color: 'hsl(var(--chart-5, 348 83% 47%))',
-            }
-          }
-
       liveEdge: {
         label: 'Live edge',
         color: 'hsl(var(--ring, 32 95% 44%))',
       },
+    }
+
+    if (showStreamWindow) {
+      config.streamWindow = {
+        label: 'Stream window',
+        color: 'hsl(var(--chart-5, 348 83% 47%))',
+      }
     }
 
     if (model?.clientKeys?.length) {
