@@ -401,7 +401,7 @@ function StreamTimelineGraphic({
               name="engineLag"
               stroke="none"
               fill="var(--color-engineLag)"
-              fillOpacity={0.15}
+              fillOpacity={0.08}
               connectNulls={false}
               isAnimationActive={false}
               dot={false}
@@ -462,11 +462,13 @@ function StreamTimelineGraphic({
             ))}
 
             <Line
-              type="linear"
+              type="monotone"
               dataKey="engineLag"
               name="engineLag"
               stroke="var(--color-engineLag)"
-              strokeWidth={2.3}
+              strokeWidth={1}
+              strokeOpacity={0.4}
+              strokeDasharray="4 4"
               connectNulls={false}
               isAnimationActive={false}
               dot={false}
