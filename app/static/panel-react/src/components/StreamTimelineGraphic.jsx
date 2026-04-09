@@ -426,6 +426,17 @@ function StreamTimelineGraphic({
 
   const { chartData, clientKeys, yMax } = model
   const yMin = -Math.max(0.3, yMax * 0.04)
+  const yTicks = useMemo(() => {
+    const candidates = [
+      0,
+      Math.round(yMax * 0.25),
+      Math.round(yMax * 0.5),
+      Math.round(yMax * 0.75),
+      Math.round(yMax),
+    ]
+
+    return Array.from(new Set(candidates.filter((value) => Number.isFinite(value) && value >= 0))).sort((a, b) => a - b)
+  }, [yMax])
 
   return (
     <div className={cn('space-y-2', className)}>
@@ -460,11 +471,15 @@ function StreamTimelineGraphic({
               type="number"
               domain={[yMin, yMax]}
               reversed
+              ticks={yTicks}
               tickLine={false}
               axisLine={false}
               tickMargin={6}
               width={36}
-              tickFormatter={(value) => `${Math.round(Math.max(0, value))}s`}
+              tickFormatter={(value) => {
+                const normalized = Math.round(Math.max(0, Number(value) || 0))
+                return normalized === 0 ? 'Live' : `${normalized}s`
+              }}
             />
 
             <ChartTooltip
@@ -592,9 +607,15 @@ function StreamTimelineGraphic({
             <ReferenceLine
               y={0}
               stroke="var(--color-liveEdge)"
-              strokeWidth={2.2}
-              strokeOpacity={0.85}
+              strokeWidth={1.2}
+              strokeOpacity={0.95}
               ifOverflow="extendDomain"
+              label={{
+                value: 'Live',
+                position: 'left',
+                fill: 'hsl(var(--muted-foreground))',
+                fontSize: 11,
+              }}
             />
 
             <Line
@@ -602,23 +623,10 @@ function StreamTimelineGraphic({
               dataKey="dynamicThreshold"
               name="dynamicThreshold"
               stroke="var(--color-dynamicThreshold)"
-              strokeWidth={2.4}
+              strokeWidth={1}
               strokeOpacity={1}
               strokeDasharray="2 4"
               strokeLinecap="round"
-              connectNulls={true}
-              isAnimationActive={false}
-              dot={false}
-              activeDot={false}
-            />
-
-            <Line
-              type="linear"
-              dataKey="liveEdge"
-              name="liveEdge"
-              stroke="var(--color-liveEdge)"
-              strokeWidth={3.4}
-              strokeOpacity={1}
               connectNulls={true}
               isAnimationActive={false}
               dot={false}

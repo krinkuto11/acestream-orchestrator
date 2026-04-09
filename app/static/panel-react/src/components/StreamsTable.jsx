@@ -31,10 +31,43 @@ const TRUNCATED_CLIENT_ID_LENGTH = 16
 const DETAILS_RECONNECT_DELAY_MS = 2000
 const SESSION_GAP_RESET_MS = 1 * 60 * 1000
 const SESSION_IDENTITY_RETENTION_MS = 10 * 60 * 1000
+const DYNAMIC_THRESHOLD_MIN_SECONDS = 4
+const DYNAMIC_THRESHOLD_SAFETY_MARGIN_SECONDS = 2
+const DYNAMIC_THRESHOLD_STARTUP_GRACE_SECONDS = 30
 
 function toNumber(value) {
   const parsed = Number.parseFloat(String(value ?? ''))
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function toEpochSeconds(value) {
+  const parsed = toNumber(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return null
+  if (parsed > 1e12) return parsed / 1000
+  return parsed
+}
+
+function deriveDynamicThresholdSeconds({ currentBufferSeconds, maxToleranceSeconds, startedAt }) {
+  if (!Number.isFinite(currentBufferSeconds) || !Number.isFinite(maxToleranceSeconds) || maxToleranceSeconds <= 0) {
+    return null
+  }
+
+  const startedAtMs = new Date(startedAt || 0).getTime()
+  const uptimeSeconds = Number.isFinite(startedAtMs) && startedAtMs > 0
+    ? Math.max(0, (Date.now() - startedAtMs) / 1000)
+    : 0
+
+  const inStartupGrace = uptimeSeconds < DYNAMIC_THRESHOLD_STARTUP_GRACE_SECONDS
+  const noRunwayYet = currentBufferSeconds <= 0
+
+  if (inStartupGrace || noRunwayYet) {
+    return Math.max(0, maxToleranceSeconds)
+  }
+
+  return Math.max(
+    DYNAMIC_THRESHOLD_MIN_SECONDS,
+    Math.min(maxToleranceSeconds, currentBufferSeconds - DYNAMIC_THRESHOLD_SAFETY_MARGIN_SECONDS),
+  )
 }
 
 function formatUptime(startedAt) {
@@ -66,6 +99,7 @@ function mergeStreamSnapshot(baseStream, payload) {
   if (!baseStream) return baseStream
 
   const next = { ...baseStream }
+  const hasThresholdField = Object.prototype.hasOwnProperty.call(payload || {}, 'dynamic_threshold_seconds')
   const stats = Array.isArray(payload?.stats) ? payload.stats : []
   const latest = stats.length > 0 ? stats[stats.length - 1] : null
   const normalizedStatus = String(payload?.status || '').trim().toLowerCase()
@@ -94,11 +128,6 @@ function mergeStreamSnapshot(baseStream, payload) {
     next.paused = payload.paused
   }
 
-  const dynamicThresholdSeconds = toNumber(payload?.dynamic_threshold_seconds)
-  if (Number.isFinite(dynamicThresholdSeconds)) {
-    next.dynamic_threshold_seconds = Math.max(0, dynamicThresholdSeconds)
-  }
-
   const dynamicThresholdUpdatedAt = toNumber(payload?.dynamic_threshold_updated_at)
   if (Number.isFinite(dynamicThresholdUpdatedAt) && dynamicThresholdUpdatedAt > 0) {
     next.dynamic_threshold_updated_at = dynamicThresholdUpdatedAt
@@ -107,6 +136,38 @@ function mergeStreamSnapshot(baseStream, payload) {
   const currentClientBufferSeconds = toNumber(payload?.current_client_buffer_seconds)
   if (Number.isFinite(currentClientBufferSeconds)) {
     next.current_client_buffer_seconds = Math.max(0, currentClientBufferSeconds)
+  }
+
+  const maxToleranceSeconds = toNumber(payload?.max_tolerance_seconds)
+  if (Number.isFinite(maxToleranceSeconds) && maxToleranceSeconds > 0) {
+    next.max_tolerance_seconds = Math.max(0, maxToleranceSeconds)
+  }
+
+  const explicitDynamicThresholdSeconds = toNumber(payload?.dynamic_threshold_seconds)
+  const effectiveCurrentBufferSeconds = Number.isFinite(currentClientBufferSeconds)
+    ? Math.max(0, currentClientBufferSeconds)
+    : toNumber(next.current_client_buffer_seconds)
+  const effectiveMaxToleranceSeconds = Number.isFinite(maxToleranceSeconds)
+    ? Math.max(0, maxToleranceSeconds)
+    : toNumber(next.max_tolerance_seconds)
+
+  const derivedDynamicThresholdSeconds = deriveDynamicThresholdSeconds({
+    currentBufferSeconds: effectiveCurrentBufferSeconds,
+    maxToleranceSeconds: effectiveMaxToleranceSeconds,
+    startedAt: next.started_at,
+  })
+
+  if (Number.isFinite(explicitDynamicThresholdSeconds)) {
+    next.dynamic_threshold_seconds = Math.max(0, explicitDynamicThresholdSeconds)
+  } else if (Number.isFinite(derivedDynamicThresholdSeconds)) {
+    next.dynamic_threshold_seconds = Math.max(0, derivedDynamicThresholdSeconds)
+  } else if (hasThresholdField) {
+    delete next.dynamic_threshold_seconds
+    delete next.dynamic_threshold_updated_at
+  }
+
+  if (!Number.isFinite(toEpochSeconds(next.dynamic_threshold_updated_at)) && Number.isFinite(next.dynamic_threshold_seconds)) {
+    next.dynamic_threshold_updated_at = Math.floor(Date.now() / 1000)
   }
 
   return next
@@ -497,7 +558,7 @@ function StreamCard({
           if (type === 'full_sync' && Array.isArray(payload?.streams)) {
             const matchingStream = payload.streams.find((item) => item?.id === streamId)
             if (matchingStream) {
-              setLocalStream((prev) => ({ ...prev, ...matchingStream }))
+              setLocalStream((prev) => mergeStreamSnapshot(prev, matchingStream))
             }
           }
         } catch {
