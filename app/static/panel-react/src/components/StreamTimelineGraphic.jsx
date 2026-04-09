@@ -511,18 +511,6 @@ function StreamTimelineGraphic({
               activeDot={false}
             />
 
-            <Line
-              type="linear"
-              dataKey="liveEdge"
-              name="liveEdge"
-              stroke="var(--color-liveEdge)"
-              strokeWidth={2}
-              connectNulls
-              isAnimationActive={false}
-              dot={false}
-              activeDot={false}
-            />
-
             {showStreamWindow && (
               <Line
                 type="monotone"
@@ -608,6 +596,20 @@ function StreamTimelineGraphic({
               strokeWidth={1.6}
               strokeOpacity={0.95}
               strokeDasharray="5 3"
+              connectNulls={true}
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
+            />
+
+            <Line
+              type="linear"
+              dataKey="liveEdge"
+              name="liveEdge"
+              stroke="var(--color-liveEdge)"
+              strokeWidth={3.2}
+              strokeOpacity={0.95}
+              strokeLinecap="round"
               connectNulls={true}
               isAnimationActive={false}
               dot={false}
