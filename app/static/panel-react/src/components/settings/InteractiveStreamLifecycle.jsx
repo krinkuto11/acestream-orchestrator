@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -136,11 +136,50 @@ function TimelineTrack({
   nodes,
   activePhase,
 }) {
+  const scrollRef = useRef(null)
+  const nodeRefs = useRef([])
+  const connectorRefs = useRef([])
+
   const hasSelection = Boolean(activePhase)
   const activeGap = GAP_PHASES[activePhase]
   const activeNode = NODE_PHASES[activePhase]
   const primaryNode = PRIMARY_NODE_PHASES[activePhase]
   const trackWideActive = activePhase === 'overall_stream_timeout' && trackId === 'normal'
+
+  useEffect(() => {
+    const container = scrollRef.current
+    if (!container || !activePhase) return
+
+    let target = null
+
+    if (activePhase === 'overall_stream_timeout' && trackId === 'normal') {
+      target = nodeRefs.current[2] || nodeRefs.current[0] || null
+    } else if (activeGap && activeGap.track === trackId) {
+      target = connectorRefs.current[activeGap.from] || nodeRefs.current[activeGap.to] || null
+    } else if (primaryNode && primaryNode.track === trackId) {
+      target = nodeRefs.current[primaryNode.index] || null
+    } else if (activeNode && activeNode.track === trackId) {
+      target = nodeRefs.current[activeNode.index] || null
+    }
+
+    if (!target) return
+
+    const centerTarget = () => {
+      const targetCenter = target.offsetLeft + target.offsetWidth / 2
+      const nextLeft = Math.max(0, targetCenter - container.clientWidth / 2)
+      container.scrollTo({ left: nextLeft, behavior: 'smooth' })
+    }
+
+    let raf2 = 0
+    const raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(centerTarget)
+    })
+
+    return () => {
+      window.cancelAnimationFrame(raf1)
+      if (raf2) window.cancelAnimationFrame(raf2)
+    }
+  }, [activeGap, activeNode, activePhase, primaryNode, trackId])
 
   return (
     <div className="space-y-3">
@@ -148,7 +187,7 @@ function TimelineTrack({
         <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
       </div>
 
-      <div className="overflow-x-auto pb-2">
+      <div ref={scrollRef} className="overflow-x-auto pb-2">
         <motion.div
           className="flex min-w-max items-start px-1"
           variants={containerVariants}
@@ -184,7 +223,13 @@ function TimelineTrack({
               ))
 
             return (
-              <div key={node.id} className="flex items-start">
+              <div
+                key={node.id}
+                className="flex items-start"
+                ref={(element) => {
+                  nodeRefs.current[index] = element
+                }}
+              >
                 <motion.div className="w-36 shrink-0" variants={itemVariants}>
                   <div className="flex flex-col items-center gap-2 text-center">
                     <div
@@ -215,7 +260,12 @@ function TimelineTrack({
                 </motion.div>
 
                 {index < nodes.length - 1 && (
-                  <div className="flex w-16 items-center pt-5">
+                  <div
+                    className="flex w-16 items-center pt-5"
+                    ref={(element) => {
+                      connectorRefs.current[index] = element
+                    }}
+                  >
                     <div
                       className={cn(
                         'h-1 w-full rounded-full bg-border transition-all',
