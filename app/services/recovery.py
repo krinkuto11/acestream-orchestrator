@@ -122,20 +122,29 @@ def recover_stream(stream_id: str, dead_vpn: Optional[str] = None, failure_reaso
     """
     def _recovery_task():
         try:
-            # Brief delay to allow state changes to synchronize globally
-            time.sleep(1.0)
-            
             from .state import state
             from ..proxy.manager import ProxyManager
             from ..services.engine_selection import select_best_engine
-            
-            stream_state = state.get_stream(stream_id)
+
+            # Wait for state to synchronize globally.
+            stream_state = None
+            for _ in range(40):  # 40 * 0.05s = 2.0s timeout
+                stream_state = state.get_stream(stream_id)
+                if stream_state and stream_state.status == "pending_failover":
+                    break
+                time.sleep(0.05)
+
             if not stream_state:
-                logger.warning(f"Recovery failed: Stream {stream_id} not found in state.")
+                logger.warning(
+                    f"Recovery failed: Stream {stream_id} not found in state after 2.0s synchronization wait."
+                )
                 return
-                
+
             if stream_state.status != "pending_failover":
-                logger.info(f"Stream {stream_id} is no longer pending failover (status: {stream_state.status}). Aborting recovery.")
+                logger.info(
+                    f"Stream {stream_id} did not reach pending failover within 2.0s "
+                    f"(status: {stream_state.status}). Aborting recovery."
+                )
                 return
 
             dead_container_id = stream_state.container_id
