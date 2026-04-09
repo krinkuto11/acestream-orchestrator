@@ -498,6 +498,33 @@ class ClientTrackingService:
         rows.sort(key=lambda item: self._safe_float(item.get("last_active"), default=0.0), reverse=True)
         return rows
 
+    def _get_stream_failover_telemetry(self, stream_id: str) -> Dict[str, Any]:
+        normalized_stream_id = str(stream_id or "").strip()
+        if not normalized_stream_id:
+            return {}
+
+        try:
+            from .state import state
+
+            telemetry = state.get_stream_failover_telemetry(stream_key=normalized_stream_id)
+            return dict(telemetry or {})
+        except Exception:
+            return {}
+
+    def get_stream_clients_payload(
+        self,
+        stream_id: str,
+        *,
+        protocol: Optional[str] = None,
+        worker_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Return stream client rows with dynamic failover telemetry for UI payloads."""
+        payload: Dict[str, Any] = {
+            "clients": self.get_stream_clients(stream_id, protocol=protocol, worker_id=worker_id)
+        }
+        payload.update(self._get_stream_failover_telemetry(stream_id))
+        return payload
+
     def count_active_clients(
         self,
         *,

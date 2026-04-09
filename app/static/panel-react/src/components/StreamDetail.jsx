@@ -193,6 +193,8 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
     is_live: Boolean(stream?.is_live),
     livepos: stream?.livepos || null,
   })
+  const [dynamicThresholdSeconds, setDynamicThresholdSeconds] = useState(toNumber(stream?.dynamic_threshold_seconds))
+  const [dynamicThresholdUpdatedAt, setDynamicThresholdUpdatedAt] = useState(toNumber(stream?.dynamic_threshold_updated_at))
   const [seekValue, setSeekValue] = useState(null)
   const [seekLoading, setSeekLoading] = useState(false)
   const [seekError, setSeekError] = useState(null)
@@ -243,6 +245,16 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
         })
       }
 
+      const nextDynamicThreshold = toNumber(payload?.dynamic_threshold_seconds)
+      if (Number.isFinite(nextDynamicThreshold)) {
+        setDynamicThresholdSeconds(Math.max(0, nextDynamicThreshold))
+      }
+
+      const nextDynamicUpdatedAt = toNumber(payload?.dynamic_threshold_updated_at)
+      if (Number.isFinite(nextDynamicUpdatedAt) && nextDynamicUpdatedAt > 0) {
+        setDynamicThresholdUpdatedAt(nextDynamicUpdatedAt)
+      }
+
       setLoading(false)
       setLiveConnected(true)
     }
@@ -272,6 +284,17 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
             if (Array.isArray(payload?.stats)) {
               setStats((prev) => mergeStatSamples(prev, payload.stats))
             }
+
+            const dynamicThreshold = toNumber(payload?.dynamic_threshold_seconds)
+            if (Number.isFinite(dynamicThreshold)) {
+              setDynamicThresholdSeconds(Math.max(0, dynamicThreshold))
+            }
+
+            const thresholdUpdatedAt = toNumber(payload?.dynamic_threshold_updated_at)
+            if (Number.isFinite(thresholdUpdatedAt) && thresholdUpdatedAt > 0) {
+              setDynamicThresholdUpdatedAt(thresholdUpdatedAt)
+            }
+
             if (payload?.livepos) {
               setLiveposData({
                 has_livepos: true,
@@ -718,6 +741,8 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
             streamId={stream.id}
             livepos={liveposData?.livepos}
             clients={clients}
+            dynamicThresholdSeconds={dynamicThresholdSeconds}
+            dynamicThresholdUpdatedAt={dynamicThresholdUpdatedAt}
             isLive={Boolean(liveposData?.is_live)}
           />
 

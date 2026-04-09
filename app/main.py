@@ -383,10 +383,21 @@ def _build_sse_payload() -> Dict[str, Any]:
     except Exception:
         orchestrator_status = None
 
+    encoded_streams = jsonable_encoder(streams)
+    for index, stream in enumerate(streams):
+        try:
+            stream_id = str(getattr(stream, "id", "") or "")
+            stream_key = str(getattr(stream, "key", "") or "")
+            telemetry = state.get_stream_failover_telemetry(stream_id=stream_id, stream_key=stream_key)
+            if telemetry and index < len(encoded_streams) and isinstance(encoded_streams[index], dict):
+                encoded_streams[index].update(telemetry)
+        except Exception:
+            continue
+
     return {
         "engines": jsonable_encoder(engines),
         "engine_docker_stats": jsonable_encoder(engine_docker_stats),
-        "streams": jsonable_encoder(streams),
+        "streams": encoded_streams,
         "vpn_status": jsonable_encoder(vpn_status),
         "orchestrator_status": jsonable_encoder(orchestrator_status),
         "kpis": {
@@ -1878,9 +1889,16 @@ async def stream_stream_details(
             if stream_key:
                 with suppress(Exception):
                     _prune_client_tracker_if_due(ttl_s=float(ProxyConfig.CLIENT_RECORD_TTL), min_interval_s=3.0)
-                    clients = client_tracking_service.get_stream_clients(stream_key)
+                    tracker_payload = client_tracking_service.get_stream_clients_payload(stream_key)
+                    clients = tracker_payload.get("clients", [])
+                    threshold_payload = {
+                        key: value
+                        for key, value in tracker_payload.items()
+                        if key != "clients"
+                    }
                     clients = _merge_clients_with_redis_runway(stream_key, clients)
-                threshold_payload = _read_stream_dynamic_threshold(stream_key)
+                if not threshold_payload:
+                    threshold_payload = _read_stream_dynamic_threshold(stream_key)
 
             payload = jsonable_encoder(
                 {
@@ -4752,8 +4770,8 @@ async def get_stream_clients(stream_key: str):
     
     try:
         _prune_client_tracker_if_due(ttl_s=float(ProxyConfig.CLIENT_RECORD_TTL), min_interval_s=3.0)
-        clients = client_tracking_service.get_stream_clients(stream_key)
-        return {"clients": clients}
+        payload = client_tracking_service.get_stream_clients_payload(stream_key)
+        return payload
         
     except Exception as e:
         logger.error(f"Error getting clients for stream {stream_key}: {e}")

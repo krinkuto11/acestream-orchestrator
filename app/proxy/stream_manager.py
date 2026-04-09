@@ -1477,11 +1477,29 @@ class StreamManager:
     def _publish_dynamic_tolerance(self, dynamic_threshold: float, current_buffer: float, max_tolerance: float, inactivity_duration: float):
         """Persist current dynamic threshold values for dashboard visualization."""
         try:
+            now = time.time()
+
+            # Keep an in-memory copy in control-plane state so SSE broadcasters
+            # can expose threshold telemetry without needing direct Redis reads.
+            try:
+                from ..services.state import state
+
+                state.update_stream_failover_telemetry(
+                    stream_id=self.stream_id,
+                    stream_key=self.content_id,
+                    dynamic_threshold_seconds=dynamic_threshold,
+                    current_client_buffer_seconds=current_buffer,
+                    max_tolerance_seconds=max_tolerance,
+                    stream_inactivity_seconds=inactivity_duration,
+                    dynamic_threshold_updated_at=now,
+                )
+            except Exception as state_err:
+                logger.debug("Failed to cache dynamic threshold telemetry in state for %s: %s", self.content_id, state_err)
+
             redis_client = getattr(self.buffer, "redis_client", None)
             if not redis_client:
                 return
 
-            now = time.time()
             last_publish_ts = float(getattr(self, "_last_threshold_publish_ts", 0.0) or 0.0)
             last_publish_value = getattr(self, "_last_threshold_publish_value", None)
             if (

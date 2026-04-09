@@ -364,8 +364,8 @@ function StreamTimelineGraphic({
         color: 'hsl(var(--chart-3, 32 95% 44%))',
       },
       dynamicThreshold: {
-        label: 'Dynamic threshold',
-        color: 'hsl(48 96% 53%)',
+        label: 'Failover Threshold',
+        color: 'hsl(var(--destructive, 0 84% 60%))',
       },
       liveEdge: {
         label: 'Live edge',
@@ -599,14 +599,13 @@ function StreamTimelineGraphic({
             />
 
             <Line
-              type="linear"
+              type="stepAfter"
               dataKey="dynamicThreshold"
               name="dynamicThreshold"
               stroke="var(--color-dynamicThreshold)"
-              strokeWidth={1}
-              strokeOpacity={1}
-              strokeDasharray="2 4"
-              strokeLinecap="round"
+              strokeWidth={2.5}
+              strokeDasharray="4 4"
+              strokeOpacity={0.8}
               connectNulls={true}
               isAnimationActive={false}
               dot={false}
