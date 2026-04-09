@@ -198,19 +198,24 @@ class HealthManager:
             if not active_streams:
                 continue
 
+            all_streams_starved = True
+
             for stream in active_streams:
                 started_at = getattr(stream, "started_at", None)
                 if not isinstance(started_at, datetime):
-                    continue
+                    all_streams_starved = False
+                    break
                 if started_at.tzinfo is None:
                     started_at = started_at.replace(tzinfo=timezone.utc)
 
-                if (now - started_at).total_seconds() <= 60:
-                    continue
+                if (now - started_at).total_seconds() <= 180:
+                    all_streams_starved = False
+                    break
 
                 snapshots = state.get_stream_stats(stream.id) or []
                 if not snapshots:
-                    continue
+                    all_streams_starved = False
+                    break
 
                 latest_snapshot = snapshots[-1]
                 if isinstance(latest_snapshot, dict):
@@ -222,28 +227,29 @@ class HealthManager:
 
                 is_starved = (peers == 0 or peers is None) and speed_down == 0
                 if not is_starved:
-                    continue
+                    all_streams_starved = False
+                    break
 
-                vpn_container = str(getattr(engine, "vpn_container", "") or "").strip()
-                if vpn_container:
-                    vpn_node = vpn_nodes_by_container.get(vpn_container) or {}
-                    assigned_hostname = str(vpn_node.get("assigned_hostname") or "").strip().lower()
-                    if assigned_hostname:
-                        vpn_reputation_manager.blacklist_hostname(assigned_hostname)
+            if not all_streams_starved:
+                continue
 
-                    state.set_vpn_node_lifecycle(
-                        vpn_container,
-                        "draining",
-                        metadata={"drain_reason": "zero_peer_starvation"},
-                    )
-                    logger.warning(
-                        "Detected zero-peer starvation for engine %s stream %s; draining VPN node %s",
-                        engine.container_id[:12],
-                        stream.id,
-                        vpn_container,
-                    )
+            vpn_container = str(getattr(engine, "vpn_container", "") or "").strip()
+            if vpn_container:
+                vpn_node = vpn_nodes_by_container.get(vpn_container) or {}
+                assigned_hostname = str(vpn_node.get("assigned_hostname") or "").strip().lower()
+                if assigned_hostname:
+                    vpn_reputation_manager.blacklist_hostname(assigned_hostname)
 
-                break
+                state.set_vpn_node_lifecycle(
+                    vpn_container,
+                    "draining",
+                    metadata={"drain_reason": "zero_peer_starvation"},
+                )
+                logger.warning(
+                    "Detected zero-peer starvation across all streams for engine %s; draining VPN node %s",
+                    engine.container_id[:12],
+                    vpn_container,
+                )
     
     def _should_wait_for_vpn_recovery(self, healthy_engines: List) -> bool:
         """
