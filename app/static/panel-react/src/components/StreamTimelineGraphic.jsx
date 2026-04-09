@@ -224,11 +224,15 @@ function StreamTimelineGraphic({
 
     const parsedDynamicThreshold = toNumber(dynamicThresholdSeconds)
     const backendThresholdObservedAtMs = toEpochMs(dynamicThresholdUpdatedAt)
+    const hasUsableDynamicThreshold = Number.isFinite(parsedDynamicThreshold)
     const hasFreshBackendThreshold = (
-      Number.isFinite(parsedDynamicThreshold)
+      hasUsableDynamicThreshold
       && Number.isFinite(backendThresholdObservedAtMs)
       && Math.max(0, timestamp - backendThresholdObservedAtMs) <= DYNAMIC_THRESHOLD_STALE_MS
     )
+    const thresholdObservedAt = Number.isFinite(backendThresholdObservedAtMs)
+      ? backendThresholdObservedAtMs
+      : timestamp
 
     const tick = {
       time: timestamp,
@@ -237,10 +241,11 @@ function StreamTimelineGraphic({
       streamWindow: Number.isFinite(toNumber(effectiveStreamWindow))
         ? Math.max(0, toNumber(effectiveStreamWindow))
         : null,
-      dynamicThreshold: hasFreshBackendThreshold
+      dynamicThreshold: hasUsableDynamicThreshold
         ? Math.max(0, parsedDynamicThreshold)
         : null,
-      dynamicThresholdObservedAt: hasFreshBackendThreshold ? backendThresholdObservedAtMs : null,
+      dynamicThresholdObservedAt: hasUsableDynamicThreshold ? thresholdObservedAt : null,
+      dynamicThresholdIsFresh: hasFreshBackendThreshold,
       ...clientValues,
     }
 
@@ -301,8 +306,8 @@ function StreamTimelineGraphic({
         dynamicThreshold: Number.isFinite(toNumber(point.dynamicThreshold))
           ? Math.max(0, toNumber(point.dynamicThreshold))
           : null,
-        dynamicThreshold__overlay: Number.isFinite(toNumber(point.dynamicThreshold))
-          ? Math.max(0, toNumber(point.dynamicThreshold))
+        dynamicThreshold__band: Number.isFinite(toNumber(point.dynamicThreshold))
+          ? [0, Math.max(0, toNumber(point.dynamicThreshold))]
           : null,
       }
       clientKeys.forEach((key) => {
@@ -493,6 +498,19 @@ function StreamTimelineGraphic({
               activeDot={false}
             />
 
+            <Area
+              type="linear"
+              dataKey="dynamicThreshold__band"
+              name="dynamicThreshold"
+              stroke="none"
+              fill="var(--color-dynamicThreshold)"
+              fillOpacity={0.05}
+              connectNulls={false}
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
+            />
+
             <Line
               type="linear"
               dataKey="liveEdge"
@@ -584,29 +602,16 @@ function StreamTimelineGraphic({
 
             <Line
               type="linear"
-              dataKey="dynamicThreshold__overlay"
-              name="dynamicThreshold__overlay"
-              stroke="hsl(var(--background))"
-              strokeWidth={4.8}
-              strokeOpacity={0.9}
-              connectNulls={false}
-              isAnimationActive={false}
-              dot={false}
-              activeDot={false}
-            />
-
-            <Line
-              type="linear"
               dataKey="dynamicThreshold"
               name="dynamicThreshold"
               stroke="var(--color-dynamicThreshold)"
-              strokeWidth={3}
-              strokeOpacity={1}
-              strokeDasharray="6 3"
-              connectNulls={false}
+              strokeWidth={1.6}
+              strokeOpacity={0.95}
+              strokeDasharray="5 3"
+              connectNulls={true}
               isAnimationActive={false}
               dot={false}
-              activeDot={{ r: 3, stroke: 'var(--color-dynamicThreshold)', strokeWidth: 1.2 }}
+              activeDot={false}
             />
           </ComposedChart>
         </ResponsiveContainer>
