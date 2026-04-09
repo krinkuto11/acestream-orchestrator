@@ -12,6 +12,7 @@ EOF_FAILOVER_WINDOW_S = 180.0
 PING_PONG_COOLDOWN_S = 20.0
 PAIR_PENALTY_WINDOW_S = 300.0
 PAIR_PENALTY_SCORE = 50
+MAX_COOLDOWN_SLEEP_S = 30.0
 MAX_TRACKED_EVENTS = 32
 
 _guardrails_lock = threading.RLock()
@@ -49,7 +50,7 @@ def _record_source_failure(stream_id: str, stream_key: str, engine_id: Optional[
             # a short cooldown before attempting another migration.
             last_four = [item[1] for item in list(recent_engines)[-4:]]
             if len(last_four) == 4:
-                if len(set(last_four)) <= 2 and last_four[0] == last_four[2] and last_four[1] == last_four[3]:
+                if len(set(last_four)) == 2 and last_four[0] == last_four[2] and last_four[1] == last_four[3]:
                     _stream_cooldowns[stream_id] = now + PING_PONG_COOLDOWN_S
 
         return len(eof_events)
@@ -166,7 +167,7 @@ def recover_stream(stream_id: str, dead_vpn: Optional[str] = None, failure_reaso
                         stream_id,
                         cooldown_remaining,
                     )
-                    time.sleep(min(cooldown_remaining, 30.0))
+                    time.sleep(min(cooldown_remaining, MAX_COOLDOWN_SLEEP_S))
 
             # Try to select a new engine, heavily penalizing the dead one
             penalties = {dead_container_id: 999} if dead_container_id else {}
