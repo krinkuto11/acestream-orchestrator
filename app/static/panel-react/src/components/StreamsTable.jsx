@@ -61,7 +61,7 @@ function deriveDynamicThresholdSeconds({ currentBufferSeconds, maxToleranceSecon
   const noRunwayYet = currentBufferSeconds <= 0
 
   if (inStartupGrace || noRunwayYet) {
-    return Math.max(0, maxToleranceSeconds)
+    return null
   }
 
   return Math.max(
@@ -99,7 +99,6 @@ function mergeStreamSnapshot(baseStream, payload) {
   if (!baseStream) return baseStream
 
   const next = { ...baseStream }
-  const hasThresholdField = Object.prototype.hasOwnProperty.call(payload || {}, 'dynamic_threshold_seconds')
   const stats = Array.isArray(payload?.stats) ? payload.stats : []
   const latest = stats.length > 0 ? stats[stats.length - 1] : null
   const normalizedStatus = String(payload?.status || '').trim().toLowerCase()
@@ -161,7 +160,7 @@ function mergeStreamSnapshot(baseStream, payload) {
     next.dynamic_threshold_seconds = Math.max(0, explicitDynamicThresholdSeconds)
   } else if (Number.isFinite(derivedDynamicThresholdSeconds)) {
     next.dynamic_threshold_seconds = Math.max(0, derivedDynamicThresholdSeconds)
-  } else if (hasThresholdField) {
+  } else {
     delete next.dynamic_threshold_seconds
     delete next.dynamic_threshold_updated_at
   }
