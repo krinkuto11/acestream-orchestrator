@@ -437,7 +437,7 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
             <Input type="number" min={1} max={60} value={draft.upstream_connect_timeout} onChange={(e) => update('upstream_connect_timeout', toNumber(e.target.value, DEFAULTS.upstream_connect_timeout))} className="max-w-xs" {...bindPhase('upstream_connect')} />
           </SettingRow>
           <SettingRow label="Upstream Read Timeout (s)" description="Per-read timeout while receiving upstream stream data.">
-            <Input type="number" min={1} max={120} value={draft.upstream_read_timeout} onChange={(e) => update('upstream_read_timeout', toNumber(e.target.value, DEFAULTS.upstream_read_timeout))} className="max-w-xs" />
+            <Input type="number" min={1} max={120} value={draft.upstream_read_timeout} onChange={(e) => update('upstream_read_timeout', toNumber(e.target.value, DEFAULTS.upstream_read_timeout))} className="max-w-xs" {...bindPhase('upstream_read')} />
           </SettingRow>
           <SettingRow label="Stream Timeout (s)" description="Overall stream request timeout.">
             <Input type="number" min={10} max={300} value={draft.stream_timeout} onChange={(e) => update('stream_timeout', toNumber(e.target.value, DEFAULTS.stream_timeout))} className="max-w-xs" {...bindPhase('overall_stream_timeout')} />

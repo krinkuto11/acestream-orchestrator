@@ -3,12 +3,14 @@ import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
+  Activity,
   AlertCircle,
   ArrowRight,
   Download,
   Link,
   MonitorPlay,
   Play,
+  Plug,
   PowerOff,
   RefreshCcw,
   Unplug,
@@ -45,6 +47,7 @@ const NODE_PHASES = {
 
 const PRIMARY_NODE_PHASES = {
   upstream_connect: { track: 'normal', index: 1 },
+  upstream_read: { track: 'normal', index: 2 },
   initial_data_wait: { track: 'normal', index: 2 },
   proxy_prebuffer: { track: 'normal', index: 3 },
   live_edge_delay: { track: 'starvation', index: 0 },
@@ -56,6 +59,7 @@ const PRIMARY_NODE_PHASES = {
 
 const TRACK_BY_PHASE = {
   upstream_connect: 'normal',
+  upstream_read: 'normal',
   initial_data_wait: 'normal',
   proxy_prebuffer: 'normal',
   idle_shutdown: 'normal',
@@ -96,6 +100,10 @@ const PHASE_CONTENT = {
   upstream_connect: {
     title: 'Upstream Connect Timeout',
     description: 'Controls how long the proxy waits to establish an upstream connection after the player first requests the stream.',
+  },
+  upstream_read: {
+    title: 'Upstream Read Timeout',
+    description: 'Applies after the connection is up: each upstream read operation must receive data within this window or the stream is treated as stalled.',
   },
   initial_data_wait: {
     title: 'Initial Data Wait',
@@ -148,6 +156,13 @@ function TimelineTrack({
   const trackWideActive = activePhase === 'overall_stream_timeout' && trackId === 'normal'
   const zoomedOutTrack = trackWideActive
 
+  const iconOverride =
+    activePhase === 'upstream_connect'
+      ? { nodeId: 'upstream', icon: Plug }
+      : activePhase === 'upstream_read'
+        ? { nodeId: 'first_byte', icon: Activity }
+        : null
+
   useEffect(() => {
     const container = scrollRef.current
     if (!container || !activePhase) return
@@ -192,7 +207,7 @@ function TimelineTrack({
 
       <div
         ref={scrollRef}
-        className="overflow-x-auto pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        className="overflow-x-auto overflow-y-visible pt-1 pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
       >
         <div className="min-w-max px-1">
           {zoomedOutTrack && (
@@ -201,9 +216,8 @@ function TimelineTrack({
               animate={{ opacity: 1, y: 0 }}
               className="relative mb-3 h-7"
             >
-              <div className="absolute left-4 right-4 top-3 h-0.5 rounded-full bg-primary/60" />
-              <ArrowRight className="absolute -left-0.5 top-1.5 h-4 w-4 rotate-180 text-primary/80" />
-              <ArrowRight className="absolute -right-0.5 top-1.5 h-4 w-4 text-primary/80" />
+              <div className="absolute left-0 right-4 top-3 h-0.5 rounded-full bg-primary/60" />
+              <ArrowRight className="absolute right-0 top-1.5 h-4 w-4 text-primary/80" />
               <span className="absolute left-1/2 top-0 -translate-x-1/2 rounded-sm bg-primary/10 px-2 text-[10px] font-medium text-primary">
                 Full lifecycle span
               </span>
@@ -216,7 +230,7 @@ function TimelineTrack({
             animate="visible"
           >
           {nodes.map((node, index) => {
-            const Icon = node.icon
+            const Icon = iconOverride && iconOverride.nodeId === node.id ? iconOverride.icon : node.icon
             const nodeInActiveGap = Boolean(
               activeGap &&
               activeGap.track === trackId &&
