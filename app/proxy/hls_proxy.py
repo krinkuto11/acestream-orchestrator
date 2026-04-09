@@ -1024,8 +1024,10 @@ class HLSProxyServer:
             if normalized_request_kind == "manifest":
                 effective_buffer_seconds_behind = None
                 effective_client_runway_seconds = None
-            elif normalized_request_kind == "segment" and effective_client_runway_seconds is None:
-                effective_client_runway_seconds = buffer_seconds_behind
+            elif normalized_request_kind == "segment":
+                effective_stream_buffer_window_seconds = None
+                if effective_client_runway_seconds is None:
+                    effective_client_runway_seconds = buffer_seconds_behind
 
             self.client_managers[channel_id].record_activity(
                 client_ip=client_ip,

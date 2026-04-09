@@ -1267,6 +1267,99 @@ class StreamManager:
                 except Exception:
                     pass
 
+    def _get_effective_client_runway(self) -> float:
+        """Return a freshness-decayed minimum runway across all active clients."""
+        now = time.time()
+        max_sample_age_s = 8.0
+        min_buffer_sec = float("inf")
+
+        def _safe_float(value, default=0.0):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        try:
+            redis_client = getattr(self.client_manager, "redis_client", None)
+            client_set_key = getattr(self.client_manager, "client_set_key", None)
+            if not redis_client or not client_set_key:
+                return 0.0
+
+            client_ids = redis_client.smembers(client_set_key) or []
+            normalized_client_ids = [
+                client_id.decode("utf-8") if isinstance(client_id, bytes) else str(client_id)
+                for client_id in client_ids
+            ]
+
+            if not normalized_client_ids:
+                if self._last_runway_estimate_ts > 0.0 and self._last_runway_estimate_s > 0.0:
+                    decayed = max(0.0, self._last_runway_estimate_s - max(0.0, now - self._last_runway_estimate_ts))
+                    return float(decayed)
+                return 0.0
+
+            fields = [
+                ClientMetadataField.BUFFER_SECONDS_BEHIND,
+                ClientMetadataField.STATS_UPDATED_AT,
+            ]
+
+            results = []
+            if hasattr(redis_client, "pipeline") and hasattr(redis_client, "hmget"):
+                pipe = redis_client.pipeline(transaction=False)
+                for normalized_client_id in normalized_client_ids:
+                    client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
+                    pipe.hmget(client_key, fields)
+                results = pipe.execute() or []
+            else:
+                # Test doubles may not expose pipelines; keep functional parity.
+                for normalized_client_id in normalized_client_ids:
+                    client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
+                    results.append(redis_client.hmget(client_key, fields))
+
+            for values in results:
+                if not values:
+                    continue
+
+                buffer_raw = values[0] if len(values) > 0 else None
+                stats_updated_at_raw = values[1] if len(values) > 1 else None
+                if buffer_raw is None:
+                    continue
+
+                buffer_seconds = _safe_float(
+                    buffer_raw.decode("utf-8") if isinstance(buffer_raw, bytes) else buffer_raw,
+                    default=0.0,
+                )
+                buffer_seconds = max(0.0, buffer_seconds)
+
+                observed_ts = _safe_float(
+                    stats_updated_at_raw.decode("utf-8") if isinstance(stats_updated_at_raw, bytes) else stats_updated_at_raw,
+                    default=0.0,
+                )
+                if observed_ts <= 0:
+                    observed_ts = now
+
+                age = max(0.0, now - observed_ts)
+                if age > max_sample_age_s:
+                    continue
+
+                effective_buffer = max(0.0, buffer_seconds - age)
+                min_buffer_sec = min(min_buffer_sec, effective_buffer)
+        except Exception as e:
+            logger.debug("Failed to calculate max client buffer for EOF retry: %s", e)
+            return 0.0
+
+        if min_buffer_sec == float("inf"):
+            # Gracefully decay the previous estimate for a short period to avoid
+            # abrupt tolerance collapse if telemetry briefly disappears.
+            if self._last_runway_estimate_ts > 0.0 and self._last_runway_estimate_s > 0.0:
+                decayed = max(0.0, self._last_runway_estimate_s - max(0.0, now - self._last_runway_estimate_ts))
+                return float(decayed)
+            return 0.0
+
+        conservative_runway = max(0.0, float(min_buffer_sec))
+        self._last_runway_estimate_s = conservative_runway
+        self._last_runway_estimate_ts = now
+        return conservative_runway
+
     def _get_max_client_buffer_seconds(self) -> float:
         """Return conservative effective client runway from Redis metadata.
 
@@ -1295,6 +1388,10 @@ class StreamManager:
                 return 0.0
 
             client_ids = redis_client.smembers(client_set_key) or []
+            normalized_client_ids = [
+                client_id.decode("utf-8") if isinstance(client_id, bytes) else str(client_id)
+                for client_id in client_ids
+            ]
             fields = [
                 ClientMetadataField.CLIENT_RUNWAY_SECONDS,
                 ClientMetadataField.BUFFER_SECONDS_BEHIND,
@@ -1303,40 +1400,22 @@ class StreamManager:
                 ClientMetadataField.STATS_UPDATED_AT,
             ]
 
-            normalized_client_ids = [
-                client_id.decode("utf-8") if isinstance(client_id, bytes) else str(client_id)
-                for client_id in client_ids
-            ]
-
-            prefetched_values = []
             if hasattr(redis_client, "pipeline") and hasattr(redis_client, "hmget"):
                 pipe = redis_client.pipeline(transaction=False)
                 for normalized_client_id in normalized_client_ids:
                     client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
                     pipe.hmget(client_key, fields)
-                prefetched_values = pipe.execute() or []
-
-            if prefetched_values:
-                values_iterator = zip(normalized_client_ids, prefetched_values)
+                results = pipe.execute() or []
+                values_iterator = zip(normalized_client_ids, results)
             else:
-                values_iterator = []
+                # Test doubles may not expose pipelines; keep functional parity.
                 fallback_rows = []
                 for normalized_client_id in normalized_client_ids:
                     client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
-                    if hasattr(redis_client, "hmget"):
-                        values = redis_client.hmget(client_key, fields)
-                    else:
-                        values = [
-                            redis_client.hget(client_key, ClientMetadataField.CLIENT_RUNWAY_SECONDS),
-                            redis_client.hget(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND),
-                            redis_client.hget(client_key, ClientMetadataField.POSITION_CONFIDENCE),
-                            redis_client.hget(client_key, ClientMetadataField.POSITION_OBSERVED_AT),
-                            redis_client.hget(client_key, ClientMetadataField.STATS_UPDATED_AT),
-                        ]
-                    fallback_rows.append((normalized_client_id, values))
+                    fallback_rows.append((normalized_client_id, redis_client.hmget(client_key, fields)))
                 values_iterator = fallback_rows
 
-            for normalized_client_id, values in values_iterator:
+            for _normalized_client_id, values in values_iterator:
                 if not values:
                     continue
 
@@ -1391,10 +1470,8 @@ class StreamManager:
         candidate_values.sort()
         p10_index = int((len(candidate_values) - 1) * 0.10)
         conservative_runway = max(0.0, float(candidate_values[p10_index]))
-
         self._last_runway_estimate_s = conservative_runway
         self._last_runway_estimate_ts = now
-
         return conservative_runway
 
     def _publish_dynamic_tolerance(self, dynamic_threshold: float, current_buffer: float, max_tolerance: float, inactivity_duration: float):

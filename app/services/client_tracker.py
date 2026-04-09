@@ -210,14 +210,14 @@ class ClientTrackingService:
                     confidence = 0.60
             confidence = max(0.0, min(1.0, confidence))
 
-            if stream_buffer_window_seconds is not None:
+            if stream_buffer_window_seconds is not None and normalized_request_kind == "manifest":
                 current["stream_buffer_window_seconds"] = max(
                     0.0,
                     self._safe_float(stream_buffer_window_seconds, default=0.0),
                 )
 
             runway_value = None
-            if client_runway_seconds is not None:
+            if normalized_request_kind != "manifest" and client_runway_seconds is not None:
                 runway_value = max(0.0, self._safe_float(client_runway_seconds, default=0.0))
             elif buffer_seconds_behind is not None and normalized_request_kind in {"segment", "stream"}:
                 runway_value = max(0.0, self._safe_float(buffer_seconds_behind, default=0.0))

@@ -118,6 +118,7 @@ class ClientMetadataField:
     CONNECTED_AT = "connected_at"
     LAST_ACTIVE = "last_active"
     BYTES_SENT = "bytes_sent"
+    # Legacy alias retained for backward compatibility with existing clients.
     BUFFER_SECONDS_BEHIND = "buffer_seconds_behind"
     AVG_RATE_KBPS = "avg_rate_KBps"
     CURRENT_RATE_KBPS = "current_rate_KBps"
@@ -126,7 +127,9 @@ class ClientMetadataField:
     WORKER_ID = "worker_id"
     CHUNKS_SENT = "chunks_sent"
     STATS_UPDATED_AT = "stats_updated_at"
+    # Per-client runway used by failover logic (segment/TS cursor based).
     CLIENT_RUNWAY_SECONDS = "client_runway_seconds"
+    # Stream-wide HLS manifest window (dashboard/diagnostics).
     STREAM_BUFFER_WINDOW_SECONDS = "stream_buffer_window_seconds"
     POSITION_SOURCE = "position_source"
     POSITION_CONFIDENCE = "position_confidence"

@@ -145,6 +145,17 @@ class GenericListResponse(RootModel[List[Any]]):
     pass
 
 
+class ClientActivityTelemetrySchema(BaseModel):
+    """Client telemetry payload used by proxy/tracker views."""
+
+    # Legacy-compatible runway field used by failover logic.
+    buffer_seconds_behind: Optional[float] = None
+    # Canonical per-client runway (segment/TS cursor based).
+    client_runway_seconds: Optional[float] = None
+    # Stream-wide HLS manifest window depth (UI/diagnostics only).
+    stream_buffer_window_seconds: Optional[float] = None
+
+
 class VPNSettingsResponse(BaseModel):
     """Dynamic VPN settings payload exposed by /settings/vpn."""
 
