@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -85,6 +85,8 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [activePhase, setActivePhase] = useState(null)
+  const lifecycleHideTimeoutRef = useRef(null)
+  const lifecycleWindowHoveredRef = useRef(false)
   const [lifecycleHidden, setLifecycleHidden] = useState(() => {
     if (typeof window === 'undefined') return false
     try {
@@ -250,6 +252,14 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
     }
   }, [lifecycleHidden])
 
+  useEffect(() => {
+    return () => {
+      if (lifecycleHideTimeoutRef.current) {
+        window.clearTimeout(lifecycleHideTimeoutRef.current)
+      }
+    }
+  }, [])
+
   const update = (field, value) => {
     setDraft((prev) => ({ ...prev, [field]: value }))
     setError('')
@@ -266,21 +276,38 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
     return Boolean(document.activeElement?.getAttribute('data-lifecycle-phase'))
   }
 
+  const clearLifecycleHideTimeout = () => {
+    if (!lifecycleHideTimeoutRef.current) return
+    window.clearTimeout(lifecycleHideTimeoutRef.current)
+    lifecycleHideTimeoutRef.current = null
+  }
+
+  const scheduleLifecycleHide = () => {
+    clearLifecycleHideTimeout()
+    lifecycleHideTimeoutRef.current = window.setTimeout(() => {
+      if (lifecycleWindowHoveredRef.current) return
+      if (isLifecycleFieldFocused()) return
+      setActivePhase(null)
+    }, 220)
+  }
+
   const bindPhase = (phase) => ({
     'data-lifecycle-phase': phase,
     onFocus: () => {
+      clearLifecycleHideTimeout()
       if (!lifecycleHidden) setActivePhase(phase)
     },
     onBlur: (event) => {
       if (isLifecycleWindowTarget(event.relatedTarget)) return
-      setActivePhase(null)
+      scheduleLifecycleHide()
     },
     onMouseEnter: () => {
+      clearLifecycleHideTimeout()
       if (!lifecycleHidden) setActivePhase(phase)
     },
     onMouseLeave: (event) => {
       if (isLifecycleWindowTarget(event.relatedTarget)) return
-      setActivePhase(null)
+      scheduleLifecycleHide()
     },
   })
 
@@ -468,7 +495,12 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
             exit={{ opacity: 0, y: 16, scale: 0.98 }}
             transition={{ type: 'spring', stiffness: 260, damping: 24 }}
             className="fixed bottom-4 right-4 z-50 w-[min(760px,calc(100vw-1.5rem))]"
+            onMouseEnter={() => {
+              lifecycleWindowHoveredRef.current = true
+              clearLifecycleHideTimeout()
+            }}
             onMouseLeave={() => {
+              lifecycleWindowHoveredRef.current = false
               if (!isLifecycleFieldFocused()) setActivePhase(null)
             }}
           >
