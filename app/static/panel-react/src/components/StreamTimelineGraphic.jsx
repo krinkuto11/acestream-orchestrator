@@ -169,6 +169,7 @@ function StreamTimelineGraphic({
     const seenClientKeys = new Set()
     let streamWindowMax = 0
     let streamWindowFallbackFromRunway = 0
+    let maxObservedClientRunway = 0
     let hasExplicitStreamWindow = false
 
     ;(Array.isArray(clients) ? clients : []).forEach((client, index) => {
@@ -181,14 +182,16 @@ function StreamTimelineGraphic({
       }
 
       if (!Number.isFinite(runway)) return
-      streamWindowFallbackFromRunway = Math.max(streamWindowFallbackFromRunway, Math.max(0, runway))
+      const safeRunway = Math.max(0, runway)
+      maxObservedClientRunway = Math.max(maxObservedClientRunway, safeRunway)
+      streamWindowFallbackFromRunway = Math.max(streamWindowFallbackFromRunway, safeRunway)
       const key = getClientSeriesKey(client, index)
       seenClientKeys.add(key)
-      clientValues[key] = Math.max(0, runway)
+      clientValues[key] = safeRunway
       const label = getClientLabel(client, index)
       nextLabels[key] = label
       lastClientSamplesRef.current[key] = {
-        value: Math.max(0, runway),
+        value: safeRunway,
         label,
         updatedAt: timestamp,
       }
@@ -224,7 +227,8 @@ function StreamTimelineGraphic({
 
     const parsedDynamicThreshold = toNumber(dynamicThresholdSeconds)
     const backendThresholdObservedAtMs = toEpochMs(dynamicThresholdUpdatedAt)
-    const hasUsableDynamicThreshold = Number.isFinite(parsedDynamicThreshold)
+    const canDisplayDynamicThreshold = maxObservedClientRunway > 0
+    const hasUsableDynamicThreshold = Number.isFinite(parsedDynamicThreshold) && canDisplayDynamicThreshold
     const hasFreshBackendThreshold = (
       hasUsableDynamicThreshold
       && Number.isFinite(backendThresholdObservedAtMs)
@@ -250,7 +254,7 @@ function StreamTimelineGraphic({
     }
 
     setHistory((prev) => {
-      if (!Number.isFinite(tick.dynamicThreshold) && prev.length > 0) {
+      if (!Number.isFinite(tick.dynamicThreshold) && prev.length > 0 && canDisplayDynamicThreshold) {
         const latestPoint = prev[prev.length - 1] || {}
         const previousThreshold = toNumber(latestPoint.dynamicThreshold)
         const previousObservedAt = toNumber(latestPoint.dynamicThresholdObservedAt)
