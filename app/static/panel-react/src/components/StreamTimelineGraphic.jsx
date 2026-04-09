@@ -566,20 +566,6 @@ function StreamTimelineGraphic({
               </React.Fragment>
             ))}
 
-            <Line
-              type="monotone"
-              dataKey="engineLag"
-              name="engineLag"
-              stroke="var(--color-engineLag)"
-              strokeWidth={1}
-              strokeOpacity={0.4}
-              strokeDasharray="4 4"
-              connectNulls={false}
-              isAnimationActive={false}
-              dot={false}
-              activeDot={false}
-            />
-
             {normalizedEventMarkers.map((marker) => (
               <ReferenceLine
                 key={marker.id}
@@ -618,6 +604,20 @@ function StreamTimelineGraphic({
               strokeDasharray="2 4"
               strokeLinecap="round"
               connectNulls={true}
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
+            />
+
+            <Line
+              type="monotone"
+              dataKey="engineLag"
+              name="engineLag"
+              stroke="var(--color-engineLag)"
+              strokeWidth={1}
+              strokeOpacity={0.4}
+              strokeDasharray="4 4"
+              connectNulls={false}
               isAnimationActive={false}
               dot={false}
               activeDot={false}
