@@ -2,7 +2,6 @@ import logging
 import threading
 import time
 from collections import defaultdict, deque
-from itertools import islice
 from typing import Deque, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -49,8 +48,7 @@ def _record_source_failure(stream_id: str, stream_key: str, engine_id: Optional[
 
             # If we keep bouncing between the same two engines quickly, apply
             # a short cooldown before attempting another migration.
-            last_four = [item[1] for item in islice(reversed(recent_engines), 0, 4)]
-            last_four.reverse()
+            last_four = [item[1] for item in list(recent_engines)[-4:]]
             if len(last_four) == 4:
                 if len(set(last_four)) == 2 and last_four[0] == last_four[2] and last_four[1] == last_four[3]:
                     _stream_cooldowns[stream_id] = now + PING_PONG_COOLDOWN_S
@@ -169,7 +167,10 @@ def recover_stream(stream_id: str, dead_vpn: Optional[str] = None, failure_reaso
                         stream_id,
                         cooldown_remaining,
                     )
-                    time.sleep(min(cooldown_remaining, MAX_COOLDOWN_SLEEP_S))
+                    # Intentional per-stream rate limiting: each recovery runs in
+                    # its own thread, so waiting here only slows repeated failovers
+                    # for this stream and prevents rapid ping-pong migrations.
+                    threading.Event().wait(min(cooldown_remaining, MAX_COOLDOWN_SLEEP_S))
 
             # Try to select a new engine, heavily penalizing the dead one
             penalties = {dead_container_id: 999} if dead_container_id else {}
