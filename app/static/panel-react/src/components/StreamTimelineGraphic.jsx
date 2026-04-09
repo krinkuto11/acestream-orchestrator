@@ -425,6 +425,7 @@ function StreamTimelineGraphic({
   }
 
   const { chartData, clientKeys, yMax } = model
+  const yMin = -Math.max(0.3, yMax * 0.04)
 
   return (
     <div className={cn('space-y-2', className)}>
@@ -457,13 +458,13 @@ function StreamTimelineGraphic({
 
             <YAxis
               type="number"
-              domain={[0, yMax]}
+              domain={[yMin, yMax]}
               reversed
               tickLine={false}
               axisLine={false}
               tickMargin={6}
               width={36}
-              tickFormatter={(value) => `${Math.round(value)}s`}
+              tickFormatter={(value) => `${Math.round(Math.max(0, value))}s`}
             />
 
             <ChartTooltip
@@ -588,28 +589,22 @@ function StreamTimelineGraphic({
               />
             ))}
 
+            <ReferenceLine
+              y={0}
+              stroke="var(--color-liveEdge)"
+              strokeWidth={3.2}
+              strokeOpacity={0.95}
+              ifOverflow="extendDomain"
+            />
+
             <Line
               type="linear"
               dataKey="dynamicThreshold"
               name="dynamicThreshold"
               stroke="var(--color-dynamicThreshold)"
-              strokeWidth={1.6}
-              strokeOpacity={0.95}
-              strokeDasharray="5 3"
-              connectNulls={true}
-              isAnimationActive={false}
-              dot={false}
-              activeDot={false}
-            />
-
-            <Line
-              type="linear"
-              dataKey="liveEdge"
-              name="liveEdge"
-              stroke="var(--color-liveEdge)"
-              strokeWidth={3.2}
-              strokeOpacity={0.95}
-              strokeLinecap="round"
+              strokeWidth={2.4}
+              strokeOpacity={1}
+              strokeDasharray="6 3"
               connectNulls={true}
               isAnimationActive={false}
               dot={false}
