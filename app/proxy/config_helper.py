@@ -14,7 +14,7 @@ class Config:
     # Connection timeouts
     CONNECTION_TIMEOUT: int = 30
     UPSTREAM_CONNECT_TIMEOUT: int = 3
-    UPSTREAM_READ_TIMEOUT: int = 60
+    UPSTREAM_READ_TIMEOUT: int = 90
     CLIENT_WAIT_TIMEOUT: int = 30
     STREAM_TIMEOUT: int = 60
     CHUNK_TIMEOUT: int = 5

@@ -1,11 +1,119 @@
 import logging
 import threading
 import time
-from typing import Optional
+from collections import defaultdict, deque
+from typing import Deque, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-def recover_stream(stream_id: str, dead_vpn: Optional[str] = None):
+# Source-instability guardrails for repeated EOF/read-timeout failovers.
+EOF_FAILOVER_BUDGET = 3
+EOF_FAILOVER_WINDOW_S = 180.0
+PING_PONG_COOLDOWN_S = 20.0
+PAIR_PENALTY_WINDOW_S = 300.0
+PAIR_PENALTY_SCORE = 50
+MAX_TRACKED_EVENTS = 32
+
+_guardrails_lock = threading.RLock()
+_stream_eof_failures: Dict[str, Deque[float]] = defaultdict(lambda: deque(maxlen=MAX_TRACKED_EVENTS))
+_stream_recent_engines: Dict[str, Deque[Tuple[float, str]]] = defaultdict(lambda: deque(maxlen=MAX_TRACKED_EVENTS))
+_stream_engine_failure_times: Dict[str, Dict[str, Deque[float]]] = defaultdict(
+    lambda: defaultdict(lambda: deque(maxlen=MAX_TRACKED_EVENTS))
+)
+_stream_cooldowns: Dict[str, float] = {}
+
+
+def _prune_deque(deq: Deque[float], now: float, window_s: float) -> None:
+    while deq and (now - deq[0]) > window_s:
+        deq.popleft()
+
+
+def _record_source_failure(stream_id: str, stream_key: str, engine_id: Optional[str], now: float) -> int:
+    with _guardrails_lock:
+        eof_events = _stream_eof_failures[stream_id]
+        eof_events.append(now)
+        _prune_deque(eof_events, now, EOF_FAILOVER_WINDOW_S)
+
+        if engine_id:
+            key = str(stream_key or stream_id)
+            engine_events = _stream_engine_failure_times[key][engine_id]
+            engine_events.append(now)
+            _prune_deque(engine_events, now, PAIR_PENALTY_WINDOW_S)
+
+            recent_engines = _stream_recent_engines[stream_id]
+            recent_engines.append((now, engine_id))
+            while recent_engines and (now - recent_engines[0][0]) > PAIR_PENALTY_WINDOW_S:
+                recent_engines.popleft()
+
+            # If we keep bouncing between the same two engines quickly, apply
+            # a short cooldown before attempting another migration.
+            last_four = [item[1] for item in list(recent_engines)[-4:]]
+            if len(last_four) == 4:
+                if len(set(last_four)) <= 2 and last_four[0] == last_four[2] and last_four[1] == last_four[3]:
+                    _stream_cooldowns[stream_id] = now + PING_PONG_COOLDOWN_S
+
+        return len(eof_events)
+
+
+def _get_cooldown_remaining(stream_id: str, now: float) -> float:
+    with _guardrails_lock:
+        until = float(_stream_cooldowns.get(stream_id, 0.0))
+        remaining = until - now
+        if remaining <= 0:
+            _stream_cooldowns.pop(stream_id, None)
+            return 0.0
+        return remaining
+
+
+def _recent_pair_penalties(stream_key: str, now: float) -> Dict[str, int]:
+    penalties: Dict[str, int] = {}
+    key = str(stream_key or "")
+    if not key:
+        return penalties
+
+    with _guardrails_lock:
+        engine_map = _stream_engine_failure_times.get(key, {})
+        for engine_id, deq in list(engine_map.items()):
+            _prune_deque(deq, now, PAIR_PENALTY_WINDOW_S)
+            if not deq:
+                continue
+            penalties[engine_id] = penalties.get(engine_id, 0) + (len(deq) * PAIR_PENALTY_SCORE)
+
+    return penalties
+
+
+def _mark_source_unstable(stream_id: str, dead_container_id: Optional[str], reason: str) -> None:
+    from ..models.schemas import StreamEndedEvent
+    from .internal_events import handle_stream_ended
+
+    logger.warning(
+        "Failover budget exceeded for stream %s; marking stream as source_unstable (reason=%s).",
+        stream_id,
+        reason,
+    )
+    handle_stream_ended(
+        StreamEndedEvent(
+            stream_id=stream_id,
+            container_id=dead_container_id,
+            reason="source_unstable",
+        )
+    )
+
+
+def _is_source_instability_reason(reason: Optional[str]) -> bool:
+    normalized = str(reason or "").strip().lower()
+    return normalized in {"eof", "read_timeout", "read_timed_out", "no_data", "chunked_encoding_error"}
+
+
+def _reset_guardrails_for_tests() -> None:
+    with _guardrails_lock:
+        _stream_eof_failures.clear()
+        _stream_recent_engines.clear()
+        _stream_engine_failure_times.clear()
+        _stream_cooldowns.clear()
+
+
+def recover_stream(stream_id: str, dead_vpn: Optional[str] = None, failure_reason: Optional[str] = None):
     """
     Background recovery task orchestration.
     Queries the global state to decouple from dead engines, finds a healthy replacement, 
@@ -30,14 +138,40 @@ def recover_stream(stream_id: str, dead_vpn: Optional[str] = None):
                 return
 
             dead_container_id = stream_state.container_id
+            normalized_reason = str(failure_reason or "unknown").strip().lower()
+            source_instability = _is_source_instability_reason(normalized_reason)
             
             # Only blacklist the VPN if it was explicitly marked as dead by the Control Plane
             resolved_dead_vpn = dead_vpn
             
-            logger.info(f"Initiating Control Plane recovery for stream {stream_id} (previous engine: {dead_container_id}, previous VPN: {resolved_dead_vpn or 'N/A'})")
+            logger.info(
+                "Initiating Control Plane recovery for stream %s (previous engine: %s, previous VPN: %s, reason: %s)",
+                stream_id,
+                dead_container_id,
+                resolved_dead_vpn or "N/A",
+                normalized_reason or "unknown",
+            )
+
+            now = time.monotonic()
+            if source_instability and not resolved_dead_vpn:
+                eof_count = _record_source_failure(stream_id, stream_state.key, dead_container_id, now)
+                if eof_count >= EOF_FAILOVER_BUDGET:
+                    _mark_source_unstable(stream_id, dead_container_id, normalized_reason)
+                    return
+
+                cooldown_remaining = _get_cooldown_remaining(stream_id, now)
+                if cooldown_remaining > 0.0:
+                    logger.info(
+                        "Applying source-instability cooldown for stream %s (%.1fs remaining) before migration.",
+                        stream_id,
+                        cooldown_remaining,
+                    )
+                    time.sleep(min(cooldown_remaining, 30.0))
 
             # Try to select a new engine, heavily penalizing the dead one
             penalties = {dead_container_id: 999} if dead_container_id else {}
+            if source_instability and stream_state.key:
+                penalties.update(_recent_pair_penalties(stream_state.key, time.monotonic()))
             new_engine = None
             max_retries = 15
             

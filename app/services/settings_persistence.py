@@ -88,7 +88,7 @@ class SettingsPersistence:
             "no_data_check_interval": 1.0,
             "connection_timeout": 30,
             "upstream_connect_timeout": 3,
-            "upstream_read_timeout": 60,
+            "upstream_read_timeout": 90,
             "stream_timeout": 60,
             "channel_shutdown_delay": 5,
             "proxy_prebuffer_seconds": 0,

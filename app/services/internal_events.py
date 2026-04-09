@@ -141,7 +141,7 @@ def handle_stream_data_plane_failed(evt: StreamDataPlaneFailedEvent) -> Optional
                 logger.info(f"Stream {stream_id} transitioned to pending_failover (reason: {evt.reason})")
                 
                 # Trigger background recovery task
-                recover_stream(stream_id)
+                recover_stream(stream_id, failure_reason=evt.reason)
                 
                 return st
             else:
