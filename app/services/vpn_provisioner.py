@@ -14,6 +14,7 @@ from ..core.config import cfg
 from .docker_client import get_client, get_orchestrator_network
 from .state import state
 from .vpn_credentials import credential_manager
+from .vpn_reputation import vpn_reputation_manager
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class VPNProvisioner:
         )
         protocol = self._resolve_protocol(settings=settings, credential=credential)
         regions = self._resolve_regions(requested_regions=requested_regions, settings=settings, credential=credential)
+        safe_hostname = await asyncio.to_thread(vpn_reputation_manager.get_safe_hostname, provider, regions)
         provider_supports_port_forwarding = self.provider_supports_port_forwarding(provider)
         credential_supports_port_forwarding = self.credential_supports_port_forwarding(credential)
         port_forwarding_supported = provider_supports_port_forwarding and credential_supports_port_forwarding
@@ -88,6 +90,8 @@ class VPNProvisioner:
             regions=regions,
             port_forwarding_supported=port_forwarding_supported,
         )
+        if safe_hostname:
+            env["SERVER_HOSTNAMES"] = safe_hostname
 
         labels = self._build_labels(
             provider=provider,
@@ -125,6 +129,7 @@ class VPNProvisioner:
                 "protocol": protocol,
                 "credential_id": lease.get("credential_id"),
                 "port_forwarding_supported": port_forwarding_supported,
+                "assigned_hostname": safe_hostname,
             },
         )
 
