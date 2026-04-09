@@ -16,6 +16,8 @@ MAX_COOLDOWN_SLEEP_S = 30.0
 MAX_TRACKED_EVENTS = 32
 
 _guardrails_lock = threading.RLock()
+_active_recoveries_lock = threading.Lock()
+_active_recoveries: set[str] = set()
 _stream_eof_failures: Dict[str, Deque[float]] = defaultdict(lambda: deque(maxlen=MAX_TRACKED_EVENTS))
 _stream_recent_engines: Dict[str, Deque[Tuple[float, str]]] = defaultdict(lambda: deque(maxlen=MAX_TRACKED_EVENTS))
 _stream_engine_failure_times: Dict[str, Dict[str, Deque[float]]] = defaultdict(
@@ -113,6 +115,9 @@ def _reset_guardrails_for_tests() -> None:
         _stream_engine_failure_times.clear()
         _stream_cooldowns.clear()
 
+    with _active_recoveries_lock:
+        _active_recoveries.clear()
+
 
 def recover_stream(stream_id: str, dead_vpn: Optional[str] = None, failure_reason: Optional[str] = None):
     """
@@ -120,6 +125,12 @@ def recover_stream(stream_id: str, dead_vpn: Optional[str] = None, failure_reaso
     Queries the global state to decouple from dead engines, finds a healthy replacement, 
     and issues a migration payload to the proxy for Perfect Splice recovery.
     """
+    with _active_recoveries_lock:
+        if stream_id in _active_recoveries:
+            logger.debug(f"Recovery already in progress for stream {stream_id}. Ignoring duplicate trigger.")
+            return
+        _active_recoveries.add(stream_id)
+
     def _recovery_task():
         try:
             from .state import state
@@ -237,6 +248,9 @@ def recover_stream(stream_id: str, dead_vpn: Optional[str] = None, failure_reaso
                 
         except Exception as e:
             logger.error(f"Error during stream recovery task for {stream_id}: {e}", exc_info=True)
+        finally:
+            with _active_recoveries_lock:
+                _active_recoveries.discard(stream_id)
 
     thread = threading.Thread(target=_recovery_task, name=f"recovery-{stream_id[:8]}", daemon=True)
     thread.start()
