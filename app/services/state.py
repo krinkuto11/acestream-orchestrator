@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections import defaultdict
 import queue
 import threading
 import logging
@@ -30,6 +31,7 @@ class State:
         self._db_worker.start()
         self.engines: Dict[str, EngineState] = {}
         self.streams: Dict[str, StreamState] = {}
+        self._streams_by_key: Dict[str, Set[str]] = defaultdict(set)
         self.stream_stats: Dict[str, List[StreamStatSnapshot]] = {}
         self.monitor_sessions: Dict[str, Dict[str, object]] = {}
         self._desired_replica_count = 0
@@ -215,7 +217,18 @@ class State:
                              playback_session_id=evt.session.playback_session_id,
                              stat_url=str(evt.session.stat_url or ""), command_url=str(evt.session.command_url or ""),
                              is_live=bool(evt.session.is_live), started_at=self.now(), status="started")
+
+            existing_stream = self.streams.get(stream_id)
+            if existing_stream and existing_stream.key:
+                existing_ids = self._streams_by_key.get(existing_stream.key)
+                if existing_ids is not None:
+                    existing_ids.discard(existing_stream.id)
+                    if not existing_ids:
+                        self._streams_by_key.pop(existing_stream.key, None)
+
             self.streams[stream_id] = st
+            if st.key:
+                self._streams_by_key[st.key].add(st.id)
             if stream_id not in eng.streams: eng.streams.append(stream_id)
 
             # Seed first snapshot from stream-start labels (legacy API compatibility).
@@ -301,12 +314,13 @@ class State:
             # content key created by reconnect/hot-swap start-event churn.
             target_key = str(st.key or "")
             target_ids = [st.id]
-            for candidate_id, candidate in list(self.streams.items()):
+            for candidate_id in set(self._streams_by_key.get(target_key, set())):
                 if candidate_id == st.id:
                     continue
-                if candidate.ended_at is not None:
+                candidate = self.streams.get(candidate_id)
+                if not candidate:
                     continue
-                if str(candidate.key or "") != target_key:
+                if candidate.ended_at is not None:
                     continue
                 target_ids.append(candidate_id)
 
@@ -335,6 +349,11 @@ class State:
 
                 # Immediately remove stream/session rows from in-memory API state.
                 self.streams.pop(target_stream.id, None)
+                if target_stream.key and target_stream.key in self._streams_by_key:
+                    indexed_ids = self._streams_by_key[target_stream.key]
+                    indexed_ids.discard(target_stream.id)
+                    if not indexed_ids:
+                        self._streams_by_key.pop(target_stream.key, None)
                 self.stream_stats.pop(target_stream.id, None)
                 
         if ended_stream_payloads:
@@ -518,10 +537,13 @@ class State:
 
             source_engine = self.engines.get(normalized_old) if normalized_old else None
 
-            for stream in self.streams.values():
+            for stream_id in set(self._streams_by_key.get(normalized_key, set())):
+                stream = self.streams.get(stream_id)
+                if not stream:
+                    continue
                 if stream.status not in {"started", "pending_failover"}:
                     continue
-                if stream.key != normalized_key:
+                if str(stream.key or "") != normalized_key:
                     continue
                 if normalized_old and stream.container_id != normalized_old:
                     continue
@@ -946,6 +968,8 @@ class State:
                                  playback_session_id=r.playback_session_id, stat_url=r.stat_url, command_url=r.command_url,
                                  is_live=r.is_live, started_at=started_at, ended_at=ended_at, status=r.status)
                 self.streams[st.id] = st
+                if st.key:
+                    self._streams_by_key[st.key].add(st.id)
                 eng = self.engines.get(r.engine_key)
                 if eng and st.id not in eng.streams: eng.streams.append(st.id)
 
@@ -954,6 +978,7 @@ class State:
         with self._lock:
             self.engines.clear()
             self.streams.clear()
+            self._streams_by_key.clear()
             self.stream_stats.clear()
             self.monitor_sessions.clear()
             self._scaling_intents.clear()
@@ -1678,7 +1703,13 @@ class State:
             
             # Remove them from memory
             for stream_id in streams_to_remove:
+                stream = self.streams.get(stream_id)
                 del self.streams[stream_id]
+                if stream and stream.key and stream.key in self._streams_by_key:
+                    indexed_ids = self._streams_by_key[stream.key]
+                    indexed_ids.discard(stream_id)
+                    if not indexed_ids:
+                        self._streams_by_key.pop(stream.key, None)
                 # Also remove stats for the stream to free memory
                 if stream_id in self.stream_stats:
                     del self.stream_stats[stream_id]
