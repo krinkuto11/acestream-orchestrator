@@ -606,12 +606,6 @@ function StreamTimelineGraphic({
               strokeWidth={1.2}
               strokeOpacity={0.95}
               ifOverflow="extendDomain"
-              label={{
-                value: 'Live',
-                position: 'left',
-                fill: 'hsl(var(--muted-foreground))',
-                fontSize: 11,
-              }}
             />
 
             <Line
