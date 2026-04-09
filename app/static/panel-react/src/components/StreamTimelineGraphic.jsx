@@ -361,11 +361,11 @@ function StreamTimelineGraphic({
       },
       dynamicThreshold: {
         label: 'Dynamic threshold',
-        color: 'hsl(var(--destructive, 0 84% 60%))',
+        color: 'hsl(48 96% 53%)',
       },
       liveEdge: {
         label: 'Live edge',
-        color: 'hsl(var(--ring, 32 95% 44%))',
+        color: 'hsl(0 84% 60%)',
       },
     }
 
@@ -592,8 +592,8 @@ function StreamTimelineGraphic({
             <ReferenceLine
               y={0}
               stroke="var(--color-liveEdge)"
-              strokeWidth={3.2}
-              strokeOpacity={0.95}
+              strokeWidth={2.2}
+              strokeOpacity={0.85}
               ifOverflow="extendDomain"
             />
 
@@ -604,7 +604,21 @@ function StreamTimelineGraphic({
               stroke="var(--color-dynamicThreshold)"
               strokeWidth={2.4}
               strokeOpacity={1}
-              strokeDasharray="6 3"
+              strokeDasharray="2 4"
+              strokeLinecap="round"
+              connectNulls={true}
+              isAnimationActive={false}
+              dot={false}
+              activeDot={false}
+            />
+
+            <Line
+              type="linear"
+              dataKey="liveEdge"
+              name="liveEdge"
+              stroke="var(--color-liveEdge)"
+              strokeWidth={3.4}
+              strokeOpacity={1}
               connectNulls={true}
               isAnimationActive={false}
               dot={false}
