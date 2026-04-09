@@ -18,6 +18,10 @@ from .constants import StreamMetadataField
 
 logger = get_logger()
 
+# Keep client-side download burst small so runway telemetry reflects
+# proxy-held buffer rather than player-local RAM hoarding.
+MAX_CLIENT_LOCAL_HOARD_SECONDS = 3.0
+
 
 class StreamGenerator:
     """Handles generating streams for clients"""
@@ -84,6 +88,10 @@ class StreamGenerator:
             # Setup streaming
             if not self._setup_streaming():
                 return
+
+            # Anchor pacing to the moment normal streaming begins, right after
+            # startup prebuffer wait has completed.
+            streaming_start_time = time.time()
             
             # Main streaming loop
             # Get no data timeout settings
@@ -107,6 +115,7 @@ class StreamGenerator:
                         observe_proxy_egress_bytes("TS", chunk_len)
                         self.chunks_sent += 1
                         self.last_chunk_sent_time = time.time()
+                        self._maybe_apply_client_pacing(streaming_start_time)
                     
                     # Update local index
                     self._advance_local_index(len(chunks), fetched_end_index=fetched_end_index)
@@ -280,6 +289,22 @@ class StreamGenerator:
 
         alpha = 0.2
         self.chunk_rate_ema = (alpha * instant_rate) + ((1.0 - alpha) * float(self.chunk_rate_ema))
+
+    def _maybe_apply_client_pacing(self, streaming_start_time: float):
+        """Throttle downstream egress when the client hoards too much local runway."""
+        chunk_rate = float(self.chunk_rate_ema or 0.0)
+        if chunk_rate <= 0.0:
+            return
+
+        video_seconds_sent = float(self.chunks_sent) / chunk_rate
+        real_time_elapsed = max(0.0, time.time() - float(streaming_start_time))
+        client_hoard = video_seconds_sent - real_time_elapsed
+
+        if client_hoard > MAX_CLIENT_LOCAL_HOARD_SECONDS:
+            # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
+            sleep_for = min(0.5, client_hoard - MAX_CLIENT_LOCAL_HOARD_SECONDS)
+            if sleep_for > 0.0:
+                time.sleep(sleep_for)
 
     def _advance_local_index(self, chunks_received: int, fetched_end_index=None):
         """Advance client position by fetched range when available.
