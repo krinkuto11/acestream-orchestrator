@@ -16,6 +16,8 @@ import { cn } from '@/lib/utils'
 const MAX_HISTORY_POINTS = 120
 const HISTORY_KEY_PREFIX = 'acestream_history_'
 const CLIENT_SAMPLE_HOLD_MS = 30000
+const DYNAMIC_THRESHOLD_HOLD_MS = 15000
+const DYNAMIC_THRESHOLD_STALE_MS = 45000
 const CLIENT_COLOR_PALETTE = [
   'hsl(var(--chart-1, 221 83% 53%))',
   'hsl(var(--chart-2, 160 84% 39%))',
@@ -27,6 +29,14 @@ const CLIENT_COLOR_PALETTE = [
 function toNumber(value) {
   const parsed = Number.parseFloat(String(value ?? ''))
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function toEpochMs(value) {
+  const parsed = toNumber(value)
+  if (!Number.isFinite(parsed)) return null
+  if (parsed > 1e12) return parsed
+  if (parsed > 1e9) return parsed * 1000
+  return null
 }
 
 function formatClock(timestampMs) {
@@ -103,6 +113,7 @@ function StreamTimelineGraphic({
   livepos,
   clients = [],
   dynamicThresholdSeconds = null,
+  dynamicThresholdUpdatedAt = null,
   showStreamWindow = true,
   eventMarkers = [],
   isLive = false,
@@ -211,6 +222,14 @@ function StreamTimelineGraphic({
         )
       : null
 
+    const parsedDynamicThreshold = toNumber(dynamicThresholdSeconds)
+    const backendThresholdObservedAtMs = toEpochMs(dynamicThresholdUpdatedAt)
+    const hasFreshBackendThreshold = (
+      Number.isFinite(parsedDynamicThreshold)
+      && Number.isFinite(backendThresholdObservedAtMs)
+      && Math.max(0, timestamp - backendThresholdObservedAtMs) <= DYNAMIC_THRESHOLD_STALE_MS
+    )
+
     const tick = {
       time: timestamp,
       liveEdge: 0,
@@ -218,17 +237,25 @@ function StreamTimelineGraphic({
       streamWindow: Number.isFinite(toNumber(effectiveStreamWindow))
         ? Math.max(0, toNumber(effectiveStreamWindow))
         : null,
-      dynamicThreshold: Number.isFinite(toNumber(dynamicThresholdSeconds))
-        ? Math.max(0, toNumber(dynamicThresholdSeconds))
+      dynamicThreshold: hasFreshBackendThreshold
+        ? Math.max(0, parsedDynamicThreshold)
         : null,
+      dynamicThresholdObservedAt: hasFreshBackendThreshold ? backendThresholdObservedAtMs : null,
       ...clientValues,
     }
 
     setHistory((prev) => {
       if (!Number.isFinite(tick.dynamicThreshold) && prev.length > 0) {
-        const previousThreshold = toNumber(prev[prev.length - 1]?.dynamicThreshold)
-        if (Number.isFinite(previousThreshold)) {
+        const latestPoint = prev[prev.length - 1] || {}
+        const previousThreshold = toNumber(latestPoint.dynamicThreshold)
+        const previousObservedAt = toNumber(latestPoint.dynamicThresholdObservedAt)
+        const carryAgeMs = Number.isFinite(previousObservedAt)
+          ? Math.max(0, timestamp - previousObservedAt)
+          : Number.POSITIVE_INFINITY
+
+        if (Number.isFinite(previousThreshold) && carryAgeMs <= DYNAMIC_THRESHOLD_HOLD_MS) {
           tick.dynamicThreshold = Math.max(0, previousThreshold)
+          tick.dynamicThresholdObservedAt = previousObservedAt
         }
       }
       const next = [...prev, tick].slice(-MAX_HISTORY_POINTS)
@@ -239,7 +266,7 @@ function StreamTimelineGraphic({
       })
       return next
     })
-  }, [clients, dynamicThresholdSeconds, livepos?.last_ts, livepos?.live_last, livepos?.pos, showStreamWindow, storageKey])
+  }, [clients, dynamicThresholdSeconds, dynamicThresholdUpdatedAt, livepos?.last_ts, livepos?.live_last, livepos?.pos, showStreamWindow, storageKey])
 
   const model = useMemo(() => {
     if (!history.length) return null
