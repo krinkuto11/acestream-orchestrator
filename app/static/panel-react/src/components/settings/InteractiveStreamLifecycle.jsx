@@ -53,6 +53,17 @@ const PRIMARY_NODE_PHASES = {
   overall_stream_timeout: { track: 'normal', index: 0 },
 }
 
+const TRACK_BY_PHASE = {
+  upstream_connect: 'normal',
+  initial_data_wait: 'normal',
+  proxy_prebuffer: 'normal',
+  idle_shutdown: 'normal',
+  overall_stream_timeout: 'normal',
+  live_edge_delay: 'starvation',
+  no_data_detection: 'starvation',
+  health_monitor_reconnect: 'starvation',
+}
+
 const containerVariants = {
   hidden: { opacity: 1 },
   visible: {
@@ -225,21 +236,19 @@ function TimelineTrack({
 
 export function InteractiveStreamLifecycle({ activePhase }) {
   const copy = PHASE_CONTENT[activePhase] || PHASE_CONTENT.default
+  const trackId = TRACK_BY_PHASE[activePhase] || 'normal'
+  const track = trackId === 'starvation'
+    ? { id: 'starvation', title: 'Failure / Starvation Lifecycle', nodes: STARVATION_TRACK }
+    : { id: 'normal', title: 'Normal Lifecycle', nodes: NORMAL_TRACK }
 
   return (
     <div className="space-y-4">
       <Card className="border-slate-200/70 bg-white/70 dark:border-slate-800 dark:bg-slate-900/50">
         <CardContent className="space-y-6 p-4 sm:p-6">
           <TimelineTrack
-            trackId="normal"
-            title="Normal Lifecycle"
-            nodes={NORMAL_TRACK}
-            activePhase={activePhase}
-          />
-          <TimelineTrack
-            trackId="starvation"
-            title="Failure / Starvation Lifecycle"
-            nodes={STARVATION_TRACK}
+            trackId={track.id}
+            title={track.title}
+            nodes={track.nodes}
             activePhase={activePhase}
           />
         </CardContent>

@@ -3,7 +3,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   Dialog,
   DialogContent,
@@ -13,7 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { AnimatePresence, motion } from 'framer-motion'
-import { AlertCircle, ChevronDown, ChevronUp, FlaskConical, Loader2 } from 'lucide-react'
+import { AlertCircle, EyeOff, FlaskConical, Loader2 } from 'lucide-react'
 import { InteractiveStreamLifecycle } from '@/components/settings/InteractiveStreamLifecycle'
 import { SettingRow } from '@/components/settings/SettingRow'
 import { useSettingsForm } from '@/context/SettingsFormContext'
@@ -51,6 +50,8 @@ const PREFLIGHT_INPUT_OPTIONS = {
   raw_data: { label: 'Raw Torrent Data', param: 'raw_data', placeholder: 'Base64/raw torrent payload' },
 }
 
+const LIFECYCLE_HELPER_HIDDEN_KEY = 'proxy.settings.lifecycleHelper.hidden'
+
 const toNumber = (value, fallback = 0) => {
   const next = Number(value)
   return Number.isFinite(next) ? next : fallback
@@ -84,7 +85,14 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [activePhase, setActivePhase] = useState(null)
-  const [lifecycleOpen, setLifecycleOpen] = useState(true)
+  const [lifecycleHidden, setLifecycleHidden] = useState(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      return window.localStorage.getItem(LIFECYCLE_HELPER_HIDDEN_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
 
   const [diagOpen, setDiagOpen] = useState(false)
   const [diagType, setDiagType] = useState('content_id')
@@ -228,17 +236,52 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
     setSectionDirty(sectionId, dirty)
   }, [dirty, setSectionDirty])
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LIFECYCLE_HELPER_HIDDEN_KEY, lifecycleHidden ? '1' : '0')
+    } catch {
+      // Ignore storage failures in constrained browser contexts.
+    }
+  }, [lifecycleHidden])
+
+  useEffect(() => {
+    if (lifecycleHidden) {
+      setActivePhase(null)
+    }
+  }, [lifecycleHidden])
+
   const update = (field, value) => {
     setDraft((prev) => ({ ...prev, [field]: value }))
     setError('')
     setMessage('')
   }
 
+  const isLifecycleWindowTarget = (target) => {
+    if (!(target instanceof Element)) return false
+    return Boolean(target.closest('[data-lifecycle-window="true"]'))
+  }
+
+  const isLifecycleFieldFocused = () => {
+    if (typeof document === 'undefined') return false
+    return Boolean(document.activeElement?.getAttribute('data-lifecycle-phase'))
+  }
+
   const bindPhase = (phase) => ({
-    onFocus: () => setActivePhase(phase),
-    onBlur: () => setActivePhase(null),
-    onMouseEnter: () => setActivePhase(phase),
-    onMouseLeave: () => setActivePhase(null),
+    'data-lifecycle-phase': phase,
+    onFocus: () => {
+      if (!lifecycleHidden) setActivePhase(phase)
+    },
+    onBlur: (event) => {
+      if (isLifecycleWindowTarget(event.relatedTarget)) return
+      setActivePhase(null)
+    },
+    onMouseEnter: () => {
+      if (!lifecycleHidden) setActivePhase(phase)
+    },
+    onMouseLeave: (event) => {
+      if (isLifecycleWindowTarget(event.relatedTarget)) return
+      setActivePhase(null)
+    },
   })
 
   const runDiagnostics = async () => {
@@ -294,44 +337,6 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       <Card>
-        <Collapsible open={lifecycleOpen} onOpenChange={setLifecycleOpen} className="w-full">
-          <CardHeader>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <CardTitle>Stream Lifecycle</CardTitle>
-                <CardDescription>
-                  Hover or focus timeout and buffering fields to highlight where each setting applies in the stream timeline.
-                </CardDescription>
-              </div>
-              <CollapsibleTrigger asChild>
-                <Button type="button" variant="ghost" size="sm" className="text-xs uppercase tracking-wider text-muted-foreground hover:bg-transparent">
-                  {lifecycleOpen ? 'Hide Timeline' : 'Show Timeline'}
-                  {lifecycleOpen ? <ChevronUp className="ml-2 h-3.5 w-3.5" /> : <ChevronDown className="ml-2 h-3.5 w-3.5" />}
-                </Button>
-              </CollapsibleTrigger>
-            </div>
-          </CardHeader>
-          <AnimatePresence initial={false}>
-            {lifecycleOpen && (
-              <CollapsibleContent forceMount asChild>
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ type: 'spring', stiffness: 260, damping: 28 }}
-                  className="overflow-hidden"
-                >
-                  <CardContent className="pt-0">
-                    <InteractiveStreamLifecycle activePhase={activePhase} />
-                  </CardContent>
-                </motion.div>
-              </CollapsibleContent>
-            )}
-          </AnimatePresence>
-        </Collapsible>
-      </Card>
-
-      <Card>
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -373,8 +378,17 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Timeout and Buffering</CardTitle>
-          <CardDescription>Startup wait, no-data detection, and shutdown grace controls.</CardDescription>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle>Timeout and Buffering</CardTitle>
+              <CardDescription>Startup wait, no-data detection, and shutdown grace controls.</CardDescription>
+            </div>
+            {lifecycleHidden && (
+              <Button type="button" size="sm" variant="outline" onClick={() => setLifecycleHidden(false)}>
+                Show Timeline Helper
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
           <SettingRow label="Initial Data Wait Timeout (s)" description="Maximum wait for first bytes.">
@@ -443,6 +457,46 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
           </CardContent>
         </Card>
       )}
+
+      <AnimatePresence>
+        {activePhase && !lifecycleHidden && (
+          <motion.div
+            data-lifecycle-window="true"
+            key="lifecycle-floating-window"
+            initial={{ opacity: 0, y: 18, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 16, scale: 0.98 }}
+            transition={{ type: 'spring', stiffness: 260, damping: 24 }}
+            className="fixed bottom-4 right-4 z-50 w-[min(760px,calc(100vw-1.5rem))]"
+            onMouseLeave={() => {
+              if (!isLifecycleFieldFocused()) setActivePhase(null)
+            }}
+          >
+            <Card className="border-slate-200/70 bg-white/95 shadow-2xl backdrop-blur-sm dark:border-slate-800 dark:bg-slate-950/95">
+              <CardHeader className="pb-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-base">Stream Lifecycle</CardTitle>
+                    <CardDescription className="text-xs">Contextual timeline for the currently selected timeout/buffering setting.</CardDescription>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setLifecycleHidden(true)}
+                  >
+                    <EyeOff className="mr-2 h-4 w-4" />
+                    Hide Timeline
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-2">
+                <InteractiveStreamLifecycle activePhase={activePhase} />
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <Dialog open={diagOpen} onOpenChange={setDiagOpen}>
         <DialogContent className="max-w-3xl">
