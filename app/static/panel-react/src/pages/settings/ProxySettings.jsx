@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { AnimatePresence, motion } from 'framer-motion'
 import { AlertCircle, ChevronDown, ChevronUp, FlaskConical, Loader2 } from 'lucide-react'
 import { InteractiveStreamLifecycle } from '@/components/settings/InteractiveStreamLifecycle'
 import { SettingRow } from '@/components/settings/SettingRow'
@@ -310,11 +311,23 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
               </CollapsibleTrigger>
             </div>
           </CardHeader>
-          <CollapsibleContent>
-            <CardContent className="pt-0">
-              <InteractiveStreamLifecycle activePhase={activePhase} />
-            </CardContent>
-          </CollapsibleContent>
+          <AnimatePresence initial={false}>
+            {lifecycleOpen && (
+              <CollapsibleContent forceMount asChild>
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ type: 'spring', stiffness: 260, damping: 28 }}
+                  className="overflow-hidden"
+                >
+                  <CardContent className="pt-0">
+                    <InteractiveStreamLifecycle activePhase={activePhase} />
+                  </CardContent>
+                </motion.div>
+              </CollapsibleContent>
+            )}
+          </AnimatePresence>
         </Collapsible>
       </Card>
 

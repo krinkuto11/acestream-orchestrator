@@ -1,6 +1,7 @@
 import React from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertCircle,
   Download,
@@ -39,6 +40,44 @@ const GAP_PHASES = {
 
 const NODE_PHASES = {
   live_edge_delay: { track: 'starvation', index: 0 },
+}
+
+const PRIMARY_NODE_PHASES = {
+  upstream_connect: { track: 'normal', index: 1 },
+  initial_data_wait: { track: 'normal', index: 2 },
+  proxy_prebuffer: { track: 'normal', index: 3 },
+  live_edge_delay: { track: 'starvation', index: 0 },
+  no_data_detection: { track: 'starvation', index: 2 },
+  health_monitor_reconnect: { track: 'starvation', index: 3 },
+  idle_shutdown: { track: 'normal', index: 5 },
+  overall_stream_timeout: { track: 'normal', index: 0 },
+}
+
+const containerVariants = {
+  hidden: { opacity: 1 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.1,
+      delayChildren: 0.05,
+    },
+  },
+}
+
+const itemVariants = {
+  hidden: {
+    opacity: 0,
+    scale: 0,
+  },
+  visible: {
+    opacity: 1,
+    scale: 1,
+    transition: {
+      type: 'spring',
+      stiffness: 300,
+      damping: 24,
+    },
+  },
 }
 
 const PHASE_CONTENT = {
@@ -89,6 +128,7 @@ function TimelineTrack({
   const hasSelection = Boolean(activePhase)
   const activeGap = GAP_PHASES[activePhase]
   const activeNode = NODE_PHASES[activePhase]
+  const primaryNode = PRIMARY_NODE_PHASES[activePhase]
   const trackWideActive = activePhase === 'overall_stream_timeout' && trackId === 'normal'
 
   return (
@@ -98,7 +138,12 @@ function TimelineTrack({
       </div>
 
       <div className="overflow-x-auto pb-2">
-        <div className="flex min-w-max items-start px-1">
+        <motion.div
+          className="flex min-w-max items-start px-1"
+          variants={containerVariants}
+          initial="hidden"
+          animate="visible"
+        >
           {nodes.map((node, index) => {
             const Icon = node.icon
             const nodeInActiveGap = Boolean(
@@ -112,6 +157,11 @@ function TimelineTrack({
               activeNode.index === index,
             )
             const nodeActive = trackWideActive || nodeInActiveGap || nodeExplicitlyActive
+            const nodeHighlightActive = Boolean(
+              primaryNode &&
+              primaryNode.track === trackId &&
+              primaryNode.index === index,
+            )
 
             const connectorActive =
               index < nodes.length - 1 &&
@@ -123,17 +173,23 @@ function TimelineTrack({
               ))
 
             return (
-              <React.Fragment key={node.id}>
-                <div className="w-36 shrink-0">
+              <div key={node.id} className="flex items-start">
+                <motion.div className="w-36 shrink-0" variants={itemVariants}>
                   <div className="flex flex-col items-center gap-2 text-center">
                     <div
                       className={cn(
-                        'flex h-11 w-11 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-all',
-                        nodeActive && 'ring-2 ring-primary bg-primary/20 text-primary',
+                        'relative flex h-11 w-11 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-all',
                         hasSelection && !nodeActive && 'opacity-50',
                       )}
                     >
-                      <Icon className="h-5 w-5" />
+                      {nodeHighlightActive && (
+                        <motion.div
+                          layoutId="activeHighlight"
+                          className="absolute inset-0 rounded-full ring-2 ring-primary bg-primary/20"
+                          transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                        />
+                      )}
+                      <Icon className={cn('relative z-10 h-5 w-5', nodeActive && 'text-primary')} />
                     </div>
                     <p
                       className={cn(
@@ -145,7 +201,7 @@ function TimelineTrack({
                       {node.label}
                     </p>
                   </div>
-                </div>
+                </motion.div>
 
                 {index < nodes.length - 1 && (
                   <div className="flex w-16 items-center pt-5">
@@ -158,10 +214,10 @@ function TimelineTrack({
                     />
                   </div>
                 )}
-              </React.Fragment>
+              </div>
             )
           })}
-        </div>
+        </motion.div>
       </div>
     </div>
   )
@@ -191,8 +247,19 @@ export function InteractiveStreamLifecycle({ activePhase }) {
 
       <Card className="border-dashed border-primary/40 bg-primary/5 dark:bg-primary/10">
         <CardContent className="space-y-1 p-4">
-          <p className="text-sm font-semibold text-foreground">{copy.title}</p>
-          <p className="text-sm text-muted-foreground">{copy.description}</p>
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activePhase || 'default'}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="space-y-1"
+            >
+              <p className="text-sm font-semibold text-foreground">{copy.title}</p>
+              <p className="text-sm text-muted-foreground">{copy.description}</p>
+            </motion.div>
+          </AnimatePresence>
         </CardContent>
       </Card>
     </div>
