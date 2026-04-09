@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertCircle,
+  ArrowRight,
   Download,
   Link,
   MonitorPlay,
@@ -145,6 +146,7 @@ function TimelineTrack({
   const activeNode = NODE_PHASES[activePhase]
   const primaryNode = PRIMARY_NODE_PHASES[activePhase]
   const trackWideActive = activePhase === 'overall_stream_timeout' && trackId === 'normal'
+  const zoomedOutTrack = trackWideActive
 
   useEffect(() => {
     const container = scrollRef.current
@@ -153,7 +155,8 @@ function TimelineTrack({
     let target = null
 
     if (activePhase === 'overall_stream_timeout' && trackId === 'normal') {
-      target = nodeRefs.current[2] || nodeRefs.current[0] || null
+      container.scrollTo({ left: 0, behavior: 'smooth' })
+      return undefined
     } else if (activeGap && activeGap.track === trackId) {
       target = connectorRefs.current[activeGap.from] || nodeRefs.current[activeGap.to] || null
     } else if (primaryNode && primaryNode.track === trackId) {
@@ -187,13 +190,31 @@ function TimelineTrack({
         <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
       </div>
 
-      <div ref={scrollRef} className="overflow-x-auto pb-2">
-        <motion.div
-          className="flex min-w-max items-start px-1"
-          variants={containerVariants}
-          initial="hidden"
-          animate="visible"
-        >
+      <div
+        ref={scrollRef}
+        className="overflow-x-auto pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+      >
+        <div className="min-w-max px-1">
+          {zoomedOutTrack && (
+            <motion.div
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="relative mb-3 h-7"
+            >
+              <div className="absolute left-4 right-4 top-3 h-0.5 rounded-full bg-primary/60" />
+              <ArrowRight className="absolute -left-0.5 top-1.5 h-4 w-4 rotate-180 text-primary/80" />
+              <ArrowRight className="absolute -right-0.5 top-1.5 h-4 w-4 text-primary/80" />
+              <span className="absolute left-1/2 top-0 -translate-x-1/2 rounded-sm bg-primary/10 px-2 text-[10px] font-medium text-primary">
+                Full lifecycle span
+              </span>
+            </motion.div>
+          )}
+          <motion.div
+            className="flex items-start"
+            variants={containerVariants}
+            initial="hidden"
+            animate="visible"
+          >
           {nodes.map((node, index) => {
             const Icon = node.icon
             const nodeInActiveGap = Boolean(
@@ -230,11 +251,12 @@ function TimelineTrack({
                   nodeRefs.current[index] = element
                 }}
               >
-                <motion.div className="w-36 shrink-0" variants={itemVariants}>
+                <motion.div className={cn(zoomedOutTrack ? 'w-24' : 'w-36', 'shrink-0')} variants={itemVariants}>
                   <div className="flex flex-col items-center gap-2 text-center">
                     <div
                       className={cn(
-                        'relative flex h-11 w-11 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-all',
+                        'relative flex items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-all',
+                        zoomedOutTrack ? 'h-9 w-9' : 'h-11 w-11',
                         hasSelection && !nodeActive && 'opacity-50',
                       )}
                     >
@@ -245,11 +267,12 @@ function TimelineTrack({
                           transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                         />
                       )}
-                      <Icon className={cn('relative z-10 h-5 w-5', nodeActive && 'text-primary')} />
+                      <Icon className={cn('relative z-10', zoomedOutTrack ? 'h-4 w-4' : 'h-5 w-5', nodeActive && 'text-primary')} />
                     </div>
                     <p
                       className={cn(
-                        'text-[11px] leading-4 text-muted-foreground transition-opacity',
+                        zoomedOutTrack ? 'text-[10px] leading-3.5' : 'text-[11px] leading-4',
+                        'text-muted-foreground transition-opacity',
                         nodeActive && 'font-medium text-foreground',
                         hasSelection && !nodeActive && 'opacity-50',
                       )}
@@ -261,7 +284,7 @@ function TimelineTrack({
 
                 {index < nodes.length - 1 && (
                   <div
-                    className="flex w-16 items-center pt-5"
+                    className={cn('flex items-center', zoomedOutTrack ? 'w-6 pt-4' : 'w-16 pt-5')}
                     ref={(element) => {
                       connectorRefs.current[index] = element
                     }}
@@ -278,7 +301,8 @@ function TimelineTrack({
               </div>
             )
           })}
-        </motion.div>
+          </motion.div>
+        </div>
       </div>
     </div>
   )
@@ -305,21 +329,24 @@ export function InteractiveStreamLifecycle({ activePhase }) {
       </Card>
 
       <Card className="border-dashed border-primary/40 bg-primary/5 dark:bg-primary/10">
-        <CardContent className="space-y-1 p-4">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activePhase || 'default'}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-              className="space-y-1"
-            >
-              <p className="text-sm font-semibold text-foreground">{copy.title}</p>
-              <p className="text-sm text-muted-foreground">{copy.description}</p>
-            </motion.div>
-          </AnimatePresence>
-        </CardContent>
+        <motion.div layout transition={{ type: 'spring', stiffness: 260, damping: 30 }}>
+          <CardContent className="space-y-1 p-4 min-h-[102px]">
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={activePhase || 'default'}
+                layout
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="space-y-1"
+              >
+                <p className="text-sm font-semibold text-foreground">{copy.title}</p>
+                <p className="text-sm text-muted-foreground">{copy.description}</p>
+              </motion.div>
+            </AnimatePresence>
+          </CardContent>
+        </motion.div>
       </Card>
     </div>
   )
