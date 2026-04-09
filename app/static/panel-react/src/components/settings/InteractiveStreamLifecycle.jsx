@@ -34,6 +34,7 @@ const STARVATION_TRACK = [
 
 const GAP_PHASES = {
   upstream_connect: { track: 'normal', from: 0, to: 1 },
+  upstream_read: { track: 'normal', from: 1, to: 2 },
   initial_data_wait: { track: 'normal', from: 1, to: 2 },
   proxy_prebuffer: { track: 'normal', from: 2, to: 3 },
   no_data_detection: { track: 'starvation', from: 1, to: 2 },
@@ -115,7 +116,7 @@ const PHASE_CONTENT = {
   },
   live_edge_delay: {
     title: 'Live Edge Delay',
-    description: 'Applies during active playback to keep clients slightly behind the live edge for smoother recovery and fewer stalls.',
+    description: 'Applies during active playback to keep clients behind the live edge, but can be unstable for P2P live sources because the swarm often sits at the live head, increasing engine starvation risk.',
   },
   no_data_detection: {
     title: 'No Data Detection',
@@ -216,9 +217,11 @@ function TimelineTrack({
               animate={{ opacity: 1, y: 0 }}
               className="relative mb-3 h-7"
             >
-              <div className="absolute left-0 right-4 top-3 h-0.5 rounded-full bg-primary/60" />
-              <ArrowRight className="absolute right-0 top-1.5 h-4 w-4 text-primary/80" />
-              <span className="absolute left-1/2 top-0 -translate-x-1/2 rounded-sm bg-primary/10 px-2 text-[10px] font-medium text-primary">
+              <div className="flex w-full items-center pt-2">
+                <div className="h-0.5 flex-1 rounded-full bg-primary/60" />
+                <ArrowRight className="h-4 w-4 text-primary/80" />
+              </div>
+              <span className="absolute left-1/2 top-0 -translate-x-1/2 rounded-sm bg-primary/10 px-2 text-[10px] font-medium text-primary whitespace-nowrap">
                 Full lifecycle span
               </span>
             </motion.div>

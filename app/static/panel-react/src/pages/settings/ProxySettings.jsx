@@ -456,7 +456,11 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
               {...bindPhase('proxy_prebuffer')}
             />
           </SettingRow>
-          <SettingRow label="Live Edge Delay" description="Default live edge offset used to stabilize live playback.">
+          <SettingRow
+            label="Live Edge Delay"
+            description="Default live edge offset used to stabilize live playback."
+            warning="Potentially unstable with AceStream P2P live sources: swarm peers are often at the live head, which can starve the engine."
+          >
             <Input type="number" min={0} max={1200} value={draft.ace_live_edge_delay} onChange={(e) => update('ace_live_edge_delay', toNumber(e.target.value, DEFAULTS.ace_live_edge_delay))} className="max-w-xs" {...bindPhase('live_edge_delay')} />
           </SettingRow>
           <SettingRow label="Idle Channel Shutdown Delay (s)" description="Grace delay before terminating idle channel.">
