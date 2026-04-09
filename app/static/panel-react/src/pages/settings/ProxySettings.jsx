@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   Dialog,
   DialogContent,
@@ -11,7 +12,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { AlertCircle, FlaskConical, Loader2 } from 'lucide-react'
+import { AlertCircle, ChevronDown, ChevronUp, FlaskConical, Loader2 } from 'lucide-react'
+import { InteractiveStreamLifecycle } from '@/components/settings/InteractiveStreamLifecycle'
 import { SettingRow } from '@/components/settings/SettingRow'
 import { useSettingsForm } from '@/context/SettingsFormContext'
 
@@ -80,6 +82,8 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
   const [draft, setDraft] = useState(DEFAULTS)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [activePhase, setActivePhase] = useState(null)
+  const [lifecycleOpen, setLifecycleOpen] = useState(true)
 
   const [diagOpen, setDiagOpen] = useState(false)
   const [diagType, setDiagType] = useState('content_id')
@@ -229,6 +233,13 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
     setMessage('')
   }
 
+  const bindPhase = (phase) => ({
+    onFocus: () => setActivePhase(phase),
+    onBlur: () => setActivePhase(null),
+    onMouseEnter: () => setActivePhase(phase),
+    onMouseLeave: () => setActivePhase(null),
+  })
+
   const runDiagnostics = async () => {
     const selected = PREFLIGHT_INPUT_OPTIONS[diagType] || PREFLIGHT_INPUT_OPTIONS.content_id
     const normalizedInput = String(diagInput || '').trim()
@@ -282,6 +293,32 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       <Card>
+        <Collapsible open={lifecycleOpen} onOpenChange={setLifecycleOpen} className="w-full">
+          <CardHeader>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle>Stream Lifecycle</CardTitle>
+                <CardDescription>
+                  Hover or focus timeout and buffering fields to highlight where each setting applies in the stream timeline.
+                </CardDescription>
+              </div>
+              <CollapsibleTrigger asChild>
+                <Button type="button" variant="ghost" size="sm" className="text-xs uppercase tracking-wider text-muted-foreground hover:bg-transparent">
+                  {lifecycleOpen ? 'Hide Timeline' : 'Show Timeline'}
+                  {lifecycleOpen ? <ChevronUp className="ml-2 h-3.5 w-3.5" /> : <ChevronDown className="ml-2 h-3.5 w-3.5" />}
+                </Button>
+              </CollapsibleTrigger>
+            </div>
+          </CardHeader>
+          <CollapsibleContent>
+            <CardContent className="pt-0">
+              <InteractiveStreamLifecycle activePhase={activePhase} />
+            </CardContent>
+          </CollapsibleContent>
+        </Collapsible>
+      </Card>
+
+      <Card>
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -328,28 +365,28 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
         </CardHeader>
         <CardContent className="space-y-3">
           <SettingRow label="Initial Data Wait Timeout (s)" description="Maximum wait for first bytes.">
-            <Input type="number" min={1} max={60} value={draft.initial_data_wait_timeout} onChange={(e) => update('initial_data_wait_timeout', toNumber(e.target.value, DEFAULTS.initial_data_wait_timeout))} className="max-w-xs" />
+            <Input type="number" min={1} max={60} value={draft.initial_data_wait_timeout} onChange={(e) => update('initial_data_wait_timeout', toNumber(e.target.value, DEFAULTS.initial_data_wait_timeout))} className="max-w-xs" {...bindPhase('initial_data_wait')} />
           </SettingRow>
           <SettingRow label="Initial Data Check Interval (s)" description="Poll cadence while waiting for data.">
-            <Input type="number" min={0.1} max={2} step={0.1} value={draft.initial_data_check_interval} onChange={(e) => update('initial_data_check_interval', toNumber(e.target.value, DEFAULTS.initial_data_check_interval))} className="max-w-xs" />
+            <Input type="number" min={0.1} max={2} step={0.1} value={draft.initial_data_check_interval} onChange={(e) => update('initial_data_check_interval', toNumber(e.target.value, DEFAULTS.initial_data_check_interval))} className="max-w-xs" {...bindPhase('initial_data_wait')} />
           </SettingRow>
           <SettingRow label="No Data Timeout Checks" description="Consecutive misses before stream termination.">
-            <Input type="number" min={5} max={600} value={draft.no_data_timeout_checks} onChange={(e) => update('no_data_timeout_checks', toNumber(e.target.value, DEFAULTS.no_data_timeout_checks))} className="max-w-xs" />
+            <Input type="number" min={5} max={600} value={draft.no_data_timeout_checks} onChange={(e) => update('no_data_timeout_checks', toNumber(e.target.value, DEFAULTS.no_data_timeout_checks))} className="max-w-xs" {...bindPhase('no_data_detection')} />
           </SettingRow>
           <SettingRow label="No Data Check Interval (s)" description="Poll cadence after no-data state.">
-            <Input type="number" min={0.01} max={1} step={0.01} value={draft.no_data_check_interval} onChange={(e) => update('no_data_check_interval', toNumber(e.target.value, DEFAULTS.no_data_check_interval))} className="max-w-xs" />
+            <Input type="number" min={0.01} max={1} step={0.01} value={draft.no_data_check_interval} onChange={(e) => update('no_data_check_interval', toNumber(e.target.value, DEFAULTS.no_data_check_interval))} className="max-w-xs" {...bindPhase('no_data_detection')} />
           </SettingRow>
           <SettingRow label="Connection Timeout (s)" description="Health monitor inactivity threshold before forcing reconnect.">
-            <Input type="number" min={5} max={60} value={draft.connection_timeout} onChange={(e) => update('connection_timeout', toNumber(e.target.value, DEFAULTS.connection_timeout))} className="max-w-xs" />
+            <Input type="number" min={5} max={60} value={draft.connection_timeout} onChange={(e) => update('connection_timeout', toNumber(e.target.value, DEFAULTS.connection_timeout))} className="max-w-xs" {...bindPhase('health_monitor_reconnect')} />
           </SettingRow>
           <SettingRow label="Upstream Connect Timeout (s)" description="Timeout for connecting to upstream playback/API endpoints.">
-            <Input type="number" min={1} max={60} value={draft.upstream_connect_timeout} onChange={(e) => update('upstream_connect_timeout', toNumber(e.target.value, DEFAULTS.upstream_connect_timeout))} className="max-w-xs" />
+            <Input type="number" min={1} max={60} value={draft.upstream_connect_timeout} onChange={(e) => update('upstream_connect_timeout', toNumber(e.target.value, DEFAULTS.upstream_connect_timeout))} className="max-w-xs" {...bindPhase('upstream_connect')} />
           </SettingRow>
           <SettingRow label="Upstream Read Timeout (s)" description="Per-read timeout while receiving upstream stream data.">
             <Input type="number" min={1} max={120} value={draft.upstream_read_timeout} onChange={(e) => update('upstream_read_timeout', toNumber(e.target.value, DEFAULTS.upstream_read_timeout))} className="max-w-xs" />
           </SettingRow>
           <SettingRow label="Stream Timeout (s)" description="Overall stream request timeout.">
-            <Input type="number" min={10} max={300} value={draft.stream_timeout} onChange={(e) => update('stream_timeout', toNumber(e.target.value, DEFAULTS.stream_timeout))} className="max-w-xs" />
+            <Input type="number" min={10} max={300} value={draft.stream_timeout} onChange={(e) => update('stream_timeout', toNumber(e.target.value, DEFAULTS.stream_timeout))} className="max-w-xs" {...bindPhase('overall_stream_timeout')} />
           </SettingRow>
           <SettingRow
             label="Proxy Prebuffer (Seconds)"
@@ -362,13 +399,14 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
               value={draft.proxy_prebuffer_seconds}
               onChange={(e) => update('proxy_prebuffer_seconds', Math.max(0, toNumber(e.target.value, DEFAULTS.proxy_prebuffer_seconds)))}
               className="max-w-xs"
+              {...bindPhase('proxy_prebuffer')}
             />
           </SettingRow>
           <SettingRow label="Live Edge Delay" description="Default live edge offset used to stabilize live playback.">
-            <Input type="number" min={0} max={1200} value={draft.ace_live_edge_delay} onChange={(e) => update('ace_live_edge_delay', toNumber(e.target.value, DEFAULTS.ace_live_edge_delay))} className="max-w-xs" />
+            <Input type="number" min={0} max={1200} value={draft.ace_live_edge_delay} onChange={(e) => update('ace_live_edge_delay', toNumber(e.target.value, DEFAULTS.ace_live_edge_delay))} className="max-w-xs" {...bindPhase('live_edge_delay')} />
           </SettingRow>
           <SettingRow label="Idle Channel Shutdown Delay (s)" description="Grace delay before terminating idle channel.">
-            <Input type="number" min={1} max={60} value={draft.channel_shutdown_delay} onChange={(e) => update('channel_shutdown_delay', toNumber(e.target.value, DEFAULTS.channel_shutdown_delay))} className="max-w-xs" />
+            <Input type="number" min={1} max={60} value={draft.channel_shutdown_delay} onChange={(e) => update('channel_shutdown_delay', toNumber(e.target.value, DEFAULTS.channel_shutdown_delay))} className="max-w-xs" {...bindPhase('idle_shutdown')} />
           </SettingRow>
         </CardContent>
       </Card>
