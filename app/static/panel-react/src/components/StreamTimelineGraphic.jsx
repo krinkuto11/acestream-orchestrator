@@ -426,17 +426,13 @@ function StreamTimelineGraphic({
 
   const { chartData, clientKeys, yMax } = model
   const yMin = -Math.max(0.3, yMax * 0.04)
-  const yTicks = useMemo(() => {
-    const candidates = [
-      0,
-      Math.round(yMax * 0.25),
-      Math.round(yMax * 0.5),
-      Math.round(yMax * 0.75),
-      Math.round(yMax),
-    ]
-
-    return Array.from(new Set(candidates.filter((value) => Number.isFinite(value) && value >= 0))).sort((a, b) => a - b)
-  }, [yMax])
+  const yTicks = Array.from(new Set([
+    0,
+    Math.round(yMax * 0.25),
+    Math.round(yMax * 0.5),
+    Math.round(yMax * 0.75),
+    Math.round(yMax),
+  ].filter((value) => Number.isFinite(value) && value >= 0))).sort((a, b) => a - b)
 
   return (
     <div className={cn('space-y-2', className)}>
