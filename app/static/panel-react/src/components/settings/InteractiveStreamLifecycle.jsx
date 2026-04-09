@@ -140,6 +140,10 @@ const PHASE_CONTENT = {
   },
 }
 
+export function getLifecycleCopy(phase) {
+  return PHASE_CONTENT[phase] || PHASE_CONTENT.default
+}
+
 function TimelineTrack({
   trackId,
   title,
@@ -325,8 +329,8 @@ function TimelineTrack({
   )
 }
 
-export function InteractiveStreamLifecycle({ activePhase }) {
-  const copy = PHASE_CONTENT[activePhase] || PHASE_CONTENT.default
+export function InteractiveStreamLifecycle({ activePhase, showDescriptionCard = true }) {
+  const copy = getLifecycleCopy(activePhase)
   const trackId = TRACK_BY_PHASE[activePhase] || 'normal'
   const track = trackId === 'starvation'
     ? { id: 'starvation', title: 'Failure / Starvation Lifecycle', nodes: STARVATION_TRACK }
@@ -345,26 +349,28 @@ export function InteractiveStreamLifecycle({ activePhase }) {
         </CardContent>
       </Card>
 
-      <Card className="border-dashed border-primary/40 bg-primary/5 dark:bg-primary/10">
-        <motion.div layout transition={{ type: 'spring', stiffness: 260, damping: 30 }}>
-          <CardContent className="space-y-1 p-4 min-h-[102px]">
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.div
-                key={activePhase || 'default'}
-                layout
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2, ease: 'easeOut' }}
-                className="space-y-1"
-              >
-                <p className="text-sm font-semibold text-foreground">{copy.title}</p>
-                <p className="text-sm text-muted-foreground">{copy.description}</p>
-              </motion.div>
-            </AnimatePresence>
-          </CardContent>
-        </motion.div>
-      </Card>
+      {showDescriptionCard && (
+        <Card className="border-dashed border-primary/40 bg-primary/5 dark:bg-primary/10">
+          <motion.div layout transition={{ type: 'spring', stiffness: 260, damping: 30 }}>
+            <CardContent className="space-y-1 p-4 min-h-[102px]">
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div
+                  key={activePhase || 'default'}
+                  layout
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                  className="space-y-1"
+                >
+                  <p className="text-sm font-semibold text-foreground">{copy.title}</p>
+                  <p className="text-sm text-muted-foreground">{copy.description}</p>
+                </motion.div>
+              </AnimatePresence>
+            </CardContent>
+          </motion.div>
+        </Card>
+      )}
     </div>
   )
 }

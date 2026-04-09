@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertCircle, EyeOff, FlaskConical, Loader2 } from 'lucide-react'
-import { InteractiveStreamLifecycle } from '@/components/settings/InteractiveStreamLifecycle'
+import { getLifecycleCopy, InteractiveStreamLifecycle } from '@/components/settings/InteractiveStreamLifecycle'
 import { SettingRow } from '@/components/settings/SettingRow'
 import { useSettingsForm } from '@/context/SettingsFormContext'
 
@@ -357,6 +357,7 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
   }
 
   const preflightFiles = extractLoadRespFiles(diagResult)
+  const lifecycleCopy = getLifecycleCopy(activePhase)
 
   return (
     <div className="space-y-5">
@@ -511,9 +512,9 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
             <Card className="border-slate-200/70 bg-white/95 shadow-2xl backdrop-blur-sm dark:border-slate-800 dark:bg-slate-950/95">
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <CardTitle className="text-base">Stream Lifecycle</CardTitle>
-                    <CardDescription className="text-xs">Contextual timeline for the currently selected timeout/buffering setting.</CardDescription>
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-foreground">{lifecycleCopy.title}</p>
+                    <p className="text-xs text-muted-foreground">{lifecycleCopy.description}</p>
                   </div>
                   <Button
                     type="button"
@@ -527,7 +528,7 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
                 </div>
               </CardHeader>
               <CardContent className="pt-2">
-                <InteractiveStreamLifecycle activePhase={activePhase} />
+                <InteractiveStreamLifecycle activePhase={activePhase} showDescriptionCard={false} />
               </CardContent>
             </Card>
           </motion.div>
