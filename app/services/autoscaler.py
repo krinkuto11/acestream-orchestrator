@@ -105,26 +105,63 @@ def _compute_desired_replicas(total_running: int, free_count: int) -> tuple[int,
     lookahead_layer = state.get_lookahead_layer()
     all_at_lookahead_layer = lookahead_layer is None or min_streams >= lookahead_layer
 
-    desired = total_running
-    target_description = f"no engines at layer {max_streams_threshold} yet (lookahead not triggered)"
+    # Always maintain an idle pool for fast failover recovery.
+    idle_pool_deficit = max(0, int(cfg.MIN_FREE_REPLICAS) - int(free_count))
+    desired = total_running + idle_pool_deficit
+    if idle_pool_deficit > 0:
+        target_description = (
+            f"replenishing idle pool (missing {idle_pool_deficit}, "
+            f"free engines: {free_count}/{cfg.MIN_FREE_REPLICAS})"
+        )
+    else:
+        target_description = (
+            f"idle pool satisfied (free engines: {free_count}/{cfg.MIN_FREE_REPLICAS}); "
+            f"no engines at layer {max_streams_threshold} yet (lookahead not triggered)"
+        )
 
     if any_engine_near_capacity:
         if all_engines_near_capacity:
             if all_at_lookahead_layer:
-                desired = total_running + 1
-                target_description = f"all engines at layer {max_streams_threshold} (LOOKAHEAD: preparing for overflow)"
+                lookahead_desired = total_running + 1
+                desired = max(desired, lookahead_desired)
+                if idle_pool_deficit > 0:
+                    target_description = (
+                        f"replenishing idle pool (missing {idle_pool_deficit}) and "
+                        f"lookahead triggered (all engines at layer {max_streams_threshold})"
+                    )
+                else:
+                    target_description = f"all engines at layer {max_streams_threshold} (LOOKAHEAD: preparing for overflow)"
                 state.set_lookahead_layer(min_streams)
             else:
-                target_description = f"waiting for all engines to reach layer {lookahead_layer}"
+                if idle_pool_deficit > 0:
+                    target_description = (
+                        f"replenishing idle pool (missing {idle_pool_deficit}); "
+                        f"waiting for all engines to reach layer {lookahead_layer}"
+                    )
+                else:
+                    target_description = f"waiting for all engines to reach layer {lookahead_layer}"
         else:
             if free_count >= cfg.MIN_FREE_REPLICAS:
                 target_description = f"lookahead buffer satisfied (free engines: {free_count})"
             elif all_at_lookahead_layer:
-                desired = total_running + 1
-                target_description = f"lookahead triggered (first engine at layer {max_streams_threshold})"
+                lookahead_desired = total_running + 1
+                desired = max(desired, lookahead_desired)
+                if idle_pool_deficit > 0:
+                    target_description = (
+                        f"replenishing idle pool (missing {idle_pool_deficit}) and "
+                        f"lookahead triggered (first engine at layer {max_streams_threshold})"
+                    )
+                else:
+                    target_description = f"lookahead triggered (first engine at layer {max_streams_threshold})"
                 state.set_lookahead_layer(min_streams)
             else:
-                target_description = f"waiting for all engines to reach layer {lookahead_layer}"
+                if idle_pool_deficit > 0:
+                    target_description = (
+                        f"replenishing idle pool (missing {idle_pool_deficit}); "
+                        f"waiting for all engines to reach layer {lookahead_layer}"
+                    )
+                else:
+                    target_description = f"waiting for all engines to reach layer {lookahead_layer}"
     else:
         if lookahead_layer is not None and min_streams < lookahead_layer:
             state.reset_lookahead_layer()
