@@ -191,14 +191,26 @@ class ResourceScheduler:
         if not vpn_enabled:
             return None
 
-        dynamic_ready_nodes = [
-            node for node in state.list_vpn_nodes()
-            if bool(node.get("managed_dynamic"))
-            and self._is_dynamic_node_ready(node)
-            and not state.is_vpn_node_draining(str(node.get("container_name") or ""))
-        ]
+        rejection_reasons: List[str] = []
+        dynamic_ready_nodes: List[Dict[str, object]] = []
+        for node in state.list_vpn_nodes():
+            if not bool(node.get("managed_dynamic")):
+                continue
+            
+            is_ready, reason = self._is_dynamic_node_ready_with_reason(node)
+            if not is_ready:
+                rejection_reasons.append(f"{node.get('container_name')}: {reason}")
+                continue
+                
+            if state.is_vpn_node_draining(str(node.get("container_name") or "")):
+                rejection_reasons.append(f"{node.get('container_name')}: draining")
+                continue
+                
+            dynamic_ready_nodes.append(node)
+
         if not dynamic_ready_nodes:
-            raise RuntimeError("No healthy active dynamic VPN nodes available - cannot schedule AceStream engine")
+            diag = "; ".join(rejection_reasons) if rejection_reasons else "none found"
+            raise RuntimeError(f"No healthy active dynamic VPN nodes available (Found: {diag}) - cannot schedule AceStream engine")
 
         candidate_nodes = dynamic_ready_nodes
         if require_forwarding_capable:
@@ -236,27 +248,43 @@ class ResourceScheduler:
             return provider in PORT_FORWARDING_NATIVE_PROVIDERS
         return False
 
-    @staticmethod
-    def _is_dynamic_node_ready(node: Dict[str, object]) -> bool:
+    def _is_dynamic_node_ready(self, node: Dict[str, object]) -> bool:
+        is_ready, _ = self._is_dynamic_node_ready_with_reason(node)
+        return is_ready
+
+    def _is_dynamic_node_ready_with_reason(self, node: Dict[str, object]) -> Tuple[bool, str]:
         container_name = str(node.get("container_name") or "").strip()
         if not container_name:
-            return False
+            return False, "no_name"
 
         condition = str(node.get("condition", "")).strip().lower()
         if condition:
             if condition != "ready":
-                return False
+                return False, f"condition_{condition}"
         elif not bool(node.get("healthy")):
-            return False
+            # Heuristic: If we already have healthy engines on this node, it IS ready
+            # regardless of what the passive monitor thinks (it might be stale).
+            from .state import state
+            engines = state.get_engines_by_vpn(container_name)
+            if any(getattr(e, "status", "") == "healthy" for e in engines):
+                return True, "ready_via_heuristic"
+            return False, "not_healthy"
 
         # Docker "running" can precede Gluetun control API readiness by a few seconds.
         # Require control API reachability and 'connected' VPN status before
         # scheduling engines on dynamic nodes.
         status = str(node.get("status") or "").strip().lower()
-        if status == "running" and not ResourceScheduler._is_vpn_control_api_reachable(container_name, require_connected=True):
-            return False
+        if status == "running":
+            is_reachable = ResourceScheduler._is_vpn_control_api_reachable(container_name, require_connected=True)
+            if not is_reachable:
+                # Secondary Heuristic: Even if API is not reachable, if engines are healthy, we are good.
+                from .state import state
+                engines = state.get_engines_by_vpn(container_name)
+                if any(getattr(e, "status", "") == "healthy" for e in engines):
+                    return True, "ready_via_heuristic_api_down"
+                return False, "api_unreachable/not_connected"
 
-        return True
+        return True, "ready"
 
     @staticmethod
     def _is_vpn_control_api_reachable(vpn_container: str, require_connected: bool = False) -> bool:
