@@ -536,6 +536,78 @@ def _init_proxy_server():
     except Exception as e:
         logger.warning(f"Failed to pre-initialize HLSProxyServer: {e}")
 
+
+async def _refresh_vpn_servers_before_vpn_provision(vpn_controller_enabled: bool) -> None:
+    """Refresh VPN server list before any VPN node provisioning begins.
+
+    Startup tries the configured refresh source first. If it fails or is unavailable,
+    it falls back to the official Gluetun servers source.
+    """
+    if not vpn_controller_enabled:
+        return
+
+    refresh_timeout_s = 180
+    configured_source = "proton_paid"
+
+    try:
+        from .services.settings_persistence import SettingsPersistence
+
+        configured_source = str(
+            SettingsPersistence.get_cached_setting(
+                "vpn_settings",
+                "vpn_servers_refresh_source",
+                "proton_paid",
+            )
+            or "proton_paid"
+        ).strip().lower()
+    except Exception:
+        configured_source = "proton_paid"
+
+    try:
+        result = await asyncio.wait_for(
+            vpn_servers_refresh_service.refresh_now(reason="startup-preprovision"),
+            timeout=refresh_timeout_s,
+        )
+        if not bool(result.get("ok", False)):
+            raise RuntimeError(str(result.get("detail") or "startup refresh returned not-ok status"))
+
+        logger.info(
+            "Startup VPN server refresh succeeded before provisioning: source=%s duration_s=%s",
+            result.get("source"),
+            result.get("duration_s"),
+        )
+        return
+    except Exception as exc:
+        logger.warning(
+            "Startup VPN server refresh failed for source=%s; falling back to gluetun_official: %s",
+            configured_source,
+            exc,
+        )
+
+    try:
+        fallback_result = await asyncio.wait_for(
+            vpn_servers_refresh_service.refresh_now(
+                reason="startup-fallback-gluetun",
+                overrides={"vpn_servers_refresh_source": "gluetun_official"},
+            ),
+            timeout=refresh_timeout_s,
+        )
+        if not bool(fallback_result.get("ok", False)):
+            raise RuntimeError(
+                str(fallback_result.get("detail") or "startup fallback refresh returned not-ok status")
+            )
+
+        logger.info(
+            "Startup VPN server refresh fallback succeeded: source=%s duration_s=%s",
+            fallback_result.get("source"),
+            fallback_result.get("duration_s"),
+        )
+    except Exception as fallback_exc:
+        logger.error(
+            "Startup VPN server refresh fallback failed; continuing with existing server catalog: %s",
+            fallback_exc,
+        )
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup - Ensure clean start (dry run)
@@ -819,6 +891,8 @@ async def lifespan(app: FastAPI):
     logger.info(
         f"Initialized desired replicas={cfg.MIN_REPLICAS}, config_hash={target_config['config_hash']}, generation={target_config['generation']}"
     )
+
+    await _refresh_vpn_servers_before_vpn_provision(vpn_controller_enabled)
 
     await docker_event_watcher.start()
     await engine_controller.start()
