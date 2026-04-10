@@ -80,6 +80,7 @@ async def test_update_merges_proton_provider_into_servers_json(tmp_path, monkeyp
         "_import_proton_types",
         staticmethod(lambda: (fake_session, (FakeTwoFARequired, FakeAuthRequired))),
     )
+    monkeypatch.setattr(ProtonServerUpdater, "_ensure_gpg_available", staticmethod(lambda: None))
 
     updater = ProtonServerUpdater(storage_path=str(tmp_path))
     result = await updater.update(
@@ -107,6 +108,7 @@ async def test_update_handles_two_factor_token(tmp_path, monkeypatch):
         "_import_proton_types",
         staticmethod(lambda: (fake_session, (FakeTwoFARequired, FakeAuthRequired))),
     )
+    monkeypatch.setattr(ProtonServerUpdater, "_ensure_gpg_available", staticmethod(lambda: None))
 
     updater = ProtonServerUpdater(storage_path=str(tmp_path))
     result = await updater.update(
@@ -129,10 +131,29 @@ async def test_update_requires_token_when_two_factor_is_needed(tmp_path, monkeyp
         "_import_proton_types",
         staticmethod(lambda: (fake_session, (FakeTwoFARequired, FakeAuthRequired))),
     )
+    monkeypatch.setattr(ProtonServerUpdater, "_ensure_gpg_available", staticmethod(lambda: None))
 
     updater = ProtonServerUpdater(storage_path=str(tmp_path))
 
     with pytest.raises(RuntimeError, match="2FA is required"):
+        await updater.update(
+            proton_username="user",
+            proton_password="pass",
+            gluetun_json_mode="none",
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_raises_runtime_error_when_gpg_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        ProtonServerUpdater,
+        "_ensure_gpg_available",
+        staticmethod(lambda: (_ for _ in ()).throw(RuntimeError("gpg missing"))),
+    )
+
+    updater = ProtonServerUpdater(storage_path=str(tmp_path))
+
+    with pytest.raises(RuntimeError, match="gpg missing"):
         await updater.update(
             proton_username="user",
             proton_password="pass",

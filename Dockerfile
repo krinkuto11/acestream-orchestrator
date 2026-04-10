@@ -47,11 +47,26 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Stage 5: Final runtime image with Distroless
+# Stage 5: Install GnuPG and collect binaries + shared libraries (Debian 12 for ABI match)
+FROM debian:12-slim AS gpg-builder
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gnupg && \
+    mkdir -p /gpg-bundle/usr/lib /gpg-bundle/usr/share && \
+    cp --parents /usr/bin/gpg /gpg-bundle/ && \
+    cp --parents /usr/bin/gpgconf /gpg-bundle/ && \
+    ldd /usr/bin/gpg | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp --parents '{}' /gpg-bundle/ && \
+    ldd /usr/bin/gpgconf | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp --parents '{}' /gpg-bundle/ && \
+    cp -a /usr/lib/gnupg /gpg-bundle/usr/lib/ && \
+    cp -a /usr/share/gnupg /gpg-bundle/usr/share/ && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Stage 6: Final runtime image with Distroless
 FROM gcr.io/distroless/python3-debian12:latest
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/usr/local/lib/python3.11/site-packages
+ENV GNUPGHOME=/tmp/.gnupg
 
 # Copy Python dependencies from builder
 COPY --from=python-builder /install /usr/local
@@ -67,6 +82,9 @@ COPY --from=redis-builder /redis-bundle/ /
 
 # Copy FFmpeg binaries and libraries for API-mode HLS segmenting
 COPY --from=ffmpeg-builder /ffmpeg-bundle/ /
+
+# Copy GnuPG binaries and libraries for proton-core modulus verification
+COPY --from=gpg-builder /gpg-bundle/ /
 
 # Create a startup script for handling Redis + app
 COPY --chmod=755 <<'EOF' /app/start.py

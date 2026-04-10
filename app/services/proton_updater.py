@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import struct
 import tempfile
 import time
@@ -96,6 +97,16 @@ class ProtonServerUpdater:
             raise RuntimeError("proton-core is installed but expected Session/ProtonAPI2FANeeded symbols were not found")
 
         return session_cls, (two_fa_exc, auth_exc)
+
+    @staticmethod
+    def _ensure_gpg_available() -> None:
+        # proton-core uses python-gnupg internally for modulus verification.
+        if shutil.which("gpg"):
+            return
+        raise RuntimeError(
+            "Proton refresh requires gpg, but it is not available in this runtime image. "
+            "Install gnupg (gpg) in the container runtime."
+        )
 
     @staticmethod
     def _country_name(value: Any) -> str:
@@ -340,24 +351,30 @@ class ProtonServerUpdater:
             if secret:
                 code = self._generate_totp_from_secret(secret)
 
+        self._ensure_gpg_available()
         Session, exception_types = self._import_proton_types()
         two_fa_exc = exception_types[0]
 
         session = Session(appversion=APP_VERSION, user_agent=USER_AGENT)
         try:
-            authenticated = await session.async_authenticate(username, password)
-            if not authenticated:
-                raise RuntimeError("Proton authentication failed")
-
             try:
-                api_data = await session.async_api_request(LOGICALS_ENDPOINT)
-            except two_fa_exc:
-                if not code:
-                    raise RuntimeError("2FA is required. Provide proton_totp_code or proton_totp_secret")
-                validated = await session.async_validate_2fa_code(code)
-                if not validated:
-                    raise RuntimeError("2FA token rejected by Proton API")
-                api_data = await session.async_api_request(LOGICALS_ENDPOINT)
+                authenticated = await session.async_authenticate(username, password)
+                if not authenticated:
+                    raise RuntimeError("Proton authentication failed")
+
+                try:
+                    api_data = await session.async_api_request(LOGICALS_ENDPOINT)
+                except two_fa_exc:
+                    if not code:
+                        raise RuntimeError("2FA is required. Provide proton_totp_code or proton_totp_secret")
+                    validated = await session.async_validate_2fa_code(code)
+                    if not validated:
+                        raise RuntimeError("2FA token rejected by Proton API")
+                    api_data = await session.async_api_request(LOGICALS_ENDPOINT)
+            except OSError as exc:
+                raise RuntimeError(
+                    "Proton refresh failed because gpg/gnupg is unavailable or misconfigured in this runtime."
+                ) from exc
 
             proton_payload, stats = self._transform_to_gluetun(api_data, applied_filters)
 
