@@ -275,6 +275,7 @@ class VPNProvisioner:
             "VPN_SERVICE_PROVIDER": provider,
             "VPN_TYPE": protocol,
             "HTTP_CONTROL_SERVER_ADDRESS": f":{cfg.GLUETUN_API_PORT}",
+            "GLUETUN_SERVERS_JSON_PATH": "/gluetun/servers.json",
         }
 
         auth_default_role = credential.get("http_control_server_auth_default_role")

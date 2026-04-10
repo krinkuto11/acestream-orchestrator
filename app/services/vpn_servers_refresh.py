@@ -319,8 +319,19 @@ class VPNServersRefreshService:
                 if provider_key == "version":
                     continue
                 if provider_key == "protonvpn" and preserve_proton:
-                    logger.debug("Preserving local dynamic ProtonVPN catalog during official refresh")
+                    # If we are in Proton Paid mode, we favor the local dedicated catalog
+                    # which likely contains more nodes (specifically HA/Paid nodes) than
+                    # the official Gluetun list.
+                    proton_dedicated_file = storage_dir / "servers-proton.json"
+                    proton_data = self._load_existing_json(proton_dedicated_file)
+                    if "protonvpn" in proton_data:
+                        existing["protonvpn"] = proton_data["protonvpn"]
+                        logger.info("Injected %d Proton Paid servers from dedicated catalog into merged list", len(proton_data["protonvpn"].get("servers", [])))
+                    else:
+                        logger.debug("Dedicated Proton catalog not found or empty; falling back to official list for 'protonvpn'")
+                        existing["protonvpn"] = provider_value
                     continue
+
                 existing[provider_key] = provider_value
             self._atomic_write_json(merged_file, existing)
 
