@@ -4491,26 +4491,41 @@ async def ace_getstream(
 
             ts_iterator = generator.generate()
 
+            active_task = None
+
             async def _guarded_ts_stream():
+                nonlocal active_task
                 try:
                     while True:
                         if await request.is_disconnected():
                             break
+
+                        if active_task is None:
+                            active_task = asyncio.create_task(asyncio.to_thread(next, ts_iterator))
+
                         try:
-                            chunk = await asyncio.wait_for(
-                                asyncio.to_thread(next, ts_iterator),
-                                timeout=1.0,
-                            )
+                            # Use shield to prevent cancellation of the underlying next() call
+                            # when wait_for times out. This ensures we don't start a second
+                            # next() call concurrently on the same generator.
+                            chunk = await asyncio.wait_for(asyncio.shield(active_task), timeout=1.0)
+                            active_task = None  # Task completed, clear for next iteration
                         except asyncio.TimeoutError:
+                            # Loop back and check for disconnect, keep active_task for next wait
                             continue
-                        except StopIteration:
+                        except (StopIteration, StopAsyncIteration):
+                            active_task = None
                             break
+                        except Exception:
+                            active_task = None
+                            raise
 
                         if chunk:
                             yield chunk
                 except asyncio.CancelledError:
                     raise
                 finally:
+                    if active_task and not active_task.done():
+                        active_task.cancel()
                     with suppress(Exception):
                         ts_iterator.close()
 
