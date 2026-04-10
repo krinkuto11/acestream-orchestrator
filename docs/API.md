@@ -67,6 +67,16 @@ Request fields (all optional):
 - `regions` (list of regions/countries/cities, can be prefixed as `country:`, `city:`, `region:`, `hostname:`)
 - `credentials` (list of JSON objects used for dynamic VPN node provisioning)
 - `trigger_migration` (optional bool; when toggling VPN state, marks engines that do not match the new target state as draining so new streams migrate without dropping active sessions)
+- `vpn_servers_auto_refresh` (bool; enables scheduled server-list refresh)
+- `vpn_servers_refresh_period_s` (int; refresh interval in seconds, minimum 60)
+- `vpn_servers_refresh_source` (`proton_paid` or `gluetun_official`)
+- `vpn_servers_gluetun_json_mode` (`none`, `update`, or `replace`)
+- `vpn_servers_storage_path` (optional directory path to write server list files)
+- `vpn_servers_official_url` (optional URL for official Gluetun catalog source)
+- `vpn_servers_proton_credentials_source` (`env` or `settings`)
+- `vpn_servers_proton_username_env`, `vpn_servers_proton_password_env`, `vpn_servers_proton_totp_code_env`, `vpn_servers_proton_totp_secret_env`
+- `vpn_servers_proton_username`, `vpn_servers_proton_password`, `vpn_servers_proton_totp_code`, `vpn_servers_proton_totp_secret`
+- Proton filter controls: `vpn_servers_filter_ipv6`, `vpn_servers_filter_secure_core`, `vpn_servers_filter_tor`, `vpn_servers_filter_free_tier` (`include|exclude|only`)
 
 Example dynamic request payload:
 
@@ -405,6 +415,16 @@ Response:
      - `storage_path` (directory path where server files will be written)
      - `gluetun_json_mode` (`none`, `replace`, or `update`)
      - filters: `ipv6`, `secure_core`, `tor`, `free_tier` (`include|exclude|only`)
+
+ - POST /vpn/servers/refresh (protected) → Refresh VPN server list from configured source
+   - Uses persisted VPN refresh settings by default
+   - Optional body overrides:
+     - `source` (`proton_paid` or `gluetun_official`)
+     - `gluetun_json_mode` (`none`, `update`, or `replace`)
+     - `reason` (string for audit/status)
+
+ - GET /vpn/servers/refresh/status → Current scheduler status and last refresh result
+   - Includes whether scheduler is running, in-progress state, last success/error, and effective config snapshot
 
  - GET /health/status → Detailed health status and management information
    - Returns comprehensive health summary including healthy/unhealthy engine counts

@@ -188,6 +188,34 @@ class SettingsPersistence:
             "port_cache_ttl_s": int(getattr(cfg, "GLUETUN_PORT_CACHE_TTL_S", 60)),
             "restart_engines_on_reconnect": bool(getattr(cfg, "VPN_RESTART_ENGINES_ON_RECONNECT", True)),
             "unhealthy_restart_timeout_s": int(getattr(cfg, "VPN_UNHEALTHY_RESTART_TIMEOUT_S", 60)),
+            "vpn_servers_auto_refresh": False,
+            "vpn_servers_refresh_period_s": int(getattr(cfg, "VPN_SERVERS_REFRESH_PERIOD_S", 86400)),
+            "vpn_servers_refresh_source": str(getattr(cfg, "VPN_SERVERS_REFRESH_SOURCE", "proton_paid") or "proton_paid"),
+            "vpn_servers_gluetun_json_mode": str(getattr(cfg, "VPN_SERVERS_GLUETUN_JSON_MODE", "update") or "update"),
+            "vpn_servers_storage_path": str(getattr(cfg, "VPN_SERVERS_STORAGE_PATH", "") or "").strip() or None,
+            "vpn_servers_official_url": str(
+                getattr(
+                    cfg,
+                    "VPN_SERVERS_OFFICIAL_URL",
+                    "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json",
+                )
+                or "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json"
+            ),
+            "vpn_servers_proton_credentials_source": str(
+                getattr(cfg, "VPN_SERVERS_PROTON_CREDENTIALS_SOURCE", "env") or "env"
+            ),
+            "vpn_servers_proton_username_env": str(getattr(cfg, "VPN_SERVERS_PROTON_USERNAME_ENV", "PROTON_USERNAME") or "PROTON_USERNAME"),
+            "vpn_servers_proton_password_env": str(getattr(cfg, "VPN_SERVERS_PROTON_PASSWORD_ENV", "PROTON_PASSWORD") or "PROTON_PASSWORD"),
+            "vpn_servers_proton_totp_code_env": str(getattr(cfg, "VPN_SERVERS_PROTON_TOTP_CODE_ENV", "PROTON_TOTP_CODE") or "PROTON_TOTP_CODE"),
+            "vpn_servers_proton_totp_secret_env": str(getattr(cfg, "VPN_SERVERS_PROTON_TOTP_SECRET_ENV", "PROTON_TOTP_SECRET") or "PROTON_TOTP_SECRET"),
+            "vpn_servers_proton_username": str(getattr(cfg, "VPN_SERVERS_PROTON_USERNAME", "") or "").strip() or None,
+            "vpn_servers_proton_password": str(getattr(cfg, "VPN_SERVERS_PROTON_PASSWORD", "") or "").strip() or None,
+            "vpn_servers_proton_totp_code": str(getattr(cfg, "VPN_SERVERS_PROTON_TOTP_CODE", "") or "").strip() or None,
+            "vpn_servers_proton_totp_secret": str(getattr(cfg, "VPN_SERVERS_PROTON_TOTP_SECRET", "") or "").strip() or None,
+            "vpn_servers_filter_ipv6": str(getattr(cfg, "VPN_SERVERS_FILTER_IPV6", "exclude") or "exclude"),
+            "vpn_servers_filter_secure_core": str(getattr(cfg, "VPN_SERVERS_FILTER_SECURE_CORE", "include") or "include"),
+            "vpn_servers_filter_tor": str(getattr(cfg, "VPN_SERVERS_FILTER_TOR", "include") or "include"),
+            "vpn_servers_filter_free_tier": str(getattr(cfg, "VPN_SERVERS_FILTER_FREE_TIER", "include") or "include"),
         }
 
     @staticmethod
@@ -267,6 +295,67 @@ class SettingsPersistence:
                 normalized[int_field] = int(normalized.get(int_field, defaults[int_field]))
             except Exception:
                 normalized[int_field] = int(defaults[int_field])
+
+        try:
+            normalized["vpn_servers_refresh_period_s"] = max(60, int(normalized.get("vpn_servers_refresh_period_s", defaults["vpn_servers_refresh_period_s"])))
+        except Exception:
+            normalized["vpn_servers_refresh_period_s"] = int(defaults["vpn_servers_refresh_period_s"])
+
+        normalized["vpn_servers_auto_refresh"] = bool(
+            normalized.get("vpn_servers_auto_refresh", defaults["vpn_servers_auto_refresh"])
+        )
+
+        normalized["vpn_servers_refresh_source"] = str(
+            normalized.get("vpn_servers_refresh_source") or defaults["vpn_servers_refresh_source"]
+        ).strip().lower()
+        if normalized["vpn_servers_refresh_source"] not in {"proton_paid", "gluetun_official"}:
+            normalized["vpn_servers_refresh_source"] = defaults["vpn_servers_refresh_source"]
+
+        normalized["vpn_servers_gluetun_json_mode"] = str(
+            normalized.get("vpn_servers_gluetun_json_mode") or defaults["vpn_servers_gluetun_json_mode"]
+        ).strip().lower()
+        if normalized["vpn_servers_gluetun_json_mode"] not in {"none", "replace", "update"}:
+            normalized["vpn_servers_gluetun_json_mode"] = defaults["vpn_servers_gluetun_json_mode"]
+
+        normalized["vpn_servers_proton_credentials_source"] = str(
+            normalized.get("vpn_servers_proton_credentials_source") or defaults["vpn_servers_proton_credentials_source"]
+        ).strip().lower()
+        if normalized["vpn_servers_proton_credentials_source"] not in {"env", "settings"}:
+            normalized["vpn_servers_proton_credentials_source"] = defaults["vpn_servers_proton_credentials_source"]
+
+        normalized["vpn_servers_storage_path"] = str(
+            normalized.get("vpn_servers_storage_path") or ""
+        ).strip() or None
+        normalized["vpn_servers_official_url"] = str(
+            normalized.get("vpn_servers_official_url") or defaults["vpn_servers_official_url"]
+        ).strip()
+
+        for env_field in (
+            "vpn_servers_proton_username_env",
+            "vpn_servers_proton_password_env",
+            "vpn_servers_proton_totp_code_env",
+            "vpn_servers_proton_totp_secret_env",
+        ):
+            normalized[env_field] = str(normalized.get(env_field) or defaults[env_field]).strip() or defaults[env_field]
+
+        for secret_field in (
+            "vpn_servers_proton_username",
+            "vpn_servers_proton_password",
+            "vpn_servers_proton_totp_code",
+            "vpn_servers_proton_totp_secret",
+        ):
+            normalized[secret_field] = str(normalized.get(secret_field) or "").strip() or None
+
+        for filter_field in (
+            "vpn_servers_filter_ipv6",
+            "vpn_servers_filter_secure_core",
+            "vpn_servers_filter_tor",
+            "vpn_servers_filter_free_tier",
+        ):
+            value = str(normalized.get(filter_field) or defaults[filter_field]).strip().lower()
+            if value not in {"include", "exclude", "only"}:
+                value = defaults[filter_field]
+            normalized[filter_field] = value
 
         normalized["enabled"] = bool(normalized.get("enabled", defaults["enabled"]))
         normalized["restart_engines_on_reconnect"] = bool(

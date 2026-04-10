@@ -41,6 +41,22 @@ const PORT_FORWARDING_SUPPORTED = new Set([
   'privatevpn',
 ])
 
+const VPN_SERVER_REFRESH_SOURCE_OPTIONS = [
+  { value: 'proton_paid', label: 'Proton Paid Catalog (auth required)' },
+  { value: 'gluetun_official', label: 'Official Gluetun Catalog (public, may be outdated)' },
+]
+
+const GLUETUN_JSON_MODE_OPTIONS = [
+  { value: 'update', label: 'Update providers in existing servers.json' },
+  { value: 'replace', label: 'Replace servers.json completely' },
+  { value: 'none', label: 'Do not modify servers.json' },
+]
+
+const PROTON_CREDENTIALS_SOURCE_OPTIONS = [
+  { value: 'env', label: 'Environment Variables' },
+  { value: 'settings', label: 'Store in Settings' },
+]
+
 const DEFAULTS = {
   enabled: false,
   api_port: 8001,
@@ -52,6 +68,21 @@ const DEFAULTS = {
   protocol: 'wireguard',
   provider: 'protonvpn',
   regionsText: '',
+  vpn_servers_auto_refresh: false,
+  vpn_servers_refresh_period_s: 86400,
+  vpn_servers_refresh_source: 'proton_paid',
+  vpn_servers_gluetun_json_mode: 'update',
+  vpn_servers_storage_path: '',
+  vpn_servers_official_url: 'https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json',
+  vpn_servers_proton_credentials_source: 'env',
+  vpn_servers_proton_username_env: 'PROTON_USERNAME',
+  vpn_servers_proton_password_env: 'PROTON_PASSWORD',
+  vpn_servers_proton_totp_code_env: 'PROTON_TOTP_CODE',
+  vpn_servers_proton_totp_secret_env: 'PROTON_TOTP_SECRET',
+  vpn_servers_proton_username: '',
+  vpn_servers_proton_password: '',
+  vpn_servers_proton_totp_code: '',
+  vpn_servers_proton_totp_secret: '',
 }
 
 const toNumber = (value, fallback = 0) => {
@@ -91,6 +122,8 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
   const [leaseSummary, setLeaseSummary] = useState(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [refreshStatus, setRefreshStatus] = useState(null)
+  const [refreshingServers, setRefreshingServers] = useState(false)
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [expertOpen, setExpertOpen] = useState(false)
@@ -138,6 +171,17 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     }
   }
 
+  const fetchRefreshStatus = async () => {
+    try {
+      const response = await fetch(`${orchUrl}/api/v1/vpn/servers/refresh/status`)
+      if (!response.ok) return
+      const payload = await response.json()
+      setRefreshStatus(payload)
+    } catch {
+      // non-blocking
+    }
+  }
+
   const fetchConfig = async () => {
     setLoading(true)
     setError('')
@@ -167,6 +211,21 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         protocol: String(payload?.protocol || DEFAULTS.protocol).toLowerCase(),
         provider: normalizeProvider(payload?.provider || DEFAULTS.provider),
         regionsText: Array.isArray(payload?.regions) ? payload.regions.join(', ') : '',
+        vpn_servers_auto_refresh: Boolean(payload?.vpn_servers_auto_refresh),
+        vpn_servers_refresh_period_s: toNumber(payload?.vpn_servers_refresh_period_s, DEFAULTS.vpn_servers_refresh_period_s),
+        vpn_servers_refresh_source: String(payload?.vpn_servers_refresh_source || DEFAULTS.vpn_servers_refresh_source).toLowerCase(),
+        vpn_servers_gluetun_json_mode: String(payload?.vpn_servers_gluetun_json_mode || DEFAULTS.vpn_servers_gluetun_json_mode).toLowerCase(),
+        vpn_servers_storage_path: String(payload?.vpn_servers_storage_path || DEFAULTS.vpn_servers_storage_path),
+        vpn_servers_official_url: String(payload?.vpn_servers_official_url || DEFAULTS.vpn_servers_official_url),
+        vpn_servers_proton_credentials_source: String(payload?.vpn_servers_proton_credentials_source || DEFAULTS.vpn_servers_proton_credentials_source).toLowerCase(),
+        vpn_servers_proton_username_env: String(payload?.vpn_servers_proton_username_env || DEFAULTS.vpn_servers_proton_username_env),
+        vpn_servers_proton_password_env: String(payload?.vpn_servers_proton_password_env || DEFAULTS.vpn_servers_proton_password_env),
+        vpn_servers_proton_totp_code_env: String(payload?.vpn_servers_proton_totp_code_env || DEFAULTS.vpn_servers_proton_totp_code_env),
+        vpn_servers_proton_totp_secret_env: String(payload?.vpn_servers_proton_totp_secret_env || DEFAULTS.vpn_servers_proton_totp_secret_env),
+        vpn_servers_proton_username: String(payload?.vpn_servers_proton_username || ''),
+        vpn_servers_proton_password: String(payload?.vpn_servers_proton_password || ''),
+        vpn_servers_proton_totp_code: String(payload?.vpn_servers_proton_totp_code || ''),
+        vpn_servers_proton_totp_secret: String(payload?.vpn_servers_proton_totp_secret || ''),
       }
 
       setInitialState(normalized)
@@ -176,6 +235,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
       setCredentials(loadedCredentials)
       setSectionDirty(sectionId, false)
       await fetchLeases()
+      await fetchRefreshStatus()
     } catch (fetchError) {
       setError(`Failed to load VPN settings: ${fetchError.message || String(fetchError)}`)
     } finally {
@@ -216,6 +276,21 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           regions: parseRegionsInput(draft.regionsText), // preserving backend schema
           credentials,
           trigger_migration: Boolean(draft.enabled) !== Boolean(initialState.enabled),
+          vpn_servers_auto_refresh: Boolean(draft.vpn_servers_auto_refresh),
+          vpn_servers_refresh_period_s: Math.max(60, toNumber(draft.vpn_servers_refresh_period_s, DEFAULTS.vpn_servers_refresh_period_s)),
+          vpn_servers_refresh_source: String(draft.vpn_servers_refresh_source || DEFAULTS.vpn_servers_refresh_source),
+          vpn_servers_gluetun_json_mode: String(draft.vpn_servers_gluetun_json_mode || DEFAULTS.vpn_servers_gluetun_json_mode),
+          vpn_servers_storage_path: String(draft.vpn_servers_storage_path || '').trim() || null,
+          vpn_servers_official_url: String(draft.vpn_servers_official_url || DEFAULTS.vpn_servers_official_url).trim(),
+          vpn_servers_proton_credentials_source: String(draft.vpn_servers_proton_credentials_source || DEFAULTS.vpn_servers_proton_credentials_source),
+          vpn_servers_proton_username_env: String(draft.vpn_servers_proton_username_env || DEFAULTS.vpn_servers_proton_username_env).trim(),
+          vpn_servers_proton_password_env: String(draft.vpn_servers_proton_password_env || DEFAULTS.vpn_servers_proton_password_env).trim(),
+          vpn_servers_proton_totp_code_env: String(draft.vpn_servers_proton_totp_code_env || DEFAULTS.vpn_servers_proton_totp_code_env).trim(),
+          vpn_servers_proton_totp_secret_env: String(draft.vpn_servers_proton_totp_secret_env || DEFAULTS.vpn_servers_proton_totp_secret_env).trim(),
+          vpn_servers_proton_username: String(draft.vpn_servers_proton_username || '').trim() || null,
+          vpn_servers_proton_password: String(draft.vpn_servers_proton_password || '').trim() || null,
+          vpn_servers_proton_totp_code: String(draft.vpn_servers_proton_totp_code || '').trim() || null,
+          vpn_servers_proton_totp_secret: String(draft.vpn_servers_proton_totp_secret || '').trim() || null,
         }
 
         const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
@@ -241,6 +316,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           setMessage('VPN settings saved')
         }
         await fetchLeases()
+        await fetchRefreshStatus()
       } finally {
         setSectionSaving(sectionId, false)
       }
@@ -393,6 +469,47 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
     setMessage('Credential removal queued; save changes to apply')
   }
 
+  const refreshServersNow = async () => {
+    if (authRequired && !String(apiKey || '').trim()) {
+      setError('API key required by server for manual VPN server refresh')
+      return
+    }
+
+    setRefreshingServers(true)
+    setError('')
+    setMessage('')
+    try {
+      const headers = { 'Content-Type': 'application/json' }
+      if (String(apiKey || '').trim()) {
+        headers.Authorization = `Bearer ${String(apiKey).trim()}`
+      }
+
+      const response = await fetch(`${orchUrl}/api/v1/vpn/servers/refresh`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          source: draft.vpn_servers_refresh_source,
+          gluetun_json_mode: draft.vpn_servers_gluetun_json_mode,
+          reason: 'manual-ui',
+        }),
+      })
+
+      if (!response.ok) {
+        const failure = await response.json().catch(() => ({}))
+        throw new Error(failure?.detail || `HTTP ${response.status}`)
+      }
+
+      const result = await response.json().catch(() => ({}))
+      const source = String(result?.source || draft.vpn_servers_refresh_source)
+      setMessage(`VPN server list refreshed from ${source}`)
+      await fetchRefreshStatus()
+    } catch (refreshError) {
+      setError(`Failed to refresh VPN server list: ${refreshError.message || String(refreshError)}`)
+    } finally {
+      setRefreshingServers(false)
+    }
+  }
+
   if (loading) {
     return (
       <Card>
@@ -467,6 +584,108 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
               <SettingRow label="Restart Engines on VPN Reconnect" description="Restart engines when VPN node reconnects to refresh routes.">
                 <Switch checked={Boolean(draft.restart_engines_on_reconnect)} onCheckedChange={(value) => update('restart_engines_on_reconnect', Boolean(value))} />
               </SettingRow>
+
+              <div className="pt-4 border-t border-border/50 space-y-3">
+                <div className="text-sm font-medium">VPN Server List Refresh</div>
+
+                <SettingRow label="Refresh Source" description="Choose where server catalog updates come from.">
+                  <Select value={draft.vpn_servers_refresh_source} onValueChange={(value) => update('vpn_servers_refresh_source', value)}>
+                    <SelectTrigger className="w-full max-w-md"><SelectValue /></SelectTrigger>
+                    <SelectContent className="dark">
+                      {VPN_SERVER_REFRESH_SOURCE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
+
+                <SettingRow label="Automatic Refresh" description="Periodically refresh VPN provider server lists.">
+                  <Switch checked={Boolean(draft.vpn_servers_auto_refresh)} onCheckedChange={(value) => update('vpn_servers_auto_refresh', Boolean(value))} />
+                </SettingRow>
+
+                <SettingRow label="Refresh Period (s)" description="How often automatic refresh should run.">
+                  <Input type="number" min={60} max={604800} value={draft.vpn_servers_refresh_period_s} onChange={(e) => update('vpn_servers_refresh_period_s', toNumber(e.target.value, DEFAULTS.vpn_servers_refresh_period_s))} className="max-w-xs" />
+                </SettingRow>
+
+                <SettingRow label="servers.json Write Mode" description="How refreshed data is applied to servers.json.">
+                  <Select value={draft.vpn_servers_gluetun_json_mode} onValueChange={(value) => update('vpn_servers_gluetun_json_mode', value)}>
+                    <SelectTrigger className="w-full max-w-md"><SelectValue /></SelectTrigger>
+                    <SelectContent className="dark">
+                      {GLUETUN_JSON_MODE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
+
+                <SettingRow label="Storage Path (Optional)" description="Directory where servers-proton.json / servers-official.json / servers.json are written.">
+                  <Input value={draft.vpn_servers_storage_path} onChange={(e) => update('vpn_servers_storage_path', e.target.value)} placeholder="/data/gluetun" className="max-w-md" />
+                </SettingRow>
+
+                {draft.vpn_servers_refresh_source === 'gluetun_official' && (
+                  <SettingRow label="Official Catalog URL" description="Official Gluetun catalog URL (override if needed).">
+                    <Input value={draft.vpn_servers_official_url} onChange={(e) => update('vpn_servers_official_url', e.target.value)} className="max-w-md" />
+                  </SettingRow>
+                )}
+
+                {draft.vpn_servers_refresh_source === 'proton_paid' && (
+                  <>
+                    <SettingRow label="Proton Credentials Source" description="Use environment variables or persisted settings values.">
+                      <Select value={draft.vpn_servers_proton_credentials_source} onValueChange={(value) => update('vpn_servers_proton_credentials_source', value)}>
+                        <SelectTrigger className="w-full max-w-md"><SelectValue /></SelectTrigger>
+                        <SelectContent className="dark">
+                          {PROTON_CREDENTIALS_SOURCE_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </SettingRow>
+
+                    {draft.vpn_servers_proton_credentials_source === 'env' ? (
+                      <div className="space-y-3">
+                        <SettingRow label="Username Env Var" description="Environment variable containing Proton username.">
+                          <Input value={draft.vpn_servers_proton_username_env} onChange={(e) => update('vpn_servers_proton_username_env', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                        <SettingRow label="Password Env Var" description="Environment variable containing Proton password.">
+                          <Input value={draft.vpn_servers_proton_password_env} onChange={(e) => update('vpn_servers_proton_password_env', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                        <SettingRow label="TOTP Code Env Var" description="Optional one-time TOTP code variable.">
+                          <Input value={draft.vpn_servers_proton_totp_code_env} onChange={(e) => update('vpn_servers_proton_totp_code_env', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                        <SettingRow label="TOTP Secret Env Var" description="Optional base32 TOTP secret variable.">
+                          <Input value={draft.vpn_servers_proton_totp_secret_env} onChange={(e) => update('vpn_servers_proton_totp_secret_env', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <SettingRow label="Proton Username" description="Stored in settings for automated refresh.">
+                          <Input value={draft.vpn_servers_proton_username} onChange={(e) => update('vpn_servers_proton_username', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                        <SettingRow label="Proton Password" description="Stored in settings for automated refresh.">
+                          <Input type="password" value={draft.vpn_servers_proton_password} onChange={(e) => update('vpn_servers_proton_password', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                        <SettingRow label="TOTP Code (Optional)" description="One-time code; if empty, TOTP secret can be used.">
+                          <Input value={draft.vpn_servers_proton_totp_code} onChange={(e) => update('vpn_servers_proton_totp_code', e.target.value)} className="max-w-xs" />
+                        </SettingRow>
+                        <SettingRow label="TOTP Secret (Optional)" description="Base32 secret for automatic token generation.">
+                          <Input type="password" value={draft.vpn_servers_proton_totp_secret} onChange={(e) => update('vpn_servers_proton_totp_secret', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div className="flex items-center gap-3">
+                  <Button type="button" variant="outline" onClick={refreshServersNow} disabled={refreshingServers}>
+                    {refreshingServers ? 'Refreshing...' : 'Refresh VPN Server List Now'}
+                  </Button>
+                  {refreshStatus?.last_finished_at && (
+                    <span className="text-xs text-muted-foreground">
+                      Last run: {String(refreshStatus.last_finished_at)}
+                    </span>
+                  )}
+                </div>
+              </div>
             </CollapsibleContent>
           </Collapsible>
         </CardContent>

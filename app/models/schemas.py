@@ -171,6 +171,25 @@ class VPNSettingsResponse(BaseModel):
     port_cache_ttl_s: int = 60
     restart_engines_on_reconnect: bool = True
     unhealthy_restart_timeout_s: int = 60
+    vpn_servers_auto_refresh: bool = False
+    vpn_servers_refresh_period_s: int = 86400
+    vpn_servers_refresh_source: str = "proton_paid"
+    vpn_servers_gluetun_json_mode: str = "update"
+    vpn_servers_storage_path: Optional[str] = None
+    vpn_servers_official_url: str = "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json"
+    vpn_servers_proton_credentials_source: str = "env"
+    vpn_servers_proton_username_env: str = "PROTON_USERNAME"
+    vpn_servers_proton_password_env: str = "PROTON_PASSWORD"
+    vpn_servers_proton_totp_code_env: str = "PROTON_TOTP_CODE"
+    vpn_servers_proton_totp_secret_env: str = "PROTON_TOTP_SECRET"
+    vpn_servers_proton_username: Optional[str] = None
+    vpn_servers_proton_password: Optional[str] = None
+    vpn_servers_proton_totp_code: Optional[str] = None
+    vpn_servers_proton_totp_secret: Optional[str] = None
+    vpn_servers_filter_ipv6: str = "exclude"
+    vpn_servers_filter_secure_core: str = "include"
+    vpn_servers_filter_tor: str = "include"
+    vpn_servers_filter_free_tier: str = "include"
 
 
 class VPNSettingsUpdate(BaseModel):
@@ -189,6 +208,25 @@ class VPNSettingsUpdate(BaseModel):
     restart_engines_on_reconnect: Optional[bool] = None
     unhealthy_restart_timeout_s: Optional[int] = None
     trigger_migration: Optional[bool] = False
+    vpn_servers_auto_refresh: Optional[bool] = None
+    vpn_servers_refresh_period_s: Optional[int] = None
+    vpn_servers_refresh_source: Optional[str] = None
+    vpn_servers_gluetun_json_mode: Optional[str] = None
+    vpn_servers_storage_path: Optional[str] = None
+    vpn_servers_official_url: Optional[str] = None
+    vpn_servers_proton_credentials_source: Optional[str] = None
+    vpn_servers_proton_username_env: Optional[str] = None
+    vpn_servers_proton_password_env: Optional[str] = None
+    vpn_servers_proton_totp_code_env: Optional[str] = None
+    vpn_servers_proton_totp_secret_env: Optional[str] = None
+    vpn_servers_proton_username: Optional[str] = None
+    vpn_servers_proton_password: Optional[str] = None
+    vpn_servers_proton_totp_code: Optional[str] = None
+    vpn_servers_proton_totp_secret: Optional[str] = None
+    vpn_servers_filter_ipv6: Optional[str] = None
+    vpn_servers_filter_secure_core: Optional[str] = None
+    vpn_servers_filter_tor: Optional[str] = None
+    vpn_servers_filter_free_tier: Optional[str] = None
 
 class OrchestratorStatusResponse(BaseModel):
     """
@@ -335,6 +373,25 @@ class VPNSettingsSchema(BaseModel):
     port_cache_ttl_s: int = 60
     restart_engines_on_reconnect: bool = True
     unhealthy_restart_timeout_s: int = 60
+    vpn_servers_auto_refresh: bool = False
+    vpn_servers_refresh_period_s: int = 86400
+    vpn_servers_refresh_source: str = "proton_paid"
+    vpn_servers_gluetun_json_mode: str = "update"
+    vpn_servers_storage_path: Optional[str] = None
+    vpn_servers_official_url: str = "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json"
+    vpn_servers_proton_credentials_source: str = "env"
+    vpn_servers_proton_username_env: str = "PROTON_USERNAME"
+    vpn_servers_proton_password_env: str = "PROTON_PASSWORD"
+    vpn_servers_proton_totp_code_env: str = "PROTON_TOTP_CODE"
+    vpn_servers_proton_totp_secret_env: str = "PROTON_TOTP_SECRET"
+    vpn_servers_proton_username: Optional[str] = None
+    vpn_servers_proton_password: Optional[str] = None
+    vpn_servers_proton_totp_code: Optional[str] = None
+    vpn_servers_proton_totp_secret: Optional[str] = None
+    vpn_servers_filter_ipv6: str = "exclude"
+    vpn_servers_filter_secure_core: str = "include"
+    vpn_servers_filter_tor: str = "include"
+    vpn_servers_filter_free_tier: str = "include"
 
 
 class ConsolidatedSettingsSchema(BaseModel):

@@ -219,3 +219,51 @@ def test_update_vpn_settings_trigger_migration_on_disable_marks_vpn_engines_drai
     set_desired.assert_called_once_with(0)
     request_reconcile.assert_called_once_with(reason="vpn_disabled_cleanup")
     mark_draining.assert_called_once_with("engine-vpn", reason="vpn_enable_migration")
+
+
+def test_update_vpn_settings_supports_server_refresh_options():
+    from app import main
+
+    settings = main.VPNSettingsUpdate(
+        enabled=True,
+        dynamic_vpn_management=True,
+        preferred_engines_per_vpn=10,
+        protocol="wireguard",
+        provider="protonvpn",
+        regions=[],
+        credentials=[],
+        api_port=8001,
+        health_check_interval_s=5,
+        port_cache_ttl_s=60,
+        restart_engines_on_reconnect=True,
+        unhealthy_restart_timeout_s=60,
+        vpn_servers_auto_refresh=True,
+        vpn_servers_refresh_period_s=3600,
+        vpn_servers_refresh_source="gluetun_official",
+        vpn_servers_gluetun_json_mode="update",
+        vpn_servers_official_url="https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json",
+    )
+
+    saved_payload = {}
+
+    def _save_side_effect(payload):
+        saved_payload.update(payload)
+        return True
+
+    with patch("app.services.settings_persistence.SettingsPersistence.load_vpn_config", return_value={}), \
+         patch("app.services.settings_persistence.SettingsPersistence.save_vpn_config", side_effect=_save_side_effect), \
+         patch("app.main.credential_manager.configure", new=AsyncMock(return_value={
+             "dynamic_vpn_management": True,
+             "max_vpn_capacity": 1,
+             "available": 1,
+             "leased": 0,
+         })), \
+         patch.object(main.vpn_controller, "is_running", return_value=False), \
+         patch.object(main.vpn_controller, "start", new=AsyncMock()):
+        response = asyncio.run(main.update_vpn_settings(settings))
+
+    assert response["vpn_servers_auto_refresh"] is True
+    assert response["vpn_servers_refresh_period_s"] == 3600
+    assert response["vpn_servers_refresh_source"] == "gluetun_official"
+    assert response["vpn_servers_gluetun_json_mode"] == "update"
+    assert saved_payload["vpn_servers_refresh_source"] == "gluetun_official"

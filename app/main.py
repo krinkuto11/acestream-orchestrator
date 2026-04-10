@@ -75,6 +75,7 @@ from .services.hls_segmenter import hls_segmenter_service
 from .services.docker_client import get_client, docker_event_watcher
 from .services.vpn_credentials import credential_manager
 from .services.proton_updater import ProtonServerUpdater, ProtonFilterConfig
+from .services.vpn_servers_refresh import vpn_servers_refresh_service
 from .utils.wireguard_parser import parse_wireguard_conf
 from .proxy.manager import ProxyManager
 from .proxy.ace_api_client import AceLegacyApiClient, AceLegacyApiError
@@ -477,6 +478,12 @@ class ProtonServersRefreshRequest(BaseModel):
     free_tier: str = "include"
 
 
+class VPNServersRefreshRequest(BaseModel):
+    source: Optional[str] = None
+    gluetun_json_mode: Optional[str] = None
+    reason: Optional[str] = None
+
+
 def _trigger_engine_generation_rollout(reason: str) -> Dict[str, Any]:
     """Update target engine config generation and request reconciliation."""
     target_hash = compute_current_engine_config_hash()
@@ -851,6 +858,8 @@ async def lifespan(app: FastAPI):
     # Start cache cleanup task
     await start_cleanup_task(interval=60)
     logger.info("Cache service started")
+
+    await vpn_servers_refresh_service.start()
     
     yield
     
@@ -867,6 +876,7 @@ async def lifespan(app: FastAPI):
     await stream_loop_detector.stop()  # Stop stream loop detector
     await looping_streams_tracker.stop()  # Stop looping streams tracker
     await db_maintenance_service.stop()  # Stop DB maintenance loop
+    await vpn_servers_refresh_service.stop()  # Stop VPN servers refresh loop
     await legacy_stream_monitoring_service.stop_all()  # Stop legacy monitor sessions
     await stop_cleanup_task()  # Stop cache cleanup
     
@@ -2674,6 +2684,35 @@ async def refresh_proton_servers(payload: ProtonServersRefreshRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/vpn/servers/refresh", dependencies=[Depends(require_api_key)])
+async def refresh_vpn_servers(payload: Optional[VPNServersRefreshRequest] = None):
+    """Refresh VPN provider servers list using current VPN settings or request overrides."""
+    request_payload = payload or VPNServersRefreshRequest()
+    overrides = {
+        "vpn_servers_refresh_source": request_payload.source,
+        "vpn_servers_gluetun_json_mode": request_payload.gluetun_json_mode,
+    }
+
+    try:
+        result = await vpn_servers_refresh_service.refresh_now(
+            reason=str(request_payload.reason or "manual").strip() or "manual",
+            overrides=overrides,
+        )
+        if not result.get("ok", False):
+            raise HTTPException(status_code=409, detail=result.get("detail") or "refresh already in progress")
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/vpn/servers/refresh/status")
+def get_vpn_servers_refresh_status():
+    """Return current VPN servers refresh scheduler status and last result."""
+    return vpn_servers_refresh_service.get_status()
 
 
 @app.get("/vpn/leases")
@@ -5597,6 +5636,25 @@ def get_vpn_settings():
         "port_cache_ttl_s": cfg.GLUETUN_PORT_CACHE_TTL_S,
         "restart_engines_on_reconnect": cfg.VPN_RESTART_ENGINES_ON_RECONNECT,
         "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
+        "vpn_servers_auto_refresh": False,
+        "vpn_servers_refresh_period_s": 86400,
+        "vpn_servers_refresh_source": "proton_paid",
+        "vpn_servers_gluetun_json_mode": "update",
+        "vpn_servers_storage_path": None,
+        "vpn_servers_official_url": "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json",
+        "vpn_servers_proton_credentials_source": "env",
+        "vpn_servers_proton_username_env": "PROTON_USERNAME",
+        "vpn_servers_proton_password_env": "PROTON_PASSWORD",
+        "vpn_servers_proton_totp_code_env": "PROTON_TOTP_CODE",
+        "vpn_servers_proton_totp_secret_env": "PROTON_TOTP_SECRET",
+        "vpn_servers_proton_username": None,
+        "vpn_servers_proton_password": None,
+        "vpn_servers_proton_totp_code": None,
+        "vpn_servers_proton_totp_secret": None,
+        "vpn_servers_filter_ipv6": "exclude",
+        "vpn_servers_filter_secure_core": "include",
+        "vpn_servers_filter_tor": "include",
+        "vpn_servers_filter_free_tier": "include",
     }
 
     persisted = SettingsPersistence.load_vpn_config()
@@ -5620,6 +5678,58 @@ def get_vpn_settings():
             merged["regions"] = []
         if not isinstance(merged.get("credentials"), list):
             merged["credentials"] = []
+
+        merged["vpn_servers_auto_refresh"] = bool(merged.get("vpn_servers_auto_refresh", False))
+        try:
+            merged["vpn_servers_refresh_period_s"] = max(60, int(merged.get("vpn_servers_refresh_period_s", 86400)))
+        except Exception:
+            merged["vpn_servers_refresh_period_s"] = 86400
+
+        refresh_source = str(merged.get("vpn_servers_refresh_source") or "proton_paid").strip().lower()
+        if refresh_source not in {"proton_paid", "gluetun_official"}:
+            refresh_source = "proton_paid"
+        merged["vpn_servers_refresh_source"] = refresh_source
+
+        json_mode = str(merged.get("vpn_servers_gluetun_json_mode") or "update").strip().lower()
+        if json_mode not in {"none", "replace", "update"}:
+            json_mode = "update"
+        merged["vpn_servers_gluetun_json_mode"] = json_mode
+
+        credentials_source = str(merged.get("vpn_servers_proton_credentials_source") or "env").strip().lower()
+        if credentials_source not in {"env", "settings"}:
+            credentials_source = "env"
+        merged["vpn_servers_proton_credentials_source"] = credentials_source
+
+        for env_key, fallback in (
+            ("vpn_servers_proton_username_env", "PROTON_USERNAME"),
+            ("vpn_servers_proton_password_env", "PROTON_PASSWORD"),
+            ("vpn_servers_proton_totp_code_env", "PROTON_TOTP_CODE"),
+            ("vpn_servers_proton_totp_secret_env", "PROTON_TOTP_SECRET"),
+        ):
+            merged[env_key] = str(merged.get(env_key) or fallback).strip() or fallback
+
+        merged["vpn_servers_storage_path"] = str(merged.get("vpn_servers_storage_path") or "").strip() or None
+        merged["vpn_servers_official_url"] = (
+            str(merged.get("vpn_servers_official_url") or defaults["vpn_servers_official_url"]).strip()
+            or defaults["vpn_servers_official_url"]
+        )
+
+        for secret_key in (
+            "vpn_servers_proton_username",
+            "vpn_servers_proton_password",
+            "vpn_servers_proton_totp_code",
+            "vpn_servers_proton_totp_secret",
+        ):
+            merged[secret_key] = str(merged.get(secret_key) or "").strip() or None
+
+        for filter_key, fallback in (
+            ("vpn_servers_filter_ipv6", "exclude"),
+            ("vpn_servers_filter_secure_core", "include"),
+            ("vpn_servers_filter_tor", "include"),
+            ("vpn_servers_filter_free_tier", "include"),
+        ):
+            value = str(merged.get(filter_key) or fallback).strip().lower()
+            merged[filter_key] = value if value in {"include", "exclude", "only"} else fallback
         return merged
 
     try:
@@ -5647,6 +5757,25 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
         "port_cache_ttl_s": cfg.GLUETUN_PORT_CACHE_TTL_S,
         "restart_engines_on_reconnect": cfg.VPN_RESTART_ENGINES_ON_RECONNECT,
         "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
+        "vpn_servers_auto_refresh": False,
+        "vpn_servers_refresh_period_s": 86400,
+        "vpn_servers_refresh_source": "proton_paid",
+        "vpn_servers_gluetun_json_mode": "update",
+        "vpn_servers_storage_path": None,
+        "vpn_servers_official_url": "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json",
+        "vpn_servers_proton_credentials_source": "env",
+        "vpn_servers_proton_username_env": "PROTON_USERNAME",
+        "vpn_servers_proton_password_env": "PROTON_PASSWORD",
+        "vpn_servers_proton_totp_code_env": "PROTON_TOTP_CODE",
+        "vpn_servers_proton_totp_secret_env": "PROTON_TOTP_SECRET",
+        "vpn_servers_proton_username": None,
+        "vpn_servers_proton_password": None,
+        "vpn_servers_proton_totp_code": None,
+        "vpn_servers_proton_totp_secret": None,
+        "vpn_servers_filter_ipv6": "exclude",
+        "vpn_servers_filter_secure_core": "include",
+        "vpn_servers_filter_tor": "include",
+        "vpn_servers_filter_free_tier": "include",
     }
 
     previously_enabled = bool(current.get("enabled", False))
@@ -5688,6 +5817,88 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
             raise HTTPException(status_code=400, detail="unhealthy_restart_timeout_s must be >= 1")
         current["unhealthy_restart_timeout_s"] = settings.unhealthy_restart_timeout_s
         cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S = settings.unhealthy_restart_timeout_s
+
+    def _valid_env_name(name: str) -> bool:
+        if not name:
+            return False
+        if not (name[0].isalpha() or name[0] == "_"):
+            return False
+        return all(ch.isalnum() or ch == "_" for ch in name)
+
+    if settings.vpn_servers_auto_refresh is not None:
+        current["vpn_servers_auto_refresh"] = bool(settings.vpn_servers_auto_refresh)
+
+    if settings.vpn_servers_refresh_period_s is not None:
+        if settings.vpn_servers_refresh_period_s < 60:
+            raise HTTPException(status_code=400, detail="vpn_servers_refresh_period_s must be >= 60")
+        current["vpn_servers_refresh_period_s"] = int(settings.vpn_servers_refresh_period_s)
+
+    if settings.vpn_servers_refresh_source is not None:
+        source = str(settings.vpn_servers_refresh_source).strip().lower()
+        if source not in {"proton_paid", "gluetun_official"}:
+            raise HTTPException(status_code=400, detail="vpn_servers_refresh_source must be 'proton_paid' or 'gluetun_official'")
+        current["vpn_servers_refresh_source"] = source
+
+    if settings.vpn_servers_gluetun_json_mode is not None:
+        json_mode = str(settings.vpn_servers_gluetun_json_mode).strip().lower()
+        if json_mode not in {"none", "replace", "update"}:
+            raise HTTPException(status_code=400, detail="vpn_servers_gluetun_json_mode must be 'none', 'replace', or 'update'")
+        current["vpn_servers_gluetun_json_mode"] = json_mode
+
+    if settings.vpn_servers_storage_path is not None:
+        current["vpn_servers_storage_path"] = str(settings.vpn_servers_storage_path or "").strip() or None
+
+    if settings.vpn_servers_official_url is not None:
+        official_url = str(settings.vpn_servers_official_url or "").strip()
+        if not official_url:
+            raise HTTPException(status_code=400, detail="vpn_servers_official_url cannot be empty")
+        if not (official_url.startswith("http://") or official_url.startswith("https://")):
+            raise HTTPException(status_code=400, detail="vpn_servers_official_url must start with http:// or https://")
+        current["vpn_servers_official_url"] = official_url
+
+    if settings.vpn_servers_proton_credentials_source is not None:
+        credentials_source = str(settings.vpn_servers_proton_credentials_source).strip().lower()
+        if credentials_source not in {"env", "settings"}:
+            raise HTTPException(status_code=400, detail="vpn_servers_proton_credentials_source must be 'env' or 'settings'")
+        current["vpn_servers_proton_credentials_source"] = credentials_source
+
+    for env_key in (
+        "vpn_servers_proton_username_env",
+        "vpn_servers_proton_password_env",
+        "vpn_servers_proton_totp_code_env",
+        "vpn_servers_proton_totp_secret_env",
+    ):
+        value = getattr(settings, env_key)
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if not _valid_env_name(normalized):
+            raise HTTPException(status_code=400, detail=f"{env_key} must be a valid environment variable name")
+        current[env_key] = normalized
+
+    for key in (
+        "vpn_servers_proton_username",
+        "vpn_servers_proton_password",
+        "vpn_servers_proton_totp_code",
+        "vpn_servers_proton_totp_secret",
+    ):
+        value = getattr(settings, key)
+        if value is not None:
+            current[key] = str(value).strip() or None
+
+    for filter_key in (
+        "vpn_servers_filter_ipv6",
+        "vpn_servers_filter_secure_core",
+        "vpn_servers_filter_tor",
+        "vpn_servers_filter_free_tier",
+    ):
+        value = getattr(settings, filter_key)
+        if value is None:
+            continue
+        normalized = str(value).strip().lower()
+        if normalized not in {"include", "exclude", "only"}:
+            raise HTTPException(status_code=400, detail=f"{filter_key} must be one of: include|exclude|only")
+        current[filter_key] = normalized
 
     # Dynamic controller mode is mandatory for VPN mode.
     current["dynamic_vpn_management"] = True
@@ -5998,6 +6209,25 @@ def _load_vpn_settings_for_credential_ops() -> Dict[str, Any]:
         "port_cache_ttl_s": cfg.GLUETUN_PORT_CACHE_TTL_S,
         "restart_engines_on_reconnect": cfg.VPN_RESTART_ENGINES_ON_RECONNECT,
         "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
+        "vpn_servers_auto_refresh": False,
+        "vpn_servers_refresh_period_s": 86400,
+        "vpn_servers_refresh_source": "proton_paid",
+        "vpn_servers_gluetun_json_mode": "update",
+        "vpn_servers_storage_path": None,
+        "vpn_servers_official_url": "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json",
+        "vpn_servers_proton_credentials_source": "env",
+        "vpn_servers_proton_username_env": "PROTON_USERNAME",
+        "vpn_servers_proton_password_env": "PROTON_PASSWORD",
+        "vpn_servers_proton_totp_code_env": "PROTON_TOTP_CODE",
+        "vpn_servers_proton_totp_secret_env": "PROTON_TOTP_SECRET",
+        "vpn_servers_proton_username": None,
+        "vpn_servers_proton_password": None,
+        "vpn_servers_proton_totp_code": None,
+        "vpn_servers_proton_totp_secret": None,
+        "vpn_servers_filter_ipv6": "exclude",
+        "vpn_servers_filter_secure_core": "include",
+        "vpn_servers_filter_tor": "include",
+        "vpn_servers_filter_free_tier": "include",
     }
 
 
