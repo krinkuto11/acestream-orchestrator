@@ -310,19 +310,14 @@ class ClientManager:
             self.last_active_time = time.time()
             
             if self.redis_client:
-                # Get client IP before removing the data
-                client_key = RedisKeys.client_metadata(self.content_id, client_id)
-                client_data = self.redis_client.hgetall(client_key)
-                if client_data and b'ip_address' in client_data:
-                    client_ip = client_data[b'ip_address'].decode('utf-8')
-                elif client_data and 'ip_address' in client_data:
-                    client_ip = client_data['ip_address']
-                
+                # Use pipeline for atomic-like removal to avoid race conditions
+                # where a client ID exists in the set but its metadata is gone.
+                pipe = self.redis_client.pipeline(transaction=False)
                 # Remove from stream's client set
-                self.redis_client.srem(self.client_set_key, client_id)
-                
+                pipe.srem(self.client_set_key, client_id)
                 # Delete individual client key
-                self.redis_client.delete(client_key)
+                pipe.delete(client_key)
+                pipe.execute()
                 
                 # Check if this was the last client
                 remaining = self.redis_client.scard(self.client_set_key) or 0

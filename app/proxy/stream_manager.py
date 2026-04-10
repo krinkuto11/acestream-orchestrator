@@ -1452,6 +1452,15 @@ class StreamManager:
                 # Decay runway by sample age, then down-weight low-confidence
                 # samples to protect failover from optimistic telemetry.
                 effective_runway = max(0.0, runway_value - age_s)
+                
+                # STALE DATA PENALTY: Telemetry older than 2s is penalized heavily
+                # to trigger faster failover if client updates stop.
+                if age_s > 2.0:
+                    # Hyperbolic runway decay
+                    effective_runway /= (age_s - 1.0)
+                    # Severe confidence drop
+                    confidence *= 0.2
+
                 confidence_weight = max(confidence_floor, 0.5 + (0.5 * confidence))
                 confidence_adjusted = effective_runway * confidence_weight
                 candidate_values.append(confidence_adjusted)
