@@ -20,6 +20,7 @@ import httpx
 
 from .proton_updater import ProtonFilterConfig, ProtonServerUpdater
 from .settings_persistence import SettingsPersistence
+from . import gluetun_servers_volume
 
 logger = logging.getLogger(__name__)
 
@@ -312,7 +313,7 @@ class VPNServersRefreshService:
             self._atomic_write_json(merged_file, existing)
 
         provider_count = max(0, len([k for k in payload.keys() if k != "version"]))
-        return {
+        result = {
             "storage_path": str(storage_dir),
             "source_url": source_url,
             "gluetun_json_mode": mode,
@@ -322,6 +323,14 @@ class VPNServersRefreshService:
                 "providers": provider_count,
             },
         }
+
+        # Propagate the updated catalog into the shared Gluetun volume so that
+        # newly-provisioned Gluetun containers validate hostnames against the
+        # refreshed list rather than their stale bundled catalog.
+        if mode != "none":
+            await asyncio.to_thread(gluetun_servers_volume.sync, merged_file)
+
+        return result
 
     async def _refresh_proton(self, settings: Dict[str, Any]) -> Dict[str, Any]:
         credentials_source = settings["vpn_servers_proton_credentials_source"]
@@ -358,6 +367,12 @@ class VPNServersRefreshService:
             filters=filters,
             gluetun_json_mode=settings["vpn_servers_gluetun_json_mode"],
         )
+
+        # Propagate the updated catalog into the shared Gluetun volume.
+        merged_file = result.get("servers_file")
+        if merged_file and settings["vpn_servers_gluetun_json_mode"] != "none":
+            await asyncio.to_thread(gluetun_servers_volume.sync, Path(merged_file))
+
         return {
             **result,
             "credentials_source": credentials_source,

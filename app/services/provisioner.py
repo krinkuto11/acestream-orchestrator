@@ -250,23 +250,19 @@ class ResourceScheduler:
             return False
 
         # Docker "running" can precede Gluetun control API readiness by a few seconds.
-        # Require control API reachability before scheduling engines on dynamic nodes.
+        # Require control API reachability and 'connected' VPN status before
+        # scheduling engines on dynamic nodes.
         status = str(node.get("status") or "").strip().lower()
-        if status == "running" and not ResourceScheduler._is_vpn_control_api_reachable(container_name):
+        if status == "running" and not ResourceScheduler._is_vpn_control_api_reachable(container_name, require_connected=True):
             return False
 
         return True
 
     @staticmethod
-    def _is_vpn_control_api_reachable(vpn_container: str) -> bool:
+    def _is_vpn_control_api_reachable(vpn_container: str, require_connected: bool = False) -> bool:
         try:
-            with httpx.Client(timeout=1.5) as client:
-                response = client.get(f"http://{vpn_container}:{cfg.GLUETUN_API_PORT}/v1/vpn/status")
-                if response.status_code == 401:
-                    # API is reachable but auth is required.
-                    return True
-                response.raise_for_status()
-                return True
+            from .gluetun import _is_control_server_reachable_sync
+            return _is_control_server_reachable_sync(vpn_container, require_connected=require_connected)
         except Exception as exc:
             logger.debug("Dynamic VPN '%s' control API not reachable yet: %s", vpn_container, exc)
             return False
@@ -351,14 +347,16 @@ class ResourceScheduler:
                 return False, None
 
             if not state.has_forwarded_engine_for_vpn(vpn_container):
-                p2p_port = get_forwarded_port_sync(vpn_container)
-                is_forwarded = p2p_port is not None
+                from .gluetun import wait_for_port_sync
+                p2p_port = wait_for_port_sync(vpn_container)
+                is_forwarded = p2p_port is not None and p2p_port > 0
                 if is_forwarded:
                     logger.info(f"Scheduled forwarded engine for VPN '{vpn_container}' with P2P port {p2p_port}")
         else:
             if not state.has_forwarded_engine():
-                p2p_port = get_forwarded_port_sync(vpn_container)
-                is_forwarded = p2p_port is not None
+                from .gluetun import wait_for_port_sync
+                p2p_port = wait_for_port_sync(vpn_container)
+                is_forwarded = p2p_port is not None and p2p_port > 0
                 if is_forwarded:
                     logger.info(f"Scheduled forwarded engine with P2P port {p2p_port}")
 

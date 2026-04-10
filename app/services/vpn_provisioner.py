@@ -12,6 +12,7 @@ from docker.errors import APIError, NotFound
 
 from ..core.config import cfg
 from .docker_client import get_client, get_orchestrator_network
+from . import gluetun_servers_volume
 from .state import state
 from .vpn_credentials import credential_manager
 from .vpn_reputation import vpn_reputation_manager
@@ -778,6 +779,16 @@ class VPNProvisioner:
         if require_wireguard_module:
             cap_add.append("SYS_MODULE")
             volumes["/lib/modules"] = {"bind": "/lib/modules", "mode": "ro"}
+
+        # Share the orchestrator's refreshed servers.json catalog with Gluetun
+        # via a named Docker volume (no host paths required).  Gluetun reads its
+        # servers list from /tmp/gluetun/ on startup; mounting our volume there
+        # ensures it validates SERVER_HOSTNAMES against our up-to-date data
+        # rather than the potentially stale catalog bundled in its Docker image.
+        volumes[gluetun_servers_volume.VOLUME_NAME] = {
+            "bind": "/tmp/gluetun",
+            "mode": "ro",
+        }
 
         return cap_add, devices, volumes
 

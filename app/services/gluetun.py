@@ -123,7 +123,7 @@ def _check_container_health_sync(container_name: str) -> Optional[bool]:
         return None
 
 
-def _is_control_server_reachable_sync(container_name: str, timeout: float = 1.5) -> bool:
+def _is_control_server_reachable_sync(container_name: str, timeout: float = 1.5, require_connected: bool = False) -> bool:
     try:
         with httpx.Client(timeout=timeout) as client:
             response = client.get(f"http://{container_name}:{cfg.GLUETUN_API_PORT}/v1/vpn/status")
@@ -131,6 +131,10 @@ def _is_control_server_reachable_sync(container_name: str, timeout: float = 1.5)
                 # Control server is reachable but auth is required.
                 return True
             response.raise_for_status()
+            data = response.json()
+            if require_connected:
+                status = str(data.get("status") or "").strip().lower()
+                return status == "connected"
             return True
     except Exception as exc:
         logger.debug("Control server not reachable yet for '%s': %s", container_name, exc)
@@ -251,7 +255,7 @@ async def fetch_forwarded_port(container_name: Optional[str] = None) -> Optional
             response.raise_for_status()
             data = response.json()
             port = data.get("port")
-            if port is None:
+            if port is None or str(port) == "0":
                 return None
             port_int = int(port)
             _set_cached_port(target, port_int)
@@ -288,7 +292,7 @@ def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[in
             response.raise_for_status()
             data = response.json()
             port = data.get("port")
-            if port is None:
+            if port is None or str(port) == "0":
                 return None
             port_int = int(port)
             _set_cached_port(target, port_int)
@@ -305,6 +309,24 @@ def get_forwarded_port_sync(container_name: Optional[str] = None) -> Optional[in
     except Exception as exc:
         logger.warning("Failed to fetch forwarded port for '%s': %s", target, exc)
         return None
+
+
+def wait_for_port_sync(container_name: Optional[str] = None, timeout: float = 30.0) -> Optional[int]:
+    """Block until a valid forwarded port (>0) is available, or timeout."""
+    import time
+    target = _resolve_target_container(container_name)
+    if not target:
+        return None
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        port = get_forwarded_port_sync(target)
+        if port and port > 0:
+            return port
+        time.sleep(1.5)
+    
+    logger.warning("Timed out waiting for forwarded port from VPN node '%s'", target)
+    return None
 
 
 def normalize_provider_name(provider: str) -> str:

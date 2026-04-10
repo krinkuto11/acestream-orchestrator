@@ -169,14 +169,18 @@ class ProtonServerUpdater:
         return session_cls, (two_fa_exc, auth_exc)
 
     @staticmethod
-    def _ensure_gpg_available() -> None:
-        # proton-core uses python-gnupg internally for modulus verification.
-        if shutil.which("gpg"):
-            return
-        raise RuntimeError(
-            "Proton refresh requires gpg, but it is not available in this runtime image. "
-            "Install gnupg (gpg) in the container runtime."
-        )
+    def _check_gpg_available() -> bool:
+        """Check if the 'gpg' (GnuPG) binary is present in the system PATH."""
+        return bool(shutil.which("gpg"))
+
+    def _ensure_gpg_available(self) -> None:
+        """Verify that gnupg is available, raising an error with guidance if not."""
+        if not self._check_gpg_available():
+            raise RuntimeError(
+                "The 'gpg' (GnuPG) binary was not found in the system PATH. "
+                "The Proton API integration requires gpg for secure authentication. "
+                "Please install gnupg (gpg) in the container/host environment."
+            )
 
     @staticmethod
     def _country_name(value: Any) -> str:
@@ -436,7 +440,15 @@ class ProtonServerUpdater:
             self._storage_path,
         )
 
-        session = Session(appversion=APP_VERSION, user_agent=USER_AGENT)
+        try:
+            session = Session(appversion=APP_VERSION, user_agent=USER_AGENT)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to initialize Proton session (GPG/Keyring issue). "
+                f"Ensure gpg is working and the storage path '{self._storage_path}' is writable. "
+                f"Error: {exc}"
+            ) from exc
+
         try:
             try:
                 authenticated = await session.async_authenticate(username, password)
