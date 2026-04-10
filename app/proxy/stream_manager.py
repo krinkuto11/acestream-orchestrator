@@ -1476,9 +1476,31 @@ class StreamManager:
                 return float(decayed)
             return 0.0
 
+        # --- ROBUST STATISTICAL OUTLIER REJECTION ---
+        count = len(candidate_values)
         candidate_values.sort()
-        p10_index = int((len(candidate_values) - 1) * 0.10)
-        conservative_runway = max(0.0, float(candidate_values[p10_index]))
+
+        if count <= 2:
+            # For 1-2 clients, use the mean to prevent a single outlier from killing the stream.
+            result = sum(candidate_values) / max(1, count)
+        else:
+            # For 3+ clients, filter out lagging outliers using Median and Mean Absolute Deviation (MAD).
+            median_val = candidate_values[count // 2]
+            # Calculate Mean Absolute Deviation from the median for robustness.
+            abs_devs = [abs(x - median_val) for x in candidate_values]
+            mad = sum(abs_devs) / count
+            
+            # Reject clients who are more than 1 deviation significantly below the median.
+            # This ignores the "tail" of starving clients if the majority is healthy.
+            cutoff = median_val - mad
+            healthy_pack = [x for x in candidate_values if x >= cutoff]
+            
+            if not healthy_pack:
+                result = candidate_values[0]
+            else:
+                result = min(healthy_pack)
+
+        conservative_runway = max(0.0, float(result))
         self._last_runway_estimate_s = conservative_runway
         self._last_runway_estimate_ts = now
         return conservative_runway
