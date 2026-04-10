@@ -1557,25 +1557,55 @@ class StreamManager:
         # Keep margin for control-plane swap propagation.
         safety_margin = 2.0
         startup_grace_s = 30.0
-
         current_buffer = self._get_max_client_buffer_seconds()
 
         start_time = float(getattr(self, "_start_time", 0.0) or 0.0)
         stream_uptime = max(0.0, time.time() - start_time) if start_time > 0.0 else 0.0
-
-        # During startup, tolerate pauses while the engine joins peers and
-        # initial prebuffer fills. Also keep tolerance generous until we see
-        # at least some real client runway.
-        in_startup_grace = stream_uptime < startup_grace_s
+        
+        # Determine if clients haven't reported runway yet
         no_runway_yet = current_buffer <= 0.0
 
-        if in_startup_grace or no_runway_yet:
-            dynamic_threshold = max_tolerance
+        # Dynamic startup grace optimization
+        probe = self.collect_legacy_stats_probe(force=False)
+        is_api = bool(self._is_api_mode() and self.ace_api_client)
+
+        if is_api and probe:
+            status = str(probe.get("status_text") or "").lower()
+            peers = int(probe.get("peers") or 0)
+            speed = int(probe.get("speed_down") or 0)
+            
+            # Phase 1: Network Readiness (0-10s)
+            if stream_uptime < 10.0:
+                if status in ("error", "err"):
+                    logger.debug(f"[{self.content_id}] Phase 1: Fatal error detected in probe ({status}). Bypassing grace.")
+                    dynamic_threshold = min_tolerance
+                elif stream_uptime > 7.0 and peers == 0:
+                    logger.debug(f"[{self.content_id}] Phase 1: No peers found after 7s. Bypassing grace.")
+                    dynamic_threshold = min_tolerance
+                else:
+                    dynamic_threshold = max_tolerance
+            # Phase 2: Swarm Readiness (10-30s)
+            elif stream_uptime < startup_grace_s:
+                if status in ("error", "err"):
+                    logger.debug(f"[{self.content_id}] Phase 2: Fatal error detected in probe ({status}). Bypassing grace.")
+                    dynamic_threshold = min_tolerance
+                elif peers > 0 or speed > 0:
+                    # Swarm is active, allow time for prebuffering
+                    dynamic_threshold = max_tolerance
+                else:
+                    # Still no sign of life after 10s, drop to dynamic tolerance
+                    dynamic_threshold = max(min_tolerance, min(max_tolerance, current_buffer - safety_margin))
+            else:
+                # Normal operation after grace period
+                dynamic_threshold = max(min_tolerance, min(max_tolerance, current_buffer - safety_margin))
         else:
-            dynamic_threshold = max(
-                min_tolerance,
-                min(max_tolerance, current_buffer - safety_margin),
-            )
+            # Fallback for non-API modes or missing probes
+            # Use a reduced grace period of 15s instead of the full 30s
+            reduced_grace = 15.0
+            if stream_uptime < reduced_grace or (no_runway_yet and stream_uptime < startup_grace_s):
+                dynamic_threshold = max_tolerance
+            else:
+                dynamic_threshold = max(min_tolerance, min(max_tolerance, current_buffer - safety_margin))
 
         return float(dynamic_threshold), float(current_buffer), float(max_tolerance)
 
