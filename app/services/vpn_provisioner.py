@@ -567,17 +567,29 @@ class VPNProvisioner:
 
         explicit_hostnames = self._extract_explicit_hostnames(env=env, protocol=protocol)
         if explicit_hostnames:
-            compatibility = vpn_reputation_manager.hostnames_support_port_forwarding(
-                provider=provider,
-                protocol=protocol,
-                hostnames=explicit_hostnames,
-                require_port_forwarding=True,
-            )
-            if compatibility is True:
+            # Filter to only hostnames present and forwarding-capable in the catalog
+            compatible_hostnames = []
+            servers = vpn_reputation_manager._provider_servers_from_catalog(provider)
+            normalized_protocol = vpn_reputation_manager._normalize_protocol(protocol)
+            for hostname in explicit_hostnames:
+                for server in servers or []:
+                    server_hostname = str(server.get("hostname") or "").strip().lower()
+                    if not server_hostname or server_hostname != hostname:
+                        continue
+                    server_protocol = vpn_reputation_manager._normalize_protocol(server.get("vpn"))
+                    if normalized_protocol and server_protocol and server_protocol != normalized_protocol:
+                        continue
+                    if normalized_protocol and not server_protocol:
+                        continue
+                    if not vpn_reputation_manager._server_supports_port_forwarding(server):
+                        continue
+                    compatible_hostnames.append(hostname)
+                    break
+            if compatible_hostnames:
+                env["SERVER_HOSTNAMES"] = ",".join(dict.fromkeys(compatible_hostnames))
                 return
-        else:
-            compatibility = None
-
+            # If none remain, fall through to drop pinning
+        # else: no explicit hostnames or none compatible
         keys_to_clear = ["SERVER_HOSTNAMES"]
         if protocol == "wireguard":
             keys_to_clear.extend(["WIREGUARD_ENDPOINTS", "WIREGUARD_ENDPOINT_IP", "WIREGUARD_ENDPOINT_PORT"])
@@ -591,9 +603,7 @@ class VPNProvisioner:
                 cleared_keys.append(key)
 
         if cleared_keys:
-            reason = "incompatible with forwarding filters"
-            if compatibility is None and explicit_hostnames:
-                reason = "forwarding compatibility unknown in servers catalog"
+            reason = "no compatible forwarding-capable hostnames in catalog"
             logger.info(
                 "Dropped explicit server pinning (%s) for provider '%s' because VPN_PORT_FORWARDING=on (%s)",
                 ",".join(cleared_keys),
