@@ -609,9 +609,10 @@ class VPNProvisioner:
                     if not server_hostname:
                         continue
                     
-                    # Match by hostname or entry IP
+                    # Match by hostname or entry IP or IPs list
                     entry_ip = str(server.get("entry_ip") or "").strip()
-                    if server_hostname != pin.lower() and entry_ip != pin:
+                    server_ips = server.get("ips") or []
+                    if server_hostname != pin.lower() and entry_ip != pin and pin not in server_ips:
                         continue
                     
                     found_in_catalog = True
@@ -630,9 +631,12 @@ class VPNProvisioner:
                     break
 
                 if not found_in_catalog:
-                    # Trust the manual pin if it's not in our potentially stale catalog.
-                    # This allows pinning brand new servers.
-                    compatible_hostnames.append(pin)
+                    # If it's not in the catalog, only trust it if it looks like a hostname.
+                    # Raw IPs in SERVER_HOSTNAMES cause Gluetun to fail startup.
+                    if not self._is_potential_ip(pin):
+                        compatible_hostnames.append(pin)
+                    else:
+                        logger.debug("Manual pin '%s' is an IP not found in catalog; omitting from SERVER_HOSTNAMES", pin)
                 elif not compatible:
                     logger.warning(
                         "Pinned server '%s' for provider '%s' exists in catalog but is marked as incompatible "
@@ -939,6 +943,14 @@ class VPNProvisioner:
         if value is None:
             return False
         return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _is_potential_ip(value: str) -> bool:
+        """Return True if the string looks like an IPv4 address."""
+        parts = value.split(".")
+        if len(parts) == 4 and all(part.isdigit() for part in parts):
+            return True
+        return False
 
 
 vpn_provisioner = VPNProvisioner()
