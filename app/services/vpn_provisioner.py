@@ -782,11 +782,11 @@ class VPNProvisioner:
 
         # Share the orchestrator's refreshed servers.json catalog with Gluetun
         # via a named Docker volume (no host paths required).  Gluetun reads its
-        # servers list from /tmp/gluetun/ on startup; mounting our volume there
+        # servers list from /gluetun/ on startup; mounting our volume there
         # ensures it validates SERVER_HOSTNAMES against our up-to-date data
         # rather than the potentially stale catalog bundled in its Docker image.
         volumes[gluetun_servers_volume.VOLUME_NAME] = {
-            "bind": "/tmp/gluetun",
+            "bind": "/gluetun",
             "mode": "ro",
         }
 

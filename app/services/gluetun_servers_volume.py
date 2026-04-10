@@ -24,9 +24,9 @@ The function is idempotent and safe to call from any async context via
 
 Gluetun containers should be given::
 
-    volumes={"acestream-gluetun-servers": {"bind": "/tmp/gluetun", "mode": "ro"}}
+    volumes={"acestream-gluetun-servers": {"bind": "/gluetun", "mode": "ro"}}
 
-so Gluetun finds ``/tmp/gluetun/servers.json`` on startup.
+so Gluetun finds ``/gluetun/servers.json`` on startup.
 """
 
 from __future__ import annotations
