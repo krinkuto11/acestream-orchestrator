@@ -1483,7 +1483,7 @@ class StreamManager:
         self._last_runway_estimate_ts = now
         return conservative_runway
 
-    def _publish_dynamic_tolerance(self, dynamic_threshold: float, current_buffer: float, max_tolerance: float, inactivity_duration: float):
+    def _publish_dynamic_tolerance(self, dynamic_threshold: float, current_buffer: float, max_tolerance: float, inactivity_duration: float, source_duration: float = 0.0):
         """Persist current dynamic threshold values for dashboard visualization."""
         try:
             now = time.time()
@@ -1500,6 +1500,7 @@ class StreamManager:
                     current_client_buffer_seconds=current_buffer,
                     max_tolerance_seconds=max_tolerance,
                     stream_inactivity_seconds=inactivity_duration,
+                    source_buffer_duration_seconds=source_duration,
                     dynamic_threshold_updated_at=now,
                 )
             except Exception as state_err:
@@ -1526,6 +1527,7 @@ class StreamManager:
                     StreamMetadataField.CURRENT_CLIENT_BUFFER_SECONDS: f"{max(0.0, float(current_buffer)):.3f}",
                     StreamMetadataField.MAX_TOLERANCE_SECONDS: f"{max(0.0, float(max_tolerance)):.3f}",
                     StreamMetadataField.STREAM_INACTIVITY_SECONDS: f"{max(0.0, float(inactivity_duration)):.3f}",
+                    StreamMetadataField.SOURCE_BUFFER_DURATION_SECONDS: f"{max(0.0, float(source_duration)):.3f}",
                     StreamMetadataField.DYNAMIC_THRESHOLD_UPDATED_AT: str(now),
                 },
             )
@@ -1656,7 +1658,13 @@ class StreamManager:
                 inactivity_duration = now - self.last_data_time
 
                 dynamic_threshold, current_buffer, max_tolerance = self._get_dynamic_tolerance()
-                self._publish_dynamic_tolerance(dynamic_threshold, current_buffer, max_tolerance, inactivity_duration)
+                
+                # Fetch ground-truth PCR-based duration from source buffer
+                source_duration = 0.0
+                if self.buffer:
+                    source_duration = self.buffer.get_buffer_duration_seconds()
+                    
+                self._publish_dynamic_tolerance(dynamic_threshold, current_buffer, max_tolerance, inactivity_duration, source_duration)
 
                 if inactivity_duration > dynamic_threshold and self.connected:
                     # Event set => steady state; cleared => waiting for control-plane recovery.

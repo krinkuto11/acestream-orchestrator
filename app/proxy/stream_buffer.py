@@ -60,6 +60,10 @@ class StreamBuffer:
         # Source rate tracking (chunks/second)
         self._source_rate_ema = None
         self._last_source_update_time = time.time()
+        
+        # Exact PCR duration window tracking
+        self._min_index = self.index
+        self._last_duration = 0.0
     
     def add_chunk(self, chunk):
         """Add data with optimized Redis storage and TS packet alignment"""
@@ -109,6 +113,8 @@ class StreamBuffer:
                         
                         # Update local tracking
                         self.index = chunk_index
+                        if not hasattr(self, '_min_index') or self._min_index == 0:
+                            self._min_index = chunk_index
                         writes_done += 1
             
             if writes_done > 0:
@@ -146,6 +152,103 @@ class StreamBuffer:
     def get_source_rate(self) -> float:
          """Return the current estimated source chunk rate (chunks/second)"""
          return float(self._source_rate_ema or 0.0)
+    
+    def _extract_first_pcr(self, chunk: bytes) -> Optional[float]:
+        """Extract the first valid 33-bit PCR base from a TS chunk.
+        
+        Returns PCR in seconds, or None if no PCR found.
+        Highly optimized using bytes.find() and direct offsets.
+        """
+        if not chunk or len(chunk) < 188:
+            return None
+            
+        offset = 0
+        limit = len(chunk) - 188
+        
+        while offset <= limit:
+            # Sync to next TS packet boundary
+            pos = chunk.find(b'\x47', offset)
+            if pos == -1 or pos > limit:
+                break
+                
+            # Check Adaptation Field Control bits (byte 3, bits 4-5)
+            # 0x20 mask checks if Adaptation Field is present
+            if (chunk[pos + 3] & 0x20):
+                af_len = chunk[pos + 4]
+                # Adaptation field must be at least 1 byte, and PCR_flag is bit 4 (0x10)
+                if af_len > 0 and (chunk[pos + 5] & 0x10):
+                    # PCR base is 33 bits, spanning bytes 6-10
+                    # pcr_base = (b0 << 25) | (b1 << 17) | (b2 << 9) | (b3 << 1) | (b4 >> 7)
+                    pcr_base = (
+                        (chunk[pos + 6] << 25) |
+                        (chunk[pos + 7] << 17) |
+                        (chunk[pos + 8] << 9) |
+                        (chunk[pos + 9] << 1) |
+                        (chunk[pos + 10] >> 7)
+                    )
+                    return float(pcr_base) / 90000.0
+            
+            # Jump to the next packet boundary
+            offset = pos + 188
+            
+        return None
+
+    def get_buffer_duration_seconds(self) -> float:
+        """Calculate exact buffer duration using head and tail PCR timestamps."""
+        if not self.redis_client:
+            return 0.0
+            
+        # Get references to head and tail indices under lock
+        with self.lock:
+            head_idx = getattr(self, "_min_index", 0)
+            tail_idx = self.index
+        
+        if tail_idx <= head_idx or tail_idx <= 0:
+            return 0.0
+            
+        # Sampling logic (performed outside the lock to avoid blocking writes)
+        try:
+            # Fetch tail chunk (newest)
+            tail_chunk = self.redis_client.get(RedisKeys.buffer_chunk(self.content_id, tail_idx))
+            if not tail_chunk:
+                return getattr(self, "_last_duration", 0.0)
+            
+            # Find a valid head (oldest) chunk
+            # If the current head is gone (expired), we crawl forward to find the new boundary.
+            head_chunk = None
+            # Limit the crawl to avoid massive Redis loops if TTL is very high
+            max_crawl = 2000
+            for offset in range(max_crawl):
+                idx = head_idx + offset
+                if idx >= tail_idx:
+                    break
+                head_chunk = self.redis_client.get(RedisKeys.buffer_chunk(self.content_id, idx))
+                if head_chunk:
+                    if idx != head_idx:
+                        with self.lock:
+                            self._min_index = idx
+                    break
+            
+            if not head_chunk:
+                return 0.0
+                
+            tail_pcr = self._extract_first_pcr(tail_chunk)
+            head_pcr = self._extract_first_pcr(head_chunk)
+            
+            if tail_pcr is None or head_pcr is None:
+                return getattr(self, "_last_duration", 0.0)
+                
+            # Handle 33-bit PCR wraparound (~26.5 hours)
+            if tail_pcr < head_pcr:
+                tail_pcr += (2**33 / 90000.0)
+                
+            duration = max(0.0, tail_pcr - head_pcr)
+            self._last_duration = duration
+            return float(duration)
+            
+        except Exception as e:
+            logger.debug(f"Failed to calculate buffer PCR duration: {e}")
+            return getattr(self, "_last_duration", 0.0)
     
     def _get_chunks_internal(self, start_index=None):
         """Get chunks and return per-call fetched end cursor.

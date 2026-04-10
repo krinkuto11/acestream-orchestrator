@@ -701,6 +701,7 @@ class State:
         current_client_buffer_seconds: Optional[float] = None,
         max_tolerance_seconds: Optional[float] = None,
         stream_inactivity_seconds: Optional[float] = None,
+        source_buffer_duration_seconds: Optional[float] = None,
         dynamic_threshold_updated_at: Optional[float] = None,
     ) -> Dict[str, float]:
         """Store latest dynamic failover telemetry for a stream."""
@@ -733,6 +734,10 @@ class State:
             inactivity = self._safe_non_negative_float(stream_inactivity_seconds, default=None)
             if inactivity is not None:
                 payload["stream_inactivity_seconds"] = inactivity
+
+            source_duration = self._safe_non_negative_float(source_buffer_duration_seconds, default=None)
+            if source_duration is not None:
+                payload["source_buffer_duration_seconds"] = source_duration
 
             if normalized_stream_id:
                 self._stream_failover_telemetry_by_id[normalized_stream_id] = dict(payload)

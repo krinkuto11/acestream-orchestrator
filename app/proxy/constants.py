@@ -108,6 +108,7 @@ class StreamMetadataField:
     MAX_TOLERANCE_SECONDS = "max_tolerance_seconds"
     STREAM_INACTIVITY_SECONDS = "stream_inactivity_seconds"
     DYNAMIC_THRESHOLD_UPDATED_AT = "dynamic_threshold_updated_at"
+    SOURCE_BUFFER_DURATION_SECONDS = "source_buffer_duration_seconds"
     
     # AceStream specific
     IS_LIVE = "is_live"
