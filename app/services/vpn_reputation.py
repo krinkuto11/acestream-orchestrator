@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
 import random
 import re
+import threading
 from contextlib import suppress
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from . import docker_client
@@ -17,9 +21,21 @@ PROVIDER_FLAG_ALIASES = {
     "privateinternetaccess": "pia",
 }
 
+PROVIDER_STORAGE_ALIASES = {
+    "pia": "private internet access",
+    "privateinternetaccess": "private internet access",
+    "private_internet_access": "private internet access",
+}
+
 
 class VPNReputationManager:
     """Manage VPN hostname reputation backed by Proxy Redis."""
+
+    def __init__(self) -> None:
+        self._servers_cache_lock = threading.Lock()
+        self._servers_cache_path: Optional[Path] = None
+        self._servers_cache_mtime: Optional[float] = None
+        self._servers_cache_data: Optional[Dict[str, object]] = None
 
     def _get_proxy_redis_client(self):
         try:
@@ -74,6 +90,16 @@ class VPNReputationManager:
         return PROVIDER_FLAG_ALIASES.get(compact, compact)
 
     @staticmethod
+    def _normalize_provider_storage(provider: str) -> str:
+        normalized = str(provider or "").strip().lower()
+        if not normalized:
+            return ""
+        if normalized in PROVIDER_STORAGE_ALIASES:
+            return PROVIDER_STORAGE_ALIASES[normalized]
+        compact = re.sub(r"[^a-z0-9]", "", normalized)
+        return PROVIDER_STORAGE_ALIASES.get(compact, normalized)
+
+    @staticmethod
     def _normalize_regions(regions: List[str]) -> List[str]:
         normalized: List[str] = []
         for region in regions or []:
@@ -86,6 +112,213 @@ class VPNReputationManager:
             if value:
                 normalized.append(value)
         return normalized
+
+    @staticmethod
+    def _normalize_protocol(protocol: Optional[object]) -> Optional[str]:
+        value = str(protocol or "").strip().lower()
+        if value in {"wireguard", "openvpn"}:
+            return value
+        return None
+
+    @staticmethod
+    def _coerce_bool(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        text = str(value or "").strip().lower()
+        return text in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _extract_endpoint_hostname(endpoint: str) -> str:
+        token = str(endpoint or "").strip().lower().strip("`")
+        if not token:
+            return ""
+
+        if token.startswith("["):
+            end_index = token.find("]")
+            if end_index > 1:
+                return token[1:end_index]
+
+        if token.count(":") == 1:
+            host_part, port_part = token.rsplit(":", 1)
+            if port_part.isdigit():
+                return host_part.strip()
+
+        return token
+
+    def _servers_json_path(self) -> Path:
+        configured = str(os.getenv("GLUETUN_SERVERS_JSON_PATH", "")).strip()
+        if configured:
+            return Path(configured)
+        return Path(__file__).resolve().parents[2] / "servers.json"
+
+    def _load_servers_catalog(self) -> Optional[Dict[str, object]]:
+        path = self._servers_json_path()
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return None
+
+        with self._servers_cache_lock:
+            if (
+                self._servers_cache_data is not None
+                and self._servers_cache_path == path
+                and self._servers_cache_mtime == mtime
+            ):
+                return self._servers_cache_data
+
+        try:
+            with path.open("r", encoding="utf-8") as file:
+                loaded = json.load(file)
+        except Exception as exc:
+            logger.warning("Failed to parse VPN servers catalog at %s: %s", path, exc)
+            return None
+
+        if not isinstance(loaded, dict):
+            logger.warning("VPN servers catalog at %s is not a JSON object", path)
+            return None
+
+        with self._servers_cache_lock:
+            self._servers_cache_path = path
+            self._servers_cache_mtime = mtime
+            self._servers_cache_data = loaded
+
+        return loaded
+
+    def _provider_servers_from_catalog(self, provider: str) -> List[Dict[str, object]]:
+        catalog = self._load_servers_catalog()
+        if not catalog:
+            return []
+
+        provider_key = self._normalize_provider_storage(provider)
+        if not provider_key:
+            return []
+
+        section = catalog.get(provider_key)
+        if not isinstance(section, dict):
+            return []
+
+        servers = section.get("servers")
+        if not isinstance(servers, list):
+            return []
+
+        return [server for server in servers if isinstance(server, dict)]
+
+    def _server_supports_port_forwarding(self, server: Dict[str, object]) -> bool:
+        if "port_forward" not in server:
+            return False
+        return self._coerce_bool(server.get("port_forward"))
+
+    def _server_matches_regions(self, server: Dict[str, object], requested_regions: List[str]) -> bool:
+        if not requested_regions:
+            return True
+
+        country = str(server.get("country") or "").strip().lower()
+        city = str(server.get("city") or "").strip().lower()
+        region = str(server.get("region") or "").strip().lower()
+        server_name = str(server.get("server_name") or "").strip().lower()
+        hostname = str(server.get("hostname") or "").strip().lower()
+
+        searchable = [country, city, region, server_name, hostname]
+
+        for requested in requested_regions:
+            if any(
+                requested == value
+                or requested in value
+                for value in searchable
+                if value
+            ):
+                return True
+        return False
+
+    def _candidate_hostnames_from_catalog(
+        self,
+        *,
+        provider: str,
+        regions: List[str],
+        protocol: Optional[str],
+        require_port_forwarding: bool,
+    ) -> List[str]:
+        servers = self._provider_servers_from_catalog(provider)
+        if not servers:
+            return []
+
+        normalized_protocol = self._normalize_protocol(protocol)
+        requested_regions = self._normalize_regions(regions)
+
+        candidates: List[str] = []
+        for server in servers:
+            hostname = str(server.get("hostname") or "").strip().lower()
+            if not hostname:
+                continue
+
+            server_protocol = self._normalize_protocol(server.get("vpn"))
+            if normalized_protocol and server_protocol and server_protocol != normalized_protocol:
+                continue
+            if normalized_protocol and not server_protocol:
+                continue
+
+            if require_port_forwarding and not self._server_supports_port_forwarding(server):
+                continue
+
+            if not self._server_matches_regions(server, requested_regions):
+                continue
+
+            candidates.append(hostname)
+
+        return list(dict.fromkeys(candidates))
+
+    def hostnames_support_port_forwarding(
+        self,
+        *,
+        provider: str,
+        protocol: Optional[str],
+        hostnames: List[str],
+        require_port_forwarding: bool,
+    ) -> Optional[bool]:
+        """
+        Return whether all explicit hostnames are compatible with the requested filters.
+
+        Returns None when catalog data is unavailable for the provider/protocol.
+        """
+        normalized_hosts = {
+            self._extract_endpoint_hostname(hostname)
+            for hostname in hostnames
+            if str(hostname or "").strip()
+        }
+        normalized_hosts = {hostname for hostname in normalized_hosts if hostname}
+        if not normalized_hosts:
+            return True
+
+        servers = self._provider_servers_from_catalog(provider)
+        if not servers:
+            return None
+
+        normalized_protocol = self._normalize_protocol(protocol)
+        protocol_hosts: set[str] = set()
+        compatible_hosts: set[str] = set()
+
+        for server in servers:
+            hostname = str(server.get("hostname") or "").strip().lower()
+            if not hostname:
+                continue
+
+            server_protocol = self._normalize_protocol(server.get("vpn"))
+            if normalized_protocol and server_protocol and server_protocol != normalized_protocol:
+                continue
+            if normalized_protocol and not server_protocol:
+                continue
+
+            protocol_hosts.add(hostname)
+
+            if require_port_forwarding and not self._server_supports_port_forwarding(server):
+                continue
+
+            compatible_hosts.add(hostname)
+
+        if not protocol_hosts:
+            return None
+
+        return normalized_hosts.issubset(compatible_hosts)
 
     @staticmethod
     def _is_markdown_separator(cells: List[str]) -> bool:
@@ -154,7 +387,39 @@ class VPNReputationManager:
             with suppress(Exception):
                 cli.close()
 
-    def get_safe_hostname(self, provider: str, regions: List[str]) -> Optional[str]:
+    def get_safe_hostname(
+        self,
+        provider: str,
+        regions: List[str],
+        protocol: Optional[str] = None,
+        require_port_forwarding: bool = False,
+    ) -> Optional[str]:
+        catalog_candidates = self._candidate_hostnames_from_catalog(
+            provider=provider,
+            regions=regions,
+            protocol=protocol,
+            require_port_forwarding=require_port_forwarding,
+        )
+        if catalog_candidates:
+            safe_catalog_hostnames = [
+                hostname
+                for hostname in catalog_candidates
+                if not self.is_blacklisted(hostname)
+            ]
+            if safe_catalog_hostnames:
+                return random.choice(safe_catalog_hostnames)
+            logger.warning("All catalog hostnames are blacklisted for provider %s", provider)
+            return None
+
+        if require_port_forwarding:
+            logger.warning(
+                "No forwarding-capable hostnames found in servers catalog for provider %s, protocol=%s, regions=%s",
+                provider,
+                protocol,
+                self._normalize_regions(regions),
+            )
+            return None
+
         output = self._run_format_servers(provider)
         if not output:
             return None

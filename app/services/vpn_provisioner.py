@@ -70,7 +70,6 @@ class VPNProvisioner:
         )
         protocol = self._resolve_protocol(settings=settings, credential=credential)
         regions = self._resolve_regions(requested_regions=requested_regions, settings=settings, credential=credential)
-        safe_hostname = await asyncio.to_thread(vpn_reputation_manager.get_safe_hostname, provider, regions)
         provider_supports_port_forwarding = self.provider_supports_port_forwarding(provider)
         credential_supports_port_forwarding = self.credential_supports_port_forwarding(credential)
         port_forwarding_supported = provider_supports_port_forwarding and credential_supports_port_forwarding
@@ -90,8 +89,24 @@ class VPNProvisioner:
             regions=regions,
             port_forwarding_supported=port_forwarding_supported,
         )
+        safe_hostname: Optional[str] = None
+        has_explicit_server_pin = bool(
+            str(env.get("SERVER_HOSTNAMES") or "").strip()
+            or str(env.get("WIREGUARD_ENDPOINTS") or "").strip()
+        )
+        require_port_forwarding = str(env.get("VPN_PORT_FORWARDING") or "").strip().lower() == "on"
+        if not has_explicit_server_pin:
+            safe_hostname = await asyncio.to_thread(
+                vpn_reputation_manager.get_safe_hostname,
+                provider,
+                regions,
+                protocol,
+                require_port_forwarding,
+            )
         if safe_hostname:
             env["SERVER_HOSTNAMES"] = safe_hostname
+
+        assigned_hostname = str(env.get("SERVER_HOSTNAMES") or safe_hostname or "").split(",", 1)[0].strip().lower()
 
         labels = self._build_labels(
             provider=provider,
@@ -129,7 +144,7 @@ class VPNProvisioner:
                 "protocol": protocol,
                 "credential_id": lease.get("credential_id"),
                 "port_forwarding_supported": port_forwarding_supported,
-                "assigned_hostname": safe_hostname,
+                "assigned_hostname": assigned_hostname or None,
             },
         )
 
@@ -227,11 +242,11 @@ class VPNProvisioner:
         credential: Dict[str, Any],
     ) -> List[str]:
         if requested_regions is not None:
-            source = requested_regions
+            source: List[Any] = list(requested_regions)
         elif isinstance(credential.get("regions"), list):
-            source = credential.get("regions")
+            source = list(credential.get("regions") or [])
         else:
-            source = settings.get("regions") or []
+            source = list(settings.get("regions") or [])
         return [str(item).strip() for item in source if str(item).strip()]
 
     def _build_gluetun_env(
@@ -299,6 +314,12 @@ class VPNProvisioner:
             if not key_s:
                 continue
             env[key_s] = str(value)
+
+        self._apply_port_forwarding_filter_guard(
+            env=env,
+            provider=provider,
+            protocol=protocol,
+        )
 
         return env
 
@@ -529,6 +550,82 @@ class VPNProvisioner:
 
         if normalized_provider == "protonvpn":
             env.setdefault("PORT_FORWARD_ONLY", "on")
+
+    def _apply_port_forwarding_filter_guard(
+        self,
+        *,
+        env: Dict[str, str],
+        provider: str,
+        protocol: str,
+    ):
+        """Drop explicit server pinning only when it conflicts with port-forward-only selection."""
+        if str(env.get("VPN_PORT_FORWARDING") or "").strip().lower() != "on":
+            return
+
+        if not self.provider_supports_port_forwarding(provider):
+            return
+
+        explicit_hostnames = self._extract_explicit_hostnames(env=env, protocol=protocol)
+        if explicit_hostnames:
+            compatibility = vpn_reputation_manager.hostnames_support_port_forwarding(
+                provider=provider,
+                protocol=protocol,
+                hostnames=explicit_hostnames,
+                require_port_forwarding=True,
+            )
+            if compatibility is True:
+                return
+        else:
+            compatibility = None
+
+        keys_to_clear = ["SERVER_HOSTNAMES"]
+        if protocol == "wireguard":
+            keys_to_clear.extend(["WIREGUARD_ENDPOINTS", "WIREGUARD_ENDPOINT_IP", "WIREGUARD_ENDPOINT_PORT"])
+        else:
+            keys_to_clear.extend(["OPENVPN_ENDPOINT_IP", "OPENVPN_ENDPOINT_PORT"])
+
+        cleared_keys = []
+        for key in keys_to_clear:
+            if key in env:
+                env.pop(key, None)
+                cleared_keys.append(key)
+
+        if cleared_keys:
+            reason = "incompatible with forwarding filters"
+            if compatibility is None and explicit_hostnames:
+                reason = "forwarding compatibility unknown in servers catalog"
+            logger.info(
+                "Dropped explicit server pinning (%s) for provider '%s' because VPN_PORT_FORWARDING=on (%s)",
+                ",".join(cleared_keys),
+                provider,
+                reason,
+            )
+
+    def _extract_explicit_hostnames(self, *, env: Dict[str, str], protocol: str) -> List[str]:
+        hostnames = self._normalize_list(env.get("SERVER_HOSTNAMES"))
+
+        if protocol == "wireguard":
+            endpoints = self._normalize_list(env.get("WIREGUARD_ENDPOINTS"))
+            for endpoint in endpoints:
+                token = str(endpoint or "").strip().lower()
+                if not token:
+                    continue
+
+                if token.startswith("["):
+                    closing = token.find("]")
+                    if closing > 1:
+                        hostnames.append(token[1:closing])
+                        continue
+
+                if token.count(":") == 1:
+                    host_part, port_part = token.rsplit(":", 1)
+                    if port_part.isdigit() and host_part.strip():
+                        hostnames.append(host_part.strip())
+                        continue
+
+                hostnames.append(token)
+
+        return list(dict.fromkeys([str(item).strip().lower() for item in hostnames if str(item).strip()]))
 
     @staticmethod
     def _apply_optional_credential_env(*, env: Dict[str, str], protocol: str, credential: Dict[str, Any]):
