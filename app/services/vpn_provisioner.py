@@ -89,6 +89,7 @@ class VPNProvisioner:
             credential=credential,
             regions=regions,
             port_forwarding_supported=port_forwarding_supported,
+            ignore_endpoint=True,
         )
         safe_hostname: Optional[str] = None
         has_explicit_server_pin = bool(
@@ -269,6 +270,7 @@ class VPNProvisioner:
         credential: Dict[str, Any],
         regions: List[str],
         port_forwarding_supported: bool,
+        ignore_endpoint: bool = False,
     ) -> Dict[str, str]:
         catalog_filename = self._get_effective_catalog_filename(settings)
         env: Dict[str, str] = {
@@ -305,6 +307,7 @@ class VPNProvisioner:
             protocol=protocol,
             credential=credential,
             allow_ipv6_wireguard=allow_ipv6_wireguard,
+            ignore_endpoint=ignore_endpoint,
         )
         self._apply_region_env(env=env, provider=provider, regions=regions, credential=credential)
         self._apply_port_forwarding_env(
@@ -384,6 +387,7 @@ class VPNProvisioner:
         protocol: str,
         credential: Dict[str, Any],
         allow_ipv6_wireguard: bool = False,
+        ignore_endpoint: bool = False,
     ):
         if protocol == "wireguard":
             private_key = (
@@ -424,7 +428,7 @@ class VPNProvisioner:
                 or credential.get("endpoint")
                 or credential.get("Endpoint")
             )
-            if endpoints:
+            if endpoints and not ignore_endpoint:
                 # Gluetun expects pluralized endpoint variable.
                 env["WIREGUARD_ENDPOINTS"] = str(endpoints)
         else:
@@ -434,6 +438,15 @@ class VPNProvisioner:
                 raise ValueError("openvpn credential is missing username/password")
             env["OPENVPN_USER"] = str(username)
             env["OPENVPN_PASSWORD"] = str(password)
+
+            if not ignore_endpoint:
+                endpoint_ip = credential.get("openvpn_endpoint_ip") or credential.get("endpoint_ip") or credential.get("ip")
+                if endpoint_ip:
+                    env["OPENVPN_ENDPOINT_IP"] = str(endpoint_ip)
+
+                endpoint_port = credential.get("openvpn_endpoint_port") or credential.get("endpoint_port") or credential.get("port")
+                if endpoint_port:
+                    env["OPENVPN_ENDPOINT_PORT"] = str(endpoint_port)
 
     def _apply_region_env(
         self,

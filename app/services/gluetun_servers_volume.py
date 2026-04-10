@@ -119,7 +119,7 @@ def sync(servers_json_path: Optional[Path] = None) -> bool:
             _HELPER_IMAGE,
             volumes={VOLUME_NAME: {"bind": "/gluetun-data", "mode": "rw"}},
         )
-        ok, _ = container.put_archive("/gluetun-data", tar_data)
+        ok = container.put_archive("/gluetun-data", tar_data)
         if ok:
             logger.info(
                 "Synced servers.json (%d bytes) into Docker volume '%s'",
