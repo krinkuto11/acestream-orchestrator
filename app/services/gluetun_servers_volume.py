@@ -74,6 +74,7 @@ def _make_tar(filename: str, content: bytes) -> bytes:
     with tarfile.open(fileobj=buf, mode="w") as tf:
         info = tarfile.TarInfo(name=filename)
         info.size = len(content)
+        info.mode = 0o644  # rw-r--r--
         tf.addfile(info, io.BytesIO(content))
     return buf.getvalue()
 

@@ -547,10 +547,16 @@ class VPNProvisioner:
                 env["VPN_PORT_FORWARDING_USERNAME"] = str(username)
             if password:
                 env["VPN_PORT_FORWARDING_PASSWORD"] = str(password)
-            env.setdefault("PORT_FORWARD_ONLY", "true")
+            
+            # If no explicit server pin is used, let Gluetun filter for PF-capable servers.
+            # If a pinning is present, we omit this to prevent validation errors against
+            # Gluetun's internal (potentially stale) catalog.
+            if not env.get("SERVER_HOSTNAMES") and not env.get("WIREGUARD_ENDPOINTS"):
+                env.setdefault("PORT_FORWARD_ONLY", "true")
 
         if normalized_provider == "protonvpn":
-            env.setdefault("PORT_FORWARD_ONLY", "on")
+            if not env.get("SERVER_HOSTNAMES") and not env.get("WIREGUARD_ENDPOINTS"):
+                env.setdefault("PORT_FORWARD_ONLY", "on")
 
     def _apply_port_forwarding_filter_guard(
         self,
@@ -785,9 +791,11 @@ class VPNProvisioner:
         # servers list from /gluetun/ on startup; mounting our volume there
         # ensures it validates SERVER_HOSTNAMES against our up-to-date data
         # rather than the potentially stale catalog bundled in its Docker image.
+        # Use 'rw' mode because Gluetun attempts to write metadata to this
+        # directory on startup; 'ro' results in "read-only file system" warnings.
         volumes[gluetun_servers_volume.VOLUME_NAME] = {
             "bind": "/gluetun",
-            "mode": "ro",
+            "mode": "rw",
         }
 
         return cap_add, devices, volumes
