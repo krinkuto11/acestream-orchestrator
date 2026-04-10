@@ -396,6 +396,16 @@ Response:
  - GET /vpn/publicip → Get VPN public IP address
    - Returns the public IP address of the VPN connection
 
+ - POST /vpn/proton/refresh (protected) → Refresh Proton paid server catalog with token-based 2FA support
+   - Fetches Proton logical servers using username/password and optional TOTP
+   - Writes `servers-proton.json` and optionally updates `servers.json`
+   - Request body fields:
+     - `proton_username`, `proton_password` (optional if provided via env/secrets)
+     - `proton_totp_code` (one-time 2FA token) or `proton_totp_secret` (base32 secret for code generation)
+     - `storage_path` (directory path where server files will be written)
+     - `gluetun_json_mode` (`none`, `replace`, or `update`)
+     - filters: `ipv6`, `secure_core`, `tor`, `free_tier` (`include|exclude|only`)
+
  - GET /health/status → Detailed health status and management information
    - Returns comprehensive health summary including healthy/unhealthy engine counts
    - Includes proactive health management status

@@ -74,6 +74,7 @@ from .services.legacy_stream_monitoring import legacy_stream_monitoring_service
 from .services.hls_segmenter import hls_segmenter_service
 from .services.docker_client import get_client, docker_event_watcher
 from .services.vpn_credentials import credential_manager
+from .services.proton_updater import ProtonServerUpdater, ProtonFilterConfig
 from .utils.wireguard_parser import parse_wireguard_conf
 from .proxy.manager import ProxyManager
 from .proxy.ace_api_client import AceLegacyApiClient, AceLegacyApiError
@@ -461,6 +462,19 @@ class StreamMigrationRequest(BaseModel):
     stream_key: str
     old_container_id: Optional[str] = None
     new_container_id: Optional[str] = None
+
+
+class ProtonServersRefreshRequest(BaseModel):
+    proton_username: Optional[str] = None
+    proton_password: Optional[str] = None
+    proton_totp_code: Optional[str] = None
+    proton_totp_secret: Optional[str] = None
+    storage_path: Optional[str] = None
+    gluetun_json_mode: str = "update"
+    ipv6: str = "exclude"
+    secure_core: str = "include"
+    tor: str = "include"
+    free_tier: str = "include"
 
 
 def _trigger_engine_generation_rollout(reason: str) -> Dict[str, Any]:
@@ -2633,6 +2647,33 @@ def parse_wireguard_config(payload: WireguardParseRequest):
             },
         )
     return parsed
+
+
+@app.post("/vpn/proton/refresh", dependencies=[Depends(require_api_key)])
+async def refresh_proton_servers(payload: ProtonServersRefreshRequest):
+    """Fetch Proton server catalog and update local Gluetun-compatible servers files."""
+    updater = ProtonServerUpdater(storage_path=payload.storage_path)
+    filters = ProtonFilterConfig(
+        ipv6=payload.ipv6,
+        secure_core=payload.secure_core,
+        tor=payload.tor,
+        free_tier=payload.free_tier,
+    )
+
+    try:
+        result = await updater.update(
+            proton_username=payload.proton_username,
+            proton_password=payload.proton_password,
+            proton_totp_code=payload.proton_totp_code,
+            proton_totp_secret=payload.proton_totp_secret,
+            filters=filters,
+            gluetun_json_mode=payload.gluetun_json_mode,
+        )
+        return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/vpn/leases")
