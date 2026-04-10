@@ -42,11 +42,12 @@ logger = logging.getLogger(__name__)
 
 VOLUME_NAME = "acestream-gluetun-servers"
 
-# Lightweight image used only for the one-shot file-write helper container.
-# busybox is typically cached on any Docker host; if not, the daemon pulls it
-# once (~5 MB).  We never start it — we only need the overlay filesystem to
-# host the volume mount while we call put_archive.
-_HELPER_IMAGE = "busybox:latest"
+# Using the core Gluetun image as our helper.  We know it's already on the host
+# because the orchestrator is currently managing Gluetun containers.
+# This avoids dependencies on external images (like busybox) that might
+# not be present in restricted or offline environments.
+# We only use it to host the mount while calling put_archive.
+_HELPER_IMAGE = "qdm12/gluetun"
 
 
 def _get_client():
@@ -103,6 +104,13 @@ def sync(servers_json_path: Optional[Path] = None) -> bool:
     container = None
     try:
         _ensure_volume()
+
+        # Ensure the helper image is available locally.
+        try:
+            cli.images.get(_HELPER_IMAGE)
+        except docker.errors.ImageNotFound:
+            logger.info("Helper image '%s' not found locally; pulling...", _HELPER_IMAGE)
+            cli.images.pull(_HELPER_IMAGE)
 
         # Create a dormant helper container that mounts the volume.
         # We never start it — put_archive works on created (not running) containers.

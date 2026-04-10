@@ -96,6 +96,7 @@ class VPNProvisioner:
             or str(env.get("WIREGUARD_ENDPOINTS") or "").strip()
         )
         require_port_forwarding = str(env.get("VPN_PORT_FORWARDING") or "").strip().lower() == "on"
+        catalog_filename = self._get_effective_catalog_filename(settings)
         if not has_explicit_server_pin:
             safe_hostname = await asyncio.to_thread(
                 vpn_reputation_manager.get_safe_hostname,
@@ -103,6 +104,7 @@ class VPNProvisioner:
                 regions,
                 protocol,
                 require_port_forwarding,
+                catalog_filename,
             )
         if safe_hostname:
             env["SERVER_HOSTNAMES"] = safe_hostname
@@ -250,6 +252,14 @@ class VPNProvisioner:
             source = list(settings.get("regions") or [])
         return [str(item).strip() for item in source if str(item).strip()]
 
+    def _get_effective_catalog_filename(self, settings: Dict[str, Any]) -> str:
+        source = settings.get("vpn_servers_refresh_source")
+        if source == "gluetun_official":
+            return "servers-official.json"
+        if source == "proton_paid":
+            return "servers-proton.json"
+        return "servers.json"
+
     def _build_gluetun_env(
         self,
         *,
@@ -258,8 +268,8 @@ class VPNProvisioner:
         settings: Dict[str, Any],
         credential: Dict[str, Any],
         regions: List[str],
-        port_forwarding_supported: bool,
     ) -> Dict[str, str]:
+        catalog_filename = self._get_effective_catalog_filename(settings)
         env: Dict[str, str] = {
             "VPN_SERVICE_PROVIDER": provider,
             "VPN_TYPE": protocol,
@@ -320,6 +330,7 @@ class VPNProvisioner:
             env=env,
             provider=provider,
             protocol=protocol,
+            catalog_filename=catalog_filename,
         )
 
         return env
@@ -564,6 +575,7 @@ class VPNProvisioner:
         env: Dict[str, str],
         provider: str,
         protocol: str,
+        catalog_filename: str = "servers.json",
     ):
         """Drop explicit server pinning only when it conflicts with port-forward-only selection.
 
@@ -581,33 +593,50 @@ class VPNProvisioner:
 
         explicit_hostnames = self._extract_explicit_hostnames(env=env, protocol=protocol)
         if explicit_hostnames:
-            servers = vpn_reputation_manager._provider_servers_from_catalog(provider)
+            servers = vpn_reputation_manager._provider_servers_from_catalog(provider, catalog_filename)
             normalized_protocol = vpn_reputation_manager._normalize_protocol(protocol)
 
             compatible_hostnames: List[str] = []
-            for raw_token in explicit_hostnames:
-                # If the token looks like an IP address, resolve it to the catalog
-                # hostname via the server's ips[] array so we can verify PF support.
-                lookup_hostname = (
-                    self._ip_to_catalog_hostname(raw_token, servers, normalized_protocol)
-                    if self._looks_like_ip(raw_token)
-                    else raw_token
-                )
-
+            for pin in explicit_hostnames:
+                found_in_catalog = False
+                compatible = False
+                
+                # Search the catalog for this pinned token (hostname or IP)
                 for server in servers or []:
                     server_hostname = str(server.get("hostname") or "").strip().lower()
-                    if not server_hostname or server_hostname != lookup_hostname:
+                    if not server_hostname:
                         continue
+                    
+                    # Match by hostname or entry IP
+                    entry_ip = str(server.get("entry_ip") or "").strip()
+                    if server_hostname != pin.lower() and entry_ip != pin:
+                        continue
+                    
+                    found_in_catalog = True
                     server_protocol = vpn_reputation_manager._normalize_protocol(server.get("vpn"))
+                    
                     if normalized_protocol and server_protocol and server_protocol != normalized_protocol:
-                        continue
-                    if normalized_protocol and not server_protocol:
-                        continue
-                    if not vpn_reputation_manager._server_supports_port_forwarding(server):
-                        continue
-                    # Pin by canonical hostname so Gluetun can resolve it for PF.
-                    compatible_hostnames.append(server_hostname)
+                        compatible = False
+                    elif normalized_protocol and not server_protocol:
+                        compatible = False
+                    elif not vpn_reputation_manager._server_supports_port_forwarding(server):
+                        compatible = False
+                    else:
+                        compatible = True
+                        # If found and compatible, use the canonical hostname
+                        compatible_hostnames.append(server_hostname)
                     break
+
+                if not found_in_catalog:
+                    # Trust the manual pin if it's not in our potentially stale catalog.
+                    # This allows pinning brand new servers.
+                    compatible_hostnames.append(pin)
+                elif not compatible:
+                    logger.warning(
+                        "Pinned server '%s' for provider '%s' exists in catalog but is marked as incompatible "
+                        "(protocol mismatch or no PF support). It may be dropped.",
+                        pin, provider
+                    )
 
             if compatible_hostnames:
                 env["SERVER_HOSTNAMES"] = ",".join(dict.fromkeys(compatible_hostnames))

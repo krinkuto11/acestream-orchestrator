@@ -32,10 +32,9 @@ class VPNReputationManager:
     """Manage VPN hostname reputation backed by Proxy Redis."""
 
     def __init__(self) -> None:
-        self._servers_cache_lock = threading.Lock()
-        self._servers_cache_path: Optional[Path] = None
-        self._servers_cache_mtime: Optional[float] = None
-        self._servers_cache_data: Optional[Dict[str, object]] = None
+        self._cache_lock = threading.Lock()
+        # Cache structure: { absolute_path: { "mtime": float, "data": Dict, "index": Dict[str, List] } }
+        self._catalogs: Dict[Path, Dict[str, Any]] = {}
 
     def _get_proxy_redis_client(self):
         try:
@@ -145,27 +144,34 @@ class VPNReputationManager:
 
         return token
 
-    def _servers_json_path(self) -> Path:
+    def _servers_json_path(self, filename: str = "servers.json") -> Path:
         configured = str(os.getenv("GLUETUN_SERVERS_JSON_PATH", "")).strip()
         if configured:
-            return Path(configured)
-        return Path(__file__).resolve().parents[2] / "servers.json"
+            base = Path(configured)
+            if base.suffix == ".json":
+                # If a specific file is forced via env, we respect it only for 'servers.json'
+                if filename == "servers.json":
+                    return base
+                return base.parent / filename
+            return base / filename
 
-    def _load_servers_catalog(self) -> Optional[Dict[str, object]]:
-        path = self._servers_json_path()
+        return Path(__file__).resolve().parents[2] / filename
+
+    def _load_servers_catalog(self, filename: str = "servers.json") -> Optional[Dict[str, Any]]:
+        path = self._servers_json_path(filename)
         try:
             mtime = path.stat().st_mtime
         except OSError:
+            if filename != "servers.json":
+                # Fallback to main servers.json if specific mode file is missing
+                return self._load_servers_catalog("servers.json")
             logger.warning("VPN servers catalog not found at %s", path)
             return None
 
-        with self._servers_cache_lock:
-            if (
-                self._servers_cache_data is not None
-                and self._servers_cache_path == path
-                and self._servers_cache_mtime == mtime
-            ):
-                return self._servers_cache_data
+        with self._cache_lock:
+            cached = self._catalogs.get(path)
+            if cached and cached.get("mtime") == mtime:
+                return cached["data"]
 
         try:
             with path.open("r", encoding="utf-8") as file:
@@ -178,29 +184,39 @@ class VPNReputationManager:
             logger.warning("VPN servers catalog at %s is not a JSON object", path)
             return None
 
-        with self._servers_cache_lock:
-            self._servers_cache_path = path
-            self._servers_cache_mtime = mtime
-            self._servers_cache_data = loaded
+        # Build provider index
+        index: Dict[str, List[Dict[str, Any]]] = {}
+        for key, section in loaded.items():
+            if key == "version" or not isinstance(section, dict):
+                continue
+            servers = section.get("servers")
+            if isinstance(servers, list):
+                index[key] = [s for s in servers if isinstance(s, dict)]
+
+        with self._cache_lock:
+            self._catalogs[path] = {
+                "mtime": mtime,
+                "data": loaded,
+                "index": index,
+            }
 
         # Log catalog metadata whenever the file is freshly (re-)loaded.
-        provider_count = max(0, len([k for k in loaded if k != "version"]))
-        total_servers = sum(
-            len(sec.get("servers", []))
-            for sec in loaded.values()
-            if isinstance(sec, dict)
-        )
+        provider_count = len(index)
+        total_servers = sum(len(s) for s in index.values())
         logger.info(
             "Loaded VPN servers catalog: path=%s providers=%d total_servers=%d",
-            path,
+            path.name,
             provider_count,
             total_servers,
         )
 
         return loaded
 
-    def _provider_servers_from_catalog(self, provider: str) -> List[Dict[str, object]]:
-        catalog = self._load_servers_catalog()
+    def _provider_servers_from_catalog(
+        self, provider: str, catalog_filename: str = "servers.json"
+    ) -> List[Dict[str, Any]]:
+        # Ensure loaded/indexed
+        catalog = self._load_servers_catalog(catalog_filename)
         if not catalog:
             return []
 
@@ -208,15 +224,16 @@ class VPNReputationManager:
         if not provider_key:
             return []
 
-        section = catalog.get(provider_key)
-        if not isinstance(section, dict):
-            return []
+        # Find the path for the effective catalog (might have fallen back to servers.json)
+        path = self._servers_json_path(catalog_filename)
+        if not path.exists() and catalog_filename != "servers.json":
+            path = self._servers_json_path("servers.json")
 
-        servers = section.get("servers")
-        if not isinstance(servers, list):
-            return []
-
-        return [server for server in servers if isinstance(server, dict)]
+        with self._cache_lock:
+            cached = self._catalogs.get(path)
+            if not cached:
+                return []
+            return cached["index"].get(provider_key) or []
 
     def _server_supports_port_forwarding(self, server: Dict[str, object]) -> bool:
         if "port_forward" not in server:
@@ -252,8 +269,9 @@ class VPNReputationManager:
         regions: List[str],
         protocol: Optional[str],
         require_port_forwarding: bool,
+        catalog_filename: str = "servers.json",
     ) -> List[str]:
-        servers = self._provider_servers_from_catalog(provider)
+        servers = self._provider_servers_from_catalog(provider, catalog_filename)
         if not servers:
             logger.warning(
                 "Catalog filter: provider=%s — no servers found for this provider in catalog",
@@ -321,6 +339,7 @@ class VPNReputationManager:
         protocol: Optional[str],
         hostnames: List[str],
         require_port_forwarding: bool,
+        catalog_filename: str = "servers.json",
     ) -> Optional[bool]:
         """
         Return whether all explicit hostnames are compatible with the requested filters.
@@ -336,7 +355,7 @@ class VPNReputationManager:
         if not normalized_hosts:
             return True
 
-        servers = self._provider_servers_from_catalog(provider)
+        servers = self._provider_servers_from_catalog(provider, catalog_filename)
         if not servers:
             return None
 
@@ -440,12 +459,14 @@ class VPNReputationManager:
         regions: List[str],
         protocol: Optional[str] = None,
         require_port_forwarding: bool = False,
+        catalog_filename: str = "servers.json",
     ) -> Optional[str]:
         catalog_candidates = self._candidate_hostnames_from_catalog(
             provider=provider,
             regions=regions,
             protocol=protocol,
             require_port_forwarding=require_port_forwarding,
+            catalog_filename=catalog_filename,
         )
         if catalog_candidates:
             safe_catalog_hostnames = [
@@ -460,13 +481,13 @@ class VPNReputationManager:
 
         if require_port_forwarding:
             logger.warning(
-                "No forwarding-capable hostnames found in servers catalog for provider %s, "
-                "protocol=%s, regions=%s — check catalog path (%s) and that servers have "
+                "No forwarding-capable hostnames found in servers catalog '%s' for provider %s, "
+                "protocol=%s, regions=%s — check catalog path and that servers have "
                 "port_forward=true for the requested region/protocol combination",
+                catalog_filename,
                 provider,
                 protocol,
                 self._normalize_regions(regions),
-                self._servers_json_path(),
             )
             return None
 
