@@ -558,7 +558,14 @@ class VPNProvisioner:
         provider: str,
         protocol: str,
     ):
-        """Drop explicit server pinning only when it conflicts with port-forward-only selection."""
+        """Drop explicit server pinning only when it conflicts with port-forward-only selection.
+
+        Handles both hostname-pinned and IP-pinned endpoints (WireGuard .conf files
+        typically contain raw IP:port endpoints). IP tokens are resolved to their
+        canonical hostnames via the catalog's ``ips`` array before compatibility
+        checking, so a credential pinned to 79.127.139.162:51820 correctly maps
+        to node-es-12.protonvpn.net without being dropped.
+        """
         if str(env.get("VPN_PORT_FORWARDING") or "").strip().lower() != "on":
             return
 
@@ -567,14 +574,22 @@ class VPNProvisioner:
 
         explicit_hostnames = self._extract_explicit_hostnames(env=env, protocol=protocol)
         if explicit_hostnames:
-            # Filter to only hostnames present and forwarding-capable in the catalog
-            compatible_hostnames = []
             servers = vpn_reputation_manager._provider_servers_from_catalog(provider)
             normalized_protocol = vpn_reputation_manager._normalize_protocol(protocol)
-            for hostname in explicit_hostnames:
+
+            compatible_hostnames: List[str] = []
+            for raw_token in explicit_hostnames:
+                # If the token looks like an IP address, resolve it to the catalog
+                # hostname via the server's ips[] array so we can verify PF support.
+                lookup_hostname = (
+                    self._ip_to_catalog_hostname(raw_token, servers, normalized_protocol)
+                    if self._looks_like_ip(raw_token)
+                    else raw_token
+                )
+
                 for server in servers or []:
                     server_hostname = str(server.get("hostname") or "").strip().lower()
-                    if not server_hostname or server_hostname != hostname:
+                    if not server_hostname or server_hostname != lookup_hostname:
                         continue
                     server_protocol = vpn_reputation_manager._normalize_protocol(server.get("vpn"))
                     if normalized_protocol and server_protocol and server_protocol != normalized_protocol:
@@ -583,33 +598,86 @@ class VPNProvisioner:
                         continue
                     if not vpn_reputation_manager._server_supports_port_forwarding(server):
                         continue
-                    compatible_hostnames.append(hostname)
+                    # Pin by canonical hostname so Gluetun can resolve it for PF.
+                    compatible_hostnames.append(server_hostname)
                     break
+
             if compatible_hostnames:
                 env["SERVER_HOSTNAMES"] = ",".join(dict.fromkeys(compatible_hostnames))
+                # Drop raw IP endpoint env vars — Gluetun will use SERVER_HOSTNAMES instead.
+                if protocol == "wireguard":
+                    for key in ("WIREGUARD_ENDPOINTS", "WIREGUARD_ENDPOINT_IP", "WIREGUARD_ENDPOINT_PORT"):
+                        env.pop(key, None)
+                else:
+                    for key in ("OPENVPN_ENDPOINT_IP", "OPENVPN_ENDPOINT_PORT"):
+                        env.pop(key, None)
+                logger.info(
+                    "Resolved explicit server pin for provider '%s' to PF-capable hostname(s): %s",
+                    provider,
+                    ",".join(dict.fromkeys(compatible_hostnames)),
+                )
                 return
             # If none remain, fall through to drop pinning
-        # else: no explicit hostnames or none compatible
+
+        # No explicit hostnames or none resolved to a PF-capable catalog entry.
         keys_to_clear = ["SERVER_HOSTNAMES"]
         if protocol == "wireguard":
             keys_to_clear.extend(["WIREGUARD_ENDPOINTS", "WIREGUARD_ENDPOINT_IP", "WIREGUARD_ENDPOINT_PORT"])
         else:
             keys_to_clear.extend(["OPENVPN_ENDPOINT_IP", "OPENVPN_ENDPOINT_PORT"])
 
-        cleared_keys = []
-        for key in keys_to_clear:
-            if key in env:
-                env.pop(key, None)
-                cleared_keys.append(key)
+        cleared_keys = [key for key in keys_to_clear if key in env]
+        for key in cleared_keys:
+            env.pop(key, None)
 
         if cleared_keys:
-            reason = "no compatible forwarding-capable hostnames in catalog"
             logger.info(
-                "Dropped explicit server pinning (%s) for provider '%s' because VPN_PORT_FORWARDING=on (%s)",
+                "Dropped explicit server pinning (%s) for provider '%s' because VPN_PORT_FORWARDING=on "
+                "(no compatible forwarding-capable hostnames in catalog)",
                 ",".join(cleared_keys),
                 provider,
-                reason,
             )
+
+    @staticmethod
+    def _looks_like_ip(token: str) -> bool:
+        """Return True when token is an IPv4 or IPv6 address (not a hostname)."""
+        import re
+        # IPv4
+        if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", token):
+            return True
+        # IPv6 (contains two or more colons)
+        if token.count(":") >= 2:
+            return True
+        return False
+
+    @staticmethod
+    def _ip_to_catalog_hostname(
+        ip: str,
+        servers: List[Dict[str, object]],
+        normalized_protocol: Optional[str],
+    ) -> str:
+        """Resolve a raw IP to the canonical hostname from the catalog's ips[] field.
+
+        Returns the original IP string unchanged when no match is found so the
+        caller can still attempt a hostname comparison (which will simply fail).
+        """
+        for server in servers or []:
+            server_protocol = vpn_reputation_manager._normalize_protocol(server.get("vpn"))
+            if normalized_protocol and server_protocol and server_protocol != normalized_protocol:
+                continue
+            if normalized_protocol and not server_protocol:
+                continue
+            ips = server.get("ips")
+            if not isinstance(ips, list):
+                continue
+            if ip in [str(i).strip().lower() for i in ips]:
+                resolved = str(server.get("hostname") or "").strip().lower()
+                if resolved:
+                    logger.debug(
+                        "Resolved endpoint IP %s to catalog hostname %s", ip, resolved
+                    )
+                    return resolved
+        return ip
 
     def _extract_explicit_hostnames(self, *, env: Dict[str, str], protocol: str) -> List[str]:
         hostnames = self._normalize_list(env.get("SERVER_HOSTNAMES"))
