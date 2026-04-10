@@ -307,11 +307,11 @@ class VPNServersRefreshService:
             existing = self._load_existing_json(merged_file)
             existing["version"] = payload.get("version", existing.get("version", 1))
 
-            # If dynamic Proton mode is enabled and we already have a protonvpn key
-            # in our local servers.json, we want to preserve it rather than
-            # overwriting it with the stale data from the official repository.
+            # If Proton API refresh is the primary source, we preserve the
+            # protonvpn key in our local servers.json to prevent it from
+            # being overwritten by stale data from the official repository.
             preserve_proton = (
-                bool(settings.get("vpn_servers_proton_dynamic"))
+                settings.get("vpn_servers_refresh_source") == "proton_paid"
                 and "protonvpn" in existing
             )
 
