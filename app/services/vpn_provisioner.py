@@ -268,6 +268,7 @@ class VPNProvisioner:
         settings: Dict[str, Any],
         credential: Dict[str, Any],
         regions: List[str],
+        port_forwarding_supported: bool,
     ) -> Dict[str, str]:
         catalog_filename = self._get_effective_catalog_filename(settings)
         env: Dict[str, str] = {

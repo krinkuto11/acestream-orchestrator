@@ -55,9 +55,10 @@ def _get_client():
     return get_client(timeout=30)
 
 
+import docker
+
 def _ensure_volume() -> None:
     """Create the named volume if it does not already exist."""
-    import docker
     cli = _get_client()
     try:
         cli.volumes.get(VOLUME_NAME)
