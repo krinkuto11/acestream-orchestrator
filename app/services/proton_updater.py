@@ -355,6 +355,13 @@ class ProtonServerUpdater:
         Session, exception_types = self._import_proton_types()
         two_fa_exc = exception_types[0]
 
+        masked_user = (username[:3] + "***") if len(username) > 3 else "***"
+        logger.debug(
+            "Proton refresh: authenticating as user=%s storage=%s",
+            masked_user,
+            self._storage_path,
+        )
+
         session = Session(appversion=APP_VERSION, user_agent=USER_AGENT)
         try:
             try:
@@ -373,7 +380,9 @@ class ProtonServerUpdater:
                     api_data = await session.async_api_request(LOGICALS_ENDPOINT)
             except OSError as exc:
                 raise RuntimeError(
-                    "Proton refresh failed because gpg/gnupg is unavailable or misconfigured in this runtime."
+                    f"Proton refresh failed because gpg/gnupg is unavailable or misconfigured "
+                    f"in this runtime (user={masked_user}, storage={self._storage_path}). "
+                    f"Underlying error: {exc}"
                 ) from exc
 
             proton_payload, stats = self._transform_to_gluetun(api_data, applied_filters)

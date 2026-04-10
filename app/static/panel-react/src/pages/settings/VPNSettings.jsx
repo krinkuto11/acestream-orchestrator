@@ -681,7 +681,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
                   </Button>
                   {refreshStatus?.last_finished_at && (
                     <span className="text-xs text-muted-foreground">
-                      Last run: {String(refreshStatus.last_finished_at)}
+                      Last run: {new Date(refreshStatus.last_finished_at).toLocaleString()}
                     </span>
                   )}
                 </div>

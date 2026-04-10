@@ -10,6 +10,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+try:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # Python 3.9+
+except ImportError:  # pragma: no cover
+    ZoneInfo = None  # type: ignore
+    ZoneInfoNotFoundError = Exception  # type: ignore
+
 import httpx
 
 from .proton_updater import ProtonFilterConfig, ProtonServerUpdater
@@ -28,6 +34,18 @@ _FILTER_VALUES = {"include", "exclude", "only"}
 
 
 def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _local_now_iso() -> str:
+    """Return a local-timezone-aware ISO 8601 timestamp respecting the TZ env var."""
+    tz_name = str(os.getenv("TZ", "")).strip()
+    if tz_name and ZoneInfo is not None:
+        try:
+            tz = ZoneInfo(tz_name)
+            return datetime.now(tz).isoformat()
+        except (ZoneInfoNotFoundError, Exception):
+            pass
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -106,7 +124,7 @@ class VPNServersRefreshService:
         async with self._refresh_lock:
             started = time.monotonic()
             self._status["in_progress"] = True
-            self._status["last_started_at"] = _utc_now_iso()
+            self._status["last_started_at"] = _local_now_iso()
             self._status["last_reason"] = str(reason or "manual")
             self._status["last_error"] = None
 
@@ -146,7 +164,7 @@ class VPNServersRefreshService:
                 raise
             finally:
                 self._status["in_progress"] = False
-                self._status["last_finished_at"] = _utc_now_iso()
+                self._status["last_finished_at"] = _local_now_iso()
 
     async def _run(self) -> None:
         while not self._stop.is_set():

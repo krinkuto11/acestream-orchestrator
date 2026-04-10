@@ -156,6 +156,7 @@ class VPNReputationManager:
         try:
             mtime = path.stat().st_mtime
         except OSError:
+            logger.warning("VPN servers catalog not found at %s", path)
             return None
 
         with self._servers_cache_lock:
@@ -181,6 +182,20 @@ class VPNReputationManager:
             self._servers_cache_path = path
             self._servers_cache_mtime = mtime
             self._servers_cache_data = loaded
+
+        # Log catalog metadata whenever the file is freshly (re-)loaded.
+        provider_count = max(0, len([k for k in loaded if k != "version"]))
+        total_servers = sum(
+            len(sec.get("servers", []))
+            for sec in loaded.values()
+            if isinstance(sec, dict)
+        )
+        logger.info(
+            "Loaded VPN servers catalog: path=%s providers=%d total_servers=%d",
+            path,
+            provider_count,
+            total_servers,
+        )
 
         return loaded
 
@@ -240,32 +255,64 @@ class VPNReputationManager:
     ) -> List[str]:
         servers = self._provider_servers_from_catalog(provider)
         if not servers:
+            logger.warning(
+                "Catalog filter: provider=%s — no servers found for this provider in catalog",
+                provider,
+            )
             return []
 
         normalized_protocol = self._normalize_protocol(protocol)
         requested_regions = self._normalize_regions(regions)
 
+        total = len(servers)
+        skipped_no_hostname = 0
+        skipped_protocol = 0
+        skipped_pf = 0
+        skipped_region = 0
         candidates: List[str] = []
+
         for server in servers:
             hostname = str(server.get("hostname") or "").strip().lower()
             if not hostname:
+                skipped_no_hostname += 1
                 continue
 
             server_protocol = self._normalize_protocol(server.get("vpn"))
             if normalized_protocol and server_protocol and server_protocol != normalized_protocol:
+                skipped_protocol += 1
                 continue
             if normalized_protocol and not server_protocol:
+                skipped_protocol += 1
                 continue
 
             if require_port_forwarding and not self._server_supports_port_forwarding(server):
+                skipped_pf += 1
                 continue
 
             if not self._server_matches_regions(server, requested_regions):
+                skipped_region += 1
                 continue
 
             candidates.append(hostname)
 
-        return list(dict.fromkeys(candidates))
+        unique_candidates = list(dict.fromkeys(candidates))
+
+        logger.info(
+            "Catalog filter: provider=%s protocol=%s pf_required=%s regions=%s "
+            "→ total=%d skipped(no_hostname=%d protocol=%d pf=%d region=%d) candidates=%d",
+            provider,
+            normalized_protocol or "any",
+            require_port_forwarding,
+            requested_regions or ["any"],
+            total,
+            skipped_no_hostname,
+            skipped_protocol,
+            skipped_pf,
+            skipped_region,
+            len(unique_candidates),
+        )
+
+        return unique_candidates
 
     def hostnames_support_port_forwarding(
         self,
@@ -413,10 +460,13 @@ class VPNReputationManager:
 
         if require_port_forwarding:
             logger.warning(
-                "No forwarding-capable hostnames found in servers catalog for provider %s, protocol=%s, regions=%s",
+                "No forwarding-capable hostnames found in servers catalog for provider %s, "
+                "protocol=%s, regions=%s — check catalog path (%s) and that servers have "
+                "port_forward=true for the requested region/protocol combination",
                 provider,
                 protocol,
                 self._normalize_regions(regions),
+                self._servers_json_path(),
             )
             return None
 
