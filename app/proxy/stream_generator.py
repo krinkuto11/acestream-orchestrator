@@ -21,6 +21,7 @@ logger = get_logger()
 # Keep client-side download burst small so runway telemetry reflects
 # proxy-held buffer rather than player-local RAM hoarding.
 MAX_CLIENT_LOCAL_HOARD_SECONDS = 3.0
+MAX_CATCHUP_SPEED_MULTIPLIER = 2.0
 
 
 class StreamGenerator:
@@ -275,6 +276,19 @@ class StreamGenerator:
 
     def _update_chunk_rate_estimate(self, chunks_received: int):
         """Maintain an EMA of producer/consumer chunk rate for lag conversion."""
+        # FAVOR SOURCE RATE: if the buffer can provide a stable ingress rate from
+        # the engine, use it to avoid egress speed contaminating the bitrate estimate.
+        if hasattr(self, "buffer") and self.buffer:
+            source_rate = getattr(self.buffer, "get_source_rate", lambda: 0.0)()
+            if source_rate > 0.1:
+                if self.chunk_rate_ema is None:
+                    self.chunk_rate_ema = source_rate
+                else:
+                    # Faster adaptation for source rate changes
+                    alpha = 0.2
+                    self.chunk_rate_ema = (alpha * source_rate) + ((1.0 - alpha) * float(self.chunk_rate_ema))
+                return
+
         now = time.time()
         elapsed = now - self.last_chunk_rate_update_time
         self.last_chunk_rate_update_time = now
@@ -298,12 +312,22 @@ class StreamGenerator:
 
         video_seconds_sent = float(self.chunks_sent) / chunk_rate
         real_time_elapsed = max(0.0, time.time() - float(streaming_start_time))
-        client_hoard = video_seconds_sent - real_time_elapsed
+        
+        # Determine pacing multiplier. If the client is significantly behind the
+        # live edge, allow them to download faster to fill their local buffer,
+        # but cap the catch-up speed so they don't drain the orchestrator's runway.
+        chunks_behind = max(0, int(getattr(self.buffer, "index", 0)) - int(self.local_index))
+        multiplier = 1.0
+        if chunks_behind > 5:
+            multiplier = MAX_CATCHUP_SPEED_MULTIPLIER
+            
+        client_hoard = video_seconds_sent - (real_time_elapsed * multiplier)
 
         if client_hoard > MAX_CLIENT_LOCAL_HOARD_SECONDS:
             # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
             sleep_for = min(0.5, client_hoard - MAX_CLIENT_LOCAL_HOARD_SECONDS)
             if sleep_for > 0.0:
+                logger.debug(f"[{self.client_id}] Pacing client: hoard={client_hoard:.1f}s, multiplier={multiplier}x, sleeping {sleep_for:.2f}s")
                 time.sleep(sleep_for)
 
     def _advance_local_index(self, chunks_received: int, fetched_end_index=None):

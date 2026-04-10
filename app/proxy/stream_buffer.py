@@ -56,6 +56,10 @@ class StreamBuffer:
         # REPLACED: gevent.event.Event with threading.Condition
         # Condition supports Wait/Notify semantics ideal for producer/consumer buffering
         self.chunk_available = threading.Condition()
+
+        # Source rate tracking (chunks/second)
+        self._source_rate_ema = None
+        self._last_source_update_time = time.time()
     
     def add_chunk(self, chunk):
         """Add data with optimized Redis storage and TS packet alignment"""
@@ -108,6 +112,7 @@ class StreamBuffer:
                         writes_done += 1
             
             if writes_done > 0:
+                self._update_source_rate(writes_done)
                 logger.debug(f"Added {writes_done} chunks ({self.target_chunk_size} bytes each) to Redis for stream {self.content_id} at index {self.index}")
             
             # NOTIFICATION: Signal any sleeping waiters on Condition that buffer has advanced
@@ -119,6 +124,28 @@ class StreamBuffer:
         except Exception as e:
             logger.error(f"Error adding chunk to buffer: {e}")
             return False
+
+    def _update_source_rate(self, writes_done: int):
+        """Update EMA of the source chunk arrival rate"""
+        now = time.time()
+        elapsed = now - self._last_source_update_time
+        
+        # Avoid division by zero or negative time
+        if elapsed < 0.001:
+            return
+
+        self._last_source_update_time = now
+        instant_rate = float(writes_done) / elapsed
+        
+        alpha = 0.1  # Slow EMA to filter out network/engine jitter
+        if self._source_rate_ema is None:
+            self._source_rate_ema = instant_rate
+        else:
+            self._source_rate_ema = (alpha * instant_rate) + ((1.0 - alpha) * self._source_rate_ema)
+
+    def get_source_rate(self) -> float:
+         """Return the current estimated source chunk rate (chunks/second)"""
+         return float(self._source_rate_ema or 0.0)
     
     def _get_chunks_internal(self, start_index=None):
         """Get chunks and return per-call fetched end cursor.
