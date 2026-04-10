@@ -425,45 +425,51 @@ def start_container(req: StartRequest) -> dict:
     container_name = generate_container_name(req.name_prefix)
     
     logger.debug(f"Starting container: name={container_name}, image={image_name}")
-    
+
     try:
-        cont = safe(cli.containers.run,
-            image_name,
-            detach=True,
-            name=container_name,
-            environment=req.env or None,
-            labels=labels,
-            network=cfg.DOCKER_NETWORK if cfg.DOCKER_NETWORK else None,
-            ports=req.ports or None,
-            restart_policy={"Name": "unless-stopped"})
-    except RuntimeError as e:
+        try:
+            cont = safe(cli.containers.run,
+                image_name,
+                detach=True,
+                name=container_name,
+                environment=req.env or None,
+                labels=labels,
+                network=cfg.DOCKER_NETWORK if cfg.DOCKER_NETWORK else None,
+                ports=req.ports or None,
+                restart_policy={"Name": "unless-stopped"})
+        except RuntimeError as e:
+            duration = time.time() - start_time
+            logger.error(f"Failed to start container {container_name}: {e} (duration: {duration:.2f}s)")
+            # Provide more helpful error messages for common image issues
+            error_msg = str(e).lower()
+            if "not found" in error_msg or "pull access denied" in error_msg:
+                raise RuntimeError(f"Image '{image_name}' not found. Please pull the image manually: docker pull {image_name}")
+            elif "network" in error_msg:
+                raise RuntimeError(f"Network error starting container with image '{image_name}': {e}")
+            else:
+                raise RuntimeError(f"Failed to start container with image '{image_name}': {e}")
+
+        # Do not poll for running status; lifecycle confirmation is informer-driven.
+        attrs_name = str((cont.attrs or {}).get("Name", "")).lstrip("/") if getattr(cont, "attrs", None) else ""
+        raw_name = attrs_name or getattr(cont, "name", "") or ""
+        actual_container_name = str(raw_name).lstrip("/")
+
         duration = time.time() - start_time
-        logger.error(f"Failed to start container {container_name}: {e} (duration: {duration:.2f}s)")
-        # Provide more helpful error messages for common image issues
-        error_msg = str(e).lower()
-        if "not found" in error_msg or "pull access denied" in error_msg:
-            raise RuntimeError(f"Image '{image_name}' not found. Please pull the image manually: docker pull {image_name}")
-        elif "network" in error_msg:
-            raise RuntimeError(f"Network error starting container with image '{image_name}': {e}")
-        else:
-            raise RuntimeError(f"Failed to start container with image '{image_name}': {e}")
-    
-    # Do not poll for running status; lifecycle confirmation is informer-driven.
-    attrs_name = str((cont.attrs or {}).get("Name", "")).lstrip("/") if getattr(cont, "attrs", None) else ""
-    raw_name = attrs_name or getattr(cont, "name", "") or ""
-    actual_container_name = str(raw_name).lstrip("/")
-    
-    duration = time.time() - start_time
-    logger.info(
-        f"Container create submitted: {actual_container_name} ({cont.id[:12]}, duration: {duration:.2f}s). "
-        "Running state will be confirmed via Docker events."
-    )
-    
-    # Check for slow provisioning (stress indicator)
-    if duration > cfg.STARTUP_TIMEOUT_S * 0.5:
-        logger.warning(f"Slow container provisioning detected: {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.5}s threshold) for {cont.id[:12]}")
-    
-    return {"container_id": cont.id, "container_name": actual_container_name}
+        logger.info(
+            f"Container create submitted: {actual_container_name} ({cont.id[:12]}, duration: {duration:.2f}s). "
+            "Running state will be confirmed via Docker events."
+        )
+
+        # Check for slow provisioning (stress indicator)
+        if duration > cfg.STARTUP_TIMEOUT_S * 0.5:
+            logger.warning(f"Slow container provisioning detected: {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.5}s threshold) for {cont.id[:12]}")
+
+        return {"container_id": cont.id, "container_name": actual_container_name}
+    finally:
+        try:
+            cli.close()
+        except Exception:
+            pass
 
 def _release_ports_from_labels(labels: dict):
     try:
@@ -554,6 +560,11 @@ def stop_container(container_id: str, force: bool = False):
         logger.debug(f"Container {container_id[:12]} already removed or not found")
     except Exception as e:
         logger.error(f"Unexpected error during stop_container for {container_id}: {e}")
+    finally:
+        try:
+            cli.close()
+        except Exception:
+            pass
 
 
 
@@ -633,28 +644,34 @@ def _check_gluetun_health_sync(container_name: Optional[str] = None) -> bool:
             return False
         
         cli = get_client()
-        container = cli.containers.get(target_container)
-        container.reload()
-        
-        # Check container status
-        if container.status != "running":
-            return False
-        
-        # Check Docker health status if available
-        health = container.attrs.get("State", {}).get("Health", {})
-        if health:
-            health_status = health.get("Status")
-            if health_status == "unhealthy":
+        try:
+            container = cli.containers.get(target_container)
+            container.reload()
+
+            # Check container status
+            if container.status != "running":
                 return False
-            elif health_status == "healthy":
-                return True
+
+            # Check Docker health status if available
+            health = container.attrs.get("State", {}).get("Health", {})
+            if health:
+                health_status = health.get("Status")
+                if health_status == "unhealthy":
+                    return False
+                elif health_status == "healthy":
+                    return True
+                else:
+                    # Health status might be "starting" or "none"
+                    # Consider container healthy if running but health status is starting/none
+                    return True
             else:
-                # Health status might be "starting" or "none"
-                # Consider container healthy if running but health status is starting/none
+                # No health check configured, consider healthy if running
                 return True
-        else:
-            # No health check configured, consider healthy if running
-            return True
+        finally:
+            try:
+                cli.close()
+            except Exception:
+                pass
             
     except NotFound:
         return False
@@ -771,100 +788,106 @@ def start_acestream(req: AceProvisionRequest, engine_spec: Optional[EngineSpec] 
     container_name = generate_container_name("acestream")
 
     cli = get_client()
-    
-    # Build container arguments, conditionally including ports
-    container_args = {
-        "image": engine_image,
-        "detach": True,
-        "name": container_name,
-        "environment": env,
-        "labels": labels,
-        **network_config,
-        "restart_policy": {"Name": "unless-stopped"}
-    }
-    
-    # Add memory limit if configured
-    if memory_limit:
-        container_args["mem_limit"] = memory_limit
-    
-    if engine_spec.volumes:
-        container_args["volumes"] = dict(engine_spec.volumes)
 
-    container_args["command"] = cmd
-    
-    # Only add ports if not using Gluetun (ports are handled by Gluetun container)
-    if ports is not None:
-        container_args["ports"] = ports
-    
-    # Capture base volumes before adding retry-specific cache mounts.
-    base_volumes = container_args.get("volumes", {}).copy()
-    max_retries = 5
-    cont = None
     try:
-        for attempt in range(max_retries):
-            current_volumes = base_volumes.copy()
-            from .engine_cache_manager import engine_cache_manager
-            if engine_cache_manager.is_enabled():
-                if engine_cache_manager.setup_cache(container_name):
-                    cache_mount = engine_cache_manager.get_mount_config(container_name)
-                    if cache_mount:
-                        current_volumes.update(cache_mount)
-                        logger.info(f"Mounted disk cache for {container_name}")
+        # Build container arguments, conditionally including ports
+        container_args = {
+            "image": engine_image,
+            "detach": True,
+            "name": container_name,
+            "environment": env,
+            "labels": labels,
+            **network_config,
+            "restart_policy": {"Name": "unless-stopped"}
+        }
 
-            if current_volumes:
-                container_args["volumes"] = current_volumes
-            elif "volumes" in container_args:
-                del container_args["volumes"]
+        # Add memory limit if configured
+        if memory_limit:
+            container_args["mem_limit"] = memory_limit
 
-            try:
-                cont = safe(cli.containers.run, **container_args)
-                break
-            except RuntimeError as e:
-                if "Conflict" in str(e) and "name" in str(e).lower() and attempt < max_retries - 1:
-                    old_name = container_name
-                    time.sleep(0.1)
-                    container_name = generate_container_name("acestream")
-                    container_args["name"] = container_name
-                    try:
-                        if engine_cache_manager.is_enabled():
-                            engine_cache_manager.cleanup_cache(old_name)
-                    except Exception:
-                        pass
-                    continue
-                raise
+        if engine_spec.volumes:
+            container_args["volumes"] = dict(engine_spec.volumes)
 
-        if cont is None:
-            raise RuntimeError("Unable to create AceStream container after retry attempts")
-    except Exception:
-        _release_ports_from_labels(labels)
+        container_args["command"] = cmd
+
+        # Only add ports if not using Gluetun (ports are handled by Gluetun container)
+        if ports is not None:
+            container_args["ports"] = ports
+
+        # Capture base volumes before adding retry-specific cache mounts.
+        base_volumes = container_args.get("volumes", {}).copy()
+        max_retries = 5
+        cont = None
+        try:
+            for attempt in range(max_retries):
+                current_volumes = base_volumes.copy()
+                from .engine_cache_manager import engine_cache_manager
+                if engine_cache_manager.is_enabled():
+                    if engine_cache_manager.setup_cache(container_name):
+                        cache_mount = engine_cache_manager.get_mount_config(container_name)
+                        if cache_mount:
+                            current_volumes.update(cache_mount)
+                            logger.info(f"Mounted disk cache for {container_name}")
+
+                if current_volumes:
+                    container_args["volumes"] = current_volumes
+                elif "volumes" in container_args:
+                    del container_args["volumes"]
+
+                try:
+                    cont = safe(cli.containers.run, **container_args)
+                    break
+                except RuntimeError as e:
+                    if "Conflict" in str(e) and "name" in str(e).lower() and attempt < max_retries - 1:
+                        old_name = container_name
+                        time.sleep(0.1)
+                        container_name = generate_container_name("acestream")
+                        container_args["name"] = container_name
+                        try:
+                            if engine_cache_manager.is_enabled():
+                                engine_cache_manager.cleanup_cache(old_name)
+                        except Exception:
+                            pass
+                        continue
+                    raise
+
+            if cont is None:
+                raise RuntimeError("Unable to create AceStream container after retry attempts")
+        except Exception:
+            _release_ports_from_labels(labels)
+            _decrement_vpn_pending_counter(vpn_container)
+            raise
+
+        # Do not poll for running status; lifecycle confirmation is informer-driven.
+        attrs_name = str((cont.attrs or {}).get("Name", "")).lstrip("/") if getattr(cont, "attrs", None) else ""
+        raw_name = attrs_name or getattr(cont, "name", "") or ""
+        actual_container_name = str(raw_name).lstrip("/")
+
+        duration = time.time() - provision_start
+        logger.info(
+            f"AceStream engine create submitted: {actual_container_name} "
+            f"({cont.id[:12]}, HTTP port: {host_http}, duration: {duration:.2f}s). "
+            "Running state will be confirmed via Docker events."
+        )
+
+        # Check for slow provisioning (stress indicator)
+        if duration > cfg.STARTUP_TIMEOUT_S * 0.7:
+            logger.warning(f"Slow AceStream provisioning detected: {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.7}s threshold) for {cont.id[:12]}")
+
+        # Decrement pending counter now that create request has succeeded.
         _decrement_vpn_pending_counter(vpn_container)
-        raise
 
-    # Do not poll for running status; lifecycle confirmation is informer-driven.
-    attrs_name = str((cont.attrs or {}).get("Name", "")).lstrip("/") if getattr(cont, "attrs", None) else ""
-    raw_name = attrs_name or getattr(cont, "name", "") or ""
-    actual_container_name = str(raw_name).lstrip("/")
-    
-    duration = time.time() - provision_start
-    logger.info(
-        f"AceStream engine create submitted: {actual_container_name} "
-        f"({cont.id[:12]}, HTTP port: {host_http}, duration: {duration:.2f}s). "
-        "Running state will be confirmed via Docker events."
-    )
-    
-    # Check for slow provisioning (stress indicator)
-    if duration > cfg.STARTUP_TIMEOUT_S * 0.7:
-        logger.warning(f"Slow AceStream provisioning detected: {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.7}s threshold) for {cont.id[:12]}")
-    
-    # Decrement pending counter now that create request has succeeded.
-    _decrement_vpn_pending_counter(vpn_container)
-    
-    return AceProvisionResponse(
-        container_id=cont.id, 
-        container_name=actual_container_name,
-        host_http_port=host_http, 
-        container_http_port=c_http, 
-        container_https_port=c_https,
-        host_api_port=host_api,
-        container_api_port=c_api
-    )
+        return AceProvisionResponse(
+            container_id=cont.id,
+            container_name=actual_container_name,
+            host_http_port=host_http,
+            container_http_port=c_http,
+            container_https_port=c_https,
+            host_api_port=host_api,
+            container_api_port=c_api
+        )
+    finally:
+        try:
+            cli.close()
+        except Exception:
+            pass

@@ -704,17 +704,23 @@ def _compute_docker_metrics_snapshot() -> Dict[str, float]:
         from .state import state
 
         docker_client = get_client()
-        for engine in state.list_engines():
+        try:
+            for engine in state.list_engines():
+                try:
+                    container = docker_client.containers.get(engine.container_id)
+                    container.reload()
+                    attrs = container.attrs or {}
+                    restart_total += int(attrs.get("RestartCount", 0) or 0)
+                    state_info = attrs.get("State", {}) or {}
+                    if state_info.get("OOMKilled"):
+                        oom_killed_total += 1
+                except Exception:
+                    continue
+        finally:
             try:
-                container = docker_client.containers.get(engine.container_id)
-                container.reload()
-                attrs = container.attrs or {}
-                restart_total += int(attrs.get("RestartCount", 0) or 0)
-                state_info = attrs.get("State", {}) or {}
-                if state_info.get("OOMKilled"):
-                    oom_killed_total += 1
+                docker_client.close()
             except Exception:
-                continue
+                pass
     except Exception:
         pass
 

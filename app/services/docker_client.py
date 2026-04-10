@@ -384,6 +384,7 @@ def get_orchestrator_network() -> str | None:
         # Not in Docker, skip detection
         return None
         
+    client = None
     try:
         client = get_client()
         # Default Docker behavior: hostname matches container ID or name
@@ -403,6 +404,10 @@ def get_orchestrator_network() -> str | None:
             return _orchestrator_network
     except Exception as e:
         logger.debug(f"Failed to detect orchestrator Docker network: {e}")
+    finally:
+        if client is not None:
+            with suppress(Exception):
+                client.close()
         
     return None
 

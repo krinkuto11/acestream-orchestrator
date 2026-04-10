@@ -144,6 +144,15 @@ class State:
                 self._db_queue.task_done()
     
     def on_stream_started(self, evt: StreamStartedEvent) -> StreamState:
+        container_name = None
+        if evt.container_id:
+            try:
+                from ..services.inspect import get_container_name
+
+                container_name = get_container_name(evt.container_id)
+            except Exception:
+                container_name = None
+
         with self._lock:
             # Try to find existing engine using multiple approaches
             eng = None
@@ -168,11 +177,8 @@ class State:
                 # Create new engine with appropriate key
                 key = evt.container_id or f"{evt.engine.host}:{evt.engine.port}"
             
-            # Get container name from Docker if we have a container_id
-            container_name = None
+            # Use pre-fetched container name to avoid Docker I/O while holding state lock.
             if evt.container_id:
-                from ..services.inspect import get_container_name
-                container_name = get_container_name(evt.container_id)
                 # If we can't get the name from Docker, but we have a container_id,
                 # use a truncated version of the container_id as a fallback
                 if not container_name:
@@ -1258,9 +1264,22 @@ class State:
     def update_engines_health(self):
         """Update health status for all engines."""
         from ..services.health import check_acestream_health
+
         with self._lock:
-            for engine in self.engines.values():
-                health_status = check_acestream_health(engine.host, engine.port)
+            targets = [
+                (engine.container_id, engine.host, engine.port)
+                for engine in self.engines.values()
+            ]
+
+        health_updates = {}
+        for container_id, host, port in targets:
+            health_updates[container_id] = check_acestream_health(host, port)
+
+        with self._lock:
+            for container_id, health_status in health_updates.items():
+                engine = self.engines.get(container_id)
+                if not engine:
+                    continue
                 engine.health_status = health_status
                 engine.last_health_check = self.now()
 

@@ -112,14 +112,37 @@ def select_best_engine(
     if reserve_pending and redis:
         try:
             pending_key = f"ace_proxy:engine:{selected.container_id}:pending"
-            pipe = redis.pipeline()
-            pipe.incr(pending_key)
-            pipe.expire(pending_key, 15)
-            pipe.execute()
+            remaining_capacity = int(max_streams) - int(current_load)
+            if remaining_capacity <= 0:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"All engines at maximum capacity ({max_streams} streams per engine)",
+                )
+
+            reserve_script = """
+            local key = KEYS[1]
+            local cap = tonumber(ARGV[1])
+            local ttl = tonumber(ARGV[2])
+            local cur = tonumber(redis.call('GET', key) or '0')
+            if cur >= cap then
+                return -1
+            end
+            local updated = redis.call('INCR', key)
+            redis.call('EXPIRE', key, ttl)
+            return updated
+            """
+            reserve_result = int(redis.eval(reserve_script, 1, pending_key, remaining_capacity, 15))
+            if reserve_result < 0:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"All engines at maximum capacity ({max_streams} streams per engine)",
+                )
             logger.debug(
                 "Atomically reserved engine %s pending count",
                 selected.container_id[:12],
             )
+        except HTTPException:
+            raise
         except Exception as e:
             logger.warning(
                 "Failed to set Redis pending reservation for engine %s: %s",

@@ -4335,8 +4335,33 @@ async def ace_getstream(
             observe_proxy_request(stream_mode, "/ace/getstream", elapsed, success=True, status_code=200)
             observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
 
+            ts_iterator = generator.generate()
+
+            async def _guarded_ts_stream():
+                try:
+                    while True:
+                        if await request.is_disconnected():
+                            break
+                        try:
+                            chunk = await asyncio.wait_for(
+                                asyncio.to_thread(next, ts_iterator),
+                                timeout=1.0,
+                            )
+                        except asyncio.TimeoutError:
+                            continue
+                        except StopIteration:
+                            break
+
+                        if chunk:
+                            yield chunk
+                except asyncio.CancelledError:
+                    raise
+                finally:
+                    with suppress(Exception):
+                        ts_iterator.close()
+
             return StreamingResponse(
-                generator.generate(),
+                _guarded_ts_stream(),
                 media_type="video/mp2t",
                 headers={
                     "Cache-Control": "no-cache, no-store, must-revalidate",
