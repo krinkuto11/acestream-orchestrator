@@ -252,7 +252,7 @@ class ResourceScheduler:
         is_ready, _ = self._is_dynamic_node_ready_with_reason(node)
         return is_ready
 
-    def _is_dynamic_node_ready_with_reason(self, node: Dict[str, object]) -> Tuple[bool, str]:
+    def _is_dynamic_node_ready_with_reason(self, node: Dict[str, object]) -> tuple[bool, str]:
         container_name = str(node.get("container_name") or "").strip()
         if not container_name:
             return False, "no_name"
