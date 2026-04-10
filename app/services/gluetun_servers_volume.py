@@ -47,7 +47,7 @@ VOLUME_NAME = "acestream-gluetun-servers"
 # This avoids dependencies on external images (like busybox) that might
 # not be present in restricted or offline environments.
 # We only use it to host the mount while calling put_archive.
-_HELPER_IMAGE = "qdm12/gluetun"
+_HELPER_IMAGE = "qmcgaw/gluetun"
 
 
 def _get_client():
