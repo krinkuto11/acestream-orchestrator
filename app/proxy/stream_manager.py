@@ -174,8 +174,10 @@ class StreamManager:
             "file_indexes": self.file_indexes,
         }
 
-        if self.seekback > 0:
+        if self.seekback and int(self.seekback) > 0:
             params["seekback"] = str(self.seekback)
+        else:
+            logger.debug(f"[{self.content_id}] Seekback is 0 or None, omitting from engine HTTP params (normal play)")
 
         if self.source_input_type in {"content_id", "infohash"}:
             params["id"] = self.source_input

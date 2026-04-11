@@ -275,6 +275,7 @@ class AceLegacyApiClient:
         first_start_info = self._parse_start_params(parts)
 
         if normalized_seekback <= 0 and absolute_seek <= 0:
+            logger.debug("starting stream without seekback (normal play/live edge)")
             return first_start_info
 
         # Startup catch-up bootstrap:

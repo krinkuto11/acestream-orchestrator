@@ -27,12 +27,13 @@ MAX_CATCHUP_SPEED_MULTIPLIER = 2.0
 class StreamGenerator:
     """Handles generating streams for clients"""
     
-    def __init__(self, content_id, client_id, client_ip, client_user_agent, stream_initializing=False):
+    def __init__(self, content_id, client_id, client_ip, client_user_agent, stream_initializing=False, seekback=None):
         self.content_id = content_id
         self.client_id = client_id
         self.client_ip = client_ip
         self.client_user_agent = client_user_agent
         self.stream_initializing = stream_initializing
+        self.seekback = seekback
         
         # Performance tracking
         self.stream_start_time = time.time()
@@ -480,10 +481,21 @@ class StreamGenerator:
             return False
         
         # Keep playback behind live edge when unified prebuffer is configured.
+        # ROBUST FIX: If seekback is exactly 0, the user wants 'normal play' (liveness).
+        # In this case, we bypass the prebuffer offset and start from the current edge.
         prebuffer_seconds = max(0.0, float(ConfigHelper.proxy_prebuffer_seconds()))
-        if prebuffer_seconds > 0.0:
+        requested_seekback = 0
+        try:
+            if self.seekback is not None:
+                requested_seekback = int(float(self.seekback))
+        except (ValueError, TypeError):
+            requested_seekback = 0
+
+        if prebuffer_seconds > 0.0 and requested_seekback > 0:
             self.local_index = max(0, int(start_index))
         else:
+            if requested_seekback == 0:
+                logger.info(f"[{self.client_id}] Seekback is 0 (normal play): starting from current live edge index {self.buffer.index}")
             self.local_index = self.buffer.index
 
         # Starting playback after prebuffer should reset starvation drain anchor.
@@ -549,6 +561,6 @@ class StreamGenerator:
         logger.info(f"[{self.client_id}] Cleanup complete")
 
 
-def create_stream_generator(content_id, client_id, client_ip, client_user_agent, stream_initializing=False):
+def create_stream_generator(content_id, client_id, client_ip, client_user_agent, stream_initializing=False, seekback=None):
     """Factory function to create StreamGenerator"""
-    return StreamGenerator(content_id, client_id, client_ip, client_user_agent, stream_initializing)
+    return StreamGenerator(content_id, client_id, client_ip, client_user_agent, stream_initializing, seekback)

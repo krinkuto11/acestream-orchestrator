@@ -4481,7 +4481,8 @@ async def ace_getstream(
                 client_id=client_id,
                 client_ip=client_ip,
                 client_user_agent=user_agent,
-                stream_initializing=(control_mode == PROXY_MODE_API)
+                stream_initializing=(control_mode == PROXY_MODE_API),
+                seekback=normalized_seekback
             )
             
             # Return streaming response with TS data
@@ -4501,7 +4502,9 @@ async def ace_getstream(
                             break
 
                         if active_task is None:
-                            active_task = asyncio.create_task(asyncio.to_thread(next, ts_iterator))
+                            # Use next(ts_iterator, sentinel) to avoid raising StopIteration into
+                            # the asyncio future, which causes TypeError in Python 3.11+.
+                            active_task = asyncio.create_task(asyncio.to_thread(next, ts_iterator, None))
 
                         try:
                             # Use shield to prevent cancellation of the underlying next() call
@@ -4509,12 +4512,13 @@ async def ace_getstream(
                             # next() call concurrently on the same generator.
                             chunk = await asyncio.wait_for(asyncio.shield(active_task), timeout=1.0)
                             active_task = None  # Task completed, clear for next iteration
+                            
+                            if chunk is None:
+                                # Generator exhausted (sentinel returned)
+                                break
                         except asyncio.TimeoutError:
                             # Loop back and check for disconnect, keep active_task for next wait
                             continue
-                        except (StopIteration, StopAsyncIteration):
-                            active_task = None
-                            break
                         except Exception:
                             active_task = None
                             raise
