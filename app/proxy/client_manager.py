@@ -312,6 +312,7 @@ class ClientManager:
             if self.redis_client:
                 # Use pipeline for atomic-like removal to avoid race conditions
                 # where a client ID exists in the set but its metadata is gone.
+                client_key = RedisKeys.client_metadata(self.content_id, client_id)
                 pipe = self.redis_client.pipeline(transaction=False)
                 # Remove from stream's client set
                 pipe.srem(self.client_set_key, client_id)
