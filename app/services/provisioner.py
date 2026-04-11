@@ -448,6 +448,7 @@ class ResourceScheduler:
 
         from .state import state
         from .gluetun import get_forwarded_port_sync
+        from .ports import alloc
 
         is_forwarded = False
         p2p_port = None
@@ -455,25 +456,41 @@ class ResourceScheduler:
         if vpn_container:
             if not ResourceScheduler._vpn_supports_port_forwarding(vpn_container):
                 logger.warning(
-                    "VPN '%s' does not support port forwarding; engine will be scheduled without forwarded P2P port",
+                    "VPN '%s' does not support port forwarding; engine will be scheduled with internal-only P2P port",
                     vpn_container,
                 )
-                return False, None
+                # Use internal-only port to avoid binding conflicts without consuming mapping slots
+                p2p_port = alloc.alloc_internal_p2p_port(vpn_container)
+                return False, p2p_port
 
-            if not state.has_forwarded_engine_for_vpn(vpn_container):
+            # Check both existing engines and pending intents to avoid burst-election collisions
+            has_existing = state.has_forwarded_engine_for_vpn(vpn_container)
+            has_pending = state.is_forwarded_engine_pending(vpn_container)
+            
+            if not has_existing and not has_pending:
                 from .gluetun import wait_for_port_sync
                 p2p_port = wait_for_port_sync(vpn_container)
                 is_forwarded = p2p_port is not None and p2p_port > 0
                 if is_forwarded:
                     logger.info(f"Scheduled forwarded engine for VPN '{vpn_container}' with P2P port {p2p_port}")
+                else:
+                    # Fallback to unique internal port if election failed or no port returned
+                    p2p_port = alloc.alloc_internal_p2p_port(vpn_container)
+                    logger.info(f"Scheduled engine for VPN '{vpn_container}' with internal-only fallback P2P port {p2p_port}")
+            else:
+                # Forwarded slot already taken (allocated or pending in intent queue)
+                is_forwarded = False
+                p2p_port = alloc.alloc_internal_p2p_port(vpn_container)
+                logger.debug(f"Assigned unique internal P2P port {p2p_port} to non-forwarded engine on VPN '{vpn_container}'")
         else:
-            if not state.has_forwarded_engine():
+            # Global/no-VPN case
+            if not state.has_forwarded_engine() and not state.has_pending_forwarded_engine():
                 from .gluetun import wait_for_port_sync
                 p2p_port = wait_for_port_sync(vpn_container)
                 is_forwarded = p2p_port is not None and p2p_port > 0
                 if is_forwarded:
                     logger.info(f"Scheduled forwarded engine with P2P port {p2p_port}")
-
+            
         return is_forwarded, p2p_port
 
     @staticmethod

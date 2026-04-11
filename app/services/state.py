@@ -1793,6 +1793,27 @@ class State:
         """Check if there is a forwarded engine for a specific VPN container."""
         return self.get_forwarded_engine_for_vpn(vpn_container) is not None
 
+    def is_forwarded_engine_pending(self, vpn_container: str) -> bool:
+        """Check if a forwarded engine creation intent is currently pending for a specific VPN."""
+        with self._lock:
+            for intent in self._scaling_intents:
+                if intent.get("status") == "pending" and intent.get("intent_type") == "create_request":
+                    details = intent.get("details", {})
+                    if details.get("vpn_container") == vpn_container and details.get("forwarded"):
+                        return True
+            return False
+
+    def has_pending_forwarded_engine(self) -> bool:
+        """Check if any forwarded engine creation intent is currently pending (global/no-VPN case)."""
+        with self._lock:
+            for intent in self._scaling_intents:
+                if intent.get("status") == "pending" and intent.get("intent_type") == "create_request":
+                    details = intent.get("details", {})
+                    # If vpn_container is missing or None, it's a global/no-VPN engine
+                    if not details.get("vpn_container") and details.get("forwarded"):
+                        return True
+            return False
+
     
     def set_lookahead_layer(self, layer: int) -> None:
         """

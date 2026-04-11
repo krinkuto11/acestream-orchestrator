@@ -27,6 +27,7 @@ class PortAllocator:
         self._vpn_port_ranges: Dict[str, Tuple[int, int, int, set[int]]] = {}
         self._vpn_range_slots: list[Tuple[int, int]] = []
         self._vpn_range_assignments: Dict[str, int] = {}
+        self._vpn_p2p_used_ports: Dict[str, set[int]] = {}
         self._init_vpn_port_ranges()
 
     def _parse(self, s: str) -> Tuple[int, int]:
@@ -314,5 +315,42 @@ class PortAllocator:
             # Clear VPN-specific allocations and slot bindings.
             self._vpn_port_ranges.clear()
             self._vpn_range_assignments.clear()
+            self._vpn_p2p_used_ports.clear()
+
+    def alloc_internal_p2p_port(self, vpn_container: str) -> int:
+        """
+        Allocate a unique internal P2P port for an engine sharing a VPN network namespace.
+        This port is ONLY for local TCP/UDP binding to avoid conflicts; it is NOT
+        intended to be reachable from the orchestrator or the internet.
+        
+        Using a separate range (starting at 62062) ensures we don't 'steal' mapping
+        slots from the GLUETUN_PORT_RANGE which are needed for HTTP/API control.
+        """
+        with self._lock:
+            used = self._vpn_p2p_used_ports.get(vpn_container)
+            if used is None:
+                used = set()
+                self._vpn_p2p_used_ports[vpn_container] = used
+            
+            # Start from AceStream default 62062 and find next free
+            p = 62062
+            while p in used:
+                p += 1
+            
+            used.add(p)
+            return p
+
+    def free_internal_p2p_port(self, port: Optional[int], vpn_container: Optional[str]):
+        """Free an internal P2P port."""
+        if port is None or not vpn_container:
+            return
+        with self._lock:
+            used = self._vpn_p2p_used_ports.get(vpn_container)
+            if used:
+                used.discard(port)
+
+    def _track(self, vpn_container: str, port: int):
+        # Legacy tracking for external GLUETUN ports
+        pass
 
 alloc = PortAllocator()
