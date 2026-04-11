@@ -1428,6 +1428,13 @@ class State:
             }
             self._dynamic_vpn_nodes[vpn_container] = node_payload
 
+        if previous_dynamic and previous_dynamic.get("condition") != condition and condition == "ready":
+            try:
+                from .autoscaler import engine_controller
+                engine_controller.request_reconcile(reason=f"vpn_ready:{vpn_container}")
+            except Exception as e:
+                logger.debug(f"Failed to nudge autoscaler on VPN readiness: {e}")
+
         self.broadcast_state_change(
             "vpn_node_status",
             {
@@ -1640,10 +1647,18 @@ class State:
 
             elif normalized_action == "health_status: healthy":
                 if engine:
+                    previous_status = engine.health_status
                     engine.last_seen = now
                     engine.health_status = "healthy"
                     engine.last_health_check = now
                     logger.info(f"Engine {container_id[:12]} marked healthy via Docker event")
+                    
+                    if previous_status != "healthy":
+                        try:
+                            from .autoscaler import engine_controller
+                            engine_controller.request_reconcile(reason=f"engine_healthy:{container_id[:12]}")
+                        except Exception as e:
+                            logger.debug(f"Failed to nudge autoscaler on engine health: {e}")
 
             elif normalized_action == "health_status: unhealthy":
                 if engine:
