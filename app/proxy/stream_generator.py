@@ -20,7 +20,7 @@ logger = get_logger()
 
 # Keep client-side download burst small so runway telemetry reflects
 # proxy-held buffer rather than player-local RAM hoarding.
-MAX_CLIENT_LOCAL_HOARD_SECONDS = 3.0
+MAX_CLIENT_LOCAL_HOARD_SECONDS = 0.0
 MAX_CATCHUP_SPEED_MULTIPLIER = 2.0
 
 
@@ -64,7 +64,7 @@ class StreamGenerator:
 
         # Virtual Runway tracking
         self.pacing_start_time = None
-        self.pacing_burst_chunks = 3  # Allow ~3MB of instant hoarding for player stability
+        self.pacing_burst_chunks = 0  # Disabled: maintain 100% of buffer in proxy for telemetry precision
     
     def generate(self):
         """Generator function that produces stream content for the client"""
@@ -319,7 +319,8 @@ class StreamGenerator:
         elapsed = time.time() - self.pacing_start_time
         expected_chunks = elapsed * source_rate
         
-        # If we've sent more chunks than expected + our allowed burst
+        # Strict pacing: no client-side burst allowed. Maintains 100% of buffer in proxy
+        # to ensure that failover runway telemetry remains highly accurate.
         if self.chunks_sent > expected_chunks + self.pacing_burst_chunks:
             # Calculate time to sleep to fall back in line with the expected rate
             wait_time = (self.chunks_sent - self.pacing_burst_chunks) / source_rate - elapsed
