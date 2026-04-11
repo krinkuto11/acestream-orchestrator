@@ -72,19 +72,34 @@ class AceProvisionResponse(BaseModel):
 
 
 class EngineSpec(BaseModel):
-    vpn_container: Optional[str] = None
-    forwarded: bool = False
-    p2p_port: Optional[int] = None
+    # Resource Identifiers
+    vpn_container_id: Optional[str] = None
+    container_name: str
+    image: str
+    
+    # Runtime Configuration
+    command: List[str] = []
+    env_vars: Dict[str, str] = {}
+    labels: Dict[str, str] = {}
+    
+    # Network Configuration
+    network_mode: str = "bridge"
+    ports: Optional[Dict[str, int]] = None  # { container_port/protocol: host_port }
+    
+    # Hardware Constraints
+    mem_limit: Optional[str] = None
+    
+    # Legacy/Metadata fields for internal tracking
     host_http_port: int
     container_http_port: int
-    container_https_port: int
     host_api_port: int
     container_api_port: int
-    host_https_port: Optional[int] = None
-    labels: Dict[str, str] = {}
-    ports: Optional[Dict[str, int]] = None
+    forwarded: bool = False
+    p2p_port: Optional[int] = None
     volumes: Dict[str, Any] = {}
-    network_config: Dict[str, Any] = {}
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self.model_dump()
 
 
 class ResourceScheduler:
@@ -92,6 +107,77 @@ class ResourceScheduler:
 
     def __init__(self):
         self._lock = _vpn_assignment_lock
+
+    def schedule_new_engine(self) -> Optional[EngineSpec]:
+        """
+        The Brain: Resolve all resources needed for a new engine.
+        Returns a complete, immutable EngineSpec that can be executed as an intent.
+        """
+        from .naming import generate_container_name
+        from .engine_config import (
+            EngineConfig,
+            build_engine_customization_args,
+            detect_platform,
+            get_config as get_engine_config,
+            resolve_engine_image,
+        )
+        
+        # 1. Resolve Global Configuration
+        engine_platform = detect_platform()
+        engine_image = resolve_engine_image(engine_platform)
+        engine_variant_name = f"global-{engine_platform}"
+        engine_config = get_engine_config() or EngineConfig()
+        
+        # 2. Memory Limits
+        mem_limit = engine_config.memory_limit or cfg.ENGINE_MEMORY_LIMIT
+        
+        # 3. Schedule Resources (VPN and Ports)
+        # For simplicity in this declarative refactor, we mock a request
+        req = AceProvisionRequest() 
+        spec_base = self.schedule(req, engine_variant_name)
+        
+        # 4. Finalize Spec Details
+        container_name = generate_container_name("acestream")
+        
+        # Prepare command
+        cmd = [
+            "python", "main.py",
+            "--http-port", str(spec_base.container_http_port),
+            "--api-port", str(spec_base.container_api_port),
+        ]
+        if spec_base.p2p_port:
+            cmd.extend(["--port", str(spec_base.p2p_port)])
+        
+        cmd.extend(build_engine_customization_args(engine_config))
+
+        # Build final intent
+        return EngineSpec(
+            vpn_container_id=spec_base.vpn_container_id, # This is mapped in schedule() refactor below
+            container_name=container_name,
+            image=engine_image,
+            command=cmd,
+            env_vars=req.env,
+            labels=spec_base.labels,
+            network_mode=spec_base.network_mode,
+            ports=spec_base.ports,
+            mem_limit=mem_limit,
+            host_http_port=spec_base.host_http_port,
+            container_http_port=spec_base.container_http_port,
+            host_api_port=spec_base.host_api_port,
+            container_api_port=spec_base.container_api_port,
+            forwarded=spec_base.forwarded,
+            p2p_port=spec_base.p2p_port,
+            volumes=spec_base.volumes
+        )
+
+    @staticmethod
+    def release_resources(spec: EngineSpec):
+        """Rollback port allocations if an intent execution fails."""
+        try:
+            _release_ports_from_labels(spec.labels)
+            _decrement_vpn_pending_counter(spec.vpn_container_id)
+        except Exception as e:
+            logger.warning(f"Resource cleanup failed during rollback for {spec.container_name}: {e}")
 
     def schedule(self, req: "AceProvisionRequest", engine_variant_name: str, base_volumes: Optional[Dict[str, Any]] = None) -> EngineSpec:
         from .state import state
@@ -163,19 +249,19 @@ class ResourceScheduler:
                         docker_ports[f"{ports_info['container_https_port']}/tcp"] = ports_info["host_https_port"]
 
                 return EngineSpec(
-                    vpn_container=vpn_container,
+                    vpn_container_id=vpn_container,
+                    container_name="", # Resolved later in schedule_new_engine
+                    image="", # Resolved later
                     forwarded=forwarded,
                     p2p_port=p2p_port,
                     host_http_port=ports_info["host_http_port"],
                     container_http_port=ports_info["container_http_port"],
-                    container_https_port=ports_info["container_https_port"],
                     host_api_port=ports_info["host_api_port"],
                     container_api_port=ports_info["container_api_port"],
-                    host_https_port=ports_info.get("host_https_port"),
                     labels=labels,
                     ports=docker_ports,
                     volumes=dict(base_volumes or {}),
-                    network_config=_get_network_config(vpn_container),
+                    network_mode=_get_network_config(vpn_container).get("network_mode", "bridge"),
                 )
         except Exception:
             if pending_incremented:
@@ -413,6 +499,63 @@ class ResourceScheduler:
 resource_scheduler = ResourceScheduler()
 
 
+def execute_engine_spec(spec: EngineSpec):
+    """
+    Dumb Executor: Blindly trusts the EngineSpec and fires the Docker run command.
+    Returns the created container object.
+    """
+    cli = get_client()
+
+    # 1. Map Network
+    network_mode = spec.network_mode
+    if spec.vpn_container_id:
+        network_mode = f"container:{spec.vpn_container_id}"
+
+    # 2. Setup Disk Cache
+    container_name = spec.container_name
+    final_volumes = spec.volumes.copy()
+    try:
+        from .engine_cache_manager import engine_cache_manager
+        if engine_cache_manager.is_enabled():
+            if engine_cache_manager.setup_cache(container_name):
+                cache_mount = engine_cache_manager.get_mount_config(container_name)
+                if cache_mount:
+                    final_volumes.update(cache_mount)
+                    logger.info(f"Mounted disk cache for {container_name}")
+    except Exception as e:
+        logger.warning(f"Failed to setup engine cache for {container_name}: {e}")
+
+    # 3. Execute Fire-and-Forget
+    try:
+        logger.info(f"Executing creation intent for {container_name} on target {network_mode}")
+        container = cli.containers.run(
+            image=spec.image,
+            name=container_name,
+            command=spec.command,
+            environment=spec.env_vars,
+            labels=spec.labels,
+            network_mode=network_mode,
+            ports=spec.ports,
+            mem_limit=spec.mem_limit,
+            volumes=final_volumes,
+            detach=True,
+            remove=True,  # Auto-cleanup on exit
+            restart_policy={"Name": "on-failure", "MaximumRetryCount": 3} if not spec.vpn_container_id else None
+        )
+        # Success at the API level (request submitted)
+        _decrement_vpn_pending_counter(spec.vpn_container_id)
+        return container
+    except Exception as e:
+        logger.error(f"Docker API failed to provision {container_name}: {e}")
+        # Rollback atomic locks if creation totally failed
+        ResourceScheduler.release_resources(spec)
+        raise
+    finally:
+        try:
+            cli.close()
+        except:
+            pass
+
 def compute_current_engine_config_hash() -> str:
     """Compute a stable hash for the desired engine runtime configuration."""
     from .engine_config import get_config as get_engine_config
@@ -531,65 +674,29 @@ def _release_ports_from_labels(labels: dict):
                 alloc.free_gluetun_port(int(ap), vpn_container)
         except Exception: pass
 
-def stop_container(container_id: str, force: bool = False):
+def stop_container(container_id: str):
     """
-    Stop and remove a container.
-    
-    Args:
-        container_id: Docker container ID or name
-        force: If True, uses 'docker rm -f' to kill and remove immediately. 
-               Should be used during shutdown for speed and reliability.
+    Dumb Terminator: Sends the stop signal and returns.
+    All state removal and port cleanup is handled by the DockerEventWatcher.
     """
     cli = get_client()
     try:
-        cont = cli.containers.get(container_id)
-        labels = cont.labels or {}
+        container = cli.containers.get(container_id)
+        logger.info(f"Executing termination intent for {container_id[:12]}")
         
-        # Get name for cache cleanup BEFORE removal
-        c_name = cont.attrs.get("Name", "").lstrip("/")
+        # We use a short timeout (5s) to prevent the worker loop from blocking too long.
+        container.stop(timeout=5)
         
-        if force:
-            logger.info(f"Forcibly destroying container {container_id[:12]}")
-            # docker-py's remove(force=True) is equivalent to docker rm -f
-            cont.remove(force=True)
-        else:
-            logger.info(f"Stopping container {container_id[:12]}")
-            try:
-                # Try graceful stop first
-                cont.stop(timeout=10)
-            except Exception as e:
-                logger.warning(f"Graceful stop failed for {container_id[:12]}: {e}")
-            
-            try:
-                # Remove after stopping
-                cont.remove(force=True)
-            except Exception as e:
-                logger.error(f"Failed to remove container {container_id[:12]}: {e}")
-
-        # Resource cleanup (ports and disk cache)
-        # We do this after removal attempt to ensure we don't block removal if cleanup fails
-        try:
-            _release_ports_from_labels(labels)
-        except Exception as e:
-            logger.warning(f"Failed to release ports for {container_id}: {e}")
-            
-        try:
-             # Use the captured name
-             from .engine_cache_manager import engine_cache_manager
-             engine_cache_manager.cleanup_cache(c_name)
-        except Exception as e:
-            logger.warning(f"Failed to cleanup cache for {container_id[:12]}: {e}")
-
-            
+        # Note: container.remove() is handled by remove=True in the execute_engine_spec run() call.
+        # If it's still there, we could force rm it, but normally stop is enough.
     except NotFound:
-        # Container already gone, nothing to do but maybe log it
-        logger.debug(f"Container {container_id[:12]} already removed or not found")
+        logger.debug(f"Container {container_id[:12]} already dead or gone")
     except Exception as e:
-        logger.error(f"Unexpected error during stop_container for {container_id}: {e}")
+        logger.warning(f"Container {container_id[:12]} could not be stopped (may already be dead): {e}")
     finally:
         try:
             cli.close()
-        except Exception:
+        except:
             pass
 
 
@@ -728,192 +835,19 @@ def get_variant_config(variant: str = "global") -> dict:
 
 _get_variant_config = get_variant_config
 
-def start_acestream(req: AceProvisionRequest, engine_spec: Optional[EngineSpec] = None) -> AceProvisionResponse:
-    from .naming import generate_container_name
-    import time
-    from .engine_config import (
-        DEFAULT_TORRENT_FOLDER_PATH,
-        EngineConfig,
-        build_engine_customization_args,
-        detect_platform,
-        get_config as get_engine_config,
-        resolve_engine_image,
+def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
+    """
+    Thin wrapper around the new intent-based logic for backward compatibility with API.
+    """
+    spec = resource_scheduler.schedule_new_engine(req)
+    container = execute_engine_spec(spec)
+    
+    return AceProvisionResponse(
+        container_id=container.id,
+        container_name=spec.container_name,
+        host_http_port=spec.host_http_port,
+        container_http_port=spec.container_http_port,
+        container_https_port=spec.container_https_port,
+        host_api_port=spec.host_api_port,
+        container_api_port=spec.container_api_port
     )
-    
-    provision_start = time.time()
-    
-    logger.debug(f"Starting AceStream engine: labels={req.labels}, custom_env={bool(req.env)}")
-
-    engine_platform = detect_platform()
-    engine_image = resolve_engine_image(engine_platform)
-    engine_variant_name = f"global-{engine_platform}"
-    engine_config = get_engine_config() or EngineConfig()
-
-    # Determine memory limit to apply.
-    # Priority: global engine config > global env config
-    memory_limit = None
-    if engine_config and engine_config.memory_limit:
-        memory_limit = engine_config.memory_limit
-        logger.info(f"Applying engine config memory limit: {memory_limit}")
-
-    if not memory_limit and cfg.ENGINE_MEMORY_LIMIT:
-        memory_limit = cfg.ENGINE_MEMORY_LIMIT
-        logger.info(f"Applying global memory limit: {memory_limit}")
-
-    # Resolve base volumes from global engine settings before scheduling.
-    volumes = None
-    if engine_config and engine_config.torrent_folder_mount_enabled:
-        if engine_config.torrent_folder_host_path:
-            container_path = engine_config.torrent_folder_container_path or DEFAULT_TORRENT_FOLDER_PATH
-            for param in engine_config.parameters:
-                if param.name == "--cache-dir" and param.enabled and param.value:
-                    cache_dir = str(param.value).replace("~", "/dev/shm")
-                    container_path = f"{cache_dir}/collected_torrent_files"
-                    break
-            volumes = {
-                engine_config.torrent_folder_host_path: {
-                    'bind': container_path,
-                    'mode': 'rw'
-                }
-            }
-            logger.info(f"Mounting torrent folder: {engine_config.torrent_folder_host_path} -> {container_path}")
-        else:
-            logger.warning("Torrent folder mount enabled but host path not configured")
-
-    # Phase 4: accept a fully resolved EngineSpec from the scheduler when provided.
-    if engine_spec is None:
-        engine_spec = resource_scheduler.schedule(req, engine_variant_name, base_volumes=volumes)
-    elif volumes and not engine_spec.volumes:
-        engine_spec.volumes = dict(volumes)
-
-    vpn_container = engine_spec.vpn_container
-    is_forwarded = engine_spec.forwarded
-    p2p_port = engine_spec.p2p_port
-    c_http = engine_spec.container_http_port
-    c_https = engine_spec.container_https_port
-    c_api = engine_spec.container_api_port
-    host_http = engine_spec.host_http_port
-    host_api = engine_spec.host_api_port
-    labels = dict(engine_spec.labels)
-    ports = engine_spec.ports
-    network_config = dict(engine_spec.network_config)
-    
-    # Prepare environment variables and strict orchestrator-owned command.
-    env = {**req.env}
-    cmd = [
-        "python", "main.py",
-        "--http-port", str(c_http),
-        "--api-port", str(c_api),
-    ]
-    if p2p_port:
-        cmd.extend(["--port", str(p2p_port)])
-
-    cmd.extend(build_engine_customization_args(engine_config))
-
-    # Generate a meaningful container name with retry logic for conflicts
-    container_name = generate_container_name("acestream")
-
-    cli = get_client()
-
-    try:
-        # Build container arguments, conditionally including ports
-        container_args = {
-            "image": engine_image,
-            "detach": True,
-            "name": container_name,
-            "environment": env,
-            "labels": labels,
-            **network_config,
-            "restart_policy": {"Name": "unless-stopped"}
-        }
-
-        # Add memory limit if configured
-        if memory_limit:
-            container_args["mem_limit"] = memory_limit
-
-        if engine_spec.volumes:
-            container_args["volumes"] = dict(engine_spec.volumes)
-
-        container_args["command"] = cmd
-
-        # Only add ports if not using Gluetun (ports are handled by Gluetun container)
-        if ports is not None:
-            container_args["ports"] = ports
-
-        # Capture base volumes before adding retry-specific cache mounts.
-        base_volumes = container_args.get("volumes", {}).copy()
-        max_retries = 5
-        cont = None
-        try:
-            for attempt in range(max_retries):
-                current_volumes = base_volumes.copy()
-                from .engine_cache_manager import engine_cache_manager
-                if engine_cache_manager.is_enabled():
-                    if engine_cache_manager.setup_cache(container_name):
-                        cache_mount = engine_cache_manager.get_mount_config(container_name)
-                        if cache_mount:
-                            current_volumes.update(cache_mount)
-                            logger.info(f"Mounted disk cache for {container_name}")
-
-                if current_volumes:
-                    container_args["volumes"] = current_volumes
-                elif "volumes" in container_args:
-                    del container_args["volumes"]
-
-                try:
-                    cont = safe(cli.containers.run, **container_args)
-                    break
-                except RuntimeError as e:
-                    if "Conflict" in str(e) and "name" in str(e).lower() and attempt < max_retries - 1:
-                        old_name = container_name
-                        time.sleep(0.1)
-                        container_name = generate_container_name("acestream")
-                        container_args["name"] = container_name
-                        try:
-                            if engine_cache_manager.is_enabled():
-                                engine_cache_manager.cleanup_cache(old_name)
-                        except Exception:
-                            pass
-                        continue
-                    raise
-
-            if cont is None:
-                raise RuntimeError("Unable to create AceStream container after retry attempts")
-        except Exception:
-            _release_ports_from_labels(labels)
-            _decrement_vpn_pending_counter(vpn_container)
-            raise
-
-        # Do not poll for running status; lifecycle confirmation is informer-driven.
-        attrs_name = str((cont.attrs or {}).get("Name", "")).lstrip("/") if getattr(cont, "attrs", None) else ""
-        raw_name = attrs_name or getattr(cont, "name", "") or ""
-        actual_container_name = str(raw_name).lstrip("/")
-
-        duration = time.time() - provision_start
-        logger.info(
-            f"AceStream engine create submitted: {actual_container_name} "
-            f"({cont.id[:12]}, HTTP port: {host_http}, duration: {duration:.2f}s). "
-            "Running state will be confirmed via Docker events."
-        )
-
-        # Check for slow provisioning (stress indicator)
-        if duration > cfg.STARTUP_TIMEOUT_S * 0.7:
-            logger.warning(f"Slow AceStream provisioning detected: {duration:.2f}s (>{cfg.STARTUP_TIMEOUT_S * 0.7}s threshold) for {cont.id[:12]}")
-
-        # Decrement pending counter now that create request has succeeded.
-        _decrement_vpn_pending_counter(vpn_container)
-
-        return AceProvisionResponse(
-            container_id=cont.id,
-            container_name=actual_container_name,
-            host_http_port=host_http,
-            container_http_port=c_http,
-            container_https_port=c_https,
-            host_api_port=host_api,
-            container_api_port=c_api
-        )
-    finally:
-        try:
-            cli.close()
-        except Exception:
-            pass

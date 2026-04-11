@@ -2,7 +2,7 @@ import threading
 import time
 import os
 from ..core.config import cfg
-from .provisioner import AceProvisionRequest, start_acestream, stop_container
+from .provisioner import ResourceScheduler, EngineSpec, execute_engine_spec, stop_container
 from .state import state
 from .circuit_breaker import circuit_breaker_manager
 from .event_logger import event_logger
@@ -10,7 +10,7 @@ from .replica_validator import replica_validator
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List, Dict, Any, NamedTuple, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -233,265 +233,152 @@ def ensure_minimum(*_args, **_kwargs):
         logger.debug(f"Traceback: {traceback.format_exc()}")
 
 
-class EngineController:
-    """Controller loop that reconciles desired and actual engine replicas."""
+class Intent(NamedTuple):
+    action: str  # "create" | "terminate"
+    payload: Any # EngineSpec | str (container_id)
+    intent_id: str
 
+class EngineController:
     def __init__(self):
-        self._task: Optional[asyncio.Task] = None
-        self._stop = asyncio.Event()
-        self._reconcile_signal = asyncio.Event()
-        self._thread_signal = threading.Event()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._interval_s = max(1, int(cfg.AUTOSCALE_INTERVAL_S))
+        self._running = False
+        self._loop_tasks: List[asyncio.Task] = []
+        self._reconcile_event = asyncio.Event()
+        self.intent_queue: asyncio.Queue[Intent] = asyncio.Queue()
+        self.scheduler = ResourceScheduler()
+        self._last_reconcile_at = 0.0
 
     async def start(self):
-        if self._task and not self._task.done():
+        if self._running:
             return
-
-        self._stop.clear()
-        self._reconcile_signal.clear()
-        self._thread_signal.clear()
-        self._loop = asyncio.get_running_loop()
-        self._task = asyncio.create_task(self._run())
-        logger.info(f"Engine controller started (interval={self._interval_s}s)")
+        self._running = True
+        logger.info("Starting EngineController (Async Intent-Based Architecture)")
+        
+        # Spawn the two core loops
+        self._loop_tasks = [
+            asyncio.create_task(self._reconciliation_loop(), name="reconciler"),
+            asyncio.create_task(self._intent_worker_loop(), name="intent-worker")
+        ]
 
     async def stop(self):
-        self._stop.set()
-        self._reconcile_signal.set()
-        self._thread_signal.set()
-        if self._task:
-            await self._task
-        logger.info("Engine controller stopped")
+        self._running = False
+        self._reconcile_event.set()
+        for task in self._loop_tasks:
+            task.cancel()
+        
+        if self._loop_tasks:
+            await asyncio.gather(*self._loop_tasks, return_exceptions=True)
+        self._loop_tasks = []
+        logger.info("EngineController stopped")
 
     def is_running(self) -> bool:
-        return bool(self._task and not self._task.done())
-
-    async def reconcile_once(self):
-        await self._reconcile_once()
+        return self._running
 
     def request_reconcile(self, reason: str = "manual"):
-        logger.debug(f"Engine controller reconcile requested: {reason}")
-        self._thread_signal.set()
-        if self._loop and self._loop.is_running():
+        """Nudge the controller to evaluate state immediately."""
+        logger.debug(f"Reconciliation requested: {reason}")
+        self._reconcile_event.set()
+
+    async def reconcile_once(self):
+        """Force a single-pass reconciliation (useful for startup/tests)."""
+        await self._do_reconcile()
+
+    async def _reconciliation_loop(self):
+        while self._running:
             try:
-                self._loop.call_soon_threadsafe(self._reconcile_signal.set)
-            except RuntimeError:
-                pass
+                try:
+                    await asyncio.wait_for(self._reconcile_event.wait(), timeout=float(cfg.AUTOSCALE_INTERVAL_S))
+                except asyncio.TimeoutError:
+                    pass
+                
+                self._reconcile_event.clear()
+                if not self._running: break
 
-    async def _run(self):
-        # Trigger an initial reconcile shortly after startup.
-        self.request_reconcile(reason="startup")
+                now = time.time()
+                if now - self._last_reconcile_at < 1.0:
+                    continue
+                self._last_reconcile_at = now
 
-        while not self._stop.is_set():
-            if self._thread_signal.is_set():
-                self._thread_signal.clear()
-
-            await self._reconcile_once()
-
-            stop_task = asyncio.create_task(self._stop.wait())
-            signal_task = asyncio.create_task(self._reconcile_signal.wait())
-            done, pending = await asyncio.wait(
-                {stop_task, signal_task},
-                timeout=self._interval_s,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            for task in pending:
-                task.cancel()
-
-            if stop_task in done:
+                await self._do_reconcile()
+            except asyncio.CancelledError:
                 break
+            except Exception as e:
+                logger.exception(f"Error in reconciliation loop: {e}")
+                await asyncio.sleep(2)
 
-            self._reconcile_signal.clear()
-
-    async def _reconcile_once(self):
+    async def _do_reconcile(self):
         from .settings_persistence import SettingsPersistence
-
-        engine_settings = SettingsPersistence.load_engine_settings() or {}
-        if engine_settings.get("manual_mode"):
+        if (SettingsPersistence.load_engine_settings() or {}).get("manual_mode"):
             return
-
-        await self._enqueue_outdated_engine_termination_intents()
-        await self._process_pending_termination_intents()
 
         desired = state.get_desired_replica_count()
         engines = state.list_engines()
-        serving_engines = [
-            engine for engine in engines
-            if not state.is_engine_draining(engine.container_id)
-        ]
-        draining_engines = [
-            engine for engine in engines
-            if state.is_engine_draining(engine.container_id)
-        ]
+        managed_engines = [e for e in engines if not e.labels.get("manual")]
+        
+        # Count engines that are either healthy OR starting (unknown)
+        # but exclude those marked as draining
+        active_alive = [e for e in managed_engines if e.health_status in ("healthy", "unknown") and not state.is_engine_draining(e.container_id)]
+        actual_count = len(active_alive)
+        
+        deficit = desired - actual_count
+        
+        if deficit > 0:
+            total_engines = len(engines)
+            creation_count = min(deficit, max(0, cfg.MAX_REPLICAS - total_engines))
+            if creation_count > 0:
+                logger.info(f"Scaling UP: deficit={deficit}, emitting {creation_count} creation intents")
+                for _ in range(creation_count):
+                    spec = self.scheduler.schedule_new_engine()
+                    if spec:
+                        intent_data = state.emit_scaling_intent("create_request", details={"source": "autoscaler"})
+                        await self.intent_queue.put(Intent("create", spec, intent_data["id"]))
+                    
+        elif deficit < 0:
+            surplus = abs(deficit)
+            candidates = self._select_termination_candidates(active_alive, surplus)
+            if candidates:
+                logger.info(f"Scaling DOWN: surplus={surplus}, emitting {len(candidates)} termination intents")
+                for c_id in candidates:
+                    intent_data = state.emit_scaling_intent("terminate_request", details={"container_id": c_id})
+                    await self.intent_queue.put(Intent("terminate", c_id, intent_data["id"]))
 
-        actual_serving = len(serving_engines)
+        # Also cleanup any draining engines that have become idle
+        draining_engines = [e for e in managed_engines if state.is_engine_draining(e.container_id)]
+        for e in draining_engines:
+            if not e.streams and can_stop_engine(e.container_id, bypass_grace_period=True):
+                intent_data = state.emit_scaling_intent("terminate_request", details={"container_id": e.container_id, "reason": "draining_cleanup"})
+                await self.intent_queue.put(Intent("terminate", e.container_id, intent_data["id"]))
 
-        if actual_serving < desired:
-            deficit = desired - actual_serving
-            for _ in range(deficit):
-                intent = state.emit_scaling_intent(
-                    intent_type="create_request",
-                    details={
-                        "requested_by": "engine_controller",
-                        "scheduler_request": True,
-                        "desired": desired,
-                        "actual": actual_serving,
-                    },
-                )
-                await self._execute_create_intent(intent)
-                actual_serving += 1
-
-        elif actual_serving > desired:
-            excess = actual_serving - desired
-            candidates = self._build_termination_candidates(serving_engines)
-            removed = 0
-
-            for engine in candidates:
-                if removed >= excess:
-                    break
-
-                if not can_stop_engine(engine.container_id, bypass_grace_period=False):
-                    continue
-
-                intent = state.emit_scaling_intent(
-                    intent_type="terminate_request",
-                    details={
-                        "requested_by": "engine_controller",
-                        "desired": desired,
-                        "actual": actual_serving,
-                        "container_id": engine.container_id,
-                    },
-                )
-                await self._execute_terminate_intent(intent, engine.container_id)
-                removed += 1
-                actual_serving -= 1
-
-        # Draining engines are excluded from placement and should be removed
-        # as soon as they become safe to stop.
-        for engine in self._build_termination_candidates(draining_engines):
-            if not can_stop_engine(engine.container_id, bypass_grace_period=False):
-                continue
-
-            intent = state.emit_scaling_intent(
-                intent_type="terminate_request",
-                details={
-                    "requested_by": "engine_controller",
-                    "eviction_reason": "draining_cleanup",
-                    "desired": desired,
-                    "actual": actual_serving,
-                    "container_id": engine.container_id,
-                },
-            )
-            await self._execute_terminate_intent(intent, engine.container_id)
-
-    async def _enqueue_outdated_engine_termination_intents(self):
-        target = state.get_target_engine_config()
-        target_hash = str(target.get("config_hash") or "").strip()
-        if not target_hash:
-            return
-
-        pending = state.list_pending_scaling_intents(intent_type="terminate_request", limit=1000)
-        pending_ids = {
-            str((intent.get("details") or {}).get("container_id") or "")
-            for intent in pending
-        }
-
-        outdated_candidates = []
-        for engine in state.list_engines():
-            engine_hash = str((engine.labels or {}).get("acestream.config_hash") or "").strip()
-            if engine_hash and engine_hash == target_hash:
-                continue
-            if engine.container_id in pending_ids:
-                continue
-            outdated_candidates.append(engine)
-
-        if not outdated_candidates:
-            return
-
-        candidate = sorted(
-            outdated_candidates,
-            key=lambda e: (
-                bool(state.list_streams(status="started", container_id=e.container_id)),
-                e.last_seen or datetime.min,
-            ),
-        )[0]
-
-        state.emit_scaling_intent(
-            intent_type="terminate_request",
-            details={
-                "requested_by": "engine_controller",
-                "eviction_reason": "config_hash_mismatch",
-                "target_config_hash": target_hash,
-                "container_id": candidate.container_id,
-                "force": False,
-            },
-        )
-
-    async def _process_pending_termination_intents(self):
-        pending = state.list_pending_scaling_intents(intent_type="terminate_request", limit=1000)
-        if not pending:
-            return
-
-        for intent in pending:
-            details = intent.get("details") or {}
-            container_id = str(details.get("container_id") or "").strip()
-            if not container_id:
-                state.resolve_scaling_intent(intent.get("id"), "failed", {"error": "missing_container_id"})
-                continue
-
-            force = bool(details.get("force", False))
-            if not force and not can_stop_engine(container_id, bypass_grace_period=False):
-                continue
-
-            await self._execute_terminate_intent(intent, container_id, force=force)
-
-    def _build_termination_candidates(self, engines):
-        active_streams = state.list_streams(status="started")
-        used_container_ids = {stream.container_id for stream in active_streams}
-        used_container_ids.update(state.get_active_monitor_container_ids())
-
-        # Prefer terminating idle non-forwarded engines first.
-        return sorted(
+    def _select_termination_candidates(self, engines: List[Any], count: int) -> List[str]:
+        # Sort by idle status (no streams first), then by age (oldest first)
+        candidates = sorted(
             engines,
             key=lambda e: (
-                e.container_id in used_container_ids,
-                bool(e.forwarded),
-                e.last_seen or datetime.min,
-            ),
-        )
-
-    async def _execute_create_intent(self, intent: dict):
-        intent_id = intent.get("id")
-
-        if not circuit_breaker_manager.can_provision("general"):
-            state.resolve_scaling_intent(intent_id, "blocked", {"reason": "circuit_breaker_open"})
-            return
-
-        try:
-            response = await asyncio.to_thread(start_acestream, AceProvisionRequest())
-            circuit_breaker_manager.record_provisioning_success("general")
-            state.resolve_scaling_intent(
-                intent_id,
-                "applied",
-                {"container_id": response.container_id, "container_name": response.container_name},
+                bool(e.streams),
+                e.first_seen or datetime.min
             )
-        except Exception as e:
-            if _is_transient_vpn_not_ready_error(e):
-                _log_vpn_not_ready_block(e)
-                state.resolve_scaling_intent(intent_id, "blocked", {"reason": "vpn_not_ready", "error": str(e)})
-                return
-            circuit_breaker_manager.record_provisioning_failure("general")
-            state.resolve_scaling_intent(intent_id, "failed", {"error": str(e)})
+        )
+        return [e.container_id for e in candidates[:count] if can_stop_engine(e.container_id)]
 
-    async def _execute_terminate_intent(self, intent: dict, container_id: str, force: bool = False):
-        intent_id = intent.get("id")
-        try:
-            await asyncio.to_thread(stop_container, container_id, force)
-            state.remove_engine(container_id)
-            state.resolve_scaling_intent(intent_id, "applied", {"container_id": container_id})
-        except Exception as e:
-            state.resolve_scaling_intent(intent_id, "failed", {"container_id": container_id, "error": str(e)})
+    async def _intent_worker_loop(self):
+        while self._running:
+            try:
+                intent = await self.intent_queue.get()
+                try:
+                    if intent.action == "create":
+                        await asyncio.to_thread(execute_engine_spec, intent.payload)
+                    elif intent.action == "terminate":
+                        await asyncio.to_thread(stop_container, intent.payload)
+                    state.resolve_scaling_intent(intent.intent_id, "applied")
+                except Exception as e:
+                    logger.error(f"Failed to execute {intent.action} intent {intent.intent_id}: {e}")
+                    state.resolve_scaling_intent(intent.intent_id, "failed", {"error": str(e)})
+                finally:
+                    self.intent_queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.exception(f"Error in intent worker loop: {e}")
+                await asyncio.sleep(1)
 
 
 engine_controller = EngineController()
