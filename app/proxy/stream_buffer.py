@@ -153,45 +153,88 @@ class StreamBuffer:
          """Return the current estimated source chunk rate (chunks/second)"""
          return float(self._source_rate_ema or 0.0)
     
-    def _extract_first_pcr(self, chunk: bytes) -> Optional[float]:
-        """Extract the first valid 33-bit PCR base from a TS chunk.
+    @staticmethod
+    def extract_chunk_duration(chunk: bytes) -> float:
+        """Finds the PCR delta between the first and last packet in a chunk.
         
-        Returns PCR in seconds, or None if no PCR found.
-        Highly optimized using bytes.find() and direct offsets.
+        Uses highly optimized byte scanning to minimize CPU overhead during
+        high-throughput client delivery.
         """
         if not chunk or len(chunk) < 188:
-            return None
+            return 0.0
+
+        def get_pcr_at(offset_start: int, reverse: bool = False) -> Optional[float]:
+            offset = offset_start
+            chunk_len = len(chunk)
             
-        offset = 0
-        limit = len(chunk) - 188
-        
-        while offset <= limit:
-            # Sync to next TS packet boundary
-            pos = chunk.find(b'\x47', offset)
-            if pos == -1 or pos > limit:
-                break
+            # Scan forward or backward for the 0x47 sync byte
+            while 0 <= offset <= chunk_len - 188:
+                if not reverse:
+                    sync_pos = chunk.find(b'\x47', offset)
+                else:
+                    sync_pos = chunk.rfind(b'\x47', 0, offset + 188)
                 
-            # Check Adaptation Field Control bits (byte 3, bits 4-5)
-            # 0x20 mask checks if Adaptation Field is present
-            if (chunk[pos + 3] & 0x20):
-                af_len = chunk[pos + 4]
-                # Adaptation field must be at least 1 byte, and PCR_flag is bit 4 (0x10)
-                if af_len > 0 and (chunk[pos + 5] & 0x10):
-                    # PCR base is 33 bits, spanning bytes 6-10
-                    # pcr_base = (b0 << 25) | (b1 << 17) | (b2 << 9) | (b3 << 1) | (b4 >> 7)
+                if sync_pos == -1:
+                    break
+                
+                # Check Adaptation Field Control (byte 3, bits 4-5) & PCR Flag (byte 5, bit 4)
+                # 0x20 => Adaptation field present
+                # chunk[sync_pos + 4] => Adaptation field length > 0
+                # 0x10 => PCR flag set
+                if (chunk[sync_pos + 3] & 0x20) and (chunk[sync_pos + 4] > 0) and (chunk[sync_pos + 5] & 0x10):
                     pcr_base = (
-                        (chunk[pos + 6] << 25) |
-                        (chunk[pos + 7] << 17) |
-                        (chunk[pos + 8] << 9) |
-                        (chunk[pos + 9] << 1) |
-                        (chunk[pos + 10] >> 7)
+                        (chunk[sync_pos + 6] << 25) |
+                        (chunk[sync_pos + 7] << 17) |
+                        (chunk[sync_pos + 8] << 9) |
+                        (chunk[sync_pos + 9] << 1) |
+                        (chunk[sync_pos + 10] >> 7)
                     )
                     return float(pcr_base) / 90000.0
+                
+                if not reverse:
+                    offset = sync_pos + 188
+                else:
+                    offset = sync_pos - 1
+            return None
+
+        # Find first PCR (Head) and last PCR (Tail)
+        first_pcr = get_pcr_at(0, reverse=False)
+        last_pcr = get_pcr_at(len(chunk) - 188, reverse=True)
+
+        if first_pcr is not None and last_pcr is not None:
+            duration = last_pcr - first_pcr
+            # Handle 33-bit clock wraparound (~26.5 hours)
+            if duration < 0:
+                duration += (2**33 / 90000.0)
+            return float(duration)
+        
+        return 0.0
+
+    def _extract_first_pcr(self, chunk: bytes) -> Optional[float]:
+        """Extract the first valid 33-bit PCR base from a TS chunk."""
+        # Use the new static method logic for consistency
+        def get_pcr_at(offset_start: int) -> Optional[float]:
+            offset = offset_start
+            chunk_len = len(chunk)
+            while 0 <= offset <= chunk_len - 188:
+                sync_pos = chunk.find(b'\x47', offset)
+                if sync_pos == -1:
+                    break
+                if (chunk[sync_pos + 3] & 0x20) and (chunk[sync_pos + 4] > 0) and (chunk[sync_pos + 5] & 0x10):
+                    pcr_base = (
+                        (chunk[sync_pos + 6] << 25) |
+                        (chunk[sync_pos + 7] << 17) |
+                        (chunk[sync_pos + 8] << 9) |
+                        (chunk[sync_pos + 9] << 1) |
+                        (chunk[sync_pos + 10] >> 7)
+                    )
+                    return float(pcr_base) / 90000.0
+                offset = sync_pos + 188
+            return None
             
-            # Jump to the next packet boundary
-            offset = pos + 188
-            
-        return None
+        if not chunk or len(chunk) < 188:
+            return None
+        return get_pcr_at(0)
 
     def get_buffer_duration_seconds(self) -> float:
         """Calculate exact buffer duration using head and tail PCR timestamps."""

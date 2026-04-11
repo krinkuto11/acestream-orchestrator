@@ -60,6 +60,10 @@ class StreamGenerator:
         self.last_chunk_rate_update_time = time.time()
         self.last_chunk_sent_time = time.time()
         self.last_starvation_update_time = 0.0
+
+        # Virtual Runway tracking
+        self.total_video_seconds_sent = 0.0
+        self.client_playback_start_time = None
     
     def generate(self):
         """Generator function that produces stream content for the client"""
@@ -109,7 +113,10 @@ class StreamGenerator:
                 
                 if chunks:
                     # Send chunks to client
-                    for chunk in chunks:
+                        # PCR-based duration tracking
+                        chunk_duration = self.buffer.extract_chunk_duration(chunk)
+                        self.total_video_seconds_sent += chunk_duration
+
                         yield chunk
                         chunk_len = len(chunk)
                         self.bytes_sent += chunk_len
@@ -359,7 +366,16 @@ class StreamGenerator:
             chunk_rate = float(self.chunk_rate_ema or 0.0)
             if chunk_rate <= 0.0:
                 chunk_rate = 1.0
-            seconds_behind = max(0.0, float(chunks_behind) / chunk_rate)
+            
+            # Use Virtual Runway (PCR-based) if available, otherwise fallback to wall-clock lag.
+            if self.total_video_seconds_sent > 0.0 and self.client_playback_start_time:
+                elapsed_watching_time = max(0.0, now - self.client_playback_start_time)
+                # Formula: Total Video Sent - Real Time Watching = Safety Buffer in Client RAM
+                seconds_behind = max(0.0, self.total_video_seconds_sent - elapsed_watching_time)
+                confidence = 0.95  # PCR is ground-truth for playback duration
+            else:
+                seconds_behind = max(0.0, float(chunks_behind) / chunk_rate)
+                confidence = 0.75 if self.chunk_rate_ema else 0.55
 
             normalized_source = str(source or "ts_cursor_ema")
             confidence = 0.75 if self.chunk_rate_ema else 0.55
@@ -472,6 +488,8 @@ class StreamGenerator:
 
         # Starting playback after prebuffer should reset starvation drain anchor.
         self.last_chunk_sent_time = time.time()
+        self.client_playback_start_time = time.time()
+        self.total_video_seconds_sent = 0.0
 
         # Publish an initial runway sample right after startup completes.
         self._maybe_update_client_position(force=True, source="ts_startup")

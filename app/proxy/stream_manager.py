@@ -1717,6 +1717,11 @@ class StreamManager:
                             pass
 
                         self.connected = False
+                elif self.connected and inactivity_duration > 5.0 and current_buffer > 15.0:
+                    # Informative logging to highlight the Virtual Runway feature in action
+                    logger.info(
+                        f"Engine silent for {inactivity_duration:.1f}s, but clients have {current_buffer:.1f}s of Virtual Runway. Holding failover."
+                    )
                 elif self.connected and not self.healthy:
                     logger.info("Stream health restored. Resuming buffer fill.")
                     self.healthy = True
