@@ -674,7 +674,7 @@ def _release_ports_from_labels(labels: dict):
                 alloc.free_gluetun_port(int(ap), vpn_container)
         except Exception: pass
 
-def stop_container(container_id: str):
+def stop_container(container_id: str, force: bool = False):
     """
     Dumb Terminator: Sends the stop signal and returns.
     All state removal and port cleanup is handled by the DockerEventWatcher.
@@ -682,10 +682,14 @@ def stop_container(container_id: str):
     cli = get_client()
     try:
         container = cli.containers.get(container_id)
-        logger.info(f"Executing termination intent for {container_id[:12]}")
+        logger.info(f"Executing {'forced ' if force else ''}termination intent for {container_id[:12]}")
         
-        # We use a short timeout (5s) to prevent the worker loop from blocking too long.
-        container.stop(timeout=5)
+        if force:
+            # Immediate SIGKILL for forced cleanup
+            container.kill()
+        else:
+            # Graceful stop with 5s timeout before SIGKILL
+            container.stop(timeout=5)
         
         # Note: container.remove() is handled by remove=True in the execute_engine_spec run() call.
         # If it's still there, we could force rm it, but normally stop is enough.
