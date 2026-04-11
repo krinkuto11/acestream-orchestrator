@@ -266,7 +266,7 @@ class ResourceScheduler:
             # regardless of what the passive monitor thinks (it might be stale).
             from .state import state
             engines = state.get_engines_by_vpn(container_name)
-            if any(getattr(e, "status", "") == "healthy" for e in engines):
+            if any(getattr(e, "health_status", "") == "healthy" for e in engines):
                 return True, "ready_via_heuristic"
             return False, "not_healthy"
 
@@ -280,7 +280,7 @@ class ResourceScheduler:
                 # Secondary Heuristic: Even if API is not reachable, if engines are healthy, we are good.
                 from .state import state
                 engines = state.get_engines_by_vpn(container_name)
-                if any(getattr(e, "status", "") == "healthy" for e in engines):
+                if any(getattr(e, "health_status", "") == "healthy" for e in engines):
                     return True, "ready_via_heuristic_api_down"
                 return False, "api_unreachable/not_connected"
 

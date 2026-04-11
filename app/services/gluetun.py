@@ -123,19 +123,43 @@ def _check_container_health_sync(container_name: str) -> Optional[bool]:
         return None
 
 
-def _is_control_server_reachable_sync(container_name: str, timeout: float = 1.5, require_connected: bool = False) -> bool:
+def _is_control_server_reachable_sync(container_name: str, timeout: float = 3.0, require_connected: bool = False) -> bool:
     try:
+        url = f"http://{container_name}:{cfg.GLUETUN_API_PORT}/v1/vpn/status"
         with httpx.Client(timeout=timeout) as client:
-            response = client.get(f"http://{container_name}:{cfg.GLUETUN_API_PORT}/v1/vpn/status")
+            response = client.get(url)
             if response.status_code == 401:
                 # Control server is reachable but auth is required.
                 return True
-            response.raise_for_status()
+            
+            if response.status_code != 200:
+                logger.debug(
+                    "Gluetun control API at %s returned unexpected status %s",
+                    url,
+                    response.status_code,
+                )
+                return False
+
             data = response.json()
             if require_connected:
                 status = str(data.get("status") or "").strip().lower()
-                return status == "connected"
+                if status != "connected":
+                    logger.debug(
+                        "Gluetun control API at %s responded but VPN status is '%s' (expected 'connected')",
+                        url,
+                        status,
+                    )
+                    return False
             return True
+    except httpx.ConnectTimeout:
+        logger.debug("Gluetun control API at %s: ConnectTimeout after %ss", container_name, timeout)
+        return False
+    except httpx.ReadTimeout:
+        logger.debug("Gluetun control API at %s: ReadTimeout after %ss", container_name, timeout)
+        return False
+    except httpx.ConnectError as e:
+        logger.debug("Gluetun control API at %s: ConnectError: %s", container_name, e)
+        return False
     except Exception as exc:
         logger.debug("Control server not reachable yet for '%s': %s", container_name, exc)
         return False
