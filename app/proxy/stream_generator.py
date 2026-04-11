@@ -14,7 +14,7 @@ from .config_helper import ConfigHelper
 from .constants import PROXY_MODE_API, normalize_proxy_mode
 from .utils import get_logger, create_ts_packet
 from .redis_keys import RedisKeys
-from .constants import StreamMetadataField
+from .constants import StreamMetadataField, NULL_PID_HIGH, NULL_PID_LOW
 
 logger = get_logger()
 
@@ -118,7 +118,7 @@ class StreamGenerator:
                         observe_proxy_egress_bytes("TS", chunk_len)
                         self.chunks_sent += 1
                         self.last_chunk_sent_time = time.time()
-                        self._maybe_apply_client_pacing()
+                        yield from self._maybe_apply_client_pacing()
                     
                     # Update local index
                     self._advance_local_index(len(chunks), fetched_end_index=fetched_end_index)
@@ -307,7 +307,14 @@ class StreamGenerator:
         self.chunk_rate_ema = (alpha * instant_rate) + ((1.0 - alpha) * float(self.chunk_rate_ema))
 
     def _maybe_apply_client_pacing(self):
-        """Strictly pace the client to the engine's download speed (Leaky Bucket)"""
+        """Strictly pace the client to the engine's download speed (Leaky Bucket)
+        
+        This method is a generator that yields MPEG-TS Null packets as keep-alives 
+        while waiting, preventing TCP/HTTP timeouts on aggressive load balancers.
+        """
+        # Local import to avoid cycle if needed
+        from ..services.metrics import observe_proxy_egress_bytes
+
         if not self.pacing_start_time:
             return
 
@@ -324,9 +331,22 @@ class StreamGenerator:
         if self.chunks_sent > expected_chunks + self.pacing_burst_chunks:
             # Calculate time to sleep to fall back in line with the expected rate
             wait_time = (self.chunks_sent - self.pacing_burst_chunks) / source_rate - elapsed
-            if wait_time > 0:
-                # Sleep max 0.5s per chunk to keep the thread somewhat responsive to interrupts
-                time.sleep(min(wait_time, 0.5))
+            
+            while wait_time > 0.01:
+                # Yield a Null packet to keep the connection active
+                # Using standard Null PID (0x1FFF = 8191)
+                yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
+                
+                self.bytes_sent += 188
+                observe_proxy_egress_bytes("TS", 188)
+                
+                # Sleep in small pulses to maintain responsiveness and timing
+                pulse = min(wait_time, 0.5)
+                time.sleep(pulse)
+                
+                # Update remaining wait time
+                elapsed = time.time() - self.pacing_start_time
+                wait_time = (self.chunks_sent - self.pacing_burst_chunks) / source_rate - elapsed
 
     def _advance_local_index(self, chunks_received: int, fetched_end_index=None):
         """Advance client position by fetched range when available.

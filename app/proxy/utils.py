@@ -33,13 +33,15 @@ def get_client_ip(request):
     return ip
 
 
-def create_ts_packet(packet_type='null', message=None):
+def create_ts_packet(packet_type='null', message=None, pid_high=None, pid_low=None):
     """
     Create a Transport Stream (TS) packet for various purposes.
     
     Args:
         packet_type (str): Type of packet - 'null', 'error', 'keepalive', etc.
         message (str): Optional message to include in packet payload
+        pid_high (int): Optional explicit PID high bits override
+        pid_low (int): Optional explicit PID low bits override
         
     Returns:
         bytes: A properly formatted 188-byte TS packet
@@ -49,8 +51,11 @@ def create_ts_packet(packet_type='null', message=None):
     # TS packet header
     packet[0] = 0x47  # Sync byte
     
-    # PID - Use different PIDs based on packet type
-    if packet_type == 'error':
+    # PID - Use explicit overrides if provided, otherwise fallback to defaults
+    if pid_high is not None and pid_low is not None:
+        packet[1] = pid_high & 0x1F  # Mask high bits (PID is 13 bits)
+        packet[2] = pid_low & 0xFF
+    elif packet_type == 'error':
         packet[1] = 0x1F  # PID high bits
         packet[2] = 0xFF  # PID low bits
     else:  # null/keepalive packets
