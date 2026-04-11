@@ -45,23 +45,23 @@ def generate_engine_name() -> str:
             return f"engine-{next_num}"
 
 
-def generate_container_name(prefix: str = "engine") -> str:
+def generate_container_name(prefix: str = "engine", extra_exclude: list[str] = None) -> str:
     """
     Generate a sequential container name with the given prefix using lowest available number.
     
-    Instead of always incrementing (which leads to acestream-11 with only 10 engines),
-    this finds the lowest available number in the range [1, N+1] where N is the number
-    of existing containers with this prefix.
+    Instead of always incrementing, this finds the lowest available number in the range [1, N+1] 
+    by checking existing containers in DB, Docker, and any pending creation intents in the State.
     
     Args:
         prefix (str): Prefix for the container name (default: "engine")
+        extra_exclude (list[str]): Optional list of full container names to exclude (useful for loop-local reservations)
         
     Returns:
-        str: Next available container name in sequence (e.g., "acestream-3" if 3 is the lowest free number)
+        str: Next available container name in sequence (e.g., "acestream-11")
     """
     with _name_generation_lock:
         with SessionLocal() as session:
-            # Get all existing container names that follow the pattern '{prefix}-N'
+            # Get all existing container names from DB that follow the pattern '{prefix}-N'
             engines = session.query(EngineRow).filter(
                 EngineRow.container_name.like(f'{prefix}-%')
             ).all()
@@ -76,12 +76,10 @@ def generate_container_name(prefix: str = "engine") -> str:
                     if match:
                         numbers.add(int(match.group(1)))
             
-            # Also check Docker for existing containers with the same pattern
-            # This prevents naming conflicts when containers exist in Docker but not in database
+            # Plus check Docker for existing containers with the same pattern
             try:
                 cli = get_client()
                 docker_containers = cli.containers.list(all=True)
-                
                 for container in docker_containers:
                     container_name = container.name
                     if container_name:
@@ -89,9 +87,28 @@ def generate_container_name(prefix: str = "engine") -> str:
                         if match:
                             numbers.add(int(match.group(1)))
             except Exception:
-                # If Docker check fails, continue with database-only numbers
-                # This ensures the function still works even if Docker is unavailable
                 pass
+
+            # Plus check pending intents in State to avoid collisions with in-flight requests
+            try:
+                from .state import state
+                pending_intents = state.list_pending_scaling_intents(intent_type="create_request")
+                for intent in pending_intents:
+                    intent_name = intent.get("details", {}).get("container_name")
+                    if intent_name:
+                        match = pattern.match(intent_name)
+                        if match:
+                            numbers.add(int(match.group(1)))
+            except Exception:
+                # If state check fails, continue with known numbers
+                pass
+            
+            # Plus handle any extra exclusions provided by the caller (burst reservations)
+            if extra_exclude:
+                for name in extra_exclude:
+                    match = pattern.match(name)
+                    if match:
+                        numbers.add(int(match.group(1)))
             
             # Find the lowest available number starting from 1
             next_num = 1

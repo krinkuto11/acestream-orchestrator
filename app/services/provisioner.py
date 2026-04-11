@@ -108,7 +108,7 @@ class ResourceScheduler:
     def __init__(self):
         self._lock = _vpn_assignment_lock
 
-    def schedule_new_engine(self) -> Optional[EngineSpec]:
+    def schedule_new_engine(self, extra_reserved_names: list[str] = None) -> Optional[EngineSpec]:
         """
         The Brain: Resolve all resources needed for a new engine.
         Returns a complete, immutable EngineSpec that can be executed as an intent.
@@ -137,7 +137,7 @@ class ResourceScheduler:
         spec_base = self.schedule(req, engine_variant_name)
         
         # 4. Finalize Spec Details
-        container_name = generate_container_name("acestream")
+        container_name = generate_container_name("acestream", extra_exclude=extra_reserved_names)
         
         # Prepare command
         cmd = [

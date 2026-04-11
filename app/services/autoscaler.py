@@ -326,10 +326,21 @@ class EngineController:
             creation_count = min(deficit, max(0, cfg.MAX_REPLICAS - total_engines))
             if creation_count > 0:
                 logger.info(f"Scaling UP: deficit={deficit}, emitting {creation_count} creation intents")
+                loop_reserved_names = []
                 for _ in range(creation_count):
-                    spec = self.scheduler.schedule_new_engine()
+                    spec = self.scheduler.schedule_new_engine(extra_reserved_names=loop_reserved_names)
                     if spec:
-                        intent_data = state.emit_scaling_intent("create_request", details={"source": "autoscaler"})
+                        # Track name locally for this loop pass to prevent internal collisions
+                        loop_reserved_names.append(spec.container_name)
+                        
+                        # Emit intent with the container name in details for global visibility
+                        intent_data = state.emit_scaling_intent(
+                            "create_request", 
+                            details={
+                                "source": "autoscaler",
+                                "container_name": spec.container_name
+                            }
+                        )
                         await self.intent_queue.put(Intent("create", spec, intent_data["id"]))
                     
         elif deficit < 0:
