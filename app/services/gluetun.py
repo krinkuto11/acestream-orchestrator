@@ -143,9 +143,9 @@ def _is_control_server_reachable_sync(container_name: str, timeout: float = 3.0,
             data = response.json()
             if require_connected:
                 status = str(data.get("status") or "").strip().lower()
-                if status != "connected":
+                if status not in ("connected", "running"):
                     logger.debug(
-                        "Gluetun control API at %s responded but VPN status is '%s' (expected 'connected')",
+                        "Gluetun control API at %s responded but VPN status is '%s' (expected 'connected' or 'running')",
                         url,
                         status,
                     )
