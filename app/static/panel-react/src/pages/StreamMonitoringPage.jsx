@@ -130,7 +130,7 @@ function Sparkline({ values, color = '#0ea5e9', label = 'series' }) {
   )
 }
 
-function BufferWindowBar({ livepos }) {
+function BufferWindowBar({ livepos, runway = 0, runwayMax = 0 }) {
   const first = toInt(livepos?.live_first ?? livepos?.first_ts)
   const last = toInt(livepos?.live_last ?? livepos?.last_ts)
   const pos = toInt(livepos?.pos)
@@ -140,23 +140,67 @@ function BufferWindowBar({ livepos }) {
   }
 
   const totalSeconds = Math.max(0, last - first)
-  const leadSeconds = Math.max(0, last - pos)
-  const adaptiveWindowSeconds = Math.min(totalSeconds, Math.max(8, Math.min(240, leadSeconds > 0 ? Math.ceil(leadSeconds / 0.25) : 8)))
+  const swarmLeadSeconds = Math.max(0, last - pos) // What the engine has downloaded
+  const viewerPos = pos - runway
+  const viewerLagSeconds = Math.max(0, last - viewerPos) // True viewer lag from live edge
+
+  const adaptiveWindowSeconds = Math.min(totalSeconds, Math.max(8, Math.min(240, viewerLagSeconds > 0 ? Math.ceil(viewerLagSeconds / 0.25) : 8)))
 
   const viewportStart = Math.max(first, last - adaptiveWindowSeconds)
   const viewportSpan = Math.max(1, last - viewportStart)
+  
   const viewportPosRatio = Math.max(0, Math.min(1, (pos - viewportStart) / viewportSpan))
+  const viewportViewerRatio = Math.max(0, Math.min(1, (viewerPos - viewportStart) / viewportSpan))
+  const viewportViewerMaxRatio = Math.max(0, Math.min(1, (pos - runwayMax - viewportStart) / viewportSpan))
 
   return (
-    <div className="space-y-1 w-full">
-      <div className="relative h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-        <div className="absolute inset-y-0 left-0 rounded-full bg-sky-400/30" style={{ width: '100%' }} />
-        <div className="absolute top-0 h-full w-1.5 -translate-x-1/2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" style={{ left: `${viewportPosRatio * 100}%` }} title="Current Position" />
-        <div className="absolute top-0 h-full w-1.5 -translate-x-1/2 rounded-full bg-sky-500" style={{ left: '100%' }} title="Live Edge" />
+    <div className="space-y-1.5 w-full">
+      <div className="relative h-2 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+        {/* Layer 1: Swarm Sync / Engine Buffer (Light sky) */}
+        <div 
+          className="absolute inset-y-0 bg-sky-400/20" 
+          style={{ 
+            left: `${viewportPosRatio * 100}%`,
+            width: `${(1 - viewportPosRatio) * 100}%` 
+          }} 
+        />
+        
+        {/* Layer 2: Proxy Inventory (Indigo) */}
+        <div 
+          className="absolute inset-y-0 bg-indigo-500/60 dark:bg-indigo-600/60" 
+          style={{ 
+            left: `${viewportViewerRatio * 100}%`,
+            width: `${(viewportPosRatio - viewportViewerRatio) * 100}%` 
+          }} 
+        />
+
+        {/* Layer 3: Viewer Playhead (Red dot) */}
+        <div 
+          className="absolute top-0 h-full w-1.5 -translate-x-1/2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)] z-10" 
+          style={{ left: `${viewportViewerRatio * 100}%` }} 
+          title="Viewer Playhead" 
+        />
+
+        {/* Layer 4: Proxy Read Head (Engine connector - Small cyan dot) */}
+        <div 
+          className="absolute top-0 h-full w-1 -translate-x-1/2 rounded-full bg-sky-500 opacity-50" 
+          style={{ left: `${viewportPosRatio * 100}%` }} 
+          title="Proxy Read Edge" 
+        />
+
+        {/* Layer 5: Live Edge */}
+        <div className="absolute top-0 h-full w-1 -translate-x-1/2 rounded-full bg-slate-400 opacity-30" style={{ left: '100%' }} />
       </div>
-      <div className="flex justify-between text-[10px] font-medium text-muted-foreground">
-        <span>Gap: {leadSeconds}s</span>
-        <span>Window: {adaptiveWindowSeconds}s</span>
+      
+      <div className="grid grid-cols-2 gap-2 text-[9px] font-medium text-muted-foreground uppercase tracking-tighter">
+        <div className="flex flex-col">
+          <span>Swarm Lead: {swarmLeadSeconds}s</span>
+          <span>Proxy Cache: {runway.toFixed(1)}s</span>
+        </div>
+        <div className="flex flex-col text-right">
+          <span className="text-red-600 dark:text-red-400 font-bold">Viewer Lag: {viewerLagSeconds}s</span>
+          <span>Window: {adaptiveWindowSeconds}s</span>
+        </div>
       </div>
     </div>
   )
@@ -172,6 +216,23 @@ function MonitorCard({ monitor, isExpanded, isSelected, isPlayingInProxy, isStop
   const posSeries = buildSeries(monitor.recent_status || [], ['livepos', 'pos'])
   const lastTsSeries = buildSeries(monitor.recent_status || [], ['livepos', 'last_ts'])
   const engineShortId = monitor.engine?.container_id ? monitor.engine.container_id.slice(0, 12) : 'n/a'
+
+  // --- CROSS-TIER TELEMETRY LINKING ---
+  // Find the active proxy stream matching this monitor's content_id to calculate real Viewer Lag
+  const normalizedContentId = normalizeContentRef(monitor.content_id)
+  const matchingStream = streams.find(s => normalizeContentRef(s.key) === normalizedContentId)
+  const proxyClients = matchingStream?.clients || []
+  
+  let proxyRunwayMin = 0
+  let proxyRunwayMax = 0
+  
+  if (proxyClients.length > 0) {
+    const runways = proxyClients.map(c => toNumber(c.client_runway_seconds ?? c.buffer_seconds_behind)).filter(v => v !== null)
+    if (runways.length > 0) {
+      proxyRunwayMin = Math.min(...runways)
+      proxyRunwayMax = Math.max(...runways)
+    }
+  }
 
   return (
     <Collapsible open={isExpanded} onOpenChange={(open) => onToggleExpand(monitor.monitor_id, open)}>
@@ -240,21 +301,30 @@ function MonitorCard({ monitor, isExpanded, isSelected, isPlayingInProxy, isStop
                   <span>Buffer Progress</span>
                   <span>{progress}%</span>
                 </p>
+              <div className="space-y-1 lg:col-span-2">
+                <p className="text-xs text-muted-foreground flex justify-between">
+                  <span>Download Progress</span>
+                  <span>{progress}%</span>
+                </p>
                 <Progress className="h-2" value={Math.max(0, Math.min(100, Number(progress) || 0))} />
               </div>
             </div>
 
+            {/* ENRICHED TELEMETRY ALIGNMENT */}
             <div className="grid gap-4 md:grid-cols-3">
               <div className="rounded-lg bg-white p-3 dark:bg-slate-900/40 border">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Live Buffer</p>
-                <BufferWindowBar livepos={livepos} />
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2 flex justify-between items-center">
+                  <span>Stream Sync</span>
+                  {isPlayingInProxy && <span className="text-[9px] text-indigo-500 font-bold">Proxy Active</span>}
+                </p>
+                <BufferWindowBar livepos={livepos} runway={proxyRunwayMin} runwayMax={proxyRunwayMax} />
               </div>
               <div className="rounded-lg bg-white p-3 dark:bg-slate-900/40 border">
-                <p className="text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-1">Pos Trend</p>
+                <p className="text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-1">Pos Trend (Proxy Read Head)</p>
                 <Sparkline values={posSeries} color="#10b981" label="pos" />
               </div>
               <div className="rounded-lg bg-white p-3 dark:bg-slate-900/40 border">
-                <p className="text-[10px] uppercase tracking-wider text-sky-600 dark:text-sky-400 mb-1">Last_TS Trend</p>
+                <p className="text-[10px] uppercase tracking-wider text-sky-600 dark:text-sky-400 mb-1">Swarm Edge Trend (last_ts)</p>
                 <Sparkline values={lastTsSeries} color="#0ea5e9" label="last_ts" />
               </div>
             </div>

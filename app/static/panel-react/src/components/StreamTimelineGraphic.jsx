@@ -300,27 +300,36 @@ function StreamTimelineGraphic({
     const normalizedHistory = history.map((point) => {
       const engineLag = toNumber(point.engineLag)
       const streamWindow = toNumber(point.streamWindow)
-      const normalizedEngineLag = Number.isFinite(engineLag) ? Math.max(0, engineLag) : null
+      const swarmLag = Number.isFinite(engineLag) ? Math.max(0, engineLag) : null
+      const threshold = toNumber(point.dynamicThreshold)
+
       const normalized = {
         time: point.time,
         liveEdge: 0,
-        engineLag: normalizedEngineLag,
-        engineLag__band: Number.isFinite(normalizedEngineLag) ? [0, normalizedEngineLag] : null,
+        engineLag: swarmLag,
+        engineLag__band: Number.isFinite(swarmLag) ? [0, swarmLag] : null,
         streamWindow: Number.isFinite(streamWindow) ? Math.max(0, streamWindow) : null,
-        dynamicThreshold: Number.isFinite(toNumber(point.dynamicThreshold))
-          ? Math.max(0, toNumber(point.dynamicThreshold))
+        dynamicThreshold: Number.isFinite(threshold)
+          ? Math.max(0, swarmLag + threshold)
           : null,
-        dynamicThreshold__band: Number.isFinite(toNumber(point.dynamicThreshold))
-          ? [0, Math.max(0, toNumber(point.dynamicThreshold))]
+        dynamicThreshold__band: Number.isFinite(threshold)
+          ? [swarmLag, Math.max(0, swarmLag + threshold)]
           : null,
       }
+
       clientKeys.forEach((key) => {
-        const value = toNumber(point[key])
-        const normalizedValue = Number.isFinite(value) ? Math.max(0, value) : null
-        normalized[key] = normalizedValue
-        normalized[`${key}__band`] = Number.isFinite(normalizedValue)
-          ? [0, normalizedValue]
-          : null
+        const runway = toNumber(point[key])
+        if (Number.isFinite(runway)) {
+          const safeRunway = Math.max(0, runway)
+          const viewerLag = swarmLag + safeRunway
+          normalized[key] = viewerLag
+          normalized[`${key}__runway`] = safeRunway
+          normalized[`${key}__band`] = [swarmLag, viewerLag]
+        } else {
+          normalized[key] = null
+          normalized[`${key}__runway`] = null
+          normalized[`${key}__band`] = null
+        }
       })
       return normalized
     })
@@ -360,11 +369,11 @@ function StreamTimelineGraphic({
   const chartConfig = useMemo(() => {
     const config = {
       engineLag: {
-        label: 'Engine lag',
+        label: 'Swarm Lead',
         color: 'hsl(var(--chart-3, 32 95% 44%))',
       },
       dynamicThreshold: {
-        label: 'Failover Threshold',
+        label: 'Failover Limit',
         color: 'hsl(var(--destructive, 0 84% 60%))',
       },
       liveEdge: {
@@ -375,7 +384,7 @@ function StreamTimelineGraphic({
 
     if (showStreamWindow) {
       config.streamWindow = {
-        label: 'Stream window',
+        label: 'HLS Proxy Window',
         color: 'hsl(var(--chart-5, 348 83% 47%))',
       }
     }
@@ -444,7 +453,7 @@ function StreamTimelineGraphic({
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={isLive ? 'success' : 'secondary'}>{isLive ? 'LIVE' : 'Not live'}</Badge>
           <Badge variant="outline">History {chartData.length} ticks</Badge>
-          <span className="text-xs text-muted-foreground">Y: Seconds (runway/window/engine lag)</span>
+          <span className="text-xs text-muted-foreground">Y: Seconds (Viewer Runway / Swarm Lead / Threshold)</span>
         </div>
       )}
 
@@ -492,10 +501,16 @@ function StreamTimelineGraphic({
                     return !key.endsWith('__band') && !key.endsWith('__overlay')
                   })}
                   labelFormatter={(label) => formatClock(label)}
-                  formatter={(value, name) => {
+                  formatter={(value, name, entry) => {
                     if (!Number.isFinite(Number(value))) return 'N/A'
                     const prettyName = chartConfig[name]?.label || name
-                    return `${prettyName}: ${Number(value).toFixed(2)}s`
+                    const runway = entry?.payload?.[`${name}__runway`]
+                    
+                    if (name.startsWith('client_') && Number.isFinite(runway)) {
+                      return [`Viewer Lag: ${Number(value).toFixed(1)}s (${runway.toFixed(1)}s buffer)`, prettyName]
+                    }
+                    
+                    return [`${prettyName}: ${Number(value).toFixed(1)}s`, name]
                   }}
                 />
               )}

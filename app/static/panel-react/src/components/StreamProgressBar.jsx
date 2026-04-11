@@ -38,21 +38,17 @@ function formatTimestamp(seconds) {
 /**
  * YouTube-like progress bar for live streams
  * 
- * Design based on AceStream wiki:
- * - Left end of bar = live_first (past)
- * - Right end of bar = live_last (LIVE edge)
- * - Gray buffer bar = from pos to last_ts
- * - Red playhead = current position (pos)
+ * DESIGN ALIGNED WITH LEAKY BUCKET ARCHITECTURE:
+ * - Engine Swarm area (Gray): Data the internal engine has downloaded from P2P.
+ * - Proxy Inventory (Indigo): Data sitting in Redis waiting to be pulsed to the client.
+ * - Viewer Playhead (Red): The actual timestamp the user is currently watching.
  * 
  * Data fields:
- * - pos: current playback position
- * - live_first: start of the live window
- * - live_last: end of the live window (LIVE point)
- * - first_ts: oldest available chunk timestamp
- * - last_ts: newest available chunk timestamp (usually same as live_last)
- * - buffer_pieces: number of buffered pieces
+ * - pos: The proxy's read head from the engine (The leading edge of the proxy buffer).
+ * - runway: How many seconds of video are in the proxy's buffer.
+ * - viewerPos: pos - runway (The trailing edge of the proxy buffer / viewer's location).
  */
-function StreamProgressBar({ streamId, orchUrl, apiKey }) {
+function StreamProgressBar({ streamId, orchUrl, apiKey, clientRunway, clientRunwayMax }) {
   const [liveposData, setLiveposData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -121,12 +117,10 @@ function StreamProgressBar({ streamId, orchUrl, apiKey }) {
   const { pos, live_first, live_last, first_ts, last_ts, buffer_pieces } = livepos
 
   // Use live_first and live_last as the bar boundaries
-  // Fallback to first_ts/last_ts if live window not available
   const barStart = live_first ?? first_ts ?? 0
   const barEnd = live_last ?? last_ts ?? 0
 
   if (barEnd <= barStart) {
-    // Invalid or no data
     return (
       <div className="text-xs text-muted-foreground">
         Waiting for stream data...
@@ -134,20 +128,29 @@ function StreamProgressBar({ streamId, orchUrl, apiKey }) {
     )
   }
 
-  // Calculate red playhead position (current pos)
-  const playheadPercent = calculatePercentage(pos, barStart, barEnd)
+  // --- MATH ALIGNMENT ---
+  // The 'pos' is the PROXY'S READ HEAD from the engine.
+  // The 'runway' is how much data the proxy has cached in Redis.
+  // The 'viewerPos' is what the user is actually watching.
+  const runway = Number(clientRunway ?? 0)
+  const runwayMax = Number(clientRunwayMax ?? runway)
   
-  // Calculate gray buffer bar span (from pos to last_ts)
-  const bufferStart = pos
-  const bufferEnd = last_ts ?? barEnd
-  const bufferStartPercent = calculatePercentage(bufferStart, barStart, barEnd)
-  const bufferEndPercent = calculatePercentage(bufferEnd, barStart, barEnd)
+  const viewerPos = pos - runway
+  const viewerPosMax = pos - runwayMax
   
-  // Buffer width is the span from current position to last_ts
-  const bufferWidth = Math.max(0, bufferEndPercent - bufferStartPercent)
+  // Percentages for the bar
+  const enginePosPercent = calculatePercentage(pos, barStart, barEnd)
+  const viewerPosPercent = calculatePercentage(viewerPos, barStart, barEnd)
+  const viewerPosMaxPercent = calculatePercentage(viewerPosMax, barStart, barEnd)
+  const swarmEndPercent = calculatePercentage(last_ts ?? barEnd, barStart, barEnd)
   
-  // Calculate seconds behind live (live_last - pos)
-  const secondsBehindLive = Math.max(0, Math.floor((live_last ?? last_ts ?? 0) - (pos ?? 0)))
+  // Widths
+  const proxyBufferWidth = Math.max(0.5, enginePosPercent - viewerPosPercent)
+  const viewerRangeWidth = Math.max(0, viewerPosPercent - viewerPosMaxPercent)
+  const swarmBufferWidth = Math.max(0, swarmEndPercent - enginePosPercent)
+  
+  // Real viewer lag (Live Edge - Viewer Playhead)
+  const viewerLagSeconds = Math.max(0, Math.floor(barEnd - viewerPos))
 
   return (
     <div className="space-y-1.5">
@@ -158,40 +161,67 @@ function StreamProgressBar({ streamId, orchUrl, apiKey }) {
           </Badge>
         )}
         <div className="flex-1 text-xs text-muted-foreground">
-          {secondsBehindLive > 0 ? (
-            <>{secondsBehindLive} second{secondsBehindLive !== 1 ? 's' : ''} behind live</>
+          {viewerLagSeconds > 0 ? (
+            <>{viewerLagSeconds}s behind live</>
           ) : (
             <>At live edge</>
           )}
+          <span className="mx-1 text-muted-foreground/30">|</span>
+          <span className="text-[10px] opacity-70">
+            Proxy Cache: {runway.toFixed(1)}s
+          </span>
         </div>
         {buffer_pieces != null && (
           <div className="text-xs text-muted-foreground">
-            Buffer: {buffer_pieces} pieces
+            {buffer_pieces} pcs
           </div>
         )}
       </div>
       
-      {/* YouTube-style progress bar container */}
-      <div className="relative h-3 w-full bg-muted/50 rounded-sm overflow-hidden cursor-pointer hover:h-3.5 transition-all duration-200 group">
-        {/* Gray buffered content bar - from pos to last_ts */}
+      {/* Three-stage progress bar */}
+      <div className="relative h-3 w-full bg-muted/50 rounded-sm overflow-hidden group">
+        
+        {/* layer 1: Swarm Availability (Gray) - What's in engine cache */}
         <div
-          className="absolute h-full bg-gray-400/70 dark:bg-gray-500/70 transition-all duration-300"
+          className="absolute h-full bg-slate-400/40 dark:bg-slate-500/40 transition-all duration-300"
           style={{ 
-            left: `${bufferStartPercent}%`,
-            width: `${bufferWidth}%` 
+            left: `${enginePosPercent}%`,
+            width: `${swarmBufferWidth}%` 
           }}
+          title="Engine Swarm Cache"
+        />
+
+        {/* layer 2: Proxy Inventory (Indigo/Violet) - What's in Redis */}
+        <div
+          className="absolute h-full bg-indigo-500/80 dark:bg-indigo-600/80 transition-all duration-300"
+          style={{ 
+            left: `${viewerPosPercent}%`,
+            width: `${proxyBufferWidth}%` 
+          }}
+          title="Proxy Buffer (Inventory)"
+        />
+
+        {/* layer 3: Viewer Range (if multiple clients) */}
+        {viewerRangeWidth > 0 && (
+          <div
+            className="absolute h-full bg-indigo-400/40 transition-all duration-300"
+            style={{ 
+              left: `${viewerPosMaxPercent}%`,
+              width: `${viewerRangeWidth}%` 
+            }}
+          />
+        )}
+        
+        {/* layer 4: View Progress (Red) - Consumed content */}
+        <div
+          className="absolute h-full bg-red-600/40 dark:bg-red-500/40 transition-all duration-300"
+          style={{ width: `${viewerPosPercent}%` }}
         />
         
-        {/* Red playhead indicator (current position) */}
+        {/* layer 5: Viewer Playhead indicator */}
         <div
-          className="absolute h-full bg-red-600 dark:bg-red-500 transition-all duration-300"
-          style={{ width: `${playheadPercent}%` }}
-        />
-        
-        {/* Playhead scrubber (visible on hover) */}
-        <div
-          className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-red-600 dark:bg-red-500 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200 shadow-lg"
-          style={{ left: `${playheadPercent}%`, marginLeft: '-6px' }}
+          className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-red-600 dark:bg-red-500 rounded-full shadow-lg transition-all duration-300"
+          style={{ left: `${viewerPosPercent}%`, marginLeft: '-6px' }}
         />
       </div>
     </div>

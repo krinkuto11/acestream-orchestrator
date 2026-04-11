@@ -187,6 +187,18 @@ function StreamCard({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, deb
                 streamId={stream.id} 
                 orchUrl={orchUrl} 
                 apiKey={apiKey} 
+                clientRunway={(() => {
+                  const clients = stream.clients || []
+                  if (clients.length === 0) return 0
+                  const runways = clients.map(c => Number(c.client_runway_seconds ?? c.buffer_seconds_behind ?? 0))
+                  return Math.min(...runways)
+                })()}
+                clientRunwayMax={(() => {
+                  const clients = stream.clients || []
+                  if (clients.length === 0) return 0
+                  const runways = clients.map(c => Number(c.client_runway_seconds ?? c.buffer_seconds_behind ?? 0))
+                  return Math.max(...runways)
+                })()}
               />
             </div>
           </div>

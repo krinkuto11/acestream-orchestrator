@@ -410,7 +410,7 @@ function ClientSession({ client }) {
             <p className="text-sm font-medium truncate" title={client.ip_address || client.client_id}>
               {client.ip_address || client.client_id || 'Unknown client'}
             </p>
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-[10px] bg-indigo-50 dark:bg-indigo-950/20 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-900">
               Runway {formatLagValue(runway)}
             </Badge>
             {Number.isFinite(streamWindow) && streamWindow > 0 ? (
