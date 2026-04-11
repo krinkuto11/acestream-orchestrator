@@ -327,21 +327,27 @@ class EngineController:
             if creation_count > 0:
                 logger.info(f"Scaling UP: deficit={deficit}, emitting {creation_count} creation intents")
                 loop_reserved_names = []
-                for _ in range(creation_count):
-                    spec = self.scheduler.schedule_new_engine(extra_reserved_names=loop_reserved_names)
-                    if spec:
-                        # Track name locally for this loop pass to prevent internal collisions
-                        loop_reserved_names.append(spec.container_name)
-                        
-                        # Emit intent with the container name in details for global visibility
-                        intent_data = state.emit_scaling_intent(
-                            "create_request", 
-                            details={
-                                "source": "autoscaler",
-                                "container_name": spec.container_name
-                            }
-                        )
-                        await self.intent_queue.put(Intent("create", spec, intent_data["id"]))
+                try:
+                    for _ in range(creation_count):
+                        spec = self.scheduler.schedule_new_engine(extra_reserved_names=loop_reserved_names)
+                        if spec:
+                            # Track name locally for this loop pass to prevent internal collisions
+                            loop_reserved_names.append(spec.container_name)
+                            
+                            # Emit intent with the container name in details for global visibility
+                            intent_data = state.emit_scaling_intent(
+                                "create_request", 
+                                details={
+                                    "source": "autoscaler",
+                                    "container_name": spec.container_name
+                                }
+                            )
+                            await self.intent_queue.put(Intent("create", spec, intent_data["id"]))
+                except Exception as e:
+                    if _is_transient_vpn_not_ready_error(e):
+                        _log_vpn_not_ready_block(e)
+                    else:
+                        raise
                     
         elif deficit < 0:
             surplus = abs(deficit)
