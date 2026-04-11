@@ -113,11 +113,7 @@ class StreamGenerator:
                     chunks = self.buffer.get_chunks(self.local_index)
                 
                 if chunks:
-                    # Send chunks to client
-                        # PCR-based duration tracking
-                        chunk_duration = self.buffer.extract_chunk_duration(chunk)
-                        self.total_video_seconds_sent += chunk_duration
-
+                    for chunk in chunks:
                         yield chunk
                         chunk_len = len(chunk)
                         self.bytes_sent += chunk_len
@@ -314,11 +310,9 @@ class StreamGenerator:
 
     def _maybe_apply_client_pacing(self, streaming_start_time: float):
         """Throttle downstream egress when the client hoards too much local runway."""
-        chunk_rate = float(self.chunk_rate_ema or 0.0)
-        if chunk_rate <= 0.0:
-            return
-
-        video_seconds_sent = float(self.chunks_sent) / chunk_rate
+        bitrate = self.buffer.get_buffer_bitrate()
+        
+        video_seconds_sent = self.bytes_sent / bitrate
         real_time_elapsed = max(0.0, time.time() - float(streaming_start_time))
         
         # Determine pacing multiplier. If the client is significantly behind the
@@ -368,12 +362,14 @@ class StreamGenerator:
             if chunk_rate <= 0.0:
                 chunk_rate = 1.0
             
-            # Use Virtual Runway (PCR-based) if available, otherwise fallback to wall-clock lag.
-            if self.total_video_seconds_sent > 0.0 and self.client_playback_start_time:
+            # Use Global Bitrate Interpolation (PCR-based) for Virtual Runway tracking.
+            bitrate = self.buffer.get_buffer_bitrate()
+            if bitrate > 0 and self.client_playback_start_time:
                 elapsed_watching_time = max(0.0, now - self.client_playback_start_time)
-                # Formula: Total Video Sent - Real Time Watching = Safety Buffer in Client RAM
-                seconds_behind = max(0.0, self.total_video_seconds_sent - elapsed_watching_time)
-                confidence = 0.95  # PCR is ground-truth for playback duration
+                # Formula: (Total Bytes Sent / Macroscopic Bitrate) - Real Time Watching = Virtual Runway
+                total_video_seconds_sent = self.bytes_sent / bitrate
+                seconds_behind = max(0.0, total_video_seconds_sent - elapsed_watching_time)
+                confidence = 0.95  # Macroscopic bitrate derived from PCR is ground-truth
             else:
                 seconds_behind = max(0.0, float(chunks_behind) / chunk_rate)
                 confidence = 0.75 if self.chunk_rate_ema else 0.55

@@ -293,6 +293,29 @@ class StreamBuffer:
             logger.debug(f"Failed to calculate buffer PCR duration: {e}")
             return getattr(self, "_last_duration", 0.0)
     
+    def get_buffer_bitrate(self) -> float:
+        """Calculate the macroscopic bitrate across the entire buffer window.
+        
+        This uses the O(1) total byte count and the macroscopic PCR duration
+        to derive a stable bitrate (bytes/sec) that is resilient to
+        per-packet multiplexing jitter.
+        """
+        duration = self.get_buffer_duration_seconds()
+        
+        # Calculate total bytes in the buffer window
+        with self.lock:
+            head_idx = getattr(self, "_min_index", 0)
+            tail_idx = self.index
+        
+        chunks_in_buffer = max(0, tail_idx - head_idx)
+        bytes_in_buffer = chunks_in_buffer * self.target_chunk_size
+        
+        # Safe bitrate calculation (default to ~1MB/s / 8Mbps if duration is too small)
+        if duration > 0.1:
+            return float(bytes_in_buffer) / float(duration)
+        
+        return 1024 * 1024.0 # 1MB/s fallback
+    
     def _get_chunks_internal(self, start_index=None):
         """Get chunks and return per-call fetched end cursor.
 
