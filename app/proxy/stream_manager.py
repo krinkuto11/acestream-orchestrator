@@ -1683,12 +1683,8 @@ class StreamManager:
 
                 dynamic_threshold, current_buffer, max_tolerance = self._get_dynamic_tolerance()
                 
-                # Fetch ground-truth PCR-based duration from source buffer
-                source_duration = 0.0
-                if self.buffer:
-                    source_duration = self.buffer.get_buffer_duration_seconds()
-                    
-                self._publish_dynamic_tolerance(dynamic_threshold, current_buffer, max_tolerance, inactivity_duration, source_duration)
+                # Update the publish call to pass 0.0 for source_duration
+                self._publish_dynamic_tolerance(dynamic_threshold, current_buffer, max_tolerance, inactivity_duration, 0.0)
 
                 if inactivity_duration > dynamic_threshold and self.connected:
                     # Event set => steady state; cleared => waiting for control-plane recovery.

@@ -63,8 +63,8 @@ class StreamGenerator:
         self.last_starvation_update_time = 0.0
 
         # Virtual Runway tracking
-        self.total_video_seconds_sent = 0.0
-        self.client_playback_start_time = None
+        self.pacing_start_time = None
+        self.pacing_burst_chunks = 3  # Allow ~3MB of instant hoarding for player stability
     
     def generate(self):
         """Generator function that produces stream content for the client"""
@@ -95,9 +95,7 @@ class StreamGenerator:
             if not self._setup_streaming():
                 return
 
-            # Anchor pacing to the moment normal streaming begins, right after
-            # startup prebuffer wait has completed.
-            streaming_start_time = time.time()
+            self.pacing_start_time = time.time() # START PACING CLOCK HERE
             
             # Main streaming loop
             # Get no data timeout settings
@@ -120,7 +118,7 @@ class StreamGenerator:
                         observe_proxy_egress_bytes("TS", chunk_len)
                         self.chunks_sent += 1
                         self.last_chunk_sent_time = time.time()
-                        self._maybe_apply_client_pacing(streaming_start_time)
+                        self._maybe_apply_client_pacing()
                     
                     # Update local index
                     self._advance_local_index(len(chunks), fetched_end_index=fetched_end_index)
@@ -308,29 +306,26 @@ class StreamGenerator:
         alpha = 0.2
         self.chunk_rate_ema = (alpha * instant_rate) + ((1.0 - alpha) * float(self.chunk_rate_ema))
 
-    def _maybe_apply_client_pacing(self, streaming_start_time: float):
-        """Throttle downstream egress when the client hoards too much local runway."""
-        bitrate = self.buffer.get_buffer_bitrate()
-        
-        video_seconds_sent = self.bytes_sent / bitrate
-        real_time_elapsed = max(0.0, time.time() - float(streaming_start_time))
-        
-        # Determine pacing multiplier. If the client is significantly behind the
-        # live edge, allow them to download faster to fill their local buffer,
-        # but cap the catch-up speed so they don't drain the orchestrator's runway.
-        chunks_behind = max(0, int(getattr(self.buffer, "index", 0)) - int(self.local_index))
-        multiplier = 1.0
-        if chunks_behind > 5:
-            multiplier = MAX_CATCHUP_SPEED_MULTIPLIER
-            
-        client_hoard = video_seconds_sent - (real_time_elapsed * multiplier)
+    def _maybe_apply_client_pacing(self):
+        """Strictly pace the client to the engine's download speed (Leaky Bucket)"""
+        if not self.pacing_start_time:
+            return
 
-        if client_hoard > MAX_CLIENT_LOCAL_HOARD_SECONDS:
-            # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
-            sleep_for = min(0.5, client_hoard - MAX_CLIENT_LOCAL_HOARD_SECONDS)
-            if sleep_for > 0.0:
-                logger.debug(f"[{self.client_id}] Pacing client: hoard={client_hoard:.1f}s, multiplier={multiplier}x, sleeping {sleep_for:.2f}s")
-                time.sleep(sleep_for)
+        # Use the engine's ingress rate, fallback to our egress EMA if missing
+        source_rate = getattr(self.buffer, "get_source_rate", lambda: 0.0)()
+        if source_rate <= 0.1:
+            source_rate = float(self.chunk_rate_ema or 1.0)
+            
+        elapsed = time.time() - self.pacing_start_time
+        expected_chunks = elapsed * source_rate
+        
+        # If we've sent more chunks than expected + our allowed burst
+        if self.chunks_sent > expected_chunks + self.pacing_burst_chunks:
+            # Calculate time to sleep to fall back in line with the expected rate
+            wait_time = (self.chunks_sent - self.pacing_burst_chunks) / source_rate - elapsed
+            if wait_time > 0:
+                # Sleep max 0.5s per chunk to keep the thread somewhat responsive to interrupts
+                time.sleep(min(wait_time, 0.5))
 
     def _advance_local_index(self, chunks_received: int, fetched_end_index=None):
         """Advance client position by fetched range when available.
@@ -348,7 +343,7 @@ class StreamGenerator:
         self.local_index += int(max(0, chunks_received))
 
     def _maybe_update_client_position(self, force: bool = False, source: str = "ts_cursor_ema"):
-        """Publish client runway estimate with debounce and freshness metadata."""
+        """Publish client runway estimate using simple chunk counting."""
         if not hasattr(self, 'client_manager') or self.client_manager is None:
             return
 
@@ -357,36 +352,21 @@ class StreamGenerator:
             return
 
         try:
+            # Simple math: Since we pace the client, the buffer remains in Redis.
             chunks_behind = max(0, int(self.buffer.index) - int(self.local_index))
-            chunk_rate = float(self.chunk_rate_ema or 0.0)
-            if chunk_rate <= 0.0:
-                chunk_rate = 1.0
-            
-            # Use Global Bitrate Interpolation (PCR-based) for Virtual Runway tracking.
-            bitrate = self.buffer.get_buffer_bitrate()
-            if bitrate > 0 and self.client_playback_start_time:
-                elapsed_watching_time = max(0.0, now - self.client_playback_start_time)
-                # Formula: (Total Bytes Sent / Macroscopic Bitrate) - Real Time Watching = Virtual Runway
-                total_video_seconds_sent = self.bytes_sent / bitrate
-                seconds_behind = max(0.0, total_video_seconds_sent - elapsed_watching_time)
-                confidence = 0.95  # Macroscopic bitrate derived from PCR is ground-truth
-            else:
-                seconds_behind = max(0.0, float(chunks_behind) / chunk_rate)
-                confidence = 0.75 if self.chunk_rate_ema else 0.55
+            chunk_rate = float(self.chunk_rate_ema or 1.0)
+            seconds_behind = max(0.0, float(chunks_behind) / chunk_rate)
 
             normalized_source = str(source or "ts_cursor_ema")
             confidence = 0.75 if self.chunk_rate_ema else 0.55
 
             if normalized_source in {"ts_starvation_decay", "starvation_tick"}:
-                # Do not drain runway before first downstream chunk is emitted.
                 if self.chunks_sent > 0:
                     elapsed_since_chunk = max(0.0, now - float(self.last_chunk_sent_time or now))
                     seconds_behind = max(0.0, seconds_behind - elapsed_since_chunk)
                     confidence = 0.45
                 else:
                     confidence = 0.55
-            elif normalized_source == "ts_startup":
-                confidence = 0.60
 
             self.client_manager.update_client_position(
                 self.client_id,
@@ -496,8 +476,6 @@ class StreamGenerator:
 
         # Starting playback after prebuffer should reset starvation drain anchor.
         self.last_chunk_sent_time = time.time()
-        self.client_playback_start_time = time.time()
-        self.total_video_seconds_sent = 0.0
 
         # Publish an initial runway sample right after startup completes.
         self._maybe_update_client_position(force=True, source="ts_startup")
