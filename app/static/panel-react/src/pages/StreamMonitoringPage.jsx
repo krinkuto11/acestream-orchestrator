@@ -298,11 +298,6 @@ function MonitorCard({ monitor, isExpanded, isSelected, isPlayingInProxy, isStop
               </div>
               <div className="space-y-1 lg:col-span-2">
                 <p className="text-xs text-muted-foreground flex justify-between">
-                  <span>Buffer Progress</span>
-                  <span>{progress}%</span>
-                </p>
-              <div className="space-y-1 lg:col-span-2">
-                <p className="text-xs text-muted-foreground flex justify-between">
                   <span>Download Progress</span>
                   <span>{progress}%</span>
                 </p>
