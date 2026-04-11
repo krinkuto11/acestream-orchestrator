@@ -78,7 +78,7 @@ class EngineSpec(BaseModel):
     image: str
     
     # Runtime Configuration
-    command: List[str] = []
+    command: list[str] = []
     env_vars: Dict[str, str] = {}
     labels: Dict[str, str] = {}
     
@@ -277,8 +277,8 @@ class ResourceScheduler:
         if not vpn_enabled:
             return None
 
-        rejection_reasons: List[str] = []
-        dynamic_ready_nodes: List[Dict[str, object]] = []
+        rejection_reasons: list[str] = []
+        dynamic_ready_nodes: list[Dict[str, object]] = []
         for node in state.list_vpn_nodes():
             if not bool(node.get("managed_dynamic")):
                 continue
