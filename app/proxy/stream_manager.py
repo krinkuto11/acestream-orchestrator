@@ -1767,6 +1767,8 @@ class StreamManager:
                                 "Killing socket to trigger immediate failover."
                             )
                             self.healthy = False
+                            # EXTEND GRACE PERIOD: Touch timers in Redis to prevent orphan cleanup mid-failover
+                            self._touch_activity_timers()
 
                         if self.http_reader:
                             try:
@@ -1794,6 +1796,30 @@ class StreamManager:
                 logger.error(f"Error in health monitor: {e}")
             
             time.sleep(self.health_check_interval)
+    
+    def _touch_activity_timers(self):
+        """Update Redis activity markers to prevent the Data Plane from reaping this stream
+        while the Control Plane is actively performing a failover or migration.
+        """
+        try:
+            redis_client = getattr(self.client_manager, "redis_client", None)
+            if not redis_client:
+                return
+
+            now_str = str(time.time())
+            init_key = RedisKeys.stream_init_time(self.content_id)
+            disconnect_key = RedisKeys.last_client_disconnect(self.content_id)
+            
+            # Use pipeline for atomic-ish updates
+            pipe = redis_client.pipeline(transaction=False)
+            pipe.setex(init_key, 3600, now_str)
+            # If the stream was previously connected but is now idle, also touch the disconnect timer
+            pipe.setex(disconnect_key, 60, now_str)
+            pipe.execute()
+            
+            logger.debug(f"Reset activity timers for content_id={self.content_id} to prevent orphan/idle cleanup")
+        except Exception as e:
+            logger.warning(f"Failed to touch activity timers for {self.content_id}: {e}")
     
     def stop(self):
         """Stop the stream manager"""

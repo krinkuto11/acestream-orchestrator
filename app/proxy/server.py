@@ -283,6 +283,19 @@ class ProxyServer:
         old_container_id = str(getattr(stream_manager, "engine_container_id", "") or "")
         target_container_id = str(getattr(new_engine, "container_id", "") or "")
 
+        # EXTEND GRACE PERIOD: Reset activity timers during migration
+        try:
+            now_str = str(time.time())
+            init_key = RedisKeys.stream_init_time(content_id)
+            disconnect_key = RedisKeys.last_client_disconnect(content_id)
+            pipe = self.redis_client.pipeline(transaction=False)
+            pipe.setex(init_key, 3600, now_str)
+            pipe.setex(disconnect_key, 60, now_str)
+            pipe.execute()
+            logger.debug(f"Reset activity timers during migration of content_id={content_id}")
+        except Exception as e:
+            logger.warning(f"Failed to reset activity timers during migration of {content_id}: {e}")
+
         if not target_container_id:
             return {
                 "migrated": False,
