@@ -122,7 +122,8 @@ class StreamGenerator:
                 
                 if chunks:
                     for chunk in chunks:
-                        if not self.has_sent_first_frame:
+                        is_probe_chunk = not self.has_sent_first_frame
+                        if is_probe_chunk:
                             self.has_sent_first_frame = True
 
                         yield chunk
@@ -134,6 +135,12 @@ class StreamGenerator:
                         observe_proxy_egress_bytes("TS", chunk_len)
                         self.chunks_sent += 1
                         self.last_chunk_sent_time = time.time()
+                        
+                        # Phase 2: Post-Probe Hoarding
+                        # If this was the very first chunk, build the pre-buffer runway now
+                        if is_probe_chunk:
+                            yield from self._apply_prebuffer_hold()
+
                         yield from self._maybe_apply_client_pacing()
                     
                     # Update local index
@@ -216,88 +223,46 @@ class StreamGenerator:
             if bool(getattr(manager, "connected", False)) and bool(getattr(manager, "playback_url", None)):
                 return True
 
-            # Drip-feed Null packets to keep connection alive during startup
-            fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
-            yield fat_keepalive
-            self.network_bytes_sent += len(fat_keepalive)
-            
-            # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
+            # SILENT WAIT: Do not send keep-alives during the handshake phase
+            # to avoid poisoning the player's probe with Null packets.
             time.sleep(check_interval)
         
         logger.error(f"[{self.client_id}] Stream initialization timeout")
         return False
     
-    def _wait_for_initial_data(self, min_index=None):
-        """Wait for initial data to arrive in the buffer before starting streaming.
+    def _wait_for_probe_chunk(self, min_index=None):
+        """Wait silently for at least one chunk to be available in the buffer.
         
-        This is critical because the HTTP streamer needs time to connect to the
-        playback URL and fetch the first chunks. Without this wait, clients will
-        see an empty buffer and disconnect prematurely.
+        This satisfies the 'Probe Release' phase: once a chunk is available, we
+        return immediately to let the generator release the headers to the client.
         """
-        prebuffer_seconds = max(0.0, float(ConfigHelper.proxy_prebuffer_seconds()))
-        timeout = max(float(ConfigHelper.initial_data_wait_timeout()), prebuffer_seconds + 15.0)
+        timeout = max(float(ConfigHelper.initial_data_wait_timeout()), 10.0)
         check_interval = ConfigHelper.initial_data_check_interval()
         start_time = time.time()
         baseline_index = max(0, int(min_index or 0))
 
-        # Hot reconnect fast-path: if the stream already has enough buffered chunks
-        # for the prebuffer target, skip the startup holdback loop.
-        initial_fresh_chunks = max(0, int(self.buffer.index) - baseline_index)
-        if prebuffer_seconds > 0.0:
-            chunk_rate = max(0.1, float(self.chunk_rate_ema or 1.0))
-            required_prebuffer_chunks = max(1, int(math.ceil(prebuffer_seconds * chunk_rate)))
-            if initial_fresh_chunks >= required_prebuffer_chunks:
-                if getattr(self.buffer, "is_upstream_fresh", None) and self.buffer.is_upstream_fresh(15.0):
-                    self.chunk_rate_ema = max(chunk_rate, float(self.chunk_rate_ema or 0.0))
-                    logger.info(
-                        f"[{self.client_id}] Hot stream detected: Bypassing prebuffer wait "
-                        f"(buffer index: {self.buffer.index}, baseline_index: {baseline_index}, "
-                        f"fresh_chunks: {initial_fresh_chunks}, required_chunks: {required_prebuffer_chunks}, "
-                        f"chunk_rate_ema: {self.chunk_rate_ema:.2f} chunks/s)"
-                    )
-                    return True
-
-                logger.warning(
-                    f"[{self.client_id}] Warm cache detected but upstream is stale; forcing cache purge "
-                    f"(buffer index: {self.buffer.index}, baseline_index: {baseline_index}, "
-                    f"fresh_chunks: {initial_fresh_chunks}, required_chunks: {required_prebuffer_chunks})"
-                )
-                if getattr(self.buffer, "purge_stale_cache", None):
-                    self.buffer.purge_stale_cache(reason="hot_reconnect_stale_upstream")
-                baseline_index = max(0, int(self.buffer.index))
-        
         logger.info(
-            f"[{self.client_id}] Waiting for initial data in buffer "
-            f"(timeout: {timeout:.1f}s, prebuffer_seconds: {prebuffer_seconds:.1f}, "
-            f"baseline_index: {baseline_index})..."
+            f"[{self.client_id}] Waiting for probe chunk in buffer "
+            f"(timeout: {timeout:.1f}s, baseline_index: {baseline_index})..."
         )
         
         while time.time() - start_time < timeout:
-            elapsed = time.time() - start_time
             fresh_chunks = max(0, int(self.buffer.index) - baseline_index)
 
-            # Prebuffer semantics for TS are time-based: keep a startup holdback
-            # for N seconds, then start from the original baseline index.
-            if prebuffer_seconds > 0.0:
-                if fresh_chunks > 0 and elapsed >= prebuffer_seconds:
-                    self.chunk_rate_ema = max(0.1, float(fresh_chunks) / max(elapsed, 0.001))
-                    logger.info(
-                        f"[{self.client_id}] Initial prebuffer ready after {elapsed:.2f}s "
-                        f"(buffer index: {self.buffer.index}, fresh_chunks: {fresh_chunks}, "
-                        f"chunk_rate_ema: {self.chunk_rate_ema:.2f} chunks/s)"
-                    )
-                    return True
-            elif fresh_chunks > 0:
+            if fresh_chunks > 0:
                 elapsed = time.time() - start_time
-                logger.info(f"[{self.client_id}] Initial data available after {elapsed:.2f}s (buffer index: {self.buffer.index})")
+                logger.info(f"[{self.client_id}] Probe chunk available after {elapsed:.2f}s (buffer index: {self.buffer.index})")
                 return True
             
-            # Drip-feed keep-alives during startup
-            fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
-            yield fat_keepalive
-            self.network_bytes_sent += len(fat_keepalive)
-            
-            # Wait before checking again
+            # SILENT WAIT: No keep-alives until the first media headers are released.
+            time.sleep(check_interval)
+        
+        # Timeout - no data arrived
+        logger.error(
+            f"[{self.client_id}] Timeout waiting for probe chunk "
+            f"(buffer index: {self.buffer.index}, baseline_index: {baseline_index})"
+        )
+        return False
             # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
             time.sleep(check_interval)
         
@@ -410,13 +375,45 @@ class StreamGenerator:
                     fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
                     yield fat_keepalive
                     self.network_bytes_sent += len(fat_keepalive)
-                
-                pulse = min(wait_time, 0.5)
-                time.sleep(pulse)
+                wait_time = (self.chunks_sent - pacing_burst_chunks) / float(source_rate) - elapsed
                 
                 now = time.time()
                 elapsed = now - self.pacing_start_time
                 wait_time = (self.chunks_sent - pacing_burst_chunks) / float(source_rate) - elapsed
+
+    def _apply_prebuffer_hold(self):
+        """Build the required safety runway after the probe chunk has been released.
+        
+        Yields Fat Keep-Alives while building the buffer. Safely blocks FFmpeg 
+        timeouts since media headers have already been provided.
+        """
+        prebuffer_seconds = max(0.0, float(ConfigHelper.proxy_prebuffer_seconds()))
+        if prebuffer_seconds <= 0:
+            return
+
+        # Estimate required chunks
+        chunk_rate = max(0.1, float(self.chunk_rate_ema or 2.0))
+        required_chunks = max(1, int(math.ceil(prebuffer_seconds * chunk_rate)))
+        target_index = self.local_index + required_chunks
+        
+        logger.info(
+            f"[{self.client_id}] Probe released. Hoarding {prebuffer_seconds}s pre-buffer "
+            f"(Target Index: {target_index}, Current: {self.buffer.index})"
+        )
+        
+        start_time = time.time()
+        while self.buffer.index < target_index:
+            # Safe to yield Fat Keep-Alives now! 
+            # Player already successfully probed the probe chunk.
+            fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
+            yield fat_keepalive
+            self.network_bytes_sent += len(fat_keepalive)
+            
+            time.sleep(0.5)
+            # Failsafe timeout to prevent infinite hoarding if engine stops
+            if time.time() - start_time > max(30.0, prebuffer_seconds * 2):
+                logger.warning(f"[{self.client_id}] Pre-buffer hoarding timed out at {self.buffer.index}")
+                break
 
     def _advance_local_index(self, chunks_received: int, fetched_end_index=None):
         """Advance client position by fetched range when available.
@@ -551,14 +548,14 @@ class StreamGenerator:
         if reconnect_start_index is None:
             start_index = self.buffer.index
         
-        # Wait for initial data in buffer before starting streaming
+        # Wait for at least one chunk in buffer (Probe Release Phase)
         # This gives the HTTP streamer time to fetch data from the playback URL
-        if not (yield from self._wait_for_initial_data(min_index=start_index)):
-            # Error already logged in _wait_for_initial_data
+        if not (yield from self._wait_for_probe_chunk(min_index=start_index)):
+            # Error already logged in _wait_for_probe_chunk
             return False
         
         # Keep playback behind live edge to ensure a safety runway for failovers.
-        prebuffer_seconds = max(0.0, float(ConfigHelper.proxy_prebuffer_seconds()))
+        # INITIAL POSITION: Start at the earliest possible chunk to satisfy the probe immediately.
         requested_seekback = 0
         try:
             if self.seekback is not None:
@@ -571,16 +568,12 @@ class StreamGenerator:
             self.local_index = max(0, int(start_index))
             logger.info(f"[{self.client_id}] Starting with explicit seekback: index {self.local_index}")
         else:
-            # Normal play: enforce initial_behind_chunks to create a safety runway.
-            behind_chunks = ConfigHelper.initial_behind_chunks()
-            if prebuffer_seconds > 0:
-                chunk_rate = max(0.1, float(self.chunk_rate_ema or 1.0))
-                behind_chunks = max(behind_chunks, int(math.ceil(prebuffer_seconds * chunk_rate)))
-            
-            self.local_index = max(0, int(self.buffer.index) - behind_chunks)
+            # Normal play: start at the live edge to release a valid chunk immediately.
+            # The 'hoarding' phase will happen after this first chunk is delivered.
+            self.local_index = max(0, int(start_index))
             logger.info(
-                f"[{self.client_id}] Normal play: starting {behind_chunks} chunks behind live edge "
-                f"(index {self.local_index}, live {self.buffer.index})"
+                f"[{self.client_id}] Probe-first startup: starting at index {self.local_index} "
+                f"(live {self.buffer.index})"
             )
 
         # Starting playback after prebuffer should reset starvation drain anchor.
