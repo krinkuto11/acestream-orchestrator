@@ -18,10 +18,9 @@ from .constants import StreamMetadataField, NULL_PID_HIGH, NULL_PID_LOW
 
 logger = get_logger()
 
-# Keep client-side download burst small so runway telemetry reflects
-# proxy-held buffer rather than player-local RAM hoarding.
 # Pacing configuration
 PACING_BURST_CHUNKS = 3
+FAT_KEEPALIVE_PACKETS = 50
 
 
 class StreamGenerator:
@@ -157,7 +156,7 @@ class StreamGenerator:
                     # IMPORTANT: Use pulses of sleep with Null packets to keep connection alive
                     sleep_remaining = no_data_check_interval
                     while sleep_remaining > 0:
-                        yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
+                        yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
                         pulse = min(sleep_remaining, 0.5)
                         time.sleep(pulse)
                         sleep_remaining -= pulse
@@ -202,7 +201,7 @@ class StreamGenerator:
                 return True
 
             # Drip-feed Null packets to keep connection alive during startup
-            yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
+            yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
             
             # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
             time.sleep(check_interval)
@@ -276,7 +275,7 @@ class StreamGenerator:
                 return True
             
             # Drip-feed keep-alives during startup
-            yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
+            yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
             
             # Wait before checking again
             # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
@@ -345,7 +344,7 @@ class StreamGenerator:
                 
                 while wait_time > 0:
                     # Yield Null packet keep-alive
-                    yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
+                    yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
                     
                     # Sleep max 0.5s to maintain responsiveness
                     pulse = min(wait_time, 0.5)
@@ -370,7 +369,7 @@ class StreamGenerator:
             wait_time = (self.chunks_sent - pacing_burst_chunks) / float(source_rate) - elapsed
             
             while wait_time > 0:
-                yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
+                yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
                 pulse = min(wait_time, 0.5)
                 time.sleep(pulse)
                 
