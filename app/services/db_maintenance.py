@@ -97,6 +97,26 @@ class DatabaseMaintenanceService:
                     pass
 
 
+
+def migrate_bitrate_column():
+    \"\"\"Ensure the streams table has the bitrate column.\"\"\"
+    import sqlalchemy
+    from sqlalchemy import text
+    
+    try:
+        with engine.connect() as conn:
+            inspector = sqlalchemy.inspect(engine)
+            columns = [c['name'] for c in inspector.get_columns(\"streams\")]
+            
+            if \"bitrate\" not in columns:
+                logger.info(\"Migrating database: Adding 'bitrate' column to 'streams' table\")
+                conn.execute(text(\"ALTER TABLE streams ADD COLUMN bitrate INTEGER\"))
+                conn.commit()
+                logger.info(\"Migration successful: 'bitrate' column added\")
+    except Exception as e:
+        logger.error(f\"Database migration failed: {e}\", exc_info=True)
+
+
 # Global maintenance service instance
 # Runs once per day and permanently removes telemetry older than 7 days.
 db_maintenance_service = DatabaseMaintenanceService(retention_days=7, interval_seconds=24 * 60 * 60)

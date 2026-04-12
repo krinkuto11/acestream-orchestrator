@@ -612,6 +612,8 @@ async def _refresh_vpn_servers_before_vpn_provision(vpn_controller_enabled: bool
 async def lifespan(app: FastAPI):
     # Startup - Ensure clean start (dry run)
     Base.metadata.create_all(bind=engine)
+    from .services.db_maintenance import migrate_bitrate_column
+    migrate_bitrate_column()
 
     from .services.config_migrator import migrate_legacy_json_configs
     from .services.settings_persistence import SettingsPersistence
