@@ -162,6 +162,7 @@ class StreamManager:
         self._ended_event_sent = False  # Track if we've already sent the ended event
         self._ended_event_stream_id = None
         self._stream_exit_reason = None
+        self.bitrate = 0
         
         logger.info(f"StreamManager initialized for content_id={content_id}")
 
@@ -215,14 +216,17 @@ class StreamManager:
         self.stat_url = session.get("stat_url") or ""
         self.command_url = session.get("command_url") or ""
         self.is_live = int(session.get("is_live", 1) or 1)
+        self.bitrate = int(session.get("bitrate") or 0)
+        
         latest_status = self.existing_session.get("latest_status") or {}
         if latest_status:
             self.legacy_status_probe = latest_status
         self.owns_engine_session = False
         logger.info(
-            "Using existing monitored session for content_id=%s monitor_id=%s",
+            "Using existing monitored session for content_id=%s monitor_id=%s bitrate=%s bps",
             self.content_id,
             self.existing_session.get("monitor_id"),
+            self.bitrate
         )
         return True
     
@@ -322,7 +326,13 @@ class StreamManager:
                 logger.debug(f"Response data: {resp_data}")
                 raise RuntimeError("No playback_url in AceStream response")
             
-            logger.info(f"AceStream session started: playback_session_id={self.playback_session_id}")
+            logger.info(
+                "AceStream session started: engine=%s content_id=%s bitrate=%s bps playback_session_id=%s",
+                self.engine_host,
+                self.content_id,
+                self.bitrate,
+                self.playback_session_id
+            )
             logger.info(f"Playback URL: {self.playback_url}")
             logger.debug(f"Stat URL: {self.stat_url}")
             logger.debug(f"Command URL: {self.command_url}")
@@ -407,7 +417,13 @@ class StreamManager:
                 self.bitrate = 0
             self.ace_api_client = client
 
-            logger.info(f"AceStream legacy API session started: playback_session_id={self.playback_session_id}")
+            logger.info(
+                "AceStream legacy API session started: engine=%s content_id=%s bitrate=%s bps playback_session_id=%s",
+                self.engine_host,
+                self.content_id, 
+                self.bitrate,
+                self.playback_session_id
+            )
             logger.info(f"Playback URL: {self.playback_url}")
             return True
         except Exception as e:
@@ -450,7 +466,7 @@ class StreamManager:
         if not playback_url:
             raise RuntimeError("No playback_url in AceStream response")
 
-        return {
+        result = {
             "playback_url": self._normalize_playback_url(str(playback_url), engine_host=engine_host),
             "playback_session_id": resp_data.get("playback_session_id"),
             "stat_url": resp_data.get("stat_url") or "",
@@ -460,6 +476,14 @@ class StreamManager:
             "resolved_infohash": self.resolved_infohash,
             "ace_api_client": None,
         }
+
+        logger.info(
+            "Obtained HTTP session: engine=%s content_id=%s bitrate=%s bps",
+            engine_host,
+            self.content_id,
+            result["bitrate"]
+        )
+        return result
 
     def _request_stream_session_api_for_engine(self, engine_host: str, engine_api_port: int, absolute_seek: int = 0) -> Dict[str, Any]:
         """Request a new API-mode AceStream session from a specific engine."""
@@ -504,7 +528,7 @@ class StreamManager:
             if not playback_url:
                 raise AceLegacyApiError("Legacy API START did not return playback URL")
 
-            return {
+            result = {
                 "playback_url": self._normalize_playback_url(str(playback_url), engine_host=engine_host),
                 "playback_session_id": start_info.get("playback_session_id", f"legacy-{int(time.time())}"),
                 "stat_url": "",
@@ -514,6 +538,14 @@ class StreamManager:
                 "resolved_infohash": resolved_infohash,
                 "ace_api_client": client,
             }
+
+            logger.info(
+                "Obtained API session: engine=%s content_id=%s bitrate=%s bps",
+                engine_host,
+                self.content_id, 
+                result["bitrate"]
+            )
+            return result
         except Exception:
             try:
                 client.shutdown()
@@ -569,9 +601,16 @@ class StreamManager:
             "stat_url": str(session.get("stat_url") or ""),
             "command_url": str(session.get("command_url") or ""),
             "is_live": int(session.get("is_live", 1) or 1),
+            "bitrate": int(session.get("bitrate") or 0),
             "resolved_infohash": session.get("resolved_infohash"),
             "ace_api_client": session.get("ace_api_client"),
         }
+
+        logger.info(
+            "Obtained session for failover/hot-swap: content_id=%s bitrate=%s bps",
+            self.content_id, 
+            pending_payload["bitrate"]
+        )
 
         if not pending_payload["playback_url"]:
             raise RuntimeError("swap_session_has_no_playback_url")
