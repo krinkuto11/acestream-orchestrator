@@ -20,9 +20,8 @@ logger = get_logger()
 
 # Keep client-side download burst small so runway telemetry reflects
 # proxy-held buffer rather than player-local RAM hoarding.
-MAX_CLIENT_LOCAL_HOARD_SECONDS = 0.0
-MAX_CATCHUP_SPEED_MULTIPLIER = 2.0
-PACING_BURST_BYTES = 5_000_000  # 5MB shock absorber
+# Pacing configuration
+PACING_BURST_CHUNKS = 3
 
 
 class StreamGenerator:
@@ -68,7 +67,7 @@ class StreamGenerator:
         self.pacing_burst_chunks = 0  # Disabled: maintain 100% of buffer in proxy for telemetry precision
         
         # Byte-based pacing (Target Bitrate)
-        self.bitrate = 0  # In bytes per second
+        self.stream_bitrate = 0  # In bytes per second
     
     def generate(self):
         """Generator function that produces stream content for the client"""
@@ -322,7 +321,7 @@ class StreamGenerator:
         self.chunk_rate_ema = (alpha * instant_rate) + ((1.0 - alpha) * float(self.chunk_rate_ema))
 
     def _maybe_apply_client_pacing(self):
-        """Strictly pace the client to the engine's target bitrate or EMA speed.
+        """Pace the client to the engine's target bitrate or EMA speed.
         
         This method is a generator that yields MPEG-TS Null packets as keep-alives 
         while waiting, preventing TCP/HTTP timeouts.
@@ -332,41 +331,52 @@ class StreamGenerator:
 
         now = time.time()
         elapsed = now - self.pacing_start_time
-        if elapsed <= 0:
+        if elapsed <= 1.0: # Grace period
             return
 
-        # HYBRID PACING MODEL: Prioritize engine's native target bitrate ($BITRATE)
-        # falling back to egress EMA if the engine does not provide metadata.
-        if self.bitrate > 0:
-            # Formula: Throttling math using target bitrate (bytes/sec)
-            # wait_time = (Total Bytes Sent - Burst Allowance) / Bitrate - Elapsed
-            wait_time = (self.bytes_sent - PACING_BURST_BYTES) / float(self.bitrate) - elapsed
-        else:
-            # Fallback: Original chunk-based pacing (Leaky Bucket)
-            source_rate = getattr(self.buffer, "get_source_rate", lambda: 0.0)()
-            if source_rate <= 0.1:
-                source_rate = float(self.chunk_rate_ema or 1.0)
+        # PRIMARY: Byte-based pacing using engine's native target bitrate
+        if self.stream_bitrate > 0:
+            pacing_burst_bytes = int(self.stream_bitrate * 6.0)
+            expected_bytes = elapsed * self.stream_bitrate
             
-            max_multiplier = float(ConfigHelper.proxy_max_catchup_multiplier() or 2.0)
-            pacing_rate = source_rate * max_multiplier
-            wait_time = (self.chunks_sent - self.pacing_burst_chunks) / pacing_rate - elapsed
+            # If we've sent more than the expected amount + burst allowance, enter wait loop
+            if self.bytes_sent > expected_bytes + pacing_burst_bytes:
+                wait_time = (self.bytes_sent - pacing_burst_bytes) / float(self.stream_bitrate) - elapsed
+                
+                while wait_time > 0:
+                    # Yield Null packet keep-alive
+                    yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
+                    
+                    # Sleep max 0.5s to maintain responsiveness
+                    pulse = min(wait_time, 0.5)
+                    time.sleep(pulse)
+                    
+                    # Recalculate based on total elapsed time
+                    now = time.time()
+                    elapsed = now - self.pacing_start_time
+                    wait_time = (self.bytes_sent - pacing_burst_bytes) / float(self.stream_bitrate) - elapsed
+                
+                # We applied byte pacing, skip chunk fallback
+                return
 
-        # Pacing: prevents greedy downloads from 'swallowing' the proxy-side buffer.
-        while wait_time > 0.01:
-            # Yield a Null packet to keep the connection active
-            yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
+        # FALLBACK: Chunk-based pacing using buffer EMA if bitrate is unknown
+        source_rate = getattr(self.buffer, "chunk_rate_ema", 1.0)
+        if source_rate <= 0:
+            return
             
-            # Pulse sleep to maintain responsiveness and timing
-            pulse = min(wait_time, 0.5)
-            time.sleep(pulse)
+        pacing_burst_chunks = getattr(self, "pacing_burst_chunks", 3)
+        expected_chunks = elapsed * source_rate
+        if self.chunks_sent > expected_chunks + pacing_burst_chunks:
+            wait_time = (self.chunks_sent - pacing_burst_chunks) / float(source_rate) - elapsed
             
-            # Update remaining wait time
-            now = time.time()
-            elapsed = now - self.pacing_start_time
-            if self.bitrate > 0:
-                wait_time = (self.bytes_sent - PACING_BURST_BYTES) / float(self.bitrate) - elapsed
-            else:
-                wait_time = (self.chunks_sent - self.pacing_burst_chunks) / pacing_rate - elapsed
+            while wait_time > 0:
+                yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
+                pulse = min(wait_time, 0.5)
+                time.sleep(pulse)
+                
+                now = time.time()
+                elapsed = now - self.pacing_start_time
+                wait_time = (self.chunks_sent - pacing_burst_chunks) / float(source_rate) - elapsed
 
     def _advance_local_index(self, chunks_received: int, fetched_end_index=None):
         """Advance client position by fetched range when available.
@@ -443,8 +453,8 @@ class StreamGenerator:
             bitrate_bits = self.client_manager.redis_client.hget(metadata_key, StreamMetadataField.BITRATE)
             if bitrate_bits:
                 # Formula requires bytes/sec, engine returns bits/sec.
-                self.bitrate = int(bitrate_bits) // 8
-                logger.info(f"[{self.client_id}] Target bitrate extracted for pacing: {self.bitrate} bytes/s")
+                self.stream_bitrate = int(bitrate_bits) // 8
+                logger.info(f"[{self.client_id}] Target bitrate extracted for pacing: {self.stream_bitrate} bytes/s")
         except Exception as e:
             logger.debug(f"[{self.client_id}] Failed to extract bitrate for pacing: {e}")
         
