@@ -3853,6 +3853,7 @@ async def ace_getstream(
         stat_url: str,
         command_url: str,
         is_live: int,
+        bitrate: int = 0,
     ) -> Optional[str]:
         existing_stream_id = _find_active_api_hls_stream_id()
         if existing_stream_id:
@@ -3880,6 +3881,7 @@ async def ace_getstream(
                     "stat_url": stat_url,
                     "command_url": command_url,
                     "is_live": int(is_live or 1),
+                    "bitrate": bitrate,
                 },
                 labels={
                     "source": "api_hls_segmenter",
@@ -4092,6 +4094,7 @@ async def ace_getstream(
                             stat_url=str(session_meta.get("stat_url") or ""),
                             command_url=str(session_meta.get("command_url") or ""),
                             is_live=_safe_int(session_meta.get("is_live"), default=1),
+                            bitrate=_safe_int(session_meta.get("bitrate"), default=0),
                         )
                         if stream_id:
                             hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
@@ -4508,13 +4511,13 @@ async def ace_getstream(
                 source_input_type=input_type,
                 file_indexes=normalized_file_indexes,
                 seekback=normalized_seekback,
-                # New adoption parameters
                 playback_url=playback_url,
                 playback_session_id=start_info.get("playback_session_id"),
                 stat_url=start_info.get("stat_url"),
                 command_url=start_info.get("command_url"),
                 is_live=start_info.get("is_live"),
                 ace_api_client=legacy_api_client,
+                bitrate=bitrate,
             )
             
             if not success:
