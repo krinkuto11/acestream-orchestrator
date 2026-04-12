@@ -348,6 +348,12 @@ class ResourceScheduler:
             if condition != "ready":
                 return False, f"condition_{condition}"
         elif not bool(node.get("healthy")):
+            status = str(node.get("status") or "").strip().lower()
+            if status in ("unhealthy", "down"):
+                # If explicitly marked unhealthy/down by Docker, do NOT trust the heuristic.
+                # The node is fundamentally unstable and should not accept new workloads.
+                return False, f"node_{status}"
+
             # Heuristic: If we already have healthy engines on this node, it IS ready
             # regardless of what the passive monitor thinks (it might be stale).
             from .state import state
@@ -355,6 +361,7 @@ class ResourceScheduler:
             if any(getattr(e, "health_status", "") == "healthy" for e in engines):
                 return True, "ready_via_heuristic"
             return False, "not_healthy"
+
 
         # Docker "running" can precede Gluetun control API readiness by a few seconds.
         # Require control API reachability and 'connected' VPN status before

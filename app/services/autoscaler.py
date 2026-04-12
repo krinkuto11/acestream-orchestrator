@@ -379,20 +379,50 @@ class EngineController:
         return [e.container_id for e in candidates[:count] if can_stop_engine(e.container_id)]
 
     async def _intent_worker_loop(self):
+        consecutive_failures = 0
         while self._running:
             try:
                 intent = await self.intent_queue.get()
                 try:
                     if intent.action == "create":
+                        # Check circuit breaker before each creation intent
+                        if not circuit_breaker_manager.can_provision("general"):
+                            raise RuntimeError("Provisioning intent blocked by open circuit breaker")
+
                         await asyncio.to_thread(execute_engine_spec, intent.payload)
+                        circuit_breaker_manager.record_provisioning_success("general")
+                        consecutive_failures = 0
                     elif intent.action == "terminate":
                         await asyncio.to_thread(stop_container, intent.payload)
+                    
                     state.resolve_scaling_intent(intent.intent_id, "applied")
                 except Exception as e:
+                    error_msg = str(e).lower()
+                    
+                    # Detect host-level seccomp/BPF ceiling (errno 524)
+                    is_seccomp_error = any(m in error_msg for m in ["seccomp", "errno 524", "failed to create shim task"])
+                    if is_seccomp_error:
+                        logger.critical(
+                            "CRITICAL: Host OS seccomp limit reached (errno 524). "
+                            "New containers cannot be started. Please check kernel BPF limits or restart Docker."
+                        )
+                        # Speed up circuit breaker opening for this specific fatal host error
+                        consecutive_failures = max(consecutive_failures, 5)
+
+                    if intent.action == "create":
+                        circuit_breaker_manager.record_provisioning_failure("general")
+                        consecutive_failures += 1
+                        
+                        # Apply back-off to prevent hammering the Docker API during failures
+                        backoff_s = min(60, 2 ** (consecutive_failures - 1))
+                        logger.warning(f"Provisioning intent failed (failure #{consecutive_failures}). Backing off for {backoff_s}s...")
+                        await asyncio.sleep(backoff_s)
+
                     logger.error(f"Failed to execute {intent.action} intent {intent.intent_id}: {e}")
                     state.resolve_scaling_intent(intent.intent_id, "failed", {"error": str(e)})
                 finally:
                     self.intent_queue.task_done()
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
