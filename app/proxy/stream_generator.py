@@ -450,13 +450,21 @@ class StreamGenerator:
             return
 
         try:
-            # Simple math: Since we pace the client, the buffer remains in Redis.
+            # Calculate lag using the best available data
             chunks_behind = max(0, int(self.buffer.index) - int(self.local_index))
-            chunk_rate = float(self.chunk_rate_ema or 1.0)
-            seconds_behind = max(0.0, float(chunks_behind) / chunk_rate)
+            target_chunk_size = getattr(self.buffer, "target_chunk_size", 1024 * 1024)
+            
+            if self.stream_bitrate > 0:
+                # Precision math: bytes_behind / bytes_per_sec
+                seconds_behind = max(0.0, (float(chunks_behind) * target_chunk_size) / float(self.stream_bitrate))
+                confidence = 0.90
+            else:
+                # Fallback: chunk_count / observation_rate
+                chunk_rate = float(self.chunk_rate_ema or 1.0)
+                seconds_behind = max(0.0, float(chunks_behind) / chunk_rate)
+                confidence = 0.75 if self.chunk_rate_ema else 0.55
 
             normalized_source = str(source or "ts_cursor_ema")
-            confidence = 0.75 if self.chunk_rate_ema else 0.55
 
             if normalized_source in {"ts_starvation_decay", "starvation_tick"}:
                 if self.chunks_sent > 0:
