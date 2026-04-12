@@ -227,9 +227,18 @@ class StreamGenerator:
             if manager_mode != PROXY_MODE_API:
                 return True
 
-            # Stream manager must complete session request before clients start normal streaming.
-            if bool(getattr(manager, "connected", False)) and bool(getattr(manager, "playback_url", None)):
-                return True
+            # Stream manager must complete session request AND bitrate detection (API mode) 
+            # before clients start normal streaming.
+            is_connected = bool(getattr(manager, "connected", False))
+            has_url = bool(getattr(manager, "playback_url", None))
+            has_bitrate = bool(getattr(manager, "bitrate", 0) > 0)
+            
+            if is_connected and has_url:
+                if manager_mode == PROXY_MODE_API and not has_bitrate:
+                    # Still waiting for bitrate propagation in API mode
+                    pass
+                else:
+                    return True
 
             # SILENT WAIT: Do not send keep-alives during the handshake phase
             # to avoid poisoning the player's probe with Null packets.
@@ -351,6 +360,24 @@ class StreamGenerator:
         """Build the required safety runway after the probe chunk has been released."""
         target_chunk_size = getattr(self.buffer, "target_chunk_size", 1024 * 1024)
         
+        # Late-binding bitrate check: try one last time to get it from manager or Redis
+        if self.stream_bitrate <= 0:
+            from .server import ProxyServer
+            proxy_server = ProxyServer.get_instance()
+            manager = proxy_server.stream_managers.get(self.content_id)
+            if manager and getattr(manager, "bitrate", 0) > 0:
+                self.stream_bitrate = int(manager.bitrate) // 8
+                logger.info(f"[{self.client_id}] Late-binding bitrate captured from manager: {self.stream_bitrate} B/s")
+            else:
+                try:
+                    metadata_key = RedisKeys.stream_metadata(self.content_id)
+                    bitrate_bits = self.client_manager.redis_client.hget(metadata_key, StreamMetadataField.BITRATE)
+                    if bitrate_bits:
+                        self.stream_bitrate = int(bitrate_bits) // 8
+                        logger.info(f"[{self.client_id}] Late-binding bitrate captured from Redis: {self.stream_bitrate} B/s")
+                except Exception:
+                    pass
+
         # Calculate target chunks based on bitrate if available, otherwise fallback to EMA
         if self.stream_bitrate > 0:
             # target = (seconds * bytes_per_sec) / bytes_per_chunk
@@ -457,16 +484,21 @@ class StreamGenerator:
             logger.error(f"[{self.client_id}] No client manager found")
             return False
 
-        # EXTRACT BITRATE FOR PACING: Fetch metadata from Redis
-        try:
-            metadata_key = RedisKeys.stream_metadata(self.content_id)
-            bitrate_bits = self.client_manager.redis_client.hget(metadata_key, StreamMetadataField.BITRATE)
-            if bitrate_bits:
-                # Formula requires bytes/sec, engine returns bits/sec.
-                self.stream_bitrate = int(bitrate_bits) // 8
-                logger.info(f"[{self.client_id}] Target bitrate extracted for pacing: {self.stream_bitrate} bytes/s")
-        except Exception as e:
-            logger.debug(f"[{self.client_id}] Failed to extract bitrate for pacing: {e}")
+        # EXTRACT BITRATE FOR PACING: Prioritize direct manager data, fallback to Redis
+        manager = proxy_server.stream_managers.get(self.content_id)
+        if manager and getattr(manager, "bitrate", 0) > 0:
+            self.stream_bitrate = int(manager.bitrate) // 8
+            logger.info(f"[{self.client_id}] Target bitrate extracted from manager: {self.stream_bitrate} bytes/s")
+        else:
+            try:
+                metadata_key = RedisKeys.stream_metadata(self.content_id)
+                bitrate_bits = self.client_manager.redis_client.hget(metadata_key, StreamMetadataField.BITRATE)
+                if bitrate_bits:
+                    # Formula requires bytes/sec, engine returns bits/sec.
+                    self.stream_bitrate = int(bitrate_bits) // 8
+                    logger.info(f"[{self.client_id}] Target bitrate extracted from Redis: {self.stream_bitrate} bytes/s")
+            except Exception as e:
+                logger.debug(f"[{self.client_id}] Failed to extract bitrate for pacing: {e}")
         
         # Capture the current index before registering the client so we can
         # track the client's absolute position in the buffer.
