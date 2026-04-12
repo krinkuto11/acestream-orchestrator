@@ -1623,10 +1623,10 @@ class StreamManager:
                 now = time.time()
                 inactivity_duration = now - self.last_data_time
 
-                dynamic_threshold, current_buffer, max_tolerance = self._get_dynamic_tolerance()
+                dynamic_threshold, proxy_runway, max_tolerance = self._get_dynamic_tolerance()
                 
                 # Update the publish call to pass 0.0 for source_duration
-                self._publish_dynamic_tolerance(dynamic_threshold, current_buffer, max_tolerance, inactivity_duration, 0.0)
+                self._publish_dynamic_tolerance(dynamic_threshold, proxy_runway, max_tolerance, inactivity_duration, 0.0)
 
                 is_stagnant = False
                 stagnation_duration = 0.0
@@ -1677,7 +1677,7 @@ class StreamManager:
                             if not is_stagnant:
                                 logger.warning(
                                     f"Stream starved for {inactivity_duration:.1f}s. "
-                                    f"[Client Buffer: {current_buffer:.1f}s | Dynamic Threshold: {dynamic_threshold:.1f}s]. "
+                                    f"[Proxy Runway: {proxy_runway:.1f}s | Dynamic Threshold: {dynamic_threshold:.1f}s]. "
                                     "Killing socket to trigger immediate failover."
                                 )
                             self.healthy = False
@@ -1697,13 +1697,13 @@ class StreamManager:
                             pass
 
                         self.connected = False
-                elif self.connected and inactivity_duration > 5.0 and current_buffer > 15.0:
-                    # Informative logging to highlight the Virtual Runway feature in action
+                elif self.connected and inactivity_duration > 5.0 and proxy_runway > 15.0:
+                    # Informative logging to highlight the Proxy-Native Runway feature in action
                     # Debounce to every 10 seconds to avoid spamming the log
                     now_monotonic = time.monotonic()
                     if (now_monotonic - self._last_failover_hold_log_time) >= 10.0:
                         logger.info(
-                            f"Engine silent for {inactivity_duration:.1f}s, but clients have {current_buffer:.1f}s of Virtual Runway. Holding failover."
+                            f"Engine silent for {inactivity_duration:.1f}s, but clients have {proxy_runway:.1f}s of Proxy Runway. Holding failover."
                         )
                         self._last_failover_hold_log_time = now_monotonic
                 elif self.connected and not self.healthy:
