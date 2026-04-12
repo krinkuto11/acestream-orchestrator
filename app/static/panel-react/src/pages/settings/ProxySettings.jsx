@@ -111,6 +111,32 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
     [draft, initialState],
   )
 
+  const preflightMetrics = useMemo(() => {
+    const probe = diagResult?.result?.status_probe
+    if (!probe) return null
+
+    const livepos = probe.livepos
+    let runway = null
+    if (livepos?.pos && (livepos?.last_ts || livepos?.live_last)) {
+      const pos = Number(livepos.pos)
+      const last = Number(livepos.last_ts || livepos.live_last)
+      if (Number.isFinite(pos) && Number.isFinite(last)) {
+        runway = Math.max(0, last - pos)
+      }
+    }
+
+    return {
+      status: probe.status_text || probe.status || 'N/A',
+      peers: probe.peers ?? 0,
+      httpPeers: probe.http_peers ?? 0,
+      speed: probe.speed_down ?? 0,
+      runway,
+      checks: diagResult?.result?.availability_checks || {},
+    }
+  }, [diagResult])
+
+  const preflightFiles = useMemo(() => extractLoadRespFiles(diagResult), [diagResult])
+
   useEffect(() => {
     const fetchConfig = async () => {
       setLoading(true)
@@ -357,32 +383,6 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
       </Card>
     )
   }
-
-  const preflightFiles = extractLoadRespFiles(diagResult)
-
-  const preflightMetrics = useMemo(() => {
-    const probe = diagResult?.result?.status_probe
-    if (!probe) return null
-
-    const livepos = probe.livepos
-    let runway = null
-    if (livepos?.pos && (livepos?.last_ts || livepos?.live_last)) {
-      const pos = Number(livepos.pos)
-      const last = Number(livepos.last_ts || livepos.live_last)
-      if (Number.isFinite(pos) && Number.isFinite(last)) {
-        runway = Math.max(0, last - pos)
-      }
-    }
-
-    return {
-      status: probe.status_text || probe.status || 'N/A',
-      peers: probe.peers ?? 0,
-      httpPeers: probe.http_peers ?? 0,
-      speed: probe.speed_down ?? 0,
-      runway,
-      checks: diagResult?.result?.availability_checks || {},
-    }
-  }, [diagResult])
 
   const lifecycleCopy = getLifecycleCopy(activePhase)
 
