@@ -1003,8 +1003,6 @@ class State:
             self.streams.clear()
             self._streams_by_key.clear()
             self.stream_stats.clear()
-            self._stream_failover_telemetry_by_id.clear()
-            self._stream_failover_telemetry_by_key.clear()
             self.monitor_sessions.clear()
             self._scaling_intents.clear()
             self._dynamic_vpn_nodes.clear()
@@ -1792,12 +1790,10 @@ class State:
             for stream_id in streams_to_remove:
                 stream = self.streams.get(stream_id)
                 del self.streams[stream_id]
-                self._stream_failover_telemetry_by_id.pop(stream_id, None)
                 if stream and stream.key and stream.key in self._streams_by_key:
                     indexed_ids = self._streams_by_key[stream.key]
                     indexed_ids.discard(stream_id)
                     if not indexed_ids:
-                        self._stream_failover_telemetry_by_key.pop(stream.key, None)
                         self._streams_by_key.pop(stream.key, None)
                 # Also remove stats for the stream to free memory
                 if stream_id in self.stream_stats:
