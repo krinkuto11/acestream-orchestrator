@@ -179,18 +179,7 @@ class StreamGenerator:
                         break
                     
                     # Wait a bit before retrying
-                    # IMPORTANT: Use pulses of sleep with Null packets to keep connection alive
-                    no_data_check_interval = ConfigHelper.no_data_check_interval()
-                    sleep_remaining = no_data_check_interval
-                    while sleep_remaining > 0:
-                        if getattr(self, "has_sent_first_frame", False):
-                            fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
-                            yield fat_keepalive
-                            self.network_bytes_sent += len(fat_keepalive)
-                        
-                        pulse = min(sleep_remaining, 0.5)
-                        time.sleep(pulse)
-                        sleep_remaining -= pulse
+                    time.sleep(ConfigHelper.no_data_check_interval())
                 
                 # Refresh client TTL periodically
                 if time.time() - self.last_ttl_refresh >= self.ttl_refresh_interval:
