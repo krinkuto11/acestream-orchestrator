@@ -370,22 +370,22 @@ function StreamTimelineGraphic({
     const config = {
       engineLag: {
         label: 'Swarm Lead',
-        color: 'hsl(var(--chart-3, 32 95% 44%))',
+        color: 'var(--warning)',
       },
       dynamicThreshold: {
         label: 'Failover Limit',
-        color: 'hsl(var(--destructive, 0 84% 60%))',
+        color: 'var(--destructive)',
       },
       liveEdge: {
         label: 'Live edge',
-        color: 'hsl(0 84% 60%)',
+        color: 'var(--foreground)',
       },
     }
 
     if (showStreamWindow) {
       config.streamWindow = {
         label: 'HLS Proxy Window',
-        color: 'hsl(var(--chart-5, 348 83% 47%))',
+        color: 'var(--info)',
       }
     }
 
