@@ -109,10 +109,7 @@ class StreamGenerator:
             self.pacing_start_time = time.time() # START PACING CLOCK HERE
             
             # Main streaming loop
-            # Get no data timeout settings
-            no_data_max_checks = ConfigHelper.no_data_timeout_checks()
-            no_data_check_interval = ConfigHelper.no_data_check_interval()
-            
+            first_chunk_yielded = False
             while True:
                 # Get chunks from buffer
                 fetched_end_index = None
@@ -123,12 +120,14 @@ class StreamGenerator:
                 
                 if chunks:
                     for chunk in chunks:
-                        is_probe_chunk = not self.has_sent_first_frame
-                        if is_probe_chunk:
-                            self.has_sent_first_frame = True
-
                         yield chunk
                         chunk_len = len(chunk)
+                        
+                        # Tracking for 'Probe-Then-Hold' and pacing math
+                        if not first_chunk_yielded:
+                            first_chunk_yielded = True
+                            self.has_sent_first_frame = True
+                        
                         self.bytes_sent += chunk_len
                         self.video_bytes_sent += chunk_len
                         self.network_bytes_sent += chunk_len
@@ -137,10 +136,11 @@ class StreamGenerator:
                         self.chunks_sent += 1
                         self.last_chunk_sent_time = time.time()
                         
-                        # Phase 2: Post-Probe Hoarding
-                        # If this was the very first chunk, build the pre-buffer runway now
-                        if is_probe_chunk:
-                            yield from self._apply_prebuffer_hold()
+                        # Probe Release: Trigger pre-buffer hold immediately after first video chunk
+                        if first_chunk_yielded and self.chunks_sent == 1:
+                            prebuffer_seconds = max(0.0, float(ConfigHelper.proxy_prebuffer_seconds()))
+                            if prebuffer_seconds > 0.0:
+                                yield from self._apply_prebuffer_hold(prebuffer_seconds)
 
                         yield from self._maybe_apply_client_pacing()
                     
@@ -176,11 +176,14 @@ class StreamGenerator:
                     
                     # Wait a bit before retrying
                     # IMPORTANT: Use pulses of sleep with Null packets to keep connection alive
+                    no_data_check_interval = ConfigHelper.no_data_check_interval()
                     sleep_remaining = no_data_check_interval
                     while sleep_remaining > 0:
-                        fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
-                        yield fat_keepalive
-                        self.network_bytes_sent += len(fat_keepalive)
+                        if getattr(self, "has_sent_first_frame", False):
+                            fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
+                            yield fat_keepalive
+                            self.network_bytes_sent += len(fat_keepalive)
+                        
                         pulse = min(sleep_remaining, 0.5)
                         time.sleep(pulse)
                         sleep_remaining -= pulse
@@ -232,11 +235,7 @@ class StreamGenerator:
         return False
     
     def _wait_for_probe_chunk(self, min_index=None):
-        """Wait silently for at least one chunk to be available in the buffer.
-        
-        This satisfies the 'Probe Release' phase: once a chunk is available, we
-        return immediately to let the generator release the headers to the client.
-        """
+        """Wait silently for at least one chunk to be available in the buffer."""
         timeout = max(float(ConfigHelper.initial_data_wait_timeout()), 10.0)
         check_interval = ConfigHelper.initial_data_check_interval()
         start_time = time.time()
@@ -248,31 +247,11 @@ class StreamGenerator:
         )
         
         while time.time() - start_time < timeout:
-            fresh_chunks = max(0, int(self.buffer.index) - baseline_index)
-
-            if fresh_chunks > 0:
-                elapsed = time.time() - start_time
-                logger.info(f"[{self.client_id}] Probe chunk available after {elapsed:.2f}s (buffer index: {self.buffer.index})")
+            if self.buffer.index > baseline_index:
                 return True
-            
-            # SILENT WAIT: No keep-alives until the first media headers are released.
             time.sleep(check_interval)
         
-        # Timeout - no data arrived
-        logger.error(
-            f"[{self.client_id}] Timeout waiting for probe chunk "
-            f"(buffer index: {self.buffer.index}, baseline_index: {baseline_index})"
-        )
-        return False
-            # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
-            time.sleep(check_interval)
-        
-        # Timeout - no data arrived
-        logger.error(
-            f"[{self.client_id}] Timeout waiting for initial data "
-            f"(buffer index: {self.buffer.index}, baseline_index: {baseline_index}, "
-            f"prebuffer_seconds: {prebuffer_seconds:.1f}, waited: {timeout:.1f}s)"
-        )
+        logger.error(f"[{self.client_id}] Timeout waiting for probe chunk")
         return False
 
     def _update_chunk_rate_estimate(self, chunks_received: int):
@@ -306,11 +285,7 @@ class StreamGenerator:
         self.chunk_rate_ema = (alpha * instant_rate) + ((1.0 - alpha) * float(self.chunk_rate_ema))
 
     def _maybe_apply_client_pacing(self):
-        """Pace the client to the engine's target bitrate or EMA speed.
-        
-        This method implements Bitrate Drift Compensation (VBR Controller) to
-        handle stream spikes and maintain real-time playback stability.
-        """
+        """Pace the client to the engine's target bitrate or EMA speed."""
         if not self.pacing_start_time:
             return
 
@@ -326,12 +301,9 @@ class StreamGenerator:
         # PRIMARY: Byte-based pacing using engine's native target bitrate
         if current_bitrate > 0:
             # 2. DRIFT COMPENSATION: 
-            # If the proxy is hoarding way too much data (> 15 seconds), it means our 
-            # pacing is too strict (the real bitrate has increased). We must accelerate.
             if hasattr(self, "buffer") and hasattr(self, "local_index"):
                 proxy_runway_chunks = max(0, self.buffer.index - self.local_index)
                 if proxy_runway_chunks > 15: # Engine is running away from the client!
-                    # Accelerate the egress by 15% to let the client catch up
                     current_bitrate = int(current_bitrate * 1.15) 
 
             pacing_burst_bytes = int(current_bitrate * pacing_burst_seconds)
@@ -342,7 +314,6 @@ class StreamGenerator:
                 wait_time = (self.video_bytes_sent - pacing_burst_bytes) / float(current_bitrate) - elapsed
                 
                 while wait_time > 0:
-                    # Sleep max 0.5s to maintain responsiveness
                     pulse = min(wait_time, 0.5)
                     time.sleep(pulse)
                     
@@ -382,47 +353,29 @@ class StreamGenerator:
                 elapsed = now - self.pacing_start_time
                 wait_time = (self.chunks_sent - pacing_burst_chunks) / float(source_rate) - elapsed
 
-    def _apply_prebuffer_hold(self):
-        """Build the required safety runway after the probe chunk has been released.
+    def _apply_prebuffer_hold(self, prebuffer_seconds):
+        """Build the required safety runway after the probe chunk has been released."""
+        chunk_rate = max(0.1, float(getattr(self, "chunk_rate_ema", 1.0) or 1.0))
+        target_chunks = int(math.ceil(prebuffer_seconds * chunk_rate))
+        logger.info(f"[{self.client_id}] Starting artificial prebuffer hold: hoarding {target_chunks} chunks")
         
-        Yields Fat Keep-Alives while building the buffer. Safely blocks FFmpeg 
-        timeouts since media headers have already been provided.
-        """
-        prebuffer_seconds = max(0.0, float(ConfigHelper.proxy_prebuffer_seconds()))
-        if prebuffer_seconds <= 0:
-            return
-
-        # Estimate required chunks
-        chunk_rate = max(0.1, float(self.chunk_rate_ema or 2.0))
-        required_chunks = max(1, int(math.ceil(prebuffer_seconds * chunk_rate)))
-        target_index = self.local_index + required_chunks
-        
-        logger.info(
-            f"[{self.client_id}] Probe released. Hoarding {prebuffer_seconds}s pre-buffer "
-            f"(Target Index: {target_index}, Current: {self.buffer.index})"
-        )
-        
-        start_time = time.time()
-        while self.buffer.index < target_index:
-            # Safe to yield Fat Keep-Alives now! 
-            # Player already successfully probed the probe chunk.
+        start_wait = time.time()
+        while True:
+            current_buffer_size = max(0, int(self.buffer.index) - int(self.local_index))
+            if current_buffer_size >= target_chunks:
+                logger.info(f"[{self.client_id}] Prebuffer complete after {time.time() - start_wait:.1f}s")
+                break
+            if time.time() - start_wait > max(30.0, prebuffer_seconds * 2):
+                logger.warning(f"[{self.client_id}] Prebuffer hold timed out")
+                break
+                
+            # Blast Fat Keep-Alives to prevent HTTP timeouts
             fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
             yield fat_keepalive
-            self.network_bytes_sent += len(fat_keepalive)
-            
             time.sleep(0.5)
-            # Failsafe timeout to prevent infinite hoarding if engine stops
-            if time.time() - start_time > max(30.0, prebuffer_seconds * 2):
-                logger.warning(f"[{self.client_id}] Pre-buffer hoarding timed out at {self.buffer.index}")
-                break
 
     def _advance_local_index(self, chunks_received: int, fetched_end_index=None):
-        """Advance client position by fetched range when available.
-
-        Redis chunk TTL expirations can create sparse ranges (missing chunk IDs).
-        Advancing only by returned chunk count can pin local_index near the
-        initial baseline and make lag appear to increase forever.
-        """
+        """Advance client position by fetched range when available."""
         if fetched_end_index is not None and isinstance(fetched_end_index, int):
             if fetched_end_index >= self.local_index:
                 self.local_index = int(fetched_end_index)
@@ -501,7 +454,6 @@ class StreamGenerator:
         start_index = self.buffer.index
 
         # Reuse the existing baseline for deterministic hot reconnects.
-        # This preserves prior runway context instead of forcing a cold start.
         reconnect_start_index = None
         try:
             redis_client = getattr(self.client_manager, "redis_client", None)
@@ -519,16 +471,14 @@ class StreamGenerator:
         except Exception:
             reconnect_start_index = None
 
+        if reconnect_start_index is not None:
             start_index = reconnect_start_index
             
             # Revoke burst allowance for hot reconnects to prevent 'burst surfing'
-            self.pacing_burst_seconds = 0.0
             self.pacing_burst_chunks = 0
+            self.stream_bitrate = 0 # Revokes byte-based burst
             
-            logger.info(
-                f"[{self.client_id}] Reusing previous baseline index {start_index} for hot reconnect. "
-                f"Revoking burst allowance to prevent buffer surfing (buffer index: {self.buffer.index})"
-            )
+            logger.info(f"[{self.client_id}] Hot reconnect detected. Revoking burst allowance to prevent buffer surfing.")
         
         # Add client with starting position
         self.client_manager.add_client(self.client_id, self.client_ip, self.client_user_agent, initial_index=start_index)
