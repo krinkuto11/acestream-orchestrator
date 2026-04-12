@@ -159,6 +159,8 @@ class StreamManager:
         self._start_time = 0.0
         self._last_threshold_publish_ts = 0.0
         self._last_threshold_publish_value = None
+        self._last_known_swarm_edge = 0
+        self._last_swarm_advance_ts = time.time()
         
         # Orchestrator event tracking
         self.stream_id = None  # Will be set after sending start event
@@ -1164,6 +1166,19 @@ class StreamManager:
                         except Exception:
                             active_clients = 0
 
+                        if self._stream_exit_reason == "source_stagnant":
+                            logger.error("Stream is globally stagnant. Bypassing engine failover and dropping stream.")
+                            from ..models.schemas import StreamDataPlaneFailedEvent
+                            from ..services.internal_events import handle_stream_data_plane_failed
+                            
+                            if self.stream_id and not self.stream_id.startswith("temp-"):
+                                handle_stream_data_plane_failed(StreamDataPlaneFailedEvent(
+                                    stream_id=self.stream_id,
+                                    container_id=self.engine_container_id,
+                                    reason="source_stagnant"
+                                ))
+                            break # Exit the main loop completely
+
                         if self._stream_exit_reason == "eof" and active_clients <= 0:
                             logger.info("Stream ended with EOF and no active clients; skipping failover.")
                             break
@@ -1750,12 +1765,40 @@ class StreamManager:
                 now = time.time()
                 inactivity_duration = now - self.last_data_time
 
-                dynamic_threshold, current_buffer, max_tolerance = self._get_dynamic_tolerance()
+                is_stagnant = False
+                stagnation_duration = 0.0
                 
-                # Update the publish call to pass 0.0 for source_duration
-                self._publish_dynamic_tolerance(dynamic_threshold, current_buffer, max_tolerance, inactivity_duration, 0.0)
+                start_time = float(getattr(self, "_start_time", 0.0) or 0.0)
+                stream_uptime = max(0.0, now - start_time) if start_time > 0.0 else 0.0
+                
+                if self.is_live and stream_uptime > 30.0:
+                    last_ts = None
+                    if self._is_api_mode():
+                        probe = self.collect_legacy_stats_probe(force=False) or {}
+                        last_ts = probe.get("livepos", {}).get("last_ts")
+                    elif self.stat_url:
+                        try:
+                            resp = requests.get(self.stat_url, timeout=0.5)
+                            if resp.status_code == 200:
+                                probe = resp.json().get("response", {})
+                                last_ts = probe.get("last_ts") or probe.get("livepos", {}).get("last_ts")
+                        except Exception:
+                            pass
+                        
+                    if last_ts is not None:
+                        try:
+                            current_edge = int(last_ts)
+                            if current_edge > self._last_known_swarm_edge:
+                                self._last_known_swarm_edge = current_edge
+                                self._last_swarm_advance_ts = now
+                            
+                            stagnation_duration = now - self._last_swarm_advance_ts
+                            if stagnation_duration > 20.0:
+                                is_stagnant = True
+                        except (ValueError, TypeError):
+                            pass
 
-                if inactivity_duration > dynamic_threshold and self.connected:
+                if (inactivity_duration > dynamic_threshold or is_stagnant) and self.connected:
                     # Event set => steady state; cleared => waiting for control-plane recovery.
                     is_recovering = (
                         hasattr(self, 'control_plane_wait_event')
@@ -1763,12 +1806,17 @@ class StreamManager:
                     )
 
                     if not is_recovering:
+                        if is_stagnant:
+                            self._stream_exit_reason = "source_stagnant"
+                            logger.error(f"Broadcaster edge stagnant for {stagnation_duration:.1f}s. The P2P Swarm is dead. Terminating stream.")
+
                         if self.healthy:
-                            logger.warning(
-                                f"Stream starved for {inactivity_duration:.1f}s. "
-                                f"[Client Buffer: {current_buffer:.1f}s | Dynamic Threshold: {dynamic_threshold:.1f}s]. "
-                                "Killing socket to trigger immediate failover."
-                            )
+                            if not is_stagnant:
+                                logger.warning(
+                                    f"Stream starved for {inactivity_duration:.1f}s. "
+                                    f"[Client Buffer: {current_buffer:.1f}s | Dynamic Threshold: {dynamic_threshold:.1f}s]. "
+                                    "Killing socket to trigger immediate failover."
+                                )
                             self.healthy = False
                             # EXTEND GRACE PERIOD: Touch timers in Redis to prevent orphan cleanup mid-failover
                             self._touch_activity_timers()
