@@ -41,6 +41,11 @@ class StreamGenerator:
         self.local_index = 0
         self.consecutive_empty = 0
         
+        # Split byte tracking for precise pacing (VBR Controller)
+        self.video_bytes_sent = 0
+        self.network_bytes_sent = 0
+        self.has_sent_first_frame = False
+        
         # Rate tracking
         self.last_stats_time = time.time()
         self.last_stats_bytes = 0
@@ -76,6 +81,9 @@ class StreamGenerator:
         self.stream_start_time = time.time()
         self.bytes_sent = 0
         self.chunks_sent = 0
+        self.video_bytes_sent = 0
+        self.network_bytes_sent = 0
+        self.has_sent_first_frame = False
         self.last_chunk_sent_time = time.time()
         self.last_starvation_update_time = 0.0
         
@@ -114,9 +122,15 @@ class StreamGenerator:
                 
                 if chunks:
                     for chunk in chunks:
+                        if not self.has_sent_first_frame:
+                            self.has_sent_first_frame = True
+
                         yield chunk
                         chunk_len = len(chunk)
                         self.bytes_sent += chunk_len
+                        self.video_bytes_sent += chunk_len
+                        self.network_bytes_sent += chunk_len
+                        
                         observe_proxy_egress_bytes("TS", chunk_len)
                         self.chunks_sent += 1
                         self.last_chunk_sent_time = time.time()
@@ -156,7 +170,9 @@ class StreamGenerator:
                     # IMPORTANT: Use pulses of sleep with Null packets to keep connection alive
                     sleep_remaining = no_data_check_interval
                     while sleep_remaining > 0:
-                        yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
+                        fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
+                        yield fat_keepalive
+                        self.network_bytes_sent += len(fat_keepalive)
                         pulse = min(sleep_remaining, 0.5)
                         time.sleep(pulse)
                         sleep_remaining -= pulse
@@ -201,7 +217,9 @@ class StreamGenerator:
                 return True
 
             # Drip-feed Null packets to keep connection alive during startup
-            yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
+            fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
+            yield fat_keepalive
+            self.network_bytes_sent += len(fat_keepalive)
             
             # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
             time.sleep(check_interval)
@@ -275,7 +293,9 @@ class StreamGenerator:
                 return True
             
             # Drip-feed keep-alives during startup
-            yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
+            fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
+            yield fat_keepalive
+            self.network_bytes_sent += len(fat_keepalive)
             
             # Wait before checking again
             # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
@@ -322,38 +342,54 @@ class StreamGenerator:
     def _maybe_apply_client_pacing(self):
         """Pace the client to the engine's target bitrate or EMA speed.
         
-        This method is a generator that yields MPEG-TS Null packets as keep-alives 
-        while waiting, preventing TCP/HTTP timeouts.
+        This method implements Bitrate Drift Compensation (VBR Controller) to
+        handle stream spikes and maintain real-time playback stability.
         """
         if not self.pacing_start_time:
             return
 
+        # 1. Base Pacing variables
+        current_bitrate = self.stream_bitrate
+        TARGET_BURST_SECONDS = 6.0
         now = time.time()
         elapsed = now - self.pacing_start_time
+        
         if elapsed <= 1.0: # Grace period
             return
 
         # PRIMARY: Byte-based pacing using engine's native target bitrate
-        if self.stream_bitrate > 0:
-            pacing_burst_bytes = int(self.stream_bitrate * 6.0)
-            expected_bytes = elapsed * self.stream_bitrate
+        if current_bitrate > 0:
+            # 2. DRIFT COMPENSATION: 
+            # If the proxy is hoarding way too much data (> 15 seconds), it means our 
+            # pacing is too strict (the real bitrate has increased). We must accelerate.
+            if hasattr(self, "buffer") and hasattr(self, "local_index"):
+                proxy_runway_chunks = max(0, self.buffer.index - self.local_index)
+                if proxy_runway_chunks > 15: # Engine is running away from the client!
+                    # Accelerate the egress by 15% to let the client catch up
+                    current_bitrate = int(current_bitrate * 1.15) 
+
+            pacing_burst_bytes = int(current_bitrate * TARGET_BURST_SECONDS)
+            expected_bytes = elapsed * current_bitrate
             
-            # If we've sent more than the expected amount + burst allowance, enter wait loop
-            if self.bytes_sent > expected_bytes + pacing_burst_bytes:
-                wait_time = (self.bytes_sent - pacing_burst_bytes) / float(self.stream_bitrate) - elapsed
+            # 3. Throttle using the video_bytes_sent only (ignore keep-alives)
+            if self.video_bytes_sent > expected_bytes + pacing_burst_bytes:
+                wait_time = (self.video_bytes_sent - pacing_burst_bytes) / float(current_bitrate) - elapsed
                 
                 while wait_time > 0:
-                    # Yield Null packet keep-alive
-                    yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
-                    
                     # Sleep max 0.5s to maintain responsiveness
                     pulse = min(wait_time, 0.5)
                     time.sleep(pulse)
                     
+                    # 4. FAT KEEP-ALIVE (Only if we've sent real video)
+                    if self.has_sent_first_frame:
+                        fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
+                        yield fat_keepalive
+                        self.network_bytes_sent += len(fat_keepalive)
+                    
                     # Recalculate based on total elapsed time
                     now = time.time()
                     elapsed = now - self.pacing_start_time
-                    wait_time = (self.bytes_sent - pacing_burst_bytes) / float(self.stream_bitrate) - elapsed
+                    wait_time = (self.video_bytes_sent - pacing_burst_bytes) / float(current_bitrate) - elapsed
                 
                 # We applied byte pacing, skip chunk fallback
                 return
@@ -369,7 +405,12 @@ class StreamGenerator:
             wait_time = (self.chunks_sent - pacing_burst_chunks) / float(source_rate) - elapsed
             
             while wait_time > 0:
-                yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
+                # 4. FAT KEEP-ALIVE (Fallback path)
+                if self.has_sent_first_frame:
+                    fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
+                    yield fat_keepalive
+                    self.network_bytes_sent += len(fat_keepalive)
+                
                 pulse = min(wait_time, 0.5)
                 time.sleep(pulse)
                 
