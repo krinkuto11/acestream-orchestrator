@@ -110,227 +110,6 @@ def _prune_client_tracker_if_due(*, ttl_s: float, min_interval_s: float = 3.0) -
         _CLIENT_TRACKER_LAST_PRUNE_MONOTONIC = now_monotonic
 
 
-def _merge_clients_with_redis_runway(stream_key: str, tracker_clients: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Overlay tracker client rows with freshest runway telemetry from Redis.
-
-    Stream failover tolerance uses Redis-backed runway data in StreamManager.
-    During reconnect races the in-memory tracker can briefly miss rows, which
-    makes UI runway appear stuck at 0.0. This reconciler keeps API output aligned
-    with the source-of-truth runway telemetry.
-    """
-    normalized_key = str(stream_key or "").strip()
-    if not normalized_key:
-        return list(tracker_clients or [])
-
-    try:
-        from .proxy.manager import ProxyManager
-        from .proxy.redis_keys import RedisKeys
-        from .proxy.constants import ClientMetadataField
-
-        proxy_server = ProxyManager.get_instance()
-        redis_client = getattr(proxy_server, "redis_client", None)
-        if not redis_client:
-            return list(tracker_clients or [])
-
-        def _to_str(value: Any) -> str:
-            if isinstance(value, bytes):
-                return value.decode("utf-8", errors="ignore")
-            return str(value or "")
-
-        def _to_float(value: Any, default: float = 0.0) -> float:
-            try:
-                return float(_to_str(value))
-            except Exception:
-                return default
-
-        merged_by_id: Dict[str, Dict[str, Any]] = {}
-        passthrough_rows: List[Dict[str, Any]] = []
-
-        for row in list(tracker_clients or []):
-            item = dict(row or {})
-            cid = str(item.get("client_id") or item.get("id") or "").strip()
-            if cid:
-                merged_by_id[cid] = item
-            else:
-                passthrough_rows.append(item)
-
-        now = time.time()
-        client_ids = redis_client.smembers(RedisKeys.clients(normalized_key)) or []
-        for raw_client_id in client_ids:
-            client_id = _to_str(raw_client_id).strip()
-            if not client_id:
-                continue
-
-            client_key = RedisKeys.client_metadata(normalized_key, client_id)
-            if hasattr(redis_client, "hmget"):
-                values = redis_client.hmget(
-                    client_key,
-                    [
-                        ClientMetadataField.CLIENT_RUNWAY_SECONDS,
-                        ClientMetadataField.BUFFER_SECONDS_BEHIND,
-                        ClientMetadataField.POSITION_SOURCE,
-                        ClientMetadataField.POSITION_CONFIDENCE,
-                        ClientMetadataField.POSITION_OBSERVED_AT,
-                        ClientMetadataField.STATS_UPDATED_AT,
-                        ClientMetadataField.LAST_ACTIVE,
-                        ClientMetadataField.IP_ADDRESS,
-                        ClientMetadataField.USER_AGENT,
-                    ],
-                )
-            else:
-                values = [
-                    redis_client.hget(client_key, ClientMetadataField.CLIENT_RUNWAY_SECONDS),
-                    redis_client.hget(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND),
-                    redis_client.hget(client_key, ClientMetadataField.POSITION_SOURCE),
-                    redis_client.hget(client_key, ClientMetadataField.POSITION_CONFIDENCE),
-                    redis_client.hget(client_key, ClientMetadataField.POSITION_OBSERVED_AT),
-                    redis_client.hget(client_key, ClientMetadataField.STATS_UPDATED_AT),
-                    redis_client.hget(client_key, ClientMetadataField.LAST_ACTIVE),
-                    redis_client.hget(client_key, ClientMetadataField.IP_ADDRESS),
-                    redis_client.hget(client_key, ClientMetadataField.USER_AGENT),
-                ]
-
-            if not values:
-                continue
-
-            (
-                runway_raw,
-                legacy_runway_raw,
-                source_raw,
-                confidence_raw,
-                observed_raw,
-                stats_updated_raw,
-                last_active_raw,
-                ip_raw,
-                ua_raw,
-            ) = values
-
-            runway = _to_float(runway_raw, default=float("nan"))
-            if runway != runway:
-                runway = _to_float(legacy_runway_raw, default=float("nan"))
-            if runway != runway:
-                continue
-            runway = max(0.0, runway)
-
-            observed_at = _to_float(observed_raw, default=0.0)
-            if observed_at <= 0.0:
-                observed_at = _to_float(stats_updated_raw, default=0.0)
-            if observed_at <= 0.0:
-                observed_at = now
-
-            row = dict(merged_by_id.get(client_id) or {
-                "id": client_id,
-                "client_id": client_id,
-                "stream_id": normalized_key,
-                "protocol": "TS",
-                "type": "TS",
-                "ip_address": _to_str(ip_raw) or "unknown",
-                "ip": _to_str(ip_raw) or "unknown",
-                "user_agent": _to_str(ua_raw) or "unknown",
-                "ua": _to_str(ua_raw) or "unknown",
-                "connected_at": observed_at,
-                "last_active": observed_at,
-            })
-
-            existing_observed = _to_float(row.get("position_observed_at"), default=0.0)
-            existing_runway = _to_float(row.get("client_runway_seconds"), default=0.0)
-
-            if observed_at >= existing_observed or existing_runway <= 0.0:
-                row["client_runway_seconds"] = runway
-                row["buffer_seconds_behind"] = runway
-                row["position_source"] = _to_str(source_raw) or str(row.get("position_source") or "")
-                row["position_confidence"] = max(0.0, min(1.0, _to_float(confidence_raw, default=0.0)))
-                row["position_observed_at"] = observed_at
-
-            last_active = _to_float(last_active_raw, default=0.0)
-            if last_active > 0.0:
-                row["last_active"] = max(last_active, _to_float(row.get("last_active"), default=last_active))
-
-            if not row.get("ip_address"):
-                row["ip_address"] = _to_str(ip_raw) or "unknown"
-                row["ip"] = row["ip_address"]
-            if not row.get("user_agent"):
-                row["user_agent"] = _to_str(ua_raw) or "unknown"
-                row["ua"] = row["user_agent"]
-
-            merged_by_id[client_id] = row
-
-        merged_rows = list(merged_by_id.values()) + passthrough_rows
-        merged_rows.sort(key=lambda item: float(item.get("last_active") or 0.0), reverse=True)
-        return merged_rows
-    except Exception:
-        return list(tracker_clients or [])
-
-
-def _read_stream_dynamic_threshold(stream_key: str) -> Dict[str, float]:
-    """Read dynamic failover threshold telemetry for one stream from Redis."""
-    normalized_key = str(stream_key or "").strip()
-    if not normalized_key:
-        return {}
-
-    try:
-        from .proxy.manager import ProxyManager
-        from .proxy.redis_keys import RedisKeys
-        from .proxy.constants import StreamMetadataField
-
-        proxy_server = ProxyManager.get_instance()
-        redis_client = getattr(proxy_server, "redis_client", None)
-        if not redis_client:
-            return {}
-
-        metadata_key = RedisKeys.stream_metadata(normalized_key)
-        fields = [
-            StreamMetadataField.DYNAMIC_THRESHOLD_SECONDS,
-            StreamMetadataField.CURRENT_CLIENT_BUFFER_SECONDS,
-            StreamMetadataField.MAX_TOLERANCE_SECONDS,
-            StreamMetadataField.STREAM_INACTIVITY_SECONDS,
-            StreamMetadataField.DYNAMIC_THRESHOLD_UPDATED_AT,
-        ]
-
-        if hasattr(redis_client, "hmget"):
-            values = redis_client.hmget(metadata_key, fields)
-        else:
-            values = [redis_client.hget(metadata_key, field) for field in fields]
-        if not values:
-            return {}
-
-        def _to_str(value: Any) -> str:
-            if isinstance(value, bytes):
-                return value.decode("utf-8", errors="ignore")
-            return str(value or "")
-
-        def _to_float(value: Any) -> float:
-            try:
-                return float(_to_str(value))
-            except Exception:
-                return 0.0
-
-        (
-            dynamic_threshold_raw,
-            current_buffer_raw,
-            max_tolerance_raw,
-            inactivity_raw,
-            updated_at_raw,
-        ) = values
-
-        dynamic_threshold = max(0.0, _to_float(dynamic_threshold_raw))
-        current_buffer = max(0.0, _to_float(current_buffer_raw))
-        max_tolerance = max(0.0, _to_float(max_tolerance_raw))
-        inactivity = max(0.0, _to_float(inactivity_raw))
-        updated_at = max(0.0, _to_float(updated_at_raw))
-
-        if dynamic_threshold <= 0.0 and current_buffer <= 0.0 and max_tolerance <= 0.0:
-            return {}
-
-        return {
-            "dynamic_threshold_seconds": dynamic_threshold,
-            "current_client_buffer_seconds": current_buffer,
-            "max_tolerance_seconds": max_tolerance,
-            "stream_inactivity_seconds": inactivity,
-            "dynamic_threshold_updated_at": updated_at,
-        }
-    except Exception:
-        return {}
 
 
 def _format_sse_message(payload: Dict[str, Any], *, event_name: Optional[str] = None, event_id: Optional[str] = None) -> str:
@@ -385,21 +164,11 @@ def _build_sse_payload() -> Dict[str, Any]:
     except Exception:
         orchestrator_status = None
 
-    encoded_streams = jsonable_encoder(streams)
-    for index, stream in enumerate(streams):
-        try:
-            stream_id = str(getattr(stream, "id", "") or "")
-            stream_key = str(getattr(stream, "key", "") or "")
-            telemetry = state.get_stream_failover_telemetry(stream_id=stream_id, stream_key=stream_key)
-            if telemetry and index < len(encoded_streams) and isinstance(encoded_streams[index], dict):
-                encoded_streams[index].update(telemetry)
-        except Exception:
-            continue
 
     return {
         "engines": jsonable_encoder(engines),
         "engine_docker_stats": jsonable_encoder(engine_docker_stats),
-        "streams": encoded_streams,
+        "streams": jsonable_encoder(streams),
         "vpn_status": jsonable_encoder(vpn_status),
         "orchestrator_status": jsonable_encoder(orchestrator_status),
         "kpis": {
@@ -1985,20 +1754,11 @@ async def stream_stream_details(
 
             clients: List[Dict[str, Any]] = []
             stream_key = str(getattr(stream_state, "key", "") or "")
-            threshold_payload: Dict[str, float] = {}
             if stream_key:
                 with suppress(Exception):
                     _prune_client_tracker_if_due(ttl_s=float(ProxyConfig.CLIENT_RECORD_TTL), min_interval_s=3.0)
                     tracker_payload = client_tracking_service.get_stream_clients_payload(stream_key)
                     clients = tracker_payload.get("clients", [])
-                    threshold_payload = {
-                        key: value
-                        for key, value in tracker_payload.items()
-                        if key != "clients"
-                    }
-                    clients = _merge_clients_with_redis_runway(stream_key, clients)
-                if not threshold_payload:
-                    threshold_payload = _read_stream_dynamic_threshold(stream_key)
 
             payload = jsonable_encoder(
                 {
@@ -2007,7 +1767,6 @@ async def stream_stream_details(
                     "stats": stream_stats,
                     "extended_stats": cached_extended_stats,
                     "clients": clients,
-                    **threshold_payload,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             )
@@ -3929,9 +3688,7 @@ async def ace_getstream(
                             user_agent=user_agent,
                             request_kind="manifest",
                             bytes_sent=len(manifest_bytes),
-                            stream_buffer_window_seconds=manifest_seconds_behind,
-                            position_source="hls_manifest_window",
-                            position_confidence=0.35,
+                            buffer_seconds_behind=manifest_seconds_behind,
                         )
 
                         elapsed = time.perf_counter() - request_started_at
@@ -4054,9 +3811,7 @@ async def ace_getstream(
                         user_agent=user_agent,
                         request_kind="manifest",
                         bytes_sent=len(manifest_bytes),
-                        stream_buffer_window_seconds=manifest_seconds_behind,
-                        position_source="hls_manifest_window",
-                        position_confidence=0.35,
+                        buffer_seconds_behind=manifest_seconds_behind,
                     )
 
                     elapsed = time.perf_counter() - request_started_at
@@ -4110,9 +3865,7 @@ async def ace_getstream(
                         user_agent,
                         request_kind="manifest",
                         bytes_sent=len(manifest_bytes),
-                        stream_buffer_window_seconds=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key),
-                        position_source="hls_manifest_window",
-                        position_confidence=0.35,
+                        buffer_seconds_behind=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key),
                     )
 
                     elapsed = time.perf_counter() - request_started_at
@@ -4322,9 +4075,7 @@ async def ace_getstream(
                     user_agent,
                     request_kind="manifest",
                     bytes_sent=len(manifest_bytes),
-                    stream_buffer_window_seconds=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key),
-                    position_source="hls_manifest_window",
-                    position_confidence=0.35,
+                    buffer_seconds_behind=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key),
                 )
 
                 elapsed = time.perf_counter() - request_started_at
@@ -4676,9 +4427,7 @@ async def ace_hls_segment(
             bytes_sent=len(segment_data),
             chunks_sent=1,
             sequence=sequence,
-            client_runway_seconds=hls_proxy.get_segment_buffer_seconds_behind(content_id, sequence),
-            position_source="hls_segment_delta",
-            position_confidence=0.85,
+            buffer_seconds_behind=hls_proxy.get_segment_buffer_seconds_behind(content_id, sequence),
         )
         observe_proxy_egress_bytes("HLS", len(segment_data))
         
@@ -4758,9 +4507,7 @@ async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: 
             bytes_sent=segment_size,
             chunks_sent=1,
             sequence=sequence,
-            client_runway_seconds=hls_segmenter_service.estimate_segment_buffer_seconds_behind(monitor_id, sequence),
-            position_source="hls_segment_delta",
-            position_confidence=0.85,
+            buffer_seconds_behind=hls_segmenter_service.estimate_segment_buffer_seconds_behind(monitor_id, sequence),
         )
         observe_proxy_egress_bytes("HLS", segment_size)
 

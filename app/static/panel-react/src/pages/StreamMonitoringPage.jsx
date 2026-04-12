@@ -227,7 +227,7 @@ function MonitorCard({ monitor, isExpanded, isSelected, isPlayingInProxy, isStop
   let proxyRunwayMax = 0
   
   if (proxyClients.length > 0) {
-    const runways = proxyClients.map(c => toNumber(c.client_runway_seconds ?? c.buffer_seconds_behind)).filter(v => v !== null)
+    const runways = proxyClients.map(c => toNumber(c.buffer_seconds_behind)).filter(v => v !== null)
     if (runways.length > 0) {
       proxyRunwayMin = Math.min(...runways)
       proxyRunwayMax = Math.max(...runways)

@@ -98,20 +98,7 @@ class ClientManager:
         self.last_activity = rebuilt_activity
         self.clients = rebuilt_clients
 
-    def record_activity(
-        self,
-        client_ip: str,
-        client_id: str = "",
-        user_agent: str = "unknown",
-        request_kind: str = "",
-        bytes_sent: Optional[float] = None,
-        chunks_sent: Optional[int] = None,
-        sequence: Optional[int] = None,
         buffer_seconds_behind: Optional[float] = None,
-        stream_buffer_window_seconds: Optional[float] = None,
-        client_runway_seconds: Optional[float] = None,
-        position_source: Optional[str] = None,
-        position_confidence: Optional[float] = None,
         now: Optional[float] = None,
     ):
         """Record client activity and transfer counters in the central tracker."""
@@ -147,10 +134,6 @@ class ClientManager:
             chunks_delta=chunks_delta,
             sequence=sequence,
             buffer_seconds_behind=buffer_seconds_behind,
-            stream_buffer_window_seconds=stream_buffer_window_seconds,
-            client_runway_seconds=client_runway_seconds,
-            position_source=position_source,
-            position_confidence=position_confidence,
             now=ts,
             worker_id=self.worker_id,
         )
@@ -168,17 +151,9 @@ class ClientManager:
                 "buffer_seconds_behind": max(
                     0.0,
                     self._safe_float(
-                        client_runway_seconds if client_runway_seconds is not None else buffer_seconds_behind,
+                        buffer_seconds_behind,
                         default=client_payload.get("buffer_seconds_behind", 0.0),
                     ),
-                ),
-                "client_runway_seconds": max(
-                    0.0,
-                    self._safe_float(client_runway_seconds, default=client_payload.get("client_runway_seconds", 0.0)),
-                ),
-                "stream_buffer_window_seconds": max(
-                    0.0,
-                    self._safe_float(stream_buffer_window_seconds, default=client_payload.get("stream_buffer_window_seconds", 0.0)),
                 ),
             })
             self.clients[normalized_client_id] = client_payload
@@ -1009,30 +984,9 @@ class HLSProxyServer:
         chunks_sent: Optional[int] = None,
         sequence: Optional[int] = None,
         buffer_seconds_behind: Optional[float] = None,
-        stream_buffer_window_seconds: Optional[float] = None,
-        client_runway_seconds: Optional[float] = None,
-        position_source: Optional[str] = None,
-        position_confidence: Optional[float] = None,
     ):
         """Record client activity for a channel (called on each manifest/segment request)"""
         if channel_id in self.client_managers:
-            normalized_request_kind = str(request_kind or "").strip().lower()
-
-            effective_buffer_seconds_behind = buffer_seconds_behind
-            effective_stream_buffer_window_seconds = stream_buffer_window_seconds
-            effective_client_runway_seconds = client_runway_seconds
-
-            # Semantic split guard:
-            # - manifest updates stream-level window only
-            # - segment updates client runway only
-            if normalized_request_kind == "manifest":
-                effective_buffer_seconds_behind = None
-                effective_client_runway_seconds = None
-            elif normalized_request_kind == "segment":
-                effective_stream_buffer_window_seconds = None
-                if effective_client_runway_seconds is None:
-                    effective_client_runway_seconds = buffer_seconds_behind
-
             self.client_managers[channel_id].record_activity(
                 client_ip=client_ip,
                 client_id=client_id,
@@ -1041,11 +995,7 @@ class HLSProxyServer:
                 bytes_sent=bytes_sent,
                 chunks_sent=chunks_sent,
                 sequence=sequence,
-                buffer_seconds_behind=effective_buffer_seconds_behind,
-                stream_buffer_window_seconds=effective_stream_buffer_window_seconds,
-                client_runway_seconds=effective_client_runway_seconds,
-                position_source=position_source,
-                position_confidence=position_confidence,
+                buffer_seconds_behind=buffer_seconds_behind,
             )
 
     def get_manifest_buffer_seconds_behind(self, channel_id: str) -> float:

@@ -404,40 +404,30 @@ class ClientManager:
         self,
         client_id,
         seconds_behind: float,
-        source: str = "ts_cursor_ema",
-        confidence: float = 0.75,
-        observed_at: Optional[float] = None,
+        **kwargs  # Accept and ignore extra fields from dynamic threshold era
     ):
-        """Update client runway estimate and freshness metadata in Redis and tracker cache."""
+        """Update client runway estimate in Redis."""
         try:
             normalized_seconds = max(0.0, float(seconds_behind or 0.0))
-            observed_ts = float(observed_at) if observed_at is not None else time.time()
-            clamped_confidence = max(0.0, min(1.0, float(confidence or 0.0)))
+            observed_ts = time.time()
             if self.redis_client:
                 client_key = RedisKeys.client_metadata(self.content_id, client_id)
                 self.redis_client.hset(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND, f"{normalized_seconds:.3f}")
-                self.redis_client.hset(client_key, ClientMetadataField.CLIENT_RUNWAY_SECONDS, f"{normalized_seconds:.3f}")
-                self.redis_client.hset(client_key, ClientMetadataField.POSITION_SOURCE, str(source or "ts_cursor_ema"))
-                self.redis_client.hset(client_key, ClientMetadataField.POSITION_CONFIDENCE, f"{clamped_confidence:.3f}")
-                self.redis_client.hset(client_key, ClientMetadataField.POSITION_OBSERVED_AT, str(observed_ts))
                 self.redis_client.hset(client_key, ClientMetadataField.STATS_UPDATED_AT, str(observed_ts))
                 self.redis_client.hset(client_key, ClientMetadataField.LAST_ACTIVE, str(observed_ts))
 
-                # Keep metadata and client membership alive even if heartbeat
-                # cadence is briefly interrupted during failover/reconnect.
                 self.redis_client.expire(client_key, self.client_ttl)
                 self.redis_client.sadd(self.client_set_key, client_id)
                 self.redis_client.expire(self.client_set_key, self.client_ttl)
 
             from ..services.client_tracker import client_tracking_service
 
+            # Ensure client_tracking_service is updated to skip confidence/source if they are no longer needed
             client_tracking_service.update_client_position(
                 client_id=str(client_id),
                 stream_id=str(self.content_id or ""),
                 protocol="TS",
                 seconds_behind=normalized_seconds,
-                source=str(source or "ts_cursor_ema"),
-                confidence=clamped_confidence,
                 observed_at=observed_ts,
                 now=observed_ts,
             )

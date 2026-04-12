@@ -31,9 +31,6 @@ const TRUNCATED_CLIENT_ID_LENGTH = 16
 const DETAILS_RECONNECT_DELAY_MS = 2000
 const SESSION_GAP_RESET_MS = 1 * 60 * 1000
 const SESSION_IDENTITY_RETENTION_MS = 10 * 60 * 1000
-const DYNAMIC_THRESHOLD_MIN_SECONDS = 4
-const DYNAMIC_THRESHOLD_SAFETY_MARGIN_SECONDS = 2
-const DYNAMIC_THRESHOLD_STARTUP_GRACE_SECONDS = 30
 
 function toNumber(value) {
   const parsed = Number.parseFloat(String(value ?? ''))
@@ -47,28 +44,6 @@ function toEpochSeconds(value) {
   return parsed
 }
 
-function deriveDynamicThresholdSeconds({ currentBufferSeconds, maxToleranceSeconds, startedAt }) {
-  if (!Number.isFinite(currentBufferSeconds) || !Number.isFinite(maxToleranceSeconds) || maxToleranceSeconds <= 0) {
-    return null
-  }
-
-  const startedAtMs = new Date(startedAt || 0).getTime()
-  const uptimeSeconds = Number.isFinite(startedAtMs) && startedAtMs > 0
-    ? Math.max(0, (Date.now() - startedAtMs) / 1000)
-    : 0
-
-  const inStartupGrace = uptimeSeconds < DYNAMIC_THRESHOLD_STARTUP_GRACE_SECONDS
-  const noRunwayYet = currentBufferSeconds <= 0
-
-  if (inStartupGrace || noRunwayYet) {
-    return null
-  }
-
-  return Math.max(
-    DYNAMIC_THRESHOLD_MIN_SECONDS,
-    Math.min(maxToleranceSeconds, currentBufferSeconds - DYNAMIC_THRESHOLD_SAFETY_MARGIN_SECONDS),
-  )
-}
 
 function formatUptime(startedAt) {
   const startedMs = new Date(startedAt || 0).getTime()
@@ -125,48 +100,6 @@ function mergeStreamSnapshot(baseStream, payload) {
 
   if (typeof payload?.paused === 'boolean') {
     next.paused = payload.paused
-  }
-
-  const dynamicThresholdUpdatedAt = toNumber(payload?.dynamic_threshold_updated_at)
-  if (Number.isFinite(dynamicThresholdUpdatedAt) && dynamicThresholdUpdatedAt > 0) {
-    next.dynamic_threshold_updated_at = dynamicThresholdUpdatedAt
-  }
-
-  const currentClientBufferSeconds = toNumber(payload?.current_client_buffer_seconds)
-  if (Number.isFinite(currentClientBufferSeconds)) {
-    next.current_client_buffer_seconds = Math.max(0, currentClientBufferSeconds)
-  }
-
-  const maxToleranceSeconds = toNumber(payload?.max_tolerance_seconds)
-  if (Number.isFinite(maxToleranceSeconds) && maxToleranceSeconds > 0) {
-    next.max_tolerance_seconds = Math.max(0, maxToleranceSeconds)
-  }
-
-  const explicitDynamicThresholdSeconds = toNumber(payload?.dynamic_threshold_seconds)
-  const effectiveCurrentBufferSeconds = Number.isFinite(currentClientBufferSeconds)
-    ? Math.max(0, currentClientBufferSeconds)
-    : toNumber(next.current_client_buffer_seconds)
-  const effectiveMaxToleranceSeconds = Number.isFinite(maxToleranceSeconds)
-    ? Math.max(0, maxToleranceSeconds)
-    : toNumber(next.max_tolerance_seconds)
-
-  const derivedDynamicThresholdSeconds = deriveDynamicThresholdSeconds({
-    currentBufferSeconds: effectiveCurrentBufferSeconds,
-    maxToleranceSeconds: effectiveMaxToleranceSeconds,
-    startedAt: next.started_at,
-  })
-
-  if (Number.isFinite(explicitDynamicThresholdSeconds)) {
-    next.dynamic_threshold_seconds = Math.max(0, explicitDynamicThresholdSeconds)
-  } else if (Number.isFinite(derivedDynamicThresholdSeconds)) {
-    next.dynamic_threshold_seconds = Math.max(0, derivedDynamicThresholdSeconds)
-  } else {
-    delete next.dynamic_threshold_seconds
-    delete next.dynamic_threshold_updated_at
-  }
-
-  if (!Number.isFinite(toEpochSeconds(next.dynamic_threshold_updated_at)) && Number.isFinite(next.dynamic_threshold_seconds)) {
-    next.dynamic_threshold_updated_at = Math.floor(Date.now() / 1000)
   }
 
   return next
@@ -394,8 +327,7 @@ function StreamStatusBadge({ isActive, isPaused, isPrebuffering, isDownloadStopp
 }
 
 function ClientSession({ client }) {
-  const runway = toNumber(client?.client_runway_seconds ?? client?.buffer_seconds_behind)
-  const streamWindow = toNumber(client?.stream_buffer_window_seconds)
+  const runway = toNumber(client?.buffer_seconds_behind)
 
   return (
     <div className="rounded-lg border bg-muted/20 p-3">
@@ -755,8 +687,6 @@ function StreamCard({
                 clients={clients}
                 isLive={streamIsLive}
                 showStreamWindow={showStreamWindow}
-                dynamicThresholdSeconds={localStream?.dynamic_threshold_seconds}
-                dynamicThresholdUpdatedAt={localStream?.dynamic_threshold_updated_at}
                 eventMarkers={eventMarkers}
                 compact
               />
@@ -776,8 +706,6 @@ function StreamCard({
                 clients={clients}
                 isLive={streamIsLive}
                 showStreamWindow={showStreamWindow}
-                dynamicThresholdSeconds={localStream?.dynamic_threshold_seconds}
-                dynamicThresholdUpdatedAt={localStream?.dynamic_threshold_updated_at}
                 eventMarkers={eventMarkers}
               />
             </div>

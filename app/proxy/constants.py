@@ -103,12 +103,6 @@ class StreamMetadataField:
     # Buffer and data tracking
     BUFFER_CHUNKS = "buffer_chunks"
     TOTAL_BYTES = "total_bytes"
-    DYNAMIC_THRESHOLD_SECONDS = "dynamic_threshold_seconds"
-    CURRENT_CLIENT_BUFFER_SECONDS = "current_client_buffer_seconds"
-    MAX_TOLERANCE_SECONDS = "max_tolerance_seconds"
-    STREAM_INACTIVITY_SECONDS = "stream_inactivity_seconds"
-    DYNAMIC_THRESHOLD_UPDATED_AT = "dynamic_threshold_updated_at"
-    SOURCE_BUFFER_DURATION_SECONDS = "source_buffer_duration_seconds"
     
     # AceStream specific
     IS_LIVE = "is_live"
@@ -129,13 +123,6 @@ class ClientMetadataField:
     WORKER_ID = "worker_id"
     CHUNKS_SENT = "chunks_sent"
     STATS_UPDATED_AT = "stats_updated_at"
-    # Per-client runway used by failover logic (segment/TS cursor based).
-    CLIENT_RUNWAY_SECONDS = "client_runway_seconds"
-    # Stream-wide HLS manifest window (dashboard/diagnostics).
-    STREAM_BUFFER_WINDOW_SECONDS = "stream_buffer_window_seconds"
-    POSITION_SOURCE = "position_source"
-    POSITION_CONFIDENCE = "position_confidence"
-    POSITION_OBSERVED_AT = "position_observed_at"
 
 # TS packet constants (keep these as AceStream uses MPEG-TS format)
 TS_PACKET_SIZE = 188

@@ -34,8 +34,6 @@ class State:
         self.streams: Dict[str, StreamState] = {}
         self._streams_by_key: Dict[str, Set[str]] = defaultdict(set)
         self.stream_stats: Dict[str, List[StreamStatSnapshot]] = {}
-        self._stream_failover_telemetry_by_id: Dict[str, Dict[str, float]] = {}
-        self._stream_failover_telemetry_by_key: Dict[str, Dict[str, float]] = {}
         self.monitor_sessions: Dict[str, Dict[str, object]] = {}
         self._desired_replica_count = 0
         self._desired_vpn_node_count = 0
@@ -240,9 +238,6 @@ class State:
             self.streams[stream_id] = st
             if st.key:
                 self._streams_by_key[st.key].add(st.id)
-                existing_failover = self._stream_failover_telemetry_by_key.get(st.key)
-                if existing_failover:
-                    self._stream_failover_telemetry_by_id[st.id] = dict(existing_failover)
             if stream_id not in eng.streams: eng.streams.append(stream_id)
 
             # Seed first snapshot from stream-start labels (legacy API compatibility).
@@ -364,12 +359,10 @@ class State:
 
                 # Immediately remove stream/session rows from in-memory API state.
                 self.streams.pop(target_stream.id, None)
-                self._stream_failover_telemetry_by_id.pop(target_stream.id, None)
                 if target_stream.key and target_stream.key in self._streams_by_key:
                     indexed_ids = self._streams_by_key[target_stream.key]
                     indexed_ids.discard(target_stream.id)
                     if not indexed_ids:
-                        self._stream_failover_telemetry_by_key.pop(target_stream.key, None)
                         self._streams_by_key.pop(target_stream.key, None)
                 self.stream_stats.pop(target_stream.id, None)
                 
@@ -696,92 +689,6 @@ class State:
             return default
         return max(0.0, parsed)
 
-    def update_stream_failover_telemetry(
-        self,
-        *,
-        stream_id: Optional[str] = None,
-        stream_key: Optional[str] = None,
-        dynamic_threshold_seconds: Optional[float] = None,
-        current_client_buffer_seconds: Optional[float] = None,
-        max_tolerance_seconds: Optional[float] = None,
-        stream_inactivity_seconds: Optional[float] = None,
-        source_buffer_duration_seconds: Optional[float] = None,
-        dynamic_threshold_updated_at: Optional[float] = None,
-    ) -> Dict[str, float]:
-        """Store latest dynamic failover telemetry for a stream."""
-        normalized_stream_id = str(stream_id or "").strip()
-        normalized_stream_key = str(stream_key or "").strip()
-        updated_at = self._safe_non_negative_float(dynamic_threshold_updated_at, default=time.time())
-
-        with self._lock:
-            existing = None
-            if normalized_stream_id:
-                existing = self._stream_failover_telemetry_by_id.get(normalized_stream_id)
-            if not existing and normalized_stream_key:
-                existing = self._stream_failover_telemetry_by_key.get(normalized_stream_key)
-
-            payload: Dict[str, float] = dict(existing or {})
-            payload["dynamic_threshold_updated_at"] = float(updated_at if updated_at is not None else time.time())
-
-            threshold = self._safe_non_negative_float(dynamic_threshold_seconds, default=None)
-            if threshold is not None:
-                payload["dynamic_threshold_seconds"] = threshold
-
-            current_buffer = self._safe_non_negative_float(current_client_buffer_seconds, default=None)
-            if current_buffer is not None:
-                payload["current_client_buffer_seconds"] = current_buffer
-
-            max_tolerance = self._safe_non_negative_float(max_tolerance_seconds, default=None)
-            if max_tolerance is not None:
-                payload["max_tolerance_seconds"] = max_tolerance
-
-            inactivity = self._safe_non_negative_float(stream_inactivity_seconds, default=None)
-            if inactivity is not None:
-                payload["stream_inactivity_seconds"] = inactivity
-
-            source_duration = self._safe_non_negative_float(source_buffer_duration_seconds, default=None)
-            if source_duration is not None:
-                payload["source_buffer_duration_seconds"] = source_duration
-
-            if normalized_stream_id:
-                self._stream_failover_telemetry_by_id[normalized_stream_id] = dict(payload)
-
-            target_ids: Set[str] = set()
-            if normalized_stream_key:
-                self._stream_failover_telemetry_by_key[normalized_stream_key] = dict(payload)
-                target_ids.update(self._streams_by_key.get(normalized_stream_key, set()))
-
-            for mapped_stream_id in target_ids:
-                self._stream_failover_telemetry_by_id[mapped_stream_id] = dict(payload)
-
-            return dict(payload)
-
-    def get_stream_failover_telemetry(
-        self,
-        *,
-        stream_id: Optional[str] = None,
-        stream_key: Optional[str] = None,
-    ) -> Dict[str, float]:
-        normalized_stream_id = str(stream_id or "").strip()
-        normalized_stream_key = str(stream_key or "").strip()
-
-        with self._lock:
-            if normalized_stream_id:
-                by_id = self._stream_failover_telemetry_by_id.get(normalized_stream_id)
-                if by_id:
-                    return dict(by_id)
-
-            if normalized_stream_key:
-                by_key = self._stream_failover_telemetry_by_key.get(normalized_stream_key)
-                if by_key:
-                    return dict(by_key)
-
-                for mapped_stream_id in self._streams_by_key.get(normalized_stream_key, set()):
-                    by_mapped_id = self._stream_failover_telemetry_by_id.get(mapped_stream_id)
-                    if by_mapped_id:
-                        return dict(by_mapped_id)
-
-            return {}
     
     def list_streams_with_stats(self, status: Optional[str] = None, container_id: Optional[str] = None) -> List[StreamState]:
         """

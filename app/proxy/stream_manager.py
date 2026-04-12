@@ -154,11 +154,6 @@ class StreamManager:
         self.last_data_time = time.time()
         self.health_check_interval = 2.0
         self.consecutive_eof_retries = 0
-        self._last_runway_estimate_s = 0.0
-        self._last_runway_estimate_ts = 0.0
-        self._start_time = 0.0
-        self._last_threshold_publish_ts = 0.0
-        self._last_threshold_publish_value = None
         self._last_known_swarm_edge = 0
         self._last_swarm_advance_ts = time.time()
         
@@ -1184,18 +1179,8 @@ class StreamManager:
                             break
 
                         if self._stream_exit_reason == "eof":
-                            max_buffer_sec = self._get_max_client_buffer_seconds()
-                            if max_buffer_sec > 4.0 and self.consecutive_eof_retries < 5:
-                                self.consecutive_eof_retries += 1
-                                logger.info(
-                                    "Stream hit EOF but clients have %.1fs of buffer. "
-                                    "Attempting local reconnect to same engine (attempt %d/5).",
-                                    max_buffer_sec,
-                                    self.consecutive_eof_retries,
-                                )
-                                self._prepare_local_reconnect()
-                                time.sleep(1.0)
-                                continue
+                            # EOF local retry logic removed (dependent on client buffer tracking)
+                            logger.info("Stream hit EOF. Dropping for Control Plane failover.")
 
                         logger.warning("Stream read loop exited prematurely. Waiting for Control Plane recovery.")
                         
@@ -1214,8 +1199,11 @@ class StreamManager:
                             logger.error("No valid stream_id available for Control Plane recovery.")
                             break
 
-                        dyn_thresh, _, _ = self._get_dynamic_tolerance()
-                        safe_wait_time = max(30.0, dyn_thresh + 10.0)
+                        try:
+                            timeout = float(ConfigHelper.connection_timeout())
+                        except Exception:
+                            timeout = 30.0
+                        safe_wait_time = max(30.0, timeout + 10.0)
 
                         awoken = self.control_plane_wait_event.wait(timeout=safe_wait_time)
                         if not awoken:
@@ -1246,8 +1234,11 @@ class StreamManager:
                             reason="error"
                         ))
 
-                        dyn_thresh, _, _ = self._get_dynamic_tolerance()
-                        safe_wait_time = max(30.0, dyn_thresh + 10.0)
+                        try:
+                            timeout = float(ConfigHelper.connection_timeout())
+                        except Exception:
+                            timeout = 30.0
+                        safe_wait_time = max(30.0, timeout + 10.0)
 
                         awoken = self.control_plane_wait_event.wait(timeout=safe_wait_time)
                         if not awoken:
@@ -1351,232 +1342,6 @@ class StreamManager:
                 except Exception:
                     pass
 
-    def _get_effective_client_runway(self) -> float:
-        """Return a freshness-decayed minimum runway across all active clients."""
-        now = time.time()
-        max_sample_age_s = 8.0
-        min_buffer_sec = float("inf")
-
-        def _safe_float(value, default=0.0):
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return default
-
-        try:
-            redis_client = getattr(self.client_manager, "redis_client", None)
-            client_set_key = getattr(self.client_manager, "client_set_key", None)
-            if not redis_client or not client_set_key:
-                return 0.0
-
-            client_ids = redis_client.smembers(client_set_key) or []
-            normalized_client_ids = [
-                client_id.decode("utf-8") if isinstance(client_id, bytes) else str(client_id)
-                for client_id in client_ids
-            ]
-
-            if not normalized_client_ids:
-                if self._last_runway_estimate_ts > 0.0 and self._last_runway_estimate_s > 0.0:
-                    decayed = max(0.0, self._last_runway_estimate_s - max(0.0, now - self._last_runway_estimate_ts))
-                    return float(decayed)
-                return 0.0
-
-            fields = [
-                ClientMetadataField.BUFFER_SECONDS_BEHIND,
-                ClientMetadataField.STATS_UPDATED_AT,
-            ]
-
-            results = []
-            if hasattr(redis_client, "pipeline") and hasattr(redis_client, "hmget"):
-                pipe = redis_client.pipeline(transaction=False)
-                for normalized_client_id in normalized_client_ids:
-                    client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
-                    pipe.hmget(client_key, fields)
-                results = pipe.execute() or []
-            else:
-                # Test doubles may not expose pipelines; keep functional parity.
-                for normalized_client_id in normalized_client_ids:
-                    client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
-                    results.append(redis_client.hmget(client_key, fields))
-
-            for values in results:
-                if not values:
-                    continue
-
-                buffer_raw = values[0] if len(values) > 0 else None
-                stats_updated_at_raw = values[1] if len(values) > 1 else None
-                if buffer_raw is None:
-                    continue
-
-                buffer_seconds = _safe_float(
-                    buffer_raw.decode("utf-8") if isinstance(buffer_raw, bytes) else buffer_raw,
-                    default=0.0,
-                )
-                buffer_seconds = max(0.0, buffer_seconds)
-
-                observed_ts = _safe_float(
-                    stats_updated_at_raw.decode("utf-8") if isinstance(stats_updated_at_raw, bytes) else stats_updated_at_raw,
-                    default=0.0,
-                )
-                if observed_ts <= 0:
-                    observed_ts = now
-
-                age = max(0.0, now - observed_ts)
-                if age > max_sample_age_s:
-                    continue
-
-                effective_buffer = max(0.0, buffer_seconds - age)
-                min_buffer_sec = min(min_buffer_sec, effective_buffer)
-        except Exception as e:
-            logger.debug("Failed to calculate max client buffer for EOF retry: %s", e)
-            return 0.0
-
-        if min_buffer_sec == float("inf"):
-            # Gracefully decay the previous estimate for a short period to avoid
-            # abrupt tolerance collapse if telemetry briefly disappears.
-            if self._last_runway_estimate_ts > 0.0 and self._last_runway_estimate_s > 0.0:
-                decayed = max(0.0, self._last_runway_estimate_s - max(0.0, now - self._last_runway_estimate_ts))
-                return float(decayed)
-            return 0.0
-
-        conservative_runway = max(0.0, float(min_buffer_sec))
-        self._last_runway_estimate_s = conservative_runway
-        self._last_runway_estimate_ts = now
-        return conservative_runway
-
-    def _get_max_client_buffer_seconds(self) -> float:
-        """Return minimum client runway using Proxy-Native Math.
-        
-        This represents the mathematically pure difference between the proxy's
-        buffer head and the slowest client's local tail.
-        """
-        min_runway = None
-
-        try:
-            redis_client = getattr(self.client_manager, "redis_client", None)
-            client_set_key = getattr(self.client_manager, "client_set_key", None)
-            if not redis_client or not client_set_key:
-                return float(getattr(self, "_last_runway_estimate_s", 0.0) or 0.0)
-
-            client_ids = redis_client.smembers(client_set_key) or []
-            if not client_ids:
-                return float(getattr(self, "_last_runway_estimate_s", 0.0) or 0.0)
-
-            for client_id_raw in client_ids:
-                client_id = client_id_raw.decode("utf-8") if isinstance(client_id_raw, bytes) else str(client_id_raw)
-                client_key = RedisKeys.client_metadata(self.content_id, client_id)
-                
-                # Fetch only BUFFER_SECONDS_BEHIND from each client's metadata hash
-                buffer_behind_raw = redis_client.hget(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND)
-                if buffer_behind_raw is not None:
-                    try:
-                        val = float(buffer_behind_raw.decode("utf-8") if isinstance(buffer_behind_raw, bytes) else buffer_behind_raw)
-                        # Find the minimum valid float value among all clients
-                        if min_runway is None or val < min_runway:
-                            min_runway = val
-                    except (ValueError, TypeError):
-                        continue
-        except Exception as e:
-            logger.debug(f"Failed to calculate proxy-native runway for {self.content_id}: {e}")
-
-        if min_runway is not None:
-            # Cache the new estimate
-            self._last_runway_estimate_s = float(min_runway)
-            return float(min_runway)
-
-        # Return the cached estimate or 0.0 if never initialized
-        return float(getattr(self, "_last_runway_estimate_s", 0.0) or 0.0)
-
-    def _publish_dynamic_tolerance(self, dynamic_threshold: float, current_buffer: float, max_tolerance: float, inactivity_duration: float, source_duration: float = 0.0):
-        """Persist current dynamic threshold values for dashboard visualization."""
-        try:
-            now = time.time()
-
-            # Keep an in-memory copy in control-plane state so SSE broadcasters
-            # can expose threshold telemetry without needing direct Redis reads.
-            try:
-                from ..services.state import state
-
-                state.update_stream_failover_telemetry(
-                    stream_id=self.stream_id,
-                    stream_key=self.content_id,
-                    dynamic_threshold_seconds=dynamic_threshold,
-                    current_client_buffer_seconds=current_buffer,
-                    max_tolerance_seconds=max_tolerance,
-                    stream_inactivity_seconds=inactivity_duration,
-                    source_buffer_duration_seconds=source_duration,
-                    dynamic_threshold_updated_at=now,
-                )
-            except Exception as state_err:
-                logger.debug("Failed to cache dynamic threshold telemetry in state for %s: %s", self.content_id, state_err)
-
-            redis_client = getattr(self.buffer, "redis_client", None)
-            if not redis_client:
-                return
-
-            last_publish_ts = float(getattr(self, "_last_threshold_publish_ts", 0.0) or 0.0)
-            last_publish_value = getattr(self, "_last_threshold_publish_value", None)
-            if (
-                last_publish_value is not None
-                and abs(float(last_publish_value) - float(dynamic_threshold)) < 0.02
-                and (now - last_publish_ts) < 1.0
-            ):
-                return
-
-            metadata_key = RedisKeys.stream_metadata(self.content_id)
-            redis_client.hset(
-                metadata_key,
-                mapping={
-                    StreamMetadataField.DYNAMIC_THRESHOLD_SECONDS: f"{max(0.0, float(dynamic_threshold)):.3f}",
-                    StreamMetadataField.CURRENT_CLIENT_BUFFER_SECONDS: f"{max(0.0, float(current_buffer)):.3f}",
-                    StreamMetadataField.MAX_TOLERANCE_SECONDS: f"{max(0.0, float(max_tolerance)):.3f}",
-                    StreamMetadataField.STREAM_INACTIVITY_SECONDS: f"{max(0.0, float(inactivity_duration)):.3f}",
-                    StreamMetadataField.SOURCE_BUFFER_DURATION_SECONDS: f"{max(0.0, float(source_duration)):.3f}",
-                    StreamMetadataField.DYNAMIC_THRESHOLD_UPDATED_AT: str(now),
-                },
-            )
-            self._last_threshold_publish_ts = now
-            self._last_threshold_publish_value = float(dynamic_threshold)
-        except Exception as e:
-            logger.debug("Failed to publish dynamic threshold telemetry for %s: %s", self.content_id, e)
-
-    def _get_dynamic_tolerance(self) -> tuple[float, float, float]:
-        """Calculate starvation tolerance from proxy-native client runway."""
-        try:
-            max_tolerance = float(ConfigHelper.connection_timeout())
-        except Exception:
-            max_tolerance = 30.0
-
-        if (
-            max_tolerance != max_tolerance
-            or max_tolerance in (float('inf'), float('-inf'))
-            or max_tolerance <= 0
-        ):
-            max_tolerance = 30.0
-
-        # Constants for Proxy-Native Math
-        min_tolerance = 5.0
-        safety_margin = 2.0
-        startup_grace_s = 30.0
-        
-        # Call the refactored proxy-native runway method
-        proxy_native_runway = self._get_max_client_buffer_seconds()
-
-        start_time = float(getattr(self, "_start_time", 0.0) or 0.0)
-        stream_uptime = max(0.0, time.time() - start_time) if start_time > 0.0 else 0.0
-        
-        if stream_uptime < startup_grace_s and proxy_native_runway <= 0.0:
-            # During startup grace period (30s) if no runway is reported, allow time for engine boot
-            dynamic_threshold = max_tolerance
-        else:
-            # Normal operation: Use proxy-native runway minus safety margin (2.0s)
-            dynamic_threshold = proxy_native_runway - safety_margin
-
-        # Clamp the final threshold between min_tolerance (5.0s) and max_tolerance
-        dynamic_threshold = max(min_tolerance, min(max_tolerance, dynamic_threshold))
-
-        return float(dynamic_threshold), float(proxy_native_runway), float(max_tolerance)
-
     def _maybe_publish_legacy_stats(self):
         """Deprecated: legacy stats are now gathered by the collector service."""
         return
@@ -1614,8 +1379,7 @@ class StreamManager:
             self._legacy_api_lock.release()
     
     def _monitor_health(self):
-        """Monitor stream health using dynamic buffer-based timeouts."""
-        # Faster tick keeps failover responsive when tolerance shrinks.
+        """Monitor stream health using static connection timeouts."""
         self.health_check_interval = 1.0
 
         while self.running:
@@ -1623,11 +1387,11 @@ class StreamManager:
                 now = time.time()
                 inactivity_duration = now - self.last_data_time
 
-                dynamic_threshold, proxy_runway, max_tolerance = self._get_dynamic_tolerance()
+                try:
+                    timeout = float(ConfigHelper.connection_timeout())
+                except Exception:
+                    timeout = 30.0
                 
-                # Update the publish call to pass 0.0 for source_duration
-                self._publish_dynamic_tolerance(dynamic_threshold, proxy_runway, max_tolerance, inactivity_duration, 0.0)
-
                 is_stagnant = False
                 stagnation_duration = 0.0
                 
@@ -1661,7 +1425,7 @@ class StreamManager:
                         except (ValueError, TypeError):
                             pass
 
-                if (inactivity_duration > dynamic_threshold or is_stagnant) and self.connected:
+                if (inactivity_duration > timeout or is_stagnant) and self.connected:
                     # Event set => steady state; cleared => waiting for control-plane recovery.
                     is_recovering = (
                         hasattr(self, 'control_plane_wait_event')
@@ -1677,7 +1441,7 @@ class StreamManager:
                             if not is_stagnant:
                                 logger.warning(
                                     f"Stream starved for {inactivity_duration:.1f}s. "
-                                    f"[Proxy Runway: {proxy_runway:.1f}s | Dynamic Threshold: {dynamic_threshold:.1f}s]. "
+                                    f"[Static Timeout: {timeout:.1f}s]. "
                                     "Killing socket to trigger immediate failover."
                                 )
                             self.healthy = False
@@ -1697,15 +1461,6 @@ class StreamManager:
                             pass
 
                         self.connected = False
-                elif self.connected and inactivity_duration > 5.0 and proxy_runway > 15.0:
-                    # Informative logging to highlight the Proxy-Native Runway feature in action
-                    # Debounce to every 10 seconds to avoid spamming the log
-                    now_monotonic = time.monotonic()
-                    if (now_monotonic - self._last_failover_hold_log_time) >= 10.0:
-                        logger.info(
-                            f"Engine silent for {inactivity_duration:.1f}s, but clients have {proxy_runway:.1f}s of Proxy Runway. Holding failover."
-                        )
-                        self._last_failover_hold_log_time = now_monotonic
                 elif self.connected and not self.healthy:
                     logger.info("Stream health restored. Resuming buffer fill.")
                     self.healthy = True
