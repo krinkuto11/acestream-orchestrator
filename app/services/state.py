@@ -1,5 +1,6 @@
 from __future__ import annotations
 from collections import defaultdict
+import asyncio
 import queue
 import threading
 import logging
@@ -1177,9 +1178,9 @@ class State:
             seen_ids.add(container_id)
             combined.append(container)
 
-        return combined, len(engine_containers), len(vpn_containers)
+        return combined, engine_containers, vpn_containers
 
-    def cleanup_all(self):
+    async def cleanup_all(self):
         """Full cleanup: stop containers, clear database and memory state."""
         logger.info("Starting full cleanup: stopping managed engine and dynamic VPN containers")
 
@@ -1187,7 +1188,8 @@ class State:
         self._stop_db_worker.set()
         self._db_queue.put(None)
         try:
-            self._db_worker.join(timeout=5.0)
+            # Join the thread since it's a synchronous resource
+            await asyncio.to_thread(self._db_worker.join, timeout=5.0)
         except Exception as e:
             logger.warning(f"Failed to join DB worker thread during cleanup: {e}")
         
@@ -1195,46 +1197,57 @@ class State:
         containers_stopped = 0
         try:
             from ..services.provisioner import stop_container
+            from ..services.vpn_provisioner import vpn_provisioner
 
-            managed_containers, engine_count, vpn_count = self._collect_managed_cleanup_targets()
-            if managed_containers:
-                logger.info(
-                    "Found %s cleanup targets (%s engine containers, %s dynamic VPN containers)",
-                    len(managed_containers),
-                    engine_count,
-                    vpn_count,
-                )
-            else:
-                logger.debug("Cleanup startup found no managed engine/VPN containers")
+            _, engine_containers, vpn_containers = self._collect_managed_cleanup_targets()
             
-            if managed_containers:
-                # Stop containers in parallel using ThreadPoolExecutor
-                # This significantly improves shutdown performance
-                def stop_single_container(container):
-                    """Helper function to stop a single container."""
+            tasks = []
+
+            # 1. Prepare Engine destruction tasks
+            for container in engine_containers:
+                cid = str(getattr(container, "id", "")).strip()
+                if not cid: continue
+                
+                async def _destroy_engine(c_id):
                     try:
-                        logger.info(f"Forcibly destroying container {container.id[:12]}")
-                        stop_container(container.id, force=True)
-                        logger.info(f"Successfully destroyed container {container.id[:12]}")
+                        logger.info(f"Forcibly destroying engine container {c_id[:12]}")
+                        await asyncio.to_thread(stop_container, c_id, force=True)
+                        logger.info(f"Successfully destroyed engine container {c_id[:12]}")
                         return True
                     except Exception as e:
-                        # Log error but continue cleanup
-                        logger.warning(f"Failed to stop container {container.id}: {e}")
+                        logger.warning(f"Failed to stop engine container {c_id}: {e}")
                         return False
                 
-                # Use ThreadPoolExecutor for parallel stopping
-                # Limit workers to min(container_count, 10) to avoid overwhelming Docker daemon
-                # while still achieving significant speedup
-                max_workers = min(len(managed_containers), 10)
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    # Submit all stop tasks
-                    futures = [executor.submit(stop_single_container, container) 
-                              for container in managed_containers]
-                    
-                    # Wait for all tasks to complete and count successes
-                    for future in as_completed(futures):
-                        if future.result():
-                            containers_stopped += 1
+                tasks.append(_destroy_engine(cid))
+
+            # 2. Prepare VPN destruction tasks (includes lease release)
+            for container in vpn_containers:
+                cid = str(getattr(container, "id", "")).strip()
+                if not cid: continue
+
+                async def _destroy_vpn(c_id):
+                    try:
+                        logger.info(f"Forcibly destroying VPN node {c_id[:12]} (releasing lease)")
+                        # destroy_node handles both container removal and creditial lease release
+                        await vpn_provisioner.destroy_node(c_id, force=True, release_credential=True)
+                        logger.info(f"Successfully destroyed VPN node {c_id[:12]} and released lease")
+                        return True
+                    except Exception as e:
+                        logger.warning(f"Failed to destroy VPN node {c_id}: {e}")
+                        return False
+                
+                tasks.append(_destroy_vpn(cid))
+
+            if tasks:
+                logger.info(
+                    "Executing parallel cleanup for %s targets (%s engines, %s VPN nodes)",
+                    len(tasks), len(engine_containers), len(vpn_containers)
+                )
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                containers_stopped = sum(1 for r in results if r is True)
+            else:
+                logger.debug("Cleanup found no managed engine/VPN containers")
+
         except Exception as e:
             logger.warning(f"Failed to stop cleanup target containers: {e}")
         
@@ -1245,7 +1258,7 @@ class State:
         
         # Clear database state
         logger.debug("Clearing database state")
-        self.clear_database()
+        await asyncio.to_thread(self.clear_database)
         
         # Clear in-memory state
         logger.debug("Clearing in-memory state")
@@ -1905,6 +1918,6 @@ state = State()
 def load_state_from_db():
     state.load_from_db()
 
-def cleanup_on_shutdown():
+async def cleanup_on_shutdown():
     """Cleanup function for application shutdown."""
-    state.cleanup_all()
+    await state.cleanup_all()

@@ -625,7 +625,7 @@ async def lifespan(app: FastAPI):
     elif migration_result.get("seeded_defaults"):
         logger.info("Runtime settings initialized with a new default row (no legacy JSON files found)")
 
-    cleanup_on_shutdown()  # Clean any existing state and containers after DB is ready
+    await cleanup_on_shutdown()  # Clean any existing state and containers after DB is ready
     
     # Load global engine customization early to ensure provisioning uses persisted values.
     from .services.engine_config import detect_platform, load_config as load_engine_config
@@ -957,13 +957,13 @@ async def lifespan(app: FastAPI):
     await stop_cleanup_task()  # Stop cache cleanup
     
     # Final cleanup: stop engines and clear state
-    cleanup_on_shutdown()
+    await cleanup_on_shutdown()
     logger.info("Orchestrator shutdown complete")
     
     # Give a small delay to ensure any pending operations complete
     await asyncio.sleep(0.1)
     
-    cleanup_on_shutdown()
+    await cleanup_on_shutdown()
 
 __version__ = "1.7.3"
 

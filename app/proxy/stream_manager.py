@@ -138,6 +138,7 @@ class StreamManager:
         # Connection state
         self.running = True
         self.connected = False
+        self._last_failover_hold_log_time = 0.0
         self.healthy = True
         self.retry_count = 0
         self.max_retries = ConfigHelper.max_retries()
@@ -1787,9 +1788,13 @@ class StreamManager:
                         self.connected = False
                 elif self.connected and inactivity_duration > 5.0 and current_buffer > 15.0:
                     # Informative logging to highlight the Virtual Runway feature in action
-                    logger.info(
-                        f"Engine silent for {inactivity_duration:.1f}s, but clients have {current_buffer:.1f}s of Virtual Runway. Holding failover."
-                    )
+                    # Debounce to every 10 seconds to avoid spamming the log
+                    now_monotonic = time.monotonic()
+                    if (now_monotonic - self._last_failover_hold_log_time) >= 10.0:
+                        logger.info(
+                            f"Engine silent for {inactivity_duration:.1f}s, but clients have {current_buffer:.1f}s of Virtual Runway. Holding failover."
+                        )
+                        self._last_failover_hold_log_time = now_monotonic
                 elif self.connected and not self.healthy:
                     logger.info("Stream health restored. Resuming buffer fill.")
                     self.healthy = True
