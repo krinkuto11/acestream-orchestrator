@@ -224,7 +224,9 @@ class State:
                              container_id=key, container_name=eng.container_name if eng else container_name,
                              playback_session_id=evt.session.playback_session_id,
                              stat_url=str(evt.session.stat_url or ""), command_url=str(evt.session.command_url or ""),
-                             is_live=bool(evt.session.is_live), started_at=self.now(), status="started")
+                             is_live=bool(evt.session.is_live), 
+                             bitrate=evt.session.bitrate,
+                             started_at=self.now(), status="started")
 
             existing_stream = self.streams.get(stream_id)
             if existing_stream and existing_stream.key:
@@ -286,6 +288,7 @@ class State:
             "stat_url": st.stat_url,
             "command_url": st.command_url,
             "is_live": st.is_live,
+            "bitrate": st.bitrate,
             "started_at": st.started_at,
             "status": st.status,
         }

@@ -302,6 +302,16 @@ class StreamManager:
             self.command_url = resp_data.get("command_url")
             self.playback_session_id = resp_data.get("playback_session_id")
             self.is_live = resp_data.get("is_live", 1)
+            try:
+                self.bitrate = int(resp_data.get("bitrate") or 0)
+                if self.bitrate > 0 and self.client_manager and self.client_manager.redis_client:
+                    self.client_manager.redis_client.hset(
+                        RedisKeys.stream_metadata(self.content_id),
+                        StreamMetadataField.BITRATE,
+                        str(self.bitrate)
+                    )
+            except (TypeError, ValueError):
+                self.bitrate = 0
             
             if not self.playback_url:
                 logger.error("No playback_url in AceStream response")
@@ -385,6 +395,16 @@ class StreamManager:
             self.command_url = ""
             self.playback_session_id = start_info.get("playback_session_id", f"legacy-{int(time.time())}")
             self.is_live = int(start_info.get("stream", 1) or 1)
+            try:
+                self.bitrate = int(start_info.get("bitrate") or 0)
+                if self.bitrate > 0 and self.client_manager and self.client_manager.redis_client:
+                    self.client_manager.redis_client.hset(
+                        RedisKeys.stream_metadata(self.content_id),
+                        StreamMetadataField.BITRATE,
+                        str(self.bitrate)
+                    )
+            except (TypeError, ValueError):
+                self.bitrate = 0
             self.ace_api_client = client
 
             logger.info(f"AceStream legacy API session started: playback_session_id={self.playback_session_id}")
@@ -436,6 +456,7 @@ class StreamManager:
             "stat_url": resp_data.get("stat_url") or "",
             "command_url": resp_data.get("command_url") or "",
             "is_live": int(resp_data.get("is_live", 1) or 1),
+            "bitrate": int(resp_data.get("bitrate") or 0),
             "resolved_infohash": self.resolved_infohash,
             "ace_api_client": None,
         }
@@ -489,6 +510,7 @@ class StreamManager:
                 "stat_url": "",
                 "command_url": "",
                 "is_live": int(start_info.get("stream", 1) or 1),
+                "bitrate": int(start_info.get("bitrate") or 0),
                 "resolved_infohash": resolved_infohash,
                 "ace_api_client": client,
             }
@@ -644,7 +666,8 @@ class StreamManager:
                         playback_session_id=self.playback_session_id or f"fallback-{self.content_id[:16]}-{int(time.time())}",
                         stat_url=self.stat_url,
                         command_url=self.command_url,
-                        is_live=self.is_live
+                        is_live=self.is_live,
+                        bitrate=getattr(self, "bitrate", None)
                     ),
                     labels={
                         "source": "proxy",

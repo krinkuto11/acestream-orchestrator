@@ -745,6 +745,7 @@ function StreamCard({
               {tile('Download', isActive ? formatBytesPerSecond((localStream.speed_down || 0) * 1024) : '—', <Download className="h-3 w-3" />)}
               {tile('Upload', isActive ? formatBytesPerSecond((localStream.speed_up || 0) * 1024) : '—', <Upload className="h-3 w-3" />)}
               {tile('Peers', isActive ? (localStream.peers ?? 'N/A') : '—', <Users className="h-3 w-3" />)}
+              {tile('Target', isActive && localStream.bitrate ? formatBytesPerSecond(localStream.bitrate / 8) : '—', <Activity className="h-3 w-3" />)}
             </div>
 
             {isActive && !isExpanded && (

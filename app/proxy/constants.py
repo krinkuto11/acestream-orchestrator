@@ -113,6 +113,7 @@ class StreamMetadataField:
     # AceStream specific
     IS_LIVE = "is_live"
     IS_ENCRYPTED = "is_encrypted"
+    BITRATE = "bitrate"
     
 # Client metadata fields
 class ClientMetadataField:

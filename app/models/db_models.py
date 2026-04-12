@@ -29,6 +29,7 @@ class StreamRow(Base):
     stat_url: Mapped[str] = mapped_column(Text)
     command_url: Mapped[str] = mapped_column(Text)
     is_live: Mapped[bool] = mapped_column(Boolean, default=True)
+    bitrate: Mapped[int | None] = mapped_column(Integer)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String(16), default="started")

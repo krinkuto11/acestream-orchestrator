@@ -22,6 +22,7 @@ class SessionInfo(BaseModel):
     stat_url: Optional[str] = None
     command_url: Optional[str] = None
     is_live: int
+    bitrate: Optional[int] = None
 
 class StreamStartedEvent(BaseModel):
     container_id: Optional[str] = None
@@ -92,6 +93,7 @@ class StreamState(BaseModel):
     stat_url: str
     command_url: str
     is_live: bool
+    bitrate: Optional[int] = None
     started_at: datetime
     ended_at: Optional[datetime] = None
     status: Literal["started", "ended", "pending_failover"] = "started"
@@ -115,6 +117,7 @@ class StreamStatSnapshot(BaseModel):
     downloaded: Optional[int] = None
     uploaded: Optional[int] = None
     status: Optional[str] = None
+    bitrate: Optional[int] = None
     livepos: Optional[LivePosData] = None
     proxy_buffer_pieces: Optional[int] = None
 

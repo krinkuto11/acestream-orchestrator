@@ -23,6 +23,7 @@ import {
   Users,
   Download,
   Upload,
+  Activity,
 } from 'lucide-react'
 import { Line } from 'react-chartjs-2'
 import {
@@ -665,6 +666,10 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
             <p className="text-[11px] text-muted-foreground flex items-center gap-1"><Users className="h-3 w-3" />Peers</p>
             <p className="text-sm font-semibold">{latestSample?.peers ?? stream?.peers ?? 'N/A'}</p>
           </div>
+          <div className="rounded-lg border bg-muted/30 px-3 py-2">
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1"><Activity className="h-3 w-3" />Target Bitrate</p>
+            <p className="text-sm font-semibold">{(stream?.bitrate || latestSample?.bitrate) ? formatBytesPerSecond((stream?.bitrate || latestSample?.bitrate) / 8) : '—'}</p>
+          </div>
         </div>
 
         <Collapsible open={isExtendedStatsOpen} onOpenChange={setIsExtendedStatsOpen}>
@@ -684,6 +689,12 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
                 <p className="text-xs text-muted-foreground">Engine</p>
                 <p className="text-sm font-medium">
                   {stream.container_name || stream.container_id?.slice(0, 12) || 'N/A'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Target Bitrate</p>
+                <p className="text-sm font-medium">
+                  {stream.bitrate ? formatBytesPerSecond(stream.bitrate / 8) : 'N/A'}
                 </p>
               </div>
               <div>
