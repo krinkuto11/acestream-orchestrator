@@ -371,16 +371,24 @@ class StreamGenerator:
             logger.info(f"[{self.client_id}] Prebuffer target: {prebuffer_seconds}s @ {chunk_rate:.1f} chunks/s (Bitrate unknown) -> {target_chunks} chunks")
         
         start_wait = time.time()
+        last_logged_size = -1
+        last_log_time = 0.0
+        
         while True:
             current_buffer_size = max(0, int(self.buffer.index) - int(self.local_index))
+            now = time.time()
+            
             if current_buffer_size >= target_chunks:
-                logger.info(f"[{self.client_id}] Prebuffer complete after {time.time() - start_wait:.1f}s (Current Runway: {current_buffer_size} chunks)")
+                logger.info(f"[{self.client_id}] Prebuffer complete after {now - start_wait:.1f}s (Current Runway: {current_buffer_size} chunks)")
                 break
             
-            # Log progress every few pulses
-            logger.info(f"[{self.client_id}] Hoarding... Runway: {current_buffer_size}/{target_chunks} chunks")
+            # Debounced logging: only log if size increased AND at least 2 seconds passed
+            if current_buffer_size != last_logged_size and (now - last_log_time) >= 2.0:
+                logger.info(f"[{self.client_id}] Hoarding... Runway: {current_buffer_size}/{target_chunks} chunks")
+                last_logged_size = current_buffer_size
+                last_log_time = now
             
-            if time.time() - start_wait > max(30.0, prebuffer_seconds * 2):
+            if now - start_wait > max(30.0, prebuffer_seconds * 2):
                 logger.warning(f"[{self.client_id}] Prebuffer hold timed out at {current_buffer_size} chunks")
                 break
                 
