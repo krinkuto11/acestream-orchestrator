@@ -223,7 +223,6 @@ class ClientManager:
             "connected_at": current_time,
             "last_active": current_time,
             "initial_index": str(initial_index),
-            ClientMetadataField.BUFFER_SECONDS_BEHIND: "0.0",
             "worker_id": self.worker_id or "unknown"
         }
         

@@ -1511,10 +1511,20 @@ class StreamManager:
                 if age_s > max_sample_age_s:
                     continue
 
+                # FILTER: Skip clients that haven't published their first real telemetry update yet.
+                # If confidence is missing (None) or explicitly 0, this client should not
+                # be allowed to pull down the failover threshold for active viewers.
+                if confidence_raw is None:
+                    continue
+
                 confidence = _safe_float(
                     confidence_raw.decode("utf-8") if isinstance(confidence_raw, bytes) else confidence_raw,
-                    default=0.70,
+                    default=0.0,
                 )
+                
+                if confidence <= 0.05:
+                    continue
+                    
                 confidence = max(0.0, min(1.0, confidence))
 
                 # Decay runway by sample age, then down-weight low-confidence
