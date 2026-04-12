@@ -502,15 +502,15 @@ function StreamTimelineGraphic({
                   })}
                   labelFormatter={(label) => formatClock(label)}
                   formatter={(value, name, entry) => {
-                    if (!Number.isFinite(Number(value))) return 'N/A'
-                    const prettyName = chartConfig[name]?.label || name
-                    const runway = entry?.payload?.[`${name}__runway`]
+                    const typedValue = Number(value)
+                    if (!Number.isFinite(typedValue)) return 'N/A'
                     
+                    const runway = entry?.payload?.[`${name}__runway`]
                     if (name.startsWith('client_') && Number.isFinite(runway)) {
-                      return [`Viewer Lag: ${Number(value).toFixed(1)}s (${runway.toFixed(1)}s buffer)`, prettyName]
+                      return `${typedValue.toFixed(1)}s (${runway.toFixed(1)}s buffer)`
                     }
                     
-                    return [`${prettyName}: ${Number(value).toFixed(1)}s`, name]
+                    return `${typedValue.toFixed(1)}s`
                   }}
                 />
               )}
