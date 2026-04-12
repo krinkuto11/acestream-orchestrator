@@ -565,7 +565,6 @@ def execute_engine_spec(spec: EngineSpec):
             detach=True,
             remove=True,  # Auto-cleanup on exit
             init=True,    # Use Docker init process to reap zombie processes
-            restart_policy={"Name": "on-failure", "MaximumRetryCount": 3} if not spec.vpn_container_id else None
         )
 
         # Success at the API level (request submitted)
