@@ -82,7 +82,7 @@ class StreamGenerator:
             
             # If stream is initializing, wait for it
             if self.stream_initializing:
-                stream_ready = self._wait_for_initialization()
+                stream_ready = yield from self._wait_for_initialization()
                 if not stream_ready:
                     return
             
@@ -92,7 +92,7 @@ class StreamGenerator:
             self.stream_start_time = time.time()
             
             # Setup streaming
-            if not self._setup_streaming():
+            if not (yield from self._setup_streaming()):
                 return
 
             self.pacing_start_time = time.time() # START PACING CLOCK HERE
@@ -151,8 +151,13 @@ class StreamGenerator:
                         break
                     
                     # Wait a bit before retrying
-                    # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
-                    time.sleep(no_data_check_interval)
+                    # IMPORTANT: Use pulses of sleep with Null packets to keep connection alive
+                    sleep_remaining = no_data_check_interval
+                    while sleep_remaining > 0:
+                        yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
+                        pulse = min(sleep_remaining, 0.5)
+                        time.sleep(pulse)
+                        sleep_remaining -= pulse
                 
                 # Refresh client TTL periodically
                 if time.time() - self.last_ttl_refresh >= self.ttl_refresh_interval:
@@ -193,6 +198,9 @@ class StreamGenerator:
             if bool(getattr(manager, "connected", False)) and bool(getattr(manager, "playback_url", None)):
                 return True
 
+            # Drip-feed Null packets to keep connection alive during startup
+            yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
+            
             # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
             time.sleep(check_interval)
         
@@ -263,6 +271,9 @@ class StreamGenerator:
                 elapsed = time.time() - start_time
                 logger.info(f"[{self.client_id}] Initial data available after {elapsed:.2f}s (buffer index: {self.buffer.index})")
                 return True
+            
+            # Drip-feed keep-alives during startup
+            yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
             
             # Wait before checking again
             # IMPORTANT: Use time.sleep() NOT gevent.sleep() - we're in threading mode
@@ -337,8 +348,9 @@ class StreamGenerator:
                 # Using standard Null PID (0x1FFF = 8191)
                 yield create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW)
                 
-                self.bytes_sent += 188
-                observe_proxy_egress_bytes("TS", 188)
+                # IMPORTANT: Null packets do NOT increment telemetry counters
+                # self.bytes_sent += 188
+                # observe_proxy_egress_bytes("TS", 188)
                 
                 # Sleep in small pulses to maintain responsiveness and timing
                 pulse = min(wait_time, 0.5)
@@ -355,12 +367,11 @@ class StreamGenerator:
         Advancing only by returned chunk count can pin local_index near the
         initial baseline and make lag appear to increase forever.
         """
-        fetched_end = fetched_end_index
-        if fetched_end is None:
-            fetched_end = getattr(self.buffer, "last_fetch_end_index", None)
-        if isinstance(fetched_end, int) and fetched_end >= self.local_index:
-            self.local_index = int(fetched_end)
-            return
+        if fetched_end_index is not None and isinstance(fetched_end_index, int):
+            if fetched_end_index >= self.local_index:
+                self.local_index = int(fetched_end_index)
+                return
+
         self.local_index += int(max(0, chunks_received))
 
     def _maybe_update_client_position(self, force: bool = False, source: str = "ts_cursor_ema"):
@@ -473,13 +484,11 @@ class StreamGenerator:
         
         # Wait for initial data in buffer before starting streaming
         # This gives the HTTP streamer time to fetch data from the playback URL
-        if not self._wait_for_initial_data(min_index=start_index):
+        if not (yield from self._wait_for_initial_data(min_index=start_index)):
             # Error already logged in _wait_for_initial_data
             return False
         
-        # Keep playback behind live edge when unified prebuffer is configured.
-        # ROBUST FIX: If seekback is exactly 0, the user wants 'normal play' (liveness).
-        # In this case, we bypass the prebuffer offset and start from the current edge.
+        # Keep playback behind live edge to ensure a safety runway for failovers.
         prebuffer_seconds = max(0.0, float(ConfigHelper.proxy_prebuffer_seconds()))
         requested_seekback = 0
         try:
@@ -488,12 +497,22 @@ class StreamGenerator:
         except (ValueError, TypeError):
             requested_seekback = 0
 
-        if prebuffer_seconds > 0.0 and requested_seekback > 0:
+        if requested_seekback > 0:
+            # Explicit seekback requested (e.g. from HLS or URL param)
             self.local_index = max(0, int(start_index))
+            logger.info(f"[{self.client_id}] Starting with explicit seekback: index {self.local_index}")
         else:
-            if requested_seekback == 0:
-                logger.info(f"[{self.client_id}] Seekback is 0 (normal play): starting from current live edge index {self.buffer.index}")
-            self.local_index = self.buffer.index
+            # Normal play: enforce initial_behind_chunks to create a safety runway.
+            behind_chunks = ConfigHelper.initial_behind_chunks()
+            if prebuffer_seconds > 0:
+                chunk_rate = max(0.1, float(self.chunk_rate_ema or 1.0))
+                behind_chunks = max(behind_chunks, int(math.ceil(prebuffer_seconds * chunk_rate)))
+            
+            self.local_index = max(0, int(self.buffer.index) - behind_chunks)
+            logger.info(
+                f"[{self.client_id}] Normal play: starting {behind_chunks} chunks behind live edge "
+                f"(index {self.local_index}, live {self.buffer.index})"
+            )
 
         # Starting playback after prebuffer should reset starvation drain anchor.
         self.last_chunk_sent_time = time.time()

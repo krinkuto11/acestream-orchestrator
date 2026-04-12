@@ -50,7 +50,6 @@ class StreamBuffer:
         # Track timers for proper cleanup
         self.stopping = False
         self.fill_timers = []
-        self.last_fetch_end_index = 0
         self.last_upstream_write_time = 0.0
         
         # REPLACED: gevent.event.Event with threading.Condition
@@ -217,11 +216,7 @@ class StreamBuffer:
             if missing_chunks > 0:
                 logger.debug(f"[{request_id}] Missing {missing_chunks}/{len(results)} chunks in Redis")
             
-            # Track the latest fetched range end so callers can advance
-            # client position even when some chunk IDs are missing.
             fetched_end_index = max(0, end_id - 1)
-            # Keep legacy shared cursor for backward compatibility.
-            self.last_fetch_end_index = fetched_end_index
             
             # Final log message
             chunk_sizes = [len(c) for c in chunks]
@@ -272,7 +267,6 @@ class StreamBuffer:
 
             with self.lock:
                 self.index = 0
-                self.last_fetch_end_index = 0
                 self.last_upstream_write_time = 0.0
                 self._write_buffer = bytearray()
                 if hasattr(self, '_partial_packet'):
