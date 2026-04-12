@@ -355,23 +355,40 @@ class StreamGenerator:
 
     def _apply_prebuffer_hold(self, prebuffer_seconds):
         """Build the required safety runway after the probe chunk has been released."""
-        chunk_rate = max(0.1, float(getattr(self, "chunk_rate_ema", 1.0) or 1.0))
-        target_chunks = int(math.ceil(prebuffer_seconds * chunk_rate))
-        logger.info(f"[{self.client_id}] Starting artificial prebuffer hold: hoarding {target_chunks} chunks")
+        target_chunk_size = getattr(self.buffer, "target_chunk_size", 1024 * 1024)
+        
+        # Calculate target chunks based on bitrate if available, otherwise fallback to EMA
+        if self.stream_bitrate > 0:
+            # target = (seconds * bytes_per_sec) / bytes_per_chunk
+            target_chunks = int(math.ceil((prebuffer_seconds * self.stream_bitrate) / float(target_chunk_size)))
+            logger.info(
+                f"[{self.client_id}] Prebuffer target: {prebuffer_seconds}s @ {self.stream_bitrate} B/s "
+                f"({target_chunk_size} B/chunk) -> {target_chunks} chunks"
+            )
+        else:
+            chunk_rate = max(0.1, float(getattr(self, "chunk_rate_ema", 1.0) or 1.0))
+            target_chunks = int(math.ceil(prebuffer_seconds * chunk_rate))
+            logger.info(f"[{self.client_id}] Prebuffer target: {prebuffer_seconds}s @ {chunk_rate:.1f} chunks/s (Bitrate unknown) -> {target_chunks} chunks")
         
         start_wait = time.time()
         while True:
             current_buffer_size = max(0, int(self.buffer.index) - int(self.local_index))
             if current_buffer_size >= target_chunks:
-                logger.info(f"[{self.client_id}] Prebuffer complete after {time.time() - start_wait:.1f}s")
+                logger.info(f"[{self.client_id}] Prebuffer complete after {time.time() - start_wait:.1f}s (Current Runway: {current_buffer_size} chunks)")
                 break
+            
+            # Log progress every few pulses
+            logger.info(f"[{self.client_id}] Hoarding... Runway: {current_buffer_size}/{target_chunks} chunks")
+            
             if time.time() - start_wait > max(30.0, prebuffer_seconds * 2):
-                logger.warning(f"[{self.client_id}] Prebuffer hold timed out")
+                logger.warning(f"[{self.client_id}] Prebuffer hold timed out at {current_buffer_size} chunks")
                 break
                 
             # Blast Fat Keep-Alives to prevent HTTP timeouts
             fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
             yield fat_keepalive
+            self.network_bytes_sent += len(fat_keepalive)
+            
             time.sleep(0.5)
 
     def _advance_local_index(self, chunks_received: int, fetched_end_index=None):
