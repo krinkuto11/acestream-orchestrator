@@ -644,7 +644,7 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
                     <div>
                       <p className="text-[10px] uppercase text-muted-foreground font-bold">Initial Runway</p>
                       <p className="text-sm font-mono text-blue-600 dark:text-blue-400">
-                        {preflightMetrics?.runway !== null ? `${preflightMetrics.runway}s` : 'N/A'}
+                        {preflightMetrics?.runway != null ? `${preflightMetrics.runway}s` : 'N/A'}
                       </p>
                     </div>
                   </div>
