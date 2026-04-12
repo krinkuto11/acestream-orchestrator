@@ -404,7 +404,6 @@ class ClientManager:
         self,
         client_id,
         seconds_behind: float,
-        **kwargs  # Accept and ignore extra fields from dynamic threshold era
     ):
         """Update client runway estimate in Redis."""
         try:

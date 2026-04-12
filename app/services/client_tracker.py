@@ -128,7 +128,6 @@ class ClientTrackingService:
         now: Optional[float] = None,
         idle_timeout_s: Optional[float] = None,
         worker_id: Optional[str] = None,
-        **kwargs  # Accept and ignore extra fields from dynamic threshold era
     ) -> Dict[str, Any]:
         ts = self._safe_float(now, default=time.time())
         normalized_protocol = self._normalize_protocol(protocol)

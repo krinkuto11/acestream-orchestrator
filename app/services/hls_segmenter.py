@@ -211,7 +211,6 @@ class HLSSegmenterService:
         chunks_sent: Optional[int] = None,
         sequence: Optional[int] = None,
         buffer_seconds_behind: Optional[float] = None,
-        stream_buffer_window_seconds: Optional[float] = None,
         now: Optional[float] = None,
     ) -> None:
         from .client_tracker import client_tracking_service
