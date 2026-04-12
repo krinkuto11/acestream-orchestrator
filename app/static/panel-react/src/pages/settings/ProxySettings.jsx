@@ -104,6 +104,7 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
   const [diagRunning, setDiagRunning] = useState(false)
   const [diagError, setDiagError] = useState('')
   const [diagResult, setDiagResult] = useState(null)
+  const [showDiagRaw, setShowDiagRaw] = useState(false)
 
   const dirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(initialState),
@@ -341,6 +342,7 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
         throw new Error(payload?.detail || `HTTP ${response.status}`)
       }
       setDiagResult(payload)
+      setShowDiagRaw(false)
     } catch (diagFailure) {
       setDiagError(diagFailure.message || String(diagFailure))
     } finally {
@@ -357,6 +359,31 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
   }
 
   const preflightFiles = extractLoadRespFiles(diagResult)
+
+  const preflightMetrics = useMemo(() => {
+    const probe = diagResult?.result?.status_probe
+    if (!probe) return null
+
+    const livepos = probe.livepos
+    let runway = null
+    if (livepos?.pos && (livepos?.last_ts || livepos?.live_last)) {
+      const pos = Number(livepos.pos)
+      const last = Number(livepos.last_ts || livepos.live_last)
+      if (Number.isFinite(pos) && Number.isFinite(last)) {
+        runway = Math.max(0, last - pos)
+      }
+    }
+
+    return {
+      status: probe.status_text || probe.status || 'N/A',
+      peers: probe.peers ?? 0,
+      httpPeers: probe.http_peers ?? 0,
+      speed: probe.speed_down ?? 0,
+      runway,
+      checks: diagResult?.result?.availability_checks || {},
+    }
+  }, [diagResult])
+
   const lifecycleCopy = getLifecycleCopy(activePhase)
 
   return (
@@ -577,20 +604,117 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
             {diagError && <p className="text-sm text-red-600 dark:text-red-400">{diagError}</p>}
 
             {diagResult && (
-              <div className="rounded-md border p-3 text-sm">
-                <p className="font-semibold">Availability: {diagResult?.result?.available ? 'Available' : 'Unavailable'}</p>
-                <p className="text-xs text-muted-foreground">Control Mode: {diagResult?.control_mode || draft.control_mode}</p>
-                <p className="text-xs text-muted-foreground break-all">Infohash: {diagResult?.result?.infohash || 'N/A'}</p>
-                {preflightFiles.length > 0 && (
-                  <div className="mt-2 text-xs text-muted-foreground">
-                    <p className="font-medium text-foreground">Files:</p>
-                    <ul className="space-y-1">
-                      {preflightFiles.slice(0, 8).map((entry) => (
-                        <li key={`${entry.index}-${entry.label}`}>[{entry.index}] {entry.label}</li>
-                      ))}
-                    </ul>
+              <div className="space-y-4">
+                <div className="rounded-md border p-3 text-sm space-y-3 bg-muted/20">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="font-semibold flex items-center gap-2">
+                        Availability: 
+                        <span className={diagResult?.result?.available ? 'text-emerald-600' : 'text-amber-600'}>
+                          {diagResult?.result?.available ? 'Available' : 'Unavailable'}
+                        </span>
+                      </p>
+                      <p className="text-xs text-muted-foreground">Control Mode: {diagResult?.control_mode || draft.control_mode}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-medium">Engine Context</p>
+                      <p className="text-[10px] text-muted-foreground font-mono">
+                        {diagResult?.engine?.container_id?.slice(0, 12) || 'local'} 
+                        ({diagResult?.engine?.host}:{diagResult?.engine?.port})
+                      </p>
+                    </div>
                   </div>
-                )}
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 border-t pt-3">
+                    <div>
+                      <p className="text-[10px] uppercase text-muted-foreground font-bold">Peers</p>
+                      <p className="text-sm font-mono">
+                        {preflightMetrics?.peers || 0}
+                        {preflightMetrics?.httpPeers > 0 && <span className="text-[10px] ml-1 opacity-70">+{preflightMetrics.httpPeers}h</span>}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase text-muted-foreground font-bold">Down Speed</p>
+                      <p className="text-sm font-mono">{(preflightMetrics?.speed || 0).toLocaleString()} KB/s</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase text-muted-foreground font-bold">Status</p>
+                      <p className="text-sm font-medium truncate">{preflightMetrics?.status || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase text-muted-foreground font-bold">Initial Runway</p>
+                      <p className="text-sm font-mono text-blue-600 dark:text-blue-400">
+                        {preflightMetrics?.runway !== null ? `${preflightMetrics.runway}s` : 'N/A'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {preflightMetrics?.checks && (
+                    <div className="flex gap-4 border-t pt-2 mt-1">
+                      <div className="flex items-center gap-1.5">
+                        <div className={`h-1.5 w-1.5 rounded-full ${preflightMetrics.checks.transport_signal ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                        <span className="text-[10px] text-muted-foreground">Transport Signal</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <div className={`h-1.5 w-1.5 rounded-full ${preflightMetrics.checks.progression_signal ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                        <span className="text-[10px] text-muted-foreground">Progression Signal</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="border-t pt-2">
+                    <p className="text-[10px] uppercase text-muted-foreground font-bold">Infohash</p>
+                    <p className="text-xs font-mono break-all opacity-80">{diagResult?.result?.infohash || 'N/A'}</p>
+                  </div>
+
+                  {preflightFiles.length > 0 && (
+                    <div className="mt-2 text-xs text-muted-foreground bg-background/50 rounded p-2">
+                      <p className="font-medium text-foreground mb-1">Files ({preflightFiles.length}):</p>
+                      <ul className="space-y-1">
+                        {preflightFiles.slice(0, 20).map((entry) => (
+                          <li key={`${entry.index}-${entry.label}`} className="truncate">
+                            <span className="opacity-50 mr-1">[{entry.index}]</span> {entry.label}
+                          </li>
+                        ))}
+                        {preflightFiles.length > 20 && (
+                          <li className="italic pt-1">... and {preflightFiles.length - 20} more files</li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-muted-foreground">Technical Investigation</p>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-7 text-[10px]" 
+                      onClick={() => setShowDiagRaw(!showDiagRaw)}
+                    >
+                      {showDiagRaw ? 'Hide Raw JSON' : 'Show Raw JSON'}
+                    </Button>
+                  </div>
+                  
+                  {showDiagRaw && (
+                    <div className="relative group">
+                      <pre className="text-[10px] p-3 rounded bg-slate-950 text-slate-50 overflow-auto max-h-[300px] font-mono leading-relaxed">
+                        {JSON.stringify(diagResult, null, 2)}
+                      </pre>
+                      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button 
+                          variant="secondary" 
+                          size="sm" 
+                          className="h-6 text-[10px]"
+                          onClick={() => navigator.clipboard.writeText(JSON.stringify(diagResult, null, 2))}
+                        >
+                          Copy JSON
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
