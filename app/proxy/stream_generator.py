@@ -146,7 +146,7 @@ class StreamGenerator:
                             if prebuffer_seconds > 0.0:
                                 yield from self._apply_prebuffer_hold(prebuffer_seconds)
 
-                        yield from self._maybe_apply_client_pacing()
+                        self._maybe_apply_client_pacing()
                     
                     # Update local index
                     self._advance_local_index(len(chunks), fetched_end_index=fetched_end_index)
