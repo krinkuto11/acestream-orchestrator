@@ -93,7 +93,7 @@ class StreamGenerator:
             
             # If stream is initializing, wait for it
             if self.stream_initializing:
-                stream_ready = yield from self._wait_for_initialization()
+                stream_ready = self._wait_for_initialization()
                 if not stream_ready:
                     return
             
@@ -103,7 +103,7 @@ class StreamGenerator:
             self.stream_start_time = time.time()
             
             # Setup streaming
-            if not (yield from self._setup_streaming()):
+            if not self._setup_streaming():
                 return
 
             self.pacing_start_time = time.time() # START PACING CLOCK HERE
@@ -505,7 +505,7 @@ class StreamGenerator:
         
         # Wait for at least one chunk in buffer (Probe Release Phase)
         # This gives the HTTP streamer time to fetch data from the playback URL
-        if not (yield from self._wait_for_probe_chunk(min_index=start_index)):
+        if not self._wait_for_probe_chunk(min_index=start_index):
             # Error already logged in _wait_for_probe_chunk
             return False
         
