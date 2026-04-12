@@ -34,3 +34,12 @@ export function formatBytesPerSecond(bytesPerSecond) {
   const i = Math.floor(Math.log(bytesPerSecond) / Math.log(k))
   return Math.round((bytesPerSecond / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
 }
+
+export function formatBitrate(bitsPerSecond) {
+  if (bitsPerSecond == null) return 'N/A'
+  if (bitsPerSecond === 0) return '0 bps'
+  const k = 1000
+  const sizes = ['bps', 'kbps', 'Mbps', 'Gbps']
+  const i = Math.floor(Math.log(bitsPerSecond) / Math.log(k))
+  return Math.round((bitsPerSecond / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
+}

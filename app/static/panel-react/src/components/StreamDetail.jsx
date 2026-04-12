@@ -36,7 +36,7 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js'
-import { formatTime, formatBytesPerSecond } from '../utils/formatters'
+import { formatTime, formatBytesPerSecond, formatBitrate } from '../utils/formatters'
 import {
   Collapsible,
   CollapsibleContent,
@@ -668,7 +668,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
           </div>
           <div className="rounded-lg border bg-muted/30 px-3 py-2">
             <p className="text-[11px] text-muted-foreground flex items-center gap-1"><Activity className="h-3 w-3" />Target Bitrate</p>
-            <p className="text-sm font-semibold">{(stream?.bitrate || latestSample?.bitrate) ? formatBytesPerSecond((stream?.bitrate || latestSample?.bitrate) / 8) : '—'}</p>
+            <p className="text-sm font-semibold">{(stream?.bitrate || latestSample?.bitrate) ? formatBitrate(stream?.bitrate || latestSample?.bitrate) : '—'}</p>
           </div>
         </div>
 
@@ -694,7 +694,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
               <div>
                 <p className="text-xs text-muted-foreground">Target Bitrate</p>
                 <p className="text-sm font-medium">
-                  {stream.bitrate ? formatBytesPerSecond(stream.bitrate / 8) : 'N/A'}
+                  {stream.bitrate ? formatBitrate(stream.bitrate) : 'N/A'}
                 </p>
               </div>
               <div>
