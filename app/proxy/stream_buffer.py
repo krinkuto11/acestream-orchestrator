@@ -45,7 +45,14 @@ class StreamBuffer:
                 logger.error(f"Error initializing buffer from Redis: {e}")
         
         self._write_buffer = bytearray()
-        self.target_chunk_size = Config.BUFFER_CHUNK_SIZE  # ~1MB default
+        
+        # ALIGNMENT FIX: target_chunk_size MUST be a multiple of TS_PACKET_SIZE (188)
+        # to prevent 'shredding' TS packets at chunk boundaries.
+        raw_target = Config.BUFFER_CHUNK_SIZE
+        self.target_chunk_size = (raw_target // self.TS_PACKET_SIZE) * self.TS_PACKET_SIZE
+        
+        if self.target_chunk_size != raw_target:
+            logger.info(f"[{self.content_id}] Adjusted chunk size to {self.target_chunk_size} bytes for TS alignment (was {raw_target})")
         
         # Track timers for proper cleanup
         self.stopping = False
