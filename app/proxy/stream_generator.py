@@ -334,12 +334,18 @@ class StreamGenerator:
         if source_rate <= 0.1:
             source_rate = float(self.chunk_rate_ema or 1.0)
             
+        # ENFORCE PACING CAP: Even if the engine bursts, do not allow the client
+        # to drain the safety buffer faster than the configured multiplier.
+        # This preserves the failover runway and keeps bitrate estimation stable.
+        max_multiplier = float(ConfigHelper.proxy_max_catchup_multiplier() or 2.0)
+        pacing_rate = source_rate * max_multiplier
+
         elapsed = time.time() - self.pacing_start_time
-        expected_chunks = elapsed * source_rate
+        expected_chunks = elapsed * pacing_rate
         
-        # Strict pacing: no client-side burst allowed. Maintains 100% of buffer in proxy
-        # to ensure that failover runway telemetry remains highly accurate.
+        # Pacing: prevents greedy downloads from 'swallowing' the proxy-side buffer.
         if self.chunks_sent > expected_chunks + self.pacing_burst_chunks:
+
             # Calculate time to sleep to fall back in line with the expected rate
             wait_time = (self.chunks_sent - self.pacing_burst_chunks) / source_rate - elapsed
             

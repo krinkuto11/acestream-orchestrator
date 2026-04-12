@@ -125,22 +125,39 @@ class StreamBuffer:
             return False
 
     def _update_source_rate(self, writes_done: int):
-        """Update EMA of the source chunk arrival rate"""
+        """Update EMA of the source chunk arrival rate with window-based stabilization"""
         now = time.time()
-        elapsed = now - self._last_source_update_time
         
-        # Avoid division by zero or negative time
-        if elapsed < 0.001:
+        # Accumulate writes until a minimum window has passed to stabilize bitrate estimation.
+        # This prevents the 'burst speed' of rapid TCP packet arrivals from being
+        # interpreted as a permanent bitrate change, which otherwise collapses runway telemetry.
+        if not hasattr(self, "_source_rate_window_start"):
+            self._source_rate_window_start = now
+            self._source_rate_window_delta = 0.0
+            self._last_source_update_time = now # Baseline for first real update
             return
 
-        self._last_source_update_time = now
-        instant_rate = float(writes_done) / elapsed
+        self._source_rate_window_delta += float(writes_done)
+        elapsed = now - self._source_rate_window_start
+
+        # Filter out inter-chunk jitter: only update EMA every ~1.5 seconds.
+        # This averages out the throughput over a meaningful period.
+        if elapsed < 1.5 and self._source_rate_ema is not None:
+            return
+
+        instant_rate = self._source_rate_window_delta / max(0.001, elapsed)
         
-        alpha = 0.1  # Slow EMA to filter out network/engine jitter
+        alpha = 0.15 # Filter out small oscillations while tracking macroscopic changes
         if self._source_rate_ema is None:
             self._source_rate_ema = instant_rate
         else:
             self._source_rate_ema = (alpha * instant_rate) + ((1.0 - alpha) * self._source_rate_ema)
+
+        # Reset window for next estimation period
+        self._source_rate_window_start = now
+        self._source_rate_window_delta = 0.0
+        self._last_source_update_time = now
+
 
     def get_source_rate(self) -> float:
          """Return the current estimated source chunk rate (chunks/second)"""

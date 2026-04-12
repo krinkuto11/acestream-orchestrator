@@ -49,6 +49,7 @@ class Config:
     
     # Health check
     HEALTH_CHECK_INTERVAL: int = 5
+    PROXY_MAX_CATCHUP_MULTIPLIER: float = 2.0
     GHOST_CLIENT_MULTIPLIER: float = 5.0
     
     # Stream data tolerance - how long to wait when no data is received
@@ -315,3 +316,8 @@ class ConfigHelper:
     def hls_segment_fetch_interval():
         """Get multiplier for manifest fetch interval (relative to target duration)."""
         return ConfigHelper._get_proxy_value("hls_segment_fetch_interval", Config.HLS_SEGMENT_FETCH_INTERVAL)
+
+    @staticmethod
+    def proxy_max_catchup_multiplier():
+        """Get maximum speed multiplier for client catch-up pacing (1.0 = real-time, 2.0 = double-time)."""
+        return float(ConfigHelper._get_proxy_value("proxy_max_catchup_multiplier", Config.PROXY_MAX_CATCHUP_MULTIPLIER))
