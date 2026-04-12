@@ -366,41 +366,52 @@ class StreamGenerator:
             proxy_server = ProxyServer.get_instance()
             manager = proxy_server.stream_managers.get(self.content_id)
             if manager and getattr(manager, "bitrate", 0) > 0:
-                self.stream_bitrate = int(manager.bitrate) // 8
+                self.stream_bitrate = int(manager.bitrate) # Already in Bytes/s
                 logger.info(f"[{self.client_id}] Late-binding bitrate captured from manager: {self.stream_bitrate} B/s")
             else:
                 try:
                     metadata_key = RedisKeys.stream_metadata(self.content_id)
-                    bitrate_bits = self.client_manager.redis_client.hget(metadata_key, StreamMetadataField.BITRATE)
-                    if bitrate_bits:
-                        self.stream_bitrate = int(bitrate_bits) // 8
+                    bitrate_raw = self.client_manager.redis_client.hget(metadata_key, StreamMetadataField.BITRATE)
+                    if bitrate_raw:
+                        self.stream_bitrate = int(bitrate_raw) # Already in Bytes/s
                         logger.info(f"[{self.client_id}] Late-binding bitrate captured from Redis: {self.stream_bitrate} B/s")
                 except Exception:
                     pass
 
-        # Calculate target chunks based on bitrate if available, otherwise fallback to EMA
-        if self.stream_bitrate > 0:
-            # target = (seconds * bytes_per_sec) / bytes_per_chunk
-            target_chunks = int(math.ceil((prebuffer_seconds * self.stream_bitrate) / float(target_chunk_size)))
-            logger.info(
-                f"[{self.client_id}] Prebuffer target: {prebuffer_seconds}s @ {self.stream_bitrate} B/s "
-                f"({target_chunk_size} B/chunk) -> {target_chunks} chunks"
-            )
-        else:
-            chunk_rate = max(0.1, float(getattr(self, "chunk_rate_ema", 1.0) or 1.0))
-            target_chunks = int(math.ceil(prebuffer_seconds * chunk_rate))
-            logger.info(f"[{self.client_id}] Prebuffer target: {prebuffer_seconds}s @ {chunk_rate:.1f} chunks/s (Bitrate unknown) -> {target_chunks} chunks")
+        # Bitrate safety floor (2.5 Mbps = 312,500 B/s)
+        MIN_SAFE_BITRATE_BPS = 312500 
+        effective_bitrate = max(self.stream_bitrate, MIN_SAFE_BITRATE_BPS)
+        if effective_bitrate > self.stream_bitrate and self.stream_bitrate > 0:
+            logger.info(f"[{self.client_id}] Applying bitrate floor: {effective_bitrate} B/s (Reported: {self.stream_bitrate} B/s)")
+        
+        target_chunks = int(math.ceil((prebuffer_seconds * effective_bitrate) / float(target_chunk_size)))
+        logger.info(
+            f"[{self.client_id}] Prebuffer target: {prebuffer_seconds}s @ {effective_bitrate} B/s "
+            f"({target_chunk_size} B/chunk) -> {target_chunks} chunks"
+        )
         
         start_wait = time.time()
         last_logged_size = -1
         last_log_time = 0.0
         
+        # PROOF OF LIFE: Record the engine index at the start.
+        # We want to see at least one NEW chunk produced before we finish.
+        initial_engine_index = self.buffer.index
+        
         while True:
             current_buffer_size = max(0, int(self.buffer.index) - int(self.local_index))
             now = time.time()
             
-            if current_buffer_size >= target_chunks:
-                logger.info(f"[{self.client_id}] Prebuffer complete after {now - start_wait:.1f}s (Current Runway: {current_buffer_size} chunks)")
+            # Condition: Target runway met AND either engine has progressed OR we've waited a bit
+            has_runway = current_buffer_size >= target_chunks
+            has_progressed = self.buffer.index > initial_engine_index
+            has_timed_out_min = (now - start_wait) >= 2.0
+            
+            if has_runway and (has_progressed or has_timed_out_min):
+                logger.info(
+                    f"[{self.client_id}] Prebuffer complete after {now - start_wait:.1f}s "
+                    f"(Runway: {current_buffer_size} chunks, Engine Progressed: {has_progressed})"
+                )
                 break
             
             # Debounced logging: only log if size increased AND at least 2 seconds passed
@@ -487,15 +498,14 @@ class StreamGenerator:
         # EXTRACT BITRATE FOR PACING: Prioritize direct manager data, fallback to Redis
         manager = proxy_server.stream_managers.get(self.content_id)
         if manager and getattr(manager, "bitrate", 0) > 0:
-            self.stream_bitrate = int(manager.bitrate) // 8
+            self.stream_bitrate = int(manager.bitrate) # Already in Bytes/s
             logger.info(f"[{self.client_id}] Target bitrate extracted from manager: {self.stream_bitrate} bytes/s")
         else:
             try:
                 metadata_key = RedisKeys.stream_metadata(self.content_id)
-                bitrate_bits = self.client_manager.redis_client.hget(metadata_key, StreamMetadataField.BITRATE)
-                if bitrate_bits:
-                    # Formula requires bytes/sec, engine returns bits/sec.
-                    self.stream_bitrate = int(bitrate_bits) // 8
+                bitrate_raw = self.client_manager.redis_client.hget(metadata_key, StreamMetadataField.BITRATE)
+                if bitrate_raw:
+                    self.stream_bitrate = int(bitrate_raw) # Already in Bytes/s
                     logger.info(f"[{self.client_id}] Target bitrate extracted from Redis: {self.stream_bitrate} bytes/s")
             except Exception as e:
                 logger.debug(f"[{self.client_id}] Failed to extract bitrate for pacing: {e}")
