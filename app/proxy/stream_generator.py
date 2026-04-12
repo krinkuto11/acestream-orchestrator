@@ -68,7 +68,8 @@ class StreamGenerator:
 
         # Virtual Runway tracking
         self.pacing_start_time = None
-        self.pacing_burst_chunks = 0  # Disabled: maintain 100% of buffer in proxy for telemetry precision
+        self.pacing_burst_chunks = PACING_BURST_CHUNKS # Burst allowance for chunk-based pacing
+        self.pacing_burst_seconds = 6.0               # Burst allowance for byte-based pacing
         
         # Byte-based pacing (Target Bitrate)
         self.stream_bitrate = 0  # In bytes per second
@@ -315,7 +316,7 @@ class StreamGenerator:
 
         # 1. Base Pacing variables
         current_bitrate = self.stream_bitrate
-        TARGET_BURST_SECONDS = 6.0
+        pacing_burst_seconds = self.pacing_burst_seconds
         now = time.time()
         elapsed = now - self.pacing_start_time
         
@@ -333,7 +334,7 @@ class StreamGenerator:
                     # Accelerate the egress by 15% to let the client catch up
                     current_bitrate = int(current_bitrate * 1.15) 
 
-            pacing_burst_bytes = int(current_bitrate * TARGET_BURST_SECONDS)
+            pacing_burst_bytes = int(current_bitrate * pacing_burst_seconds)
             expected_bytes = elapsed * current_bitrate
             
             # 3. Throttle using the video_bytes_sent only (ignore keep-alives)
@@ -364,7 +365,7 @@ class StreamGenerator:
         if source_rate <= 0:
             return
             
-        pacing_burst_chunks = getattr(self, "pacing_burst_chunks", 3)
+        pacing_burst_chunks = self.pacing_burst_chunks
         expected_chunks = elapsed * source_rate
         if self.chunks_sent > expected_chunks + pacing_burst_chunks:
             wait_time = (self.chunks_sent - pacing_burst_chunks) / float(source_rate) - elapsed
@@ -518,11 +519,15 @@ class StreamGenerator:
         except Exception:
             reconnect_start_index = None
 
-        if reconnect_start_index is not None:
             start_index = reconnect_start_index
+            
+            # Revoke burst allowance for hot reconnects to prevent 'burst surfing'
+            self.pacing_burst_seconds = 0.0
+            self.pacing_burst_chunks = 0
+            
             logger.info(
-                f"[{self.client_id}] Reusing previous baseline index {start_index} for hot reconnect "
-                f"(buffer index: {self.buffer.index})"
+                f"[{self.client_id}] Reusing previous baseline index {start_index} for hot reconnect. "
+                f"Revoking burst allowance to prevent buffer surfing (buffer index: {self.buffer.index})"
             )
         
         # Add client with starting position
