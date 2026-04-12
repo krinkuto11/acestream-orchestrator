@@ -1445,151 +1445,47 @@ class StreamManager:
         return conservative_runway
 
     def _get_max_client_buffer_seconds(self) -> float:
-        """Return conservative effective client runway from Redis metadata.
-
-        This value is used to drive failover tolerance. The aggregation is
-        intentionally conservative and freshness-aware:
-        - stale samples are ignored,
-        - runway is decayed by sample age,
-        - low-confidence sources are down-weighted,
-        - final runway uses lower-tail (p10) selection.
+        """Return minimum client runway using Proxy-Native Math.
+        
+        This represents the mathematically pure difference between the proxy's
+        buffer head and the slowest client's local tail.
         """
-        now = time.time()
-        max_sample_age_s = 8.0
-        confidence_floor = 0.15
-        candidate_values = []
-
-        def _safe_float(value, default=0.0):
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return default
+        min_runway = None
 
         try:
             redis_client = getattr(self.client_manager, "redis_client", None)
             client_set_key = getattr(self.client_manager, "client_set_key", None)
             if not redis_client or not client_set_key:
-                return 0.0
+                return float(getattr(self, "_last_runway_estimate_s", 0.0) or 0.0)
 
             client_ids = redis_client.smembers(client_set_key) or []
-            normalized_client_ids = [
-                client_id.decode("utf-8") if isinstance(client_id, bytes) else str(client_id)
-                for client_id in client_ids
-            ]
-            fields = [
-                ClientMetadataField.CLIENT_RUNWAY_SECONDS,
-                ClientMetadataField.BUFFER_SECONDS_BEHIND,
-                ClientMetadataField.POSITION_CONFIDENCE,
-                ClientMetadataField.POSITION_OBSERVED_AT,
-                ClientMetadataField.STATS_UPDATED_AT,
-            ]
+            if not client_ids:
+                return float(getattr(self, "_last_runway_estimate_s", 0.0) or 0.0)
 
-            if hasattr(redis_client, "pipeline") and hasattr(redis_client, "hmget"):
-                pipe = redis_client.pipeline(transaction=False)
-                for normalized_client_id in normalized_client_ids:
-                    client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
-                    pipe.hmget(client_key, fields)
-                results = pipe.execute() or []
-                values_iterator = zip(normalized_client_ids, results)
-            else:
-                # Test doubles may not expose pipelines; keep functional parity.
-                fallback_rows = []
-                for normalized_client_id in normalized_client_ids:
-                    client_key = RedisKeys.client_metadata(self.content_id, normalized_client_id)
-                    fallback_rows.append((normalized_client_id, redis_client.hmget(client_key, fields)))
-                values_iterator = fallback_rows
-
-            for _normalized_client_id, values in values_iterator:
-                if not values:
-                    continue
-
-                runway_raw, legacy_runway_raw, confidence_raw, observed_at_raw, stats_updated_at_raw = values
-
-                runway_value_raw = runway_raw if runway_raw is not None else legacy_runway_raw
-                if runway_value_raw is None:
-                    continue
-
-                runway_value = _safe_float(
-                    runway_value_raw.decode("utf-8") if isinstance(runway_value_raw, bytes) else runway_value_raw,
-                    default=0.0,
-                )
-                runway_value = max(0.0, runway_value)
-
-                observed_raw = observed_at_raw if observed_at_raw is not None else stats_updated_at_raw
-                observed_ts = _safe_float(
-                    observed_raw.decode("utf-8") if isinstance(observed_raw, bytes) else observed_raw,
-                    default=0.0,
-                )
-                if observed_ts <= 0:
-                    observed_ts = now
-
-                age_s = max(0.0, now - observed_ts)
-                if age_s > max_sample_age_s:
-                    continue
-
-                # FILTER: Skip clients that haven't published their first real telemetry update yet.
-                # If confidence is missing (None) or explicitly 0, this client should not
-                # be allowed to pull down the failover threshold for active viewers.
-                if confidence_raw is None:
-                    continue
-
-                confidence = _safe_float(
-                    confidence_raw.decode("utf-8") if isinstance(confidence_raw, bytes) else confidence_raw,
-                    default=0.0,
-                )
+            for client_id_raw in client_ids:
+                client_id = client_id_raw.decode("utf-8") if isinstance(client_id_raw, bytes) else str(client_id_raw)
+                client_key = RedisKeys.client_metadata(self.content_id, client_id)
                 
-                if confidence <= 0.05:
-                    continue
-                    
-                confidence = max(0.0, min(1.0, confidence))
-
-                # LINEAR RUNWAY SYNC: 
-                # To maintain perfect sync with the UI, we use the raw physical runway 
-                # decayed strictly by sample age. We rely on the 2.0s safety_margin 
-                # (added later) to handle telemetry jitter instead of using 
-                # non-linear confidence multipliers that 'go nuts' in the graphs.
-                stable_runway = max(0.0, runway_value - age_s)
-                candidate_values.append(stable_runway)
+                # Fetch only BUFFER_SECONDS_BEHIND from each client's metadata hash
+                buffer_behind_raw = redis_client.hget(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND)
+                if buffer_behind_raw is not None:
+                    try:
+                        val = float(buffer_behind_raw.decode("utf-8") if isinstance(buffer_behind_raw, bytes) else buffer_behind_raw)
+                        # Find the minimum valid float value among all clients
+                        if min_runway is None or val < min_runway:
+                            min_runway = val
+                    except (ValueError, TypeError):
+                        continue
         except Exception as e:
-            logger.debug("Failed to calculate max client buffer for EOF retry: %s", e)
-            return 0.0
+            logger.debug(f"Failed to calculate proxy-native runway for {self.content_id}: {e}")
 
-        if not candidate_values:
-            # Gracefully decay the previous estimate for a short period to avoid
-            # abrupt tolerance collapse if telemetry briefly disappears.
-            if self._last_runway_estimate_ts > 0.0 and self._last_runway_estimate_s > 0.0:
-                decayed = max(0.0, self._last_runway_estimate_s - max(0.0, now - self._last_runway_estimate_ts))
-                return float(decayed)
-            return 0.0
+        if min_runway is not None:
+            # Cache the new estimate
+            self._last_runway_estimate_s = float(min_runway)
+            return float(min_runway)
 
-        # --- ROBUST STATISTICAL OUTLIER REJECTION ---
-        count = len(candidate_values)
-        candidate_values.sort()
-
-        if count <= 2:
-            # For 1-2 clients, use the mean to prevent a single outlier from killing the stream.
-            result = sum(candidate_values) / max(1, count)
-        else:
-            # For 3+ clients, filter out lagging outliers using Median and Mean Absolute Deviation (MAD).
-            median_val = candidate_values[count // 2]
-            # Calculate Mean Absolute Deviation from the median for robustness.
-            abs_devs = [abs(x - median_val) for x in candidate_values]
-            mad = sum(abs_devs) / count
-            
-            # Reject clients who are more than 1 deviation significantly below the median.
-            # This ignores the "tail" of starving clients if the majority is healthy.
-            cutoff = median_val - mad
-            healthy_pack = [x for x in candidate_values if x >= cutoff]
-            
-            if not healthy_pack:
-                result = candidate_values[0]
-            else:
-                result = min(healthy_pack)
-
-        conservative_runway = max(0.0, float(result))
-        self._last_runway_estimate_s = conservative_runway
-        self._last_runway_estimate_ts = now
-        return conservative_runway
+        # Return the cached estimate or 0.0 if never initialized
+        return float(getattr(self, "_last_runway_estimate_s", 0.0) or 0.0)
 
     def _publish_dynamic_tolerance(self, dynamic_threshold: float, current_buffer: float, max_tolerance: float, inactivity_duration: float, source_duration: float = 0.0):
         """Persist current dynamic threshold values for dashboard visualization."""
@@ -1645,11 +1541,7 @@ class StreamManager:
             logger.debug("Failed to publish dynamic threshold telemetry for %s: %s", self.content_id, e)
 
     def _get_dynamic_tolerance(self) -> tuple[float, float, float]:
-        """Calculate starvation tolerance from client runway.
-
-        Returns:
-            (dynamic_threshold_seconds, current_buffer_seconds, max_tolerance_seconds)
-        """
+        """Calculate starvation tolerance from proxy-native client runway."""
         try:
             max_tolerance = float(ConfigHelper.connection_timeout())
         except Exception:
@@ -1662,62 +1554,28 @@ class StreamManager:
         ):
             max_tolerance = 30.0
 
-        # Do not fail over too aggressively during startup or transient jitter.
-        min_tolerance = 4.0
-        # Keep margin for control-plane swap propagation.
+        # Constants for Proxy-Native Math
+        min_tolerance = 5.0
         safety_margin = 2.0
         startup_grace_s = 30.0
-        current_buffer = self._get_max_client_buffer_seconds()
+        
+        # Call the refactored proxy-native runway method
+        proxy_native_runway = self._get_max_client_buffer_seconds()
 
         start_time = float(getattr(self, "_start_time", 0.0) or 0.0)
         stream_uptime = max(0.0, time.time() - start_time) if start_time > 0.0 else 0.0
         
-        # Determine if clients haven't reported runway yet
-        no_runway_yet = current_buffer <= 0.0
+        if stream_uptime < startup_grace_s and proxy_native_runway <= 0.0:
+            # During startup grace period (30s) if no runway is reported, allow time for engine boot
+            dynamic_threshold = max_tolerance
+        else:
+            # Normal operation: Use proxy-native runway minus safety margin (2.0s)
+            dynamic_threshold = proxy_native_runway - safety_margin
 
-        # Dynamic startup grace optimization
-        probe = self.collect_legacy_stats_probe(force=False)
-        is_api = bool(self._is_api_mode() and self.ace_api_client)
+        # Clamp the final threshold between min_tolerance (5.0s) and max_tolerance
+        dynamic_threshold = max(min_tolerance, min(max_tolerance, dynamic_threshold))
 
-        if is_api and probe:
-            status = str(probe.get("status_text") or "").lower()
-            peers = int(probe.get("peers") or 0)
-            speed = int(probe.get("speed_down") or 0)
-            
-            # Phase 1: Network Readiness (0-10s)
-            if stream_uptime < 10.0:
-                if status in ("error", "err"):
-                    logger.debug(f"[{self.content_id}] Phase 1: Fatal error detected in probe ({status}). Bypassing grace.")
-                    dynamic_threshold = min_tolerance
-                elif stream_uptime > 7.0 and peers == 0:
-                    logger.debug(f"[{self.content_id}] Phase 1: No peers found after 7s. Bypassing grace.")
-                    dynamic_threshold = min_tolerance
-                else:
-                    dynamic_threshold = max_tolerance
-            # Phase 2: Swarm Readiness (10-30s)
-            elif stream_uptime < startup_grace_s:
-                if status in ("error", "err"):
-                    logger.debug(f"[{self.content_id}] Phase 2: Fatal error detected in probe ({status}). Bypassing grace.")
-                    dynamic_threshold = min_tolerance
-                elif peers > 0 or speed > 0:
-                    # Swarm is active, allow time for prebuffering
-                    dynamic_threshold = max_tolerance
-                else:
-                    # Still no sign of life after 10s, drop to dynamic tolerance
-                    dynamic_threshold = max(min_tolerance, min(max_tolerance, current_buffer - safety_margin))
-            else:
-                # Normal operation: Use buffer minus safety margin.
-                # HARDENING: If client runway is critically low, allow the threshold to 
-                # drop below min_tolerance to prevent stuttering. 
-                # Absolute floor is 0.5s to avoid noise.
-                dynamic_threshold = max(0.5, min(max_tolerance, current_buffer - safety_margin))
-                
-                # If we have a healthy buffer, we still respect the min_tolerance (4.0s) 
-                # to prevent flapping during minor jitters.
-                if current_buffer > (min_tolerance + safety_margin):
-                    dynamic_threshold = max(min_tolerance, dynamic_threshold)
-
-        return float(dynamic_threshold), float(current_buffer), float(max_tolerance)
+        return float(dynamic_threshold), float(proxy_native_runway), float(max_tolerance)
 
     def _maybe_publish_legacy_stats(self):
         """Deprecated: legacy stats are now gathered by the collector service."""
