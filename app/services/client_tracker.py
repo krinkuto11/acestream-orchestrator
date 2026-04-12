@@ -143,6 +143,8 @@ class ClientTrackingService:
         if chunk_delta < 0:
             chunk_delta = 0
 
+        normalized_request_kind = str(request_kind or "").strip().lower()
+
         self.register_client(
             client_id=normalized_client_id,
             stream_id=normalized_stream_id,
