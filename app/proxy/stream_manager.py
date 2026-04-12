@@ -1765,6 +1765,11 @@ class StreamManager:
                 now = time.time()
                 inactivity_duration = now - self.last_data_time
 
+                dynamic_threshold, current_buffer, max_tolerance = self._get_dynamic_tolerance()
+                
+                # Update the publish call to pass 0.0 for source_duration
+                self._publish_dynamic_tolerance(dynamic_threshold, current_buffer, max_tolerance, inactivity_duration, 0.0)
+
                 is_stagnant = False
                 stagnation_duration = 0.0
                 
