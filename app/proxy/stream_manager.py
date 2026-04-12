@@ -165,7 +165,7 @@ class StreamManager:
         self._ended_event_stream_id = None
         self._stream_exit_reason = None
         
-        logger.info(f"StreamManager initialized for content_id={content_id}")
+        logger.info(f"StreamManager initialized for content_id={content_id} bitrate={self.bitrate} bps")
 
 
     def _build_legacy_http_params(self):
@@ -237,7 +237,7 @@ class StreamManager:
 
         # If we already have a playback_url, we don't need to request it again
         if self.playback_url:
-            logger.info(f"Adopting pre-initialized stream session for content_id={self.content_id}")
+            logger.info(f"Adopting pre-initialized stream session for content_id={self.content_id} bitrate={self.bitrate} bps")
             self.connected = False  # Reader will set this to True
             return True
 
@@ -829,7 +829,7 @@ class StreamManager:
             
             self.connected = True
             self._start_time = time.time()
-            logger.info(f"Stream started for content_id={self.content_id}")
+            logger.info(f"Stream started for content_id={self.content_id} bitrate={self.bitrate} bps")
             
             return True
             
@@ -1134,7 +1134,7 @@ class StreamManager:
             
             while self.running:
                 try:
-                    logger.info(f"Connecting to stream for content_id={self.content_id}")
+                    logger.info(f"Connecting to stream for content_id={self.content_id} bitrate={self.bitrate} bps")
                     self._stream_exit_reason = None
                     
                     if not self.connected:

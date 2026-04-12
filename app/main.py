@@ -4431,6 +4431,13 @@ async def ace_getstream(
                             raise HTTPException(status_code=500, detail="No playback URL returned by API START")
 
                         legacy_api_client = client
+                        bitrate = int(start_info.get("bitrate") or 0)
+                        logger.info(
+                            "Obtained API session for stream %s: engine=%s bitrate=%s bps",
+                            stream_key,
+                            selected_engine.container_id[:12],
+                            bitrate
+                        )
                         break
                     except HTTPException as e:
                         last_start_error = e

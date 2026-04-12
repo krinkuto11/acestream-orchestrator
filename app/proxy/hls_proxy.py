@@ -355,7 +355,7 @@ class StreamManager:
 
         self._swap_lock = threading.RLock()
         
-        logger.info(f"Initialized HLS stream manager for channel {channel_id}")
+        logger.info(f"Initialized HLS stream manager for channel {channel_id} bitrate={self.bitrate} bps")
 
     def get_playback_context(self) -> Dict[str, str]:
         """Return playback URL and engine identity atomically for fetch operations."""
@@ -996,7 +996,7 @@ class HLSProxyServer:
             # Start cleanup monitoring
             manager.start_cleanup_monitoring(self)
             
-            logger.info(f"HLS channel {channel_id} initialized")
+            logger.info(f"HLS channel {channel_id} initialized bitrate={bitrate} bps")
     
     def record_client_activity(
         self,
