@@ -109,7 +109,11 @@ class StreamGenerator:
             self.pacing_start_time = time.time() # START PACING CLOCK HERE
             
             # Main streaming loop
+            # Get no data timeout settings for starvation handling
+            no_data_max_checks = ConfigHelper.no_data_timeout_checks()
+            no_data_check_interval = ConfigHelper.no_data_check_interval()
             first_chunk_yielded = False
+            
             while True:
                 # Get chunks from buffer
                 fetched_end_index = None
@@ -317,12 +321,6 @@ class StreamGenerator:
                     pulse = min(wait_time, 0.5)
                     time.sleep(pulse)
                     
-                    # 4. FAT KEEP-ALIVE (Only if we've sent real video)
-                    if self.has_sent_first_frame:
-                        fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
-                        yield fat_keepalive
-                        self.network_bytes_sent += len(fat_keepalive)
-                    
                     # Recalculate based on total elapsed time
                     now = time.time()
                     elapsed = now - self.pacing_start_time
@@ -342,12 +340,8 @@ class StreamGenerator:
             wait_time = (self.chunks_sent - pacing_burst_chunks) / float(source_rate) - elapsed
             
             while wait_time > 0:
-                # 4. FAT KEEP-ALIVE (Fallback path)
-                if self.has_sent_first_frame:
-                    fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
-                    yield fat_keepalive
-                    self.network_bytes_sent += len(fat_keepalive)
-                wait_time = (self.chunks_sent - pacing_burst_chunks) / float(source_rate) - elapsed
+                pulse = min(wait_time, 0.5)
+                time.sleep(pulse)
                 
                 now = time.time()
                 elapsed = now - self.pacing_start_time
