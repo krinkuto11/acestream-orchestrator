@@ -3564,6 +3564,14 @@ def ace_preflight(
                     status_probe = client.collect_status_samples(samples=4, interval_s=0.5, per_sample_timeout_s=2.0)
                     preflight_result["start"] = start_info
                     preflight_result["status_probe"] = status_probe
+                    
+                    preflight_bitrate = int(start_info.get("bitrate") or 0)
+                    logger.info(
+                        "Preflight (deep) for %s on engine %s: bitrate=%s bps",
+                        stream_key,
+                        selected_engine.container_id[:12],
+                        preflight_bitrate
+                    )
                     client.stop_stream()
 
             return {
@@ -3642,6 +3650,15 @@ def ace_preflight(
         "can_retry": True,
         "should_wait": False,
     }
+
+    if result["available"]:
+        preflight_bitrate = int(response_data.get("bitrate") or 0)
+        logger.info(
+            "Preflight (HTTP) for %s on engine %s: bitrate=%s bps",
+            stream_key,
+            selected_engine.container_id[:12],
+            preflight_bitrate
+        )
 
     if normalized_tier == "deep" and response_data.get("stat_url"):
         try:
@@ -3998,30 +4015,32 @@ async def ace_getstream(
                             logger.error("No playback_url in AceStream response")
                             raise HTTPException(status_code=500, detail="No playback URL in engine response")
 
-                        logger.info(f"HLS playback URL: {playback_url}")
+                        bitrate = int(resp_data.get("bitrate") or 0)
+                        logger.info(f"HLS playback URL: {playback_url} bitrate={bitrate} bps")
 
                         api_key = os.getenv('API_KEY')
                         session_info = {
-                            'playback_session_id': resp_data.get('playback_session_id'),
-                            'stat_url': resp_data.get('stat_url'),
-                            'command_url': resp_data.get('command_url'),
-                            'is_live': resp_data.get('is_live', 1),
-                            'owns_engine_session': True,
+                            "playback_session_id": resp_data.get("playback_session_id"),
+                            "stat_url": resp_data.get("stat_url"),
+                            "command_url": resp_data.get("command_url"),
+                            "is_live": resp_data.get("is_live", 1),
+                            "owns_engine_session": True
                         }
-
-                    hls_proxy.initialize_channel(
-                        channel_id=stream_key,
-                        playback_url=playback_url,
-                        engine_host=selected_engine.host,
-                        engine_port=selected_engine.port,
-                        engine_container_id=selected_engine.container_id,
-                        session_info=session_info,
-                        engine_api_port=selected_engine.api_port,
-                        api_key=api_key,
-                        stream_key_type=input_type,
-                        file_indexes=normalized_file_indexes,
-                        seekback=normalized_seekback,
-                    )
+                        
+                        hls_proxy.initialize_channel(
+                            channel_id=stream_key,
+                            playback_url=playback_url,
+                            engine_host=selected_engine.host,
+                            engine_port=selected_engine.port,
+                            engine_container_id=selected_engine.container_id,
+                            session_info=session_info,
+                            engine_api_port=selected_engine.api_port,
+                            api_key=api_key,
+                            stream_key_type=input_type,
+                            file_indexes=normalized_file_indexes,
+                            seekback=normalized_seekback,
+                            bitrate=bitrate
+                        )
 
                     manifest_content = await hls_proxy.get_manifest_async(stream_key)
                     manifest_bytes = manifest_content.encode('utf-8')
@@ -4124,8 +4143,17 @@ async def ace_getstream(
                         "stat_url": str(monitor_session.get("stat_url") or ""),
                         "command_url": str(monitor_session.get("command_url") or ""),
                         "is_live": int(monitor_session.get("is_live") or 1),
+                        "bitrate": int(monitor_session.get("bitrate") or 0),
                     }
+                    playback_url = str(monitor_session.get("playback_url") or "").strip()
+                    if not playback_url:
+                        raise HTTPException(status_code=500, detail="Monitor session has no playback URL")
                     legacy_api_client = None
+                    logger.info(
+                        "Reusing monitor HLS session for stream %s: bitrate=%s bps",
+                        stream_key,
+                        start_info["bitrate"]
+                    )
                 else:
                     engines_count = max(1, len(state.list_engines()))
                     max_engine_attempts = min(2, engines_count)
@@ -4192,6 +4220,13 @@ async def ace_getstream(
                             if not playback_url:
                                 raise HTTPException(status_code=500, detail="No playback URL returned by API START")
 
+                            bitrate = int(start_info.get("bitrate") or 0)
+                            logger.info(
+                                "Obtained API session for stream %s: engine=%s bitrate=%s bps",
+                                stream_key,
+                                selected_engine.container_id[:12],
+                                bitrate
+                            )
                             legacy_api_client = client
                             break
                         except HTTPException as e:
@@ -4240,6 +4275,7 @@ async def ace_getstream(
                     "stat_url": str(start_info.get("stat_url") or ""),
                     "command_url": str(start_info.get("command_url") or ""),
                     "is_live": int(start_info.get("is_live") or 1),
+                    "bitrate": int(start_info.get("bitrate") or 0),
                     "container_id": str(selected_engine.container_id or ""),
                     "engine_host": str(selected_engine.host or ""),
                     "engine_port": int(selected_engine.port or 0),
@@ -4319,7 +4355,14 @@ async def ace_getstream(
                     "is_live": int(monitor_session.get("is_live") or 1),
                 }
                 playback_url = str(monitor_session.get("playback_url") or "").strip()
+                bitrate = int(monitor_session.get("bitrate") or 0)
                 legacy_api_client = None
+                logger.info(
+                    "Using monitor session %s for content_id=%s bitrate=%s bps",
+                    reusable_monitor_session.get("monitor_id"),
+                    stream_key,
+                    bitrate
+                )
             elif control_mode == PROXY_MODE_API:
                 engines_count = max(1, len(state.list_engines()))
                 max_engine_attempts = min(2, engines_count)
@@ -4329,6 +4372,7 @@ async def ace_getstream(
                 legacy_api_client = None
                 start_info = {}
                 playback_url = ""
+                bitrate = 0
 
                 for attempt_idx in range(max_engine_attempts):
                     selected_engine, current_load = select_best_engine(

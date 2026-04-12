@@ -294,11 +294,10 @@ class StreamManager:
     
     def __init__(self, playback_url: str, channel_id: str, engine_host: str, engine_port: int, 
                  engine_container_id: str, session_info: Dict[str, Any], api_key: Optional[str] = None,
-                 stream_key_type: str = "content_id",
-                 file_indexes: str = "0",
                  seekback: int = 0,
                  engine_api_port: Optional[int] = None,
-                 event_loop: Optional[asyncio.AbstractEventLoop] = None):
+                 event_loop: Optional[asyncio.AbstractEventLoop] = None,
+                 bitrate: int = 0):
         self.playback_url = playback_url
         self.channel_id = channel_id
         self.engine_host = engine_host
@@ -313,6 +312,7 @@ class StreamManager:
         except (TypeError, ValueError):
             normalized_seekback = 0
         self.seekback = max(0, normalized_seekback)
+        self.bitrate = bitrate
         self.control_mode = PROXY_MODE_HTTP
         self.running = True
         
@@ -459,12 +459,14 @@ class StreamManager:
             self.stat_url = response_data.get("stat_url") or self.stat_url
             self.command_url = response_data.get("command_url") or self.command_url
             self.is_live = int(response_data.get("is_live", self.is_live or 1) or 1)
+            self.bitrate = int(response_data.get("bitrate", self.bitrate or 0) or 0)
 
         logger.info(
-            "Applied HLS hot swap for channel=%s old_engine=%s new_engine=%s",
+            "Applied HLS hot swap for channel=%s old_engine=%s new_engine=%s bitrate=%s bps",
             self.channel_id,
             old_container_id,
             target_container_id,
+            self.bitrate
         )
 
         return {
@@ -475,6 +477,7 @@ class StreamManager:
             "stat_url": self.stat_url,
             "command_url": self.command_url,
             "is_live": self.is_live,
+            "bitrate": self.bitrate,
         }
     
     def stop(self):
@@ -911,7 +914,7 @@ class HLSProxyServer:
                           engine_port: int, engine_container_id: str, session_info: Dict[str, Any],
                           engine_api_port: Optional[int] = None,
                           api_key: Optional[str] = None, stream_key_type: str = "content_id",
-                          file_indexes: str = "0", seekback: int = 0):
+                          file_indexes: str = "0", seekback: int = 0, bitrate: int = 0):
         """Initialize a new HLS channel.
         
         This method should only be called for new channels. Existing channels should be
@@ -923,7 +926,7 @@ class HLSProxyServer:
                 logger.warning(f"HLS channel {channel_id} already exists, skipping initialization")
                 return
             
-            logger.info(f"Initializing HLS channel {channel_id} with URL {playback_url}")
+            logger.info(f"Initializing HLS channel {channel_id} with URL {playback_url} bitrate={bitrate} bps")
             
             # Ensure we have the main event loop reference
             # In normal FastAPI operation, initialize_channel is always called from an async endpoint,
@@ -949,7 +952,8 @@ class HLSProxyServer:
                 file_indexes=file_indexes,
                 seekback=seekback,
                 engine_api_port=engine_api_port,
-                event_loop=self._main_loop  # Pass event loop reference for thread-safe event sending
+                event_loop=self._main_loop,  # Pass event loop reference for thread-safe event sending
+                bitrate=bitrate
             )
             buffer = StreamBuffer()
             client_manager = ClientManager(stream_id=channel_id)

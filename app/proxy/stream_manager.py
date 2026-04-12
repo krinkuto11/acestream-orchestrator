@@ -82,6 +82,7 @@ class StreamManager:
         command_url: Optional[str] = None,
         is_live: Optional[int] = None,
         ace_api_client: Optional[Any] = None,
+        bitrate: int = 0,
     ):
         # Basic properties
         self.content_id = content_id
@@ -100,6 +101,7 @@ class StreamManager:
         self.stat_url = stat_url or ""
         self.command_url = command_url or ""
         self.is_live = is_live if is_live is not None else 1
+        self.bitrate = bitrate
         self.control_mode = normalize_proxy_mode(ConfigHelper.control_mode(), default=PROXY_MODE_HTTP)
         self.ace_api_client = ace_api_client
         self._legacy_api_lock = threading.Lock()
@@ -162,7 +164,6 @@ class StreamManager:
         self._ended_event_sent = False  # Track if we've already sent the ended event
         self._ended_event_stream_id = None
         self._stream_exit_reason = None
-        self.bitrate = 0
         
         logger.info(f"StreamManager initialized for content_id={content_id}")
 
@@ -995,6 +996,7 @@ class StreamManager:
             old_stat_url = self.stat_url
             old_command_url = self.command_url
             old_is_live = self.is_live
+            old_bitrate = self.bitrate
             old_resolved_infohash = self.resolved_infohash
             old_ace_api_client = self.ace_api_client
 
@@ -1024,6 +1026,7 @@ class StreamManager:
                 self.stat_url = str(pending_engine_swap.get("stat_url") or old_stat_url or "")
                 self.command_url = str(pending_engine_swap.get("command_url") or old_command_url or "")
                 self.is_live = int(pending_engine_swap.get("is_live", old_is_live or 1) or 1)
+                self.bitrate = int(pending_engine_swap.get("bitrate") or old_bitrate)
                 self.resolved_infohash = pending_engine_swap.get("resolved_infohash") or old_resolved_infohash
                 self.ace_api_client = pending_engine_swap.get("ace_api_client")
 
@@ -1045,6 +1048,7 @@ class StreamManager:
                     self.stat_url = old_stat_url
                     self.command_url = old_command_url
                     self.is_live = old_is_live
+                    self.bitrate = old_bitrate
                     self.resolved_infohash = old_resolved_infohash
                     self.ace_api_client = old_ace_api_client
 

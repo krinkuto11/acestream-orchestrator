@@ -170,6 +170,7 @@ class ProxyServer:
         command_url=None,
         is_live=None,
         ace_api_client=None,
+        bitrate: int = 0,
     ):
         """Start a new stream session"""
         if content_id in self.stream_managers:
@@ -181,6 +182,11 @@ class ProxyServer:
                     existing_timer.cancel()
                     shutdown_timers.pop(content_id, None)
                     logger.info(f"Canceled pending shutdown timer for {content_id}")
+                
+                # Check if we need to update the bitrate of the existing manager
+                if bitrate > 0 and getattr(stream_manager, 'bitrate', 0) == 0:
+                    stream_manager.bitrate = bitrate
+                    logger.info(f"Updated bitrate for existing stream {content_id}: {bitrate} bps")
 
                 logger.info(f"Stream already exists and is active for content_id={content_id}")
                 return True
@@ -226,6 +232,7 @@ class ProxyServer:
                 command_url=command_url,
                 is_live=is_live,
                 ace_api_client=ace_api_client,
+                bitrate=bitrate,
             )
             self.stream_managers[content_id] = stream_manager
             
