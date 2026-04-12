@@ -1527,23 +1527,13 @@ class StreamManager:
                     
                 confidence = max(0.0, min(1.0, confidence))
 
-                # Decay runway by sample age, then down-weight low-confidence
-                # samples to protect failover from optimistic telemetry.
-                effective_runway = max(0.0, runway_value - age_s)
-                
-                # STALE DATA PENALTY: Telemetry older than 6s is penalized 
-                # to trigger failover if the producer (StreamGenerator) truly stops.
-                # Threshold increased from 2.0s to 6.0s to respect the Generator's 
-                # natural 2.5s update cadence and allow for 1-2 missed heartbeats.
-                if age_s > 6.0:
-                    # Hyperbolic runway decay
-                    effective_runway /= (age_s - 5.0)
-                    # Severe confidence drop
-                    confidence *= 0.2
-
-                confidence_weight = max(confidence_floor, 0.5 + (0.5 * confidence))
-                confidence_adjusted = effective_runway * confidence_weight
-                candidate_values.append(confidence_adjusted)
+                # LINEAR RUNWAY SYNC: 
+                # To maintain perfect sync with the UI, we use the raw physical runway 
+                # decayed strictly by sample age. We rely on the 2.0s safety_margin 
+                # (added later) to handle telemetry jitter instead of using 
+                # non-linear confidence multipliers that 'go nuts' in the graphs.
+                stable_runway = max(0.0, runway_value - age_s)
+                candidate_values.append(stable_runway)
         except Exception as e:
             logger.debug("Failed to calculate max client buffer for EOF retry: %s", e)
             return 0.0
