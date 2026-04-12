@@ -1521,11 +1521,13 @@ class StreamManager:
                 # samples to protect failover from optimistic telemetry.
                 effective_runway = max(0.0, runway_value - age_s)
                 
-                # STALE DATA PENALTY: Telemetry older than 2s is penalized heavily
-                # to trigger faster failover if client updates stop.
-                if age_s > 2.0:
+                # STALE DATA PENALTY: Telemetry older than 6s is penalized 
+                # to trigger failover if the producer (StreamGenerator) truly stops.
+                # Threshold increased from 2.0s to 6.0s to respect the Generator's 
+                # natural 2.5s update cadence and allow for 1-2 missed heartbeats.
+                if age_s > 6.0:
                     # Hyperbolic runway decay
-                    effective_runway /= (age_s - 1.0)
+                    effective_runway /= (age_s - 5.0)
                     # Severe confidence drop
                     confidence *= 0.2
 
@@ -1688,16 +1690,16 @@ class StreamManager:
                     # Still no sign of life after 10s, drop to dynamic tolerance
                     dynamic_threshold = max(min_tolerance, min(max_tolerance, current_buffer - safety_margin))
             else:
-                # Normal operation after grace period
-                dynamic_threshold = max(min_tolerance, min(max_tolerance, current_buffer - safety_margin))
-        else:
-            # Fallback for non-API modes or missing probes
-            # Use a reduced grace period of 15s instead of the full 30s
-            reduced_grace = 15.0
-            if stream_uptime < reduced_grace or (no_runway_yet and stream_uptime < startup_grace_s):
-                dynamic_threshold = max_tolerance
-            else:
-                dynamic_threshold = max(min_tolerance, min(max_tolerance, current_buffer - safety_margin))
+                # Normal operation: Use buffer minus safety margin.
+                # HARDENING: If client runway is critically low, allow the threshold to 
+                # drop below min_tolerance to prevent stuttering. 
+                # Absolute floor is 0.5s to avoid noise.
+                dynamic_threshold = max(0.5, min(max_tolerance, current_buffer - safety_margin))
+                
+                # If we have a healthy buffer, we still respect the min_tolerance (4.0s) 
+                # to prevent flapping during minor jitters.
+                if current_buffer > (min_tolerance + safety_margin):
+                    dynamic_threshold = max(min_tolerance, dynamic_threshold)
 
         return float(dynamic_threshold), float(current_buffer), float(max_tolerance)
 
