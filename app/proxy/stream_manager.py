@@ -807,6 +807,11 @@ class StreamManager:
     def start_stream(self):
         """Start streaming from AceStream engine"""
         try:
+            # RESET DATA PLANE: Clear any stale fragments from previous connections
+            # to prevent polluting the new engine's bitstream.
+            if hasattr(self, "buffer") and self.buffer:
+                self.buffer.reset()
+                
             logger.debug(f"Starting HTTP stream reader for playback URL: {self.playback_url}")
             logger.debug(f"Chunk size: {ConfigHelper.chunk_size()}")
             
@@ -997,6 +1002,11 @@ class StreamManager:
             old_bitrate = self.bitrate
             old_resolved_infohash = self.resolved_infohash
             old_ace_api_client = self.ace_api_client
+
+            # RESET DATA PLANE: Flush and Clear any stale fragments from previous connection
+            if hasattr(self, "buffer") and self.buffer:
+                self.buffer.flush() # Try to save what we have as a final chunk
+                self.buffer.reset()
 
             with self._reader_lock:
                 old_reader = self.http_reader

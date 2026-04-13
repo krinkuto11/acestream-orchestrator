@@ -67,6 +67,42 @@ class StreamBuffer:
         self._source_rate_ema = None
         self._last_source_update_time = time.time()
     
+    def reset(self):
+        """
+        Forcefully reset the buffer's write state.
+        Should be called when swapping engines or reconnecting to ensure
+        no stale bytes from a previous connection pollute the new stream.
+        """
+        with self.lock:
+            old_len = len(self._write_buffer)
+            self._write_buffer = bytearray()
+            self._partial_packet = bytearray()
+            logger.info(f"[{self.content_id}] StreamBuffer reset: discarded {old_len} bytes of pending data")
+
+    def flush(self):
+        """
+        Write any remaining data in the write buffer to Redis immediately,
+        even if it's smaller than target_chunk_size. Use for clean shutdowns.
+        """
+        with self.lock:
+            if not self._write_buffer:
+                return
+            
+            chunk_data = bytes(self._write_buffer)
+            self._write_buffer = bytearray()
+            self._partial_packet = bytearray()
+            
+            if self.redis_client:
+                chunk_index = self.redis_client.incr(self.buffer_index_key)
+                chunk_key = RedisKeys.buffer_chunk(self.content_id, chunk_index)
+                self.redis_client.setex(chunk_key, self.chunk_ttl, chunk_data)
+                self.index = chunk_index
+                
+                logger.info(f"[{self.content_id}] StreamBuffer flushed {len(chunk_data)} bytes as final chunk {chunk_index}")
+                
+                with self.chunk_available:
+                    self.chunk_available.notify_all()
+
     def add_chunk(self, chunk):
         """Add data with optimized Redis storage and TS packet alignment"""
         if not chunk:

@@ -80,14 +80,23 @@ class SyncHunter:
     """
     TS Sync Hunter - Ensures stream alignment by finding the first 0x47 sync byte
     and verifying the packet structure before allowing data through.
+    
+    Hardened Version:
+    1. Wait for PUSI=1 (Start of Frame) before locking to ensure clean decoder starts.
+    2. Self-Healing: If sync is lost while locked, drop back to hunting mode.
     """
     
-    def __init__(self, required_confirmations=3):
+    # Maximum consecutive invalid sync bytes allowed before dropping lock
+    MAX_INVALID_SYNC = 5
+    
+    def __init__(self, required_confirmations=3, align_to_frame=True):
         self.buffer = bytearray()
         self.is_locked = False
         self.packet_size = 188
         self.sync_byte = 0x47
         self.required_confirmations = required_confirmations
+        self.align_to_frame = align_to_frame
+        self.invalid_sync_count = 0
         self.logger = get_logger("SyncHunter")
 
     def feed(self, data: bytes) -> bytes:
@@ -100,30 +109,55 @@ class SyncHunter:
             
         self.buffer.extend(data)
         
-        # If already locked, just return what we have (preserving alignment)
+        # --- SELF-HEALING / LOCKED PATH ---
         if self.is_locked:
             valid_length = (len(self.buffer) // self.packet_size) * self.packet_size
-            if valid_length > 0:
-                aligned_data = bytes(self.buffer[:valid_length])
-                del self.buffer[:valid_length]
-                return aligned_data
-            return b""
+            if valid_length == 0:
+                return b""
 
-        # HUNTING MODE: Find the first sync byte and verify sequence
+            # Verify sync bytes in the outgoing buffer
+            to_output = bytearray()
+            for i in range(0, valid_length, self.packet_size):
+                if self.buffer[i] == self.sync_byte:
+                    to_output.extend(self.buffer[i:i+self.packet_size])
+                    self.invalid_sync_count = 0
+                else:
+                    self.invalid_sync_count += 1
+                    if self.invalid_sync_count >= self.MAX_INVALID_SYNC:
+                        self.logger.warning(f"Sync lost after {self.invalid_sync_count} invalid bytes. Re-entering hunting mode.")
+                        self.is_locked = False
+                        del self.buffer[:i] # Keep the rest for re-hunting
+                        return bytes(to_output)
+            
+            del self.buffer[:valid_length]
+            return bytes(to_output)
+
+        # --- HUNTING MODE ---
+        # We need at least (confirmations * size) to verify a sequence
         while len(self.buffer) >= (self.packet_size * self.required_confirmations):
             # Find the first 0x47
             try:
                 first_sync = self.buffer.index(self.sync_byte)
             except ValueError:
-                # No sync byte in the entire buffer, discard all except the very last byte
-                # in case it's the start of a multi-byte sequence (not applicable for single 0x47 though)
-                self.buffer.clear()
+                # No sync byte at all, keep only the last partial bit for next feed
+                del self.buffer[:-1]
                 return b""
 
             # Discard junk before the sync byte
             if first_sync > 0:
                 del self.buffer[:first_sync]
+                if len(self.buffer) < (self.packet_size * self.required_confirmations):
+                    break
             
+            # OPTIONAL: Frame Alignment (Wait for PUSI=1)
+            # PES packets (H.264 frames) start with the PUSI bit set in the TS header.
+            # packet[1] & 0x40 == 1
+            if self.align_to_frame:
+                is_start_of_frame = bool(self.buffer[1] & 0x40)
+                if not is_start_of_frame:
+                    del self.buffer[:1]
+                    continue
+
             # Verify the sequence of sync bytes
             verified = True
             for i in range(1, self.required_confirmations):
@@ -133,7 +167,8 @@ class SyncHunter:
             
             if verified:
                 self.is_locked = True
-                self.logger.info(f"Sync Hunter locked after {first_sync} bytes of junk.")
+                self.invalid_sync_count = 0
+                self.logger.info(f"Sync Hunter locked onto frame boundary (verified {self.required_confirmations} packets)")
                 
                 # Return all complete packets
                 valid_length = (len(self.buffer) // self.packet_size) * self.packet_size
@@ -141,8 +176,7 @@ class SyncHunter:
                 del self.buffer[:valid_length]
                 return aligned_data
             else:
-                # This 0x47 was a 'false sync' (found in payload). Discard it and keep hunting.
-                # Correct fix: skip this sync byte and look for the next one.
+                # This 0x47 was a 'false sync'. Skip one byte and keep hunting.
                 del self.buffer[:1]
                 continue
                 
