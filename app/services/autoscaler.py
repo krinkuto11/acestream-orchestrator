@@ -373,11 +373,30 @@ class EngineController:
 
             for vpn_name, vpn_engines in active_by_vpn.items():
                 if len(vpn_engines) > preferred_limit:
+                    all_engines_on_node = state.get_engines_by_vpn(vpn_name)
+                    if any(state.is_engine_draining(e.container_id) for e in all_engines_on_node):
+                        # Skip this node for now; we already have a rebalance in progress here.
+                        # This prevents burst volatility and allows the scheduler to fill capacity elsewhere.
+                        continue
+
                     excess_count = len(vpn_engines) - preferred_limit
-                    # Prioritize draining engines with the least stream workload
-                    to_drain = sorted(vpn_engines, key=lambda e: len(e.streams))[:excess_count]
+                    
+                    # Prioritize draining:
+                    # 1. Non-forwarded engines first
+                    # 2. Engines with the least stream workload
+                    # 3. Idle engines (0 streams)
+                    drain_candidates = [e for e in vpn_engines if not e.forwarded]
+                    
+                    if not drain_candidates:
+                        # If ALL engines are forwarded (unusual), we proceed with caution
+                        # or skip rebalancing to ensure stream stability.
+                        logger.debug("VPN node %s is oversubscribed but only forwarded engines exist. Skipping density rebalance.", vpn_name)
+                        continue
+
+                    to_drain = sorted(drain_candidates, key=lambda e: len(e.streams))[:excess_count]
+                    
                     logger.info(
-                        "VPN node %s is oversubscribed (%s > %s); marking %s engine(s) for rebalancing",
+                        "VPN node %s is oversubscribed (%s > %s); marking %s engine(s) for rebalancing (protected forwarded engines)",
                         vpn_name,
                         len(vpn_engines),
                         preferred_limit,

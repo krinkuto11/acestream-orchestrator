@@ -311,16 +311,37 @@ class ResourceScheduler:
                     "falling back to standard node routing"
                 )
 
-        selected = min(
-            candidate_nodes,
-            key=lambda node: len(state.get_engines_by_vpn(str(node.get("container_name") or "")))
-            + _vpn_pending_engines.get(str(node.get("container_name") or ""), 0),
-        )
+        # 3. Apply Density Limits
+        # Filter candidate nodes that have not yet reached the preferred density limit.
+        # We count ALL engines (Active + Draining) plus engines currently being provisioned
+        # by this scheduler pass to ensure we don't oversubscribe nodes during burst scaling.
+        preferred_limit = vpn_settings.get("preferred_engines_per_vpn", cfg.PREFERRED_ENGINES_PER_VPN)
+        
+        nodes_with_capacity = []
+        for node in candidate_nodes:
+            vpn_name = str(node.get("container_name") or "")
+            if not vpn_name:
+                continue
+            
+            # state.get_engines_by_vpn returns ALL engines (Healthy, Starting, Draining)
+            current_total = len(state.get_engines_by_vpn(vpn_name))
+            pending = _vpn_pending_engines.get(vpn_name, 0)
+            
+            if (current_total + pending) < preferred_limit:
+                nodes_with_capacity.append((node, current_total + pending))
+
+        if not nodes_with_capacity:
+            diag = f"all {len(candidate_nodes)} candidate dynamic VPN nodes are at capacity (limit: {preferred_limit}) - cannot schedule AceStream engine"
+            raise RuntimeError(diag)
+
+        # 4. Select Least Loaded Node among those with capacity
+        selected, _ = min(nodes_with_capacity, key=lambda x: x[1])
         selected_name = str(selected.get("container_name") or "").strip()
+        
         if not selected_name:
             raise RuntimeError("Selected dynamic VPN node has no container name")
 
-        logger.info(f"Scheduling new engine on dynamic VPN '{selected_name}'")
+        logger.info(f"Scheduling new engine on dynamic VPN '{selected_name}' (Effective load: {current_total + pending}/{preferred_limit})")
         return selected_name
 
     @staticmethod
