@@ -266,22 +266,36 @@ class StreamBuffer:
             
             results = pipe.execute()
             
-            # Process results
-            chunks = [result for result in results if result is not None]
+            # Process results: CONTIGUOUS ONLY
+            # If a chunk is missing (latency/race), we MUST NOT skip it. 
+            # We return only the contiguous prefix and wait for the hole to be filled.
+            chunks = []
+            last_idx = start_id - 1
+            for i, result in enumerate(results):
+                if result is None:
+                    # WE HIT A HOLE! 
+                    # This happens if the reader is faster than the writer's SETEX.
+                    # Stop here to maintain bitstream integrity.
+                    logger.debug(f"[{request_id}] Missing chunk {start_id + i} in Redis (race condition protected). Stopping fetch.")
+                    break
+                chunks.append(result)
+                last_idx = start_id + i
             
-            # Count non-None results
+            # Count results
             found_chunks = len(chunks)
-            missing_chunks = len(results) - found_chunks
+            missing_in_range = len(results) - found_chunks
             
-            if missing_chunks > 0:
-                logger.debug(f"[{request_id}] Missing {missing_chunks}/{len(results)} chunks in Redis")
+            if missing_in_range > 0 and len(chunks) == 0:
+                logger.debug(f"[{request_id}] Still waiting for chunk {start_id}")
             
-            fetched_end_index = max(0, end_id - 1)
+            # Current cursor for this caller: the last successfully fetched chunk index
+            fetched_end_index = last_idx
             
             # Final log message
             chunk_sizes = [len(c) for c in chunks]
             total_bytes = sum(chunk_sizes) if chunks else 0
-            logger.debug(f"[{request_id}] Returning {len(chunks)} chunks ({total_bytes} bytes)")
+            if chunks:
+                logger.debug(f"[{request_id}] Returning {len(chunks)} contiguous chunks ({total_bytes} bytes). Next index should be {fetched_end_index + 1}")
             
             return chunks, fetched_end_index
             
@@ -381,12 +395,19 @@ class StreamBuffer:
             
             results = pipe.execute()
             
-            # Filter out None results
-            chunks = [result for result in results if result is not None]
+            # Filter out results: CONTIGUOUS ONLY
+            chunks = []
+            for result in results:
+                if result is None:
+                    # WE HIT A HOLE! STOP.
+                    break
+                chunks.append(result)
             
             # Update local index if needed
-            if chunks and start_id + len(chunks) - 1 > self.index:
-                self.index = start_id + len(chunks) - 1
+            if chunks:
+                last_idx = start_id + len(chunks) - 1
+                if last_idx > self.index:
+                    self.index = last_idx
             
             return chunks
             
@@ -430,10 +451,10 @@ class StreamBuffer:
                         if self.redis_client:
                             try:
                                 chunk_index = self.redis_client.incr(self.buffer_index_key)
-                                chunk_key = f"{self.buffer_prefix}{chunk_index}"
+                                chunk_key = RedisKeys.buffer_chunk(self.content_id, chunk_index)
                                 self.redis_client.setex(chunk_key, self.chunk_ttl, bytes(final_chunk))
                                 self.index = chunk_index
-                                logger.info(f"Flushed final chunk of {len(final_chunk)} bytes to Redis")
+                                logger.info(f"Flushed final chunk of {len(final_chunk)} bytes to Redis at index {chunk_index}")
                             except Exception as e:
                                 logger.error(f"Error flushing final chunk: {e}")
                 
