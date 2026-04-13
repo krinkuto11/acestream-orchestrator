@@ -311,11 +311,23 @@ class ResourceScheduler:
                     "falling back to standard node routing"
                 )
 
-        # 3. Apply Density Limits
-        # Filter candidate nodes that have not yet reached the preferred density limit.
-        # We count ALL engines (Active + Draining) plus engines currently being provisioned
-        # by this scheduler pass to ensure we don't oversubscribe nodes during burst scaling.
-        preferred_limit = vpn_settings.get("preferred_engines_per_vpn", cfg.PREFERRED_ENGINES_PER_VPN)
+        # 3. Apply Balanced Density Limits
+        # Instead of filling nodes to their absolute maximum, we calculate a 
+        # 'Balanced Limit' based on the total desired engines and the number of 
+        # nodes we expect to have. For example, 8 engines with a 5-per-node max 
+        # will target a 4/4 split.
+        max_per_vpn = vpn_settings.get("preferred_engines_per_vpn", cfg.PREFERRED_ENGINES_PER_VPN)
+        desired_engines = max(0, int(state.get_desired_replica_count()))
+        
+        # Calculate how many nodes we actually NEED for this demand
+        if max_per_vpn > 0 and desired_engines > 0:
+            required_nodes = math.ceil(desired_engines / max_per_vpn)
+            # The 'Balanced Limit' is the fair share each node should take
+            balanced_limit = math.ceil(desired_engines / required_nodes)
+            # Never exceed the absolute configured maximum
+            effective_limit = min(balanced_limit, max_per_vpn)
+        else:
+            effective_limit = max_per_vpn
         
         nodes_with_capacity = []
         for node in candidate_nodes:
@@ -327,12 +339,14 @@ class ResourceScheduler:
             current_total = len(state.get_engines_by_vpn(vpn_name))
             pending = _vpn_pending_engines.get(vpn_name, 0)
             
-            if (current_total + pending) < preferred_limit:
+            if (current_total + pending) < effective_limit:
                 nodes_with_capacity.append((node, current_total + pending))
+            else:
+                rejection_reasons.append(f"{vpn_name}: at balanced capacity ({current_total + pending}/{effective_limit})")
 
         if not nodes_with_capacity:
-            diag = f"all {len(candidate_nodes)} candidate dynamic VPN nodes are at capacity (limit: {preferred_limit}) - cannot schedule AceStream engine"
-            raise RuntimeError(diag)
+            diag = "; ".join(rejection_reasons) if rejection_reasons else f"all {len(candidate_nodes)} nodes at capacity"
+            raise RuntimeError(f"Resource restriction: {diag} - cannot schedule AceStream engine")
 
         # 4. Select Least Loaded Node among those with capacity
         selected, _ = min(nodes_with_capacity, key=lambda x: x[1])
@@ -492,24 +506,28 @@ class ResourceScheduler:
                 return False, p2p_port
 
             # Check both existing engines and pending intents to avoid burst-election collisions
+            # We also verify that the existing leader is actually on a PF-capable node.
             has_existing = state.has_forwarded_engine_for_vpn(vpn_container)
             has_pending = state.is_forwarded_engine_pending(vpn_container)
             
             if not has_existing and not has_pending:
                 from .gluetun import wait_for_port_sync
+                # Strict election: attempt to get a port for the leader slot
                 p2p_port = wait_for_port_sync(vpn_container)
                 is_forwarded = p2p_port is not None and p2p_port > 0
                 if is_forwarded:
                     logger.info(f"Scheduled forwarded engine for VPN '{vpn_container}' with P2P port {p2p_port}")
                 else:
-                    # Fallback to unique internal port if election failed or no port returned
+                    # If we failed to get a port, we still use an internal port for this engine
+                    # but we do NOT mark it as forwarded. The next scheduler pass will 
+                    # see the node as 'headless' and try again with the next engine.
                     p2p_port = alloc.alloc_internal_p2p_port(vpn_container)
-                    logger.info(f"Scheduled engine for VPN '{vpn_container}' with internal-only fallback P2P port {p2p_port}")
+                    logger.warning(f"Could not elect leader for PF-enabled VPN '{vpn_container}' (no port from Gluetun). Engine will use internal port {p2p_port}")
             else:
-                # Forwarded slot already taken (allocated or pending in intent queue)
+                # Forwarded slot already taken or pending
                 is_forwarded = False
                 p2p_port = alloc.alloc_internal_p2p_port(vpn_container)
-                logger.debug(f"Assigned unique internal P2P port {p2p_port} to non-forwarded engine on VPN '{vpn_container}'")
+                logger.debug(f"Assigned unique internal P2P port {p2p_port} to follower engine on VPN '{vpn_container}'")
         else:
             # Global/no-VPN case
             if not state.has_forwarded_engine() and not state.has_pending_forwarded_engine():

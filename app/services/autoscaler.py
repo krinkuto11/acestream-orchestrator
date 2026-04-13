@@ -318,9 +318,11 @@ class EngineController:
         # but exclude those marked as draining
         active_alive = [e for e in managed_engines if e.health_status in ("healthy", "unknown") and not state.is_engine_draining(e.container_id)]
         actual_count = len(active_alive)
-        
         deficit = desired - actual_count
-        
+
+        # 1. Scaling UP (Deficit Filling)
+        # We process this in a guarded block so that capacity rejections in one VPN 
+        # do not abort the entire management pass for other nodes.
         if deficit > 0:
             total_engines = len(engines)
             creation_count = min(deficit, max(0, cfg.MAX_REPLICAS - total_engines))
@@ -329,88 +331,105 @@ class EngineController:
                 loop_reserved_names = []
                 try:
                     for _ in range(creation_count):
-                        spec = self.scheduler.schedule_new_engine(extra_reserved_names=loop_reserved_names)
-                        if spec:
-                            # Track name locally for this loop pass to prevent internal collisions
-                            loop_reserved_names.append(spec.container_name)
-                            
-                            # Emit intent with the container name and VPN details for global visibility
-                            intent_data = state.emit_scaling_intent(
-                                "create_request", 
-                                details={
-                                    "source": "autoscaler",
-                                    "container_name": spec.container_name,
-                                    "vpn_container": spec.vpn_container_id,
-                                    "forwarded": spec.forwarded
-                                }
-                            )
-                            await self.intent_queue.put(Intent("create", spec, intent_data["id"]))
+                        try:
+                            spec = self.scheduler.schedule_new_engine(extra_reserved_names=loop_reserved_names)
+                            if spec:
+                                loop_reserved_names.append(spec.container_name)
+                                intent_data = state.emit_scaling_intent(
+                                    "create_request", 
+                                    details={
+                                        "source": "autoscaler",
+                                        "container_name": spec.container_name,
+                                        "vpn_container": spec.vpn_container_id,
+                                        "forwarded": spec.forwarded
+                                    }
+                                )
+                                await self.intent_queue.put(Intent("create", spec, intent_data["id"]))
+                        except Exception as e:
+                            if _is_transient_vpn_not_ready_error(e):
+                                _log_vpn_not_ready_block(e)
+                                # Stop creating in this pass but continue to other lifecycle stages
+                                break
+                            else:
+                                logger.error(f"Unexpected error creating engine intent: {e}")
+                                break
                 except Exception as e:
-                    if _is_transient_vpn_not_ready_error(e):
-                        _log_vpn_not_ready_block(e)
-                    else:
-                        raise
-                    
+                    logger.error(f"Failed scaling up pass: {e}")
+
+        # 2. Scaling DOWN (Purge Surplus)
         elif deficit < 0:
             surplus = abs(deficit)
             candidates = self._select_termination_candidates(active_alive, surplus)
             if candidates:
                 logger.info(f"Scaling DOWN: surplus={surplus}, emitting {len(candidates)} termination intents")
                 for c_id in candidates:
-                    intent_data = state.emit_scaling_intent("terminate_request", details={"container_id": c_id})
-                    await self.intent_queue.put(Intent("terminate", c_id, intent_data["id"]))
+                    try:
+                        intent_data = state.emit_scaling_intent("terminate_request", details={"container_id": c_id, "reason": "surplus_cleanup"})
+                        await self.intent_queue.put(Intent("terminate", c_id, intent_data["id"]))
+                    except Exception as e:
+                        logger.error(f"Failed emitting termination intent for {c_id}: {e}")
 
-        # Check for oversubscribed VPN nodes and trigger rebalancing if needed.
-        # This ensures that when preferred_engines_per_vpn decreases, we migrate 
-        # workload to the newly created (less dense) nodes.
+        # 3. Density Rebalancing & Headless Node Recovery
+        # We calculate the BALANCED LIMIT here to match the scheduler's logic.
         vpn_settings = SettingsPersistence.load_vpn_config() or {}
-        preferred_limit = vpn_settings.get("preferred_engines_per_vpn", cfg.PREFERRED_ENGINES_PER_VPN)
-        if preferred_limit > 0:
+        max_per_vpn = vpn_settings.get("preferred_engines_per_vpn", cfg.PREFERRED_ENGINES_PER_VPN)
+        
+        # Determine the target density limit (Balanced Density)
+        if max_per_vpn > 0 and desired > 0:
+            # We count ACTIVE nodes (healthy or starting) to know our split target
+            all_vpn_nodes = {node.get("container_name"): node for node in state.list_vpn_nodes() if node.get("managed_dynamic")}
+            ready_vpn_count = sum(1 for n in all_vpn_nodes.values() if not state.is_vpn_node_draining(str(n.get("container_name") or "")))
+            
+            # If we know we need multiple nodes, but only one is ready, we still 
+            # use the final desired count to calculate the fair-share split.
+            required_nodes = math.ceil(desired / max_per_vpn)
+            effective_limit = min(max_per_vpn, math.ceil(desired / max(1, required_nodes)))
+        else:
+            effective_limit = max_per_vpn
+
+        if effective_limit > 0:
             active_by_vpn = {}
             for e in active_alive:
                 if e.vpn_container:
                     active_by_vpn.setdefault(e.vpn_container, []).append(e)
 
             for vpn_name, vpn_engines in active_by_vpn.items():
-                if len(vpn_engines) > preferred_limit:
+                if len(vpn_engines) > effective_limit:
+                    # Node is over-balanced. Check if we should move engines to less dense nodes.
                     all_engines_on_node = state.get_engines_by_vpn(vpn_name)
                     if any(state.is_engine_draining(e.container_id) for e in all_engines_on_node):
-                        # Skip this node for now; we already have a rebalance in progress here.
-                        # This prevents burst volatility and allows the scheduler to fill capacity elsewhere.
-                        continue
+                        continue # Rebalance already in progress on this node
 
-                    excess_count = len(vpn_engines) - preferred_limit
-                    
-                    # Prioritize draining:
-                    # 1. Non-forwarded engines first
-                    # 2. Engines with the least stream workload
-                    # 3. Idle engines (0 streams)
+                    excess_count = len(vpn_engines) - effective_limit
+                    # Prioritize draining followers with least workload
                     drain_candidates = [e for e in vpn_engines if not e.forwarded]
-                    
                     if not drain_candidates:
-                        # If ALL engines are forwarded (unusual), we proceed with caution
-                        # or skip rebalancing to ensure stream stability.
-                        logger.debug("VPN node %s is oversubscribed but only forwarded engines exist. Skipping density rebalance.", vpn_name)
-                        continue
+                        continue # Don't drain the leader unless absolutely necessary
 
                     to_drain = sorted(drain_candidates, key=lambda e: len(e.streams))[:excess_count]
-                    
-                    logger.info(
-                        "VPN node %s is oversubscribed (%s > %s); marking %s engine(s) for rebalancing (protected forwarded engines)",
-                        vpn_name,
-                        len(vpn_engines),
-                        preferred_limit,
-                        len(to_drain),
-                    )
+                    logger.info("VPN node %s is over-balanced (%s > %s); rebalancing %s follower(s)", vpn_name, len(vpn_engines), effective_limit, len(to_drain))
                     for eng in to_drain:
-                        if state.mark_engine_draining(eng.container_id, reason="vpn_oversubscribed"):
-                            logger.info("Marked engine %s on %s as draining for density rebalance", eng.container_id[:12], vpn_name)
+                        state.mark_engine_draining(eng.container_id, reason="density_balanced")
+                else:
+                    # Node is WITHIN density balance limits. Check for "Headless" state.
+                    if ResourceScheduler._node_supports_port_forwarding(all_vpn_nodes.get(vpn_name, {})):
+                        has_leader = any(e.forwarded for e in vpn_engines)
+                        has_pending = state.is_forwarded_engine_pending(vpn_name)
+                        
+                        if not has_leader and not has_pending:
+                            # Node supports PF but has no leader. 
+                            # If we have followers, we must drain one to force a leader replacement.
+                            if vpn_engines:
+                                logger.warning("VPN node %s is headless (PF-capable but no leader). Marking one follower for replacement.", vpn_name)
+                                # Drain the most idle follower
+                                candidate = sorted(vpn_engines, key=lambda e: len(e.streams))[0]
+                                state.mark_engine_draining(candidate.container_id, reason="headless_correction")
 
-        # Also cleanup any draining engines that have become idle
+        # 4. Cleanup Idle Draining Engines
         draining_engines = [e for e in managed_engines if state.is_engine_draining(e.container_id)]
         for e in draining_engines:
             if not e.streams and can_stop_engine(e.container_id, bypass_grace_period=True):
-                intent_data = state.emit_scaling_intent("terminate_request", details={"container_id": e.container_id, "reason": "draining_cleanup"})
+                intent_data = state.emit_scaling_intent("terminate_request", details={"container_id": e.container_id, "reason": "draining_idle_cleanup"})
                 await self.intent_queue.put(Intent("terminate", e.container_id, intent_data["id"]))
 
     def _select_termination_candidates(self, engines: List[Any], count: int) -> List[str]:
