@@ -97,7 +97,15 @@ class ClientManager:
             rebuilt_clients[client_id] = dict(payload)
         self.last_activity = rebuilt_activity
         self.clients = rebuilt_clients
-
+    def record_client_activity(
+        self,
+        client_ip: Optional[str] = None,
+        client_id: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        bytes_sent: Optional[float] = None,
+        chunks_sent: Optional[int] = None,
+        request_kind: Optional[str] = None,
+        sequence: Optional[int] = None,
         buffer_seconds_behind: Optional[float] = None,
         now: Optional[float] = None,
     ):

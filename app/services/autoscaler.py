@@ -360,6 +360,33 @@ class EngineController:
                     intent_data = state.emit_scaling_intent("terminate_request", details={"container_id": c_id})
                     await self.intent_queue.put(Intent("terminate", c_id, intent_data["id"]))
 
+        # Check for oversubscribed VPN nodes and trigger rebalancing if needed.
+        # This ensures that when preferred_engines_per_vpn decreases, we migrate 
+        # workload to the newly created (less dense) nodes.
+        vpn_settings = SettingsPersistence.load_vpn_config() or {}
+        preferred_limit = vpn_settings.get("preferred_engines_per_vpn", cfg.PREFERRED_ENGINES_PER_VPN)
+        if preferred_limit > 0:
+            active_by_vpn = {}
+            for e in active_alive:
+                if e.vpn_container:
+                    active_by_vpn.setdefault(e.vpn_container, []).append(e)
+
+            for vpn_name, vpn_engines in active_by_vpn.items():
+                if len(vpn_engines) > preferred_limit:
+                    excess_count = len(vpn_engines) - preferred_limit
+                    # Prioritize draining engines with the least stream workload
+                    to_drain = sorted(vpn_engines, key=lambda e: len(e.streams))[:excess_count]
+                    logger.info(
+                        "VPN node %s is oversubscribed (%s > %s); marking %s engine(s) for rebalancing",
+                        vpn_name,
+                        len(vpn_engines),
+                        preferred_limit,
+                        len(to_drain),
+                    )
+                    for eng in to_drain:
+                        if state.mark_engine_draining(eng.container_id, reason="vpn_oversubscribed"):
+                            logger.info("Marked engine %s on %s as draining for density rebalance", eng.container_id[:12], vpn_name)
+
         # Also cleanup any draining engines that have become idle
         draining_engines = [e for e in managed_engines if state.is_engine_draining(e.container_id)]
         for e in draining_engines:
