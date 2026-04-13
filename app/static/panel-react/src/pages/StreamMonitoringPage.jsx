@@ -72,6 +72,11 @@ function toInt(value) {
   return Number.isNaN(n) ? null : n
 }
 
+function toNumber(value) {
+  const parsed = Number.parseFloat(String(value ?? ''))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 function normalizeContentRef(value) {
   if (!value) return ''
   const trimmed = String(value).trim().toLowerCase()
@@ -206,7 +211,7 @@ function BufferWindowBar({ livepos, runway = 0, runwayMax = 0 }) {
   )
 }
 
-function MonitorCard({ monitor, isExpanded, isSelected, isPlayingInProxy, isStopping, isDeleting, onToggleExpand, onToggleSelect, onStop, onDelete }) {
+function MonitorCard({ monitor, isExpanded, isSelected, isPlayingInProxy, isStopping, isDeleting, onToggleExpand, onToggleSelect, onStop, onDelete, streams = [] }) {
   const latest = monitor._derived.latest || {}
   const movement = monitor.livepos_movement || {}
   const statusText = latest.status_text || latest.status || 'unknown'
@@ -891,6 +896,7 @@ export function StreamMonitoringPage({ orchUrl, apiKey, streams = [] }) {
                 onToggleSelect={(id, state) => setSelectedById(p => ({ ...p, [id]: state }))}
                 onStop={(id) => handleAction(id, 'stop')}
                 onDelete={(id) => handleAction(id, 'delete')}
+                streams={streams}
               />
             ))}
           </div>
