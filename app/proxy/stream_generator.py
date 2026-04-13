@@ -418,6 +418,9 @@ class StreamGenerator:
             yield fat_keepalive
             self.network_bytes_sent += len(fat_keepalive)
             
+            # Keep telemetry fresh during hoarding so dashboard shows buffer growth
+            self._maybe_update_client_position(source="prebuffer_hoarding")
+            
             time.sleep(0.5)
 
     def _advance_local_index(self, chunks_received: int, fetched_end_index=None):
