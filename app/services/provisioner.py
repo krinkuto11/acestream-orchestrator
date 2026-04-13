@@ -356,7 +356,7 @@ class ResourceScheduler:
         if not selected_name:
             raise RuntimeError("Selected dynamic VPN node has no container name")
 
-        logger.info(f"Scheduling new engine on dynamic VPN '{selected_name}' (Effective load: {current_total + pending}/{preferred_limit})")
+        logger.info(f"Scheduling new engine on dynamic VPN '{selected_name}' (Effective load: {current_total + pending}/{effective_limit})")
         return selected_name
 
     @staticmethod
