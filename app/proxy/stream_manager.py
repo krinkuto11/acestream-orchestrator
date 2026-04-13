@@ -1402,13 +1402,19 @@ class StreamManager:
                     last_ts = None
                     if self._is_api_mode():
                         probe = self.collect_legacy_stats_probe(force=False) or {}
-                        last_ts = probe.get("livepos", {}).get("last_ts")
+                        livepos = probe.get("livepos")
+                        if isinstance(livepos, dict):
+                            last_ts = livepos.get("last_ts")
                     elif self.stat_url:
                         try:
                             resp = requests.get(self.stat_url, timeout=0.5)
                             if resp.status_code == 200:
                                 probe = resp.json().get("response", {})
-                                last_ts = probe.get("last_ts") or probe.get("livepos", {}).get("last_ts")
+                                last_ts = probe.get("last_ts")
+                                if last_ts is None:
+                                    livepos = probe.get("livepos")
+                                    if isinstance(livepos, dict):
+                                        last_ts = livepos.get("last_ts")
                         except Exception:
                             pass
                         
