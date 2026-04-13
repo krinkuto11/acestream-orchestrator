@@ -64,6 +64,10 @@ class Config:
     # Unified prebuffer for TS/HLS startup holdback (seconds)
     PROXY_PREBUFFER_SECONDS: int = 0
     
+    # Pacing settings
+    PACING_BURST_SECONDS: float = 15.0
+    PACING_BITRATE_MULTIPLIER: float = 1.10
+    
     # Stream mode (TS or HLS)
     STREAM_MODE: str = 'TS'  # Default to MPEG-TS for backwards compatibility
 
@@ -321,3 +325,13 @@ class ConfigHelper:
     def proxy_max_catchup_multiplier():
         """Get maximum speed multiplier for client catch-up pacing (1.0 = real-time, 2.0 = double-time)."""
         return float(ConfigHelper._get_proxy_value("proxy_max_catchup_multiplier", Config.PROXY_MAX_CATCHUP_MULTIPLIER))
+
+    @staticmethod
+    def pacing_burst_seconds():
+        """Get burst allowance window for initial playback or buffer gaps (seconds)."""
+        return float(ConfigHelper._get_proxy_value("pacing_burst_seconds", Config.PACING_BURST_SECONDS))
+
+    @staticmethod
+    def pacing_bitrate_multiplier():
+        """Get constant headroom multiplier for pacing (e.g. 1.1 = deliver 10% faster than engine)."""
+        return float(ConfigHelper._get_proxy_value("pacing_bitrate_multiplier", Config.PACING_BITRATE_MULTIPLIER))

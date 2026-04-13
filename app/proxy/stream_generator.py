@@ -68,8 +68,9 @@ class StreamGenerator:
 
         # Virtual Runway tracking
         self.pacing_start_time = None
-        self.pacing_burst_chunks = PACING_BURST_CHUNKS # Burst allowance for chunk-based pacing
-        self.pacing_burst_seconds = 6.0               # Burst allowance for byte-based pacing
+        self.pacing_burst_chunks = 10  # Initial burst allowance for chunk-based pacing
+        self.pacing_burst_seconds = ConfigHelper.pacing_burst_seconds()
+        self.pacing_bitrate_multiplier = ConfigHelper.pacing_bitrate_multiplier()
         
         # Byte-based pacing (Target Bitrate)
         self.stream_bitrate = 0  # In bytes per second
@@ -290,42 +291,48 @@ class StreamGenerator:
         self.chunk_rate_ema = (alpha * instant_rate) + ((1.0 - alpha) * float(self.chunk_rate_ema))
 
     def _maybe_apply_client_pacing(self):
-        """Pace the client to the engine's target bitrate or EMA speed."""
+        """Pace the client to the engine's target bitrate with safety headroom and tiered catch-up."""
         if not self.pacing_start_time:
             return
 
         # 1. Base Pacing variables
-        current_bitrate = self.stream_bitrate
-        pacing_burst_seconds = self.pacing_burst_seconds
         now = time.time()
         elapsed = now - self.pacing_start_time
         
-        if elapsed <= 1.0: # Grace period
+        if elapsed <= 2.0: # Grace period expanded to 2s
             return
 
         # PRIMARY: Byte-based pacing using engine's native target bitrate
-        if current_bitrate > 0:
-            # 2. DRIFT COMPENSATION: 
+        if self.stream_bitrate > 0:
+            current_bitrate = self.stream_bitrate
+            
+            # 2. TIERED CATCH-UP & HEADROOM
+            # Instead of pacing exactly to bitrate, we pace to a 'safe' upper bound.
+            # Default is 110% of engine bitrate to handle VBR peaks and tiny drifts.
+            pacing_multiplier = self.pacing_bitrate_multiplier 
+            
             if hasattr(self, "buffer") and hasattr(self, "local_index"):
                 proxy_runway_chunks = max(0, self.buffer.index - self.local_index)
-                if proxy_runway_chunks > 15: # Engine is running away from the client!
-                    current_bitrate = int(current_bitrate * 1.15) 
-
-            pacing_burst_bytes = int(current_bitrate * pacing_burst_seconds)
-            expected_bytes = elapsed * current_bitrate
+                
+                if proxy_runway_chunks > 30: 
+                    # CRITICAL LAG: Max catchup
+                    pacing_multiplier = ConfigHelper.proxy_max_catchup_multiplier()
+                elif proxy_runway_chunks > 15:
+                    # MODERATE LAG: 1.5x catchup
+                    pacing_multiplier = max(pacing_multiplier, 1.5)
+            
+            effective_bitrate = int(current_bitrate * pacing_multiplier)
+            pacing_burst_bytes = int(effective_bitrate * self.pacing_burst_seconds)
+            expected_bytes = elapsed * effective_bitrate
             
             # 3. Throttle using the video_bytes_sent only (ignore keep-alives)
             if self.video_bytes_sent > expected_bytes + pacing_burst_bytes:
-                wait_time = (self.video_bytes_sent - pacing_burst_bytes) / float(current_bitrate) - elapsed
+                # Calculate sleep time based on effective bitrate
+                wait_time = (self.video_bytes_sent - pacing_burst_bytes) / float(effective_bitrate) - elapsed
                 
-                while wait_time > 0:
-                    pulse = min(wait_time, 0.5)
-                    time.sleep(pulse)
-                    
-                    # Recalculate based on total elapsed time
-                    now = time.time()
-                    elapsed = now - self.pacing_start_time
-                    wait_time = (self.video_bytes_sent - pacing_burst_bytes) / float(current_bitrate) - elapsed
+                if wait_time > 0:
+                    # Clamp sleep to prevent long unresponsive hangs
+                    time.sleep(min(wait_time, 0.5))
                 
                 # We applied byte pacing, skip chunk fallback
                 return
