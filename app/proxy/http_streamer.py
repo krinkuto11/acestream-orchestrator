@@ -105,7 +105,11 @@ class HTTPStreamReader:
 
             # Stream chunks to pipe
             chunk_count = 0
-            ts_buffer = bytearray() # Buffer for 188-byte alignment
+            
+            # HARDENING: Use SyncHunter to find first 0x47 and align packets.
+            # This prevents bitstream corruption when joining in the middle of a packet.
+            from .utils import SyncHunter
+            hunter = SyncHunter(required_confirmations=3)
             
             try:
                 # Change chunk_size to a multiple of 188 (e.g., 188 * 44 = 8272)
@@ -116,20 +120,15 @@ class HTTPStreamReader:
                         break
 
                     if chunk:
-                        ts_buffer.extend(chunk)
+                        # Process chunk through hunter to get aligned packets
+                        aligned_data = hunter.feed(chunk)
                         
-                        # Calculate the largest multiple of 188 we have buffered
-                        valid_length = (len(ts_buffer) // 188) * 188
-                        
-                        if valid_length > 0:
+                        if aligned_data:
                             try:
                                 # Only write perfectly aligned TS packets
-                                os.write(self.pipe_write, ts_buffer[:valid_length])
-                                observe_proxy_ingress_bytes("TS", valid_length)
+                                os.write(self.pipe_write, aligned_data)
+                                observe_proxy_ingress_bytes("TS", len(aligned_data))
                                 chunk_count += 1
-                                
-                                # Keep the remainder (incomplete packet) for the next iteration
-                                del ts_buffer[:valid_length]
                                 
                                 # Log progress periodically
                                 if chunk_count % 1000 == 0:

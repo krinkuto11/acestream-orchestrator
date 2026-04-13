@@ -33,7 +33,7 @@ def get_client_ip(request):
     return ip
 
 
-def create_ts_packet(packet_type='null', message=None, pid_high=None, pid_low=None):
+def create_ts_packet(packet_type='null', message=None, pid_high=None, pid_low=None, cc=0):
     """
     Create a Transport Stream (TS) packet for various purposes.
     
@@ -42,6 +42,7 @@ def create_ts_packet(packet_type='null', message=None, pid_high=None, pid_low=No
         message (str): Optional message to include in packet payload
         pid_high (int): Optional explicit PID high bits override
         pid_low (int): Optional explicit PID low bits override
+        cc (int): Continuity counter value (0-15)
         
     Returns:
         bytes: A properly formatted 188-byte TS packet
@@ -62,6 +63,11 @@ def create_ts_packet(packet_type='null', message=None, pid_high=None, pid_low=No
         packet[1] = 0x1F  # PID high bits (null packet)
         packet[2] = 0xFF  # PID low bits (null packet)
     
+    # Adaptation field and payload indicator
+    # Set adaptation field control to '01' (payload only) for simplicity
+    # Set continuity counter (last 4 bits of byte 3)
+    packet[3] = 0x10 | (cc & 0x0F)
+    
     # Add message to payload if provided
     if message:
         msg_bytes = message.encode('utf-8')
@@ -70,7 +76,87 @@ def create_ts_packet(packet_type='null', message=None, pid_high=None, pid_low=No
     return bytes(packet)
 
 
+class SyncHunter:
+    """
+    TS Sync Hunter - Ensures stream alignment by finding the first 0x47 sync byte
+    and verifying the packet structure before allowing data through.
+    """
+    
+    def __init__(self, required_confirmations=3):
+        self.buffer = bytearray()
+        self.is_locked = False
+        self.packet_size = 188
+        self.sync_byte = 0x47
+        self.required_confirmations = required_confirmations
+        self.logger = get_logger("SyncHunter")
+
+    def feed(self, data: bytes) -> bytes:
+        """
+        Feed raw data and return perfectly aligned 188-byte TS packets.
+        Returns empty bytes until synchronization is 'Locked'.
+        """
+        if not data:
+            return b""
+            
+        self.buffer.extend(data)
+        
+        # If already locked, just return what we have (preserving alignment)
+        if self.is_locked:
+            valid_length = (len(self.buffer) // self.packet_size) * self.packet_size
+            if valid_length > 0:
+                aligned_data = bytes(self.buffer[:valid_length])
+                del self.buffer[:valid_length]
+                return aligned_data
+            return b""
+
+        # HUNTING MODE: Find the first sync byte and verify sequence
+        while len(self.buffer) >= (self.packet_size * self.required_confirmations):
+            # Find the first 0x47
+            try:
+                first_sync = self.buffer.index(self.sync_byte)
+            except ValueError:
+                # No sync byte in the entire buffer, discard all except the very last byte
+                # in case it's the start of a multi-byte sequence (not applicable for single 0x47 though)
+                self.buffer.clear()
+                return b""
+
+            # Discard junk before the sync byte
+            if first_sync > 0:
+                del self.buffer[:first_sync]
+            
+            # Verify the sequence of sync bytes
+            verified = True
+            for i in range(1, self.required_confirmations):
+                if self.buffer[i * self.packet_size] != self.sync_byte:
+                    verified = False
+                    break
+            
+            if verified:
+                self.is_locked = True
+                self.logger.info(f"Sync Hunter locked after {first_sync} bytes of junk.")
+                
+                # Return all complete packets
+                valid_length = (len(self.buffer) // self.packet_size) * self.packet_size
+                aligned_data = bytes(self.buffer[:valid_length])
+                del self.buffer[:valid_length]
+                return aligned_data
+            else:
+                # This 0x47 was a 'false sync' (found in payload). Discard it and keep hunting.
+                # Correct fix: skip this sync byte and look for the next one.
+                del self.buffer[:1]
+                continue
+                
+        return b""
+
+    def reset(self):
+        """Reset the hunter to hunting mode (e.g. after a failover)"""
+        self.is_locked = False
+        self.buffer.clear()
+
+
 def get_logger(component_name=None):
+    # (Existing implementation kept for reference or move it above if needed)
+    # ...
     """
     Get a standardized logger with ace_proxy prefix and optional component name.
     

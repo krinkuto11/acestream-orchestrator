@@ -73,6 +73,9 @@ class StreamGenerator:
         
         # Byte-based pacing (Target Bitrate)
         self.stream_bitrate = 0  # In bytes per second
+
+        # HARDENING: Continuity counter for synthetic NULL packets (keep-alives)
+        self.null_cc = 0
     
     def generate(self):
         """Generator function that produces stream content for the client"""
@@ -414,7 +417,19 @@ class StreamGenerator:
                 break
                 
             # Blast Fat Keep-Alives to prevent HTTP timeouts
-            fat_keepalive = create_ts_packet(pid_high=NULL_PID_HIGH, pid_low=NULL_PID_LOW) * FAT_KEEPALIVE_PACKETS
+            # Standard CC (Continuity Counter) increment: 0-15 wrapping.
+            # Even for NULL packets, some strict decoders prefer valid CCs.
+            keepalive_packets = []
+            for _ in range(FAT_KEEPALIVE_PACKETS):
+                pkt = create_ts_packet(
+                    pid_high=NULL_PID_HIGH, 
+                    pid_low=NULL_PID_LOW,
+                    cc=self.null_cc
+                )
+                keepalive_packets.append(pkt)
+                self.null_cc = (self.null_cc + 1) & 0x0F
+            
+            fat_keepalive = b"".join(keepalive_packets)
             yield fat_keepalive
             self.network_bytes_sent += len(fat_keepalive)
             
