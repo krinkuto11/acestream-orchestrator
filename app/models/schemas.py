@@ -108,6 +108,8 @@ class StreamState(BaseModel):
     livepos: Optional[LivePosData] = None
     # Proxy-level buffer calculation
     proxy_buffer_pieces: Optional[int] = None
+    # Active clients connected to this stream (populated during telemetry collection)
+    clients: List[Dict[str, Any]] = []
 
 class StreamStatSnapshot(BaseModel):
     ts: datetime

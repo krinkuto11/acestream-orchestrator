@@ -456,13 +456,14 @@ class StreamGenerator:
                 seconds_behind = max(0.0, float(chunks_behind) / chunk_rate)
                 confidence = 0.75 if self.chunk_rate_ema else 0.55
 
-            # ALWAYS APPLY CONSUMPTION DECAY:
-            # Our 'raw' calculation only counts data sitting in Redis. We must 
-            # subtract the time elapsed since we last delivered a chunk to the 
-            # player's socket, as the player has likely watched that data by now.
+            # SOFTENED CONSUMPTION DECAY:
+            # Our 'raw' calculation counts data sitting in Redis. We subtract the
+            # time elapsed since we last delivered a chunk to the player's socket.
+            # We use a 0.85 factor to 'soften' the decay, preventing the runway 
+            # from snapping to 0 too aggressively during minor network jitters.
             if self.chunks_sent > 0:
                 elapsed_since_chunk = max(0.0, now - float(self.last_chunk_sent_time or now))
-                seconds_behind = max(0.0, seconds_behind - elapsed_since_chunk)
+                seconds_behind = max(0.0, seconds_behind - (elapsed_since_chunk * 0.85))
             
             normalized_source = str(source or "ts_cursor_ema")
 

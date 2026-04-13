@@ -140,7 +140,17 @@ def _build_sse_payload() -> Dict[str, Any]:
     total_peers = 0
     total_speed_down = 0
     total_speed_up = 0
+    
+    # Pre-fetch tracker for efficiency (but only if we have active streams)
+    active_stream_keys = [s.key for s in streams if getattr(s, "key", None)]
+    from .services.client_tracker import client_tracking_service
+    
     for stream in streams:
+        # Populate clients for dashboard runway calculation
+        if stream.status == "started" and getattr(stream, "key", None):
+            with suppress(Exception):
+                stream.clients = client_tracking_service.get_stream_clients(stream.key)
+        
         try:
             total_peers += int(stream.peers or 0)
         except Exception:
@@ -2054,7 +2064,16 @@ def get_engine_stats(container_id: str):
 @app.get("/streams", response_model=List[StreamState])
 def get_streams(status: Optional[str] = Query(None, pattern="^(started|ended|pending_failover)$"), container_id: Optional[str] = None):
     """Get streams. By default, returns all streams. Use status=started, status=pending_failover, or status=ended to filter."""
-    return state.list_streams_with_stats(status=status, container_id=container_id)
+    streams = state.list_streams_with_stats(status=status, container_id=container_id)
+    
+    # Enrich with client data for dashboard runway visualization
+    from .services.client_tracker import client_tracking_service
+    for stream in streams:
+        if stream.status == "started" and getattr(stream, "key", None):
+            with suppress(Exception):
+                stream.clients = client_tracking_service.get_stream_clients(stream.key)
+    
+    return streams
 
 @app.get("/streams/{stream_id}/stats", response_model=List[StreamStatSnapshot])
 def get_stream_stats(stream_id: str, since: Optional[datetime] = None):
