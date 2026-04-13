@@ -165,11 +165,11 @@ function StreamTimelineGraphic({
     const seenClientKeys = new Set()
     let streamWindowMax = 0
     let streamWindowFallbackFromRunway = 0
-    let maxObservedClientRunway = 0
     let hasExplicitStreamWindow = false
 
     ;(Array.isArray(clients) ? clients : []).forEach((client, index) => {
       const runway = toNumber(client?.buffer_seconds_behind)
+      const streamWindow = toNumber(client?.stream_buffer_window_seconds)
 
       if (Number.isFinite(streamWindow)) {
         hasExplicitStreamWindow = true
@@ -178,7 +178,6 @@ function StreamTimelineGraphic({
 
       if (!Number.isFinite(runway)) return
       const safeRunway = Math.max(0, runway)
-      maxObservedClientRunway = Math.max(maxObservedClientRunway, safeRunway)
       streamWindowFallbackFromRunway = Math.max(streamWindowFallbackFromRunway, safeRunway)
       const key = getClientSeriesKey(client, index)
       seenClientKeys.add(key)
@@ -230,8 +229,6 @@ function StreamTimelineGraphic({
         ? Math.max(0, toNumber(effectiveStreamWindow))
         : null,
       dynamicThreshold: null,
-      dynamicThresholdObservedAt: null,
-      dynamicThresholdIsFresh: false,
       ...clientValues,
     }
 
@@ -270,7 +267,6 @@ function StreamTimelineGraphic({
       const engineLag = toNumber(point.engineLag)
       const streamWindow = toNumber(point.streamWindow)
       const swarmLag = Number.isFinite(engineLag) ? Math.max(0, engineLag) : null
-      const threshold = toNumber(point.dynamicThreshold)
 
       const normalized = {
         time: point.time,
@@ -278,8 +274,6 @@ function StreamTimelineGraphic({
         engineLag: swarmLag,
         engineLag__band: Number.isFinite(swarmLag) ? [0, swarmLag] : null,
         streamWindow: Number.isFinite(streamWindow) ? Math.max(0, streamWindow) : null,
-        dynamicThreshold: null,
-        dynamicThreshold__band: null,
       }
 
       clientKeys.forEach((key) => {
@@ -308,10 +302,6 @@ function StreamTimelineGraphic({
       const streamWindow = toNumber(point.streamWindow)
       if (showStreamWindow && Number.isFinite(streamWindow)) {
         nextMax = Math.max(nextMax, streamWindow)
-      }
-      const dynamicThreshold = toNumber(point.dynamicThreshold)
-      if (Number.isFinite(dynamicThreshold)) {
-        nextMax = Math.max(nextMax, dynamicThreshold)
       }
       clientKeys.forEach((key) => {
         const lag = toNumber(point[key])

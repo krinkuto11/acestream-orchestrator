@@ -328,6 +328,7 @@ function StreamStatusBadge({ isActive, isPaused, isPrebuffering, isDownloadStopp
 
 function ClientSession({ client }) {
   const runway = toNumber(client?.buffer_seconds_behind)
+  const streamWindow = toNumber(client?.stream_buffer_window_seconds)
 
   return (
     <div className="rounded-lg border bg-muted/20 p-3">
