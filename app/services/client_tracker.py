@@ -82,6 +82,8 @@ class ClientTrackingService:
                     "protocol": normalized_protocol,
                     "bytes_sent": 0.0,
                     "buffer_seconds_behind": 0.0,
+                    "buffer_seconds_behind_source": "initial",
+                    "buffer_seconds_behind_confidence": 1.0,
                     "connected_at": now,
                     "last_active": now,
                     "bps": 0.0,
@@ -125,6 +127,8 @@ class ClientTrackingService:
         chunks_delta: int = 0,
         sequence: Optional[int] = None,
         buffer_seconds_behind: Optional[float] = None,
+        buffer_seconds_behind_source: Optional[str] = None,
+        buffer_seconds_behind_confidence: Optional[float] = None,
         now: Optional[float] = None,
         idle_timeout_s: Optional[float] = None,
         worker_id: Optional[str] = None,
@@ -172,6 +176,10 @@ class ClientTrackingService:
 
             if buffer_seconds_behind is not None:
                 current["buffer_seconds_behind"] = max(0.0, self._safe_float(buffer_seconds_behind, default=0.0))
+            if buffer_seconds_behind_source is not None:
+                current["buffer_seconds_behind_source"] = str(buffer_seconds_behind_source)
+            if buffer_seconds_behind_confidence is not None:
+                current["buffer_seconds_behind_confidence"] = self._safe_float(buffer_seconds_behind_confidence, default=1.0)
 
             if idle_timeout_s is not None:
                 current["idle_timeout_s"] = self._safe_float(idle_timeout_s, default=0.0)
@@ -210,6 +218,8 @@ class ClientTrackingService:
         stream_id: str,
         protocol: str,
         seconds_behind: float,
+        source: Optional[str] = None,
+        confidence: Optional[float] = None,
         observed_at: Optional[float] = None,
         now: Optional[float] = None,
     ) -> Dict[str, Any]:
@@ -240,6 +250,12 @@ class ClientTrackingService:
 
             normalized_seconds = max(0.0, self._safe_float(seconds_behind, default=0.0))
             current["buffer_seconds_behind"] = normalized_seconds
+            
+            if source is not None:
+                current["buffer_seconds_behind_source"] = str(source)
+            if confidence is not None:
+                current["buffer_seconds_behind_confidence"] = self._safe_float(confidence, default=1.0)
+            
             current["stats_updated_at"] = ts
 
             # Position updates are valid heartbeat activity even when no bytes
@@ -367,6 +383,8 @@ class ClientTrackingService:
             "bps": self._safe_float(row.get("bps"), default=0.0),
             "bytes_sent": self._safe_float(row.get("bytes_sent"), default=0.0),
             "buffer_seconds_behind": self._safe_float(row.get("buffer_seconds_behind"), default=0.0),
+            "buffer_seconds_behind_source": str(row.get("buffer_seconds_behind_source") or "unknown"),
+            "buffer_seconds_behind_confidence": self._safe_float(row.get("buffer_seconds_behind_confidence"), default=1.0),
             "connected_at": self._safe_float(row.get("connected_at"), default=now),
             "last_active": last_active,
             "inactive_seconds": max(0.0, now - last_active),

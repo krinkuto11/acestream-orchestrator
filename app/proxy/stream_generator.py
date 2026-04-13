@@ -476,7 +476,7 @@ class StreamGenerator:
             )
             self.last_position_update_time = now
         except Exception as e:
-            logger.debug(f"[{self.client_id}] Failed to update client position: {e}")
+            logger.error(f"[{self.client_id}] Failed to update client position (source={source}): {e}")
     
     def _setup_streaming(self):
         """Setup streaming parameters"""

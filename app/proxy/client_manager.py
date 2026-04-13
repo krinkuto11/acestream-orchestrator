@@ -404,11 +404,15 @@ class ClientManager:
         self,
         client_id,
         seconds_behind: float,
+        source: str = "unknown",
+        confidence: float = 1.0,
+        observed_at: Optional[float] = None,
     ):
         """Update client runway estimate in Redis."""
         try:
             normalized_seconds = max(0.0, float(seconds_behind or 0.0))
-            observed_ts = time.time()
+            observed_ts = float(observed_at) if observed_at is not None else time.time()
+            
             if self.redis_client:
                 client_key = RedisKeys.client_metadata(self.content_id, client_id)
                 self.redis_client.hset(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND, f"{normalized_seconds:.3f}")
@@ -421,12 +425,13 @@ class ClientManager:
 
             from ..services.client_tracker import client_tracking_service
 
-            # Ensure client_tracking_service is updated to skip confidence/source if they are no longer needed
             client_tracking_service.update_client_position(
                 client_id=str(client_id),
                 stream_id=str(self.content_id or ""),
                 protocol="TS",
                 seconds_behind=normalized_seconds,
+                source=source,
+                confidence=confidence,
                 observed_at=observed_ts,
                 now=observed_ts,
             )

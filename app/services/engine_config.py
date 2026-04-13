@@ -212,8 +212,8 @@ def _parameter_to_cli_tokens(parameter: EngineParameter) -> List[str]:
 def build_engine_customization_args(config: EngineConfig) -> List[str]:
     """Build sanitized customization args (never includes orchestrator-owned ports)."""
     args: List[str] = [
-        "--download-limit", str(int(config.download_limit)),
-        "--upload-limit", str(int(config.upload_limit)),
+        "--max-download-speed", str(int(config.download_limit)),
+        "--max-upload-speed", str(int(config.upload_limit)),
         "--live-buffer", str(int(config.buffer_time)),
     ]
 
