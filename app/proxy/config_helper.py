@@ -66,7 +66,7 @@ class Config:
     
     # Pacing settings
     PACING_BURST_SECONDS: float = 15.0
-    PACING_BITRATE_MULTIPLIER: float = 1.10
+    PACING_BITRATE_MULTIPLIER: float = 1.20
     
     # Stream mode (TS or HLS)
     STREAM_MODE: str = 'TS'  # Default to MPEG-TS for backwards compatibility
