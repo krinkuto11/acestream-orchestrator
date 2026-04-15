@@ -249,24 +249,6 @@ class ClientManager:
                     self.redis_client.delete(disconnect_key)
                     
                     self._notify_owner_of_activity()
-                    
-                    # Publish client connected event
-                    event_data = {
-                        "event": EventType.CLIENT_CONNECTED,
-                        "content_id": self.content_id,
-                        "client_id": client_id,
-                        "worker_id": self.worker_id or "unknown",
-                        "timestamp": time.time()
-                    }
-                    
-                    if user_agent:
-                        event_data["user_agent"] = user_agent
-                        logger.debug(f"Storing user agent '{user_agent}' for client {client_id}")
-                    
-                    self.redis_client.publish(
-                        RedisKeys.events_channel(self.content_id),
-                        json.dumps(event_data)
-                    )
                 
                 # Get total clients across all workers
                 total_clients = self.get_total_client_count()
@@ -326,39 +308,24 @@ class ClientManager:
                     
                     # Trigger disconnect time tracking
                     disconnect_key = RedisKeys.last_client_disconnect(self.content_id)
+                    # Trigger disconnect time tracking
+                    disconnect_key = RedisKeys.last_client_disconnect(self.content_id)
                     self.redis_client.setex(disconnect_key, 60, str(time.time()))
                 
                 self._notify_owner_of_activity()
                 
-                # Check if we're the owner
-                am_i_owner = self.proxy_server and self.proxy_server.am_i_owner(self.content_id)
-                
-                if am_i_owner:
-                    # We're the owner - handle the disconnect directly
-                    logger.debug(f"Owner handling CLIENT_DISCONNECTED for client {client_id} locally")
-                    if remaining == 0:
-                        logger.debug(f"No clients left - triggering immediate shutdown check")
-                        # Use threading.Thread instead of gevent.spawn
-                        # gevent.spawn doesn't work in uvicorn's default threading environment
-                        thread = threading.Thread(
-                            target=self.proxy_server.handle_client_disconnect,
-                            args=(self.content_id,),
-                            daemon=True,
-                            name=f"client-disconnect-{self.content_id[:8]}"
-                        )
-                        thread.start()
-                else:
-                    # We're not the owner - publish event
-                    logger.debug(f"Non-owner publishing CLIENT_DISCONNECTED event for client {client_id}")
-                    event_data = json.dumps({
-                        "event": EventType.CLIENT_DISCONNECTED,
-                        "content_id": self.content_id,
-                        "client_id": client_id,
-                        "worker_id": self.worker_id or "unknown",
-                        "timestamp": time.time(),
-                        "remaining_clients": remaining
-                    })
-                    self.redis_client.publish(RedisKeys.events_channel(self.content_id), event_data)
+                # Immediate shutdown check for owners when last local client leaves.
+                # All other disconnect events (local or remote) are handled via unified
+                # tracker events received in ProxyServer._handle_event.
+                if remaining == 0 and self.proxy_server and self.proxy_server.am_i_owner(self.content_id):
+                    logger.debug(f"Last local client removed on owner session - triggering immediate shutdown check")
+                    thread = threading.Thread(
+                        target=self.proxy_server.handle_client_disconnect,
+                        args=(self.content_id,),
+                        daemon=True,
+                        name=f"client-disconnect-{self.content_id[:8]}"
+                    )
+                    thread.start()
             
             total_clients = self.get_total_client_count()
             logger.info(f"Client disconnected: {client_id} (local: {len(self.clients)}, total: {total_clients})")

@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+import json
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -12,6 +11,41 @@ class ClientTrackingService:
         self._lock = threading.RLock()
         self._clients: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
         self._rate_state: Dict[Tuple[str, str, str], Tuple[float, float]] = {}
+        self._redis = None
+
+    def set_redis_client(self, redis_client: Any):
+        """Inject Redis client for PubSub event generation."""
+        self._redis = redis_client
+
+    def _publish_client_event(self, event_type: str, stream_id: str, client_row: Dict[str, Any]):
+        """Publish client lifecycle event to Redis PubSub for real-time UI updates."""
+        if not self._redis or not stream_id:
+            return
+
+        try:
+            from ..proxy.redis_keys import RedisKeys
+            
+            # Build event payload compatible with proxy/client_manager.py format
+            event_data = {
+                "event": event_type,
+                "content_id": stream_id,
+                "client_id": client_row.get("client_id"),
+                "worker_id": client_row.get("worker_id") or "orchestrator",
+                "timestamp": time.time(),
+                "protocol": client_row.get("protocol"),
+                "ip_address": client_row.get("ip_address"),
+                "user_agent": client_row.get("user_agent"),
+            }
+
+            # Include remaining client count for disconnection events
+            if event_type == "client_disconnected":
+                event_data["remaining_clients"] = self.count_active_clients(stream_id=stream_id)
+
+            channel = RedisKeys.events_channel(stream_id)
+            self._redis.publish(channel, json.dumps(event_data))
+        except Exception as e:
+            # Metrics/events errors should never compromise data path stability
+            pass
 
     @staticmethod
     def _normalize_protocol(protocol: Optional[str]) -> str:
@@ -113,6 +147,11 @@ class ClientTrackingService:
 
         if created:
             self._emit_connect_metric(normalized_protocol)
+            try:
+                from ..proxy.constants import EventType
+                self._publish_client_event(EventType.CLIENT_CONNECTED, normalized_stream_id, row)
+            except Exception:
+                pass
         return row
 
     def record_activity(
@@ -279,7 +318,7 @@ class ClientTrackingService:
             return 0
 
         now = time.time()
-        removed_protocols: List[str] = []
+        removed_rows: List[Dict[str, Any]] = []
 
         with self._lock:
             stale_keys: List[Tuple[str, str, str]] = []
@@ -297,11 +336,17 @@ class ClientTrackingService:
                 row = self._clients.pop(key, None)
                 self._rate_state.pop(key, None)
                 if row is not None:
-                    removed_protocols.append(self._normalize_protocol(row.get("protocol")))
+                    removed_rows.append(row)
 
-        for protocol in removed_protocols:
+        for row in removed_rows:
+            protocol = self._normalize_protocol(row.get("protocol"))
             self._emit_disconnect_metric(protocol)
-        return len(removed_protocols)
+            try:
+                from ..proxy.constants import EventType
+                self._publish_client_event(EventType.CLIENT_DISCONNECTED, str(row.get("stream_id")), row)
+            except Exception:
+                pass
+        return len(removed_rows)
 
     def unregister_client(
         self,
@@ -314,7 +359,7 @@ class ClientTrackingService:
         normalized_stream_id = str(stream_id or "")
         normalized_client_id = str(client_id or "")
 
-        removed_protocols: List[str] = []
+        removed_rows: List[Dict[str, Any]] = []
         with self._lock:
             keys_to_remove = []
             for key in self._clients.keys():
@@ -331,11 +376,17 @@ class ClientTrackingService:
                 row = self._clients.pop(key, None)
                 self._rate_state.pop(key, None)
                 if row is not None:
-                    removed_protocols.append(self._normalize_protocol(row.get("protocol")))
+                    removed_rows.append(row)
 
-        for p in removed_protocols:
+        for row in removed_rows:
+            p = self._normalize_protocol(row.get("protocol"))
             self._emit_disconnect_metric(p)
-        return len(removed_protocols)
+            try:
+                from ..proxy.constants import EventType
+                self._publish_client_event(EventType.CLIENT_DISCONNECTED, normalized_stream_id, row)
+            except Exception:
+                pass
+        return len(removed_rows)
 
     def unregister_stream(
         self,
@@ -348,7 +399,7 @@ class ClientTrackingService:
         normalized_stream_id = str(stream_id or "")
         normalized_worker_id = str(worker_id or "") if worker_id is not None else None
 
-        removed_protocols: List[str] = []
+        removed_rows: List[Dict[str, Any]] = []
         with self._lock:
             keys_to_remove = []
             for key, row in self._clients.items():
@@ -365,11 +416,17 @@ class ClientTrackingService:
                 row = self._clients.pop(key, None)
                 self._rate_state.pop(key, None)
                 if row is not None:
-                    removed_protocols.append(self._normalize_protocol(row.get("protocol")))
+                    removed_rows.append(row)
 
-        for p in removed_protocols:
+        for row in removed_rows:
+            p = self._normalize_protocol(row.get("protocol"))
             self._emit_disconnect_metric(p)
-        return len(removed_protocols)
+            try:
+                from ..proxy.constants import EventType
+                self._publish_client_event(EventType.CLIENT_DISCONNECTED, normalized_stream_id, row)
+            except Exception:
+                pass
+        return len(removed_rows)
 
     def _to_public_row(self, row: Dict[str, Any], now: float) -> Dict[str, Any]:
         last_active = self._safe_float(row.get("last_active"), default=now)
