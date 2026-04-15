@@ -108,6 +108,7 @@ class ClientManager:
         request_kind: Optional[str] = None,
         sequence: Optional[int] = None,
         buffer_seconds_behind: Optional[float] = None,
+        is_prebuffering: Optional[bool] = None,
         now: Optional[float] = None,
     ):
         """Record client activity and transfer counters in the central tracker."""
@@ -144,6 +145,7 @@ class ClientManager:
             sequence=sequence,
             buffer_seconds_behind=buffer_seconds_behind,
             now=ts,
+            is_prebuffering=is_prebuffering,
             worker_id=self.worker_id,
         )
 
@@ -1085,9 +1087,15 @@ class HLSProxyServer:
         chunks_sent: Optional[int] = None,
         sequence: Optional[int] = None,
         buffer_seconds_behind: Optional[float] = None,
+        is_prebuffering: Optional[bool] = None,
     ):
         """Record client activity for a channel (called on each manifest/segment request)"""
         if channel_id in self.client_managers:
+            manager = self.stream_managers.get(channel_id)
+            effective_prebuffering = is_prebuffering
+            if effective_prebuffering is None and manager:
+                effective_prebuffering = getattr(manager, "initial_buffering", False)
+
             self.client_managers[channel_id].record_activity(
                 client_ip=client_ip,
                 client_id=client_id,
@@ -1097,6 +1105,7 @@ class HLSProxyServer:
                 chunks_sent=chunks_sent,
                 sequence=sequence,
                 buffer_seconds_behind=buffer_seconds_behind,
+                is_prebuffering=effective_prebuffering,
             )
 
     def get_manifest_buffer_seconds_behind(self, channel_id: str) -> float:

@@ -799,6 +799,7 @@ const buildSnapshot = (
     const nodeX = clientStartX + (index % 2 === 0 ? 0 : 45)
     const nodeY = clientStartY + (index * clientSpacingY)
     const rawClientBw = (client.bps * 8) / 1_000_000
+    const isPrebuffering = Boolean(client.is_prebuffering)
     
     // Retrieve previous client node state
     const prevClientNode = prevState?.nodes.find(n => n.id === cNodeId)
@@ -830,7 +831,7 @@ const buildSnapshot = (
     const clientFlowActive = resolveEdgeFlowActive(
       previousEdgeFlowById.get(clientEdgeId) ?? false,
       rawClientBw,
-    )
+    ) || isPrebuffering
     edges.push({
       id: clientEdgeId,
       type: 'topologyEdge',
@@ -842,6 +843,7 @@ const buildSnapshot = (
         bandwidthMbps: clientBwMbps,
         protocol: client.type,
         flowActive: clientFlowActive,
+        isPrebuffering: isPrebuffering,
       },
       style: {
         stroke: '#22c55e',

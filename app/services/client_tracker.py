@@ -94,6 +94,7 @@ class ClientTrackingService:
                     "stats_updated_at": now,
                     "worker_id": str(worker_id or ""),
                     "idle_timeout_s": self._safe_float(idle_timeout_s, default=0.0),
+                    "is_prebuffering": False,
                 }
                 self._clients[key] = current
                 self._rate_state[key] = (0.0, now)
@@ -131,6 +132,7 @@ class ClientTrackingService:
         buffer_seconds_behind_confidence: Optional[float] = None,
         now: Optional[float] = None,
         idle_timeout_s: Optional[float] = None,
+        is_prebuffering: Optional[bool] = None,
         worker_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         ts = self._safe_float(now, default=time.time())
@@ -189,6 +191,9 @@ class ClientTrackingService:
             if normalized_request_kind:
                 current["last_request_kind"] = normalized_request_kind
 
+            if is_prebuffering is not None:
+                current["is_prebuffering"] = bool(is_prebuffering)
+
             if sequence is not None:
                 try:
                     seq = int(sequence)
@@ -221,6 +226,7 @@ class ClientTrackingService:
         source: Optional[str] = None,
         confidence: Optional[float] = None,
         observed_at: Optional[float] = None,
+        is_prebuffering: Optional[bool] = None,
         now: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Update buffer lag for an existing client without incrementing request counters."""
@@ -256,6 +262,9 @@ class ClientTrackingService:
             if confidence is not None:
                 current["buffer_seconds_behind_confidence"] = self._safe_float(confidence, default=1.0)
             
+            if is_prebuffering is not None:
+                current["is_prebuffering"] = bool(is_prebuffering)
+
             current["stats_updated_at"] = ts
 
             # Position updates are valid heartbeat activity even when no bytes
@@ -393,6 +402,7 @@ class ClientTrackingService:
             "chunks_sent": self._safe_int(row.get("chunks_sent"), default=0),
             "last_sequence": row.get("last_sequence"),
             "stats_updated_at": self._safe_float(row.get("stats_updated_at"), default=last_active),
+            "is_prebuffering": bool(row.get("is_prebuffering", False)),
             "worker_id": str(row.get("worker_id") or ""),
         }
         return payload

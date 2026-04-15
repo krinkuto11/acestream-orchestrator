@@ -411,6 +411,8 @@ class StreamGenerator:
                     f"[{self.client_id}] Prebuffer complete after {now - start_wait:.1f}s "
                     f"(Runway: {current_buffer_size} chunks, Engine Progressed: {has_progressed})"
                 )
+                # Final update to clear prebuffer flag immediately
+                self._maybe_update_client_position(force=True, is_prebuffering=False, source="prebuffer_complete")
                 break
             
             # Debounced logging: only log if size increased AND at least 2 seconds passed
@@ -441,7 +443,7 @@ class StreamGenerator:
             self.network_bytes_sent += len(fat_keepalive)
             
             # Keep telemetry fresh during hoarding so dashboard shows buffer growth
-            self._maybe_update_client_position(source="prebuffer_hoarding")
+            self._maybe_update_client_position(is_prebuffering=True, source="prebuffer_hoarding")
             
             time.sleep(0.5)
 
@@ -454,7 +456,7 @@ class StreamGenerator:
 
         self.local_index += int(max(0, chunks_received))
 
-    def _maybe_update_client_position(self, force: bool = False, source: str = "ts_cursor_ema"):
+    def _maybe_update_client_position(self, force: bool = False, is_prebuffering: Optional[bool] = None, source: str = "ts_cursor_ema"):
         """Publish client runway estimate using simple chunk counting."""
         if not hasattr(self, 'client_manager') or self.client_manager is None:
             return
@@ -495,6 +497,7 @@ class StreamGenerator:
                 source=normalized_source,
                 confidence=confidence,
                 observed_at=now,
+                is_prebuffering=is_prebuffering,
             )
             self.last_position_update_time = now
         except Exception as e:

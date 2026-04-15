@@ -248,6 +248,21 @@ class HLSSegmenterService:
         if chunks_delta < 0:
             chunks_delta = 0
 
+        # Detect prebuffering phase: if manifest has fewer than 2 segments, or is not yet cached
+        is_prebuffering = False
+        try:
+            self._update_manifest_cache_if_stale(session)
+            if session.cached_latest_seq is None:
+                is_prebuffering = True
+            else:
+                # If we have very few segments, we are still prebuffering
+                # list_size is typically 5, we want at least 2 for a stable start
+                manifest_depth = session.cached_manifest_lag / (self._hls_segment_time_s or 3.0)
+                if manifest_depth < 2.0:
+                    is_prebuffering = True
+        except Exception:
+            pass
+
         client_tracking_service.record_activity(
             client_id=normalized_client_id,
             stream_id=key,
@@ -261,6 +276,7 @@ class HLSSegmenterService:
             buffer_seconds_behind=buffer_seconds_behind,
             now=ts,
             idle_timeout_s=self._client_record_ttl_s,
+            is_prebuffering=is_prebuffering,
             worker_id="api_hls_segmenter",
         )
         

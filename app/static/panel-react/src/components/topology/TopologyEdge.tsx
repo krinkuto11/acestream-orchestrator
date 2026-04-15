@@ -42,6 +42,7 @@ export function TopologyEdge({
   const isFailover = style.strokeDasharray != null
   const isMonitoringRoute = data?.monitoringActive === true
   const isDrainingRoute = data?.drainingRoute === true
+  const isPrebuffering = data?.isPrebuffering === true
 
   const rawBandwidth = (data?.bandwidthMbps || 0) + (data?.uploadMbps || 0)
   const flowActive = data?.flowActive === undefined ? rawBandwidth > 0.2 : data.flowActive === true
@@ -100,7 +101,9 @@ export function TopologyEdge({
   // Foreground colored dashed pipe, revealed by the sweeping mask
   const fillStyle = {
     ...style,
-    stroke: (isFailover || isMonitoringRoute || isDrainingRoute) ? '#f59e0b' : '#22c55e',
+    stroke: isPrebuffering 
+      ? '#f59e0b' 
+      : (isFailover || isMonitoringRoute || isDrainingRoute) ? '#f59e0b' : '#22c55e',
     strokeWidth: baseStrokeWidth,
     strokeOpacity: 1,
     strokeDasharray: '8 6', // Always dashed
@@ -138,11 +141,13 @@ export function TopologyEdge({
           <div 
             className={cn(
               "px-2 py-0.5 rounded-md border text-[11px] font-semibold transition-colors duration-300 shadow-md flex items-center gap-2",
-              (isFailover || isMonitoringRoute || isDrainingRoute)
-                ? "border-amber-400 bg-[#020617] text-amber-400" 
-                : flowActive 
-                  ? "border-emerald-400 bg-[#020617] text-emerald-400" 
-                  : "border-slate-600 bg-[#020617] text-slate-400"
+              isPrebuffering
+                ? "border-amber-500 bg-amber-500/10 text-amber-500 animate-pulse"
+                : (isFailover || isMonitoringRoute || isDrainingRoute)
+                  ? "border-amber-400 bg-[#020617] text-amber-400" 
+                  : flowActive 
+                    ? "border-emerald-400 bg-[#020617] text-emerald-400" 
+                    : "border-slate-600 bg-[#020617] text-slate-400"
             )}
           >
             {data?.uploadMbps !== undefined ? (
@@ -157,9 +162,19 @@ export function TopologyEdge({
                 </div>
               </div>
             ) : (
-              <span className="tabular-nums font-bold">{data.bandwidthMbps.toFixed(1)}</span>
+              <div className="flex items-center gap-1.5">
+                {isPrebuffering && (
+                  <span className="relative flex h-1.5 w-1.5 mr-0.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                  </span>
+                )}
+                <span className="tabular-nums font-bold">
+                  {isPrebuffering ? 'PREBUFFERING' : data.bandwidthMbps.toFixed(1)}
+                </span>
+              </div>
             )}
-            <span className="text-[10px] text-slate-500 font-medium ml-0.5 uppercase">Mbps</span>
+            {!isPrebuffering && <span className="text-[10px] text-slate-500 font-medium ml-0.5 uppercase">Mbps</span>}
           </div>
         </div>
       </EdgeLabelRenderer>
