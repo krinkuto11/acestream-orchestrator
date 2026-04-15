@@ -483,8 +483,8 @@ def _single_vpn_status(container_name: str) -> Dict[str, object]:
     health = "healthy" if connected else "unhealthy"
 
     assigned_hostname = None
-    if node and "metadata" in node:
-        assigned_hostname = node["metadata"].get("assigned_hostname")
+    if node:
+        assigned_hostname = node.get("assigned_hostname")
 
     forwarded_port = get_forwarded_port_sync(container_name) if connected else None
     provider = get_vpn_provider(container_name) if connected else None
