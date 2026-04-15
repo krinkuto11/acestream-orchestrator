@@ -3542,6 +3542,14 @@ async def ace_getstream(
     # Get current stream mode
     stream_mode = ProxyConfig.STREAM_MODE
     control_mode = _resolve_control_mode(ProxyConfig.CONTROL_MODE)
+
+    # HTTP mode does not support orchestrated liveseek/seekback.
+    if control_mode == PROXY_MODE_HTTP:
+        if normalized_seekback > 0:
+            logger.info(f"Overriding seekback/live_delay to 0 for HTTP-mode stream {stream_key}")
+            normalized_seekback = 0
+            # Rebuild stream key without seekback
+            stream_key = _build_stream_key(input_type, input_value, normalized_file_indexes, normalized_seekback)
     
     # Check if stream is on the looping blacklist
     if looping_streams_tracker.is_looping(stream_key):

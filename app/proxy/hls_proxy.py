@@ -293,11 +293,8 @@ class StreamManager:
         self.stream_key_type = (stream_key_type or "content_id").strip().lower()
         normalized_file_indexes = str(file_indexes if file_indexes is not None else "0").strip()
         self.file_indexes = normalized_file_indexes or "0"
-        try:
-            normalized_seekback = int(float(seekback))
-        except (TypeError, ValueError):
-            normalized_seekback = 0
-        self.seekback = max(0, normalized_seekback)
+        # HTTP mode HLS does not support liveseek/seekback.
+        self.seekback = 0
         self.bitrate = bitrate
         self.control_mode = normalize_proxy_mode(ConfigHelper.control_mode(), default=PROXY_MODE_HTTP)
         self.running = True
@@ -505,23 +502,9 @@ class StreamManager:
                 "new_container_id": target_container_id,
             }
 
-        # --- ROBUST FAILOVER FIX: Capture position before reconnecting ---
-        try:
-            if self.stat_url:
-                resp = requests.get(self.stat_url, timeout=1.0)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    response = data.get("response", {})
-                    livepos = response.get("livepos")
-                    if isinstance(livepos, dict):
-                        pos = livepos.get("pos")
-                        live_last = livepos.get("last_ts") or livepos.get("live_last")
-                        
-                        if pos is not None and live_last is not None:
-                            self.seekback = max(0, int(live_last) - int(pos))
-                            logger.info(f"HLS Hot swap / Failover triggered. Updating seekback to {self.seekback}s to resume via HTTP stat alignment.")
-        except Exception as e:
-            logger.debug(f"Failed to calculate HLS resume position during failover: {e}")
+        # --- Failover behavior for HTTP HLS: Always resume at live edge ---
+        # Position alignment via seekback is not possible in HTTP mode.
+        self.seekback = 0
         # -----------------------------------------------------------------
 
         session_updates = self._request_stream_session_http_for_engine(new_host, int(new_port))

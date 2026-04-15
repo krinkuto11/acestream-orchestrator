@@ -32,7 +32,14 @@ class StreamGenerator:
         self.client_ip = client_ip
         self.client_user_agent = client_user_agent
         self.stream_initializing = stream_initializing
-        self.seekback = seekback
+        
+        # HTTP mode Does not support liveseek/seekback.
+        # We enforce this at the generator level to ensure consistency.
+        control_mode = normalize_proxy_mode(ConfigHelper.control_mode(), default=PROXY_MODE_HTTP)
+        if control_mode == PROXY_MODE_HTTP:
+            self.seekback = 0
+        else:
+            self.seekback = seekback
         
         # Performance tracking
         self.stream_start_time = time.time()
