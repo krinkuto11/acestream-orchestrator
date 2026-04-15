@@ -154,6 +154,7 @@ type VpnNodeDescriptor = {
   publicIp: string | null
   provider: string | null
   country: string | null
+  assignedHostname?: string | null
 }
 
 const normalizeLifecycle = (value: unknown): 'active' | 'draining' => {
@@ -274,6 +275,7 @@ const extractVpnNodes = (
       publicIp: rawNode.public_ip == null ? null : String(rawNode.public_ip),
       provider,
       country,
+      assignedHostname: rawNode.assigned_hostname == null ? null : String(rawNode.assigned_hostname),
     })
   }
 
@@ -559,7 +561,7 @@ const buildSnapshot = (
         data: {
           kind: 'vpn',
           title: vpnNode.title,
-          subtitle: vpnNode.subtitle,
+          subtitle: vpnNode.assignedHostname || vpnNode.subtitle,
           health,
           bandwidthMbps: isMockMode ? randomBetween(90, 210) : 0,
           streamCount: 0,

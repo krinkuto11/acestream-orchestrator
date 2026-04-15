@@ -482,6 +482,10 @@ def _single_vpn_status(container_name: str) -> Dict[str, object]:
     connected = bool(health_bool) and control_ready
     health = "healthy" if connected else "unhealthy"
 
+    assigned_hostname = None
+    if node and "metadata" in node:
+        assigned_hostname = node["metadata"].get("assigned_hostname")
+
     forwarded_port = get_forwarded_port_sync(container_name) if connected else None
     provider = get_vpn_provider(container_name) if connected else None
     ip_info = get_vpn_public_ip_info(container_name) if connected else None
@@ -500,6 +504,7 @@ def _single_vpn_status(container_name: str) -> Dict[str, object]:
         "country": (ip_info or {}).get("country"),
         "city": (ip_info or {}).get("city"),
         "region": (ip_info or {}).get("region"),
+        "assigned_hostname": assigned_hostname,
         "last_check": now_iso,
         "last_check_at": now_iso,
     }
