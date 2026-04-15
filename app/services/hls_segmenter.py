@@ -145,8 +145,12 @@ class HLSSegmenterService:
             session.seekback = self._to_int(metadata.get("seekback"), default=0)
         if metadata.get("stream_id") is not None:
             session.stream_id = str(metadata.get("stream_id") or "")
-        if metadata.get("control_client") is not None and session.control_client is None:
+        if metadata.get("control_client") is not None:
             session.control_client = metadata.get("control_client")
+        
+        # Capture current seekback if provided (e.g. from a migration)
+        if metadata.get("target_seekback") is not None:
+            session.seekback = self._to_int(metadata.get("target_seekback"), default=session.seekback)
 
     async def _shutdown_control_client(self, control_client: object) -> None:
         try:
@@ -500,6 +504,43 @@ class HLSSegmenterService:
             return session.legacy_probe_cache
         finally:
             session.legacy_probe_lock.release()
+
+    def migrate_session(self, monitor_id: str, new_metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Prepare an API-mode HLS session for migration to a new engine.
+        
+        This method captures the current playback position from the active session
+        so the next session (after re-starting in main.py) can resume from the same point.
+        """
+        key = self._sanitize_monitor_id(monitor_id)
+        session = self._sessions.get(key)
+        if not session:
+            return {"migrated": False, "reason": "hls_segmenter_session_not_found"}
+
+        old_container_id = session.container_id
+        
+        # --- ROBUST FAILOVER FIX: Capture position before reconnecting ---
+        try:
+            probe = self.collect_legacy_stats_probe(monitor_id, force=True)
+            if probe and "livepos" in probe:
+                pos = probe["livepos"].get("pos")
+                live_last = probe["livepos"].get("last_ts") or probe["livepos"].get("live_last")
+                
+                if pos is not None and live_last is not None:
+                    # Update seekback for the next attempt
+                    session.seekback = max(0, int(live_last) - int(pos))
+                    logger.info(f"External HLS Segmenter migration triggered for {monitor_id}. "
+                               f"Updating seekback to {session.seekback}s for resume alignment.")
+        except Exception as e:
+            logger.debug(f"Failed to calculate HLS segmenter resume position during migration: {e}")
+        # -----------------------------------------------------------------
+
+        # We return the target seekback so main.py can use it for the new engine START command
+        return {
+            "migrated": True,
+            "old_container_id": old_container_id,
+            "target_seekback": session.seekback,
+            "stream_type": "HLS_API",
+        }
 
     async def get_or_wait_manifest(self, monitor_id: str, timeout_s: float = 15.0) -> Optional[Path]:
         """Return manifest for an existing session, waiting briefly if FFmpeg is still warming up."""

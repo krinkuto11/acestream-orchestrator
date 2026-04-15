@@ -16,9 +16,10 @@ import uuid
 from typing import Dict, Optional, Set, Any, List
 from urllib.parse import urljoin, urlparse
 from .config_helper import ConfigHelper
-from .constants import PROXY_MODE_HTTP
+from .constants import PROXY_MODE_HTTP, normalize_proxy_mode
+from .utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 
 class HLSConfig:
@@ -296,7 +297,7 @@ class StreamManager:
             normalized_seekback = 0
         self.seekback = max(0, normalized_seekback)
         self.bitrate = bitrate
-        self.control_mode = PROXY_MODE_HTTP
+        self.control_mode = normalize_proxy_mode(ConfigHelper.control_mode(), default=PROXY_MODE_HTTP)
         self.running = True
         
         # Session info from AceStream API
@@ -337,8 +338,28 @@ class StreamManager:
         self.cleanup_running = False
 
         self._swap_lock = threading.RLock()
+        self._legacy_api_lock = threading.Lock()
+        self.ace_api_client: Optional[AceLegacyApiClient] = None
         
         logger.info(f"Initialized HLS stream manager for channel {channel_id} bitrate={self.bitrate} bps")
+
+    def _is_api_mode(self) -> bool:
+        return False  # HLSProxyServer is only for HTTP mode (integrated segmenter)
+
+    def collect_legacy_stats_probe(self, force: bool = False):
+        """Fetch current live position from AceStream engine if using API control."""
+        if not self._is_api_mode() or not self.ace_api_client or not self.running:
+            return None
+
+        # Simplified probe for HLS failover position alignment
+        try:
+            with self._legacy_api_lock:
+                if not self.ace_api_client:
+                    return None
+                return self.ace_api_client.collect_status_samples(samples=1, interval_s=0.0, per_sample_timeout_s=1.0)
+        except Exception as e:
+            logger.debug(f"HLS legacy stats probe failed: {e}")
+            return None
 
     def get_playback_context(self) -> Dict[str, str]:
         """Return playback URL and engine identity atomically for fetch operations."""
@@ -387,6 +408,78 @@ class StreamManager:
 
         return params
 
+            self.is_live = int(response_data.get("is_live", self.is_live or 1) or 1)
+            self.bitrate = int(response_data.get("bitrate", self.bitrate or 0) or 0)
+
+        # Handle potential API client transition
+        if "ace_api_client" in session_updates:
+            old_client = None
+            with self._legacy_api_lock:
+                old_client = self.ace_api_client
+                self.ace_api_client = session_updates["ace_api_client"]
+            
+            if old_client and old_client is not self.ace_api_client:
+                try:
+                    old_client.shutdown()
+                except Exception:
+                    pass
+
+        logger.info(
+            "Applied HLS hot swap for channel=%s old_engine=%s new_engine=%s bitrate=%s bps",
+            self.channel_id,
+            old_container_id,
+            target_container_id,
+            self.bitrate
+        )
+
+        return {
+            "swapped": True,
+            "old_container_id": old_container_id,
+            "new_container_id": target_container_id,
+            "playback_session_id": self.playback_session_id,
+            "stat_url": self.stat_url,
+            "command_url": self.command_url,
+            "is_live": self.is_live,
+            "bitrate": self.bitrate,
+        }
+
+    def _request_stream_session_http_for_engine(self, engine_host: str, engine_port: int) -> Dict[str, Any]:
+        """Request a new HTTP-mode AceStream HLS session from a specific engine."""
+        hls_url = f"http://{engine_host}:{int(engine_port)}/ace/manifest.m3u8"
+        params = self._build_engine_stream_params()
+        
+        response = requests.get(hls_url, params=params, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+
+        if payload.get("error"):
+            raise RuntimeError(f"AceStream engine returned error: {payload.get('error')}")
+
+        response_data = payload.get("response", {})
+        playback_url = str(response_data.get("playback_url") or "").strip()
+        if not playback_url:
+            raise RuntimeError("No playback_url in HLS swap response")
+
+        # Rewrite localhost URLs
+        parsed_url = urlparse(playback_url)
+        if parsed_url.hostname in {"127.0.0.1", "localhost"}:
+            port_part = f":{parsed_url.port}" if parsed_url.port else ""
+            playback_url = f"{parsed_url.scheme}://{engine_host}{port_part}{parsed_url.path}"
+            if parsed_url.query:
+                playback_url = f"{playback_url}?{parsed_url.query}"
+
+        return {
+            "playback_url": playback_url,
+            "playback_session_id": response_data.get("playback_session_id"),
+            "stat_url": response_data.get("stat_url") or "",
+            "command_url": response_data.get("command_url") or "",
+            "is_live": int(response_data.get("is_live", 1) or 1),
+            "bitrate": int(response_data.get("bitrate") or 0),
+        }
+        except Exception as e:
+            logger.error(f"Failed to request HTTP HLS session: {e}", exc_info=True)
+            raise
+
     def hot_swap_engine(
         self,
         new_host: str,
@@ -410,26 +503,26 @@ class StreamManager:
                 "new_container_id": target_container_id,
             }
 
-        hls_url = f"http://{new_host}:{int(new_port)}/ace/manifest.m3u8"
-        params = self._build_engine_stream_params()
-        response = requests.get(hls_url, params=params, timeout=10)
-        response.raise_for_status()
-        payload = response.json()
+        # --- ROBUST FAILOVER FIX: Capture position before reconnecting ---
+        try:
+            if self.stat_url:
+                resp = requests.get(self.stat_url, timeout=1.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    response = data.get("response", {})
+                    livepos = response.get("livepos")
+                    if isinstance(livepos, dict):
+                        pos = livepos.get("pos")
+                        live_last = livepos.get("last_ts") or livepos.get("live_last")
+                        
+                        if pos is not None and live_last is not None:
+                            self.seekback = max(0, int(live_last) - int(pos))
+                            logger.info(f"HLS Hot swap / Failover triggered. Updating seekback to {self.seekback}s to resume via HTTP stat alignment.")
+        except Exception as e:
+            logger.debug(f"Failed to calculate HLS resume position during failover: {e}")
+        # -----------------------------------------------------------------
 
-        if payload.get("error"):
-            raise RuntimeError(f"AceStream engine returned error: {payload.get('error')}")
-
-        response_data = payload.get("response", {})
-        playback_url = str(response_data.get("playback_url") or "").strip()
-        if not playback_url:
-            raise RuntimeError("No playback_url in HLS swap response")
-
-        parsed_url = urlparse(playback_url)
-        if parsed_url.hostname in {"127.0.0.1", "localhost"}:
-            port_part = f":{parsed_url.port}" if parsed_url.port else ""
-            playback_url = f"{parsed_url.scheme}://{new_host}{port_part}{parsed_url.path}"
-            if parsed_url.query:
-                playback_url = f"{playback_url}?{parsed_url.query}"
+        session_updates = self._request_stream_session_http_for_engine(new_host, int(new_port))
 
         with self._swap_lock:
             old_container_id = self.engine_container_id
@@ -437,12 +530,12 @@ class StreamManager:
             self.engine_port = int(new_port)
             self.engine_api_port = int(new_api_port or 62062)
             self.engine_container_id = target_container_id
-            self.playback_url = playback_url
-            self.playback_session_id = response_data.get("playback_session_id") or self.playback_session_id
-            self.stat_url = response_data.get("stat_url") or self.stat_url
-            self.command_url = response_data.get("command_url") or self.command_url
-            self.is_live = int(response_data.get("is_live", self.is_live or 1) or 1)
-            self.bitrate = int(response_data.get("bitrate", self.bitrate or 0) or 0)
+            self.playback_url = session_updates["playback_url"]
+            self.playback_session_id = session_updates["playback_session_id"] or self.playback_session_id
+            self.stat_url = session_updates["stat_url"] or self.stat_url
+            self.command_url = session_updates["command_url"] or self.command_url
+            self.is_live = int(session_updates["is_live"] or self.is_live or 1)
+            self.bitrate = int(session_updates["bitrate"] or self.bitrate or 0)
 
         logger.info(
             "Applied HLS hot swap for channel=%s old_engine=%s new_engine=%s bitrate=%s bps",

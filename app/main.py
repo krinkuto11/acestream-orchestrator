@@ -3939,6 +3939,14 @@ async def ace_getstream(
                     start_info = {}
                     playback_url = ""
 
+                    # Check if we have a warm session (e.g. from a migration) that has a captured seekback
+                    session_meta = hls_segmenter_service.get_session_metadata(stream_key) or {}
+                    migrated_seekback = session_meta.get("seekback")
+                    if migrated_seekback is not None and int(migrated_seekback) > 0:
+                        if int(migrated_seekback) != normalized_seekback:
+                            logger.info(f"Using migrated seekback {migrated_seekback}s instead of initial {normalized_seekback}s for API-HLS stream {stream_key}")
+                            normalized_seekback = int(migrated_seekback)
+
                     for attempt_idx in range(max_engine_attempts):
                         selected_engine, current_load = select_best_engine(
                             additional_load_by_engine=excluded_engine_penalties,

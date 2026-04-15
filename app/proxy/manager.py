@@ -80,11 +80,15 @@ class ProxyManager:
                 if normalized_key in hls_server.stream_managers:
                     result = hls_server.migrate_stream(normalized_key, selected_engine)
                 else:
-                    return {
-                        "migrated": False,
-                        "reason": "stream_not_found_in_proxy",
-                        "stream_key": normalized_key,
-                    }
+                    from ..services.hls_segmenter import hls_segmenter_service
+                    if hls_segmenter_service.has_session(normalized_key):
+                        result = hls_segmenter_service.migrate_session(normalized_key, {"new_engine": selected_engine})
+                    else:
+                        return {
+                            "migrated": False,
+                            "reason": "stream_not_found_in_proxy",
+                            "stream_key": normalized_key,
+                        }
         except Exception as e:
             logger.warning("Proxy stream migration failed for key=%s: %s", normalized_key, e)
             return {

@@ -387,9 +387,12 @@ class StreamManager:
                 start_mode = resolved_mode
                 start_payload = self.source_input
 
+            stream_type = "output_format=hls" if Config.STREAM_MODE == "HLS" else "output_format=http"
+            
             start_info = client.start_stream(
                 start_payload,
                 mode=start_mode,
+                stream_type=stream_type,
                 file_indexes=self.file_indexes,
                 seekback=self.seekback,
             )
