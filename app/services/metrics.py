@@ -477,9 +477,10 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
         # 1. Check Internal HLS Proxy
         hls_proxy = HLSProxyServer.get_instance()
         if hls_proxy:
-            managers = getattr(hls_proxy, "client_managers", {}) or {}
-            for stream_key, manager in managers.items():
-                container_id = stream_to_engine.get(stream_key)
+            # Use stream_managers which track actual engine-to-proxy fetching
+            managers = getattr(hls_proxy, "stream_managers", {}) or {}
+            for channel_id, manager in managers.items():
+                container_id = stream_to_engine.get(channel_id)
                 if not container_id:
                     continue
                 try:

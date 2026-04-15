@@ -343,7 +343,7 @@ const extractVpnNodes = (
 
 const toMbps = (speedMaybe: number | null | undefined): number => {
   if (speedMaybe == null || Number.isNaN(speedMaybe)) return 0
-  return (speedMaybe * 8) / 1000
+  return (speedMaybe * 8) / 1000000
 }
 
 // EMA smoothing to prevent pipes from flashing to 0 during burst waits

@@ -326,6 +326,7 @@ class StreamManager:
         self.initial_buffering = True
         self.buffered_duration = 0.0
         self.last_manifest_buffer_seconds_behind = 0.0
+        self.total_bytes_fetched = 0
         
         # Orchestrator event tracking
         self.stream_id = None  # Will be set after sending start event
@@ -920,6 +921,10 @@ class StreamFetcher:
                 response.raise_for_status()
                 payload = response.content
                 observe_proxy_ingress_bytes("HLS", len(payload))
+                
+                # Update per-stream ingress tracking for topology metrics
+                self.manager.total_bytes_fetched += len(payload)
+                
                 return payload
             except Exception as e:
                 # Only log if manager is still running (expected errors when stopping)
