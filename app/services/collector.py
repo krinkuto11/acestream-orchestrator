@@ -122,6 +122,11 @@ class Collector:
             # Extract status field
             status = payload.get("status")
 
+            # Extract bitrate
+            bitrate = payload.get("bitrate")
+            if bitrate is None:
+                bitrate = payload.get("bitRate")
+
             # Extract livepos data (for live streams)
             # AceStream engines return livepos object with fields that may vary by version:
             # - pos: current playback position timestamp
@@ -159,6 +164,7 @@ class Collector:
                 downloaded=payload.get("downloaded"),
                 uploaded=payload.get("uploaded"),
                 status=status,
+                bitrate=bitrate,
                 livepos=livepos_data,
                 proxy_buffer_pieces=proxy_pieces,
             )
@@ -240,6 +246,10 @@ class Collector:
             if downloaded is None:
                 downloaded = probe.get("http_downloaded")
 
+            bitrate = probe.get("bitrate")
+            if bitrate is None:
+                bitrate = probe.get("http_bitrate")
+
             # Keep numeric fields stable for panel/metrics even if probe omits fields.
             speed_down = 0 if speed_down is None else speed_down
             speed_up = 0 if probe.get("speed_up") is None else probe.get("speed_up")
@@ -268,6 +278,7 @@ class Collector:
                 downloaded=downloaded,
                 uploaded=uploaded,
                 status=probe.get("status_text") or probe.get("status"),
+                bitrate=bitrate,
                 livepos=livepos,
                 proxy_buffer_pieces=proxy_pieces,
             )

@@ -17,8 +17,11 @@ export interface TopologyNodeData {
   subtitle: string
   health: TopologyNodeHealth
   bandwidthMbps: number
+  bandwidthKbps?: number
   uploadMbps?: number
+  uploadKbps?: number
   proxyIngressMbps?: number
+  proxyIngressKbps?: number
   streamCount: number
   vpnTunnel?: TunnelId
   lifecycle?: 'active' | 'draining'
@@ -341,9 +344,19 @@ const extractVpnNodes = (
   return nodes
 }
 
-const toMbps = (speedMaybe: number | null | undefined): number => {
-  if (speedMaybe == null || Number.isNaN(speedMaybe)) return 0
-  return (speedMaybe * 8) / 1000000
+const toMbps = (kbpsMaybe: number | null | undefined): number => {
+  if (kbpsMaybe == null || Number.isNaN(kbpsMaybe)) return 0
+  // AceStream reports speed in KB/s. kbps * 8 = kbits/s. / 1000 = Mbps.
+  return (kbpsMaybe * 8) / 1000
+}
+
+/**
+ * Robustly formats a throughput value in both KB/s and Mbps.
+ */
+export const formatThroughputDual = (kbps: number | null | undefined): string => {
+  if (kbps == null || Number.isNaN(kbps) || kbps <= 0) return '0 KB/s'
+  const mbps = (kbps * 8) / 1000
+  return `${Math.round(kbps)} KB/s | ${mbps.toFixed(1)} Mbps`
 }
 
 // EMA smoothing to prevent pipes from flashing to 0 during burst waits
@@ -393,6 +406,7 @@ const buildSnapshot = (
   const vpnStatusAny = (vpnStatus || {}) as Record<string, unknown>
   const directPublicIp = String(vpnStatusAny.public_ip || '').trim()
 
+  const failoverEngines: string[] = []
   const previousEdgeFlowById = new Map<string, boolean>()
   
   // Robustly resolve which streams belong to which engine, handling ID prefix matches (short vs long) and name fallbacks.
@@ -460,22 +474,28 @@ const buildSnapshot = (
 
   const engineStats = workingEngines.map((engine) => {
     const engineStreams = resolveStreamsForEngine(engine)
-    const streamMeasuredDownMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_down), 0)
-    const streamMeasuredUpMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_up), 0)
-    const reportedTotalDownMbps = toMbps(engine.total_speed_down)
-    const reportedTotalUpMbps = toMbps(engine.total_speed_up)
+    const streamMeasuredDownKbps = engineStreams.reduce((sum, stream) => sum + (stream.speed_down || 0), 0)
+    const streamMeasuredUpKbps = engineStreams.reduce((sum, stream) => sum + (stream.speed_up || 0), 0)
+    
+    const reportedTotalDownKbps = engine.total_speed_down || 0
+    const reportedTotalUpKbps = engine.total_speed_up || 0
 
     // Prefer backend aggregates when available: they include monitor-session STATUS traffic.
-    const measuredDownMbps = Math.max(streamMeasuredDownMbps, reportedTotalDownMbps)
-    const measuredUpMbps = Math.max(streamMeasuredUpMbps, reportedTotalUpMbps)
+    const measuredDownKbps = Math.max(streamMeasuredDownKbps, reportedTotalDownKbps)
+    const measuredUpKbps = Math.max(streamMeasuredUpKbps, reportedTotalUpKbps)
+    
+    const measuredDownMbps = toMbps(measuredDownKbps)
+    const measuredUpMbps = toMbps(measuredUpKbps)
+
     return {
       engine,
       streamCount: engineStreams.length,
       measuredMbps: measuredDownMbps, // used for sorting
-      streamMeasuredDownMbps,
-      streamMeasuredUpMbps,
+      streamMeasuredDownMbps: toMbps(streamMeasuredDownKbps),
       measuredDownMbps,
       measuredUpMbps,
+      measuredDownKbps,
+      measuredUpKbps,
     }
   })
 
@@ -612,7 +632,7 @@ const buildSnapshot = (
   }
 
   // 3. Process engine nodes with stable staggered lanes
-  normalizedEngineStats.forEach(({ engine, streamCount, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, assignedTunnel }, index) => {
+  normalizedEngineStats.forEach(({ engine, streamCount, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, measuredDownKbps, measuredUpKbps, assignedTunnel }, index) => {
     const engineStreams = resolveStreamsForEngine(engine)
     const monitorStreamCount = Math.max(
       0,
@@ -665,6 +685,12 @@ const buildSnapshot = (
     const engineIngressBps = hasIngressMap
       ? Number((ingressByEngine as Record<string, number | undefined>)[engine.container_id] ?? 0)
       : undefined
+    
+    // metrics.py reports ingress in bytes per second. Convert for dual display.
+    const engineIngressKbps = typeof engineIngressBps === 'number'
+      ? engineIngressBps / 1024
+      : (streamCount > 0 ? measuredDownKbps * 0.98 : (isMockMode ? randomBetween(120, 2200) : 0))
+    
     const proxyIngressMbps = typeof engineIngressBps === 'number'
       ? (engineIngressBps > 0 ? (engineIngressBps * 8) / 1_000_000 : 0)
       : (streamCount > 0 ? streamMeasuredDownMbps * 0.98 : (isMockMode ? randomBetween(2, 18) : 0))
@@ -691,8 +717,11 @@ const buildSnapshot = (
         health,
         streamCount,
         bandwidthMbps,
+        bandwidthKbps: measuredDownKbps,
         uploadMbps: measuredUpMbps > 0 ? measuredUpMbps : (isMockMode ? randomBetween(2, 12) : 0),
+        uploadKbps: measuredUpKbps,
         proxyIngressMbps: proxyIngressMbps,
+        proxyIngressKbps: engineIngressKbps,
         vpnTunnel: isVpnDisabledMode ? undefined : assignedTunnel,
         lifecycle: engineLifecycle,
         forwarded: Boolean(engine.forwarded),
@@ -701,6 +730,7 @@ const buildSnapshot = (
           assignedTunnel,
           activeTunnel: sourceNodeId,
           peers: engineStreams.reduce((sum, stream) => sum + (stream.peers || 0), 0),
+          targetBitrate: engineStreams[0]?.bitrate || null,
           monitorStreamCount,
           lifecycle: engineLifecycle,
           variant: engine.engine_variant || 'default',

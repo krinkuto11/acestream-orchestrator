@@ -2,7 +2,7 @@ import { AlertTriangle, GitBranch, Server, ShieldCheck, Timer, Users, Zap } from
 import { Handle, Position, type NodeProps } from 'reactflow'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import type { TopologyNodeData } from '@/stores/topologyStore'
+import { formatThroughputDual, type TopologyNodeData } from '@/stores/topologyStore'
 
 const formatBytes = (bytes: number, decimals = 2) => {
   if (bytes === 0) return '0 Bytes'
@@ -214,23 +214,27 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
             <div className="flex flex-col p-1 px-1.5 rounded bg-[#1e1b4b] border border-indigo-800">
               <span className="text-[8px] text-emerald-400 font-bold uppercase leading-none mb-1">Down</span>
               <div className="flex items-baseline gap-1">
-                <span className="text-base font-bold leading-none tracking-tight">{data.bandwidthMbps.toFixed(1)}</span>
-                <span className="text-[8px] font-medium text-indigo-300">Mbps</span>
+                <span className="text-[10px] font-bold leading-none tracking-tight">
+                  {formatThroughputDual(data.bandwidthKbps)}
+                </span>
               </div>
             </div>
             <div className="flex flex-col p-1 px-1.5 rounded bg-[#1e1b4b] border border-indigo-800">
               <span className="text-[8px] text-rose-400 font-bold uppercase leading-none mb-1">Up</span>
               <div className="flex items-baseline gap-1">
-                <span className="text-base font-bold leading-none tracking-tight">{(data.uploadMbps || 0).toFixed(1)}</span>
-                <span className="text-[8px] font-medium text-indigo-300">Mbps</span>
+                <span className="text-[10px] font-bold leading-none tracking-tight">
+                  {formatThroughputDual(data.uploadKbps)}
+                </span>
               </div>
             </div>
           </div>
-        ) : data.kind === 'proxy' ? (
+        ) : data.kind === 'proxy' || data.kind === 'engine' ? (
           <div className={cn("flex items-center justify-between rounded-md border p-1.5 px-2 shadow-sm", theme.box)}>
-            <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>Throughput</span>
-            <span className="text-sm font-semibold">
-              {data.bandwidthMbps.toFixed(1)} <span className="text-[9px] font-normal text-fuchsia-300/80 ml-0.5">Mbps</span>
+            <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>
+              {data.kind === 'proxy' ? 'Throughput' : 'Egress (to Proxy)'}
+            </span>
+            <span className="text-[10px] font-bold">
+              {formatThroughputDual(data.kind === 'proxy' ? data.bandwidthKbps : data.proxyIngressKbps)}
             </span>
           </div>
         ) : data.kind === 'client' && (

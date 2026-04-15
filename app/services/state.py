@@ -812,6 +812,24 @@ class State:
         with self._lock:
             arr = self.stream_stats.setdefault(stream_id, [])
             arr.append(snap)
+            
+            # Update latest stats on the main StreamState object for real-time access
+            st = self.streams.get(stream_id)
+            if st:
+                st.peers = snap.peers if snap.peers is not None else st.peers
+                st.speed_down = snap.speed_down if snap.speed_down is not None else st.speed_down
+                st.speed_up = snap.speed_up if snap.speed_up is not None else st.speed_up
+                st.downloaded = snap.downloaded if snap.downloaded is not None else st.downloaded
+                st.uploaded = snap.uploaded if snap.uploaded is not None else st.uploaded
+                if snap.status:
+                    st.status = "started" # ensure status is correct if we are getting stats
+                if snap.bitrate is not None:
+                    st.bitrate = snap.bitrate
+                if snap.livepos:
+                    st.livepos = snap.livepos
+                if snap.proxy_buffer_pieces is not None:
+                    st.proxy_buffer_pieces = snap.proxy_buffer_pieces
+
             from ..core.config import cfg as _cfg
             if len(arr) > _cfg.STATS_HISTORY_MAX:
                 del arr[: len(arr) - _cfg.STATS_HISTORY_MAX]

@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { TopologyNode } from '@/components/topology/TopologyNode'
 import { TopologyEdge } from '@/components/topology/TopologyEdge'
-import { useTopologyStore } from '@/stores/topologyStore'
+import { useTopologyStore, formatThroughputDual } from '@/stores/topologyStore'
 import { cn } from '@/lib/utils'
 
 const nodeTypes = {
@@ -203,8 +203,8 @@ function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus,
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-[10px] text-slate-500 uppercase font-medium">Throughput</p>
-                  <p className="text-xl font-semibold text-emerald-400 tabular-nums">
-                    {selectedNode.data?.bandwidthMbps.toFixed(1)} <span className="text-xs text-slate-500 font-normal ml-0.5">Mbps</span>
+                  <p className="text-sm font-semibold text-emerald-400 tabular-nums leading-tight mt-1">
+                    {formatThroughputDual(selectedNode.data?.bandwidthKbps)}
                   </p>
                 </div>
                 <div>
@@ -221,12 +221,21 @@ function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus,
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Metadata Properties</p>
               </div>
               <div className="p-4 space-y-2 font-mono text-[11px] text-slate-300">
-                {Object.entries(selectedNode.data?.metadata || {}).map(([key, value]) => (
-                  <div key={key} className="flex items-center justify-between gap-4 border-b border-white/5 pb-1.5 last:border-b-0 last:pb-0">
-                    <span className="text-slate-500">{key}</span>
-                    <span className="font-semibold text-right text-slate-300 truncate">{String(value)}</span>
-                  </div>
-                ))}
+                {Object.entries(selectedNode.data?.metadata || {}).map(([key, value]) => {
+                  if (value === null || value === undefined) return null;
+                  
+                  let displayValue = String(value);
+                  if (key === 'targetBitrate' && typeof value === 'number' && value > 0) {
+                    displayValue = `${(value / 1000000).toFixed(1)} Mbps (${value.toLocaleString()} bps)`;
+                  }
+
+                  return (
+                    <div key={key} className="flex items-center justify-between gap-4 border-b border-white/5 pb-1.5 last:border-b-0 last:pb-0">
+                      <span className="text-slate-500">{key === 'targetBitrate' ? 'Target Bitrate' : key}</span>
+                      <span className="font-semibold text-right text-slate-300 truncate">{displayValue}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </CardContent>
