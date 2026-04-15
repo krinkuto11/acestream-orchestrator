@@ -490,12 +490,16 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
                 except Exception:
                     continue
 
-        # 2. Check External API HLS Segmenter
+        # 2. Check External HLS Segmenter Service (API mode)
+        from .hls_segmenter import hls_segmenter_service
         if hls_segmenter_service:
-            # External segmenter doesn't track cumulative bytes fetched directly in memory,
-            # but it has the latest engine probe which contains 'downloaded' total from engine.
-            for stream_key, container_id in stream_to_engine.items():
-                if hls_segmenter_service.has_session(stream_key):
+            sessions = getattr(hls_segmenter_service, "_sessions", {}) or {}
+            for stream_key, session in sessions.items():
+                container_id = stream_to_engine.get(stream_key)
+                if not container_id:
+                    continue
+                try:
+                    # External segmenters report total downloaded bytes in their legacy probes
                     probe = hls_segmenter_service.collect_legacy_stats_probe(stream_key)
                     if probe:
                         downloaded = probe.get("downloaded")
@@ -503,6 +507,8 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
                             downloaded = probe.get("http_downloaded")
                         if downloaded is not None:
                             current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + int(downloaded)
+                except Exception:
+                    continue
     except Exception:
         pass
 

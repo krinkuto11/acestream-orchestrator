@@ -3615,8 +3615,9 @@ async def ace_getstream(
             additional_load_by_engine=additional_load_by_engine,
         )
 
-    def _find_active_api_hls_stream_id() -> Optional[str]:
-        for active_stream in state.list_streams(status="started"):
+    def _find_active_api_hls_stream_id(stream_key: str) -> Optional[str]:
+        active_streams = state.list_streams(status="started")
+        for active_stream in active_streams:
             if active_stream.key != stream_key:
                 continue
             if normalize_proxy_mode(active_stream.control_mode, default=PROXY_MODE_HTTP) == PROXY_MODE_API:
@@ -3640,8 +3641,12 @@ async def ace_getstream(
         command_url: str,
         is_live: int,
         bitrate: int = 0,
+        stream_key: str,
+        input_type: str,
+        normalized_file_indexes: str,
+        normalized_seekback: int,
     ) -> Optional[str]:
-        existing_stream_id = _find_active_api_hls_stream_id()
+        existing_stream_id = _find_active_api_hls_stream_id(stream_key)
         if existing_stream_id:
             return existing_stream_id
 
@@ -3837,7 +3842,6 @@ async def ace_getstream(
                         client_id=client_identity,
                         user_agent=user_agent,
                         request_kind="manifest",
-                        bytes_sent=len(manifest_bytes),
                         buffer_seconds_behind=manifest_seconds_behind,
                     )
 
@@ -3867,19 +3871,24 @@ async def ace_getstream(
                     session_meta = hls_segmenter_service.get_session_metadata(stream_key) or {}
                     existing_stream_id = str(session_meta.get("stream_id") or "").strip()
                     if not existing_stream_id:
-                        stream_id = await _register_api_hls_stream_if_missing(
-                            container_id=str(session_meta.get("container_id") or ""),
-                            engine_host=str(session_meta.get("engine_host") or ""),
-                            engine_port=_safe_int(session_meta.get("engine_port"), default=0),
-                            engine_api_port=_safe_int(session_meta.get("engine_api_port"), default=0),
-                            playback_session_id=str(session_meta.get("playback_session_id") or ""),
-                            stat_url=str(session_meta.get("stat_url") or ""),
-                            command_url=str(session_meta.get("command_url") or ""),
-                            is_live=_safe_int(session_meta.get("is_live"), default=1),
-                            bitrate=_safe_int(session_meta.get("bitrate"), default=0),
-                        )
-                        if stream_id:
-                            hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
+                        if not hls_proxy.has_channel(stream_key):
+                            stream_id = await _register_api_hls_stream_if_missing(
+                                container_id=str(session_meta.get("container_id") or ""),
+                                engine_host=str(session_meta.get("engine_host") or ""),
+                                engine_port=_safe_int(session_meta.get("engine_port"), default=0),
+                                engine_api_port=_safe_int(session_meta.get("engine_api_port"), default=0),
+                                playback_session_id=str(session_meta.get("playback_session_id") or ""),
+                                stat_url=str(session_meta.get("stat_url") or ""),
+                                command_url=str(session_meta.get("command_url") or ""),
+                                is_live=_safe_int(session_meta.get("is_live"), default=1),
+                                bitrate=_safe_int(session_meta.get("bitrate"), default=0),
+                                stream_key=stream_key,
+                                input_type=input_type,
+                                normalized_file_indexes=normalized_file_indexes,
+                                normalized_seekback=normalized_seekback,
+                            )
+                            if stream_id:
+                                hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
 
                     logger.debug("Reusing external HLS segmenter for stream %s", stream_key)
                     hls_segmenter_service.record_activity(stream_key)
@@ -4096,6 +4105,10 @@ async def ace_getstream(
                     stat_url=str(segmenter_metadata.get("stat_url") or ""),
                     command_url=str(segmenter_metadata.get("command_url") or ""),
                     is_live=int(segmenter_metadata.get("is_live") or 1),
+                    stream_key=stream_key,
+                    input_type=input_type,
+                    normalized_file_indexes=normalized_file_indexes,
+                    normalized_seekback=normalized_seekback,
                 )
                 if stream_id:
                     hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
@@ -4109,7 +4122,6 @@ async def ace_getstream(
                     client_ip,
                     user_agent,
                     request_kind="manifest",
-                    bytes_sent=len(manifest_bytes),
                     buffer_seconds_behind=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key),
                 )
 
