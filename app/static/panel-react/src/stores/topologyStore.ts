@@ -393,8 +393,41 @@ const buildSnapshot = (
   const vpnStatusAny = (vpnStatus || {}) as Record<string, unknown>
   const directPublicIp = String(vpnStatusAny.public_ip || '').trim()
 
-  const failoverEngines: string[] = []
   const previousEdgeFlowById = new Map<string, boolean>()
+  
+  // Robustly resolve which streams belong to which engine, handling ID prefix matches (short vs long) and name fallbacks.
+  const resolveStreamsForEngine = (engine: EngineState): StreamState[] => {
+    // 1. Exact match by containerId (preferred)
+    const direct = streamMap.get(engine.container_id)
+    if (direct) return direct
+
+    // 2. Exact match by containerName
+    if (engine.container_name) {
+      const byName = streamMap.get(engine.container_name)
+      if (byName) return byName
+    }
+
+    // 3. Prefix match (short ID vs long ID)
+    if (engine.container_id.length >= 12) {
+      const shortId = engine.container_id.substring(0, 12)
+      for (const [id, sList] of streamMap.entries()) {
+        if (id.startsWith(shortId) || shortId.startsWith(id.substring(0, 12))) {
+          return sList
+        }
+      }
+    }
+
+    // 4. Fallback search by stream containerName
+    if (engine.container_name) {
+      for (const [id, sList] of streamMap.entries()) {
+        if (sList[0]?.container_name === engine.container_name) {
+          return sList
+        }
+      }
+    }
+
+    return []
+  }
 
   if (prevState) {
     prevState.edges.forEach((edge) => {
@@ -426,7 +459,7 @@ const buildSnapshot = (
   }
 
   const engineStats = workingEngines.map((engine) => {
-    const engineStreams = streamMap.get(engine.container_id) || []
+    const engineStreams = resolveStreamsForEngine(engine)
     const streamMeasuredDownMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_down), 0)
     const streamMeasuredUpMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_up), 0)
     const reportedTotalDownMbps = toMbps(engine.total_speed_down)
@@ -580,7 +613,7 @@ const buildSnapshot = (
 
   // 3. Process engine nodes with stable staggered lanes
   normalizedEngineStats.forEach(({ engine, streamCount, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, assignedTunnel }, index) => {
-    const engineStreams = streamMap.get(engine.container_id) || []
+    const engineStreams = resolveStreamsForEngine(engine)
     const monitorStreamCount = Math.max(
       0,
       Number(

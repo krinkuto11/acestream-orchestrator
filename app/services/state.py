@@ -156,8 +156,18 @@ class State:
             # Try to find existing engine using multiple approaches
             eng = None
             if evt.container_id:
-                # First try by container_id
+                # First try by container_id (direct match)
                 eng = self.engines.get(evt.container_id)
+                
+                # If no direct match, try partial match (short ID vs long ID) or by container name
+                if not eng:
+                    short_id = evt.container_id[:12]
+                    for eid, engine in self.engines.items():
+                        # Match by short ID prefix OR by container name
+                        if (len(evt.container_id) >= 12 and eid.startswith(short_id)) or \
+                           (evt.container_id == engine.container_name):
+                            eng = engine
+                            break
 
             if not eng:
                 # If not found, search for engine with matching host:port
