@@ -322,19 +322,43 @@ def _get_proxy_stream_buffer_pieces(stream_key: str) -> Optional[int]:
 
         # 2. Check HLS Segmenter (API mode HLS)
         try:
-            api_hls_clients = client_tracking_service.get_stream_clients(
-                stream_key,
-                protocol="HLS",
-                worker_id="api_hls_segmenter",
-            )
-            # For now, HLS Segmenter aggregate pieces = number of available segments
-            # (Lag calculation would require parsing the manifest on disk each second)
-            if api_hls_clients:
-                # If we have clients, we return a value that reflects the potential lag
-                # But since we don't have the live head easily, we fall back to a "healthy" signal
-                # or a fixed value if clients exist.
-                # To be improved if absolute manifest tracking is added to the service.
-                pass
+            from .hls_segmenter import hls_segmenter_service
+            
+            # Use the segmenter service to calculate the lag for API-mode HLS.
+            # We treat 'monitor_id' as the stream_key for external segmenters.
+            if hls_segmenter_service.has_session(stream_key):
+                latest_seq = hls_segmenter_service._latest_manifest_sequence(stream_key)
+                
+                if latest_seq is not None:
+                    api_hls_clients = client_tracking_service.get_stream_clients(
+                        stream_key,
+                        protocol="HLS",
+                        worker_id="api_hls_segmenter",
+                    )
+                    
+                    if api_hls_clients:
+                        min_client_seq = latest_seq
+                        has_active_clients = False
+
+                        for client in api_hls_clients:
+                            c_seq = client.get("last_sequence")
+                            if c_seq is not None:
+                                try:
+                                    c_seq_int = int(c_seq)
+                                    if c_seq_int < min_client_seq:
+                                        min_client_seq = c_seq_int
+                                    has_active_clients = True
+                                except (TypeError, ValueError):
+                                    continue
+                        
+                        if has_active_clients:
+                            # Lag is the number of segments between head and slowest client.
+                            return max(0, latest_seq - min_client_seq)
+                
+                # If no clients or sequence not available, fall back to manifest window depth
+                lag_seconds = hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key)
+                # Normalize seconds to a 'pieces' equivalent (roughly 1 piece per second)
+                return int(lag_seconds)
         except Exception:
             pass
 

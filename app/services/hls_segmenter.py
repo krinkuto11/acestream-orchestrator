@@ -39,6 +39,12 @@ class SegmenterSession:
     legacy_probe_cache: Optional[Dict[str, Any]] = None
     legacy_probe_cache_ts: float = 0.0
     legacy_probe_lock: threading.Lock = field(default_factory=threading.Lock)
+    
+    # Manifest caching for topology/collector metrics
+    manifest_cache_ts: float = 0.0
+    manifest_mtime: float = 0.0
+    cached_latest_seq: Optional[int] = None
+    cached_manifest_lag: float = 0.0
 
 
 class HLSSegmenterService:
@@ -257,6 +263,15 @@ class HLSSegmenterService:
             idle_timeout_s=self._client_record_ttl_s,
             worker_id="api_hls_segmenter",
         )
+        
+        # Report egress metrics for global throughput gauges
+        if bytes_delta > 0:
+            try:
+                from .metrics import observe_proxy_egress_bytes
+                observe_proxy_egress_bytes("HLS", int(bytes_delta))
+            except Exception:
+                pass
+                
         session.last_activity = ts
 
     @staticmethod
@@ -275,23 +290,47 @@ class HLSSegmenterService:
                 continue
         return sequences
 
+    def _update_manifest_cache_if_stale(self, session: SegmenterSession) -> None:
+        """Update cached manifest metrics if the file has changed on disk."""
+        try:
+            if not session.manifest_path.exists():
+                return
+            
+            mtime = session.manifest_path.stat().st_mtime
+            if mtime == session.manifest_mtime and session.cached_latest_seq is not None:
+                return
+                
+            manifest_content = session.manifest_path.read_text("utf-8")
+            sequences = self._manifest_segment_sequences(manifest_content)
+            
+            session.manifest_mtime = mtime
+            session.manifest_cache_ts = time.time()
+            
+            if not sequences:
+                session.cached_latest_seq = None
+                session.cached_manifest_lag = 0.0
+                return
+                
+            session.cached_latest_seq = max(sequences)
+            
+            # Estimate lag based on window depth
+            if len(sequences) <= 1:
+                session.cached_manifest_lag = 0.0
+            else:
+                lag_segments = max(0, max(sequences) - min(sequences))
+                session.cached_manifest_lag = max(0.0, float(lag_segments) * float(self._hls_segment_time_s))
+                
+        except Exception as e:
+            logger.debug(f"Failed to update manifest cache for {session.monitor_id}: {e}")
+
     def _latest_manifest_sequence(self, monitor_id: str) -> Optional[int]:
         key = self._sanitize_monitor_id(monitor_id)
         session = self._sessions.get(key)
         if not session:
             return None
 
-        try:
-            if not session.manifest_path.exists():
-                return None
-            manifest_content = session.manifest_path.read_text("utf-8")
-        except Exception:
-            return None
-
-        sequences = self._manifest_segment_sequences(manifest_content)
-        if not sequences:
-            return None
-        return max(sequences)
+        self._update_manifest_cache_if_stale(session)
+        return session.cached_latest_seq
 
     def estimate_manifest_buffer_seconds_behind(self, monitor_id: str) -> float:
         """Estimate lag based on the FFmpeg HLS playlist window depth."""
@@ -300,19 +339,8 @@ class HLSSegmenterService:
         if not session:
             return 0.0
 
-        try:
-            if not session.manifest_path.exists():
-                return 0.0
-            manifest_content = session.manifest_path.read_text("utf-8")
-        except Exception:
-            return 0.0
-
-        sequences = self._manifest_segment_sequences(manifest_content)
-        if len(sequences) <= 1:
-            return 0.0
-
-        lag_segments = max(0, max(sequences) - min(sequences))
-        return max(0.0, float(lag_segments) * float(self._hls_segment_time_s))
+        self._update_manifest_cache_if_stale(session)
+        return session.cached_manifest_lag
 
     def estimate_segment_buffer_seconds_behind(self, monitor_id: str, sequence: Optional[int]) -> float:
         """Estimate per-client lag from requested segment sequence vs latest playlist sequence."""
@@ -496,6 +524,23 @@ class HLSSegmenterService:
             )
             if not isinstance(probe, dict):
                 return session.legacy_probe_cache
+            
+            # Report ingress metrics for global throughput gauges
+            # Only report if this is a fresh probe (not cached)
+            speed_down = probe.get("speed_down")
+            if speed_down is None:
+                speed_down = probe.get("http_speed_down")
+            
+            if speed_down is not None:
+                try:
+                    from .metrics import observe_proxy_ingress_bytes
+                    # Convert KB/s to bytes (assuming ~1s interval between collector probes)
+                    bytes_down = int(float(speed_down) * 1024)
+                    if bytes_down > 0:
+                        observe_proxy_ingress_bytes("HLS", bytes_down)
+                except Exception:
+                    pass
+
             session.legacy_probe_cache = probe
             session.legacy_probe_cache_ts = time.monotonic()
             return probe

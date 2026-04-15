@@ -463,28 +463,45 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
     except Exception:
         pass
 
-    # Also attribute HLS ingress per-engine via HLS segmenter stream ownership
+    # Also attribute HLS ingress per-engine via HLS proxy/segmenter stream ownership
     try:
         from ..proxy.hls_proxy import HLSProxyServer
+        from .hls_segmenter import hls_segmenter_service
 
-        hls_proxy = HLSProxyServer.get_instance()
-        managers = getattr(hls_proxy, "client_managers", {}) or {}
         active_streams = state.list_streams(status="started")
         stream_to_engine: Dict[str, str] = {}
         for s in active_streams:
             if s.key and s.container_id:
                 stream_to_engine[s.key] = s.container_id
 
-        for stream_key, manager in managers.items():
-            container_id = stream_to_engine.get(stream_key)
-            if not container_id:
-                continue
-            try:
-                total_fetched = getattr(manager, "total_bytes_fetched", 0) or 0
-                if total_fetched > 0:
-                    current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + int(total_fetched)
-            except Exception:
-                continue
+        # 1. Check Internal HLS Proxy
+        hls_proxy = HLSProxyServer.get_instance()
+        if hls_proxy:
+            managers = getattr(hls_proxy, "client_managers", {}) or {}
+            for stream_key, manager in managers.items():
+                container_id = stream_to_engine.get(stream_key)
+                if not container_id:
+                    continue
+                try:
+                    total_fetched = getattr(manager, "total_bytes_fetched", 0) or 0
+                    if total_fetched > 0:
+                        current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + int(total_fetched)
+                except Exception:
+                    continue
+
+        # 2. Check External API HLS Segmenter
+        if hls_segmenter_service:
+            # External segmenter doesn't track cumulative bytes fetched directly in memory,
+            # but it has the latest engine probe which contains 'downloaded' total from engine.
+            for stream_key, container_id in stream_to_engine.items():
+                if hls_segmenter_service.has_session(stream_key):
+                    probe = hls_segmenter_service.collect_legacy_stats_probe(stream_key)
+                    if probe:
+                        downloaded = probe.get("downloaded")
+                        if downloaded is None:
+                            downloaded = probe.get("http_downloaded")
+                        if downloaded is not None:
+                            current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + int(downloaded)
     except Exception:
         pass
 
