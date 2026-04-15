@@ -9,6 +9,7 @@ NOT gevent. All sleep operations must use time.sleep(), not gevent.sleep().
 import time
 import logging
 import math
+from typing import Optional
 
 from .config_helper import ConfigHelper
 from .constants import PROXY_MODE_API, normalize_proxy_mode
