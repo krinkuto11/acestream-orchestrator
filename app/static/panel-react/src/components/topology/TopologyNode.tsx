@@ -228,7 +228,7 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
               </div>
             </div>
           </div>
-        ) : data.kind === 'proxy' || data.kind === 'engine' ? (
+        ) : data.kind === 'proxy' ? (
           <div className={cn("flex items-center justify-between rounded-md border p-1.5 px-2 shadow-sm", theme.box)}>
             <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>
               {data.kind === 'proxy' ? 'Throughput' : 'Egress (to Proxy)'}

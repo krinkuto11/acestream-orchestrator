@@ -317,8 +317,9 @@ const extractVpnNodes = (
           public_ip: legacyNode?.public_ip,
           provider: legacyNode?.provider,
           country: legacyNode?.country,
+          assigned_hostname: legacyNode?.assigned_hostname,
         },
-        idx,
+        nodes.length + idx,
       )
     })
   }
