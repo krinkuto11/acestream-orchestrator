@@ -1478,4 +1478,7 @@ class HLSProxyServer:
         buffer = self.stream_buffers[channel_id]
         
         # Deliver the full segment immediately. Hold happens at manifest level now.
+        segment_data = buffer.get(segment_id)
+        if segment_data is None:
+            raise ValueError(f"Segment {segment_id} not found in buffer")
         yield segment_data

@@ -1051,6 +1051,7 @@ class HLSSegmenterService:
             return
 
         # Deliver the full segment immediately. No hold here.
+        segment_data = await asyncio.to_thread(path.read_bytes)
         yield segment_data
 
     def get_segment_file_path(self, monitor_id: str, segment_filename: str) -> Optional[Path]:
