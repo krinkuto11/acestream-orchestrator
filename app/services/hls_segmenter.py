@@ -34,6 +34,7 @@ class SegmenterSession:
     stream_key_type: str = "content_id"
     file_indexes: str = "0"
     seekback: int = 0
+    bitrate: int = 0
     stream_id: str = ""
     control_client: Optional[object] = None
     legacy_probe_cache: Optional[Dict[str, Any]] = None
@@ -149,6 +150,8 @@ class HLSSegmenterService:
             session.file_indexes = str(metadata.get("file_indexes") or "0")
         if metadata.get("seekback") is not None:
             session.seekback = self._to_int(metadata.get("seekback"), default=0)
+        if metadata.get("bitrate") is not None:
+            session.bitrate = self._to_int(metadata.get("bitrate"), default=0)
         if metadata.get("stream_id") is not None:
             session.stream_id = str(metadata.get("stream_id") or "")
         if metadata.get("control_client") is not None:
@@ -257,9 +260,13 @@ class HLSSegmenterService:
             else:
                 # If we have very few segments, we are still prebuffering
                 # list_size is typically 5, we want at least 2 for a stable start
-                manifest_depth = session.cached_manifest_lag / (self._hls_segment_time_s or 3.0)
+                segment_time = self._hls_segment_time_s or 3.0
+                manifest_depth = session.cached_manifest_lag / segment_time
                 if manifest_depth < 2.0:
                     is_prebuffering = True
+                
+                # If bitrate is known, we can be more precise about the actual 'seconds' buffered
+                # based on segment count.
         except Exception:
             pass
 
@@ -278,6 +285,7 @@ class HLSSegmenterService:
             idle_timeout_s=self._client_record_ttl_s,
             is_prebuffering=is_prebuffering,
             worker_id="api_hls_segmenter",
+            bitrate=session.bitrate,  # Pass bitrate to tracker for accurate BPS EMA initialization
         )
         
         # Report egress metrics for global throughput gauges
@@ -356,6 +364,10 @@ class HLSSegmenterService:
             return 0.0
 
         self._update_manifest_cache_if_stale(session)
+        
+        # Use bitrate-aware estimation if possible, otherwise fallback to sequence-based
+        # Actually for HLS, 'seconds behind' is primarily governed by segment durations.
+        # But we can cross-reference with bitrate to ensure consistency.
         return session.cached_manifest_lag
 
     def estimate_segment_buffer_seconds_behind(self, monitor_id: str, sequence: Optional[int]) -> float:
@@ -373,6 +385,9 @@ class HLSSegmenterService:
             return self.estimate_manifest_buffer_seconds_behind(monitor_id)
 
         lag_segments = max(0, int(latest_sequence) - current_sequence)
+        
+        # If we have bitrate, we can potentially use it to refine the estimate 
+        # but HLS segment time is the most direct metric for visual runway.
         return max(0.0, float(lag_segments) * float(self._hls_segment_time_s))
 
     def list_clients(self, monitor_id: str, max_idle_seconds: Optional[int] = None) -> List[Dict[str, Any]]:

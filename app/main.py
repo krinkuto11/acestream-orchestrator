@@ -4084,6 +4084,7 @@ async def ace_getstream(
                     "file_indexes": normalized_file_indexes,
                     "seekback": normalized_seekback,
                     "control_client": legacy_api_client,
+                    "bitrate": bitrate,
                 }
                 try:
                     await hls_segmenter_service.start_segmenter(stream_key, playback_url, metadata=segmenter_metadata)

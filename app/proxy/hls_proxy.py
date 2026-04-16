@@ -109,6 +109,7 @@ class ClientManager:
         sequence: Optional[int] = None,
         buffer_seconds_behind: Optional[float] = None,
         is_prebuffering: Optional[bool] = None,
+        bitrate: int = 0,
         now: Optional[float] = None,
     ):
         """Record client activity and transfer counters in the central tracker."""
@@ -147,6 +148,7 @@ class ClientManager:
             now=ts,
             is_prebuffering=is_prebuffering,
             worker_id=self.worker_id,
+            bitrate=bitrate,
         )
 
         with self.lock:
@@ -342,6 +344,10 @@ class StreamManager:
         self.ace_api_client: Optional[AceLegacyApiClient] = None
         
         logger.info(f"Initialized HLS stream manager for channel {channel_id} bitrate={self.bitrate} bps")
+        
+        # Start telemetry heartbeat if in an async context
+        if self._event_loop and self._event_loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._telemetry_heartbeat_loop(), self._event_loop)
 
     def _is_api_mode(self) -> bool:
         return False  # HLSProxyServer is only for HTTP mode (integrated segmenter)
@@ -411,40 +417,81 @@ class StreamManager:
 
     def _request_stream_session_http_for_engine(self, engine_host: str, engine_port: int) -> Dict[str, Any]:
         """Request a new HTTP-mode AceStream HLS session from a specific engine."""
-        hls_url = f"http://{engine_host}:{int(engine_port)}/ace/manifest.m3u8"
-        params = self._build_engine_stream_params()
-        
-        response = requests.get(hls_url, params=params, timeout=10)
-        response.raise_for_status()
-        payload = response.json()
+        try:
+            hls_url = f"http://{engine_host}:{int(engine_port)}/ace/manifest.m3u8"
+            params = self._build_engine_stream_params()
+            
+            response = requests.get(hls_url, params=params, timeout=10)
+            response.raise_for_status()
+            payload = response.json()
 
-        if payload.get("error"):
-            raise RuntimeError(f"AceStream engine returned error: {payload.get('error')}")
+            if payload.get("error"):
+                raise RuntimeError(f"AceStream engine returned error: {payload.get('error')}")
 
-        response_data = payload.get("response", {})
-        playback_url = str(response_data.get("playback_url") or "").strip()
-        if not playback_url:
-            raise RuntimeError("No playback_url in HLS swap response")
+            response_data = payload.get("response", {})
+            playback_url = str(response_data.get("playback_url") or "").strip()
+            if not playback_url:
+                raise RuntimeError("No playback_url in HLS swap response")
 
-        # Rewrite localhost URLs
-        parsed_url = urlparse(playback_url)
-        if parsed_url.hostname in {"127.0.0.1", "localhost"}:
-            port_part = f":{parsed_url.port}" if parsed_url.port else ""
-            playback_url = f"{parsed_url.scheme}://{engine_host}{port_part}{parsed_url.path}"
-            if parsed_url.query:
-                playback_url = f"{playback_url}?{parsed_url.query}"
+            # Rewrite localhost URLs
+            parsed_url = urlparse(playback_url)
+            if parsed_url.hostname in {"127.0.0.1", "localhost"}:
+                port_part = f":{parsed_url.port}" if parsed_url.port else ""
+                playback_url = f"{parsed_url.scheme}://{engine_host}{port_part}{parsed_url.path}"
+                if parsed_url.query:
+                    playback_url = f"{playback_url}?{parsed_url.query}"
 
-        return {
-            "playback_url": playback_url,
-            "playback_session_id": response_data.get("playback_session_id"),
-            "stat_url": response_data.get("stat_url") or "",
-            "command_url": response_data.get("command_url") or "",
-            "is_live": int(response_data.get("is_live", 1) or 1),
-            "bitrate": int(response_data.get("bitrate") or 0),
-        }
+            return {
+                "playback_url": playback_url,
+                "playback_session_id": response_data.get("playback_session_id"),
+                "stat_url": response_data.get("stat_url") or "",
+                "command_url": response_data.get("command_url") or "",
+                "is_live": int(response_data.get("is_live", 1) or 1),
+                "bitrate": int(response_data.get("bitrate") or 0),
+            }
         except Exception as e:
             logger.error(f"Failed to request HTTP HLS session: {e}", exc_info=True)
             raise
+
+    async def _telemetry_heartbeat_loop(self):
+        """Periodic heartbeat to keep UI stats fresh even between HLS segment polls."""
+        logger.debug(f"Starting telemetry heartbeat loop for channel {self.channel_id}")
+        last_run = time.time()
+        interval = 5.0 # Align with TS generator interval
+        
+        try:
+            while self.running:
+                now = time.time()
+                elapsed = now - last_run
+                if elapsed >= interval:
+                    if self.client_manager and self.client_manager.has_clients():
+                        clients = self.client_manager.list_clients()
+                        for client in clients:
+                            # Record activity with 0 delta to trigger a refresh check in tracker.
+                            # The tracker will use its EMA to report the current smoothed BPS.
+                            client_id = client.get("client_id") or client.get("id")
+                            if not client_id:
+                                continue
+                                
+                            self.client_manager.record_client_activity(
+                                client_id=client_id,
+                                client_ip=client.get("ip_address"),
+                                user_agent=client.get("user_agent"),
+                                bytes_sent=0,
+                                chunks_sent=0,
+                                request_kind="heartbeat",
+                                buffer_seconds_behind=self.last_manifest_buffer_seconds_behind,
+                                now=now,
+                                is_prebuffering=self.initial_buffering
+                            )
+                    last_run = now
+                
+                # Sleep briefly to avoid tight loop but stay responsive to self.running change
+                await asyncio.sleep(1.0)
+        except Exception as e:
+            logger.error(f"Telemetry heartbeat loop failed for {self.channel_id}: {e}")
+        finally:
+            logger.debug(f"Telemetry heartbeat loop stopped for {self.channel_id}")
 
     def hot_swap_engine(
         self,
@@ -1060,6 +1107,7 @@ class HLSProxyServer:
                 sequence=sequence,
                 buffer_seconds_behind=buffer_seconds_behind,
                 is_prebuffering=effective_prebuffering,
+                bitrate=getattr(manager, "bitrate", 0) if manager else 0,
             )
 
     def get_manifest_buffer_seconds_behind(self, channel_id: str) -> float:
