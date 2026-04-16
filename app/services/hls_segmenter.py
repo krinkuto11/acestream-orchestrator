@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..proxy.config_helper import ConfigHelper
-from ..proxy.hls_utils import get_hls_padding_comment
+from ..proxy.hls_utils import get_hls_padding_comment, get_ts_null_padding
 
 logger = logging.getLogger(__name__)
 
@@ -935,33 +935,14 @@ class HLSSegmenterService:
         yield b"#EXTM3U\n"
         yield b"# ACESTREAM HLS PREBUFFER KEEPALIVE\n"
 
-        # 2. Wait for target prebuffer with periodic comments
-        target_prebuffer = ConfigHelper.hls_initial_buffer_seconds()
-        timeout = max(15.0, float(target_prebuffer) + 30.0)
+        # 2. Wait only for the manifest file to exist (instant delivery)
+        timeout = 15.0
         start_wait = time.time()
-        last_comment = start_wait
-
-        while True:
-            self._update_manifest_cache_if_stale(session)
-            current_lag = session.cached_manifest_lag
-            
-            if current_lag >= float(target_prebuffer):
-                break
-                
-            now = time.time()
-            if now - start_wait > timeout:
-                yield b"# ERROR: Timeout waiting for prebuffer duration\n"
+        while not session.manifest_path.exists():
+            if time.time() - start_wait > timeout:
+                yield b"# ERROR: Timeout waiting for manifest generation\n"
                 return
-
-            if now - last_comment > 0.5:
-                # Fat Keep-Alive: Provide progress info + ~8KB of padding
-                yield f"# Prebuffering: {current_lag:.1f}s / {target_prebuffer}s reached\n".encode("utf-8")
-                # Payload padding to satisfy bandwidth monitors (Dispatcharr parity: exactly 8KB aligned)
-                yield get_hls_padding_comment(8272)
-                
-                last_comment = now
-
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(0.2)
 
         # 3. Final Manifest
         content = await asyncio.to_thread(session.manifest_path.read_text, "utf-8")
@@ -992,6 +973,50 @@ class HLSSegmenterService:
 
             lines.append(f"/api/v1/hls/{key}/{segment_name}")
         return "\n".join(lines) + "\n"
+
+    async def read_segment_stream(self, monitor_id: str, segment_filename: str):
+        """Streaming async generator for HLS segments with prebuffer hold support (API mode)."""
+        path = self.get_segment_file_path(monitor_id, segment_filename)
+        if not path or not path.exists() or not path.is_file():
+            raise FileNotFoundError(f"HLS segment not found: {segment_filename}")
+
+        key = self._sanitize_monitor_id(monitor_id)
+        session = self._sessions.get(key)
+        if not session:
+            # If session is gone, just deliver the file if it exists
+            with open(path, "rb") as f:
+                yield f.read()
+            return
+
+        # Prebuffer hold if necessary
+        target_prebuffer = ConfigHelper.hls_initial_buffer_seconds()
+        if target_prebuffer > 0:
+            start_wait = time.time()
+            last_padding = start_wait
+            timeout = max(15.0, float(target_prebuffer) + 30.0)
+            
+            while True:
+                self._update_manifest_cache_if_stale(session)
+                current_lag = session.cached_manifest_lag
+                
+                if current_lag >= float(target_prebuffer):
+                    break
+                    
+                now = time.time()
+                if now - start_wait > timeout:
+                    logger.warning(f"Timeout waiting for prebuffer for API HLS session {key}")
+                    break
+
+                if now - last_padding >= 0.2:
+                    # Yield TS NULL packets that FFmpeg can ingest as background data
+                    yield get_ts_null_padding(8272)
+                    last_padding = now
+                
+                await asyncio.sleep(0.1)
+
+        # Finally deliver the real segment data
+        content = await asyncio.to_thread(path.read_bytes)
+        yield content
 
     def get_segment_file_path(self, monitor_id: str, segment_filename: str) -> Optional[Path]:
         key = self._sanitize_monitor_id(monitor_id)

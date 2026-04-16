@@ -1363,35 +1363,11 @@ class HLSProxyServer:
         yield b"#EXTM3U\n"
         yield b"# ACESTREAM HLS PREBUFFER KEEPALIVE\n"
         
-        # 2. Wait for initial buffer with periodic comments
+        # 2. Wait only for first segment binary availability
+        # (Ensures the manifest is valid but doesn't wait for full prebuffer)
         timeout = HLSConfig.BUFFER_READY_TIMEOUT()
         start_wait = time.time()
-        last_comment = start_wait
         
-        while not manager.buffer_ready.is_set():
-            now = time.time()
-            if now - start_wait > timeout:
-                yield b"# ERROR: Timeout waiting for initial buffer\n"
-                return
-
-            if now - last_comment > 0.5:
-                # Fat Keep-Alive: Provide progress info + ~2KB of padding
-                current_lag = getattr(manager, "buffered_duration", 0.0)
-                try:
-                    target = HLSConfig.hls_initial_buffer_seconds()
-                except Exception:
-                    target = 10
-                
-                # Header comment with info
-                yield f"# Prebuffering: {current_lag:.1f}s / {target}s reached\n".encode("utf-8")
-                # Payload padding to satisfy bandwidth monitors (Dispatcharr parity: exactly 8KB aligned)
-                yield get_hls_padding_comment(8272) 
-                
-                last_comment = now
-
-            await asyncio.sleep(0.25)
-
-        # 3. Wait for first segment binary availability
         while True:
             available = list(buffer.keys())
             if available:
@@ -1455,8 +1431,8 @@ class HLSProxyServer:
         
         return manifest_content
     
-    def get_segment(self, channel_id: str, segment_name: str) -> bytes:
-        """Get segment data"""
+    async def get_segment_stream(self, channel_id: str, segment_name: str):
+        """Streaming async generator for HLS segments with prebuffer hold support."""
         if channel_id not in self.stream_buffers:
             raise ValueError(f"Channel {channel_id} not found")
         
@@ -1465,10 +1441,35 @@ class HLSProxyServer:
         except ValueError:
             raise ValueError(f"Invalid segment name: {segment_name}")
         
+        manager = self.stream_managers[channel_id]
         buffer = self.stream_buffers[channel_id]
-        segment_data = buffer[segment_id]
         
+        # Absolute Parity: Perform prebuffer hold on the FIRST segment request
+        # (or any segment requested while initial_buffering is still True)
+        if manager.initial_buffering:
+            start_wait = time.time()
+            last_padding = start_wait
+            timeout = HLSConfig.BUFFER_READY_TIMEOUT()
+            
+            while not manager.buffer_ready.is_set():
+                now = time.time()
+                if now - start_wait > timeout:
+                    logger.warning(f"Timeout waiting for prebuffer for {channel_id} segment {segment_id}")
+                    break
+
+                if now - last_padding >= 0.2:
+                    # Yield TS NULL packets that FFmpeg can ingest as background data
+                    # Use 8272 bytes (exactly 44 TS packets) for perfect alignment
+                    yield get_ts_null_padding(8272)
+                    last_padding = now
+                
+                await asyncio.sleep(0.1)
+
+        # Finally deliver the real segment data
+        segment_data = buffer[segment_id]
         if segment_data is None:
             raise ValueError(f"Segment {segment_id} not found in buffer")
         
-        return segment_data
+        yield segment_data
+
+    def get_segment(self, channel_id: str, segment_name: str) -> bytes:

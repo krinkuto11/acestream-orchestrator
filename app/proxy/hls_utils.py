@@ -4,6 +4,19 @@ Utility functions for HLS manifest processing and keep-alive protection.
 import random
 import string
 
+# Standard MPEG-TS NULL packet (188 bytes)
+# Header: 47 1f ff 10 (PID 0x1fff, Continuity Counter 0)
+# Payload: 184 bytes of 0xFF
+TS_NULL_PACKET = b"\x47\x1f\xff\x10" + b"\xff" * 184
+
+def get_ts_null_padding(size_bytes: int = 8272) -> bytes:
+    """
+    Generate a block of MPEG-TS NULL packets for segment-level prebuffering.
+    Default size 8272 is 188 * 44 (TS aligned).
+    """
+    count = size_bytes // 188
+    return TS_NULL_PACKET * count
+
 def get_hls_padding_comment(size_bytes: int = 1880) -> bytes:
     """
     Generate a large HLS comment to act as padding (Fat Keep-Alive).

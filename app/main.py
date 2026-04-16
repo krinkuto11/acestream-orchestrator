@@ -4462,27 +4462,31 @@ async def ace_hls_segment(
         except Exception:
             pass
 
-        segment_data = hls_proxy.get_segment(content_id, segment_path)
+        # Use streaming generator for segment-level prebuffer hold (Absolute Parity)
+        # Note: We record bytes_sent based on the actual segment size to maintain bitrate fidelity
+        buffer = hls_proxy.stream_buffers.get(content_id)
+        raw_segment_size = len(buffer[sequence]) if buffer and sequence in buffer else 0
+
         hls_proxy.record_client_activity(
             content_id,
             client_ip,
             client_id=client_identity,
             user_agent=user_agent,
             request_kind="segment",
-            bytes_sent=len(segment_data),
+            bytes_sent=raw_segment_size,
             chunks_sent=1,
             sequence=sequence,
             buffer_seconds_behind=hls_proxy.get_segment_buffer_seconds_behind(content_id, sequence),
         )
-        observe_proxy_egress_bytes("HLS", len(segment_data))
+        observe_proxy_egress_bytes("HLS", raw_segment_size)
         
-        # Return segment data directly
+        # Return segment via streaming generator
         elapsed = time.perf_counter() - request_started_at
         observe_proxy_request("HLS", "/ace/hls/segment", elapsed, success=True, status_code=200)
         observe_proxy_ttfb("HLS", "/ace/hls/segment", elapsed)
 
-        return Response(
-            content=segment_data,
+        return StreamingResponse(
+            hls_proxy.get_segment_stream(content_id, segment_path),
             media_type="video/MP2T",
             headers={
                 "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -4543,24 +4547,15 @@ async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: 
         except Exception:
             pass
 
-        hls_segmenter_service.record_client_activity(
-            monitor_id,
-            client_identity,
-            client_ip,
-            user_agent,
-            request_kind="segment",
-            bytes_sent=segment_size,
-            chunks_sent=1,
-            sequence=sequence,
-            buffer_seconds_behind=hls_segmenter_service.estimate_segment_buffer_seconds_behind(monitor_id, sequence),
-        )
-        observe_proxy_egress_bytes("HLS", segment_size)
-
+        # Use streaming generator for segment-level prebuffer hold (Absolute Parity)
         elapsed = time.perf_counter() - request_started_at
         observe_proxy_request("HLS", "/api/v1/hls/segment", elapsed, success=True, status_code=200)
         observe_proxy_ttfb("HLS", "/api/v1/hls/segment", elapsed)
 
-        return FileResponse(path=str(path), media_type="video/MP2T")
+        return StreamingResponse(
+            hls_segmenter_service.read_segment_stream(monitor_id, segment_filename),
+            media_type="video/MP2T"
+        )
     except HTTPException:
         raise
     except Exception as e:
