@@ -246,6 +246,12 @@ class ClientTrackingService:
             if is_prebuffering is not None:
                 current["is_prebuffering"] = bool(is_prebuffering)
 
+            if bitrate is not None:
+                try:
+                    current["bitrate"] = int(bitrate)
+                except (TypeError, ValueError):
+                    pass
+
             if sequence is not None:
                 try:
                     seq = int(sequence)
@@ -544,7 +550,8 @@ class ClientTrackingService:
         with self._lock:
             rows: List[Dict[str, Any]] = []
             for row in self._clients.values():
-                if str(row.get("stream_id") or "") != normalized_stream_id:
+                row_stream_id = str(row.get("stream_id") or "")
+                if row_stream_id != normalized_stream_id:
                     continue
                 row_protocol = self._normalize_protocol(row.get("protocol"))
                 if target_protocol and row_protocol != target_protocol:
@@ -552,6 +559,18 @@ class ClientTrackingService:
                 if target_worker_id is not None and str(row.get("worker_id") or "") != target_worker_id:
                     continue
                 rows.append(self._to_public_row(row, now))
+
+        if not rows and not str(normalized_stream_id or "").startswith("ts:"):
+            # Diagnostic for HLS API mode where we expect clients but find none
+            with self._lock:
+                total_in_memory = len(self._clients)
+                sample_keys = list(self._clients.keys())[:5]
+                logger.debug(
+                    "[Telemetry:Diagnostic] No clients found for stream %s. Total in tracker: %d. Sample keys: %s",
+                    normalized_stream_id,
+                    total_in_memory,
+                    sample_keys
+                )
 
         rows.sort(key=lambda item: self._safe_float(item.get("last_active"), default=0.0), reverse=True)
         return rows

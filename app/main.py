@@ -1771,6 +1771,8 @@ async def stream_stream_details(
                     _prune_client_tracker_if_due(ttl_s=float(ProxyConfig.CLIENT_RECORD_TTL), min_interval_s=3.0)
                     tracker_payload = client_tracking_service.get_stream_clients_payload(stream_key)
                     clients = tracker_payload.get("clients", [])
+                    if not clients and getattr(stream_state, "status", None) == "started":
+                        logger.debug(f"[Telemetry:SSE] No clients found in tracker for active stream {stream_id[:12]} using key {stream_key}")
 
             payload = jsonable_encoder(
                 {
