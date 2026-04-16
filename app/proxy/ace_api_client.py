@@ -64,6 +64,14 @@ class AceLegacyApiClient:
         return normalized if normalized.isdigit() else "0"
 
     @staticmethod
+    def _sanitize_id(val: str) -> str:
+        """Strip whitespace and common shell/JSON junk characters from IDs."""
+        if not val:
+            return ""
+        # Strip common trailing junk like backslashes, braces, quotes, and whitespace
+        return str(val).strip().strip("\\{}'\"").strip()
+
+    @staticmethod
     def _normalize_input_mode(mode: Optional[str]) -> str:
         """Normalize user-facing aliases to protocol-level input modes."""
         normalized = (mode or "auto").strip().lower()
@@ -177,7 +185,7 @@ class AceLegacyApiClient:
         For ``direct_url`` mode the protocol typically skips LOADASYNC, so this
         method returns a synthetic successful response and ``direct_url`` mode.
         """
-        content_ref = (content_id or "").strip()
+        content_ref = self._sanitize_id(content_id)
         if not content_ref:
             raise AceLegacyApiError("content reference is required")
 
@@ -248,6 +256,7 @@ class AceLegacyApiClient:
         absolute_seek: int = 0,
     ) -> Dict[str, str]:
         """Start stream and return parsed START key/value response."""
+        content_id = self._sanitize_id(content_id)
         normalized_mode = self._normalize_input_mode(mode)
         normalized_file_indexes = self._normalize_file_indexes(file_indexes)
         normalized_seekback = self._normalize_seekback(seekback)
@@ -773,7 +782,7 @@ class AceLegacyApiClient:
                     raise AceLegacyApiError(f"Engine dialog error: {dialog_text}")
 
             self._handle_async(cmd, parts)
-        raise AceLegacyApiError(f"Timeout waiting for {expected_cmd}")
+        raise AceLegacyApiError(f"Timeout waiting for {expected_cmd} after {timeout}s")
 
     def _handle_async(self, cmd: str, parts: list):
         if cmd == "EVENT" and len(parts) > 1 and parts[1] == "download_stopped":

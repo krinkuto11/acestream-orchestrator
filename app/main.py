@@ -3104,7 +3104,8 @@ def _select_stream_input(
         ("direct_url", direct_url),
         ("raw_data", raw_data),
     ]:
-        text = (raw_value or "").strip()
+        # Strip common trailing junk like backslashes, braces, quotes, and whitespace
+        text = str(raw_value or "").strip().strip("\\{}'\"").strip()
         if text:
             choices.append((input_type, text))
 
@@ -3164,6 +3165,9 @@ def _resolve_control_mode(mode: Optional[str]) -> str:
 
 
 def _build_stream_key(input_type: str, input_value: str, file_indexes: str = "0", seekback: int = 0) -> str:
+    # Sanitize input_value to remove common junk (backslashes, braces, etc.)
+    input_value = str(input_value or "").strip().strip("\\{}'\"").strip()
+    
     if input_type in {"content_id", "infohash"} and file_indexes == "0" and seekback <= 0:
         return input_value
 
@@ -4427,20 +4431,10 @@ async def ace_hls_segment(
     segment_path: str,
     request: Request,
 ):
-    """Proxy endpoint for HLS segments.
+    """Proxy endpoint for HLS segments."""
+    # Sanitize content_id to ensure it matches the internal session ID
+    content_id = str(content_id or "").strip().strip("\\{}'\"").strip()
     
-    This endpoint serves individual HLS segments from the buffered stream.
-    It's used when the stream mode is set to HLS.
-    
-    Args:
-        content_id: AceStream content ID (infohash or content_id)
-        segment_path: Segment filename from the M3U8 manifest (e.g., "123.ts")
-        request: FastAPI Request object for client info
-        
-    Returns:
-        Streaming response with segment data
-    """
-    from fastapi.responses import Response
     from app.proxy.hls_proxy import HLSProxyServer
     from app.proxy.utils import get_client_ip
     
@@ -4519,8 +4513,11 @@ async def ace_hls_segment(
     },
 )
 async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: Request):
+    # Sanitize monitor_id to ensure it matches the internal session ID
+    monitor_id = str(monitor_id or "").strip().strip("\\{}'\"").strip()
+    
     from app.proxy.utils import get_client_ip
-
+    
     request_started_at = time.perf_counter()
 
     try:
