@@ -16,6 +16,7 @@ import uuid
 from typing import Dict, Optional, Set, Any, List
 from urllib.parse import urljoin, urlparse
 from .config_helper import ConfigHelper
+from .hls_utils import get_hls_padding_comment
 from .constants import PROXY_MODE_HTTP, normalize_proxy_mode
 from .utils import get_logger
 
@@ -1373,17 +1374,22 @@ class HLSProxyServer:
                 yield b"# ERROR: Timeout waiting for initial buffer\n"
                 return
 
-            if now - last_comment > 1.5:
-                # Provide progress info in the comment
+            if now - last_comment > 0.5:
+                # Fat Keep-Alive: Provide progress info + ~2KB of padding
                 current_lag = getattr(manager, "buffered_duration", 0.0)
                 try:
                     target = HLSConfig.hls_initial_buffer_seconds()
                 except Exception:
                     target = 10
+                
+                # Header comment with info
                 yield f"# Prebuffering: {current_lag:.1f}s / {target}s reached\n".encode("utf-8")
+                # Payload padding to satisfy bandwidth monitors (Dispatcharr parity)
+                yield get_hls_padding_comment(1880) 
+                
                 last_comment = now
 
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.25)
 
         # 3. Wait for first segment binary availability
         while True:

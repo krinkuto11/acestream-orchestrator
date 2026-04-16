@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..proxy.config_helper import ConfigHelper
+from ..proxy.hls_utils import get_hls_padding_comment
 
 logger = logging.getLogger(__name__)
 
@@ -952,11 +953,15 @@ class HLSSegmenterService:
                 yield b"# ERROR: Timeout waiting for prebuffer duration\n"
                 return
 
-            if now - last_comment > 1.5:
+            if now - last_comment > 0.5:
+                # Fat Keep-Alive: Provide progress info + ~2KB of padding
                 yield f"# Prebuffering: {current_lag:.1f}s / {target_prebuffer}s reached\n".encode("utf-8")
+                # Payload padding to satisfy bandwidth monitors (Dispatcharr parity)
+                yield get_hls_padding_comment(1880)
+                
                 last_comment = now
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.25)
 
         # 3. Final Manifest
         content = await asyncio.to_thread(session.manifest_path.read_text, "utf-8")
