@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .config_helper import ConfigHelper
+from ..proxy.config_helper import ConfigHelper
 
 logger = logging.getLogger(__name__)
 
