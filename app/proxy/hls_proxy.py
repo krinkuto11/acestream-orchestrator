@@ -1050,7 +1050,7 @@ class HLSProxyServer:
             if effective_prebuffering is None and manager:
                 effective_prebuffering = getattr(manager, "initial_buffering", False)
 
-            self.client_managers[channel_id].record_activity(
+            self.client_managers[channel_id].record_client_activity(
                 client_ip=client_ip,
                 client_id=client_id,
                 user_agent=user_agent,

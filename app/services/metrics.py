@@ -143,6 +143,7 @@ _last_engine_ingress_sample_ts: Optional[float] = None
 _engine_ingress_rate_bps: Dict[str, float] = {}       # container_id -> rate in bytes/s
 _last_engine_ingress_rate_bps: Dict[str, float] = {}  # held rates for zero-spike smoothing
 _last_engine_rate_ts: Optional[float] = None
+_hls_simulated_downloaded: Dict[str, int] = {}        # stream_key -> simulated cumulative bytes
 
 _docker_rate_lock = threading.Lock()
 _last_network_rx_bytes: Optional[int] = None
@@ -446,69 +447,82 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
                 active_streams = state.list_streams()
             chunk_size = int(getattr(ProxyConfig, "BUFFER_CHUNK_SIZE", 188 * 5644))
 
-            # Build stream_key -> container_id mapping
-            stream_to_engine: Dict[str, str] = {}
+            # --- 1. TS Engines (via Redis Buffer) ---
             for s in active_streams:
-                if s.key and s.container_id:
-                    stream_to_engine[s.key] = s.container_id
-
-            for stream_key, container_id in stream_to_engine.items():
+                if not s.key or not s.container_id:
+                    continue
                 try:
-                    buffer_index_raw = redis_client.get(RedisKeys.buffer_index(stream_key))
-                    buffer_index = int(buffer_index_raw or 0)
-                    ingress_bytes = max(0, buffer_index) * chunk_size
-                    current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + ingress_bytes
+                    buffer_index_raw = redis_client.get(RedisKeys.buffer_index(s.key))
+                    if buffer_index_raw is not None:
+                        buffer_index = int(buffer_index_raw or 0)
+                        ingress_bytes = max(0, buffer_index) * chunk_size
+                        current_engine_bytes[s.container_id] = current_engine_bytes.get(s.container_id, 0) + ingress_bytes
                 except Exception:
                     continue
     except Exception:
         pass
 
-    # Also attribute HLS ingress per-engine via HLS proxy/segmenter stream ownership
+    # --- 2. HLS Engines (Internal Proxy or External Segmenter) ---
     try:
         from ..proxy.hls_proxy import HLSProxyServer
         from .hls_segmenter import hls_segmenter_service
 
-        active_streams = state.list_streams(status="started")
-        stream_to_engine: Dict[str, str] = {}
-        for s in active_streams:
-            if s.key and s.container_id:
-                stream_to_engine[s.key] = s.container_id
+        # Calculate time-step for synthetic cumulative increments
+        global _last_engine_ingress_sample_ts
+        dt = 0.0
+        if _last_engine_ingress_sample_ts is not None:
+            dt = max(0.0, now - _last_engine_ingress_sample_ts)
 
-        # 1. Check Internal HLS Proxy
+        # 2a. Internal HLS Proxy
         hls_proxy = HLSProxyServer.get_instance()
         if hls_proxy:
-            # Use stream_managers which track actual engine-to-proxy fetching
             managers = getattr(hls_proxy, "stream_managers", {}) or {}
             for channel_id, manager in managers.items():
-                container_id = stream_to_engine.get(channel_id)
+                container_id = getattr(manager, "engine_container_id", None)
                 if not container_id:
                     continue
-                try:
-                    total_fetched = getattr(manager, "total_bytes_fetched", 0) or 0
-                    if total_fetched > 0:
-                        current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + int(total_fetched)
-                except Exception:
-                    continue
+                total_fetched = getattr(manager, "total_bytes_fetched", 0) or 0
+                if total_fetched > 0:
+                    current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + int(total_fetched)
 
-        # 2. Check External HLS Segmenter Service (API mode)
-        from .hls_segmenter import hls_segmenter_service
+        # 2b. External HLS Segmenter Service (API mode)
         if hls_segmenter_service:
             sessions = getattr(hls_segmenter_service, "_sessions", {}) or {}
             for stream_key, session in sessions.items():
-                container_id = stream_to_engine.get(stream_key)
+                container_id = getattr(session, "container_id", None)
                 if not container_id:
                     continue
+                
                 try:
-                    # External segmenters report total downloaded bytes in their legacy probes
                     probe = hls_segmenter_service.collect_legacy_stats_probe(stream_key)
                     if probe:
+                        # Attempt to use real cumulative downloaded bytes first
                         downloaded = probe.get("downloaded")
                         if downloaded is None:
                             downloaded = probe.get("http_downloaded")
+                        
+                        # Fallback: if 'downloaded' is missing/static but we have speed, estimate progress
+                        if (downloaded is None or downloaded == 0) and dt > 0:
+                            speed_kbps = float(probe.get("speed_down") or probe.get("http_speed_down") or 0)
+                            if speed_kbps > 0:
+                                prev_sim = _hls_simulated_downloaded.get(stream_key, 0)
+                                inc = int(speed_kbps * 1024 * dt)
+                                downloaded = prev_sim + inc
+                                _hls_simulated_downloaded[stream_key] = downloaded
+                        elif downloaded is not None:
+                            # Keep our simulator in sync with reality if reality shows up
+                            _hls_simulated_downloaded[stream_key] = int(downloaded)
+
                         if downloaded is not None:
                             current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + int(downloaded)
                 except Exception:
                     continue
+            
+            # Cleanup simulation keys for ended sessions
+            ended_keys = [k for k in _hls_simulated_downloaded if k not in sessions]
+            for k in ended_keys:
+                _hls_simulated_downloaded.pop(k, None)
+
     except Exception:
         pass
 

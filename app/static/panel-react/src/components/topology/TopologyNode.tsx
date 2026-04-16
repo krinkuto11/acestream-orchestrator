@@ -124,6 +124,7 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
   const vpnIp = data.kind === 'vpn' ? String(data.metadata?.publicIp || '') : null
   const vpnCountry = data.kind === 'vpn' ? String(data.metadata?.country || '') : null
   const vpnProvider = data.kind === 'vpn' ? String(data.metadata?.provider || '') : null
+  const vpnHostname = data.kind === 'vpn' ? String(data.metadata?.assignedHostname || '') : null
   const flag = countryToFlag(vpnCountry)
 
   return (
@@ -176,7 +177,7 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
           )}
           {isDraining && (
             <Badge variant="warning" className="gap-1 border-amber-400/60 bg-amber-500/15 text-[10px] font-semibold uppercase text-amber-200">
-              <Timer className="h-3 w-3" />
+              <Zap className="h-3 w-3" />
               Draining
             </Badge>
           )}
@@ -193,10 +194,19 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
                 {flag && <span className="text-sm shadow-sm">{flag}</span>}
               </div>
             )}
-            {vpnProvider && (
-              <p className="text-[10px] font-medium text-indigo-300 leading-none">
-                {vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}
-              </p>
+            {(vpnProvider || vpnHostname) && (
+              <div className="space-y-1">
+                {vpnHostname && (
+                  <p className="text-[9px] font-mono text-indigo-200 truncate" title={vpnHostname}>
+                    {vpnHostname}
+                  </p>
+                )}
+                {vpnProvider && (
+                  <p className="text-[10px] font-medium text-indigo-300 leading-none">
+                    {vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}
+                  </p>
+                )}
+              </div>
             )}
           </div>
         )}

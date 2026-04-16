@@ -244,13 +244,31 @@ class ClientTrackingService:
                 except (TypeError, ValueError):
                     pass
 
-            previous_bytes, previous_ts = self._rate_state.get(key, (0.0, ts))
+            previous_bytes, previous_ts = self._rate_state.get(key, (0.0, 0.0))
+            if previous_ts == 0.0:
+                # First capture for this client. 
+                # Use time since connection if available, otherwise assume 500ms bootstrap.
+                connected_at = self._safe_float(current.get("connected_at"), default=ts)
+                previous_ts = max(connected_at, ts - 0.5)
+                previous_bytes = 0.0
+
             delta_bytes = self._safe_float(current.get("bytes_sent"), 0.0) - previous_bytes
-            delta_time = ts - self._safe_float(previous_ts, ts)
-            if delta_time > 0 and delta_bytes >= 0:
-                current["bps"] = delta_bytes / delta_time
+            delta_time = ts - previous_ts
+            
+            # Use 1ms floor for delta_time to avoid division by zero and capture the first sample.
+            # This is particularly important for HLS segments which are large but sparse.
+            effective_dt = max(0.001, delta_time)
+            instant_bps = max(0.0, delta_bytes / effective_dt)
+            
+            # Apply smoothing (exponential moving average) to prevent jumpy UI.
+            # Alpha 0.3 provides a balance between responsiveness and stability for bursty HLS.
+            prev_bps = self._safe_float(current.get("bps"), default=0.0)
+            if prev_bps == 0:
+                current["bps"] = instant_bps
             else:
-                current["bps"] = 0.0
+                alpha = 0.3
+                current["bps"] = (prev_bps * (1 - alpha)) + (instant_bps * alpha)
+
             self._rate_state[key] = (self._safe_float(current.get("bytes_sent"), 0.0), ts)
 
             return dict(current)

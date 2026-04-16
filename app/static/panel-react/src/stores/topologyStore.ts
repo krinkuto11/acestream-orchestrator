@@ -615,7 +615,7 @@ const buildSnapshot = (
         data: {
           kind: 'vpn',
           title: vpnNode.title,
-          subtitle: vpnNode.assignedHostname || vpnNode.subtitle,
+          subtitle: vpnNode.subtitle,
           health,
           bandwidthMbps: isMockMode ? randomBetween(90, 210) : 0,
           streamCount: 0,
@@ -625,6 +625,7 @@ const buildSnapshot = (
             publicIp: vpnNode.publicIp,
             provider: vpnNode.provider,
             country: vpnNode.country,
+            assignedHostname: vpnNode.assignedHostname,
             lifecycle: vpnNode.lifecycle,
           },
         },
