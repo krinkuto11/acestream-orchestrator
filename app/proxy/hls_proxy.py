@@ -1374,8 +1374,15 @@ class HLSProxyServer:
                 buffer = manager.get_buffer()
                 available = sorted(buffer.keys())
                 
-                # Check for hoarding exit (buffer full)
-                if not manager.is_hoarding:
+                # Buffer Ceiling Logic:
+                # If target_prebuffer=30 but the manifest window only allows 15s (5 segments * 3s),
+                # we must release as soon as the manifest is 'full' to avoid infinite parking.
+                manifest_is_full = len(available) >= HLSConfig.WINDOW_SIZE()
+
+                # Check for hoarding exit or ceiling
+                if not manager.is_hoarding or manifest_is_full:
+                   if manifest_is_full and manager.is_hoarding:
+                       logger.info(f"[HLS:{channel_id}] Reached manifest ceiling (%d segments) before target (%ds). Releasing.", len(available), target_prebuffer)
                    break
                    
                 now = time.time()

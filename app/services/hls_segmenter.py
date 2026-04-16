@@ -960,10 +960,28 @@ class HLSSegmenterService:
             timeout = max(15.0, float(target_prebuffer) + 30.0)
             
             while True:
+                # 1. Activity Heartbeat: Prevent 'Rapid Cleanup' from killing us during prebuffer
+                self.record_activity(key)
+                
                 self._update_manifest_cache_if_stale(session)
                 current_lag = session.cached_manifest_lag
                 
-                if current_lag >= float(target_prebuffer):
+                # 2. Buffer Ceiling Logic:
+                # If target_prebuffer=30 but the manifest window only allows 15s (5 segments * 3s),
+                # we must release as soon as the manifest is 'full' to avoid infinite parking.
+                manifest_is_full = False
+                if session.manifest_path.exists():
+                    try:
+                        content = session.manifest_path.read_text("utf-8")
+                        segments = self._manifest_segments(content)
+                        if len(segments) >= self._hls_list_size:
+                            manifest_is_full = True
+                    except Exception:
+                        pass
+
+                if current_lag >= float(target_prebuffer) or manifest_is_full:
+                    if manifest_is_full and current_lag < float(target_prebuffer):
+                        logger.info(f"[HLS-API:{key}] Reached manifest ceiling (%ds) before target (%ds). Releasing hold.", current_lag, target_prebuffer)
                     session.initial_buffering = False
                     break
                     
