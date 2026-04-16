@@ -29,7 +29,8 @@ def sanitize_stream_id(val: str) -> str:
     
     # 2. Regular expression for filesystem and URL safety.
     # Replaces any remaining non-alphanumeric (except _.-) with underscores.
-    return re.sub(r"[^a-zA-Z0-9_.-]", "_", stripped)
+    # We enforce lowercase for absolute case-insensitivity across the stack.
+    return re.sub(r"[^a-zA-Z0-9_.-]", "_", stripped).lower()
 
 
 def get_client_ip(request):

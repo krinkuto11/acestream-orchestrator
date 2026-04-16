@@ -4667,8 +4667,7 @@ async def _resolve_proxy_stream_manager(monitor_id: str):
     # Compatibility fallback when monitor_id points to a legacy monitor session.
     if not manager:
         monitor = await legacy_stream_monitoring_service.get_monitor(monitor_id, include_recent_status=False)
-        monitor_content_id = (monitor or {}).get("content_id") if monitor else None
-        normalized_monitor_content_id = (monitor_content_id or "").strip().lower()
+        normalized_monitor_content_id = sanitize_stream_id(monitor_content_id)
         if normalized_monitor_content_id:
             manager = proxy.stream_managers.get(normalized_monitor_content_id)
             stream_key = normalized_monitor_content_id
