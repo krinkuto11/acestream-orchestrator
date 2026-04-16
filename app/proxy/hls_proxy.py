@@ -408,40 +408,6 @@ class StreamManager:
 
         return params
 
-            self.is_live = int(response_data.get("is_live", self.is_live or 1) or 1)
-            self.bitrate = int(response_data.get("bitrate", self.bitrate or 0) or 0)
-
-        # Handle potential API client transition
-        if "ace_api_client" in session_updates:
-            old_client = None
-            with self._legacy_api_lock:
-                old_client = self.ace_api_client
-                self.ace_api_client = session_updates["ace_api_client"]
-            
-            if old_client and old_client is not self.ace_api_client:
-                try:
-                    old_client.shutdown()
-                except Exception:
-                    pass
-
-        logger.info(
-            "Applied HLS hot swap for channel=%s old_engine=%s new_engine=%s bitrate=%s bps",
-            self.channel_id,
-            old_container_id,
-            target_container_id,
-            self.bitrate
-        )
-
-        return {
-            "swapped": True,
-            "old_container_id": old_container_id,
-            "new_container_id": target_container_id,
-            "playback_session_id": self.playback_session_id,
-            "stat_url": self.stat_url,
-            "command_url": self.command_url,
-            "is_live": self.is_live,
-            "bitrate": self.bitrate,
-        }
 
     def _request_stream_session_http_for_engine(self, engine_host: str, engine_port: int) -> Dict[str, Any]:
         """Request a new HTTP-mode AceStream HLS session from a specific engine."""
