@@ -12,7 +12,24 @@ import inspect
 logger = logging.getLogger("ace_proxy")
 
 
-def get_client_ip(request):
+def sanitize_stream_id(val: str) -> str:
+    """
+    Unified sanitization for all stream identifiers (content_id, infohash, monitor_id).
+    Ensures absolute parity between API client, data plane, and orchestrator state.
+    """
+    raw = str(val or "").strip()
+    if not raw:
+        return ""
+    
+    # 1. Strip common binary/shell/JSON junk characters: \ { } ' "
+    # We strip these entirely as they are almost certainly copy-paste artifacts.
+    stripped = raw.strip().strip("\\{}'\"").strip()
+    if not stripped:
+        return "unknown"
+    
+    # 2. Regular expression for filesystem and URL safety.
+    # Replaces any remaining non-alphanumeric (except _.-) with underscores.
+    return re.sub(r"[^a-zA-Z0-9_.-]", "_", stripped)
     """
     Extract client IP address from FastAPI request.
     Handles cases where request is behind a proxy by checking X-Forwarded-For.

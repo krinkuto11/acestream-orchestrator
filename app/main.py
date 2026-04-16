@@ -76,7 +76,7 @@ from .services.docker_client import get_client, docker_event_watcher
 from .services.vpn_credentials import credential_manager
 from .services.proton_updater import ProtonServerUpdater, ProtonFilterConfig
 from .services.vpn_servers_refresh import vpn_servers_refresh_service
-from .utils.wireguard_parser import parse_wireguard_conf
+from .proxy.utils import get_client_ip, sanitize_stream_id
 from .proxy.manager import ProxyManager
 from .proxy.ace_api_client import AceLegacyApiClient, AceLegacyApiError
 from .proxy.constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mode
@@ -1699,8 +1699,7 @@ async def stream_stream_details(
     interval_seconds: float = Query(2.0, ge=0.5, le=10.0),
     api_key: Optional[str] = Query(None),
 ):
-    # Sanitize stream_id to match internal session ID
-    stream_id = str(stream_id or "").strip().strip("\\{}'\"").strip()
+    stream_id = sanitize_stream_id(stream_id)
     
     """SSE endpoint that streams detail payloads for a single stream row."""
     _validate_sse_api_key(request, api_key)
@@ -2080,8 +2079,7 @@ def get_streams(status: Optional[str] = Query(None, pattern="^(started|ended|pen
 
 @app.get("/streams/{stream_id}/stats", response_model=List[StreamStatSnapshot])
 def get_stream_stats(stream_id: str, since: Optional[datetime] = None):
-    # Sanitize stream_id to match internal session ID
-    stream_id = str(stream_id or "").strip().strip("\\{}'\"").strip()
+    stream_id = sanitize_stream_id(stream_id)
     snaps = state.get_stream_stats(stream_id)
     if since:
         snaps = [x for x in snaps if x.ts >= since]
@@ -2089,8 +2087,7 @@ def get_stream_stats(stream_id: str, since: Optional[datetime] = None):
 
 @app.get("/streams/{stream_id}/extended-stats")
 async def get_stream_extended_stats(stream_id: str):
-    # Sanitize stream_id to match internal session ID
-    stream_id = str(stream_id or "").strip().strip("\\{}'\"").strip()
+    stream_id = sanitize_stream_id(stream_id)
     
     """
     Get extended statistics for a stream when stat_url is available (HTTP control mode).
@@ -2148,8 +2145,7 @@ async def get_stream_extended_stats(stream_id: str):
 
 @app.get("/streams/{stream_id}/livepos")
 async def get_stream_livepos(stream_id: str):
-    # Sanitize stream_id to match internal session ID
-    stream_id = str(stream_id or "").strip().strip("\\{}'\"").strip()
+    stream_id = sanitize_stream_id(stream_id)
     
     """
     Get live position data for a stream from stat URL or API-mode probe.
@@ -2301,8 +2297,7 @@ async def get_stream_livepos(stream_id: str):
 
 @app.delete("/streams/{stream_id}", dependencies=[Depends(require_api_key)])
 async def stop_stream(stream_id: str):
-    # Sanitize stream_id to match internal session ID
-    stream_id = str(stream_id or "").strip().strip("\\{}'\"").strip()
+    stream_id = sanitize_stream_id(stream_id)
     
     """
     Stop a stream by calling its command URL with method=stop.
@@ -2427,7 +2422,7 @@ async def batch_stop_streams(command_urls: List[str]):
 async def migrate_proxy_stream(req: StreamMigrationRequest):
     """Trigger an on-demand proxy stream migration for TS/HLS continuity workflows."""
     # Sanitize stream_key to remove common junk (backslashes, braces, etc.)
-    stream_key = str(req.stream_key or "").strip().strip("\\{}'\"").strip()
+    stream_key = sanitize_stream_id(req.stream_key)
     if not stream_key:
         raise HTTPException(status_code=400, detail="stream_key is required")
 
@@ -3119,8 +3114,8 @@ def _select_stream_input(
         ("direct_url", direct_url),
         ("raw_data", raw_data),
     ]:
-        # Strip common trailing junk like backslashes, braces, quotes, and whitespace
-        text = str(raw_value or "").strip().strip("\\{}'\"").strip()
+        # Matches AceLegacyApiClient._sanitize_id
+        text = sanitize_stream_id(raw_value)
         if text:
             choices.append((input_type, text))
 
@@ -3180,8 +3175,7 @@ def _resolve_control_mode(mode: Optional[str]) -> str:
 
 
 def _build_stream_key(input_type: str, input_value: str, file_indexes: str = "0", seekback: int = 0) -> str:
-    # Sanitize input_value to remove common junk (backslashes, braces, etc.)
-    input_value = str(input_value or "").strip().strip("\\{}'\"").strip()
+    input_value = sanitize_stream_id(input_value)
     
     if input_type in {"content_id", "infohash"} and file_indexes == "0" and seekback <= 0:
         return input_value
@@ -4447,8 +4441,7 @@ async def ace_hls_segment(
     request: Request,
 ):
     """Proxy endpoint for HLS segments."""
-    # Sanitize content_id to ensure it matches the internal session ID
-    content_id = str(content_id or "").strip().strip("\\{}'\"").strip()
+    content_id = sanitize_stream_id(content_id)
     
     from app.proxy.hls_proxy import HLSProxyServer
     from app.proxy.utils import get_client_ip
@@ -4528,8 +4521,7 @@ async def ace_hls_segment(
     },
 )
 async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: Request):
-    # Sanitize monitor_id to ensure it matches the internal session ID
-    monitor_id = str(monitor_id or "").strip().strip("\\{}'\"").strip()
+    monitor_id = sanitize_stream_id(monitor_id)
     
     from app.proxy.utils import get_client_ip
     
@@ -4824,8 +4816,7 @@ async def proxy_session_info(ace_id: str):
 
 @app.get("/proxy/streams/{stream_key}/clients")
 async def get_stream_clients(stream_key: str):
-    # Sanitize stream_key to match internal session ID
-    stream_key = str(stream_key or "").strip().strip("\\{}'\"").strip()
+    stream_key = sanitize_stream_id(stream_key)
     
     """Get list of clients connected to a specific stream.
     

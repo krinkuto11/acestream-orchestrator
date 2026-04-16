@@ -14,6 +14,7 @@ import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote, unquote
+from .utils import sanitize_stream_id
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +67,7 @@ class AceLegacyApiClient:
     @staticmethod
     def _sanitize_id(val: str) -> str:
         """Strip whitespace and common shell/JSON junk characters from IDs."""
-        if not val:
-            return ""
-        # Strip common trailing junk like backslashes, braces, quotes, and whitespace
-        return str(val).strip().strip("\\{}'\"").strip()
+        return sanitize_stream_id(val)
 
     @staticmethod
     def _normalize_input_mode(mode: Optional[str]) -> str:

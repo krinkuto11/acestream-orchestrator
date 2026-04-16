@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from ..proxy.config_helper import ConfigHelper
 from ..proxy.hls_utils import get_hls_padding_comment, get_ts_null_padding
+from ..proxy.utils import sanitize_stream_id
 
 logger = logging.getLogger(__name__)
 
@@ -97,15 +98,7 @@ class HLSSegmenterService:
 
     @staticmethod
     def _sanitize_monitor_id(monitor_id: str) -> str:
-        raw = str(monitor_id or "").strip()
-        if not raw:
-            raise ValueError("monitor_id is required")
-        # Strip common trailing junk like backslashes, braces, quotes, and whitespace
-        stripped = raw.strip().strip("\\{}'\"").strip()
-        if not stripped:
-            return "unknown"
-        # Then apply generic regex for filesystem/URL safety
-        return re.sub(r"[^a-zA-Z0-9_.-]", "_", stripped)
+        return sanitize_stream_id(monitor_id)
 
     def _get_output_dir(self, monitor_id: str) -> Path:
         return self._base_dir / monitor_id

@@ -2,6 +2,7 @@ import json
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
+from ..proxy.utils import sanitize_stream_id
 
 
 class ClientTrackingService:
@@ -102,7 +103,7 @@ class ClientTrackingService:
         now = self._safe_float(connected_at, default=time.time())
         normalized_protocol = self._normalize_protocol(protocol)
         normalized_client_id = str(client_id or "unknown")
-        normalized_stream_id = str(stream_id or "")
+        normalized_stream_id = sanitize_stream_id(stream_id)
         key = self._key(normalized_protocol, normalized_stream_id, normalized_client_id)
 
         created = False
@@ -181,7 +182,7 @@ class ClientTrackingService:
         ts = self._safe_float(now, default=time.time())
         normalized_protocol = self._normalize_protocol(protocol)
         normalized_client_id = str(client_id or "unknown")
-        normalized_stream_id = str(stream_id or "")
+        normalized_stream_id = sanitize_stream_id(stream_id)
 
         byte_delta = self._safe_float(bytes_delta, default=0.0)
         if byte_delta < 0:
@@ -302,7 +303,7 @@ class ClientTrackingService:
         ts = self._safe_float(now, default=time.time())
         normalized_protocol = self._normalize_protocol(protocol)
         normalized_client_id = str(client_id or "unknown")
-        normalized_stream_id = str(stream_id or "")
+        normalized_stream_id = sanitize_stream_id(stream_id)
         key = self._key(normalized_protocol, normalized_stream_id, normalized_client_id)
 
         # Position updates can arrive while tracker rows are briefly missing
@@ -386,7 +387,7 @@ class ClientTrackingService:
         protocol: Optional[str] = None,
     ) -> int:
         target_protocol = self._normalize_protocol(protocol) if protocol else None
-        normalized_stream_id = str(stream_id or "")
+        normalized_stream_id = sanitize_stream_id(stream_id)
         normalized_client_id = str(client_id or "")
 
         removed_rows: List[Dict[str, Any]] = []
@@ -426,7 +427,7 @@ class ClientTrackingService:
         worker_id: Optional[str] = None,
     ) -> int:
         target_protocol = self._normalize_protocol(protocol) if protocol else None
-        normalized_stream_id = str(stream_id or "")
+        normalized_stream_id = sanitize_stream_id(stream_id)
         normalized_worker_id = str(worker_id or "") if worker_id is not None else None
 
         removed_rows: List[Dict[str, Any]] = []
@@ -509,7 +510,7 @@ class ClientTrackingService:
         protocol: Optional[str] = None,
         worker_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        normalized_stream_id = str(stream_id or "")
+        normalized_stream_id = sanitize_stream_id(stream_id)
         target_protocol = self._normalize_protocol(protocol) if protocol else None
         target_worker_id = str(worker_id or "") if worker_id is not None else None
         now = time.time()
@@ -548,7 +549,7 @@ class ClientTrackingService:
         protocol: Optional[str] = None,
         worker_id: Optional[str] = None,
     ) -> int:
-        target_stream_id = str(stream_id or "") if stream_id is not None else None
+        target_stream_id = sanitize_stream_id(stream_id) if stream_id is not None else None
         target_protocol = self._normalize_protocol(protocol) if protocol else None
         target_worker_id = str(worker_id or "") if worker_id is not None else None
 
