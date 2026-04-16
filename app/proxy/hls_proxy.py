@@ -769,15 +769,12 @@ class StreamManager:
                         time.sleep(5)
                         continue
                     
-                    # Respect the globally configured Idle Stream Shutdown Delay (CHANNEL_SHUTDOWN_DELAY)
-                    # Use the configured delay as the inactivity timeout.
-                    # As a safety minimum for HLS (to account for client manifest polling intervals), 
-                    # we ensure it's at least 2x the target segment duration.
-                    configured_delay = float(ConfigHelper.channel_shutdown_delay())
-                    timeout = max(configured_delay, self.target_duration * 2.0)
+                    # Unified HLS Idle Shutdown: Respect ConfigHelper.hls_client_idle_timeout()
+                    # Derived from Phase 15 harmonization (20s default).
+                    idle_timeout = float(ConfigHelper.hls_client_idle_timeout())
                     
-                    if self.client_manager and self.client_manager.cleanup_inactive(timeout):
-                        logger.info(f"Channel {self.channel_id}: All clients inactive for {timeout:.1f}s (respecting shutdown delay: {configured_delay}s)")
+                    if self.client_manager and self.client_manager.cleanup_inactive(idle_timeout):
+                        logger.info(f"Channel {self.channel_id}: All clients inactive for {idle_timeout:.1f}s (unified HLS cleanup threshold)")
                         # Stop the channel via proxy server
                         proxy_server.stop_channel(self.channel_id)
                         break

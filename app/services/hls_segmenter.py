@@ -49,6 +49,7 @@ class SegmenterSession:
     manifest_mtime: float = 0.0
     cached_latest_seq: Optional[int] = None
     cached_manifest_lag: float = 0.0
+    initial_buffering: bool = True
 
 
 class HLSSegmenterService:
@@ -58,6 +59,7 @@ class HLSSegmenterService:
         self._base_dir = Path(base_dir)
         self._lock = asyncio.Lock()
         self._sessions: Dict[str, SegmenterSession] = {}
+        self._background_tasks: Dict[str, List[asyncio.Task]] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         # API-mode HLS should detect disconnected clients faster than the generic TS Redis TTL.
         # Default to min(PROXY_CLIENT_TTL, 10s) unless explicitly overridden.
@@ -794,6 +796,12 @@ class HLSSegmenterService:
                 self._apply_metadata(session, metadata)
                 self._sessions[key] = session
 
+                # Start unified background tasks for this session
+                self._background_tasks[key] = [
+                    asyncio.create_task(self._telemetry_heartbeat_loop(key), name=f"HLS-Heartbeat-{key[:8]}"),
+                    asyncio.create_task(self._cleanup_loop(key), name=f"HLS-Cleanup-{key[:8]}")
+                ]
+
         await self._wait_for_manifest(key, timeout_s=timeout_s)
         session = self._sessions.get(key)
         if not session:
@@ -829,7 +837,7 @@ class HLSSegmenterService:
         async with self._lock:
             return await self._stop_locked(key, emit_stream_ended=emit_stream_ended)
 
-    async def _stop_locked(self, key: str, emit_stream_ended: bool = True) -> bool:
+    async def _stop_locked(self, key: str, emit_stream_ended: bool = True, reason: str = "api_hls_segmenter_stopped") -> bool:
         from .client_tracker import client_tracking_service
 
         session = self._sessions.pop(key, None)
@@ -868,13 +876,20 @@ class HLSSegmenterService:
                     StreamEndedEvent(
                         container_id=session.container_id or None,
                         stream_id=session.stream_id,
-                        reason="api_hls_segmenter_stopped",
+                        reason=reason,
                     ),
                 )
             except Exception:
                 logger.debug("Failed emitting stream ended event for API-mode HLS segmenter %s", key, exc_info=True)
 
         await asyncio.to_thread(shutil.rmtree, session.output_dir, True)
+        
+        # Cancel background tasks
+        tasks = self._background_tasks.pop(key, [])
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+                
         return True
 
     def stop_segmenter_nowait(self, monitor_id: str, emit_stream_ended: bool = True) -> None:
@@ -1000,6 +1015,7 @@ class HLSSegmenterService:
                 current_lag = session.cached_manifest_lag
                 
                 if current_lag >= float(target_prebuffer):
+                    session.initial_buffering = False
                     break
                     
                 now = time.time()
@@ -1050,6 +1066,62 @@ class HLSSegmenterService:
             if await self.stop_segmenter(key):
                 cleaned += 1
         return cleaned
+
+    async def _telemetry_heartbeat_loop(self, key: str):
+        """Periodic heartbeat to keep UI stats fresh for API-mode streams."""
+        interval = 5.0
+        try:
+            while True:
+                session = self._sessions.get(key)
+                if not session or session.process.returncode is not None:
+                    break
+
+                now = time.time()
+                clients = self.list_clients(key)
+                if clients:
+                    for client in clients:
+                        client_id = client.get("client_id") or client.get("id")
+                        if not client_id:
+                            continue
+                            
+                        self.record_client_activity(
+                            key,
+                            client_id,
+                            client.get("ip_address"),
+                            client.get("user_agent"),
+                            bytes_sent=0,
+                            chunks_sent=0,
+                            request_kind="heartbeat",
+                            buffer_seconds_behind=self.estimate_manifest_buffer_seconds_behind(key),
+                            now=now,
+                        )
+                
+                await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"Telemetry heartbeat loop failed for API session {key}: {e}")
+
+    async def _cleanup_loop(self, key: str):
+        """Rapid cleanup loop to stop idle sessions without waiting for global cleanup."""
+        interval = 5.0
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                session = self._sessions.get(key)
+                if not session:
+                    break
+                
+                idle_timeout = ConfigHelper.hls_client_idle_timeout()
+                if (time.time() - session.last_activity) > idle_timeout:
+                    logger.info(f"Rapid cleanup: stopping idle API HLS session {key} (idle > {idle_timeout}s)")
+                    # Align stop reason with parity goals
+                    await self._stop_locked(key, emit_stream_ended=True, reason="api_hls_client_timeout")
+                    break
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"Cleanup loop failed for API session {key}: {e}")
 
 
 hls_segmenter_service = HLSSegmenterService()

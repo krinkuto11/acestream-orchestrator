@@ -31,6 +31,7 @@ class Config:
     
     # TTL settings
     CLIENT_RECORD_TTL: int = 60
+    HLS_CLIENT_IDLE_TIMEOUT: int = 20
     REDIS_CHUNK_TTL: int = 60
     
     # Cleanup and maintenance
@@ -320,6 +321,11 @@ class ConfigHelper:
     def hls_segment_fetch_interval():
         """Get multiplier for manifest fetch interval (relative to target duration)."""
         return ConfigHelper._get_proxy_value("hls_segment_fetch_interval", Config.HLS_SEGMENT_FETCH_INTERVAL)
+
+    @staticmethod
+    def hls_client_idle_timeout():
+        """Get unified HLS client idle timeout in seconds (20s default)."""
+        return int(ConfigHelper._get_proxy_value("hls_client_idle_timeout", Config.HLS_CLIENT_IDLE_TIMEOUT))
 
     @staticmethod
     def proxy_max_catchup_multiplier():
