@@ -30,6 +30,9 @@ def sanitize_stream_id(val: str) -> str:
     # 2. Regular expression for filesystem and URL safety.
     # Replaces any remaining non-alphanumeric (except _.-) with underscores.
     return re.sub(r"[^a-zA-Z0-9_.-]", "_", stripped)
+
+
+def get_client_ip(request):
     """
     Extract client IP address from FastAPI request.
     Handles cases where request is behind a proxy by checking X-Forwarded-For.

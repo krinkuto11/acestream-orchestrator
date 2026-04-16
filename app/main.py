@@ -3541,7 +3541,6 @@ async def ace_getstream(
     from fastapi.responses import StreamingResponse
     from uuid import uuid4
     from app.proxy.stream_generator import create_stream_generator
-    from app.proxy.utils import get_client_ip
     from app.proxy.config_helper import Config as ProxyConfig
     from .services.looping_streams import looping_streams_tracker
 
@@ -4444,7 +4443,6 @@ async def ace_hls_segment(
     content_id = sanitize_stream_id(content_id)
     
     from app.proxy.hls_proxy import HLSProxyServer
-    from app.proxy.utils import get_client_ip
     
     logger.debug(f"HLS segment request: content_id={content_id}, segment={segment_path}")
     request_started_at = time.perf_counter()
@@ -4523,7 +4521,6 @@ async def ace_hls_segment(
 async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: Request):
     monitor_id = sanitize_stream_id(monitor_id)
     
-    from app.proxy.utils import get_client_ip
     
     request_started_at = time.perf_counter()
 
