@@ -364,19 +364,38 @@ class StreamManager:
         return False  # HLSProxyServer is only for HTTP mode (integrated segmenter)
 
     def collect_legacy_stats_probe(self, force: bool = False):
-        """Fetch current live position from AceStream engine if using API control."""
-        if not self._is_api_mode() or not self.ace_api_client or not self.running:
+        """Fetch current live position and status from engine.
+        
+        If not in API mode, returns synthetic telemetry based on internal bitrate 
+        and transfer counters to enable dashboard parity.
+        """
+        if not self.running:
             return None
 
-        # Simplified probe for HLS failover position alignment
-        try:
-            with self._legacy_api_lock:
-                if not self.ace_api_client:
-                    return None
-                return self.ace_api_client.collect_status_samples(samples=1, interval_s=0.0, per_sample_timeout_s=1.0)
-        except Exception as e:
-            logger.debug(f"HLS legacy stats probe failed: {e}")
-            return None
+        # API mode: probe the engine via Ace API client
+        if self._is_api_mode() and self.ace_api_client:
+            try:
+                with self._legacy_api_lock:
+                    if not self.ace_api_client:
+                        return None
+                    return self.ace_api_client.collect_status_samples(samples=1, interval_s=0.0, per_sample_timeout_s=1.0)
+            except Exception as e:
+                logger.debug(f"HLS legacy stats probe failed for channel {self.channel_id}: {e}")
+                return None
+
+        # Integrated (HTTP) mode: return synthetic probe for dashboard parity.
+        # Speed calculations use internal bitrate (bps) converted to KB/s.
+        return {
+            "status": "DL",  # Default status for active integrated streams
+            "status_text": "Downloading",
+            "speed_down": float(self.bitrate / 8.0 / 1024.0),
+            "speed_up": 0.0,
+            "downloaded": int(self.total_bytes_fetched),
+            "uploaded": 0,
+            "peers": self.count_active_clients(),
+            "bitrate": int(self.bitrate),
+            "is_live": bool(self.is_live),
+        }
 
     def get_playback_context(self) -> Dict[str, str]:
         """Return playback URL and engine identity atomically for fetch operations."""
