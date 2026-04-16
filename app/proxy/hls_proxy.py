@@ -388,6 +388,26 @@ class StreamManager:
                 self.segment_durations.pop(seq, None)
                 self.segment_sources.pop(seq, None)
 
+    def update_dynamic_bitrate(self, segment_size_bytes: int, segment_duration: float):
+        """Update dynamic bitrate using per-segment measurement and EMA."""
+        if segment_duration <= 0 or segment_size_bytes <= 0:
+            return
+
+        # Instantaneous bitrate (bps)
+        instant_bitrate = int((segment_size_bytes * 8) / segment_duration)
+        
+        # If initial bitrate is 0, set it directly
+        if self.bitrate <= 0:
+            self.bitrate = instant_bitrate
+        else:
+            # EMA smoothing factor: 0.25 new value, 0.75 old value
+            self.bitrate = int((instant_bitrate * 0.25) + (self.bitrate * 0.75))
+            
+        logger.debug(
+            "Updated dynamic HLS bitrate for %s: %s bps (size: %s, duration: %s)", 
+            self.channel_id, self.bitrate, segment_size_bytes, segment_duration
+        )
+
     def _build_engine_stream_params(self) -> Dict[str, str]:
         params: Dict[str, str] = {
             "format": "json",
@@ -885,6 +905,10 @@ class StreamFetcher:
                     self.manager.next_sequence += 1
                     successful_downloads += 1
                     self.downloaded_segments.add(segment.uri)
+                    
+                    # Rework bitrate calculation using per-segment size
+                    self.manager.update_dynamic_bitrate(len(segment_data), duration)
+                    
                     logger.debug(f"Buffered initial segment {seq} (duration: {duration}s)")
             except Exception as e:
                 logger.error(f"Error downloading initial segment: {e}")
@@ -914,6 +938,10 @@ class StreamFetcher:
                 self.manager.record_segment_metadata(seq, duration, source_engine_id=source_engine_id)
                 self.manager.next_sequence += 1
                 self.downloaded_segments.add(latest_segment.uri)
+                
+                # Rework bitrate calculation using per-segment size
+                self.manager.update_dynamic_bitrate(len(segment_data), duration)
+                
                 logger.debug(f"Buffered segment {seq} (duration: {duration}s)")
         except Exception as e:
             logger.error(f"Error downloading latest segment: {e}")

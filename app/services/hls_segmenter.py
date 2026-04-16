@@ -299,20 +299,40 @@ class HLSSegmenterService:
         session.last_activity = ts
 
     @staticmethod
-    def _manifest_segment_sequences(manifest_content: str) -> List[int]:
-        sequences: List[int] = []
+    def _manifest_segments(manifest_content: str) -> List[Dict[str, Any]]:
+        """Parse manifest for segment sequence numbers and durations."""
+        segments: List[Dict[str, Any]] = []
+        current_duration = 3.0
         for raw_line in str(manifest_content or "").splitlines():
             line = raw_line.strip()
-            if not line or line.startswith("#"):
+            if not line:
                 continue
+            if line.startswith("#EXTINF:"):
+                # Parse duration: #EXTINF:3.003,
+                match = re.search(r"#EXTINF:([\d.]+)", line)
+                if match:
+                    try:
+                        current_duration = float(match.group(1))
+                    except (TypeError, ValueError):
+                        current_duration = 3.0
+                continue
+            if line.startswith("#"):
+                continue
+            
+            # This is a segment filename (e.g. 123.ts)
             match = re.search(r"(\d+)", line)
             if not match:
                 continue
             try:
-                sequences.append(int(match.group(1)))
+                seq = int(match.group(1))
+                segments.append({
+                    "sequence": seq,
+                    "duration": current_duration,
+                    "filename": line
+                })
             except (TypeError, ValueError):
                 continue
-        return sequences
+        return segments
 
     def _update_manifest_cache_if_stale(self, session: SegmenterSession) -> None:
         """Update cached manifest metrics if the file has changed on disk."""
@@ -325,23 +345,55 @@ class HLSSegmenterService:
                 return
                 
             manifest_content = session.manifest_path.read_text("utf-8")
-            sequences = self._manifest_segment_sequences(manifest_content)
+            segments = self._manifest_segments(manifest_content)
             
             session.manifest_mtime = mtime
             session.manifest_cache_ts = time.time()
             
-            if not sequences:
+            if not segments:
                 session.cached_latest_seq = None
                 session.cached_manifest_lag = 0.0
                 return
                 
-            session.cached_latest_seq = max(sequences)
+            sequences = [s["sequence"] for s in segments]
+            latest_seq = max(sequences)
+            
+            # Logic for dynamic bitrate calculation from latest segment
+            try:
+                latest_segment = next((s for s in segments if s["sequence"] == latest_seq), None)
+                if latest_segment:
+                    segment_file = session.output_dir / latest_segment["filename"]
+                    if segment_file.exists():
+                        duration = float(latest_segment["duration"] or 3.0)
+                        if duration > 0:
+                            file_size = segment_file.stat().st_size
+                            # Instantaneous bitrate (bps)
+                            instant_bitrate = int((file_size * 8) / duration)
+                            
+                            if instant_bitrate > 0:
+                                # Update session bitrate using EMA for smoothness
+                                # If initial bitrate is 0, set it directly first
+                                if session.bitrate <= 0:
+                                    session.bitrate = instant_bitrate
+                                else:
+                                    # EMA smoothing factor: 0.2 new value, 0.8 old value
+                                    session.bitrate = int((instant_bitrate * 0.2) + (session.bitrate * 0.8))
+                                
+                                logger.debug(
+                                    "Updated dynamic HLS bitrate for %s: %s bps (last segment: %s size: %d bytes)", 
+                                    session.monitor_id, session.bitrate, latest_segment["filename"], file_size
+                                )
+            except Exception as e:
+                logger.debug(f"Failed to calculate dynamic bitrate for {session.monitor_id}: {e}")
+
+            session.cached_latest_seq = latest_seq
             
             # Estimate lag based on window depth
             if len(sequences) <= 1:
                 session.cached_manifest_lag = 0.0
             else:
                 lag_segments = max(0, max(sequences) - min(sequences))
+                # For manifest lag, fixed segment time is usually consistent enough.
                 session.cached_manifest_lag = max(0.0, float(lag_segments) * float(self._hls_segment_time_s))
                 
         except Exception as e:
