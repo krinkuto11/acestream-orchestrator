@@ -50,6 +50,7 @@ class SegmenterSession:
     cached_latest_seq: Optional[int] = None
     cached_manifest_lag: float = 0.0
     initial_buffering: bool = True
+    null_cc: int = 0
 
 
 class HLSSegmenterService:
@@ -990,7 +991,7 @@ class HLSSegmenterService:
         return "\n".join(lines) + "\n"
 
     async def read_segment_stream(self, monitor_id: str, segment_filename: str):
-        """Streaming async generator for HLS segments with prebuffer hold support (API mode)."""
+        """Streaming async generator for HLS segments with Headers-First prebuffer hold (API mode)."""
         path = self.get_segment_file_path(monitor_id, segment_filename)
         if not path or not path.exists() or not path.is_file():
             raise FileNotFoundError(f"HLS segment not found: {segment_filename}")
@@ -1003,9 +1004,20 @@ class HLSSegmenterService:
                 yield f.read()
             return
 
+        # Finally deliver the real segment data
+        segment_data = await asyncio.to_thread(path.read_bytes)
+        
+        # Headers-First Parity: Deliver first part immediately to satisfy FFmpeg probe
+        # 32KB is enough for PAT/PMT/PES headers
+        header_size = min(len(segment_data), 32768)
+        header_data = segment_data[:header_size]
+        remainder_data = segment_data[header_size:]
+        
+        yield header_data
+
         # Prebuffer hold if necessary
         target_prebuffer = ConfigHelper.hls_initial_buffer_seconds()
-        if target_prebuffer > 0:
+        if target_prebuffer > 0 and session.initial_buffering:
             start_wait = time.time()
             last_padding = start_wait
             timeout = max(15.0, float(target_prebuffer) + 30.0)
@@ -1024,15 +1036,17 @@ class HLSSegmenterService:
                     break
 
                 if now - last_padding >= 0.2:
-                    # Yield TS NULL packets that FFmpeg can ingest as background data
-                    yield get_ts_null_padding(8272)
+                    # Yield TS NULL packets with stateful CC to satisfy strict demuxers
+                    padding, next_cc = get_ts_null_padding(8272, session.null_cc)
+                    session.null_cc = next_cc
+                    yield padding
                     last_padding = now
                 
                 await asyncio.sleep(0.1)
 
-        # Finally deliver the real segment data
-        content = await asyncio.to_thread(path.read_bytes)
-        yield content
+        # Deliver the rest of the segment
+        if remainder_data:
+            yield remainder_data
 
     def get_segment_file_path(self, monitor_id: str, segment_filename: str) -> Optional[Path]:
         key = self._sanitize_monitor_id(monitor_id)

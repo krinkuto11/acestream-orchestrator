@@ -9,13 +9,23 @@ import string
 # Payload: 184 bytes of 0xFF
 TS_NULL_PACKET = b"\x47\x1f\xff\x10" + b"\xff" * 184
 
-def get_ts_null_padding(size_bytes: int = 8272) -> bytes:
+def get_ts_null_padding(size_bytes: int = 8272, cc: int = 0) -> tuple[bytes, int]:
     """
     Generate a block of MPEG-TS NULL packets for segment-level prebuffering.
     Default size 8272 is 188 * 44 (TS aligned).
+    Returns a tuple of (bytes, next_cc).
     """
     count = size_bytes // 188
-    return TS_NULL_PACKET * count
+    packets = []
+    current_cc = cc
+    for _ in range(count):
+        # Header: 47 1f ff 1x (PID 0x1fff, Content indicator 1, CC)
+        # Final nibble is 0x10 | (cc & 0x0F)
+        header = b"\x47\x1f\xff" + bytes([0x10 | (current_cc & 0x0F)])
+        packets.append(header + b"\xff" * 184)
+        current_cc = (current_cc + 1) & 0x0F
+    
+    return b"".join(packets), current_cc
 
 def get_hls_padding_comment(size_bytes: int = 1880) -> bytes:
     """

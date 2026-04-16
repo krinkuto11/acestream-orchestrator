@@ -330,6 +330,7 @@ class StreamManager:
         self.buffered_duration = 0.0
         self.last_manifest_buffer_seconds_behind = 0.0
         self.total_bytes_fetched = 0
+        self.null_cc = 0
         
         # Orchestrator event tracking
         self.stream_id = None  # Will be set after sending start event
@@ -1429,7 +1430,7 @@ class HLSProxyServer:
         return manifest_content
     
     async def get_segment_stream(self, channel_id: str, segment_name: str):
-        """Streaming async generator for HLS segments with prebuffer hold support."""
+        """Streaming async generator for HLS segments with Headers-First prebuffer hold."""
         if channel_id not in self.stream_buffers:
             raise ValueError(f"Channel {channel_id} not found")
         
@@ -1441,8 +1442,20 @@ class HLSProxyServer:
         manager = self.stream_managers[channel_id]
         buffer = self.stream_buffers[channel_id]
         
-        # Absolute Parity: Perform prebuffer hold on the FIRST segment request
-        # (or any segment requested while initial_buffering is still True)
+        # Finally deliver the real segment data
+        segment_data = buffer[segment_id]
+        if segment_data is None:
+            raise ValueError(f"Segment {segment_id} not found in buffer")
+            
+        # Headers-First Parity: Deliver first part immediately to satisfy FFmpeg probe
+        # 32KB is enough for PAT/PMT/PES headers
+        header_size = min(len(segment_data), 32768)
+        header_data = segment_data[:header_size]
+        remainder_data = segment_data[header_size:]
+        
+        yield header_data
+
+        # Absolute Parity: Perform prebuffer hold after headers are delivered
         if manager.initial_buffering:
             start_wait = time.time()
             last_padding = start_wait
@@ -1455,18 +1468,16 @@ class HLSProxyServer:
                     break
 
                 if now - last_padding >= 0.2:
-                    # Yield TS NULL packets that FFmpeg can ingest as background data
-                    # Use 8272 bytes (exactly 44 TS packets) for perfect alignment
-                    yield get_ts_null_padding(8272)
+                    # Yield TS NULL packets with stateful CC to satisfy strict demuxers
+                    padding, next_cc = get_ts_null_padding(8272, manager.null_cc)
+                    manager.null_cc = next_cc
+                    yield padding
                     last_padding = now
                 
                 await asyncio.sleep(0.1)
 
-        # Finally deliver the real segment data
-        segment_data = buffer[segment_id]
-        if segment_data is None:
-            raise ValueError(f"Segment {segment_id} not found in buffer")
-        
-        yield segment_data
+        # Deliver the rest of the segment
+        if remainder_data:
+            yield remainder_data
 
     def get_segment(self, channel_id: str, segment_name: str) -> bytes:
