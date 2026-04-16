@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .config_helper import ConfigHelper
+
 logger = logging.getLogger(__name__)
 
 
@@ -701,7 +703,12 @@ class HLSSegmenterService:
         return session.manifest_path
 
     async def start_segmenter(self, monitor_id: str, source_mpegts_url: str, metadata: Optional[Dict[str, Any]] = None) -> Path:
-        """Start FFmpeg HLS segmenter and wait until index.m3u8 exists."""
+        """Start FFmpeg HLS segmenter and wait until prebuffer is reached."""
+        # Determine target prebuffer duration from ConfigHelper
+        target_prebuffer = ConfigHelper.hls_initial_buffer_seconds()
+        # Ensure we don't timeout prematurely if prebuffer is long
+        timeout_s = max(15.0, float(target_prebuffer) + 30.0)
+        
         key = self._sanitize_monitor_id(monitor_id)
         source = str(source_mpegts_url or "").strip()
         if not source:
@@ -786,21 +793,35 @@ class HLSSegmenterService:
                 self._apply_metadata(session, metadata)
                 self._sessions[key] = session
 
-        await self._wait_for_manifest(key)
+        await self._wait_for_manifest(key, timeout_s=timeout_s)
         session = self._sessions.get(key)
         if not session:
             raise RuntimeError(f"Segmenter session {key} not found")
         return session.manifest_path
 
     async def _wait_for_manifest(self, monitor_id: str, timeout_s: float = 15.0) -> None:
+        """Wait for the manifest to exist and reach the target prebuffer duration."""
         started = time.time()
+        target_prebuffer = ConfigHelper.hls_initial_buffer_seconds()
+        
+        logger.debug(f"Waiting for HLS manifest {monitor_id} (target prebuffer: {target_prebuffer}s, timeout: {timeout_s}s)")
+        
         while (time.time() - started) < timeout_s:
             session = self._sessions.get(monitor_id)
             if not session:
                 raise RuntimeError(f"Segmenter session {monitor_id} not found")
 
             if session.manifest_path.exists():
-                return
+                # For feature parity with MPEG-TS, we don't just wait for existence,
+                # we wait for enough duration in the manifest window.
+                self._update_manifest_cache_if_stale(session)
+                current_lag = session.cached_manifest_lag
+                
+                if current_lag >= float(target_prebuffer):
+                    logger.info(f"HLS Prebuffer ready for {monitor_id}: {current_lag:.1f}s reached")
+                    return
+                
+                logger.debug(f"HLS Prebuffering {monitor_id}: {current_lag:.1f}s / {target_prebuffer}s")
 
             if session.process.returncode is not None:
                 stderr = ""
