@@ -1384,8 +1384,8 @@ class HLSProxyServer:
                 
                 # Header comment with info
                 yield f"# Prebuffering: {current_lag:.1f}s / {target}s reached\n".encode("utf-8")
-                # Payload padding to satisfy bandwidth monitors (Dispatcharr parity)
-                yield get_hls_padding_comment(1880) 
+                # Payload padding to satisfy bandwidth monitors (Dispatcharr parity: exactly 8KB aligned)
+                yield get_hls_padding_comment(8272) 
                 
                 last_comment = now
 
