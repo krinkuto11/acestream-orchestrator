@@ -1218,8 +1218,6 @@ class HLSProxyServer:
             
             # Check if there are still active clients
             if channel_id in self.client_managers and self.client_managers[channel_id].has_clients():
-            # Check if there are still active clients
-            if channel_id in self.client_managers and self.client_managers[channel_id].has_clients():
                 logger.info(f"[HLS:{channel_id}] Cancelling stop - clients still active")
                 return
             
