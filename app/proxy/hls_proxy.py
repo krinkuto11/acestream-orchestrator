@@ -1346,10 +1346,64 @@ class HLSProxyServer:
                 if time.time() - start_time > HLSConfig.FIRST_SEGMENT_TIMEOUT():
                     raise TimeoutError("Timeout waiting for first segment")
                 
-                await asyncio.sleep(0.05)  # Non-blocking wait instead of time.sleep(0.1)
-            
             # Build manifest
             return self._build_manifest(channel_id, manager, buffer)
+
+    async def get_manifest_stream(self, channel_id: str):
+        """Streaming async generator for HLS manifest with keep-alive comments."""
+        if channel_id not in self.stream_managers:
+            raise ValueError(f"Channel {channel_id} not found")
+        
+        manager = self.stream_managers[channel_id]
+        buffer = self.stream_buffers[channel_id]
+        
+        # 1. Immediate Header
+        # Player MUST see #EXTM3U first.
+        yield b"#EXTM3U\n"
+        yield b"# ACESTREAM HLS PREBUFFER KEEPALIVE\n"
+        
+        # 2. Wait for initial buffer with periodic comments
+        timeout = HLSConfig.BUFFER_READY_TIMEOUT()
+        start_wait = time.time()
+        last_comment = start_wait
+        
+        while not manager.buffer_ready.is_set():
+            now = time.time()
+            if now - start_wait > timeout:
+                yield b"# ERROR: Timeout waiting for initial buffer\n"
+                return
+
+            if now - last_comment > 1.5:
+                # Provide progress info in the comment
+                current_lag = getattr(manager, "buffered_duration", 0.0)
+                try:
+                    target = HLSConfig.hls_initial_buffer_seconds()
+                except Exception:
+                    target = 10
+                yield f"# Prebuffering: {current_lag:.1f}s / {target}s reached\n".encode("utf-8")
+                last_comment = now
+
+            await asyncio.sleep(0.4)
+
+        # 3. Wait for first segment binary availability
+        while True:
+            available = list(buffer.keys())
+            if available:
+                break
+            if time.time() - start_wait > timeout:
+                yield b"# ERROR: Timeout waiting for first segment\n"
+                return
+            await asyncio.sleep(0.2)
+
+        # 4. Final Manifest (body only)
+        manifest_content = self._build_manifest(channel_id, manager, buffer)
+        # Strip duplicate header if present
+        if manifest_content.startswith("#EXTM3U\n"):
+            manifest_content = manifest_content[len("#EXTM3U\n"):]
+        elif manifest_content.startswith("#EXTM3U\r\n"):
+            manifest_content = manifest_content[len("#EXTM3U\r\n"):]
+            
+        yield manifest_content.encode("utf-8")
     
     def _build_manifest(self, channel_id: str, manager: 'StreamManager', buffer: 'StreamBuffer') -> str:
         """Build manifest from buffer state (fast, non-blocking operation)"""

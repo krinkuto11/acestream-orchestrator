@@ -173,6 +173,7 @@ class ClientTrackingService:
         idle_timeout_s: Optional[float] = None,
         is_prebuffering: Optional[bool] = None,
         worker_id: Optional[str] = None,
+        bitrate: Optional[int] = None,
     ) -> Dict[str, Any]:
         ts = self._safe_float(now, default=time.time())
         normalized_protocol = self._normalize_protocol(protocol)
@@ -248,6 +249,10 @@ class ClientTrackingService:
             if previous_ts == 0.0:
                 # First capture for this client. 
                 # Use time since connection if available, otherwise assume 500ms bootstrap.
+                # If we have a nominal bitrate, use it to prime the initial BPS state.
+                initial_bps = float(bitrate) if bitrate is not None and bitrate > 0 else 0.0
+                current["bps"] = initial_bps
+                
                 connected_at = self._safe_float(current.get("connected_at"), default=ts)
                 previous_ts = max(connected_at, ts - 0.5)
                 previous_bytes = 0.0

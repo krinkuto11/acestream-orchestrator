@@ -800,28 +800,15 @@ class HLSSegmenterService:
         return session.manifest_path
 
     async def _wait_for_manifest(self, monitor_id: str, timeout_s: float = 15.0) -> None:
-        """Wait for the manifest to exist and reach the target prebuffer duration."""
+        """Wait for the manifest file to exist on disk."""
         started = time.time()
-        target_prebuffer = ConfigHelper.hls_initial_buffer_seconds()
-        
-        logger.debug(f"Waiting for HLS manifest {monitor_id} (target prebuffer: {target_prebuffer}s, timeout: {timeout_s}s)")
-        
         while (time.time() - started) < timeout_s:
             session = self._sessions.get(monitor_id)
             if not session:
                 raise RuntimeError(f"Segmenter session {monitor_id} not found")
 
             if session.manifest_path.exists():
-                # For feature parity with MPEG-TS, we don't just wait for existence,
-                # we wait for enough duration in the manifest window.
-                self._update_manifest_cache_if_stale(session)
-                current_lag = session.cached_manifest_lag
-                
-                if current_lag >= float(target_prebuffer):
-                    logger.info(f"HLS Prebuffer ready for {monitor_id}: {current_lag:.1f}s reached")
-                    return
-                
-                logger.debug(f"HLS Prebuffering {monitor_id}: {current_lag:.1f}s / {target_prebuffer}s")
+                return
 
             if session.process.returncode is not None:
                 stderr = ""
@@ -933,6 +920,56 @@ class HLSSegmenterService:
         if rewrite:
             return self.rewrite_manifest(key, content)
         return content
+
+    async def read_manifest_stream(self, monitor_id: str, rewrite: bool = True):
+        """Streaming async generator for API-mode manifest with keep-alive comments."""
+        key = self._sanitize_monitor_id(monitor_id)
+        session = self._sessions.get(key)
+        if not session:
+            # Fallback to a failure comment if session is missing
+            yield b"#EXTM3U\n# ERROR: No active HLS session found\n"
+            return
+
+        # 1. Immediate Header
+        yield b"#EXTM3U\n"
+        yield b"# ACESTREAM HLS PREBUFFER KEEPALIVE\n"
+
+        # 2. Wait for target prebuffer with periodic comments
+        target_prebuffer = ConfigHelper.hls_initial_buffer_seconds()
+        timeout = max(15.0, float(target_prebuffer) + 30.0)
+        start_wait = time.time()
+        last_comment = start_wait
+
+        while True:
+            self._update_manifest_cache_if_stale(session)
+            current_lag = session.cached_manifest_lag
+            
+            if current_lag >= float(target_prebuffer):
+                break
+                
+            now = time.time()
+            if now - start_wait > timeout:
+                yield b"# ERROR: Timeout waiting for prebuffer duration\n"
+                return
+
+            if now - last_comment > 1.5:
+                yield f"# Prebuffering: {current_lag:.1f}s / {target_prebuffer}s reached\n".encode("utf-8")
+                last_comment = now
+
+            await asyncio.sleep(0.5)
+
+        # 3. Final Manifest
+        content = await asyncio.to_thread(session.manifest_path.read_text, "utf-8")
+        if rewrite:
+            content = self.rewrite_manifest(key, content)
+            
+        # Strip duplicate header
+        if content.startswith("#EXTM3U\n"):
+            content = content[len("#EXTM3U\n"):]
+        elif content.startswith("#EXTM3U\r\n"):
+            content = content[len("#EXTM3U\r\n"):]
+            
+        yield content.encode("utf-8")
 
     def rewrite_manifest(self, monitor_id: str, manifest_content: str) -> str:
         key = self._sanitize_monitor_id(monitor_id)

@@ -3833,8 +3833,7 @@ async def ace_getstream(
                             bitrate=bitrate
                         )
 
-                    manifest_content = await hls_proxy.get_manifest_async(stream_key)
-                    manifest_bytes = manifest_content.encode('utf-8')
+                    # Record activity immediately to acknowledge the client before prebuffering wait
                     manifest_seconds_behind = hls_proxy.get_manifest_buffer_seconds_behind(stream_key)
                     hls_proxy.record_client_activity(
                         stream_key,
@@ -3850,7 +3849,7 @@ async def ace_getstream(
                     observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
 
                     return StreamingResponse(
-                        iter([manifest_bytes]),
+                        hls_proxy.get_manifest_stream(stream_key),
                         media_type="application/vnd.apple.mpegurl",
                         headers={
                             "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -4115,8 +4114,6 @@ async def ace_getstream(
                     hls_segmenter_service.set_session_metadata(stream_key, {"stream_id": stream_id})
 
                 hls_segmenter_service.record_activity(stream_key)
-                manifest_content = await hls_segmenter_service.read_manifest(stream_key, rewrite=True)
-                manifest_bytes = manifest_content.encode('utf-8')
                 hls_segmenter_service.record_client_activity(
                     stream_key,
                     client_identity,
@@ -4131,7 +4128,7 @@ async def ace_getstream(
                 observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
 
                 return StreamingResponse(
-                    iter([manifest_bytes]),
+                    hls_segmenter_service.read_manifest_stream(stream_key, rewrite=True),
                     media_type="application/vnd.apple.mpegurl",
                     headers={
                         "Cache-Control": "no-cache, no-store, must-revalidate",
