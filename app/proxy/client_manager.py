@@ -243,10 +243,6 @@ class ClientManager:
                     
                     self._notify_owner_of_activity()
                 
-                # Get total clients across all workers
-                total_clients = self.get_total_client_count()
-                logger.info(f"New client connected: {client_id} (local: {len(self.clients)}, total: {total_clients})")
-
                 client_tracking_service.register_client(
                     client_id=str(client_id),
                     stream_id=str(self.content_id or ""),
@@ -258,6 +254,10 @@ class ClientManager:
                     worker_id=str(self.worker_id or "unknown"),
                     initial_metadata={"initial_index": str(initial_index)}
                 )
+                
+                # Get total clients across all workers
+                total_clients = self.get_total_client_count()
+                logger.info(f"New client connected: {client_id} (local: {len(self.clients)}, total: {total_clients})")
                 
                 self.last_heartbeat_time[client_id] = time.time()
                 

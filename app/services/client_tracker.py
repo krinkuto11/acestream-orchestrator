@@ -168,33 +168,37 @@ class ClientTrackingService:
                 normalized_protocol,
                 worker_id or "unknown"
             )
-            try:
-                from ..proxy.constants import EventType
-                from ..proxy.redis_keys import RedisKeys
-                
+
+        # Redis persistence (cross-worker updates)
+        # We perform this even if the client was NOT just created locally,
+        # to ensure that Redis sets and TTLs are refreshed if they expired
+        # but the client is still active in memory.
+        try:
+            from ..proxy.constants import EventType
+            from ..proxy.redis_keys import RedisKeys
+            
+            if created:
                 self._publish_client_event(EventType.CLIENT_CONNECTED, normalized_stream_id, row)
+            
+            if self._redis:
+                client_key = RedisKeys.client_metadata(normalized_stream_id, normalized_client_id)
+                client_set_key = RedisKeys.clients(normalized_stream_id)
                 
-                # Persist to Redis for cross-worker parity
-                if self._redis:
-                    client_key = RedisKeys.client_metadata(normalized_stream_id, normalized_client_id)
-                    client_set_key = RedisKeys.clients(normalized_stream_id)
-                    
-                    # Convert row values to strings for Redis hash
-                    mapping = {k: str(v) for k, v in row.items() if v is not None}
-                    self._redis.hset(client_key, mapping=mapping)
-                    
-                    # Add to the client set for the stream
-                    self._redis.sadd(client_set_key, normalized_client_id)
-                    
-                    # Use a generous TTL (60s default) to handle client cleanup
-                    from ..proxy.config_helper import Config
-                    ttl = int(Config.CLIENT_RECORD_TTL)
-                    self._redis.expire(client_key, ttl)
-                    self._redis.expire(client_set_key, ttl)
-            except Exception as e:
-                logger.debug(f"Failed to persist client registration to Redis: {e}")
-            except Exception:
-                pass
+                # Convert row values to strings for Redis hash
+                mapping = {k: str(v) for k, v in row.items() if v is not None}
+                self._redis.hset(client_key, mapping=mapping)
+                
+                # Add to the client set for the stream
+                self._redis.sadd(client_set_key, normalized_client_id)
+                
+                # Use a generous TTL (60s default) to handle client cleanup
+                from ..proxy.config_helper import Config
+                ttl = int(Config.CLIENT_RECORD_TTL)
+                self._redis.expire(client_key, ttl)
+                self._redis.expire(client_set_key, ttl)
+        except Exception as e:
+            logger.debug(f"Failed to persist client registration to Redis: {e}")
+            
         return row
 
     def record_activity(
@@ -678,31 +682,54 @@ class ClientTrackingService:
             if self._redis:
                 try:
                     from ..proxy.redis_keys import RedisKeys
-                    pattern = f"ace_proxy:stream:{normalized_stream_id}:clients:*"
-                    keys = self._redis.keys(pattern)
-                    for k in keys:
-                        raw_data = self._redis.hgetall(k)
-                        if not raw_data:
-                            continue
+                    client_set_key = RedisKeys.clients(normalized_stream_id)
+                    
+                    # Get all client IDs for this stream from the set
+                    # This is O(N) where N is number of clients in stream, much faster than KEYS *
+                    raw_client_ids = self._redis.smembers(client_set_key)
+                    if raw_client_ids:
+                        # Use pipelining to fetch all metadata hashes in one round-trip
+                        pipe = self._redis.pipeline()
+                        client_ids = []
+                        for rid in raw_client_ids:
+                            try:
+                                cid = rid.decode("utf-8") if isinstance(rid, bytes) else str(rid)
+                                client_ids.append(cid)
+                                pipe.hgetall(RedisKeys.client_metadata(normalized_stream_id, cid))
+                            except Exception:
+                                continue
                         
-                        # Decode Redis bytes to string and convert types
-                        data = {key.decode("utf-8"): val.decode("utf-8") for key, val in raw_data.items()}
+                        raw_data_list = pipe.execute()
                         
-                        # Filter by worker_id and protocol if requested
-                        if target_worker_id is not None and data.get("worker_id") != target_worker_id:
-                            continue
-                        row_protocol = self._normalize_protocol(data.get("protocol"))
-                        if target_protocol and row_protocol != target_protocol:
-                            continue
-                            
-                        # Enrich and format for public return
-                        rows.append(self._to_public_row(data, now))
+                        for i, raw_data in enumerate(raw_data_list):
+                            if not raw_data:
+                                continue
+                                
+                            # Decode Redis bytes to string
+                            data = {}
+                            for k, v in raw_data.items():
+                                try:
+                                    decoded_k = k.decode("utf-8") if isinstance(k, bytes) else str(k)
+                                    decoded_v = v.decode("utf-8") if isinstance(v, bytes) else str(v)
+                                    data[decoded_k] = decoded_v
+                                except Exception:
+                                    continue
+                                    
+                            # Filter by worker_id and protocol if requested
+                            if target_worker_id is not None and data.get("worker_id") != target_worker_id:
+                                continue
+                            row_protocol = self._normalize_protocol(data.get("protocol"))
+                            if target_protocol and row_protocol != target_protocol:
+                                continue
+                                
+                            # Enrich and format for public return
+                            rows.append(self._to_public_row(data, now))
                 except Exception as e:
-                    logger.warning(f"Failed to fetch clients from Redis for stream {normalized_stream_id}: {e}")
+                    logger.warning(f"Failed to aggregate clients from Redis for stream {normalized_stream_id}: {e}")
 
             # 2. Fallback/Augment with in-memory tracking
             # We use a set of IDs to avoid duplicates if same data exists in both
-            seen_client_ids = {r.get("id") for r in rows}
+            seen_client_ids = {str(r.get("id") or "") for r in rows}
             
             for row in self._clients.values():
                 row_client_id = str(row.get("client_id") or "")
@@ -719,14 +746,15 @@ class ClientTrackingService:
                     continue
                 rows.append(self._to_public_row(row, now))
 
-        if not rows and not (str(normalized_stream_id or "").startswith("ts:") or str(normalized_stream_id or "").startswith("ts_")):
+        if not rows:
             # Diagnostic logic remains
             with self._lock:
                 total_in_memory = len(self._clients)
                 similar_keys = [str(k[1]) for k in self._clients.keys() if str(k[1])[:4] == str(normalized_stream_id)[:4]]
-                logger.info(
-                    "[Telemetry:Diagnostic] No clients found for stream %s. Total in tracker: %d. Similar keys in memory: %s",
+                logger.debug(
+                    "[Telemetry:Diagnostic] No clients found for stream %s (TargetProtocol: %s). Tracker: %d rows. Similar: %s",
                     normalized_stream_id,
+                    target_protocol or "Any",
                     total_in_memory,
                     similar_keys[:5]
                 )
