@@ -22,6 +22,10 @@ orch_vpn1_health = Enum("orch_vpn1_health", "Health status of VPN1 container", s
 orch_vpn2_health = Enum("orch_vpn2_health", "Health status of VPN2 container", states=["healthy", "unhealthy", "unknown", "disabled", "starting"])
 orch_vpn1_engines = Gauge("orch_vpn1_engines", "Number of engines assigned to VPN1")
 orch_vpn2_engines = Gauge("orch_vpn2_engines", "Number of engines assigned to VPN2")
+orch_vpn1_download_speed_mbps = Gauge("orch_vpn1_download_speed_mbps", "Current download speed for VPN1 in MB/s")
+orch_vpn1_upload_speed_mbps = Gauge("orch_vpn1_upload_speed_mbps", "Current upload speed for VPN1 in MB/s")
+orch_vpn2_download_speed_mbps = Gauge("orch_vpn2_download_speed_mbps", "Current download speed for VPN2 in MB/s")
+orch_vpn2_upload_speed_mbps = Gauge("orch_vpn2_upload_speed_mbps", "Current upload speed for VPN2 in MB/s")
 orch_extra_engines = Gauge("orch_extra_engines", "Number of engines beyond MIN_REPLICAS")
 
 # Performance metrics - operation timing statistics
@@ -1056,8 +1060,17 @@ def update_custom_metrics(window_seconds: int = 900, max_points: int = 360) -> D
     vpn1_engine_count = sum(1 for e in engines if vpn1_name and e.vpn_container == vpn1_name)
     vpn2_engine_count = sum(1 for e in engines if vpn2_name and e.vpn_container == vpn2_name)
 
+    vpn1_download_speed = sum(float(e.total_speed_down or 0) for e in engines if vpn1_name and e.vpn_container == vpn1_name)
+    vpn1_upload_speed = sum(float(e.total_speed_up or 0) for e in engines if vpn1_name and e.vpn_container == vpn1_name)
+    vpn2_download_speed = sum(float(e.total_speed_down or 0) for e in engines if vpn2_name and e.vpn_container == vpn2_name)
+    vpn2_upload_speed = sum(float(e.total_speed_up or 0) for e in engines if vpn2_name and e.vpn_container == vpn2_name)
+
     orch_vpn1_engines.set(vpn1_engine_count)
     orch_vpn2_engines.set(vpn2_engine_count)
+    orch_vpn1_download_speed_mbps.set(round(vpn1_download_speed / 1024.0, 3))
+    orch_vpn1_upload_speed_mbps.set(round(vpn1_upload_speed / 1024.0, 3))
+    orch_vpn2_download_speed_mbps.set(round(vpn2_download_speed / 1024.0, 3))
+    orch_vpn2_upload_speed_mbps.set(round(vpn2_upload_speed / 1024.0, 3))
     
     orch_extra_engines.set(extra_engines)
 

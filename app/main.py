@@ -3841,6 +3841,7 @@ async def ace_getstream(
                         client_id=client_identity,
                         user_agent=user_agent,
                         request_kind="manifest",
+                        bytes_sent=500,  # Estimated manifest size
                         buffer_seconds_behind=manifest_seconds_behind,
                     )
 
@@ -4120,6 +4121,7 @@ async def ace_getstream(
                     client_ip,
                     user_agent,
                     request_kind="manifest",
+                    bytes_sent=500,  # Estimated manifest size
                     buffer_seconds_behind=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key),
                 )
 
@@ -4548,6 +4550,18 @@ async def api_hls_segment_file(monitor_id: str, segment_filename: str, request: 
             pass
 
         # Use streaming generator for segment-level prebuffer hold (Absolute Parity)
+        hls_segmenter_service.record_client_activity(
+            monitor_id,
+            client_identity,
+            client_ip,
+            user_agent,
+            request_kind="segment",
+            bytes_sent=segment_size,
+            chunks_sent=1,
+            sequence=sequence,
+            buffer_seconds_behind=hls_segmenter_service.estimate_manifest_buffer_seconds_behind(monitor_id),
+        )
+
         elapsed = time.perf_counter() - request_started_at
         observe_proxy_request("HLS", "/api/v1/hls/segment", elapsed, success=True, status_code=200)
         observe_proxy_ttfb("HLS", "/api/v1/hls/segment", elapsed)

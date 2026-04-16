@@ -144,8 +144,14 @@ class DockerStatsCollector:
                 
                 container_ids = [e.container_id for e in engines]
                 
+                # Also collect stats for VPN containers (GLUETUN nodes)
+                vpn_nodes = state.list_vpn_nodes()
+                vpn_container_ids = [str(n.get("container_name")) for n in vpn_nodes if n.get("container_name")]
+                
+                target_ids = list(set(container_ids + vpn_container_ids))
+                
                 # Collect stats for all containers in batch (efficient)
-                stats_dict = get_multiple_container_stats(container_ids)
+                stats_dict = get_multiple_container_stats(target_ids)
                 
                 # Update cache with new stats
                 with self._cache_lock:

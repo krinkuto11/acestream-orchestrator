@@ -829,6 +829,19 @@ class State:
                     st.livepos = snap.livepos
                 if snap.proxy_buffer_pieces is not None:
                     st.proxy_buffer_pieces = snap.proxy_buffer_pieces
+            
+            # Update parent EngineState aggregates if the engine is registered
+            if st and st.container_id:
+                engine = self.engines.get(st.container_id)
+                if engine:
+                    # Recalculate engine-level throughput from all its active streams
+                    engine_streams = [
+                        self.streams.get(sid) for sid in engine.streams
+                        if sid in self.streams
+                    ]
+                    engine.total_speed_down = sum(int(s.speed_down or 0) for s in engine_streams if s and s.status == "started")
+                    engine.total_speed_up = sum(int(s.speed_up or 0) for s in engine_streams if s and s.status == "started")
+                    engine.stream_count = len([s for s in engine_streams if s and s.status == "started"])
 
             from ..core.config import cfg as _cfg
             if len(arr) > _cfg.STATS_HISTORY_MAX:
