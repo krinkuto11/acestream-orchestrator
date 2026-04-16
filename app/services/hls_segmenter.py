@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import re
+import math
 import shutil
 import threading
 import time
@@ -755,6 +756,13 @@ class HLSSegmenterService:
                     # Avoid waiting for long GOP keyframes before first segment emission.
                     hls_flags += "+split_by_time"
 
+                # Dynamic Window Alignment: Ensure the manifest can hold enough segments for the target prebuffer.
+                # Formula: ceil(target / segment_time) + margin.
+                dynamic_list_size = max(
+                    self._hls_list_size, 
+                    int(math.ceil(float(target_prebuffer) / self._hls_segment_time_s)) + 2
+                )
+                
                 cmd = [
                     "ffmpeg",
                     "-hide_banner",
@@ -769,13 +777,13 @@ class HLSSegmenterService:
                     "-hls_time",
                     str(self._hls_segment_time_s),
                     "-hls_list_size",
-                    str(self._hls_list_size),
+                    str(dynamic_list_size),
                     "-hls_flags",
                     hls_flags,
                     str(manifest_path),
                 ]
 
-                logger.info("Starting external HLS segmenter for stream %s", key)
+                logger.info("Starting external HLS segmenter for stream %s (list_size=%d @ %.1fs)", key, dynamic_list_size, self._hls_segment_time_s)
                 try:
                     process = await asyncio.create_subprocess_exec(
                         *cmd,

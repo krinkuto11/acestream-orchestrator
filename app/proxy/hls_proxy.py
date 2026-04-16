@@ -13,6 +13,7 @@ import m3u8
 import os
 import asyncio
 import uuid
+import math
 from typing import Dict, Optional, Set, Any, List
 from urllib.parse import urljoin, urlparse
 from .config_helper import ConfigHelper
@@ -39,8 +40,16 @@ class HLSConfig:
     
     @staticmethod
     def WINDOW_SIZE():
-        """Number of segments in manifest window"""
-        return ConfigHelper.hls_window_size()
+        """Number of segments in manifest window.
+        Dynamically aligned with prebuffer target to ensure runway depth.
+        """
+        target_prebuffer = ConfigHelper.initial_buffer_seconds()
+        # Assume 10s segments if target_duration is not yet known from manager
+        # (This is a safe fallback for window calculation)
+        segment_time = 10.0
+        
+        dynamic_size = int(math.ceil(float(target_prebuffer) / segment_time)) + 2
+        return max(ConfigHelper.hls_window_size(), dynamic_size)
     
     @staticmethod
     def BUFFER_READY_TIMEOUT():
