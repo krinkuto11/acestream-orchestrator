@@ -97,6 +97,7 @@ class ClientTrackingService:
         connected_at: Optional[float] = None,
         idle_timeout_s: Optional[float] = None,
         worker_id: Optional[str] = None,
+        update_last_active: bool = True,
     ) -> Dict[str, Any]:
         now = self._safe_float(connected_at, default=time.time())
         normalized_protocol = self._normalize_protocol(protocol)
@@ -141,7 +142,9 @@ class ClientTrackingService:
                     current["worker_id"] = str(worker_id)
                 if idle_timeout_s is not None:
                     current["idle_timeout_s"] = self._safe_float(idle_timeout_s, default=0.0)
-                current["last_active"] = max(now, self._safe_float(current.get("last_active"), default=now))
+                
+                if update_last_active:
+                    current["last_active"] = max(now, self._safe_float(current.get("last_active"), default=now))
 
             row = dict(current)
 
@@ -199,6 +202,7 @@ class ClientTrackingService:
             connected_at=ts,
             idle_timeout_s=idle_timeout_s,
             worker_id=worker_id,
+            update_last_active=(normalized_request_kind != "heartbeat"),
         )
 
         key = self._key(normalized_protocol, normalized_stream_id, normalized_client_id)
@@ -210,7 +214,10 @@ class ClientTrackingService:
 
             current["ip_address"] = str(ip_address or current.get("ip_address") or "unknown")
             current["user_agent"] = str(user_agent or current.get("user_agent") or "unknown")
-            current["last_active"] = ts
+            
+            if normalized_request_kind != "heartbeat":
+                current["last_active"] = ts
+                
             current["bytes_sent"] = self._safe_float(current.get("bytes_sent"), 0.0) + byte_delta
             current["chunks_sent"] = self._safe_int(current.get("chunks_sent"), 0) + chunk_delta
             current["requests_total"] = self._safe_int(current.get("requests_total"), 0) + 1
