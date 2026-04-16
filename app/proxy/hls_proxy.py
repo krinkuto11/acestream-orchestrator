@@ -201,21 +201,34 @@ class ClientManager:
             return True
 
         now = time.time()
-        client_tracking_service.prune_stale_clients(timeout)
-
-        clients = client_tracking_service.get_stream_clients(
+        
+        # Identify clients that will be pruned
+        clients_before = client_tracking_service.get_stream_clients(
             self.stream_id,
             protocol="HLS",
             worker_id=self.worker_id,
         )
+        
+        client_tracking_service.prune_stale_clients(timeout)
+
+        clients_after = client_tracking_service.get_stream_clients(
+            self.stream_id,
+            protocol="HLS",
+            worker_id=self.worker_id,
+        )
+        
+        # Log pruned clients
+        if len(clients_before) > len(clients_after):
+            remaining_ids = {c.get("client_id") for c in clients_after}
+            for client in clients_before:
+                c_id = client.get("client_id")
+                if c_id not in remaining_ids:
+                    logger.info(f"[HLS:{self.stream_id}] [Client:{c_id}] Client disconnected (idle timeout)")
+
         with self.lock:
-            self._sync_last_activity_from_clients(clients)
+            self._sync_last_activity_from_clients(clients_after)
 
-        if clients:
-            oldest = min(now - self._safe_float(p.get("last_active"), default=now) for p in clients)
-            logger.debug(f"Active clients: {len(clients)}, oldest activity: {oldest:.1f}s ago")
-
-        return len(clients) == 0
+        return len(clients_after) == 0
 
     def list_clients(self, max_idle_seconds: Optional[float] = None) -> List[Dict[str, Any]]:
         """Return active clients enriched with transfer counters."""
@@ -1371,7 +1384,7 @@ class HLSProxyServer:
             # Build manifest
             return self._build_manifest(channel_id, manager, buffer)
 
-    async def get_manifest_stream(self, channel_id: str):
+    async def get_manifest_stream(self, channel_id: str, client_id: str = "unknown"):
         """Streaming async generator for HLS manifest with keep-alive comments."""
         if channel_id not in self.stream_managers:
             raise ValueError(f"Channel {channel_id} not found")
@@ -1387,7 +1400,7 @@ class HLSProxyServer:
         # 3. Prebuffer Hold (Hoarding Rescue)
         target_prebuffer = ConfigHelper.initial_buffer_seconds()
         if target_prebuffer > 0 and manager.is_hoarding:
-            logger.info(f"[HLS:{channel_id}] Parking client at manifest level for {target_prebuffer}s prebuffer")
+            logger.info(f"[HLS:{channel_id}] [Client:{client_id}] Parking client at manifest level for {target_prebuffer}s prebuffer")
             start_wait = time.time()
             last_padding = start_wait
             timeout = max(15.0, float(target_prebuffer) + 30.0)
@@ -1405,12 +1418,14 @@ class HLSProxyServer:
                 # Check for hoarding exit or ceiling
                 if not manager.is_hoarding or manifest_is_full:
                    if manifest_is_full and manager.is_hoarding:
-                       logger.info(f"[HLS:{channel_id}] Reached manifest ceiling (%d segments) before target (%ds). Releasing.", len(available), target_prebuffer)
+                       logger.info(f"[HLS:{channel_id}] [Client:{client_id}] Reached manifest ceiling (%d segments) before target (%ds). Releasing.", len(available), target_prebuffer)
+                   else:
+                       logger.info(f"[HLS:{channel_id}] [Client:{client_id}] Prebuffer complete after {time.time() - start_wait:.1f}s (Segments: {len(available)})")
                    break
                    
                 now = time.time()
                 if now - start_wait > timeout:
-                    logger.warning(f"[HLS:{channel_id}] Prebuffer hold timed out at manifest level")
+                    logger.warning(f"[HLS:{channel_id}] [Client:{client_id}] Prebuffer hold timed out at manifest level")
                     break
                     
                 if now - last_padding >= 0.5:

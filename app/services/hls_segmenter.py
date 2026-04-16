@@ -563,6 +563,7 @@ class HLSSegmenterService:
         if stale_ids:
             for stale_id in stale_ids:
                 legacy_clients.pop(stale_id, None)
+                logger.info(f"[HLS-API:{session.monitor_id}] [Client:{stale_id}] Client disconnected (idle timeout)")
             if emit_disconnect_metric:
                 try:
                     from .metrics import observe_proxy_client_disconnect
@@ -953,7 +954,7 @@ class HLSSegmenterService:
             return self.rewrite_manifest(key, content)
         return content
 
-    async def read_manifest_stream(self, monitor_id: str, rewrite: bool = True):
+    async def read_manifest_stream(self, monitor_id: str, client_id: str = "unknown", rewrite: bool = True):
         """Streaming async generator for API-mode manifest with keep-alive comments."""
         key = self._sanitize_monitor_id(monitor_id)
         session = self._sessions.get(key)
@@ -969,7 +970,7 @@ class HLSSegmenterService:
         # 2. Prebuffer Hold (Hoarding Rescue)
         target_prebuffer = ConfigHelper.hls_initial_buffer_seconds()
         if target_prebuffer > 0 and session.initial_buffering:
-            logger.info(f"[HLS-API:{key}] Parking client at manifest level for {target_prebuffer}s prebuffer")
+            logger.info(f"[HLS-API:{key}] [Client:{client_id}] Parking client at manifest level for {target_prebuffer}s prebuffer")
             start_wait = time.time()
             last_padding = start_wait
             timeout = max(15.0, float(target_prebuffer) + 30.0)
@@ -996,13 +997,15 @@ class HLSSegmenterService:
 
                 if current_lag >= float(target_prebuffer) or manifest_is_full:
                     if manifest_is_full and current_lag < float(target_prebuffer):
-                        logger.info(f"[HLS-API:{key}] Reached manifest ceiling (%ds) before target (%ds). Releasing hold.", current_lag, target_prebuffer)
+                        logger.info(f"[HLS-API:{key}] [Client:{client_id}] Reached manifest ceiling (%ds) before target (%ds). Releasing hold.", current_lag, target_prebuffer)
+                    else:
+                        logger.info(f"[HLS-API:{key}] [Client:{client_id}] Prebuffer complete after {time.time() - start_wait:.1f}s (Lag: {current_lag:.1f}s)")
                     session.initial_buffering = False
                     break
                     
                 now = time.time()
                 if now - start_wait > timeout:
-                    logger.warning(f"[HLS-API:{key}] Prebuffer hold timed out at manifest level")
+                    logger.warning(f"[HLS-API:{key}] [Client:{client_id}] Prebuffer hold timed out at manifest level")
                     break
 
                 if now - last_padding >= 0.5:

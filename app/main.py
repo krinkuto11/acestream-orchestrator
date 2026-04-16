@@ -3850,7 +3850,7 @@ async def ace_getstream(
                     observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
 
                     return StreamingResponse(
-                        hls_proxy.get_manifest_stream(stream_key),
+                        hls_proxy.get_manifest_stream(stream_key, client_id=client_identity),
                         media_type="application/vnd.apple.mpegurl",
                         headers={
                             "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -4130,7 +4130,7 @@ async def ace_getstream(
                 observe_proxy_ttfb(stream_mode, "/ace/getstream", elapsed)
 
                 return StreamingResponse(
-                    hls_segmenter_service.read_manifest_stream(stream_key, rewrite=True),
+                    hls_segmenter_service.read_manifest_stream(stream_key, client_id=client_identity, rewrite=True),
                     media_type="application/vnd.apple.mpegurl",
                     headers={
                         "Cache-Control": "no-cache, no-store, must-revalidate",
