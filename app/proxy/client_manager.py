@@ -374,6 +374,7 @@ class ClientManager:
         source: str = "unknown",
         confidence: float = 1.0,
         observed_at: Optional[float] = None,
+        is_prebuffering: Optional[bool] = None,
     ):
         """Update client runway estimate in Redis."""
         try:
@@ -401,6 +402,7 @@ class ClientManager:
                 confidence=confidence,
                 observed_at=observed_ts,
                 now=observed_ts,
+                is_prebuffering=is_prebuffering,
             )
         except Exception as e:
             logger.error(f"Error updating client buffer position: {e}")
