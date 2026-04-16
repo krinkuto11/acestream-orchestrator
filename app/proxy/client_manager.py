@@ -345,8 +345,8 @@ class ClientManager:
             client_tracking_service.record_activity(
                 client_id=str(client_id),
                 stream_id=str(self.content_id or ""),
-                bytes_delta=0, # This method just syncs the total, so we pass 0 delta
-                raw_bytes=float(bytes_sent),
+                bytes_delta=0,
+                total_bytes=float(bytes_sent),
                 protocol="TS",
             )
         except Exception as e:
@@ -368,6 +368,7 @@ class ClientManager:
             client_tracking_service.update_client_position(
                 client_id=str(client_id),
                 stream_id=str(self.content_id or ""),
+                protocol="TS",
                 seconds_behind=float(seconds_behind),
                 source=str(source),
                 confidence=float(confidence),

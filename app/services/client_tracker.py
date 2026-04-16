@@ -217,6 +217,7 @@ class ClientTrackingService:
         is_prebuffering: Optional[bool] = None,
         worker_id: Optional[str] = None,
         bitrate: Optional[int] = None,
+        total_bytes: Optional[float] = None,
     ) -> Dict[str, Any]:
         ts = self._safe_float(now, default=time.time())
         normalized_protocol = self._normalize_protocol(protocol)
@@ -258,7 +259,11 @@ class ClientTrackingService:
             if normalized_request_kind != "heartbeat":
                 current["last_active"] = ts
                 
-            current["bytes_sent"] = self._safe_float(current.get("bytes_sent"), 0.0) + byte_delta
+            if total_bytes is not None:
+                current["bytes_sent"] = self._safe_float(total_bytes, 0.0)
+            else:
+                current["bytes_sent"] = self._safe_float(current.get("bytes_sent"), 0.0) + byte_delta
+                
             current["chunks_sent"] = self._safe_int(current.get("chunks_sent"), 0) + chunk_delta
             current["requests_total"] = self._safe_int(current.get("requests_total"), 0) + 1
             current["stats_updated_at"] = ts
