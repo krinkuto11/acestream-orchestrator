@@ -217,8 +217,13 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
     let reconnectTimer = null
     let closed = false
 
+    const matchesStream = (targetId) => {
+      if (!targetId || !stream?.id) return false
+      return targetId === stream.id || stream.id.startsWith(`${targetId}|`)
+    }
+
     const applySnapshot = (payload) => {
-      if (!payload || payload.stream_id !== stream.id) return
+      if (!payload || !matchesStream(payload.stream_id)) return
 
       if (Array.isArray(payload.stats)) {
         setStats((prev) => mergeStatSamples(prev, payload.stats))
@@ -265,12 +270,12 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
           const type = String(parsed?.type || event.type || '').trim()
           const payload = parsed?.payload || {}
 
-          if ((type === 'stream_details_snapshot' || !type) && payload?.stream_id === stream.id) {
+          if ((type === 'stream_details_snapshot' || !type) && matchesStream(payload?.stream_id)) {
             applySnapshot(payload)
             return
           }
 
-          if (type === 'stream_metrics' && payload?.stream_id === stream.id) {
+          if (type === 'stream_metrics' && matchesStream(payload?.stream_id)) {
             if (Array.isArray(payload?.stats)) {
               setStats((prev) => mergeStatSamples(prev, payload.stats))
             }
@@ -286,7 +291,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
             return
           }
 
-          if (type === 'client_update' && payload?.stream_id === stream.id && payload?.client) {
+          if (type === 'client_update' && matchesStream(payload?.stream_id) && payload?.client) {
             setClients((prev) => {
               const next = [...prev]
               const key = payload.client.client_id || payload.client.ip_address
@@ -298,12 +303,12 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
             return
           }
 
-          if (type === 'client_connected' && payload?.stream_id === stream.id && payload?.client) {
+          if (type === 'client_connected' && matchesStream(payload?.stream_id) && payload?.client) {
             setClients((prev) => [...prev, payload.client])
             return
           }
 
-          if (type === 'client_disconnected' && payload?.stream_id === stream.id) {
+          if (type === 'client_disconnected' && matchesStream(payload?.stream_id)) {
             const disconnectedId = String(payload?.client_id || payload?.client?.client_id || '').trim()
             if (disconnectedId) {
               setClients((prev) => prev.filter((client) => String(client?.client_id || '').trim() !== disconnectedId))

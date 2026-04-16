@@ -464,31 +464,43 @@ function StreamCard({
           const type = String(parsed?.type || event.type || '').trim()
           const payload = parsed?.payload || {}
 
-          if ((type === 'stream_details_snapshot' || !type) && payload?.stream_id === streamId) {
+          // Matches if ID is exact or if streamId has a fallback suffix (e.g. infohash|fallback-...)
+          const matchesStream = payload?.stream_id && (
+            payload.stream_id === streamId
+            || streamId.startsWith(`${payload.stream_id}|`)
+          )
+
+          if ((type === 'stream_details_snapshot' || !type) && matchesStream) {
             applySnapshot(payload)
             return
           }
 
-          if (type === 'stream_metrics' && payload?.stream_id === streamId) {
+          if (type === 'stream_metrics' && matchesStream) {
             setLocalStream((prev) => mergeStreamSnapshot(prev, payload))
             return
           }
 
-          if ((type === 'client_connected' || type === 'client_update') && payload?.stream_id === streamId) {
+          if ((type === 'client_connected' || type === 'client_update') && matchesStream) {
             const nextClient = payload?.client || payload
             setClients((prev) => upsertClient(prev, nextClient))
             setClientsLoading(false)
             return
           }
 
-          if (type === 'client_disconnected' && payload?.stream_id === streamId) {
+          if (type === 'client_disconnected' && matchesStream) {
             setClients((prev) => removeClient(prev, payload))
             return
           }
 
           // Compatibility path for full-sync frames from global streams SSE.
           if (type === 'full_sync' && Array.isArray(payload?.streams)) {
-            const matchingStream = payload.streams.find((item) => item?.id === streamId)
+            const matchingStream = payload.streams.find((item) => {
+              const itemStreamId = item?.id || item?.stream_id
+              return itemStreamId && (
+                itemStreamId === streamId
+                || streamId.startsWith(`${itemStreamId}|`)
+              )
+            })
             if (matchingStream) {
               setLocalStream((prev) => mergeStreamSnapshot(prev, matchingStream))
             }
