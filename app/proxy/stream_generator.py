@@ -12,7 +12,7 @@ import math
 from typing import Optional
 
 from .config_helper import ConfigHelper
-from .constants import PROXY_MODE_API, normalize_proxy_mode
+from .constants import PROXY_MODE_API, PROXY_MODE_HTTP, normalize_proxy_mode
 from .utils import get_logger, create_ts_packet
 from .redis_keys import RedisKeys
 from .constants import StreamMetadataField, NULL_PID_HIGH, NULL_PID_LOW
