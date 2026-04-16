@@ -155,6 +155,13 @@ class ClientTrackingService:
 
         if created:
             self._emit_connect_metric(normalized_protocol)
+            logger.info(
+                "[Telemetry:Registration] New client %s registered for stream %s (Protocol: %s, Worker: %s)",
+                normalized_client_id[:12],
+                normalized_stream_id,
+                normalized_protocol,
+                worker_id or "unknown"
+            )
             try:
                 from ..proxy.constants import EventType
                 self._publish_client_event(EventType.CLIENT_CONNECTED, normalized_stream_id, row)
@@ -564,12 +571,13 @@ class ClientTrackingService:
             # Diagnostic for HLS API mode where we expect clients but find none
             with self._lock:
                 total_in_memory = len(self._clients)
-                sample_keys = list(self._clients.keys())[:5]
-                logger.debug(
-                    "[Telemetry:Diagnostic] No clients found for stream %s. Total in tracker: %d. Sample keys: %s",
+                # Filter sample keys to show those that might be similar
+                similar_keys = [str(k[1]) for k in self._clients.keys() if str(k[1])[:4] == str(normalized_stream_id)[:4]]
+                logger.info(
+                    "[Telemetry:Diagnostic] No clients found for stream %s. Total in tracker: %d. Similar keys in memory: %s",
                     normalized_stream_id,
                     total_in_memory,
-                    sample_keys
+                    similar_keys[:5]
                 )
 
         rows.sort(key=lambda item: self._safe_float(item.get("last_active"), default=0.0), reverse=True)
