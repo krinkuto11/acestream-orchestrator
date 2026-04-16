@@ -100,7 +100,12 @@ class HLSSegmenterService:
         raw = str(monitor_id or "").strip()
         if not raw:
             raise ValueError("monitor_id is required")
-        return re.sub(r"[^a-zA-Z0-9_.-]", "_", raw)
+        # Strip common trailing junk like backslashes, braces, quotes, and whitespace
+        stripped = raw.strip().strip("\\{}'\"").strip()
+        if not stripped:
+            return "unknown"
+        # Then apply generic regex for filesystem/URL safety
+        return re.sub(r"[^a-zA-Z0-9_.-]", "_", stripped)
 
     def _get_output_dir(self, monitor_id: str) -> Path:
         return self._base_dir / monitor_id

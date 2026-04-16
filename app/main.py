@@ -1699,6 +1699,9 @@ async def stream_stream_details(
     interval_seconds: float = Query(2.0, ge=0.5, le=10.0),
     api_key: Optional[str] = Query(None),
 ):
+    # Sanitize stream_id to match internal session ID
+    stream_id = str(stream_id or "").strip().strip("\\{}'\"").strip()
+    
     """SSE endpoint that streams detail payloads for a single stream row."""
     _validate_sse_api_key(request, api_key)
 
@@ -2077,6 +2080,8 @@ def get_streams(status: Optional[str] = Query(None, pattern="^(started|ended|pen
 
 @app.get("/streams/{stream_id}/stats", response_model=List[StreamStatSnapshot])
 def get_stream_stats(stream_id: str, since: Optional[datetime] = None):
+    # Sanitize stream_id to match internal session ID
+    stream_id = str(stream_id or "").strip().strip("\\{}'\"").strip()
     snaps = state.get_stream_stats(stream_id)
     if since:
         snaps = [x for x in snaps if x.ts >= since]
@@ -2084,6 +2089,9 @@ def get_stream_stats(stream_id: str, since: Optional[datetime] = None):
 
 @app.get("/streams/{stream_id}/extended-stats")
 async def get_stream_extended_stats(stream_id: str):
+    # Sanitize stream_id to match internal session ID
+    stream_id = str(stream_id or "").strip().strip("\\{}'\"").strip()
+    
     """
     Get extended statistics for a stream when stat_url is available (HTTP control mode).
     For API mode streams, extended stats gathering is intentionally disabled.
@@ -2140,6 +2148,9 @@ async def get_stream_extended_stats(stream_id: str):
 
 @app.get("/streams/{stream_id}/livepos")
 async def get_stream_livepos(stream_id: str):
+    # Sanitize stream_id to match internal session ID
+    stream_id = str(stream_id or "").strip().strip("\\{}'\"").strip()
+    
     """
     Get live position data for a stream from stat URL or API-mode probe.
     This returns livepos details and derived live performance metrics.
@@ -2290,6 +2301,9 @@ async def get_stream_livepos(stream_id: str):
 
 @app.delete("/streams/{stream_id}", dependencies=[Depends(require_api_key)])
 async def stop_stream(stream_id: str):
+    # Sanitize stream_id to match internal session ID
+    stream_id = str(stream_id or "").strip().strip("\\{}'\"").strip()
+    
     """
     Stop a stream by calling its command URL with method=stop.
     Then marks the stream as ended in state.
@@ -2412,7 +2426,8 @@ async def batch_stop_streams(command_urls: List[str]):
 @app.post("/proxy/migrate-stream", dependencies=[Depends(require_api_key)])
 async def migrate_proxy_stream(req: StreamMigrationRequest):
     """Trigger an on-demand proxy stream migration for TS/HLS continuity workflows."""
-    stream_key = str(req.stream_key or "").strip()
+    # Sanitize stream_key to remove common junk (backslashes, braces, etc.)
+    stream_key = str(req.stream_key or "").strip().strip("\\{}'\"").strip()
     if not stream_key:
         raise HTTPException(status_code=400, detail="stream_key is required")
 
@@ -4809,6 +4824,9 @@ async def proxy_session_info(ace_id: str):
 
 @app.get("/proxy/streams/{stream_key}/clients")
 async def get_stream_clients(stream_key: str):
+    # Sanitize stream_key to match internal session ID
+    stream_key = str(stream_key or "").strip().strip("\\{}'\"").strip()
+    
     """Get list of clients connected to a specific stream.
     
     Args:
