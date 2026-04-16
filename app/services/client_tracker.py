@@ -1,8 +1,12 @@
 import json
+import logging
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from ..proxy.utils import sanitize_stream_id
+
+
+logger = logging.getLogger(__name__)
 
 
 class ClientTrackingService:
@@ -375,6 +379,14 @@ class ClientTrackingService:
             try:
                 from ..proxy.constants import EventType
                 self._publish_client_event(EventType.CLIENT_DISCONNECTED, str(row.get("stream_id")), row)
+                
+                # Explicit logs for visibility into client timeouts
+                logger.info(
+                    "[Stream:%s] [Client:%s] Disconnected (Idle timeout: %.0fs)", 
+                    str(row.get("stream_id"))[:12], 
+                    str(row.get("client_id"))[:12],
+                    effective_timeout
+                )
             except Exception:
                 pass
         return len(removed_rows)
@@ -415,6 +427,13 @@ class ClientTrackingService:
             try:
                 from ..proxy.constants import EventType
                 self._publish_client_event(EventType.CLIENT_DISCONNECTED, normalized_stream_id, row)
+
+                # Explicit logs for visibility into client removal
+                logger.info(
+                    "[Stream:%s] [Client:%s] Client disconnected", 
+                    normalized_stream_id[:12], 
+                    str(row.get("client_id"))[:12]
+                )
             except Exception:
                 pass
         return len(removed_rows)
@@ -455,6 +474,13 @@ class ClientTrackingService:
             try:
                 from ..proxy.constants import EventType
                 self._publish_client_event(EventType.CLIENT_DISCONNECTED, normalized_stream_id, row)
+
+                # Explicit logs for visibility into batch client removal
+                logger.info(
+                    "[Stream:%s] [Client:%s] Client removed (Stream ended)", 
+                    normalized_stream_id[:12], 
+                    str(row.get("client_id"))[:12]
+                )
             except Exception:
                 pass
         return len(removed_rows)
