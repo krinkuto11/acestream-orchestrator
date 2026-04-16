@@ -1361,12 +1361,40 @@ class HLSProxyServer:
         yield b"#EXTM3U\n"
         yield b"# ACESTREAM HLS PREBUFFER KEEPALIVE\n"
         
-        # 2. Wait only for first segment binary availability
-        # (Ensures the manifest is valid but doesn't wait for full prebuffer)
-        timeout = HLSConfig.BUFFER_READY_TIMEOUT()
+        # 3. Prebuffer Hold (Hoarding Rescue)
+        target_prebuffer = ConfigHelper.initial_buffer_seconds()
+        if target_prebuffer > 0 and manager.is_hoarding:
+            logger.info(f"[HLS:{channel_id}] Parking client at manifest level for {target_prebuffer}s prebuffer")
+            start_wait = time.time()
+            last_padding = start_wait
+            timeout = max(15.0, float(target_prebuffer) + 30.0)
+            
+            while True:
+                # Refresh buffer state
+                buffer = manager.get_buffer()
+                available = sorted(buffer.keys())
+                
+                # Check for hoarding exit (buffer full)
+                if not manager.is_hoarding:
+                   break
+                   
+                now = time.time()
+                if now - start_wait > timeout:
+                    logger.warning(f"[HLS:{channel_id}] Prebuffer hold timed out at manifest level")
+                    break
+                    
+                if now - last_padding >= 0.5:
+                    # HLS-compliant comment padding
+                    yield b"# ACESTREAM HLS PREBUFFER KEEPALIVE\n"
+                    last_padding = now
+                    
+                await asyncio.sleep(0.1)
+
+        # 4. Wait only for the first segment to exist (safety check)
         start_wait = time.time()
-        
+        timeout = 10.0
         while True:
+            buffer = manager.get_buffer()
             available = list(buffer.keys())
             if available:
                 break
@@ -1375,7 +1403,7 @@ class HLSProxyServer:
                 return
             await asyncio.sleep(0.2)
 
-        # 4. Final Manifest (body only)
+        # 5. Final Manifest (body only)
         manifest_content = self._build_manifest(channel_id, manager, buffer)
         # Strip duplicate header if present
         if manifest_content.startswith("#EXTM3U\n"):
@@ -1455,28 +1483,7 @@ class HLSProxyServer:
         
         yield header_data
 
-        # Absolute Parity: Perform prebuffer hold after headers are delivered
-        if manager.initial_buffering:
-            start_wait = time.time()
-            last_padding = start_wait
-            timeout = HLSConfig.BUFFER_READY_TIMEOUT()
-            
-            while not manager.buffer_ready.is_set():
-                now = time.time()
-                if now - start_wait > timeout:
-                    logger.warning(f"Timeout waiting for prebuffer for {channel_id} segment {segment_id}")
-                    break
-
-                if now - last_padding >= 0.2:
-                    # Yield TS NULL packets with stateful CC to satisfy strict demuxers
-                    padding, next_cc = get_ts_null_padding(8272, manager.null_cc)
-                    manager.null_cc = next_cc
-                    yield padding
-                    last_padding = now
-                
-                await asyncio.sleep(0.1)
-
-        # Deliver the rest of the segment
+        # Deliver the full segment immediately. No hold here.
         if remainder_data:
             yield remainder_data
 

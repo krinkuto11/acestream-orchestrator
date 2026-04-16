@@ -951,8 +951,36 @@ class HLSSegmenterService:
         yield b"#EXTM3U\n"
         yield b"# ACESTREAM HLS PREBUFFER KEEPALIVE\n"
 
-        # 2. Wait only for the manifest file to exist (instant delivery)
-        timeout = 15.0
+        # 2. Prebuffer Hold (Hoarding Rescue)
+        target_prebuffer = ConfigHelper.hls_initial_buffer_seconds()
+        if target_prebuffer > 0 and session.initial_buffering:
+            logger.info(f"[HLS-API:{key}] Parking client at manifest level for {target_prebuffer}s prebuffer")
+            start_wait = time.time()
+            last_padding = start_wait
+            timeout = max(15.0, float(target_prebuffer) + 30.0)
+            
+            while True:
+                self._update_manifest_cache_if_stale(session)
+                current_lag = session.cached_manifest_lag
+                
+                if current_lag >= float(target_prebuffer):
+                    session.initial_buffering = False
+                    break
+                    
+                now = time.time()
+                if now - start_wait > timeout:
+                    logger.warning(f"[HLS-API:{key}] Prebuffer hold timed out at manifest level")
+                    break
+
+                if now - last_padding >= 0.5:
+                    # HLS-compliant comment padding
+                    yield b"# ACESTREAM HLS PREBUFFER KEEPALIVE\n"
+                    last_padding = now
+                
+                await asyncio.sleep(0.1)
+
+        # 3. Wait only for the manifest file to exist (instant delivery)
+        timeout = 10.0
         start_wait = time.time()
         while not session.manifest_path.exists():
             if time.time() - start_wait > timeout:
@@ -1004,49 +1032,8 @@ class HLSSegmenterService:
                 yield f.read()
             return
 
-        # Finally deliver the real segment data
-        segment_data = await asyncio.to_thread(path.read_bytes)
-        
-        # Headers-First Parity: Deliver first part immediately to satisfy FFmpeg probe
-        # 512KB is enough for PAT/PMT/PES and codec initialization (SPS/PPS)
-        header_size = min(len(segment_data), 524288)
-        header_data = segment_data[:header_size]
-        remainder_data = segment_data[header_size:]
-        
-        yield header_data
-
-        # Prebuffer hold if necessary
-        target_prebuffer = ConfigHelper.hls_initial_buffer_seconds()
-        if target_prebuffer > 0 and session.initial_buffering:
-            start_wait = time.time()
-            last_padding = start_wait
-            timeout = max(15.0, float(target_prebuffer) + 30.0)
-            
-            while True:
-                self._update_manifest_cache_if_stale(session)
-                current_lag = session.cached_manifest_lag
-                
-                if current_lag >= float(target_prebuffer):
-                    session.initial_buffering = False
-                    break
-                    
-                now = time.time()
-                if now - start_wait > timeout:
-                    logger.warning(f"Timeout waiting for prebuffer for API HLS session {key}")
-                    break
-
-                if now - last_padding >= 0.2:
-                    # Yield TS NULL packets with stateful CC to satisfy strict demuxers
-                    padding, next_cc = get_ts_null_padding(8272, session.null_cc)
-                    session.null_cc = next_cc
-                    yield padding
-                    last_padding = now
-                
-                await asyncio.sleep(0.1)
-
-        # Deliver the rest of the segment
-        if remainder_data:
-            yield remainder_data
+        # Deliver the full segment immediately. No hold here.
+        yield segment_data
 
     def get_segment_file_path(self, monitor_id: str, segment_filename: str) -> Optional[Path]:
         key = self._sanitize_monitor_id(monitor_id)
