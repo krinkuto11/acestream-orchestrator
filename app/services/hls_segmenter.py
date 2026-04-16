@@ -1008,8 +1008,8 @@ class HLSSegmenterService:
         segment_data = await asyncio.to_thread(path.read_bytes)
         
         # Headers-First Parity: Deliver first part immediately to satisfy FFmpeg probe
-        # 32KB is enough for PAT/PMT/PES headers
-        header_size = min(len(segment_data), 32768)
+        # 512KB is enough for PAT/PMT/PES and codec initialization (SPS/PPS)
+        header_size = min(len(segment_data), 524288)
         header_data = segment_data[:header_size]
         remainder_data = segment_data[header_size:]
         

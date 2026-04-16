@@ -1448,8 +1448,8 @@ class HLSProxyServer:
             raise ValueError(f"Segment {segment_id} not found in buffer")
             
         # Headers-First Parity: Deliver first part immediately to satisfy FFmpeg probe
-        # 32KB is enough for PAT/PMT/PES headers
-        header_size = min(len(segment_data), 32768)
+        # 512KB is enough for PAT/PMT/PES and codec initialization (SPS/PPS)
+        header_size = min(len(segment_data), 524288)
         header_data = segment_data[:header_size]
         remainder_data = segment_data[header_size:]
         
