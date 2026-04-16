@@ -182,9 +182,9 @@ class ClientManager:
             self.clients[normalized_client_id] = client_payload
 
         if tracked.get("requests_total") == 1:
-            logger.info(f"New client connected: {normalized_ip} ({normalized_client_id})")
+            logger.info(f"[HLS:{self.stream_id}] [Client:{normalized_client_id}] New client connected from {normalized_ip}")
         else:
-            logger.debug(f"Client activity: {normalized_ip} ({normalized_client_id})")
+            logger.debug(f"[HLS:{self.stream_id}] [Client:{normalized_client_id}] Client activity: {request_kind}")
                 
     def cleanup_inactive(self, timeout: float) -> bool:
         """Remove inactive clients and return True if no clients remain"""
@@ -354,7 +354,7 @@ class StreamManager:
         self._legacy_api_lock = threading.Lock()
         self.ace_api_client: Optional[AceLegacyApiClient] = None
         
-        logger.info(f"Initialized HLS stream manager for channel {channel_id} bitrate={self.bitrate} bps")
+        logger.info(f"[HLS:{channel_id}] Initialized HLS stream manager (bitrate={self.bitrate} bps)")
         
         # Start telemetry heartbeat if in an async context
         if self._event_loop and self._event_loop.is_running():
@@ -587,11 +587,7 @@ class StreamManager:
             self.bitrate = int(session_updates["bitrate"] or self.bitrate or 0)
 
         logger.info(
-            "Applied HLS hot swap for channel=%s old_engine=%s new_engine=%s bitrate=%s bps",
-            self.channel_id,
-            old_container_id,
-            target_container_id,
-            self.bitrate
+            f"[HLS:{self.channel_id}] Applied HLS hot swap (old_engine={old_container_id}, new_engine={target_container_id}, bitrate={self.bitrate} bps)"
         )
 
         return {
@@ -609,7 +605,7 @@ class StreamManager:
         """Stop the stream manager"""
         self.running = False
         self.cleanup_running = False
-        logger.info(f"Stopping stream manager for channel {self.channel_id}")
+        logger.info(f"[HLS:{self.channel_id}] Stopping stream manager")
         
         # Send stop command only when this HLS proxy owns the engine session.
         if not self.owns_engine_session:
@@ -620,7 +616,7 @@ class StreamManager:
         elif self.command_url:
             try:
                 requests.get(f"{self.command_url}?method=stop", timeout=5)
-                logger.info("Sent stop command to AceStream engine")
+                logger.info(f"[HLS:{self.channel_id}] Sent stop command to AceStream engine")
             except Exception as e:
                 logger.warning(f"Failed to send stop command: {e}")
     
@@ -710,9 +706,9 @@ class StreamManager:
                 # Update stream_id from result
                 if result:
                     self.stream_id = result.id
-                    logger.info(f"Sent HLS stream started event to orchestrator: stream_id={self.stream_id}")
+                    logger.info(f"[HLS:{self.channel_id}] Started HLS stream session (stream_id={self.stream_id})")
                 else:
-                    logger.warning(f"HLS stream started event handler returned no result")
+                    logger.warning(f"[HLS:{self.channel_id}] HLS stream started event handler returned no result")
                     self.stream_id = f"temp-hls-{self.channel_id[:16]}-{int(time.time())}"
                 
             except Exception as e:
@@ -769,7 +765,7 @@ class StreamManager:
                 # Mark as sent
                 self._ended_event_sent = True
                 
-                logger.info(f"Sent HLS stream ended event to orchestrator: stream_id={self.stream_id}, reason={reason}")
+                logger.info(f"[HLS:{self.channel_id}] Ended HLS stream session (stream_id={self.stream_id}, reason={reason})")
                 
             except Exception as e:
                 logger.warning(f"Failed to send HLS stream ended event to orchestrator: {e}")
@@ -803,7 +799,7 @@ class StreamManager:
                     idle_timeout = float(ConfigHelper.hls_client_idle_timeout())
                     
                     if self.client_manager and self.client_manager.cleanup_inactive(idle_timeout):
-                        logger.info(f"Channel {self.channel_id}: All clients inactive for {idle_timeout:.1f}s (unified HLS cleanup threshold)")
+                        logger.info(f"[HLS:{self.channel_id}] All clients inactive for {idle_timeout:.1f}s, cleaning up")
                         # Stop the channel via proxy server
                         proxy_server.stop_channel(self.channel_id)
                         break
@@ -821,7 +817,7 @@ class StreamManager:
                 daemon=True
             )
             self.cleanup_thread.start()
-            logger.info(f"Started cleanup monitoring for HLS channel {self.channel_id}")
+            logger.info(f"[HLS:{self.channel_id}] Started cleanup monitoring")
 
 
 class StreamFetcher:
@@ -866,7 +862,7 @@ class StreamFetcher:
                         self.manager.manifest_version = manifest.version
                     
                     if not manifest.segments:
-                        logger.warning(f"No segments in manifest for channel {self.manager.channel_id}")
+                        logger.warning(f"[HLS:{self.manager.channel_id}] No segments in manifest")
                         await asyncio.sleep(retry_delay)
                         continue
                     
@@ -895,7 +891,7 @@ class StreamFetcher:
                 except Exception as e:
                     # Only log if manager is still running (expected errors when stopping)
                     if self.manager.running:
-                        logger.error(f"Fetch loop error for channel {self.manager.channel_id}: {e}")
+                        logger.error(f"[HLS:{self.manager.channel_id}] Fetch loop error: {e}")
                     await asyncio.sleep(retry_delay)
                     retry_delay = min(retry_delay * 2, max_retry_delay)
     
@@ -944,8 +940,7 @@ class StreamFetcher:
         if successful_downloads > 0:
             self.manager.initial_buffering = False
             self.manager.buffer_ready.set()
-            logger.info(f"Initial buffer ready with {successful_downloads} segments "
-                       f"({self.manager.buffered_duration:.1f}s of content)")
+            logger.info(f"[HLS:{self.manager.channel_id}] Initial buffer ready with {successful_downloads} segments ({self.manager.buffered_duration:.1f}s)")
     
     async def _fetch_latest_segment(self, manifest: m3u8.M3U8, base_url: str, source_engine_id: str):
         """Fetch the latest segment if not already downloaded (async version)"""
@@ -1060,7 +1055,7 @@ class HLSProxyServer:
                 logger.warning(f"HLS channel {channel_id} already exists, skipping initialization")
                 return
             
-            logger.info(f"Initializing HLS channel {channel_id} with URL {playback_url} bitrate={bitrate} bps")
+            logger.info(f"[HLS:{channel_id}] Initializing HLS channel (bitrate={bitrate} bps)")
             
             # Ensure we have the main event loop reference
             # In normal FastAPI operation, initialize_channel is always called from an async endpoint,
@@ -1211,7 +1206,7 @@ class HLSProxyServer:
             logger.debug(f"No active HLS channel for channel_id={channel_id}, nothing to clean up")
             return
         
-        logger.info(f"Stopping HLS channel {channel_id} (called from state synchronization)")
+        logger.info(f"[HLS:{channel_id}] Stopping HLS channel (called from state synchronization)")
         self.stop_channel(channel_id, reason="stream_ended_in_state")
     
     def stop_channel(self, channel_id: str, reason: str = "normal"):
@@ -1223,10 +1218,12 @@ class HLSProxyServer:
             
             # Check if there are still active clients
             if channel_id in self.client_managers and self.client_managers[channel_id].has_clients():
-                logger.info(f"Cancelling stop for HLS channel {channel_id} - clients still active")
+            # Check if there are still active clients
+            if channel_id in self.client_managers and self.client_managers[channel_id].has_clients():
+                logger.info(f"[HLS:{channel_id}] Cancelling stop - clients still active")
                 return
             
-            logger.info(f"Stopping HLS channel {channel_id}")
+            logger.info(f"[HLS:{channel_id}] Stopping HLS channel")
             manager = self.stream_managers[channel_id]
             
             # Send stream ended event before stopping

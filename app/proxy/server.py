@@ -142,7 +142,7 @@ class ProxyServer:
                 if self.am_i_owner(content_id):
                     remaining = data.get('remaining_clients', 0)
                     if remaining == 0:
-                        logger.info(f"Last client disconnected for {content_id}, scheduling cleanup")
+                        logger.info(f"[TS:{content_id}] Last client disconnected, scheduling cleanup")
                         shutdown_timers = self._get_shutdown_timers()
                         existing_timer = shutdown_timers.get(content_id)
                         if existing_timer:
@@ -185,17 +185,17 @@ class ProxyServer:
                 if existing_timer:
                     existing_timer.cancel()
                     shutdown_timers.pop(content_id, None)
-                    logger.info(f"Canceled pending shutdown timer for {content_id}")
+                    logger.info(f"[TS:{content_id}] Canceled pending shutdown timer")
                 
                 # Check if we need to update the bitrate of the existing manager
                 if bitrate > 0 and getattr(stream_manager, 'bitrate', 0) == 0:
                     stream_manager.bitrate = bitrate
-                    logger.info(f"Updated bitrate for existing stream {content_id}: {bitrate} bps")
+                    logger.info(f"[TS:{content_id}] Updated bitrate for existing session: {bitrate} bps")
 
-                logger.info(f"Stream already exists and is active for content_id={content_id}")
+                logger.info(f"[TS:{content_id}] Stream already exists and is active")
                 return True
 
-            logger.info(f"Stream exists but thread is dead, cleaning up for restart: {content_id}")
+            logger.info(f"[TS:{content_id}] Stream exists but thread is dead, cleaning up for restart")
             self._stop_stream(content_id)
         
         try:
@@ -251,7 +251,7 @@ class ProxyServer:
             thread = threading.Thread(target=stream_manager.run, daemon=True, name=f"stream-{content_id[:8]}")
             thread.start()
             
-            logger.info(f"Started stream for content_id={content_id}")
+            logger.info(f"[TS:{content_id}] Started stream session")
             return True
             
         except Exception as e:
@@ -271,7 +271,7 @@ class ProxyServer:
             logger.debug(f"No active proxy session for content_id={content_id}, nothing to clean up")
             return
         
-        logger.info(f"Stopping proxy session for content_id={content_id} (called from state synchronization)")
+        logger.info(f"[TS:{content_id}] Stopping proxy session (called from state synchronization)")
         self._stop_stream(content_id)
 
     def migrate_stream(self, content_id: str, new_engine) -> dict:
@@ -347,7 +347,7 @@ class ProxyServer:
     
     def _stop_stream(self, content_id):
         """Stop a stream session (internal method)"""
-        logger.info(f"Stopping stream for content_id={content_id}")
+        logger.info(f"[TS:{content_id}] Stopping stream")
 
         shutdown_timers = self._get_shutdown_timers()
         existing_timer = shutdown_timers.pop(content_id, None)
@@ -372,7 +372,7 @@ class ProxyServer:
         # Flush all Redis keys related to this stream so stale cache does not survive stream end.
         self._flush_stream_redis_cache(content_id)
         
-        logger.info(f"Stream stopped for content_id={content_id}")
+        logger.info(f"[TS:{content_id}] Stream stopped and cleaned up")
 
     def _flush_stream_redis_cache(self, content_id: str) -> int:
         """Remove Redis keys associated with one proxy stream.
@@ -425,7 +425,7 @@ class ProxyServer:
                 )
 
         if deleted_count > 0:
-            logger.info("Flushed %s Redis keys for stream %s", deleted_count, content_id)
+            logger.info(f"[TS:{content_id}] Flushed {deleted_count} Redis keys")
 
         return deleted_count
     
@@ -452,7 +452,7 @@ class ProxyServer:
                             idle_time = time.time() - last_disconnect_time
                             
                             if idle_time > Config.CHANNEL_SHUTDOWN_DELAY:
-                                logger.info(f"Cleaning up idle stream {content_id} (idle for {idle_time:.1f}s)")
+                                logger.info(f"[TS:{content_id}] Cleaning up idle stream (idle for {idle_time:.1f}s)")
                                 self._stop_stream(content_id)
                         else:
                             # No clients EVER - check init_time
@@ -462,7 +462,7 @@ class ProxyServer:
                                 init_time = float(init_time_raw.decode('utf-8'))
                                 idle_since_init = time.time() - init_time
                                 if idle_since_init > Config.CHANNEL_SHUTDOWN_DELAY:
-                                    logger.info(f"Cleaning up orphan stream {content_id} (never connected, initialized {idle_since_init:.1f}s ago)")
+                                    logger.info(f"[TS:{content_id}] Cleaning up orphan stream (never connected, initialized {idle_since_init:.1f}s ago)")
                                     self._stop_stream(content_id)
             
             except Exception as e:
@@ -491,7 +491,7 @@ class ProxyServer:
             client_count = client_manager.get_total_client_count()
             
             if client_count == 0:
-                logger.info(f"No clients left for {content_id}, scheduling stop")
+                logger.info(f"[TS:{content_id}] No clients left, scheduling stop")
                 shutdown_timers = self._get_shutdown_timers()
                 existing_timer = shutdown_timers.get(content_id)
                 if existing_timer:

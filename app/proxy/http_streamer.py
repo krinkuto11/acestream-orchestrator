@@ -17,7 +17,8 @@ logger = get_logger()
 class HTTPStreamReader:
     """Thread-based HTTP stream reader that writes to a pipe"""
 
-    def __init__(self, url, user_agent=None, chunk_size=8192):
+    def __init__(self, content_id, url, user_agent=None, chunk_size=8192):
+        self.content_id = content_id
         self.url = url
         self.user_agent = user_agent
         self.chunk_size = chunk_size
@@ -27,6 +28,7 @@ class HTTPStreamReader:
         self.pipe_read = None
         self.pipe_write = None
         self.running = False
+        self.tag = f"[TS:{content_id}] [Upstream]"
 
     def start(self):
         """Start the HTTP stream reader thread"""
@@ -38,7 +40,7 @@ class HTTPStreamReader:
         self.thread = threading.Thread(target=self._read_stream, daemon=True)
         self.thread.start()
 
-        logger.info(f"Started HTTP stream reader thread for {self.url}")
+        logger.info(f"{self.tag} Started HTTP stream reader thread for {self.url}")
         return self.pipe_read
 
     def _read_stream(self):
@@ -56,8 +58,8 @@ class HTTPStreamReader:
                 'Connection': 'keep-alive',
             }
 
-            logger.info(f"HTTP reader connecting to {self.url}")
-            logger.debug(f"Request headers: {headers}")
+            logger.info(f"{self.tag} Connecting to {self.url}")
+            logger.debug(f"{self.tag} Request headers: {headers}")
 
             # Create session
             self.session = requests.Session()
@@ -72,7 +74,7 @@ class HTTPStreamReader:
             timeout_pair = (connect_timeout, read_timeout)
 
             # Stream the URL
-            logger.debug(f"Initiating HTTP GET request with timeout={timeout_pair}")
+            logger.debug(f"{self.tag} Initiating HTTP GET request with timeout={timeout_pair}")
             self.response = self.session.get(
                 self.url,
                 headers=headers,
@@ -80,11 +82,11 @@ class HTTPStreamReader:
                 timeout=timeout_pair
             )
 
-            logger.debug(f"HTTP response status: {self.response.status_code}")
-            logger.debug(f"HTTP response headers: {dict(self.response.headers)}")
+            logger.debug(f"{self.tag} HTTP response status: {self.response.status_code}")
+            logger.debug(f"{self.tag} HTTP response headers: {dict(self.response.headers)}")
 
             if self.response.status_code != 200:
-                logger.error(f"HTTP {self.response.status_code} from {self.url}")
+                logger.error(f"{self.tag} HTTP {self.response.status_code} from {self.url}")
                 observe_proxy_request(
                     mode="TS",
                     endpoint="/proxy/upstream",
@@ -96,12 +98,12 @@ class HTTPStreamReader:
                 try:
                     # Read only first 500 bytes without loading entire response
                     response_preview = next(self.response.iter_content(chunk_size=500), b'').decode('utf-8', errors='ignore')
-                    logger.debug(f"Response preview: {response_preview}")
+                    logger.debug(f"{self.tag} Response preview: {response_preview}")
                 except Exception:
-                    logger.debug("Could not read response preview")
+                    logger.debug(f"{self.tag} Could not read response preview")
                 return
 
-            logger.info(f"HTTP reader connected successfully, streaming data...")
+            logger.info(f"{self.tag} Connected successfully, streaming data...")
 
             # Stream chunks to pipe
             chunk_count = 0
@@ -116,7 +118,7 @@ class HTTPStreamReader:
                 for chunk in self.response.iter_content(chunk_size=8272):
                     # Check if we should stop before processing chunk
                     if not self.running:
-                        logger.debug("HTTP reader stopping (running=False)")
+                        logger.debug(f"{self.tag} Stopping (running=False)")
                         break
 
                     if chunk:
@@ -132,34 +134,34 @@ class HTTPStreamReader:
                                 
                                 # Log progress periodically
                                 if chunk_count % 1000 == 0:
-                                    logger.debug(f"HTTP reader streamed {chunk_count} chunks")
+                                    logger.debug(f"{self.tag} Streamed {chunk_count} chunks")
                             except OSError as e:
-                                logger.error(f"Pipe write error: {e}")
+                                logger.error(f"{self.tag} Pipe write error: {e}")
                                 break
             except requests.exceptions.ChunkedEncodingError as e:
-                logger.info(f"HTTP stream ended prematurely (ChunkedEncodingError) after {chunk_count} chunks")
+                logger.info(f"{self.tag} Stream ended prematurely (ChunkedEncodingError) after {chunk_count} chunks")
             except requests.exceptions.ConnectionError as e:
                 # Handle read timeouts and connection errors during streaming
                 # This is common when the upstream source stops sending data or times out
                 error_msg = str(e)
                 if 'Read timed out' in error_msg or 'ReadTimeoutError' in error_msg:
-                    logger.info(f"HTTP stream read timeout after {chunk_count} chunks - stream likely ended")
+                    logger.info(f"{self.tag} Stream read timeout after {chunk_count} chunks - stream likely ended")
                 else:
-                    logger.warning(f"HTTP stream connection error: {error_msg}")
+                    logger.warning(f"{self.tag} Stream connection error: {error_msg}")
             except AttributeError as e:
                 # This can happen if response is closed during iteration
                 # Check if it's the specific 'read' error we expect during shutdown
                 error_msg = str(e)
                 if not self.running and ('read' in error_msg or 'NoneType' in error_msg):
-                    logger.debug("HTTP reader stopped during iteration (expected)")
+                    logger.debug(f"{self.tag} Stopped during iteration (expected)")
                 else:
                     # Unexpected AttributeError - re-raise to avoid masking bugs
-                    logger.error(f"Unexpected attribute error in HTTP reader: {e}", exc_info=True)
+                    logger.error(f"{self.tag} Unexpected attribute error in HTTP reader: {e}", exc_info=True)
                     raise
             except Exception as e:
-                logger.error(f"HTTP reader streaming error: {e}", exc_info=True)
+                logger.error(f"{self.tag} Streaming error: {e}", exc_info=True)
 
-            logger.info("HTTP stream ended")
+            logger.info(f"{self.tag} Stream ended")
 
         except requests.exceptions.RequestException as e:
             logger.error(f"HTTP reader request error: {e}")

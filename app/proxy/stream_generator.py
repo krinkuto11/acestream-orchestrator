@@ -85,6 +85,7 @@ class StreamGenerator:
 
         # HARDENING: Continuity counter for synthetic NULL packets (keep-alives)
         self.null_cc = 0
+        self.tag = f"[TS:{content_id}] [Client:{client_id}]"
     
     def generate(self):
         """Generator function that produces stream content for the client"""
@@ -101,7 +102,7 @@ class StreamGenerator:
         self.last_starvation_update_time = 0.0
         
         try:
-            logger.info(f"[{self.client_id}] Stream generator started, stream_ready={not self.stream_initializing}")
+            logger.info(f"{self.tag} Stream generator started, stream_ready={not self.stream_initializing}")
             
             # If stream is initializing, wait for it
             if self.stream_initializing:
@@ -109,7 +110,7 @@ class StreamGenerator:
                 if not stream_ready:
                     return
             
-            logger.info(f"[{self.client_id}] Stream ready, starting normal streaming")
+            logger.info(f"{self.tag} Stream ready, starting normal streaming")
             
             # Reset start time for real streaming
             self.stream_start_time = time.time()
@@ -187,7 +188,7 @@ class StreamGenerator:
                     # Check if stream has ended (no data for too long)
                     if self.consecutive_empty > no_data_max_checks:
                         timeout_seconds = no_data_max_checks * no_data_check_interval
-                        logger.info(f"[{self.client_id}] Stream ended (no data for {timeout_seconds:.1f}s)")
+                        logger.info(f"{self.tag} Stream ended (no data for {timeout_seconds:.1f}s)")
                         break
                     
                     # Wait a bit before retrying
@@ -197,12 +198,12 @@ class StreamGenerator:
                 if time.time() - self.last_ttl_refresh >= self.ttl_refresh_interval:
                     self._refresh_ttl()
             
-            logger.info(f"[{self.client_id}] Stream completed: {self.bytes_sent} bytes, {self.chunks_sent} chunks")
+            logger.info(f"{self.tag} Stream completed: {self.bytes_sent} bytes, {self.chunks_sent} chunks")
             
         except GeneratorExit:
-            logger.info(f"[{self.client_id}] Client disconnected")
+            logger.info(f"{self.tag} Client disconnected")
         except Exception as e:
-            logger.error(f"[{self.client_id}] Stream error: {e}", exc_info=True)
+            logger.error(f"{self.tag} Stream error: {e}", exc_info=True)
         finally:
             self._cleanup()
     
@@ -215,12 +216,12 @@ class StreamGenerator:
         check_interval = 0.2
         proxy_server = ProxyServer.get_instance()
         
-        logger.info(f"[{self.client_id}] Waiting for stream initialization (timeout: {timeout}s)")
+        logger.info(f"{self.tag} Waiting for stream initialization (timeout: {timeout}s)")
         
         while time.time() - start_time < timeout:
             manager = proxy_server.stream_managers.get(self.content_id)
             if manager is None:
-                logger.error(f"[{self.client_id}] Stream manager missing during initialization")
+                logger.error(f"{self.tag} Stream manager missing during initialization")
                 return False
 
             manager_mode = normalize_proxy_mode(getattr(manager, "control_mode", None))
@@ -245,7 +246,7 @@ class StreamGenerator:
             # to avoid poisoning the player's probe with Null packets.
             time.sleep(check_interval)
         
-        logger.error(f"[{self.client_id}] Stream initialization timeout")
+        logger.error(f"{self.tag} Stream initialization timeout")
         return False
     
     def _wait_for_probe_chunk(self, min_index=None):
@@ -256,7 +257,7 @@ class StreamGenerator:
         baseline_index = max(0, int(min_index or 0))
 
         logger.info(
-            f"[{self.client_id}] Waiting for probe chunk in buffer "
+            f"{self.tag} Waiting for probe chunk in buffer "
             f"(timeout: {timeout:.1f}s, baseline_index: {baseline_index})..."
         )
         
@@ -265,7 +266,7 @@ class StreamGenerator:
                 return True
             time.sleep(check_interval)
         
-        logger.error(f"[{self.client_id}] Timeout waiting for probe chunk")
+        logger.error(f"{self.tag} Timeout waiting for probe chunk")
         return False
 
     def _update_chunk_rate_estimate(self, chunks_received: int):
@@ -374,14 +375,14 @@ class StreamGenerator:
             manager = proxy_server.stream_managers.get(self.content_id)
             if manager and getattr(manager, "bitrate", 0) > 0:
                 self.stream_bitrate = int(manager.bitrate) # Already in Bytes/s
-                logger.info(f"[{self.client_id}] Late-binding bitrate captured from manager: {self.stream_bitrate} B/s")
+                logger.info(f"{self.tag} Late-binding bitrate captured from manager: {self.stream_bitrate * 8} bps")
             else:
                 try:
                     metadata_key = RedisKeys.stream_metadata(self.content_id)
                     bitrate_raw = self.client_manager.redis_client.hget(metadata_key, StreamMetadataField.BITRATE)
                     if bitrate_raw:
                         self.stream_bitrate = int(bitrate_raw) # Already in Bytes/s
-                        logger.info(f"[{self.client_id}] Late-binding bitrate captured from Redis: {self.stream_bitrate} B/s")
+                        logger.info(f"{self.tag} Late-binding bitrate captured from Redis: {self.stream_bitrate * 8} bps")
                 except Exception:
                     pass
 
@@ -389,11 +390,11 @@ class StreamGenerator:
         MIN_SAFE_BITRATE_BPS = 312500 
         effective_bitrate = max(self.stream_bitrate, MIN_SAFE_BITRATE_BPS)
         if effective_bitrate > self.stream_bitrate and self.stream_bitrate > 0:
-            logger.info(f"[{self.client_id}] Applying bitrate floor: {effective_bitrate} B/s (Reported: {self.stream_bitrate} B/s)")
+            logger.info(f"{self.tag} Applying bitrate floor: {effective_bitrate * 8} bps (Reported: {self.stream_bitrate * 8} bps)")
         
         target_chunks = int(math.ceil((prebuffer_seconds * effective_bitrate) / float(target_chunk_size)))
         logger.info(
-            f"[{self.client_id}] Prebuffer target: {prebuffer_seconds}s @ {effective_bitrate} B/s "
+            f"{self.tag} Prebuffer target: {prebuffer_seconds}s @ {effective_bitrate * 8} bps "
             f"({target_chunk_size} B/chunk) -> {target_chunks} chunks"
         )
         
@@ -416,7 +417,7 @@ class StreamGenerator:
             
             if has_runway and (has_progressed or has_timed_out_min):
                 logger.info(
-                    f"[{self.client_id}] Prebuffer complete after {now - start_wait:.1f}s "
+                    f"{self.tag} Prebuffer complete after {now - start_wait:.1f}s "
                     f"(Runway: {current_buffer_size} chunks, Engine Progressed: {has_progressed})"
                 )
                 # Final update to clear prebuffer flag immediately
@@ -425,12 +426,12 @@ class StreamGenerator:
             
             # Debounced logging: only log if size increased AND at least 2 seconds passed
             if current_buffer_size != last_logged_size and (now - last_log_time) >= 2.0:
-                logger.info(f"[{self.client_id}] Hoarding... Runway: {current_buffer_size}/{target_chunks} chunks")
+                logger.info(f"{self.tag} Hoarding... Runway: {current_buffer_size}/{target_chunks} chunks")
                 last_logged_size = current_buffer_size
                 last_log_time = now
             
             if now - start_wait > max(30.0, prebuffer_seconds * 2):
-                logger.warning(f"[{self.client_id}] Prebuffer hold timed out at {current_buffer_size} chunks")
+                logger.warning(f"{self.tag} Prebuffer hold timed out at {current_buffer_size} chunks")
                 break
                 
             # Blast Fat Keep-Alives to prevent HTTP timeouts
@@ -509,7 +510,7 @@ class StreamGenerator:
             )
             self.last_position_update_time = now
         except Exception as e:
-            logger.error(f"[{self.client_id}] Failed to update client position (source={source}): {e}")
+            logger.error(f"{self.tag} Failed to update client position (source={source}): {e}")
     
     def _setup_streaming(self):
         """Setup streaming parameters"""
@@ -520,29 +521,29 @@ class StreamGenerator:
         # Get stream buffer
         self.buffer = proxy_server.stream_buffers.get(self.content_id)
         if not self.buffer:
-            logger.error(f"[{self.client_id}] No buffer found for content_id={self.content_id}")
+            logger.error(f"{self.tag} No buffer found for content_id={self.content_id}")
             return False
         
         # Get client manager
         self.client_manager = proxy_server.client_managers.get(self.content_id)
         if not self.client_manager:
-            logger.error(f"[{self.client_id}] No client manager found")
+            logger.error(f"{self.tag} No client manager found")
             return False
 
         # EXTRACT BITRATE FOR PACING: Prioritize direct manager data, fallback to Redis
         manager = proxy_server.stream_managers.get(self.content_id)
         if manager and getattr(manager, "bitrate", 0) > 0:
             self.stream_bitrate = int(manager.bitrate) # Already in Bytes/s
-            logger.info(f"[{self.client_id}] Target bitrate extracted from manager: {self.stream_bitrate} bytes/s")
+            logger.info(f"{self.tag} Target bitrate extracted from manager: {self.stream_bitrate * 8} bps")
         else:
             try:
                 metadata_key = RedisKeys.stream_metadata(self.content_id)
                 bitrate_raw = self.client_manager.redis_client.hget(metadata_key, StreamMetadataField.BITRATE)
                 if bitrate_raw:
                     self.stream_bitrate = int(bitrate_raw) # Already in Bytes/s
-                    logger.info(f"[{self.client_id}] Target bitrate extracted from Redis: {self.stream_bitrate} bytes/s")
+                    logger.info(f"{self.tag} Target bitrate extracted from Redis: {self.stream_bitrate * 8} bps")
             except Exception as e:
-                logger.debug(f"[{self.client_id}] Failed to extract bitrate for pacing: {e}")
+                logger.debug(f"{self.tag} Failed to extract bitrate for pacing: {e}")
         
         # Capture the current index before registering the client so we can
         # track the client's absolute position in the buffer.
@@ -573,10 +574,11 @@ class StreamGenerator:
             self.pacing_burst_chunks = 0
             self.stream_bitrate = 0 # Revokes byte-based burst
             
-            logger.info(f"[{self.client_id}] Hot reconnect detected. Revoking burst allowance to prevent buffer surfing.")
+            logger.info(f"{self.tag} Hot reconnect detected. Revoking burst allowance to prevent buffer surfing.")
         
         # Add client with starting position
         self.client_manager.add_client(self.client_id, self.client_ip, self.client_user_agent, initial_index=start_index)
+        logger.info(f"{self.tag} New client connected from {self.client_ip} ({self.client_user_agent})")
 
         # Register an initial TS client row immediately so lag updates do not wait
         # for the first periodic stats flush.
@@ -616,13 +618,13 @@ class StreamGenerator:
         if requested_seekback > 0:
             # Explicit seekback requested (e.g. from HLS or URL param)
             self.local_index = max(0, int(start_index))
-            logger.info(f"[{self.client_id}] Starting with explicit seekback: index {self.local_index}")
+            logger.info(f"{self.tag} Starting with explicit seekback: index {self.local_index}")
         else:
             # Normal play: start at the live edge to release a valid chunk immediately.
             # The 'hoarding' phase will happen after this first chunk is delivered.
             self.local_index = max(0, int(start_index))
             logger.info(
-                f"[{self.client_id}] Probe-first startup: starting at index {self.local_index} "
+                f"{self.tag} Probe-first startup: starting at index {self.local_index} "
                 f"(live {self.buffer.index})"
             )
 
@@ -632,7 +634,7 @@ class StreamGenerator:
         # Publish an initial runway sample right after startup completes.
         self._maybe_update_client_position(force=True, source="ts_startup")
         
-        logger.info(f"[{self.client_id}] Starting from buffer index {self.local_index}")
+        logger.info(f"{self.tag} Starting from buffer index {self.local_index}")
         return True
     
     def _update_stats(self):
@@ -662,7 +664,7 @@ class StreamGenerator:
 
             self.current_rate = bytes_since_last / elapsed / 1024  # KB/s
             
-            logger.debug(f"[{self.client_id}] Rate: {self.current_rate:.1f} KB/s, Total: {self.bytes_sent / 1024 / 1024:.1f} MB")
+            logger.debug(f"{self.tag} Rate: {self.current_rate:.1f} KB/s, Total: {self.bytes_sent / 1024 / 1024:.1f} MB")
             
             self.last_stats_time = now
             self.last_stats_bytes = self.bytes_sent
@@ -684,7 +686,7 @@ class StreamGenerator:
         if hasattr(self, 'client_manager') and self.client_manager:
             self.client_manager.remove_client(self.client_id)
         
-        logger.info(f"[{self.client_id}] Cleanup complete")
+        logger.info(f"{self.tag} Cleanup complete")
 
 
 def create_stream_generator(content_id, client_id, client_ip, client_user_agent, stream_initializing=False, seekback=None):

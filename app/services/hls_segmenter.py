@@ -278,7 +278,7 @@ class HLSSegmenterService:
         except Exception:
             pass
 
-        client_tracking_service.record_activity(
+        tracked = client_tracking_service.record_activity(
             client_id=normalized_client_id,
             stream_id=key,
             bytes_delta=bytes_delta,
@@ -295,6 +295,11 @@ class HLSSegmenterService:
             worker_id="api_hls_segmenter",
             bitrate=session.bitrate,  # Pass bitrate to tracker for accurate BPS EMA initialization
         )
+
+        if tracked.get("requests_total") == 1:
+            logger.info(f"[HLS-API:{key}] [Client:{normalized_client_id}] New client connected from {normalized_ip}")
+        else:
+            logger.debug(f"[HLS-API:{key}] [Client:{normalized_client_id}] Client activity: {request_kind}")
         
         # Report egress metrics for global throughput gauges
         if bytes_delta > 0:
@@ -388,7 +393,7 @@ class HLSSegmenterService:
                                     session.bitrate = int((instant_bitrate * 0.2) + (session.bitrate * 0.8))
                                 
                                 logger.debug(
-                                    "Updated dynamic HLS bitrate for %s: %s bps (last segment: %s size: %d bytes)", 
+                                    "[HLS-API:%s] Updated dynamic bitrate: %s bps (last segment: %s size: %d bytes)", 
                                     session.monitor_id, session.bitrate, latest_segment["filename"], file_size
                                 )
             except Exception as e:
@@ -664,7 +669,7 @@ class HLSSegmenterService:
                 if pos is not None and live_last is not None:
                     # Update seekback for the next attempt
                     session.seekback = max(0, int(live_last) - int(pos))
-                    logger.info(f"External HLS Segmenter migration triggered for {monitor_id}. "
+                    logger.info(f"[HLS-API:{key}] External HLS Segmenter migration triggered. "
                                f"Updating seekback to {session.seekback}s for resume alignment.")
         except Exception as e:
             logger.debug(f"Failed to calculate HLS segmenter resume position during migration: {e}")
@@ -740,7 +745,7 @@ class HLSSegmenterService:
                     self._apply_metadata(existing, metadata)
                     if existing.manifest_path.exists():
                         return existing.manifest_path
-                    logger.info("Reusing warming external HLS segmenter for stream %s", key)
+                    logger.info("[HLS-API:%s] Reusing warming external HLS segmenter", key)
                     wait_for_existing = True
 
             if existing and not wait_for_existing:
@@ -784,7 +789,7 @@ class HLSSegmenterService:
                     str(manifest_path),
                 ]
 
-                logger.info("Starting external HLS segmenter for stream %s (list_size=%d @ %.1fs)", key, dynamic_list_size, self._hls_segment_time_s)
+                logger.info("[HLS-API:%s] Starting external HLS segmenter (list_size=%d @ %.1fs)", key, dynamic_list_size, self._hls_segment_time_s)
                 try:
                     process = await asyncio.create_subprocess_exec(
                         *cmd,
@@ -861,7 +866,7 @@ class HLSSegmenterService:
             worker_id="api_hls_segmenter",
         )
 
-        logger.info("Stopping external HLS segmenter for stream %s", key)
+        logger.info("[HLS-API:%s] Stopping external HLS segmenter", key)
         process = session.process
         if process.returncode is None:
             process.terminate()
@@ -1144,7 +1149,7 @@ class HLSSegmenterService:
                 
                 idle_timeout = ConfigHelper.hls_client_idle_timeout()
                 if (time.time() - session.last_activity) > idle_timeout:
-                    logger.info(f"Rapid cleanup: stopping idle API HLS session {key} (idle > {idle_timeout}s)")
+                    logger.info(f"[HLS-API:{key}] Rapid cleanup: stopping idle session (idle > {idle_timeout}s)")
                     # Align stop reason with parity goals
                     await self._stop_locked(key, emit_stream_ended=True, reason="api_hls_client_timeout")
                     break

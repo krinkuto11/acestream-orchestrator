@@ -822,6 +822,7 @@ class StreamManager:
             # Some AceStream engines may behave differently based on the user agent
             with self._reader_lock:
                 self.http_reader = HTTPStreamReader(
+                    content_id=self.content_id,
                     url=self.playback_url,
                     user_agent=VLC_USER_AGENT,
                     chunk_size=ConfigHelper.chunk_size()
