@@ -51,6 +51,7 @@ class SegmenterSession:
     cached_latest_seq: Optional[int] = None
     cached_manifest_lag: float = 0.0
     initial_buffering: bool = True
+    list_size: int = 5
     null_cc: int = 0
 
 
@@ -801,6 +802,7 @@ class HLSSegmenterService:
                     process=process,
                     started_at=now,
                     last_activity=now,
+                    list_size=dynamic_list_size,
                 )
                 self._apply_metadata(session, metadata)
                 self._sessions[key] = session
@@ -982,7 +984,7 @@ class HLSSegmenterService:
                     try:
                         content = session.manifest_path.read_text("utf-8")
                         segments = self._manifest_segments(content)
-                        if len(segments) >= self._hls_list_size:
+                        if len(segments) >= session.list_size:
                             manifest_is_full = True
                     except Exception:
                         pass
