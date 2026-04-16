@@ -233,13 +233,6 @@ class ClientManager:
                 
                 # Store in Redis
                 if self.redis_client:
-                    self.redis_client.hset(client_key, mapping=client_data)
-                    self.redis_client.expire(client_key, self.client_ttl)
-                    
-                    # Add to the client set
-                    self.redis_client.sadd(self.client_set_key, client_id)
-                    self.redis_client.expire(self.client_set_key, self.client_ttl)
-                    
                     # Clear any initialization timer
                     init_key = RedisKeys.stream_init_time(self.content_id)
                     self.redis_client.delete(init_key)
@@ -263,6 +256,7 @@ class ClientManager:
                     connected_at=time.time(),
                     idle_timeout_s=float(self.client_ttl),
                     worker_id=str(self.worker_id or "unknown"),
+                    initial_metadata={"initial_index": str(initial_index)}
                 )
                 
                 self.last_heartbeat_time[client_id] = time.time()
@@ -291,23 +285,11 @@ class ClientManager:
             self.last_active_time = time.time()
             
             if self.redis_client:
-                # Use pipeline for atomic-like removal to avoid race conditions
-                # where a client ID exists in the set but its metadata is gone.
-                client_key = RedisKeys.client_metadata(self.content_id, client_id)
-                pipe = self.redis_client.pipeline(transaction=False)
-                # Remove from stream's client set
-                pipe.srem(self.client_set_key, client_id)
-                # Delete individual client key
-                pipe.delete(client_key)
-                pipe.execute()
-                
                 # Check if this was the last client
                 remaining = self.redis_client.scard(self.client_set_key) or 0
                 if remaining == 0:
                     logger.warning(f"Last client removed: {client_id} - stream may shut down soon")
                     
-                    # Trigger disconnect time tracking
-                    disconnect_key = RedisKeys.last_client_disconnect(self.content_id)
                     # Trigger disconnect time tracking
                     disconnect_key = RedisKeys.last_client_disconnect(self.content_id)
                     self.redis_client.setex(disconnect_key, 60, str(time.time()))
@@ -356,14 +338,17 @@ class ClientManager:
             return len(self.clients)  # Fall back to local count
     
     def update_client_bytes_sent(self, client_id, bytes_sent):
-        """Update bytes_sent metric for a specific client in Redis"""
-        if not self.redis_client:
-            return
+        """Update bytes_sent metric, routing to ClientTrackingService for unified parity."""
+        from ..services.client_tracker import client_tracking_service
         
         try:
-            client_key = RedisKeys.client_metadata(self.content_id, client_id)
-            self.redis_client.hset(client_key, "bytes_sent", str(bytes_sent))
-            self.redis_client.hset(client_key, "stats_updated_at", str(time.time()))
+            client_tracking_service.record_activity(
+                client_id=str(client_id),
+                stream_id=str(self.content_id or ""),
+                bytes_delta=0, # This method just syncs the total, so we pass 0 delta
+                raw_bytes=float(bytes_sent),
+                protocol="TS",
+            )
         except Exception as e:
             logger.error(f"Error updating client bytes_sent: {e}")
 
@@ -376,36 +361,21 @@ class ClientManager:
         observed_at: Optional[float] = None,
         is_prebuffering: Optional[bool] = None,
     ):
-        """Update client runway estimate in Redis."""
+        """Update client buffer position, routing to ClientTrackingService for unified parity."""
+        from ..services.client_tracker import client_tracking_service
+        
         try:
-            normalized_seconds = max(0.0, float(seconds_behind or 0.0))
-            observed_ts = float(observed_at) if observed_at is not None else time.time()
-            
-            if self.redis_client:
-                client_key = RedisKeys.client_metadata(self.content_id, client_id)
-                self.redis_client.hset(client_key, ClientMetadataField.BUFFER_SECONDS_BEHIND, f"{normalized_seconds:.3f}")
-                self.redis_client.hset(client_key, ClientMetadataField.STATS_UPDATED_AT, str(observed_ts))
-                self.redis_client.hset(client_key, ClientMetadataField.LAST_ACTIVE, str(observed_ts))
-
-                self.redis_client.expire(client_key, self.client_ttl)
-                self.redis_client.sadd(self.client_set_key, client_id)
-                self.redis_client.expire(self.client_set_key, self.client_ttl)
-
-            from ..services.client_tracker import client_tracking_service
-
             client_tracking_service.update_client_position(
                 client_id=str(client_id),
                 stream_id=str(self.content_id or ""),
-                protocol="TS",
-                seconds_behind=normalized_seconds,
-                source=source,
-                confidence=confidence,
-                observed_at=observed_ts,
-                now=observed_ts,
+                seconds_behind=float(seconds_behind),
+                source=str(source),
+                confidence=float(confidence),
+                observed_at=observed_at or time.time(),
                 is_prebuffering=is_prebuffering,
             )
         except Exception as e:
-            logger.error(f"Error updating client buffer position: {e}")
+            logger.error(f"Error updating client position: {e}")
     
     def refresh_client_ttl(self):
         """Refresh TTL for active clients to prevent expiration"""

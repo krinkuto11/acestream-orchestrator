@@ -103,6 +103,7 @@ class ClientTrackingService:
         idle_timeout_s: Optional[float] = None,
         worker_id: Optional[str] = None,
         update_last_active: bool = True,
+        initial_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         now = self._safe_float(connected_at, default=time.time())
         normalized_protocol = self._normalize_protocol(protocol)
@@ -136,6 +137,11 @@ class ClientTrackingService:
                     "idle_timeout_s": self._safe_float(idle_timeout_s, default=0.0),
                     "is_prebuffering": False,
                 }
+                if initial_metadata:
+                    # Update with initial metadata, converting all to strings for consistency
+                    for k, v in initial_metadata.items():
+                        if k not in current and v is not None:
+                            current[k] = v
                 self._clients[key] = current
                 self._rate_state[key] = (0.0, now)
                 created = True
@@ -164,7 +170,29 @@ class ClientTrackingService:
             )
             try:
                 from ..proxy.constants import EventType
+                from ..proxy.redis_keys import RedisKeys
+                
                 self._publish_client_event(EventType.CLIENT_CONNECTED, normalized_stream_id, row)
+                
+                # Persist to Redis for cross-worker parity
+                if self._redis:
+                    client_key = RedisKeys.client_metadata(normalized_stream_id, normalized_client_id)
+                    client_set_key = RedisKeys.clients(normalized_stream_id)
+                    
+                    # Convert row values to strings for Redis hash
+                    mapping = {k: str(v) for k, v in row.items() if v is not None}
+                    self._redis.hset(client_key, mapping=mapping)
+                    
+                    # Add to the client set for the stream
+                    self._redis.sadd(client_set_key, normalized_client_id)
+                    
+                    # Use a generous TTL (60s default) to handle client cleanup
+                    from ..proxy.config_helper import Config
+                    ttl = int(Config.CLIENT_RECORD_TTL)
+                    self._redis.expire(client_key, ttl)
+                    self._redis.expire(client_set_key, ttl)
+            except Exception as e:
+                logger.debug(f"Failed to persist client registration to Redis: {e}")
             except Exception:
                 pass
         return row
@@ -301,6 +329,33 @@ class ClientTrackingService:
 
             self._rate_state[key] = (self._safe_float(current.get("bytes_sent"), 0.0), ts)
 
+            # Update Redis if available to keep state fresh across workers
+            if self._redis:
+                try:
+                    from ..proxy.redis_keys import RedisKeys
+                    from ..proxy.config_helper import Config
+                    client_key = RedisKeys.client_metadata(normalized_stream_id, normalized_client_id)
+                    # Use minimal subset for high-frequency updates to reduce Redis load
+                    update_mapping = {
+                        "bps": str(current.get("bps")),
+                        "bytes_sent": str(current.get("bytes_sent")),
+                        "requests_total": str(current.get("requests_total")),
+                        "last_active": str(current.get("last_active")),
+                        "stats_updated_at": str(current.get("stats_updated_at")),
+                    }
+                    if is_prebuffering is not None:
+                        update_mapping["is_prebuffering"] = str(current.get("is_prebuffering"))
+                    
+                    self._redis.hset(client_key, mapping=update_mapping)
+                    
+                    # Refresh TTL for both individual client and the stream's client set
+                    ttl = int(Config.CLIENT_RECORD_TTL)
+                    self._redis.expire(client_key, ttl)
+                    client_set_key = RedisKeys.clients(normalized_stream_id)
+                    self._redis.expire(client_set_key, ttl)
+                except Exception as e:
+                    logger.debug(f"Failed to update client activity in Redis: {e}")
+
             return dict(current)
 
     def update_client_position(
@@ -358,6 +413,22 @@ class ClientTrackingService:
             # are currently flowing (e.g., short upstream starvation/reconnect).
             current["last_active"] = max(ts, self._safe_float(current.get("last_active"), default=ts))
             current["stats_updated_at"] = ts
+
+            # Update Redis if available
+            if self._redis:
+                try:
+                    from ..proxy.redis_keys import RedisKeys
+                    client_key = RedisKeys.client_metadata(normalized_stream_id, normalized_client_id)
+                    self._redis.hset(client_key, mapping={
+                        "buffer_seconds_behind": str(current.get("buffer_seconds_behind")),
+                        "buffer_seconds_behind_source": str(current.get("buffer_seconds_behind_source")),
+                        "buffer_seconds_behind_confidence": str(current.get("buffer_seconds_behind_confidence")),
+                        "stats_updated_at": str(current.get("stats_updated_at")),
+                        "last_active": str(current.get("last_active")),
+                    })
+                except Exception:
+                    pass
+
             return dict(current)
 
     def prune_stale_clients(self, timeout_s: float) -> int:
@@ -391,15 +462,30 @@ class ClientTrackingService:
             self._emit_disconnect_metric(protocol)
             try:
                 from ..proxy.constants import EventType
-                self._publish_client_event(EventType.CLIENT_DISCONNECTED, str(row.get("stream_id")), row)
+                from ..proxy.redis_keys import RedisKeys
+                
+                stream_id = str(row.get("stream_id"))
+                client_id = str(row.get("client_id"))
+                
+                self._publish_client_event(EventType.CLIENT_DISCONNECTED, stream_id, row)
+                
+                # Cleanup Redis if available
+                if self._redis:
+                    client_key = RedisKeys.client_metadata(stream_id, client_id)
+                    client_set_key = RedisKeys.clients(stream_id)
+                    
+                    self._redis.unlink(client_key)
+                    self._redis.srem(client_set_key, client_id)
                 
                 # Explicit logs for visibility into client timeouts
                 logger.info(
                     "[Stream:%s] [Client:%s] Disconnected (Idle timeout: %.0fs)", 
-                    str(row.get("stream_id"))[:12], 
-                    str(row.get("client_id"))[:12],
+                    stream_id[:12], 
+                    client_id[:12],
                     effective_timeout
                 )
+            except Exception as e:
+                logger.debug(f"Failed to cleanup stale client from Redis: {e}")
             except Exception:
                 pass
         return len(removed_rows)
@@ -439,14 +525,28 @@ class ClientTrackingService:
             self._emit_disconnect_metric(p)
             try:
                 from ..proxy.constants import EventType
+                from ..proxy.redis_keys import RedisKeys
+                
+                client_id = str(row.get("client_id"))
+                
                 self._publish_client_event(EventType.CLIENT_DISCONNECTED, normalized_stream_id, row)
+
+                # Cleanup Redis if available
+                if self._redis:
+                    client_key = RedisKeys.client_metadata(normalized_stream_id, client_id)
+                    client_set_key = RedisKeys.clients(normalized_stream_id)
+                    
+                    self._redis.unlink(client_key)
+                    self._redis.srem(client_set_key, client_id)
 
                 # Explicit logs for visibility into client removal
                 logger.info(
                     "[Stream:%s] [Client:%s] Client disconnected", 
                     normalized_stream_id[:12], 
-                    str(row.get("client_id"))[:12]
+                    client_id[:12]
                 )
+            except Exception as e:
+                logger.debug(f"Failed to cleanup client unregistration from Redis: {e}")
             except Exception:
                 pass
         return len(removed_rows)
@@ -486,7 +586,19 @@ class ClientTrackingService:
             self._emit_disconnect_metric(p)
             try:
                 from ..proxy.constants import EventType
+                from ..proxy.redis_keys import RedisKeys
+                
+                client_id = str(row.get("client_id"))
+                
                 self._publish_client_event(EventType.CLIENT_DISCONNECTED, normalized_stream_id, row)
+
+                # Cleanup Redis if available
+                if self._redis:
+                    client_key = RedisKeys.client_metadata(normalized_stream_id, client_id)
+                    client_set_key = RedisKeys.clients(normalized_stream_id)
+                    
+                    self._redis.unlink(client_key)
+                    self._redis.srem(client_set_key, client_id)
 
                 # Explicit logs for visibility into batch client removal
                 logger.info(
@@ -556,7 +668,42 @@ class ClientTrackingService:
 
         with self._lock:
             rows: List[Dict[str, Any]] = []
+            
+            # 1. Fetch from Redis first for cross-worker parity
+            if self._redis:
+                try:
+                    from ..proxy.redis_keys import RedisKeys
+                    pattern = f"ace_proxy:stream:{normalized_stream_id}:clients:*"
+                    keys = self._redis.keys(pattern)
+                    for k in keys:
+                        raw_data = self._redis.hgetall(k)
+                        if not raw_data:
+                            continue
+                        
+                        # Decode Redis bytes to string and convert types
+                        data = {key.decode("utf-8"): val.decode("utf-8") for key, val in raw_data.items()}
+                        
+                        # Filter by worker_id and protocol if requested
+                        if target_worker_id is not None and data.get("worker_id") != target_worker_id:
+                            continue
+                        row_protocol = self._normalize_protocol(data.get("protocol"))
+                        if target_protocol and row_protocol != target_protocol:
+                            continue
+                            
+                        # Enrich and format for public return
+                        rows.append(self._to_public_row(data, now))
+                except Exception as e:
+                    logger.warning(f"Failed to fetch clients from Redis for stream {normalized_stream_id}: {e}")
+
+            # 2. Fallback/Augment with in-memory tracking
+            # We use a set of IDs to avoid duplicates if same data exists in both
+            seen_client_ids = {r.get("id") for r in rows}
+            
             for row in self._clients.values():
+                row_client_id = str(row.get("client_id") or "")
+                if row_client_id in seen_client_ids:
+                    continue
+                    
                 row_stream_id = str(row.get("stream_id") or "")
                 if row_stream_id != normalized_stream_id:
                     continue
@@ -567,11 +714,10 @@ class ClientTrackingService:
                     continue
                 rows.append(self._to_public_row(row, now))
 
-        if not rows and not str(normalized_stream_id or "").startswith("ts:"):
-            # Diagnostic for HLS API mode where we expect clients but find none
+        if not rows and not (str(normalized_stream_id or "").startswith("ts:") or str(normalized_stream_id or "").startswith("ts_")):
+            # Diagnostic logic remains
             with self._lock:
                 total_in_memory = len(self._clients)
-                # Filter sample keys to show those that might be similar
                 similar_keys = [str(k[1]) for k in self._clients.keys() if str(k[1])[:4] == str(normalized_stream_id)[:4]]
                 logger.info(
                     "[Telemetry:Diagnostic] No clients found for stream %s. Total in tracker: %d. Similar keys in memory: %s",

@@ -82,32 +82,10 @@ class ClientManager:
 
     def __init__(self, stream_id: str = ""):
         self.stream_id = str(stream_id or f"__hls_local_{id(self)}")
+        # Standardize worker_id format to match TS proxy pattern
         self.worker_id = f"hls_proxy:{id(self)}"
-        self.last_activity: Dict[str, float] = {}
-        self.clients: Dict[str, Dict[str, Any]] = {}
         self.lock = threading.Lock()
 
-    @staticmethod
-    def _safe_float(value: Any, default: float = 0.0) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
-
-    def _sync_last_activity_from_clients(self, clients: List[Dict[str, Any]]) -> None:
-        rebuilt_activity: Dict[str, float] = {}
-        rebuilt_clients: Dict[str, Dict[str, Any]] = {}
-        now = time.time()
-        for payload in clients:
-            ip = str(payload.get("ip_address") or payload.get("ip") or "unknown")
-            client_id = str(payload.get("client_id") or payload.get("id") or ip)
-            ts = self._safe_float(payload.get("last_active"), default=now)
-            previous = rebuilt_activity.get(ip)
-            if previous is None or ts > previous:
-                rebuilt_activity[ip] = ts
-            rebuilt_clients[client_id] = dict(payload)
-        self.last_activity = rebuilt_activity
-        self.clients = rebuilt_clients
     def record_client_activity(
         self,
         client_ip: Optional[str] = None,
@@ -161,26 +139,6 @@ class ClientManager:
             bitrate=bitrate,
         )
 
-        with self.lock:
-            previous_ip_activity = self.last_activity.get(normalized_ip)
-            self.last_activity[normalized_ip] = ts if previous_ip_activity is None else max(previous_ip_activity, ts)
-            client_payload = dict(self.clients.get(normalized_client_id) or {})
-            client_payload.update({
-                "client_id": normalized_client_id,
-                "ip_address": normalized_ip,
-                "user_agent": normalized_ua,
-                "last_active": ts,
-                "last_request_kind": str(request_kind or "").strip().lower(),
-                "buffer_seconds_behind": max(
-                    0.0,
-                    self._safe_float(
-                        buffer_seconds_behind,
-                        default=client_payload.get("buffer_seconds_behind", 0.0),
-                    ),
-                ),
-            })
-            self.clients[normalized_client_id] = client_payload
-
         if tracked.get("requests_total") == 1:
             logger.info(f"[HLS:{self.stream_id}] [Client:{normalized_client_id}] New client connected from {normalized_ip}")
         else:
@@ -196,13 +154,9 @@ class ClientManager:
                 protocol="HLS",
                 worker_id=self.worker_id,
             )
-            with self.lock:
-                self.last_activity = {}
             return True
 
-        now = time.time()
-        
-        # Identify clients that will be pruned
+        # Identify clients that will be pruned for logging purposes
         clients_before = client_tracking_service.get_stream_clients(
             self.stream_id,
             protocol="HLS",
@@ -225,9 +179,6 @@ class ClientManager:
                 if c_id not in remaining_ids:
                     logger.info(f"[HLS:{self.stream_id}] [Client:{c_id}] Client disconnected (idle timeout)")
 
-        with self.lock:
-            self._sync_last_activity_from_clients(clients_after)
-
         return len(clients_after) == 0
 
     def list_clients(self, max_idle_seconds: Optional[float] = None) -> List[Dict[str, Any]]:
@@ -237,14 +188,11 @@ class ClientManager:
         if max_idle_seconds is not None and max_idle_seconds > 0:
             client_tracking_service.prune_stale_clients(max_idle_seconds)
 
-        clients = client_tracking_service.get_stream_clients(
+        return client_tracking_service.get_stream_clients(
             self.stream_id,
             protocol="HLS",
             worker_id=self.worker_id,
         )
-        with self.lock:
-            self._sync_last_activity_from_clients(clients)
-        return clients
 
     def count_active_clients(self) -> int:
         from ..services.client_tracker import client_tracking_service
