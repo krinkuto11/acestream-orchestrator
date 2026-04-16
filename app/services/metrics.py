@@ -296,6 +296,11 @@ def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
     from .state import state
 
     now = time.time()
+    global _proxy_total_ingress_bytes, _proxy_total_egress_bytes
+    global _last_proxy_sample_ts, _last_proxy_client_bytes, _last_proxy_stream_ingress_bytes
+    global _last_proxy_egress_observed_bytes, _last_proxy_ingress_observed_bytes
+    global _last_proxy_ingress_rate_bps, _last_proxy_egress_rate_bps, _last_proxy_rate_ts
+
     current_client_bytes: Dict[str, int] = {}
     current_stream_ingress_bytes: Dict[str, int] = {}
 
@@ -340,11 +345,6 @@ def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
                         continue
     except Exception:
         pass
-
-    global _proxy_total_ingress_bytes, _proxy_total_egress_bytes
-    global _last_proxy_sample_ts, _last_proxy_client_bytes, _last_proxy_stream_ingress_bytes
-    global _last_proxy_egress_observed_bytes, _last_proxy_ingress_observed_bytes
-    global _last_proxy_ingress_rate_bps, _last_proxy_egress_rate_bps, _last_proxy_rate_ts
 
     with _proxy_io_lock:
         delta_ts_egress = 0
@@ -432,6 +432,10 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
     from .state import state
 
     now = time.time()
+    global _last_engine_ingress_sample_ts
+    global _last_engine_ingress_bytes, _engine_ingress_rate_bps
+    global _last_engine_ingress_rate_bps, _last_engine_rate_ts
+
     current_engine_bytes: Dict[str, int] = {}  # container_id -> total ingress bytes
 
     try:
@@ -468,7 +472,6 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
         from .hls_segmenter import hls_segmenter_service
 
         # Calculate time-step for synthetic cumulative increments
-        global _last_engine_ingress_sample_ts
         dt = 0.0
         if _last_engine_ingress_sample_ts is not None:
             dt = max(0.0, now - _last_engine_ingress_sample_ts)
@@ -525,9 +528,6 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
 
     except Exception:
         pass
-
-    global _last_engine_ingress_bytes, _last_engine_ingress_sample_ts
-    global _engine_ingress_rate_bps, _last_engine_ingress_rate_bps, _last_engine_rate_ts
 
     rate_hold_seconds = 10.0
     result: Dict[str, float] = {}
