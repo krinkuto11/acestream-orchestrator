@@ -1470,21 +1470,5 @@ class HLSProxyServer:
         manager = self.stream_managers[channel_id]
         buffer = self.stream_buffers[channel_id]
         
-        # Finally deliver the real segment data
-        segment_data = buffer[segment_id]
-        if segment_data is None:
-            raise ValueError(f"Segment {segment_id} not found in buffer")
-            
-        # Headers-First Parity: Deliver first part immediately to satisfy FFmpeg probe
-        # 512KB is enough for PAT/PMT/PES and codec initialization (SPS/PPS)
-        header_size = min(len(segment_data), 524288)
-        header_data = segment_data[:header_size]
-        remainder_data = segment_data[header_size:]
-        
-        yield header_data
-
-        # Deliver the full segment immediately. No hold here.
-        if remainder_data:
-            yield remainder_data
-
-    def get_segment(self, channel_id: str, segment_name: str) -> bytes:
+        # Deliver the full segment immediately. Hold happens at manifest level now.
+        yield segment_data
