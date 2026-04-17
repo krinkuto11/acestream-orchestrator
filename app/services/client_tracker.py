@@ -114,6 +114,40 @@ class ClientTrackingService:
         created = False
         with self._lock:
             current = self._clients.get(key)
+            
+            # If not in memory but we have Redis, try to pull existing metadata 
+            # to avoid 'blind overwrite' from other workers calling position updates.
+            if current is None and self._redis:
+                try:
+                    from ..proxy.redis_keys import RedisKeys
+                    client_key = RedisKeys.client_metadata(normalized_stream_id, normalized_client_id)
+                    raw_data = self._redis.hgetall(client_key)
+                    if raw_data:
+                        # Hydrate a base row from Redis so we don't start from 'unknown'
+                        current = {}
+                        for k, v in raw_data.items():
+                            try:
+                                decoded_k = k.decode("utf-8") if isinstance(k, bytes) else str(k)
+                                decoded_v = v.decode("utf-8") if isinstance(v, bytes) else str(v)
+                                current[decoded_k] = decoded_v
+                            except Exception:
+                                continue
+                        
+                        # Fix type casting for numeric fields from Redis strings
+                        current["bytes_sent"] = self._safe_float(current.get("bytes_sent"), 0.0)
+                        current["bps"] = self._safe_float(current.get("bps"), 0.0)
+                        current["requests_total"] = self._safe_int(current.get("requests_total"), 0)
+                        current["chunks_sent"] = self._safe_int(current.get("chunks_sent"), 0)
+                        current["connected_at"] = self._safe_float(current.get("connected_at"), now)
+                        current["last_active"] = self._safe_float(current.get("last_active"), now)
+                        current["is_prebuffering"] = str(current.get("is_prebuffering", "False")).lower() == "true"
+                        
+                        self._clients[key] = current
+                        self._rate_state[key] = (current["bytes_sent"], current["last_active"])
+                        logger.debug("[Telemetry:Registration] Hydrated client %s from Redis", normalized_client_id[:12])
+                except Exception as e:
+                    logger.debug(f"Failed to hydrate client from Redis during registration: {e}")
+
             if current is None:
                 current = {
                     "client_id": normalized_client_id,
@@ -146,8 +180,16 @@ class ClientTrackingService:
                 self._rate_state[key] = (0.0, now)
                 created = True
             else:
-                current["ip_address"] = str(ip_address or current.get("ip_address") or "unknown")
-                current["user_agent"] = str(user_agent or current.get("user_agent") or "unknown")
+                # SMART MERGE: Only update IP/UA if the new value is NOT 'unknown',
+                # or if the current value is missing/'unknown'.
+                new_ip = str(ip_address or "unknown")
+                if new_ip != "unknown" or not current.get("ip_address") or current.get("ip_address") == "unknown":
+                    current["ip_address"] = new_ip
+
+                new_ua = str(user_agent or "unknown")
+                if new_ua != "unknown" or not current.get("user_agent") or current.get("user_agent") == "unknown":
+                    current["user_agent"] = new_ua
+
                 current["protocol"] = normalized_protocol
                 if worker_id is not None:
                     current["worker_id"] = str(worker_id)
@@ -257,8 +299,15 @@ class ClientTrackingService:
             if current is None:
                 return {}
 
-            current["ip_address"] = str(ip_address or current.get("ip_address") or "unknown")
-            current["user_agent"] = str(user_agent or current.get("user_agent") or "unknown")
+            # SMART MERGE: Only update IP/UA if the new value is NOT 'unknown',
+            # or if the current value is missing/'unknown'.
+            new_ip = str(ip_address or "unknown")
+            if new_ip != "unknown" or not current.get("ip_address") or current.get("ip_address") == "unknown":
+                current["ip_address"] = new_ip
+
+            new_ua = str(user_agent or "unknown")
+            if new_ua != "unknown" or not current.get("user_agent") or current.get("user_agent") == "unknown":
+                current["user_agent"] = new_ua
             
             if normalized_request_kind != "heartbeat":
                 current["last_active"] = ts

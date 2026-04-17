@@ -282,10 +282,18 @@ class ClientManager:
             if client_id in self.last_heartbeat_time:
                 del self.last_heartbeat_time[client_id]
             
+            # 1. Unregister from tracker first to update Redis state (SREM)
+            client_tracking_service.unregister_client(
+                client_id=str(client_id),
+                stream_id=str(self.content_id or ""),
+                protocol="TS",
+            )
+            
+            # 2. Update metadata
             self.last_active_time = time.time()
             
             if self.redis_client:
-                # Check if this was the last client
+                # 3. Check for remaining clients (now accurate after SREM)
                 remaining = self.redis_client.scard(self.client_set_key) or 0
                 if remaining == 0:
                     logger.warning(f"Last client removed: {client_id} - stream may shut down soon")
@@ -296,11 +304,9 @@ class ClientManager:
                 
                 self._notify_owner_of_activity()
                 
-                # Immediate shutdown check for owners when last local client leaves.
-                # All other disconnect events (local or remote) are handled via unified
-                # tracker events received in ProxyServer._handle_event.
+                # 4. Immediate shutdown check for owners when last client leaves.
                 if remaining == 0 and self.proxy_server and self.proxy_server.am_i_owner(self.content_id):
-                    logger.debug(f"Last local client removed on owner session - triggering immediate shutdown check")
+                    logger.debug(f"Last client removed on owner session - triggering immediate shutdown check")
                     thread = threading.Thread(
                         target=self.proxy_server.handle_client_disconnect,
                         args=(self.content_id,),
@@ -309,14 +315,9 @@ class ClientManager:
                     )
                     thread.start()
             
+            # 5. Log accurate total (will be 0 if this was the last client)
             total_clients = self.get_total_client_count()
             logger.info(f"Client disconnected: {client_id} (local: {len(self.clients)}, total: {total_clients})")
-
-            client_tracking_service.unregister_client(
-                client_id=str(client_id),
-                stream_id=str(self.content_id or ""),
-                protocol="TS",
-            )
         
         return len(self.clients)
     
