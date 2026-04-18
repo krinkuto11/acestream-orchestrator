@@ -2,7 +2,7 @@
 
 <img src="app/icons/favicon-96x96-dark.png" alt="AceStream Orchestrator Logo" width="96" height="96" />
 
-On-demand AceStream engine orchestration with a declarative control plane, built-in proxy, dynamic VPN lifecycle management, metrics, and a web panel. 
+On-demand AceStream engine orchestration with a declarative control plane, built-in proxy, dynamic VPN lifecycle management, metrics, and a web panel.  
 
 > [!WARNING]
 > **LEGAL DISCLAIMER: EDUCATIONAL USE ONLY**
@@ -102,16 +102,16 @@ For initial deployment (especially VPN mode), use environment variables. See [`.
 
 Key environment variables:
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `API_KEY` | *(none)* | Bearer token for protected endpoints |
-| `MIN_REPLICAS` | `2` | Minimum engine containers to keep running |
-| `MAX_REPLICAS` | `6` | Maximum concurrent engines |
-| `PORT_RANGE_HOST` | `19000-19999` | Host ports mapped to engine containers |
-| `VPN_PROVIDER` | `protonvpn` | Default VPN provider for dynamic nodes |
-| `VPN_PROTOCOL` | `wireguard` | Default VPN protocol for dynamic nodes |
-| `PREFERRED_ENGINES_PER_VPN` | `10` | Target engines per dynamic VPN node |
-| `DEBUG_MODE` | `false` | Verbose logging |
+| Variable                    | Default       | Purpose                                   |
+| --------------------------- | ------------- | ----------------------------------------- |
+| `API_KEY`                   | *(none)*      | Bearer token for protected endpoints      |
+| `MIN_REPLICAS`              | `2`           | Minimum engine containers to keep running |
+| `MAX_REPLICAS`              | `6`           | Maximum concurrent engines                |
+| `PORT_RANGE_HOST`           | `19000-19999` | Host ports mapped to engine containers    |
+| `VPN_PROVIDER`              | `protonvpn`   | Default VPN provider for dynamic nodes    |
+| `VPN_PROTOCOL`              | `wireguard`   | Default VPN protocol for dynamic nodes    |
+| `PREFERRED_ENGINES_PER_VPN` | `10`          | Target engines per dynamic VPN node       |
+| `DEBUG_MODE`                | `false`       | Verbose logging                           |
 
 ## Documentation
 
