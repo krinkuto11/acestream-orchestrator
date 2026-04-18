@@ -327,7 +327,7 @@ async def _refresh_vpn_servers_before_vpn_provision(vpn_controller_enabled: bool
         return
 
     refresh_timeout_s = 180
-    configured_source = "proton_paid"
+    configured_source = "gluetun_official"
 
     try:
         from .services.settings_persistence import SettingsPersistence
@@ -336,12 +336,12 @@ async def _refresh_vpn_servers_before_vpn_provision(vpn_controller_enabled: bool
             SettingsPersistence.get_cached_setting(
                 "vpn_settings",
                 "vpn_servers_refresh_source",
-                "proton_paid",
+                "gluetun_official",
             )
-            or "proton_paid"
+            or "gluetun_official"
         ).strip().lower()
     except Exception:
-        configured_source = "proton_paid"
+        configured_source = "gluetun_official"
 
     try:
         result = await asyncio.wait_for(
@@ -5593,7 +5593,7 @@ def get_vpn_settings():
         "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
         "vpn_servers_auto_refresh": False,
         "vpn_servers_refresh_period_s": 86400,
-        "vpn_servers_refresh_source": "proton_paid",
+        "vpn_servers_refresh_source": "gluetun_official",
         "vpn_servers_gluetun_json_mode": "update",
         "vpn_servers_storage_path": None,
         "vpn_servers_official_url": "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json",
@@ -5640,9 +5640,9 @@ def get_vpn_settings():
         except Exception:
             merged["vpn_servers_refresh_period_s"] = 86400
 
-        refresh_source = str(merged.get("vpn_servers_refresh_source") or "proton_paid").strip().lower()
+        refresh_source = str(merged.get("vpn_servers_refresh_source") or "gluetun_official").strip().lower()
         if refresh_source not in {"proton_paid", "gluetun_official"}:
-            refresh_source = "proton_paid"
+            refresh_source = "gluetun_official"
         merged["vpn_servers_refresh_source"] = refresh_source
 
         json_mode = str(merged.get("vpn_servers_gluetun_json_mode") or "update").strip().lower()
@@ -5714,7 +5714,7 @@ async def update_vpn_settings(settings: VPNSettingsUpdate):
         "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
         "vpn_servers_auto_refresh": False,
         "vpn_servers_refresh_period_s": 86400,
-        "vpn_servers_refresh_source": "proton_paid",
+        "vpn_servers_refresh_source": "gluetun_official",
         "vpn_servers_gluetun_json_mode": "update",
         "vpn_servers_storage_path": None,
         "vpn_servers_official_url": "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json",
@@ -6166,7 +6166,7 @@ def _load_vpn_settings_for_credential_ops() -> Dict[str, Any]:
         "unhealthy_restart_timeout_s": cfg.VPN_UNHEALTHY_RESTART_TIMEOUT_S,
         "vpn_servers_auto_refresh": False,
         "vpn_servers_refresh_period_s": 86400,
-        "vpn_servers_refresh_source": "proton_paid",
+        "vpn_servers_refresh_source": "gluetun_official",
         "vpn_servers_gluetun_json_mode": "update",
         "vpn_servers_storage_path": None,
         "vpn_servers_official_url": "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json",

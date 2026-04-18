@@ -100,7 +100,7 @@ class VPNServersRefreshService:
             "config": {
                 "auto_refresh": bool(settings.get("vpn_servers_auto_refresh", False)),
                 "refresh_period_s": int(settings.get("vpn_servers_refresh_period_s", 86400)),
-                "source": str(settings.get("vpn_servers_refresh_source", "proton_paid")),
+                "source": str(settings.get("vpn_servers_refresh_source", "gluetun_official")),
                 "gluetun_json_mode": str(settings.get("vpn_servers_gluetun_json_mode", "update")),
                 "proton_credentials_source": str(
                     settings.get("vpn_servers_proton_credentials_source", "env")
@@ -192,7 +192,7 @@ class VPNServersRefreshService:
                 if value is not None:
                     merged[key] = value
 
-        merged.setdefault("vpn_servers_refresh_source", "proton_paid")
+        merged.setdefault("vpn_servers_refresh_source", "gluetun_official")
         merged.setdefault("vpn_servers_gluetun_json_mode", "update")
         merged.setdefault("vpn_servers_proton_credentials_source", "env")
         merged.setdefault("vpn_servers_official_url", OFFICIAL_GLUETUN_SERVERS_URL)

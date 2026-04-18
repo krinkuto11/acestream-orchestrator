@@ -174,7 +174,7 @@ class VPNSettingsResponse(BaseModel):
     unhealthy_restart_timeout_s: int = 60
     vpn_servers_auto_refresh: bool = False
     vpn_servers_refresh_period_s: int = 86400
-    vpn_servers_refresh_source: str = "proton_paid"
+    vpn_servers_refresh_source: str = "gluetun_official"
     vpn_servers_gluetun_json_mode: str = "update"
     vpn_servers_storage_path: Optional[str] = None
     vpn_servers_official_url: str = "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json"
@@ -376,7 +376,7 @@ class VPNSettingsSchema(BaseModel):
     unhealthy_restart_timeout_s: int = 60
     vpn_servers_auto_refresh: bool = False
     vpn_servers_refresh_period_s: int = 86400
-    vpn_servers_refresh_source: str = "proton_paid"
+    vpn_servers_refresh_source: str = "gluetun_official"
     vpn_servers_gluetun_json_mode: str = "update"
     vpn_servers_storage_path: Optional[str] = None
     vpn_servers_official_url: str = "https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json"

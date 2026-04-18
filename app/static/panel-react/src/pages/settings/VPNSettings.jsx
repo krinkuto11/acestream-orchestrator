@@ -70,7 +70,7 @@ const DEFAULTS = {
   regionsText: '',
   vpn_servers_auto_refresh: false,
   vpn_servers_refresh_period_s: 86400,
-  vpn_servers_refresh_source: 'proton_paid',
+  vpn_servers_refresh_source: 'gluetun_official',
   vpn_servers_gluetun_json_mode: 'update',
   vpn_servers_storage_path: '',
   vpn_servers_official_url: 'https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json',

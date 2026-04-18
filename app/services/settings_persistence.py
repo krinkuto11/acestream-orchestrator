@@ -190,7 +190,7 @@ class SettingsPersistence:
             "unhealthy_restart_timeout_s": int(getattr(cfg, "VPN_UNHEALTHY_RESTART_TIMEOUT_S", 60)),
             "vpn_servers_auto_refresh": False,
             "vpn_servers_refresh_period_s": int(getattr(cfg, "VPN_SERVERS_REFRESH_PERIOD_S", 86400)),
-            "vpn_servers_refresh_source": str(getattr(cfg, "VPN_SERVERS_REFRESH_SOURCE", "proton_paid") or "proton_paid"),
+            "vpn_servers_refresh_source": str(getattr(cfg, "VPN_SERVERS_REFRESH_SOURCE", "gluetun_official") or "gluetun_official"),
             "vpn_servers_gluetun_json_mode": str(getattr(cfg, "VPN_SERVERS_GLUETUN_JSON_MODE", "update") or "update"),
             "vpn_servers_storage_path": str(getattr(cfg, "VPN_SERVERS_STORAGE_PATH", "") or "").strip() or None,
             "vpn_servers_official_url": str(
