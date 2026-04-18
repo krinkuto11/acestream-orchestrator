@@ -2,7 +2,7 @@
 
 <img src="app/icons/favicon-96x96-dark.png" alt="AceStream Orchestrator Logo" width="96" height="96" />
 
-On-demand AceStream engine orchestration with a declarative control plane, built-in proxy, dynamic VPN lifecycle management, metrics, and a web panel.
+On-demand AceStream engine orchestration with a declarative control plane, built-in proxy, dynamic VPN lifecycle management, metrics, and a web panel. 
 
 > [!WARNING]
 > **LEGAL DISCLAIMER: EDUCATIONAL USE ONLY**
