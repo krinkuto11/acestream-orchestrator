@@ -24,6 +24,7 @@ import time
 from docker.errors import NotFound
 
 from .utils.logging import setup
+from .utils.wireguard_parser import parse_wireguard_conf
 from .core.config import cfg
 from .services.autoscaler import ensure_minimum, scale_to, can_stop_engine, engine_controller
 from .services.provisioner import StartRequest, start_container, stop_container, AceProvisionRequest, AceProvisionResponse, start_acestream, HOST_LABEL_HTTP, compute_current_engine_config_hash
