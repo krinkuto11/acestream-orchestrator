@@ -817,23 +817,24 @@ def _get_network_config(vpn_container: Optional[str] = None):
         return {
             "network_mode": f"container:{vpn_container}"
         }
-    elif cfg.DOCKER_NETWORK:
-        # Use specified Docker network
-        return {
-            "network": cfg.DOCKER_NETWORK
-        }
-    else:
-        # Detect orchestrator network if no explicit network or VPN is configured
-        # This ensuring engines can reach each other and the orchestrator in "no VPN" mode
+    
+    # Try explicit configuration first, then auto-detection
+    network_name = cfg.DOCKER_NETWORK
+    if not network_name:
         from .docker_client import get_orchestrator_network
-        orch_network = get_orchestrator_network()
-        if orch_network:
-            return {"network": orch_network}
-            
-        # Fallback to default bridge network
+        network_name = get_orchestrator_network()
+        
+    if network_name:
+        # Docker SDK treats the 'network_mode' parameter as the value for --net/--network.
+        # This ensures engines join the same network as the orchestrator in "no VPN" mode.
         return {
-            "network": None
+            "network_mode": network_name
         }
+            
+    # Fallback to default bridge network
+    return {
+        "network_mode": "bridge"
+    }
 
 def _check_gluetun_health_sync(container_name: Optional[str] = None) -> bool:
     """Synchronous version of VPN health check."""
