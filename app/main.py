@@ -3010,7 +3010,7 @@ class StreamSaveRequest(BaseModel):
 
 @app.post("/ace/monitor/legacy/start", dependencies=[Depends(require_api_key)])
 async def start_legacy_stream_monitor(req: LegacyStreamMonitorStartRequest):
-    """Start a background legacy API monitor that collects STATUS every interval.
+    """Start a  background legacy API monitor that collects STATUS every interval.
 
     The monitor uses LOADASYNC/START once, does not stream to clients, and gathers
     STATUS/livepos telemetry only for observability.
