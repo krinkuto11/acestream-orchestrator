@@ -256,7 +256,7 @@ class VPNController:
             # Nudge engine controller immediately so blocked create intents can retry
             # without waiting for the next autoscaler interval.
             try:
-                from .autoscaler import engine_controller
+                from ..control_plane.autoscaler import engine_controller
 
                 engine_controller.request_reconcile(
                     reason=f"vpn_node_provisioned:{str(result.get('container_name') or 'unknown')}"

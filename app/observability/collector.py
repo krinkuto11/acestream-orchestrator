@@ -200,7 +200,7 @@ class Collector:
             # so we read them from the in-process proxy stream manager.
             from ..proxy.server import ProxyServer
             from ..proxy.hls_proxy import HLSProxyServer
-            from .hls_segmenter import hls_segmenter_service
+            from ..data_plane.hls_segmenter import hls_segmenter_service
 
             proxy = ProxyServer.get_instance()
             manager = proxy.stream_managers.get(stream.key) if proxy else None
@@ -234,7 +234,7 @@ class Collector:
 
             if not probe:
                 # Stream may be reusing a monitoring session (no direct legacy socket on proxy side).
-                from .legacy_stream_monitoring import legacy_stream_monitoring_service
+                from ..data_plane.legacy_stream_monitoring import legacy_stream_monitoring_service
 
                 reusable = await legacy_stream_monitoring_service.get_reusable_session_for_content(stream.key)
                 if reusable:
@@ -303,7 +303,7 @@ class Collector:
 
 def _get_proxy_stream_buffer_pieces(stream_key: str) -> Optional[int]:
     try:
-        from .client_tracker import client_tracking_service
+        from ..data_plane.client_tracker import client_tracking_service
 
         # 1. Check HLS Proxy (HTTP mode HLS)
         try:
@@ -342,7 +342,7 @@ def _get_proxy_stream_buffer_pieces(stream_key: str) -> Optional[int]:
 
         # 2. Check HLS Segmenter (API mode HLS)
         try:
-            from .hls_segmenter import hls_segmenter_service
+            from ..data_plane.hls_segmenter import hls_segmenter_service
             
             # Use the segmenter service to calculate the lag for API-mode HLS.
             # We treat 'monitor_id' as the stream_key for external segmenters.

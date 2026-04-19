@@ -63,7 +63,7 @@ def _set_cached_host_public_ip(public_ip: Optional[str]) -> Optional[str]:
 
 def _state_node(container_name: str) -> Optional[Dict[str, object]]:
     try:
-        from .state import state
+        from ..services.state import state
 
         for node in state.list_vpn_nodes():
             if str(node.get("container_name") or "").strip() == container_name:
@@ -76,7 +76,7 @@ def _state_node(container_name: str) -> Optional[Dict[str, object]]:
 def _discover_vpn_names() -> Set[str]:
     names: Set[str] = set()
     try:
-        from .state import state
+        from ..services.state import state
 
         for node in state.list_vpn_nodes():
             name = str(node.get("container_name") or "").strip()

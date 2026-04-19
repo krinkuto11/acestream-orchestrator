@@ -302,7 +302,7 @@ class HLSSegmenterService:
         # Report egress metrics for global throughput gauges
         if bytes_delta > 0:
             try:
-                from .metrics import observe_proxy_egress_bytes
+                from ..observability.metrics import observe_proxy_egress_bytes
                 observe_proxy_egress_bytes("HLS", int(bytes_delta))
             except Exception:
                 pass
@@ -564,7 +564,7 @@ class HLSSegmenterService:
                 logger.info(f"[HLS-API:{session.monitor_id}] [Client:{stale_id}] Client disconnected (idle timeout)")
             if emit_disconnect_metric:
                 try:
-                    from .metrics import observe_proxy_client_disconnect
+                    from ..observability.metrics import observe_proxy_client_disconnect
 
                     for _ in stale_ids:
                         observe_proxy_client_disconnect("HLS")
@@ -628,7 +628,7 @@ class HLSSegmenterService:
             
             if speed_down is not None:
                 try:
-                    from .metrics import observe_proxy_ingress_bytes
+                    from ..observability.metrics import observe_proxy_ingress_bytes
                     # Convert KB/s to bytes (assuming ~1s interval between collector probes)
                     bytes_down = int(float(speed_down) * 1024)
                     if bytes_down > 0:

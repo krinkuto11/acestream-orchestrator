@@ -579,7 +579,7 @@ def execute_engine_spec(spec: EngineSpec):
     container_name = spec.container_name
     final_volumes = spec.volumes.copy()
     try:
-        from .engine_cache_manager import engine_cache_manager
+        from ..infrastructure.engine_cache_manager import engine_cache_manager
         if engine_cache_manager.is_enabled():
             if engine_cache_manager.setup_cache(container_name):
                 cache_mount = engine_cache_manager.get_mount_config(container_name)
@@ -623,7 +623,7 @@ def execute_engine_spec(spec: EngineSpec):
 
 def compute_current_engine_config_hash() -> str:
     """Compute a stable hash for the desired engine runtime configuration."""
-    from .engine_config import get_config as get_engine_config
+    from ..infrastructure.engine_config import get_config as get_engine_config
 
     engine_config = None
     cfg_obj = get_engine_config()
@@ -773,7 +773,7 @@ def stop_container(container_id: str, force: bool = False):
 def clear_acestream_cache(container_id: Optional[str] = None) -> bool:
     """Backward-compatible cache cleanup hook used by legacy tests and scripts."""
     try:
-        from .engine_cache_manager import engine_cache_manager
+        from ..infrastructure.engine_cache_manager import engine_cache_manager
         if container_id:
             engine_cache_manager.cleanup_cache(container_id)
         return True
@@ -821,7 +821,7 @@ def _get_network_config(vpn_container: Optional[str] = None):
     # Try explicit configuration first, then auto-detection
     network_name = cfg.DOCKER_NETWORK
     if not network_name:
-        from .docker_client import get_orchestrator_network
+        from ..infrastructure.docker_client import get_orchestrator_network
         network_name = get_orchestrator_network()
         
     if network_name:
@@ -839,7 +839,7 @@ def _get_network_config(vpn_container: Optional[str] = None):
 def _check_gluetun_health_sync(container_name: Optional[str] = None) -> bool:
     """Synchronous version of VPN health check."""
     try:
-        from .docker_client import get_client
+        from ..infrastructure.docker_client import get_client
         from docker.errors import NotFound
         
         target_container = container_name

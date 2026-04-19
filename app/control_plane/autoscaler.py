@@ -179,7 +179,7 @@ def ensure_minimum(*_args, **_kwargs):
     """
     try:
         # Skip autoscaling if manual mode is enabled
-        from .settings_persistence import SettingsPersistence
+        from ..persistence.settings_persistence import SettingsPersistence
         engine_settings = SettingsPersistence.load_engine_settings() or {}
         if engine_settings.get('manual_mode'):
             logger.debug("Autoscaler paused: manual mode is enabled")
@@ -307,7 +307,7 @@ class EngineController:
                 await asyncio.sleep(2)
 
     async def _do_reconcile(self):
-        from .settings_persistence import SettingsPersistence
+        from ..persistence.settings_persistence import SettingsPersistence
         if (SettingsPersistence.load_engine_settings() or {}).get("manual_mode"):
             return
 
@@ -607,7 +607,7 @@ def can_stop_engine(container_id: str, bypass_grace_period: bool = False) -> boo
 
 def scale_to(demand: int):
     # Skip autoscaling if manual mode is enabled
-    from .settings_persistence import SettingsPersistence
+    from ..persistence.settings_persistence import SettingsPersistence
     engine_settings = SettingsPersistence.load_engine_settings() or {}
     if engine_settings.get('manual_mode'):
         logger.debug("Manual mode is enabled, skipping scale_to")

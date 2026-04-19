@@ -713,7 +713,7 @@ def _compute_window_throughput_totals(window_seconds: int) -> Dict[str, float]:
 
 def _compute_docker_metrics_snapshot() -> Dict[str, float]:
     """Compute Docker USE snapshots and derivative throughput rates."""
-    from .docker_stats_collector import docker_stats_collector
+    from ..infrastructure.docker_stats_collector import docker_stats_collector
 
     total_stats = docker_stats_collector.get_total_stats() or {}
     cpu_percent = float(total_stats.get("total_cpu_percent", 0.0) or 0.0)
@@ -742,7 +742,7 @@ def _compute_docker_metrics_snapshot() -> Dict[str, float]:
     restart_total = 0
     oom_killed_total = 0
     try:
-        from .docker_client import get_client
+        from ..infrastructure.docker_client import get_client
         from ..services.state import state
 
         docker_client = get_client()
@@ -979,7 +979,7 @@ def update_custom_metrics(window_seconds: int = 900, max_points: int = 360) -> D
       - success_rate: Success rate percentage
     """
     from ..services.state import state
-    from .gluetun import get_vpn_status
+    from ..vpn.gluetun import get_vpn_status
     from ..core.config import cfg
     
     # Get all active streams with their latest stats

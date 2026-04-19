@@ -194,7 +194,7 @@ class EngineCacheManager:
             all_volumes = cli.volumes.list()
             acestream_volumes = [v for v in all_volumes if v.name.startswith('acestream-cache-')]
             
-            from .state import state
+            from ..services.state import state
             active_engines = state.list_engines()
             active_volume_names = {self._get_volume_name(e.container_name) for e in active_engines if e.container_name}
             

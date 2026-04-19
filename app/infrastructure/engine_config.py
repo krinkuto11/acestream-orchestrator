@@ -145,7 +145,7 @@ def _normalize_legacy_payload(data: Dict[str, Any]) -> Dict[str, Any]:
 def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Optional[EngineConfig]:
     """Load engine config from DB-backed runtime settings cache."""
     del config_path
-    from .settings_persistence import SettingsPersistence
+    from ..persistence.settings_persistence import SettingsPersistence
 
     persisted = SettingsPersistence.load_engine_config()
     if persisted:
@@ -170,7 +170,7 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Optional[EngineConfi
 
 def save_config(config: EngineConfig, config_path: Path = DEFAULT_CONFIG_PATH) -> bool:
     del config_path
-    from .settings_persistence import SettingsPersistence
+    from ..persistence.settings_persistence import SettingsPersistence
 
     try:
         if not SettingsPersistence.save_engine_config(config.model_dump(mode="json")):

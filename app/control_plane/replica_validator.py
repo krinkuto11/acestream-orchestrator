@@ -165,7 +165,7 @@ class ReplicaValidator:
         
         # Trigger reindex to pick up missing containers
         try:
-            from .reindex import reindex_existing
+            from ..persistence.reindex import reindex_existing
             logger.info("Running reindex to sync with Docker containers")
             reindex_existing()
         except Exception as e:

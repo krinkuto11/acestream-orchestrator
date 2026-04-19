@@ -119,7 +119,7 @@ class DockerStatsCollector:
         Collect stats for all engines and cache them.
         This runs in a thread pool to avoid blocking the event loop.
         """
-        from .performance_metrics import Timer, performance_metrics
+        from ..observability.performance_metrics import Timer, performance_metrics
         
         with Timer(performance_metrics, 'docker_stats_collection'):
             try:

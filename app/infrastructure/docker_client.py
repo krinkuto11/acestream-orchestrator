@@ -111,7 +111,7 @@ class DockerEventWatcher:
 
             if self._has_connected_once:
                 try:
-                    from .reindex import run_reindex
+                    from ..persistence.reindex import run_reindex
 
                     run_reindex()
                     logger.warning("Docker event stream reconnected. Executed full state reconciliation to catch missed events.")
@@ -198,7 +198,7 @@ class DockerEventWatcher:
 
     def _bootstrap_vpn_nodes_snapshot(self):
         """Seed VPN node state from currently existing containers before streaming events."""
-        from .state import state
+        from ..services.state import state
 
         cli = None
         try:
@@ -247,7 +247,7 @@ class DockerEventWatcher:
                     cli.close()
 
     def _apply_state_update(self, container_id: str, container_name: Optional[str], action: str, attrs: dict):
-        from .state import state
+        from ..services.state import state
 
         vpn_name = self._match_vpn_name(container_name, attrs)
         if vpn_name:
@@ -289,7 +289,7 @@ class DockerEventWatcher:
 
     @staticmethod
     def _emit_vpn_evictions(vpn_container: str, reason: str):
-        from .state import state
+        from ..services.state import state
 
         engines = state.get_engines_by_vpn(vpn_container)
         if not engines:
@@ -328,7 +328,7 @@ class DockerEventWatcher:
     @staticmethod
     def _request_engine_reconcile(reason: str):
         try:
-            from .autoscaler import engine_controller
+            from ..control_plane.autoscaler import engine_controller
 
             engine_controller.request_reconcile(reason=reason)
         except Exception as e:

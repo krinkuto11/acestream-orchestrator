@@ -363,7 +363,7 @@ class State(StateStore):
             self._enqueue_db_task(db_work)
 
             try:
-                from .engine_info import invalidate_engine_version_cache
+                from ..infrastructure.engine_info import invalidate_engine_version_cache
                 invalidate_engine_version_cache(container_id)
             except Exception:
                 pass
@@ -749,7 +749,7 @@ class State(StateStore):
 
         if previous_dynamic and previous_dynamic.get("condition") != condition and condition == "ready":
             try:
-                from .autoscaler import engine_controller
+                from ..control_plane.autoscaler import engine_controller
                 engine_controller.request_reconcile(reason=f"vpn_ready:{vpn_container}")
             except Exception as e:
                 logger.debug(f"Failed to nudge autoscaler on VPN readiness: {e}")
@@ -838,7 +838,7 @@ class State(StateStore):
 
                     if previous_status != "healthy":
                         try:
-                            from .autoscaler import engine_controller
+                            from ..control_plane.autoscaler import engine_controller
                             engine_controller.request_reconcile(reason=f"engine_healthy:{container_id[:12]}")
                         except Exception as e:
                             logger.debug(f"Failed to nudge autoscaler on engine health: {e}")

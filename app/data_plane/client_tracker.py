@@ -77,7 +77,7 @@ class ClientTrackingService:
 
     def _emit_connect_metric(self, protocol: str):
         try:
-            from .metrics import observe_proxy_client_connect
+            from ..observability.metrics import observe_proxy_client_connect
 
             observe_proxy_client_connect(protocol)
         except Exception:
@@ -85,7 +85,7 @@ class ClientTrackingService:
 
     def _emit_disconnect_metric(self, protocol: str):
         try:
-            from .metrics import observe_proxy_client_disconnect
+            from ..observability.metrics import observe_proxy_client_disconnect
 
             observe_proxy_client_disconnect(protocol)
         except Exception:

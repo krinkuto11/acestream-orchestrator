@@ -171,7 +171,7 @@ class StreamLoopDetector:
                 del self._first_check_completed[stream.id]
             
             # Log event
-            from .event_logger import event_logger
+            from ..observability.event_logger import event_logger
             event_logger.log_event(
                 event_type="stream",
                 category="ended",
