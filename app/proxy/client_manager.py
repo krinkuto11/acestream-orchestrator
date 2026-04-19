@@ -196,7 +196,7 @@ class ClientManager:
     
     def add_client(self, client_id, client_ip, user_agent=None, initial_index=0):
         """Add a client with duplicate prevention and backpressure limits"""
-        from ..services.client_tracker import client_tracking_service
+        from ..data_plane.client_tracker import client_tracking_service
         
         # BACKPRESSURE: Throttling client count to prevent connection and CPU exhaustion
         max_clients = getattr(Config, 'MAX_CLIENTS_PER_STREAM', 100)
@@ -269,7 +269,7 @@ class ClientManager:
     
     def remove_client(self, client_id):
         """Remove a client from this stream and Redis"""
-        from ..services.client_tracker import client_tracking_service
+        from ..data_plane.client_tracker import client_tracking_service
         client_ip = None
         
         with self.lock:
@@ -340,7 +340,7 @@ class ClientManager:
     
     def update_client_bytes_sent(self, client_id, bytes_sent):
         """Update bytes_sent metric, routing to ClientTrackingService for unified parity."""
-        from ..services.client_tracker import client_tracking_service
+        from ..data_plane.client_tracker import client_tracking_service
         
         try:
             client_tracking_service.record_activity(
@@ -363,7 +363,7 @@ class ClientManager:
         is_prebuffering: Optional[bool] = None,
     ):
         """Update client buffer position, routing to ClientTrackingService for unified parity."""
-        from ..services.client_tracker import client_tracking_service
+        from ..data_plane.client_tracker import client_tracking_service
         
         try:
             client_tracking_service.update_client_position(

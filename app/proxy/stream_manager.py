@@ -31,7 +31,7 @@ from .constants import (
 from .config_helper import ConfigHelper, Config
 from .ace_api_client import AceLegacyApiClient, AceLegacyApiError
 from .utils import get_logger
-from ..services.engine_selection import select_best_engine
+from ..infrastructure.engine_selection import select_best_engine
 
 logger = get_logger()
 
@@ -686,7 +686,7 @@ class StreamManager:
             try:
                 # Import here to avoid circular dependencies
                 from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
-                from ..services.internal_events import handle_stream_started
+                from ..data_plane.internal_events import handle_stream_started
                 
                 # Build event object
                 event = StreamStartedEvent(
@@ -785,7 +785,7 @@ class StreamManager:
         try:
             # Import here to avoid circular dependencies
             from ..models.schemas import StreamEndedEvent
-            from ..services.internal_events import handle_stream_ended
+            from ..data_plane.internal_events import handle_stream_ended
             
             # Build event object
             event = StreamEndedEvent(
@@ -1178,7 +1178,7 @@ class StreamManager:
                         if self._stream_exit_reason == "source_stagnant":
                             logger.error("Stream is globally stagnant. Bypassing engine failover and dropping stream.")
                             from ..models.schemas import StreamDataPlaneFailedEvent
-                            from ..services.internal_events import handle_stream_data_plane_failed
+                            from ..data_plane.internal_events import handle_stream_data_plane_failed
                             
                             if self.stream_id and not self.stream_id.startswith("temp-"):
                                 handle_stream_data_plane_failed(StreamDataPlaneFailedEvent(
@@ -1199,7 +1199,7 @@ class StreamManager:
                         logger.warning("Stream read loop exited prematurely. Waiting for Control Plane recovery.")
                         
                         from ..models.schemas import StreamDataPlaneFailedEvent
-                        from ..services.internal_events import handle_stream_data_plane_failed
+                        from ..data_plane.internal_events import handle_stream_data_plane_failed
 
                         self.control_plane_wait_event.clear()
                         
@@ -1237,7 +1237,7 @@ class StreamManager:
                     
                     logger.warning("Stream error hit. Waiting for Control Plane recovery.")
                     from ..models.schemas import StreamDataPlaneFailedEvent
-                    from ..services.internal_events import handle_stream_data_plane_failed
+                    from ..data_plane.internal_events import handle_stream_data_plane_failed
 
                     self.control_plane_wait_event.clear()
                     
@@ -1274,7 +1274,7 @@ class StreamManager:
     
     def _process_stream_data(self):
         """Read from stream and feed to buffer with optimized non-blocking I/O"""
-        from ..services.performance_metrics import Timer, performance_metrics
+        from ..observability.performance_metrics import Timer, performance_metrics
         
         chunk_count = 0
 

@@ -101,7 +101,7 @@ class ClientManager:
         now: Optional[float] = None,
     ):
         """Record client activity and transfer counters in the central tracker."""
-        from ..services.client_tracker import client_tracking_service
+        from ..data_plane.client_tracker import client_tracking_service
 
         ts = now if now is not None else time.time()
         normalized_ip = str(client_ip or "unknown")
@@ -146,7 +146,7 @@ class ClientManager:
                 
     def cleanup_inactive(self, timeout: float) -> bool:
         """Remove inactive clients and return True if no clients remain"""
-        from ..services.client_tracker import client_tracking_service
+        from ..data_plane.client_tracker import client_tracking_service
 
         if timeout <= 0:
             client_tracking_service.unregister_stream(
@@ -183,7 +183,7 @@ class ClientManager:
 
     def list_clients(self, max_idle_seconds: Optional[float] = None) -> List[Dict[str, Any]]:
         """Return active clients enriched with transfer counters."""
-        from ..services.client_tracker import client_tracking_service
+        from ..data_plane.client_tracker import client_tracking_service
 
         if max_idle_seconds is not None and max_idle_seconds > 0:
             client_tracking_service.prune_stale_clients(max_idle_seconds)
@@ -195,7 +195,7 @@ class ClientManager:
         )
 
     def count_active_clients(self) -> int:
-        from ..services.client_tracker import client_tracking_service
+        from ..data_plane.client_tracker import client_tracking_service
 
         return client_tracking_service.count_active_clients(
             stream_id=self.stream_id,
@@ -626,7 +626,7 @@ class StreamManager:
             try:
                 # Import here to avoid circular dependencies
                 from ..models.schemas import StreamStartedEvent, StreamKey, EngineAddress, SessionInfo
-                from ..services.internal_events import handle_stream_started
+                from ..data_plane.internal_events import handle_stream_started
                 
                 # Build event object
                 event = StreamStartedEvent(
@@ -709,7 +709,7 @@ class StreamManager:
             try:
                 # Import here to avoid circular dependencies
                 from ..models.schemas import StreamEndedEvent
-                from ..services.internal_events import handle_stream_ended
+                from ..data_plane.internal_events import handle_stream_ended
                 
                 # Build event object
                 event = StreamEndedEvent(
@@ -931,8 +931,8 @@ class StreamFetcher:
     
     async def _download_segment(self, url: str) -> Optional[bytes]:
         """Download a single segment (async version with performance tracking)"""
-        from ..services.performance_metrics import Timer, performance_metrics
-        from ..services.metrics import observe_proxy_ingress_bytes
+        from ..observability.performance_metrics import Timer, performance_metrics
+        from ..observability.metrics import observe_proxy_ingress_bytes
         
         # Check if manager is still running before downloading
         if not self.manager.running:
@@ -1302,7 +1302,7 @@ class HLSProxyServer:
         This async version uses asyncio.sleep() instead of time.sleep() to avoid
         blocking the event loop during waits.
         """
-        from ..services.performance_metrics import Timer, performance_metrics
+        from ..observability.performance_metrics import Timer, performance_metrics
         
         with Timer(performance_metrics, 'hls_manifest_generation', {'channel_id': channel_id[:16]}):
             if channel_id not in self.stream_managers:

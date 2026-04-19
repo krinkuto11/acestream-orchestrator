@@ -78,7 +78,7 @@ class ProxyServer:
             logger.info("Connected to Redis")
             
             # Inject Redis client into unified tracker for PubSub parity
-            from ..services.client_tracker import client_tracking_service
+            from ..data_plane.client_tracker import client_tracking_service
             client_tracking_service.set_redis_client(self.redis_client)
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")

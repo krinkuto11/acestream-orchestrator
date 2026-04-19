@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from pydantic import BaseModel, validator, field_validator, model_validator
 from dotenv import load_dotenv
-from ..proxy.constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mode
+from ..shared.proxy_modes import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mode
 load_dotenv()
 
 import platform as _platform

@@ -117,7 +117,7 @@ class ConfigHelper:
     @staticmethod
     def _proxy_settings():
         try:
-            from ..services.settings_persistence import SettingsPersistence
+            from ..persistence.settings_persistence import SettingsPersistence
 
             return SettingsPersistence.load_proxy_config() or {}
         except Exception:
@@ -126,7 +126,7 @@ class ConfigHelper:
     @staticmethod
     def _get_proxy_value(key: str, fallback):
         try:
-            from ..services.settings_persistence import SettingsPersistence
+            from ..persistence.settings_persistence import SettingsPersistence
 
             return SettingsPersistence.get_cached_setting("proxy_settings", key, fallback)
         except Exception:

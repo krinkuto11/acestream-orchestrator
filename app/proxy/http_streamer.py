@@ -46,7 +46,7 @@ class HTTPStreamReader:
     def _read_stream(self):
         """Thread worker that reads HTTP stream and writes to pipe"""
         # Local import avoids module-level coupling during proxy startup.
-        from ..services.metrics import observe_proxy_ingress_bytes, observe_proxy_request
+        from ..observability.metrics import observe_proxy_ingress_bytes, observe_proxy_request
 
         try:
             # Build headers - mimic VLC player for better compatibility

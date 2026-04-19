@@ -5,49 +5,13 @@ Adapted from ts_proxy constants - keeping all the battle-tested infrastructure.
 
 from typing import Optional
 
-
-# Canonical proxy control modes
-PROXY_MODE_HTTP = "http"
-PROXY_MODE_API = "api"
-
-# Backward-compatible aliases still accepted in env/settings payloads.
-_PROXY_MODE_ALIASES = {
-    "legacy_http": PROXY_MODE_HTTP,
-    "legacy-api": PROXY_MODE_API,
-    "legacy_http_mode": PROXY_MODE_HTTP,
-    "legacy_api": PROXY_MODE_API,
-    "http": PROXY_MODE_HTTP,
-    "api": PROXY_MODE_API,
-    "legacyhttp": PROXY_MODE_HTTP,
-    "legacyapi": PROXY_MODE_API,
-}
-
-
-def normalize_proxy_mode(value: Optional[str], default: Optional[str] = PROXY_MODE_HTTP) -> Optional[str]:
-    """Normalize proxy control mode to canonical lowercase values.
-
-    Accepted legacy values like "LEGACY_HTTP" or "legacy_api" are mapped to
-    "http" and "api" respectively.
-    """
-    text = str(value or "").strip().lower()
-    if not text:
-        return default
-
-    # Normalize separators so LEGACY_HTTP, legacy-http, and legacy http all map.
-    compact = text.replace(" ", "_").replace("-", "_")
-    mapped = _PROXY_MODE_ALIASES.get(compact)
-    if mapped:
-        return mapped
-
-    return default
-
-
-def proxy_mode_label(value: Optional[str]) -> str:
-    """Human-readable control mode label for UI/event payloads."""
-    mode = normalize_proxy_mode(value)
-    if mode == PROXY_MODE_API:
-        return "API"
-    return "HTTP"
+# Proxy mode constants live in shared/ so they can be imported without pulling in proxy deps.
+from ..shared.proxy_modes import (  # noqa: F401
+    PROXY_MODE_HTTP,
+    PROXY_MODE_API,
+    normalize_proxy_mode,
+    proxy_mode_label,
+)
 
 # Redis related constants
 REDIS_KEY_PREFIX = "ace_proxy"

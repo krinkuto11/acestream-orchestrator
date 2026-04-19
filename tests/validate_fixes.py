@@ -15,7 +15,7 @@ def test_custom_variant_config():
     """Test custom variant configuration loading and platform detection"""
     print("Testing custom variant configuration...")
     
-    from services.custom_variant_config import (
+    from infrastructure.custom_variant_config import (
         detect_platform, 
         get_default_parameters,
         CustomVariantConfig,
@@ -80,7 +80,7 @@ def test_settings_persistence():
     """Test settings persistence structure"""
     print("Testing settings persistence...")
     
-    from services.settings_persistence import SettingsPersistence, CONFIG_DIR
+    from persistence.settings_persistence import SettingsPersistence, CONFIG_DIR
     
     print(f"✓ Config directory: {CONFIG_DIR}")
     

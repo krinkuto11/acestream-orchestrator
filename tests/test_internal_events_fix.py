@@ -17,7 +17,7 @@ from app.models.schemas import (
 
 def test_internal_event_handler_imports():
     """Test that internal event handlers can be imported"""
-    from app.services.internal_events import handle_stream_started, handle_stream_ended
+    from app.data_plane.internal_events import handle_stream_started, handle_stream_ended
     
     assert callable(handle_stream_started)
     assert callable(handle_stream_ended)
@@ -75,7 +75,7 @@ def test_hls_proxy_uses_internal_handlers():
     source = inspect.getsource(StreamManager._send_stream_started_event)
     
     # Verify it imports and uses internal handlers
-    assert "from ..services.internal_events import handle_stream_started" in source
+    assert "from ..data_plane.internal_events import handle_stream_started" in source
     assert "handle_stream_started(event)" in source
     # Verify it does NOT use requests.post
     assert "requests.post" not in source
@@ -90,7 +90,7 @@ def test_ts_proxy_uses_internal_handlers():
     source = inspect.getsource(StreamManager._send_stream_started_event)
     
     # Verify it imports and uses internal handlers
-    assert "from ..services.internal_events import handle_stream_started" in source
+    assert "from ..data_plane.internal_events import handle_stream_started" in source
     assert "handle_stream_started(event)" in source
     # Verify it does NOT use requests.post
     assert "requests.post" not in source

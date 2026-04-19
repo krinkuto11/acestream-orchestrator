@@ -90,7 +90,7 @@ class StreamGenerator:
     def generate(self):
         """Generator function that produces stream content for the client"""
         # Local import avoids creating import cycles at module import time.
-        from ..services.metrics import observe_proxy_egress_bytes
+        from ..observability.metrics import observe_proxy_egress_bytes
 
         self.stream_start_time = time.time()
         self.bytes_sent = 0
@@ -582,7 +582,7 @@ class StreamGenerator:
 
         # Register an initial TS client row immediately so lag updates do not wait
         # for the first periodic stats flush.
-        from ..services.client_tracker import client_tracking_service
+        from ..data_plane.client_tracker import client_tracking_service
 
         client_tracking_service.register_client(
             client_id=str(self.client_id),
@@ -639,7 +639,7 @@ class StreamGenerator:
     
     def _update_stats(self):
         """Update streaming statistics and flush aggregated tracker deltas."""
-        from ..services.client_tracker import client_tracking_service
+        from ..data_plane.client_tracker import client_tracking_service
 
         now = time.time()
         elapsed = now - self.last_stats_time

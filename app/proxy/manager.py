@@ -36,7 +36,7 @@ class ProxyManager:
         if selected_engine is None:
             try:
                 from ..core.config import cfg
-                from ..services.engine_selection import select_best_engine
+                from ..infrastructure.engine_selection import select_best_engine
 
                 additional_load = {}
                 if old_container_id:
@@ -80,7 +80,7 @@ class ProxyManager:
                 if normalized_key in hls_server.stream_managers:
                     result = hls_server.migrate_stream(normalized_key, selected_engine)
                 else:
-                    from ..services.hls_segmenter import hls_segmenter_service
+                    from ..data_plane.hls_segmenter import hls_segmenter_service
                     if hls_segmenter_service.has_session(normalized_key):
                         result = hls_segmenter_service.migrate_session(normalized_key, {"new_engine": selected_engine})
                     else:
