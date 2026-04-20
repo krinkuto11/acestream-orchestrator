@@ -2149,9 +2149,10 @@ async def go_proxy_stream_stats(request: Request):
     speed_up = body.get("speed_up")
     downloaded = body.get("downloaded")
     uploaded = body.get("uploaded")
-    status_state = body.get("state")
+    livepos = body.get("livepos")
+    proxy_buffer_pieces = body.get("proxy_buffer_pieces")
 
-    has_full_stats = peers is not None or speed_down is not None
+    has_full_stats = (peers is not None or speed_down is not None or livepos is not None)
 
     if has_full_stats:
         # API mode: create a full snapshot replacing what Python can't collect.
@@ -2164,6 +2165,8 @@ async def go_proxy_stream_stats(request: Request):
             uploaded=uploaded,
             status=status_state,
             bitrate=bitrate,
+            livepos=livepos,
+            proxy_buffer_pieces=proxy_buffer_pieces,
         )
         state.append_stat(stream_id, snap)
     elif bitrate is not None:
