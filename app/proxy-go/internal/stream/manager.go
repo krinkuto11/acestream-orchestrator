@@ -447,13 +447,13 @@ func (m *Manager) runAPIKeepalive(ctx context.Context) {
 			if cli == nil {
 				return
 			}
-			info, err := cli.PingWithStatus()
+			fullStatus, err := cli.PingWithStatus()
 			if err != nil {
 				slog.Debug("API keepalive ping failed", "stream", m.params.ContentID, "err", err)
 				return
 			}
-			if info != nil {
-				go m.pushStats(info)
+			if fullStatus != nil {
+				go m.pushStats(fullStatus)
 			}
 		}
 	}
@@ -501,7 +501,7 @@ func (m *Manager) measureBitrate(ctx context.Context) {
 //
 // info carries ACE API STATUS fields (peers, speed, etc.) — nil for HTTP-mode
 // calls where only the measured bitrate needs updating.
-func (m *Manager) pushStats(info *aceapi.StatusInfo) {
+func (m *Manager) pushStats(full *aceapi.FullStatus) {
 	m.mu.Lock()
 	pythonID := m.pythonStreamID
 	contentID := m.params.ContentID
@@ -518,13 +518,33 @@ func (m *Manager) pushStats(info *aceapi.StatusInfo) {
 		"content_key": contentID,
 		"bitrate":     bitrate,
 	}
-	if info != nil {
+	if full != nil && full.Status != nil {
+		info := full.Status
 		payload["peers"] = info.Peers
+		payload["http_peers"] = info.HttpPeers
 		payload["speed_down"] = info.SpeedDown
+		payload["http_speed_down"] = info.HttpSpeedDown
 		payload["speed_up"] = info.SpeedUp
 		payload["downloaded"] = info.Downloaded
+		payload["http_downloaded"] = info.HttpDownloaded
 		payload["uploaded"] = info.Uploaded
-		payload["state"] = info.State
+		payload["state"] = info.Status // Maps to "status" in Python, but field name in JSON is often "state" or "status"
+		payload["status"] = info.Status
+		payload["total_progress"] = info.TotalProgress
+		payload["immediate_progress"] = info.ImmediateProgress
+
+		if full.LivePos != nil {
+			lp := full.LivePos
+			payload["livepos"] = map[string]any{
+				"pos":           lp.Pos,
+				"last_ts":       lp.LastTS,
+				"live_last":     lp.LastTS,
+				"first_ts":      lp.FirstTS,
+				"live_first":    lp.FirstTS,
+				"is_live":       lp.IsLive,
+				"buffer_pieces": lp.BufferPieces,
+			}
+		}
 	}
 
 	body, err := json.Marshal(payload)

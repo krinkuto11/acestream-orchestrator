@@ -24,6 +24,18 @@ type ClientRecord struct {
 	ChunksSent   int64
 	InitialIndex int64
 	WorkerID     string
+
+	// Tracking fields for rate calculation
+	PrevBytesSent int64
+	PrevUpdatedAt time.Time
+	BPS           float64 // smoothed bits per second
+
+	// Extended telemetry
+	RequestsTotal       int64
+	BufferSecondsBehind float64
+	IsPrebuffering      bool
+	LastRequestKind     string
+	LastSequence        int64
 }
 
 // ClientManager tracks active clients for one stream.
@@ -65,13 +77,15 @@ func (cm *ClientManager) Add(clientID, ip, userAgent string, initialIndex int64)
 
 	now := time.Now()
 	cm.clients[clientID] = &ClientRecord{
-		ID:           clientID,
-		IP:           ip,
-		UserAgent:    userAgent,
-		ConnectedAt:  now,
-		LastActive:   now,
-		InitialIndex: initialIndex,
-		WorkerID:     cm.workerID,
+		ID:            clientID,
+		IP:            ip,
+		UserAgent:     userAgent,
+		ConnectedAt:   now,
+		LastActive:    now,
+		InitialIndex:  initialIndex,
+		WorkerID:      cm.workerID,
+		PrevUpdatedAt: now,
+		RequestsTotal: 1,
 	}
 	cm.hadClients = true
 
@@ -79,12 +93,18 @@ func (cm *ClientManager) Add(clientID, ip, userAgent string, initialIndex int64)
 	ttl := config.C.ClientRecordTTL
 	key := rediskeys.ClientMetadata(cm.contentID, clientID)
 	cm.rdb.HSet(ctx, key,
+		"client_id", clientID,
+		"stream_id", cm.contentID,
 		"ip_address", ip,
 		"user_agent", userAgent,
+		"protocol", "TS",
 		"connected_at", fmt.Sprintf("%f", float64(now.UnixNano())/1e9),
 		"last_active", fmt.Sprintf("%f", float64(now.UnixNano())/1e9),
 		"initial_index", fmt.Sprintf("%d", initialIndex),
 		"worker_id", cm.workerID,
+		"requests_total", "1",
+		"bps", "0",
+		"stats_updated_at", fmt.Sprintf("%f", float64(now.UnixNano())/1e9),
 	)
 	cm.rdb.Expire(ctx, key, ttl)
 
@@ -177,19 +197,38 @@ func (cm *ClientManager) HeartbeatHLSClient(clientID, ip, userAgent string, byte
 	now := time.Now()
 	if !exists {
 		rec = &ClientRecord{
-			ID:          clientID,
-			IP:          ip,
-			UserAgent:   userAgent,
-			ConnectedAt: now,
-			LastActive:  now,
-			WorkerID:    cm.workerID,
+			ID:            clientID,
+			IP:            ip,
+			UserAgent:     userAgent,
+			ConnectedAt:   now,
+			LastActive:    now,
+			WorkerID:      cm.workerID,
+			PrevUpdatedAt: now,
 		}
 		cm.clients[clientID] = rec
 		cm.hadClients = true
 	}
+
+	// BPS calculation with EMA smoothing (alpha=0.3)
+	if bytesDelta > 0 {
+		dt := now.Sub(rec.PrevUpdatedAt).Seconds()
+		if dt > 0 {
+			instantBPS := float64(bytesDelta) * 8.0 / dt
+			if rec.BPS == 0 {
+				rec.BPS = instantBPS
+			} else {
+				alpha := 0.3
+				rec.BPS = (rec.BPS * (1.0 - alpha)) + (instantBPS * alpha)
+			}
+		}
+		rec.PrevBytesSent = rec.BytesSent
+		rec.PrevUpdatedAt = now
+	}
+
 	rec.LastActive = now
 	rec.BytesSent += bytesDelta
 	rec.ChunksSent++
+	rec.RequestsTotal++
 	cm.mu.Unlock()
 
 	ctx := context.Background()
@@ -199,6 +238,8 @@ func (cm *ClientManager) HeartbeatHLSClient(clientID, ip, userAgent string, byte
 	if !exists {
 		// First time: full registration so Python tracker can hydrate the row.
 		cm.rdb.HSet(ctx, key,
+			"client_id", clientID,
+			"stream_id", cm.contentID,
 			"ip_address", ip,
 			"user_agent", userAgent,
 			"protocol", "HLS",
@@ -208,6 +249,8 @@ func (cm *ClientManager) HeartbeatHLSClient(clientID, ip, userAgent string, byte
 			"chunks_sent", "1",
 			"requests_total", "1",
 			"worker_id", cm.workerID,
+			"bps", fmt.Sprintf("%.2f", rec.BPS),
+			"stats_updated_at", fmt.Sprintf("%f", float64(now.UnixNano())/1e9),
 		)
 		setKey := rediskeys.Clients(cm.contentID)
 		cm.rdb.SAdd(ctx, setKey, clientID)
@@ -219,7 +262,9 @@ func (cm *ClientManager) HeartbeatHLSClient(clientID, ip, userAgent string, byte
 			"last_active", fmt.Sprintf("%f", float64(now.UnixNano())/1e9),
 			"bytes_sent", fmt.Sprintf("%d", rec.BytesSent),
 			"chunks_sent", fmt.Sprintf("%d", rec.ChunksSent),
-			"requests_total", fmt.Sprintf("%d", rec.ChunksSent),
+			"requests_total", fmt.Sprintf("%d", rec.RequestsTotal),
+			"bps", fmt.Sprintf("%.2f", rec.BPS),
+			"stats_updated_at", fmt.Sprintf("%f", float64(now.UnixNano())/1e9),
 		)
 	}
 	cm.rdb.Expire(ctx, key, ttl)
@@ -247,13 +292,13 @@ func (cm *ClientManager) heartbeatLoop() {
 
 func (cm *ClientManager) sendHeartbeats() {
 	cm.mu.RLock()
-	ids := make([]string, 0, len(cm.clients))
-	for id := range cm.clients {
-		ids = append(ids, id)
+	clients := make([]*ClientRecord, 0, len(cm.clients))
+	for _, rec := range cm.clients {
+		clients = append(clients, rec)
 	}
 	cm.mu.RUnlock()
 
-	if len(ids) == 0 {
+	if len(clients) == 0 {
 		return
 	}
 
@@ -263,11 +308,15 @@ func (cm *ClientManager) sendHeartbeats() {
 	setKey := rediskeys.Clients(cm.contentID)
 
 	pipe := cm.rdb.Pipeline()
-	for _, id := range ids {
-		key := rediskeys.ClientMetadata(cm.contentID, id)
-		pipe.HSet(ctx, key, "last_active", now)
+	for _, rec := range clients {
+		key := rediskeys.ClientMetadata(cm.contentID, rec.ID)
+		pipe.HSet(ctx, key,
+			"last_active", now,
+			"bps", fmt.Sprintf("%.2f", rec.BPS),
+			"stats_updated_at", now,
+		)
 		pipe.Expire(ctx, key, ttl)
-		pipe.SAdd(ctx, setKey, id)
+		pipe.SAdd(ctx, setKey, rec.ID)
 	}
 	pipe.Expire(ctx, setKey, ttl)
 	pipe.Exec(ctx) //nolint:errcheck

@@ -23,6 +23,16 @@ type StartInfo struct {
 	StatURL           string
 	CommandURL        string
 	PlaybackSessionID string
+	Bitrate           int
+}
+
+// LivePos contains timestamp and buffer placement info from EVENT livepos.
+type LivePos struct {
+	Pos          int64
+	FirstTS      int64
+	LastTS       int64
+	IsLive       int
+	BufferPieces int
 }
 
 // Error is returned when the engine reports a protocol-level failure.
@@ -256,29 +266,71 @@ func (c *Client) StopPlayback() error {
 }
 
 // StatusInfo holds the parsed fields from an AceStream STATUS response.
-// Example response: STATUS state=dl peers=5 speed_down=512 speed_up=128 downloaded=1024 uploaded=256
 type StatusInfo struct {
-	State      string
-	Peers      int
-	SpeedDown  int // KB/s
-	SpeedUp    int // KB/s
-	Downloaded int // KB
-	Uploaded   int // KB
+	Status            string
+	TotalProgress     int
+	ImmediateProgress int
+	SpeedDown         int // KB/s
+	HttpSpeedDown     int // KB/s
+	SpeedUp           int // KB/s
+	Peers             int
+	HttpPeers         int
+	Downloaded        int // KB
+	HttpDownloaded    int // KB
+	Uploaded          int // KB
+}
+
+// FullStatus contains both the STATUS fields and the latest livepos event data.
+type FullStatus struct {
+	Status  *StatusInfo
+	LivePos *LivePos
 }
 
 // PingWithStatus sends a STATUS command and returns the parsed response.
-// Used both as a keepalive and to collect live stream statistics.
-func (c *Client) PingWithStatus() (*StatusInfo, error) {
+// It skips interleaved EVENT messages but captures livepos data if present.
+func (c *Client) PingWithStatus() (*FullStatus, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	if err := c.write("STATUS"); err != nil {
 		return nil, err
 	}
-	line, err := c.readLine(2 * time.Second)
-	if err != nil {
-		return nil, err
+
+	res := &FullStatus{}
+	deadline := time.Now().Add(2 * time.Second)
+
+	for time.Now().Before(deadline) {
+		line, err := c.readLine(time.Until(deadline))
+		if err != nil {
+			return nil, err
+		}
+
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) == 0 {
+			continue
+		}
+
+		cmd := parts[0]
+		if cmd == "STATUS" {
+			res.Status = parseStatusLine(line)
+			return res, nil
+		}
+
+		if cmd == "EVENT" && len(parts) > 1 {
+			ev := ParseEventLine(line)
+			if ev["event"] == "livepos" {
+				res.LivePos = &LivePos{
+					Pos:          parseInt64(ev["pos"]),
+					FirstTS:      coalesceInt64(ev["first_ts"], ev["live_first"]),
+					LastTS:       coalesceInt64(ev["last_ts"], ev["live_last"]),
+					IsLive:       int(parseInt64(ev["is_live"])),
+					BufferPieces: int(parseInt64(ev["buffer_pieces"])),
+				}
+			}
+		}
 	}
-	return parseStatusLine(line), nil
+
+	return nil, &Error{"timeout waiting for STATUS"}
 }
 
 // Ping sends a STATUS command and discards the response.
@@ -289,21 +341,107 @@ func (c *Client) Ping() error {
 }
 
 func parseStatusLine(line string) *StatusInfo {
-	kv := parseKV(line)
-	return &StatusInfo{
-		State:      kv["state"],
-		Peers:      parseIntField2(kv, "peers"),
-		SpeedDown:  parseIntField2(kv, "speed_down"),
-		SpeedUp:    parseIntField2(kv, "speed_up"),
-		Downloaded: parseIntField2(kv, "downloaded"),
-		Uploaded:   parseIntField2(kv, "uploaded"),
+	if !strings.HasPrefix(line, "STATUS ") {
+		return nil
 	}
+
+	payload := strings.TrimPrefix(line, "STATUS ")
+	fields := strings.Split(payload, ";")
+
+	// HTTPAceProxy-compatible normalization:
+	// If state is wait/seekprebuf, it returns STATUS main:wait;0. The 0 is redundant.
+	// If state is buf/prebuf, it returns STATUS main:buf;0;100. The 0;100 are progress info.
+	if containsAny(fields, "main:wait", "main:seekprebuf") {
+		if len(fields) > 1 {
+			fields = append(fields[:1], fields[2:]...)
+		}
+	} else if containsAny(fields, "main:buf", "main:prebuf") {
+		if len(fields) > 2 {
+			fields = append(fields[:1], fields[3:]...)
+		}
+	}
+
+	info := &StatusInfo{}
+	keys := []string{
+		"status", "total_progress", "immediate_progress",
+		"speed_down", "http_speed_down", "speed_up",
+		"peers", "http_peers", "downloaded", "http_downloaded", "uploaded",
+	}
+
+	for i, val := range fields {
+		if i >= len(keys) {
+			break
+		}
+		clean := strings.TrimPrefix(val, "main:")
+		switch keys[i] {
+		case "status":
+			info.Status = clean
+		case "total_progress":
+			info.TotalProgress = int(parseInt64(clean))
+		case "immediate_progress":
+			info.ImmediateProgress = int(parseInt64(clean))
+		case "speed_down":
+			info.SpeedDown = int(parseInt64(clean))
+		case "http_speed_down":
+			info.HttpSpeedDown = int(parseInt64(clean))
+		case "speed_up":
+			info.SpeedUp = int(parseInt64(clean))
+		case "peers":
+			info.Peers = int(parseInt64(clean))
+		case "http_peers":
+			info.HttpPeers = int(parseInt64(clean))
+		case "downloaded":
+			info.Downloaded = int(parseInt64(clean))
+		case "http_downloaded":
+			info.HttpDownloaded = int(parseInt64(clean))
+		case "uploaded":
+			info.Uploaded = int(parseInt64(clean))
+		}
+	}
+	return info
 }
 
-func parseIntField2(kv map[string]string, key string) int {
-	var n int
-	fmt.Sscanf(kv[key], "%d", &n)
+func containsAny(slice []string, targets ...string) bool {
+	for _, s := range slice {
+		for _, t := range targets {
+			if s == t {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func parseInt64(s string) int64 {
+	var n int64
+	fmt.Sscanf(s, "%d", &n)
 	return n
+}
+
+func coalesceInt64(a, b string) int64 {
+	if a != "" {
+		return parseInt64(a)
+	}
+	return parseInt64(b)
+}
+
+// ParseEventLine parses an EVENT line into a map of keys and unescaped values.
+func ParseEventLine(line string) map[string]string {
+	m := make(map[string]string)
+	if !strings.HasPrefix(line, "EVENT ") {
+		return m
+	}
+	parts := strings.Fields(line)
+	if len(parts) >= 2 {
+		m["event"] = parts[1]
+	}
+	for _, p := range parts[2:] {
+		kv := strings.SplitN(p, "=", 2)
+		if len(kv) == 2 {
+			m[kv[0]] = unescape(kv[1])
+		}
+	}
+	return m
 }
 
 // ---- internal helpers ----
@@ -379,6 +517,7 @@ func parseStartKV(kv map[string]string) *StartInfo {
 		StatURL:           unescape(kv["stat_url"]),
 		CommandURL:        unescape(kv["command_url"]),
 		PlaybackSessionID: kv["sid"],
+		Bitrate:           int(parseIntField(kv, "bitrate")),
 	}
 }
 
