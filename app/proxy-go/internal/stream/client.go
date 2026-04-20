@@ -300,8 +300,19 @@ func (cs *ClientStreamer) applyPacing() {
 		}
 	}
 
-	if cs.streamBitrate > 0 {
-		effectiveBR := float64(cs.streamBitrate) * mult
+	// Prefer the measured ingress rate (source rate × chunk size) over the
+	// engine-reported estimate, which is set before buffering begins and may
+	// not reflect actual P2P throughput. Fall back to engine value when the
+	// ring buffer hasn't had enough data to produce a reliable measurement.
+	bps := cs.streamBitrate
+	if srcRate := cs.buf.SourceRate(); srcRate > 0.1 {
+		if measured := int(srcRate * float64(cs.buf.TargetChunkSize())); measured > 0 {
+			bps = measured
+		}
+	}
+
+	if bps > 0 {
+		effectiveBR := float64(bps) * mult
 		burst := effectiveBR * cfg.PacingBurstSeconds
 		expected := elapsed * effectiveBR
 		if float64(cs.videoByteSent) > expected+burst {

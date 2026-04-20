@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -38,11 +39,14 @@ func New(contentID, url string, buf *buffer.RingBuffer) *Reader {
 		buf:       buf,
 		stopCh:    make(chan struct{}),
 		client: &http.Client{
+			// No total Timeout here — we use an idle-reset context inside readOnce
+			// so P2P starvation gaps are retried without killing the stream.
 			Transport: &http.Transport{
 				DisableKeepAlives:   false,
 				MaxIdleConns:        2,
 				IdleConnTimeout:     90 * time.Second,
 				TLSHandshakeTimeout: 5 * time.Second,
+				DialContext:         (&net.Dialer{Timeout: config.C.UpstreamConnectTimeout}).DialContext,
 			},
 		},
 	}
@@ -60,6 +64,7 @@ func (r *Reader) Start(ctx context.Context) error {
 
 	deadline := time.Now().Add(config.C.ChannelInitGracePeriod)
 	attempt := 0
+	everHadData := false
 
 	for {
 		select {
@@ -82,21 +87,30 @@ func (r *Reader) Start(ctx context.Context) error {
 			}
 		}
 
-		if time.Now().After(deadline) {
+		// Only enforce the init deadline before the first byte has arrived.
+		// After that, P2P starvation gaps are expected and we retry indefinitely.
+		if !everHadData && time.Now().After(deadline) {
 			return fmt.Errorf("%s engine did not start streaming within %s",
 				tag, config.C.ChannelInitGracePeriod)
 		}
 
 		attempt++
 		chunks, err := r.readOnce(ctx, tag)
+		if chunks > 0 {
+			everHadData = true
+		}
 		if err != nil {
-			// Hard error (not EOF) — log and retry.
-			slog.Warn("upstream connect/read error", "stream", r.contentID,
-				"attempt", attempt, "err", err)
+			if everHadData {
+				slog.Warn("upstream stall (P2P gap), reconnecting", "stream", r.contentID,
+					"attempt", attempt, "err", err)
+			} else {
+				slog.Warn("upstream connect/read error", "stream", r.contentID,
+					"attempt", attempt, "err", err)
+			}
 			continue
 		}
 		if chunks > 0 {
-			// Stream delivered data and then ended normally.
+			// Stream delivered data and then ended normally (clean EOF).
 			return nil
 		}
 		// EOF with zero chunks: engine not ready yet.
@@ -107,8 +121,19 @@ func (r *Reader) Start(ctx context.Context) error {
 
 // readOnce makes one HTTP request and drains the body into the ring buffer.
 // Returns the number of chunks written and any non-EOF error.
+//
+// An idle-reset sub-context (child of ctx) is used so that the body read is
+// cancelled after UpstreamReadTimeout of *silence* — not after that duration
+// from connection start. Resetting the timer on every data arrival means
+// short P2P starvation gaps are survived; the outer Start loop handles retries.
 func (r *Reader) readOnce(ctx context.Context, tag string) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.url, nil)
+	// Idle-reset context: cancelled when no bytes arrive for UpstreamReadTimeout.
+	idleCtx, idleCancel := context.WithCancel(ctx)
+	defer idleCancel()
+	idleTimer := time.AfterFunc(config.C.UpstreamReadTimeout, idleCancel)
+	defer idleTimer.Stop()
+
+	req, err := http.NewRequestWithContext(idleCtx, http.MethodGet, r.url, nil)
 	if err != nil {
 		return 0, fmt.Errorf("%s build request: %w", tag, err)
 	}
@@ -116,8 +141,6 @@ func (r *Reader) readOnce(ctx context.Context, tag string) (int, error) {
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Connection", "keep-alive")
-
-	r.client.Timeout = config.C.UpstreamConnectTimeout + config.C.UpstreamReadTimeout
 
 	resp, err := r.client.Do(req)
 	if err != nil {
@@ -147,6 +170,7 @@ func (r *Reader) readOnce(ctx context.Context, tag string) (int, error) {
 
 		n, readErr := resp.Body.Read(rawBuf)
 		if n > 0 {
+			idleTimer.Reset(config.C.UpstreamReadTimeout)
 			aligned := hunter.Feed(rawBuf[:n])
 			if len(aligned) > 0 {
 				written := r.buf.Write(aligned)
