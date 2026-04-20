@@ -117,8 +117,8 @@ func load() *Config {
 		InitialBehindChunks: envInt("INITIAL_BEHIND_CHUNKS", 4),
 		RedisChunkTTL:       envDuration("REDIS_CHUNK_TTL_S", 60*time.Second),
 
-		CleanupInterval:      envDuration("CLEANUP_INTERVAL_S", 15*time.Second),
-		CleanupCheckInterval: envDuration("CLEANUP_CHECK_INTERVAL_S", 3*time.Second),
+		CleanupInterval:      envDuration("CLEANUP_INTERVAL_S", 5*time.Second),
+		CleanupCheckInterval: envDuration("CLEANUP_CHECK_INTERVAL_S", 2*time.Second),
 
 		ClientHeartbeatInterval: envDuration("CLIENT_HEARTBEAT_INTERVAL_S", 10*time.Second),
 		ClientRecordTTL:         envDuration("CLIENT_RECORD_TTL_S", 60*time.Second),
@@ -152,7 +152,7 @@ func load() *Config {
 		HLSInitialBufferSeconds: envInt("HLS_INITIAL_BUFFER_SECONDS", 10),
 		HLSMaxInitialSegments:   envInt("HLS_MAX_INITIAL_SEGMENTS", 10),
 		HLSSegmentFetchInterval: envFloat("HLS_SEGMENT_FETCH_INTERVAL", 0.5),
-		HLSClientIdleTimeout:    envDuration("HLS_CLIENT_IDLE_TIMEOUT_S", 20*time.Second),
+		HLSClientIdleTimeout:    envDuration("HLS_CLIENT_IDLE_TIMEOUT_S", 10*time.Second),
 
 		APIKey:          envStr("API_KEY", ""),
 		OrchestratorURL: envStr("ORCHESTRATOR_URL", "http://localhost:8001"),
