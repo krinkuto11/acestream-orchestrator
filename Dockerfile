@@ -150,22 +150,27 @@ def start_python():
         stderr=sys.stderr,
     )
     _procs.append(p)
-    print(f"Python orchestrator started (pid={p.pid})", flush=True)
+    print(f"Python orchestrator process started (pid={p.pid})", flush=True)
     return p
 
 def main():
+    print("Starting AceStream Orchestrator Stack...", flush=True)
     start_redis()
+    
+    # Start Go data plane and Python control plane
     go_proc = start_go_proxy()
     py_proc = start_python()
 
+    print("Orchestrator stack initialized. Monitoring processes...", flush=True)
+    
     # Monitor: exit if either child dies unexpectedly
     while True:
         time.sleep(2)
         if go_proc.poll() is not None:
-            print(f"Go proxy exited (code={go_proc.returncode}), stopping", flush=True)
+            print(f"CRITICAL: Go proxy exited (code={go_proc.returncode}), stopping stack", flush=True)
             _stop_all()
         if py_proc.poll() is not None:
-            print(f"Python orchestrator exited (code={py_proc.returncode}), stopping", flush=True)
+            print(f"CRITICAL: Python orchestrator exited (code={py_proc.returncode}), stopping stack", flush=True)
             _stop_all()
 
 if __name__ == '__main__':

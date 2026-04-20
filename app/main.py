@@ -674,7 +674,12 @@ async def lifespan(app: FastAPI):
         f"Initialized desired replicas={cfg.MIN_REPLICAS}, config_hash={target_config['config_hash']}, generation={target_config['generation']}"
     )
 
-    await _refresh_vpn_servers_before_vpn_provision(vpn_controller_enabled)
+    # Start VPN server refresh in background to avoid blocking API startup.
+    # The VPN controller will use existing servers until the refresh finishes.
+    asyncio.create_task(
+        _refresh_vpn_servers_before_vpn_provision(vpn_controller_enabled),
+        name="initial-vpn-refresh"
+    )
 
     await docker_event_watcher.start()
     await engine_controller.start()
