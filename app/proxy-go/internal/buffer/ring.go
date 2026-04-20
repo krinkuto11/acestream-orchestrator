@@ -99,7 +99,7 @@ func (rb *RingBuffer) Write(data []byte) int {
 		rb.mu.Unlock()
 		return 0
 	}
-	rb.partial = combined[alignedLen:]
+	subTS := combined[alignedLen:] // bytes below one TS packet
 	aligned := combined[:alignedLen]
 
 	// Write as many target-size chunks as possible
@@ -111,6 +111,11 @@ func (rb *RingBuffer) Write(data []byte) int {
 		rb.storeChunk(chunk)
 		written++
 	}
+
+	// Save the leftover TS-aligned bytes so they accumulate across Write calls.
+	// Previously this was discarded, meaning the buffer never filled when
+	// individual writes are smaller than targetSize (~1 MB).
+	rb.partial = append(aligned, subTS...)
 
 	rb.mu.Unlock()
 
