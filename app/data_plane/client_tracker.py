@@ -705,12 +705,39 @@ class ClientTrackingService:
         return payload
 
     def get_all_active_clients(self) -> List[Dict[str, Any]]:
+        """Aggregate all active clients across all started streams from both Redis and local memory."""
+        from ..services.state import state
+        
+        # Pull streams that are currently active
+        active_streams = state.list_streams(status="started")
+        all_clients: List[Dict[str, Any]] = []
+        seen_client_ids = set()
+        
+        # 1. Pull from Redis for each active stream (cross-worker/Go-proxy clients)
+        for s in active_streams:
+            if not s.key:
+                continue
+            
+            # get_stream_clients handles Redis aggregation + local merging for a single stream
+            stream_clients = self.get_stream_clients(s.key)
+            for client in stream_clients:
+                cid = str(client.get("id") or "")
+                if cid and cid not in seen_client_ids:
+                    all_clients.append(client)
+                    seen_client_ids.add(cid)
+        
+        # 2. Add any remaining local-only clients that might not have been matched
+        # (e.g. from streams in 'creating' or 'initializing' states)
         now = time.time()
         with self._lock:
-            rows = [self._to_public_row(row, now) for row in self._clients.values()]
+            for row in self._clients.values():
+                cid = str(row.get("client_id") or "")
+                if cid and cid not in seen_client_ids:
+                    all_clients.append(self._to_public_row(row, now))
+                    seen_client_ids.add(cid)
 
-        rows.sort(key=lambda item: self._safe_float(item.get("last_active"), default=0.0), reverse=True)
-        return rows
+        all_clients.sort(key=lambda item: self._safe_float(item.get("last_active"), default=0.0), reverse=True)
+        return all_clients
 
     def get_stream_clients(
         self,

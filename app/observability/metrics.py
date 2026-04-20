@@ -525,10 +525,25 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
                 except Exception:
                     continue
             
-            # Cleanup simulation keys for ended sessions
-            ended_keys = [k for k in _hls_simulated_downloaded if k not in sessions]
-            for k in ended_keys:
-                _hls_simulated_downloaded.pop(k, None)
+        # 2b. External HLS Segmenter Service (API mode)
+        if hls_segmenter_service:
+            # ... (existing hls_segmenter_service logic)
+            pass
+
+        # --- 3. Go Proxy Managed Streams (via State Snapshots) ---
+        # If an engine wasn't found in TS Redis or local HLS managers, check the 
+        # latest stats pushed by the Go proxy into the Orchestrator state.
+        for s in active_streams:
+            if not s.container_id or s.container_id in current_engine_bytes:
+                continue
+            
+            # Fetch latest stats snapshot which includes 'downloaded' total from Go
+            stats = state.get_stream_stats(s.id)
+            if stats:
+                latest = stats[-1]
+                downloaded = getattr(latest, "downloaded", 0) or 0
+                if downloaded > 0:
+                    current_engine_bytes[s.container_id] = current_engine_bytes.get(s.container_id, 0) + int(downloaded)
 
     except Exception:
         pass

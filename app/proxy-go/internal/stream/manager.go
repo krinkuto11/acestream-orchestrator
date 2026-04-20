@@ -480,6 +480,12 @@ func (m *Manager) measureBitrate(ctx context.Context) {
 			// We have data flowing; initial buffering is over.
 			m.clients.SetInitialBuffering(false)
 
+			// Sync buffer index to Redis so Orchestrator telemetry can see engine->proxy flow
+			head := m.buf.Head()
+			if head >= 0 && m.hub != nil {
+				m.hub.rdb.Set(ctx, rediskeys.BufferIndex(m.params.ContentID), strconv.FormatInt(head, 10), time.Hour)
+			}
+
 			measured := int(srcRate * float64(m.buf.TargetChunkSize()))
 			if measured < 10_000 {
 				continue // noise — ignore
