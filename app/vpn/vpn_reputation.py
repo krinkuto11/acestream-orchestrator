@@ -8,7 +8,7 @@ import re
 import threading
 from contextlib import suppress
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..infrastructure import docker_client
 from ..proxy import manager
@@ -262,7 +262,7 @@ class VPNReputationManager:
                 return True
         return False
 
-    def _candidate_hostnames_from_catalog(
+    def _candidate_servers_from_catalog(
         self,
         *,
         provider: str,
@@ -270,7 +270,7 @@ class VPNReputationManager:
         protocol: Optional[str],
         require_port_forwarding: bool,
         catalog_filename: str = "servers.json",
-    ) -> List[str]:
+    ) -> List[Dict[str, Any]]:
         servers = self._provider_servers_from_catalog(provider, catalog_filename)
         if not servers:
             logger.warning(
@@ -287,7 +287,7 @@ class VPNReputationManager:
         skipped_protocol = 0
         skipped_pf = 0
         skipped_region = 0
-        candidates: List[str] = []
+        candidates: List[Dict[str, Any]] = []
 
         for server in servers:
             hostname = str(server.get("hostname") or "").strip().lower()
@@ -311,9 +311,8 @@ class VPNReputationManager:
                 skipped_region += 1
                 continue
 
-            candidates.append(hostname)
+            candidates.append(server)
 
-        unique_candidates = list(dict.fromkeys(candidates))
 
         logger.info(
             "Catalog filter: provider=%s protocol=%s pf_required=%s regions=%s "
@@ -327,10 +326,10 @@ class VPNReputationManager:
             skipped_protocol,
             skipped_pf,
             skipped_region,
-            len(unique_candidates),
+            len(candidates),
         )
 
-        return unique_candidates
+        return candidates
 
     def hostnames_support_port_forwarding(
         self,
@@ -453,6 +452,20 @@ class VPNReputationManager:
             with suppress(Exception):
                 cli.close()
 
+    def get_hostname_load(self, hostname: str, provider: str = "protonvpn", catalog_filename: str = "servers.json") -> Optional[int]:
+        """Lookup the reported load for a specific hostname in the catalog."""
+        servers = self._provider_servers_from_catalog(provider, catalog_filename)
+        normalized = str(hostname or "").strip().lower()
+        if not servers or not normalized:
+            return None
+        
+        for server in servers:
+            server_hostname = str(server.get("hostname") or "").strip().lower()
+            if server_hostname == normalized:
+                load = server.get("load")
+                return int(load) if load is not None else None
+        return None
+
     def get_safe_hostname(
         self,
         provider: str,
@@ -461,7 +474,7 @@ class VPNReputationManager:
         require_port_forwarding: bool = False,
         catalog_filename: str = "servers.json",
     ) -> Optional[str]:
-        catalog_candidates = self._candidate_hostnames_from_catalog(
+        catalog_candidates = self._candidate_servers_from_catalog(
             provider=provider,
             regions=regions,
             protocol=protocol,
@@ -469,15 +482,39 @@ class VPNReputationManager:
             catalog_filename=catalog_filename,
         )
         if catalog_candidates:
-            safe_catalog_hostnames = [
-                hostname
-                for hostname in catalog_candidates
-                if not self.is_blacklisted(hostname)
+            safe_catalog_servers = [
+                s for s in catalog_candidates
+                if not self.is_blacklisted(str(s.get("hostname") or "").strip().lower())
             ]
-            if safe_catalog_hostnames:
-                return random.choice(safe_catalog_hostnames)
-            logger.warning("All catalog hostnames are blacklisted for provider %s", provider)
-            return None
+            if not safe_catalog_servers:
+                logger.warning("All catalog hostnames are blacklisted for provider %s", provider)
+                return None
+
+            # Sort by load (ascending, lowest first)
+            # Default load to 100 if missing to penalize unknown nodes
+            safe_catalog_servers.sort(key=lambda x: int(x.get("load") if x.get("load") is not None else 100))
+            
+            # Check if we actually have useful load data. 
+            # If the best load is 100, it means no servers have been assigned a lower load by the updater.
+            has_real_load_data = any(s.get("load") is not None for s in safe_catalog_servers[:10])
+            
+            if not has_real_load_data:
+                # Fallback to pure random choice from the entire safe list
+                chosen = random.choice(safe_catalog_servers)
+                hostname = str(chosen.get("hostname") or "").strip().lower()
+                logger.info("Selected VPN hostname=%s (pure random, no load data available)", hostname)
+                return hostname
+
+            # Pick randomly from the top 5 least-loaded servers to spread load
+            top_n = safe_catalog_servers[:5]
+            chosen = random.choice(top_n)
+            hostname = str(chosen.get("hostname") or "").strip().lower()
+            
+            logger.info(
+                "Selected VPN hostname=%s with load=%s%% (among top %d candidates)",
+                hostname, chosen.get("load", "unknown"), len(top_n)
+            )
+            return hostname
 
         if require_port_forwarding:
             logger.warning(

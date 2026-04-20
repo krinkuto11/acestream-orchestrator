@@ -487,8 +487,17 @@ def _single_vpn_status(container_name: str) -> Dict[str, object]:
         assigned_hostname = node.get("assigned_hostname")
 
     forwarded_port = get_forwarded_port_sync(container_name) if connected else None
-    provider = get_vpn_provider(container_name) if connected else None
+    provider_name = get_vpn_provider(container_name) if connected else None
     ip_info = get_vpn_public_ip_info(container_name) if connected else None
+    
+    # Enrichment: Get load for assigned hostname from catalog
+    load = None
+    if connected and assigned_hostname:
+        try:
+            from .vpn_reputation import vpn_reputation_manager
+            load = vpn_reputation_manager.get_hostname_load(assigned_hostname, provider=provider_name or "protonvpn")
+        except Exception:
+            pass
 
     now_iso = datetime.now(timezone.utc).isoformat()
     return {
@@ -500,10 +509,11 @@ def _single_vpn_status(container_name: str) -> Dict[str, object]:
         "connected": connected,
         "forwarded_port": forwarded_port,
         "public_ip": (ip_info or {}).get("public_ip"),
-        "provider": provider,
+        "provider": provider_name,
         "country": (ip_info or {}).get("country"),
         "city": (ip_info or {}).get("city"),
         "region": (ip_info or {}).get("region"),
+        "load": load,
         "assigned_hostname": assigned_hostname,
         "last_check": now_iso,
         "last_check_at": now_iso,

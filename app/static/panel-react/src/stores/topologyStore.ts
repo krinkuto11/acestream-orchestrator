@@ -27,6 +27,7 @@ export interface TopologyNodeData {
   lifecycle?: 'active' | 'draining'
   forwarded?: boolean
   failoverActive?: boolean
+  load?: number
   metadata?: Record<string, string | number | boolean | null>
 }
 
@@ -158,6 +159,7 @@ type VpnNodeDescriptor = {
   provider: string | null
   country: string | null
   assignedHostname?: string | null
+  load?: number | null
 }
 
 const normalizeLifecycle = (value: unknown): 'active' | 'draining' => {
@@ -279,6 +281,7 @@ const extractVpnNodes = (
       provider,
       country,
       assignedHostname: rawNode.assigned_hostname == null ? null : String(rawNode.assigned_hostname),
+      load: typeof rawNode.load === 'number' ? rawNode.load : null,
     })
   }
 
@@ -318,6 +321,7 @@ const extractVpnNodes = (
           provider: legacyNode?.provider,
           country: legacyNode?.country,
           assigned_hostname: legacyNode?.assigned_hostname,
+          load: (legacyNode as Record<string, unknown>)?.load,
         },
         nodes.length + idx,
       )
@@ -642,6 +646,7 @@ const buildSnapshot = (
           uploadKbps: total.upKbps,
           streamCount: total.streams,
           lifecycle: vpnNode.lifecycle,
+          load: vpnNode.load ?? undefined,
           metadata: {
             connected: vpnNode.connected,
             publicIp: vpnNode.publicIp,

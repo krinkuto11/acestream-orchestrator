@@ -173,6 +173,7 @@ const vpnTunnelStatusSchema = z
     country: z.string().nullish(),
     city: z.string().nullish(),
     region: z.string().nullish(),
+    load: z.number().nullish(),
     last_check: z.string().nullish(),
     last_check_at: z.string().nullish(),
     error: z.string().nullish(),

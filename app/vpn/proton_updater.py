@@ -305,6 +305,7 @@ class ProtonServerUpdater:
                 )
                 city = str(logical.get("City") or "").strip()
                 server_name = str(logical.get("Name") or domain).strip()
+                load = self._coerce_int(logical.get("Load"), 0)
 
                 ips: List[str] = [entry_ip]
                 if has_ipv6 and filters.ipv6 in {"include", "only"}:
@@ -316,6 +317,7 @@ class ProtonServerUpdater:
                     "server_name": server_name,
                     "hostname": domain,
                     "ips": ips,
+                    "load": load,
                 }
 
                 if is_free:

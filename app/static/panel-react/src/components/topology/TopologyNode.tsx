@@ -188,12 +188,54 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         {/* VPN Specific Details Restored */}
         {data.kind === 'vpn' && (
           <div className="rounded-lg border border-indigo-600 bg-[#312e81] p-2 space-y-1.5 mb-1.5">
-            {vpnIp && (
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[11px] font-semibold text-indigo-100">{vpnIp}</span>
-                {flag && <span className="text-sm shadow-sm">{flag}</span>}
-              </div>
-            )}
+            <div className="flex items-center justify-between">
+              {vpnIp && (
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[11px] font-semibold text-indigo-100">{vpnIp}</span>
+                  {flag && <span className="text-sm shadow-sm">{flag}</span>}
+                </div>
+              )}
+              {data.load !== undefined && data.load !== null && !isNaN(data.load) && (
+                <div className="flex items-center gap-2 px-1.5 py-0.5 rounded-md bg-black/30 border border-white/10" title={`Server Load: ${data.load}%`}>
+                  <div className="relative h-4 w-4">
+                    {/* Background Ring (Secondary track) */}
+                    <svg className="h-full w-full" viewBox="0 0 16 16">
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="7"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        className="text-white/10"
+                      />
+                      {/* Progress Ring (Battery indicator) */}
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="7"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeDasharray={44}
+                        strokeDashoffset={44 - (44 * Math.min(100, Math.max(0, data.load))) / 100}
+                        strokeLinecap="round"
+                        className={cn(
+                          "transition-all duration-500 ease-out",
+                          data.load < 40 ? "text-emerald-400 drop-shadow-[0_0_3px_rgba(52,211,153,0.8)]" :
+                          data.load < 80 ? "text-amber-400 drop-shadow-[0_0_3px_rgba(251,191,36,0.8)]" :
+                          "text-rose-500 drop-shadow-[0_0_3px_rgba(244,63,94,0.8)]"
+                        )}
+                        transform="rotate(-90 8 8)"
+                      />
+                    </svg>
+                  </div>
+                  <span className="text-[10px] font-bold text-white/90 tabular-nums">
+                    {Math.round(data.load)}%
+                  </span>
+                </div>
+              )}
+            </div>
             {(vpnProvider || vpnHostname) && (
               <div className="space-y-1">
                 {vpnHostname && (
