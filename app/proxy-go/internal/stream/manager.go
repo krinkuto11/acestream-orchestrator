@@ -476,6 +476,10 @@ func (m *Manager) measureBitrate(ctx context.Context) {
 			if srcRate < 0.05 {
 				continue
 			}
+			
+			// We have data flowing; initial buffering is over.
+			m.clients.SetInitialBuffering(false)
+
 			measured := int(srcRate * float64(m.buf.TargetChunkSize()))
 			if measured < 10_000 {
 				continue // noise — ignore

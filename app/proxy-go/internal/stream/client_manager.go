@@ -48,6 +48,7 @@ type ClientManager struct {
 	mu         sync.RWMutex
 	clients    map[string]*ClientRecord
 	hadClients bool // true once at least one client (TS or HLS) has ever connected
+	isInitialBuffering bool
 
 	stopCh chan struct{}
 }
@@ -57,11 +58,19 @@ func newClientManager(contentID, workerID string, rdb *redis.Client) *ClientMana
 		contentID: contentID,
 		workerID:  workerID,
 		rdb:       rdb,
-		clients:   make(map[string]*ClientRecord),
-		stopCh:    make(chan struct{}),
+		clients:            make(map[string]*ClientRecord),
+		stopCh:             make(chan struct{}),
+		isInitialBuffering: true, // Start in buffering mode
 	}
 	go cm.heartbeatLoop()
 	return cm
+}
+
+// SetInitialBuffering updates the buffering state. While true, ghost eviction is suspended.
+func (cm *ClientManager) SetInitialBuffering(v bool) {
+	cm.mu.Lock()
+	cm.isInitialBuffering = v
+	cm.mu.Unlock()
 }
 
 // Add registers a new client. Returns false if the stream is at max capacity.
@@ -305,17 +314,18 @@ func (cm *ClientManager) sendHeartbeats() {
 	}
 
 	ctx := context.Background()
-	now := fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9)
 	ttl := config.C.ClientRecordTTL
 	setKey := rediskeys.Clients(cm.contentID)
 
+	nowStr := fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9)
 	pipe := cm.rdb.Pipeline()
 	for _, rec := range clients {
 		key := rediskeys.ClientMetadata(cm.contentID, rec.ID)
+		lastActive := fmt.Sprintf("%f", float64(rec.LastActive.UnixNano())/1e9)
 		pipe.HSet(ctx, key,
-			"last_active", now,
+			"last_active", lastActive,
 			"bps", fmt.Sprintf("%.2f", rec.BPS),
-			"stats_updated_at", now,
+			"stats_updated_at", nowStr,
 		)
 		pipe.Expire(ctx, key, ttl)
 		pipe.SAdd(ctx, setKey, rec.ID)
@@ -333,6 +343,11 @@ func (cm *ClientManager) evictGhosts() {
 	hlsGhostTimeout := config.C.HLSClientIdleTimeout
 
 	cm.mu.Lock()
+	if cm.isInitialBuffering {
+		cm.mu.Unlock()
+		return
+	}
+
 	var ghosts []string
 	now := time.Now()
 	for id, rec := range cm.clients {
@@ -351,7 +366,7 @@ func (cm *ClientManager) evictGhosts() {
 	cm.mu.Unlock()
 
 	if len(ghosts) > 0 {
-		slog.Warn("evicted ghost clients", "stream", cm.contentID, "count", len(ghosts))
+		slog.Debug("evicted ghost clients", "stream", cm.contentID, "count", len(ghosts))
 		ctx := context.Background()
 		for _, id := range ghosts {
 			cm.rdb.SRem(ctx, rediskeys.Clients(cm.contentID), id)
