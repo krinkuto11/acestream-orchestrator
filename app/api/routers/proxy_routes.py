@@ -2151,6 +2151,7 @@ async def go_proxy_stream_stats(request: Request):
     uploaded = body.get("uploaded")
     livepos = body.get("livepos")
     proxy_buffer_pieces = body.get("proxy_buffer_pieces")
+    status_state = body.get("status") or body.get("state")
 
     has_full_stats = (peers is not None or speed_down is not None or livepos is not None)
 
