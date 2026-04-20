@@ -86,6 +86,7 @@ func (cm *ClientManager) Add(clientID, ip, userAgent string, initialIndex int64)
 		WorkerID:      cm.workerID,
 		PrevUpdatedAt: now,
 		RequestsTotal: 1,
+		LastRequestKind: "TS",
 	}
 	cm.hadClients = true
 
@@ -205,6 +206,7 @@ func (cm *ClientManager) HeartbeatHLSClient(clientID, ip, userAgent string, byte
 			WorkerID:      cm.workerID,
 			PrevUpdatedAt: now,
 		}
+		rec.LastRequestKind = "HLS"
 		cm.clients[clientID] = rec
 		cm.hadClients = true
 	}
@@ -327,19 +329,25 @@ func (cm *ClientManager) sendHeartbeats() {
 }
 
 func (cm *ClientManager) evictGhosts() {
-	ghostTimeout := config.C.ClientHeartbeatInterval * 5
+	tsGhostTimeout := config.C.ClientHeartbeatInterval * 5
+	hlsGhostTimeout := config.C.HLSClientIdleTimeout
 
 	cm.mu.Lock()
 	var ghosts []string
 	now := time.Now()
 	for id, rec := range cm.clients {
-		if now.Sub(rec.LastActive) > ghostTimeout {
+		timeout := tsGhostTimeout
+		if rec.LastRequestKind == "HLS" {
+			timeout = hlsGhostTimeout
+		}
+		if now.Sub(rec.LastActive) > timeout {
 			ghosts = append(ghosts, id)
 		}
 	}
 	for _, id := range ghosts {
 		delete(cm.clients, id)
 	}
+	remaining := len(cm.clients)
 	cm.mu.Unlock()
 
 	if len(ghosts) > 0 {
@@ -348,6 +356,12 @@ func (cm *ClientManager) evictGhosts() {
 		for _, id := range ghosts {
 			cm.rdb.SRem(ctx, rediskeys.Clients(cm.contentID), id)
 			cm.rdb.Del(ctx, rediskeys.ClientMetadata(cm.contentID, id))
+		}
+
+		if remaining == 0 {
+			cm.rdb.Set(ctx, rediskeys.LastClientDisconnect(cm.contentID),
+				fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9),
+				config.C.ClientRecordTTL)
 		}
 	}
 }

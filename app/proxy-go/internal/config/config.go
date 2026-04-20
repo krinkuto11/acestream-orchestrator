@@ -117,7 +117,7 @@ func load() *Config {
 		InitialBehindChunks: envInt("INITIAL_BEHIND_CHUNKS", 4),
 		RedisChunkTTL:       envDuration("REDIS_CHUNK_TTL_S", 60*time.Second),
 
-		CleanupInterval:      envDuration("CLEANUP_INTERVAL_S", 60*time.Second),
+		CleanupInterval:      envDuration("CLEANUP_INTERVAL_S", 15*time.Second),
 		CleanupCheckInterval: envDuration("CLEANUP_CHECK_INTERVAL_S", 3*time.Second),
 
 		ClientHeartbeatInterval: envDuration("CLIENT_HEARTBEAT_INTERVAL_S", 10*time.Second),
