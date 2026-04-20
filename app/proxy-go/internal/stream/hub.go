@@ -83,7 +83,31 @@ func (h *Hub) StartStream(ctx context.Context, p StreamParams) bool {
 	buf := buffer.New(config.C.BufferChunkSize, 16)
 	cm := newClientManager(contentID, h.workerID, h.rdb)
 	mgr := newManager(p, buf, cm, h)
-...
+
+	// Always use context.Background() for stream lifecycle — never the request
+	// context, which is cancelled as soon as the HTTP handler returns.
+	streamCtx, cancel := context.WithCancel(context.Background())
+	h.streams[contentID] = &streamEntry{
+		manager:  mgr,
+		buf:      buf,
+		clients:  cm,
+		cancelFn: cancel,
+	}
+
+	// Claim ownership in Redis
+	h.rdb.Set(ctx, rediskeys.StreamOwner(contentID), h.workerID, 5*time.Minute)
+	h.rdb.Set(ctx, rediskeys.StreamInitTime(contentID), fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9), time.Hour)
+
+	go func() {
+		mgr.Run(streamCtx)
+		slog.Info("stream manager exited", "stream", contentID)
+		h.removeStream(contentID)
+	}()
+
+	slog.Info("stream started", "stream", contentID, "engine", fmt.Sprintf("%s:%d", p.Engine.Host, p.Engine.Port))
+	return true
+}
+
 func (h *Hub) atGlobalLimits() bool {
 	count := len(h.streams)
 	if config.C.MaxTotalStreams > 0 && count >= config.C.MaxTotalStreams {
@@ -117,9 +141,6 @@ func (h *Hub) evictOldestIdle() bool {
 
 	if oldestID != "" {
 		slog.Info("evicting idle stream due to resource limits", "stream", oldestID)
-		// We call removeStream internally while holding the lock.
-		// NOTE: StopStream normally locks, but here we are already locked.
-		// I should refactor StopStream or use removeStream.
 		h.removeStreamLocked(oldestID)
 		return true
 	}
@@ -138,30 +159,6 @@ func (h *Hub) removeStreamLocked(contentID string) {
 		}
 		h.flushRedis(contentID)
 	}
-}
-
-	// Always use context.Background() for stream lifecycle — never the request
-	// context, which is cancelled as soon as the HTTP handler returns.
-	streamCtx, cancel := context.WithCancel(context.Background())
-	h.streams[contentID] = &streamEntry{
-		manager:  mgr,
-		buf:      buf,
-		clients:  cm,
-		cancelFn: cancel,
-	}
-
-	// Claim ownership in Redis
-	h.rdb.Set(ctx, rediskeys.StreamOwner(contentID), h.workerID, 5*time.Minute)
-	h.rdb.Set(ctx, rediskeys.StreamInitTime(contentID), fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9), time.Hour)
-
-	go func() {
-		mgr.Run(streamCtx)
-		slog.Info("stream manager exited", "stream", contentID)
-		h.removeStream(contentID)
-	}()
-
-	slog.Info("stream started", "stream", contentID, "engine", fmt.Sprintf("%s:%d", p.Engine.Host, p.Engine.Port))
-	return true
 }
 
 // StopStream stops a stream immediately.
