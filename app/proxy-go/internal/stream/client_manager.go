@@ -152,6 +152,66 @@ func (cm *ClientManager) UpdateStats(clientID string, bytesDelta, chunksDelta in
 	cm.mu.Unlock()
 }
 
+// HeartbeatHLSClient records activity for an HLS client (manifest or segment
+// fetch). HLS clients never go through ClientStreamer, so they must be
+// registered here to be visible to the Python telemetry UI.
+//
+// The client is added to the Redis set + metadata hash on first call (the same
+// keys that client_tracking_service.get_stream_clients reads), then the
+// last_active timestamp and stats are refreshed on every call.
+func (cm *ClientManager) HeartbeatHLSClient(clientID, ip, userAgent string, bytesDelta int64) {
+	cm.mu.Lock()
+	rec, exists := cm.clients[clientID]
+	now := time.Now()
+	if !exists {
+		rec = &ClientRecord{
+			ID:          clientID,
+			IP:          ip,
+			UserAgent:   userAgent,
+			ConnectedAt: now,
+			LastActive:  now,
+			WorkerID:    cm.workerID,
+		}
+		cm.clients[clientID] = rec
+	}
+	rec.LastActive = now
+	rec.BytesSent += bytesDelta
+	rec.ChunksSent++
+	cm.mu.Unlock()
+
+	ctx := context.Background()
+	ttl := config.C.ClientRecordTTL
+	key := rediskeys.ClientMetadata(cm.contentID, clientID)
+
+	if !exists {
+		// First time: full registration so Python tracker can hydrate the row.
+		cm.rdb.HSet(ctx, key,
+			"ip_address", ip,
+			"user_agent", userAgent,
+			"protocol", "HLS",
+			"connected_at", fmt.Sprintf("%f", float64(now.UnixNano())/1e9),
+			"last_active", fmt.Sprintf("%f", float64(now.UnixNano())/1e9),
+			"bytes_sent", fmt.Sprintf("%d", bytesDelta),
+			"chunks_sent", "1",
+			"requests_total", "1",
+			"worker_id", cm.workerID,
+		)
+		setKey := rediskeys.Clients(cm.contentID)
+		cm.rdb.SAdd(ctx, setKey, clientID)
+		cm.rdb.Expire(ctx, setKey, ttl)
+		slog.Info("hls client connected", "stream", cm.contentID, "client", clientID, "ip", ip)
+	} else {
+		// Incremental update: refresh presence fields only.
+		cm.rdb.HSet(ctx, key,
+			"last_active", fmt.Sprintf("%f", float64(now.UnixNano())/1e9),
+			"bytes_sent", fmt.Sprintf("%d", rec.BytesSent),
+			"chunks_sent", fmt.Sprintf("%d", rec.ChunksSent),
+			"requests_total", fmt.Sprintf("%d", rec.ChunksSent),
+		)
+	}
+	cm.rdb.Expire(ctx, key, ttl)
+}
+
 // Stop halts the heartbeat goroutine.
 func (cm *ClientManager) Stop() {
 	close(cm.stopCh)

@@ -198,6 +198,7 @@ func (s *Server) handleHLSManifest(w http.ResponseWriter, r *http.Request) {
 		controlMode := mgr.ControlMode()
 		if strings.ToLower(controlMode) == "api" {
 			s.handleHLSManifestAPIMode(w, r, inputType, inputVal, fileIndexes, seekback, streamKey, mgr, buf)
+			s.recordHLSClient(streamKey, 0, r)
 			return
 		}
 		// HTTP mode: proxy the engine's manifest.
@@ -206,7 +207,9 @@ func (s *Server) handleHLSManifest(w http.ResponseWriter, r *http.Request) {
 		sess := hls.NewSession(streamKey, engineURL, fmt.Sprintf("http://%s", r.Host))
 		if err := sess.ServeManifest(r.Context(), w); err != nil {
 			http.Error(w, "manifest error: "+err.Error(), http.StatusBadGateway)
+			return
 		}
+		s.recordHLSClient(streamKey, 0, r)
 		return
 	}
 
@@ -219,6 +222,7 @@ func (s *Server) handleHLSManifest(w http.ResponseWriter, r *http.Request) {
 
 	if ep.ControlMode == "api" {
 		s.handleHLSManifestAPIMode(w, r, inputType, inputVal, fileIndexes, seekback, streamKey, nil, nil)
+		s.recordHLSClient(streamKey, 0, r)
 		return
 	}
 
@@ -229,6 +233,7 @@ func (s *Server) handleHLSManifest(w http.ResponseWriter, r *http.Request) {
 	if err := sess.ServeManifest(r.Context(), w); err != nil {
 		http.Error(w, "manifest error: "+err.Error(), http.StatusBadGateway)
 	}
+	s.recordHLSClient(streamKey, 0, r)
 }
 
 // handleHLSManifestAPIMode serves a live HLS manifest backed by our in-process
@@ -315,6 +320,7 @@ func (s *Server) handleHLSSegment(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 		w.Header().Set("Cache-Control", "max-age=60")
 		w.Write(data) //nolint:errcheck
+		s.recordHLSClient(streamKey, int64(len(data)), r)
 		return
 	}
 
@@ -383,6 +389,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request) {
 	s.orchestProxy.ServeHTTP(w, r)
+}
+
+// recordHLSClient registers (or heartbeats) an HLS client against the stream's
+// ClientManager so it appears in the Python telemetry SSE feed.
+// bytesDelta should be 0 for manifest requests and the segment size for segments.
+func (s *Server) recordHLSClient(streamKey string, bytesDelta int64, r *http.Request) {
+	_, _, cm := s.hub.GetEntry(streamKey)
+	if cm == nil {
+		return
+	}
+	ip := clientIP(r)
+	ua := r.Header.Get("User-Agent")
+	cid := buildClientID(ip, ua)
+	cm.HeartbeatHLSClient(cid, ip, ua, bytesDelta)
 }
 
 // --- Engine selection (calls Python orchestrator internal API) ---
