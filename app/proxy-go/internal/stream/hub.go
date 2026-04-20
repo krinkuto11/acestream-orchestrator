@@ -47,6 +47,13 @@ func NewHub(rdb *redis.Client) *Hub {
 
 // StartStream ensures a stream is running. If it already exists and is healthy,
 // this is a no-op. Returns true if a new stream was started.
+//
+// NOTE: The stream's internal context is always rooted at context.Background(),
+// NOT at the caller-provided ctx. This is intentional: streams must outlive the
+// HTTP request that started them (e.g. in HLS mode the handler returns immediately
+// after issuing a redirect, which would otherwise cancel the stream goroutine).
+// The caller's ctx is accepted for API compatibility but is not used for the stream
+// lifecycle — only for the initial Redis ownership write.
 func (h *Hub) StartStream(ctx context.Context, p StreamParams) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -69,7 +76,9 @@ func (h *Hub) StartStream(ctx context.Context, p StreamParams) bool {
 	cm := newClientManager(contentID, h.workerID, h.rdb)
 	mgr := newManager(p, buf, cm, h)
 
-	streamCtx, cancel := context.WithCancel(ctx)
+	// Always use context.Background() for stream lifecycle — never the request
+	// context, which is cancelled as soon as the HTTP handler returns.
+	streamCtx, cancel := context.WithCancel(context.Background())
 	h.streams[contentID] = &streamEntry{
 		manager:  mgr,
 		buf:      buf,
