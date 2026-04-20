@@ -157,6 +157,11 @@ class VPNReputationManager:
 
         return Path(__file__).resolve().parents[2] / filename
 
+    def is_catalog_available(self, filename: str = "servers.json") -> bool:
+        """Check if the catalog file exists on disk."""
+        path = self._servers_json_path(filename)
+        return path.exists() and path.is_file()
+
     def _load_servers_catalog(self, filename: str = "servers.json") -> Optional[Dict[str, Any]]:
         path = self._servers_json_path(filename)
         try:

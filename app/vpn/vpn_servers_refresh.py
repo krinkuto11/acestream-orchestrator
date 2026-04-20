@@ -77,6 +77,7 @@ class VPNServersRefreshService:
             "last_result": None,
             "official_url": OFFICIAL_GLUETUN_SERVERS_URL,
         }
+        self._initial_refresh_event = asyncio.Event()
 
     async def start(self) -> None:
         if self._task and not self._task.done():
@@ -107,6 +108,15 @@ class VPNServersRefreshService:
                 ),
             },
         }
+
+    async def wait_for_initial_refresh(self, timeout: float = 60.0) -> bool:
+        """Wait for the first successful server refresh to complete."""
+        try:
+            await asyncio.wait_for(self._initial_refresh_event.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            logger.warning("Timed out waiting for initial VPN servers refresh after %ss", timeout)
+            return False
 
     async def refresh_now(
         self,
@@ -149,6 +159,11 @@ class VPNServersRefreshService:
                 }
                 self._status["last_ok"] = True
                 self._status["last_result"] = payload
+                
+                # Signal that at least one successful refresh has occurred
+                if not self._initial_refresh_event.is_set():
+                    self._initial_refresh_event.set()
+                
                 return payload
             except Exception as exc:
                 duration_s = round(time.monotonic() - started, 3)
