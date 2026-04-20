@@ -94,7 +94,7 @@ func (s *Segmenter) Manifest(proxyBase, streamKey string) string {
 	fmt.Fprintf(&sb, "#EXT-X-MEDIA-SEQUENCE:%d\n", segs[0].seq)
 	for _, seg := range segs {
 		fmt.Fprintf(&sb, "#EXTINF:%.3f,\n", seg.duration)
-		fmt.Fprintf(&sb, "%s/ace/hls/segment?stream=%s&seq=%d\n", base, streamKey, seg.seq)
+		fmt.Fprintf(&sb, "%s/ace/hls/segment.ts?stream=%s&seq=%d\n", base, streamKey, seg.seq)
 	}
 	return sb.String()
 }

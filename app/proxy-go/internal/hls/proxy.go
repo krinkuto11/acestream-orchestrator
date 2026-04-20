@@ -200,8 +200,8 @@ func (ps *ProxySession) rewriteManifest(raw string) string {
 		if err != nil {
 			sb.WriteString(line)
 		} else {
-			// Rewrite: /ace/hls/segment?stream=<id>&url=<encoded>
-			proxied := fmt.Sprintf("%s/ace/hls/segment?stream=%s&url=%s",
+			// Rewrite: /ace/hls/segment.ts?stream=<id>&url=<encoded>
+			proxied := fmt.Sprintf("%s/ace/hls/segment.ts?stream=%s&url=%s",
 				ps.proxyBase, url.QueryEscape(ps.contentID), url.QueryEscape(segURL.String()))
 			sb.WriteString(proxied)
 		}

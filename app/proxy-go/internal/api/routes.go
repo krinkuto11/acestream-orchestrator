@@ -65,7 +65,8 @@ func (s *Server) registerRoutes() {
 	// Proxy-native endpoints
 	s.mux.HandleFunc("/ace/getstream", s.handleGetStream)
 	s.mux.HandleFunc("/ace/manifest.m3u8", s.handleHLSManifest)
-	s.mux.HandleFunc("/ace/hls/segment", s.handleHLSSegment) // ?stream=...&url=... OR ?stream=...&seq=...
+	s.mux.HandleFunc("/ace/hls/segment", s.handleHLSSegment)
+	s.mux.HandleFunc("/ace/hls/segment.ts", s.handleHLSSegment)
 	s.mux.HandleFunc("/ace/hls/", s.handleHLSSegmentLegacy)  // /ace/hls/{id}/segment/{path}
 
 	// Internal control endpoints (called by Python orchestrator)
