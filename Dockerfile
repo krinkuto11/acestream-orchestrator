@@ -23,51 +23,33 @@ RUN pip install --upgrade pip && \
     --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org \
     -r requirements.txt
 
-# Stage 3: Install Redis and collect all dependencies (use Debian 12 to match Distroless)
-FROM debian:12-slim AS redis-builder
+# Stage 3: Collect binary dependencies (Redis, GPG)
+FROM debian:12-slim AS dependency-builder
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends redis-server redis-tools && \
-    mkdir -p /redis-bundle && \
-    # Preserve original paths for binaries and their shared libraries
-    cp --parents /usr/bin/redis-server /redis-bundle/ && \
-    cp --parents /usr/bin/redis-cli /redis-bundle/ && \
-    ldd /usr/bin/redis-server | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp --parents '{}' /redis-bundle/ && \
+    apt-get install -y --no-install-recommends redis-server redis-tools gnupg && \
+    mkdir -p /bundle && \
+    # Collect Redis
+    cp --parents /usr/bin/redis-server /bundle/ && \
+    cp --parents /usr/bin/redis-cli /bundle/ && \
+    ldd /usr/bin/redis-server | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp --parents '{}' /bundle/ && \
+    # Collect GnuPG
+    cp --parents /usr/bin/gpg /bundle/ && \
+    cp --parents /usr/bin/gpgconf /bundle/ && \
+    ldd /usr/bin/gpg | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp --parents '{}' /bundle/ && \
+    ldd /usr/bin/gpgconf | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp --parents '{}' /bundle/ && \
+    mkdir -p /bundle/usr/lib /bundle/usr/share && \
+    cp -a /usr/lib/gnupg /bundle/usr/lib/ && \
+    cp -a /usr/share/gnupg /bundle/usr/share/ && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Stage 4: Install FFmpeg and collect binary + shared libraries (Debian 12 for ABI match)
-FROM debian:12-slim AS ffmpeg-builder
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
-    mkdir -p /ffmpeg-bundle && \
-    # Preserve original paths for binaries and their shared libraries
-    cp --parents /usr/bin/ffmpeg /ffmpeg-bundle/ && \
-    cp --parents /usr/bin/ffprobe /ffmpeg-bundle/ && \
-    ldd /usr/bin/ffmpeg | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp --parents '{}' /ffmpeg-bundle/ && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Stage 5: Install GnuPG and collect binaries + shared libraries (Debian 12 for ABI match)
-FROM debian:12-slim AS gpg-builder
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends gnupg && \
-    mkdir -p /gpg-bundle/usr/lib /gpg-bundle/usr/share && \
-    cp --parents /usr/bin/gpg /gpg-bundle/ && \
-    cp --parents /usr/bin/gpgconf /gpg-bundle/ && \
-    ldd /usr/bin/gpg | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp --parents '{}' /gpg-bundle/ && \
-    ldd /usr/bin/gpgconf | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp --parents '{}' /gpg-bundle/ && \
-    cp -a /usr/lib/gnupg /gpg-bundle/usr/lib/ && \
-    cp -a /usr/share/gnupg /gpg-bundle/usr/share/ && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Stage 6: Build Go proxy binary (static, no CGO — works in distroless)
+# Stage 4: Build Go proxy binary
 FROM golang:1.23 AS go-builder
 WORKDIR /proxy
 COPY app/proxy-go/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o acestream-proxy ./cmd/proxy
 
-# Stage 7: Final runtime image with Distroless
+# Stage 5: Final runtime image with Distroless
 FROM gcr.io/distroless/python3-debian12:latest
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
@@ -80,19 +62,13 @@ COPY --from=python-builder /install /usr/local
 # Copy application files
 COPY app ./app
 
-# Copy built React panel from panel-builder (output is in /build/panel)
+# Copy built React panel from panel-builder
 COPY --from=panel-builder /build/panel ./app/static/panel
 
-# Copy Redis binaries and libraries (preserves original architecture-specific paths)
-COPY --from=redis-builder /redis-bundle/ /
+# Copy collected binary dependencies (Redis, GPG)
+COPY --from=dependency-builder /bundle/ /
 
-# Copy FFmpeg binaries and libraries for API-mode HLS segmenting
-COPY --from=ffmpeg-builder /ffmpeg-bundle/ /
-
-# Copy GnuPG binaries and libraries for proton-core modulus verification
-COPY --from=gpg-builder /gpg-bundle/ /
-
-# Copy Go proxy binary (statically linked, no runtime deps)
+# Copy Go proxy binary
 COPY --from=go-builder /proxy/acestream-proxy /usr/local/bin/acestream-proxy
 
 # Startup script: Redis → Go proxy (port 8000) → Python FastAPI (port 8001)

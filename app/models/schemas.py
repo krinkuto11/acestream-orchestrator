@@ -72,12 +72,12 @@ class EngineState(BaseModel):
 
 class LivePosData(BaseModel):
     """Live position data for live streams."""
-    pos: Optional[str] = None
-    live_first: Optional[str] = None
-    live_last: Optional[str] = None
-    first_ts: Optional[str] = None
-    last_ts: Optional[str] = None
-    buffer_pieces: Optional[str] = None
+    pos: Optional[Any] = None
+    live_first: Optional[Any] = None
+    live_last: Optional[Any] = None
+    first_ts: Optional[Any] = None
+    last_ts: Optional[Any] = None
+    buffer_pieces: Optional[Any] = None
 
 class StreamState(BaseModel):
     id: str
