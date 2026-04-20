@@ -33,8 +33,9 @@ type ClientManager struct {
 	workerID  string
 	rdb       *redis.Client
 
-	mu      sync.RWMutex
-	clients map[string]*ClientRecord
+	mu         sync.RWMutex
+	clients    map[string]*ClientRecord
+	hadClients bool // true once at least one client (TS or HLS) has ever connected
 
 	stopCh chan struct{}
 }
@@ -72,6 +73,7 @@ func (cm *ClientManager) Add(clientID, ip, userAgent string, initialIndex int64)
 		InitialIndex: initialIndex,
 		WorkerID:     cm.workerID,
 	}
+	cm.hadClients = true
 
 	ctx := context.Background()
 	ttl := config.C.ClientRecordTTL
@@ -119,6 +121,16 @@ func (cm *ClientManager) Remove(clientID string) {
 
 	slog.Info("client disconnected", "stream", cm.contentID, "client", clientID,
 		"remaining_local", remaining)
+}
+
+// HadClients returns true once at least one client has ever connected.
+// Used by the cleanup loop to distinguish streams that were never served from
+// streams whose last client has since disconnected (or been ghost-evicted).
+func (cm *ClientManager) HadClients() bool {
+	cm.mu.RLock()
+	v := cm.hadClients
+	cm.mu.RUnlock()
+	return v
 }
 
 // LocalCount returns the number of clients managed by this instance.
@@ -173,6 +185,7 @@ func (cm *ClientManager) HeartbeatHLSClient(clientID, ip, userAgent string, byte
 			WorkerID:    cm.workerID,
 		}
 		cm.clients[clientID] = rec
+		cm.hadClients = true
 	}
 	rec.LastActive = now
 	rec.BytesSent += bytesDelta

@@ -255,17 +255,55 @@ func (c *Client) StopPlayback() error {
 	return c.write("STOP")
 }
 
-// Ping sends a STATUS command and discards the response.
-// Used as a keepalive to prevent the engine from closing an idle API session.
-func (c *Client) Ping() error {
+// StatusInfo holds the parsed fields from an AceStream STATUS response.
+// Example response: STATUS state=dl peers=5 speed_down=512 speed_up=128 downloaded=1024 uploaded=256
+type StatusInfo struct {
+	State      string
+	Peers      int
+	SpeedDown  int // KB/s
+	SpeedUp    int // KB/s
+	Downloaded int // KB
+	Uploaded   int // KB
+}
+
+// PingWithStatus sends a STATUS command and returns the parsed response.
+// Used both as a keepalive and to collect live stream statistics.
+func (c *Client) PingWithStatus() (*StatusInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.write("STATUS"); err != nil {
-		return err
+		return nil, err
 	}
-	// Drain one line (STATUS response or an event) with a short timeout.
-	_, _ = c.readLine(2 * time.Second)
-	return nil
+	line, err := c.readLine(2 * time.Second)
+	if err != nil {
+		return nil, err
+	}
+	return parseStatusLine(line), nil
+}
+
+// Ping sends a STATUS command and discards the response.
+// Used as a keepalive to prevent the engine from closing an idle API session.
+func (c *Client) Ping() error {
+	_, err := c.PingWithStatus()
+	return err
+}
+
+func parseStatusLine(line string) *StatusInfo {
+	kv := parseKV(line)
+	return &StatusInfo{
+		State:      kv["state"],
+		Peers:      parseIntField2(kv, "peers"),
+		SpeedDown:  parseIntField2(kv, "speed_down"),
+		SpeedUp:    parseIntField2(kv, "speed_up"),
+		Downloaded: parseIntField2(kv, "downloaded"),
+		Uploaded:   parseIntField2(kv, "uploaded"),
+	}
+}
+
+func parseIntField2(kv map[string]string, key string) int {
+	var n int
+	fmt.Sscanf(kv[key], "%d", &n)
+	return n
 }
 
 // ---- internal helpers ----

@@ -118,6 +118,7 @@ func (m *Manager) Run(ctx context.Context) {
 		m.isLive = m.params.IsLive
 		m.mu.Unlock()
 		m.notifyStreamStarted()
+		go m.measureBitrate(ctx)
 		m.startReadLoop(ctx)
 		m.notifyStreamEnded("stopped")
 		m.sendEngineStop()
@@ -130,6 +131,7 @@ func (m *Manager) Run(ctx context.Context) {
 	}
 
 	m.notifyStreamStarted()
+	go m.measureBitrate(ctx)
 	m.startReadLoop(ctx)
 	m.notifyStreamEnded("stopped")
 	m.sendEngineStop()
@@ -429,6 +431,8 @@ func (m *Manager) startReadLoop(ctx context.Context) {
 
 // runAPIKeepalive sends STATUS pings over the open API connection so the engine
 // does not consider the session idle and terminate the content stream.
+// It also collects live stats (peers, speed, etc.) from the STATUS response
+// and pushes them to the Python orchestrator for dashboard visibility.
 func (m *Manager) runAPIKeepalive(ctx context.Context) {
 	ticker := time.NewTicker(apiKeepaliveInterval)
 	defer ticker.Stop()
@@ -443,12 +447,107 @@ func (m *Manager) runAPIKeepalive(ctx context.Context) {
 			if cli == nil {
 				return
 			}
-			if err := cli.Ping(); err != nil {
+			info, err := cli.PingWithStatus()
+			if err != nil {
 				slog.Debug("API keepalive ping failed", "stream", m.params.ContentID, "err", err)
 				return
 			}
+			if info != nil {
+				go m.pushStats(info)
+			}
 		}
 	}
+}
+
+// measureBitrate periodically computes the actual ingress bitrate from the ring
+// buffer's source-rate EMA and updates m.bitrate + Redis. This replaces the
+// engine-reported estimate (which is set before P2P buffering and may be stale).
+// For HTTP-mode streams it also pushes the measured value to the orchestrator so
+// the dashboard shows accurate bitrate without relying on the engine's value.
+func (m *Manager) measureBitrate(ctx context.Context) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			srcRate := m.buf.SourceRate()
+			if srcRate < 0.05 {
+				continue
+			}
+			measured := int(srcRate * float64(m.buf.TargetChunkSize()))
+			if measured < 10_000 {
+				continue // noise — ignore
+			}
+			m.mu.Lock()
+			m.bitrate = measured
+			m.mu.Unlock()
+			m.persistBitrate(measured)
+
+			// API mode pushes full stats (peers/speed) via runAPIKeepalive.
+			// For HTTP mode the Python collector already polls stat_url, but it
+			// uses the inaccurate engine-reported bitrate — push the measured
+			// value so the latest stat snapshot gets an accurate bitrate.
+			if strings.ToLower(m.params.ControlMode) != "api" {
+				go m.pushStats(nil)
+			}
+		}
+	}
+}
+
+// pushStats sends stream statistics to the Python orchestrator so the dashboard
+// can display live data for streams managed by the Go proxy.
+//
+// info carries ACE API STATUS fields (peers, speed, etc.) — nil for HTTP-mode
+// calls where only the measured bitrate needs updating.
+func (m *Manager) pushStats(info *aceapi.StatusInfo) {
+	m.mu.Lock()
+	pythonID := m.pythonStreamID
+	contentID := m.params.ContentID
+	m.mu.Unlock()
+
+	srcRate := m.buf.SourceRate()
+	bitrate := 0
+	if srcRate > 0.05 {
+		bitrate = int(srcRate * float64(m.buf.TargetChunkSize()))
+	}
+
+	payload := map[string]any{
+		"stream_id":   pythonID,
+		"content_key": contentID,
+		"bitrate":     bitrate,
+	}
+	if info != nil {
+		payload["peers"] = info.Peers
+		payload["speed_down"] = info.SpeedDown
+		payload["speed_up"] = info.SpeedUp
+		payload["downloaded"] = info.Downloaded
+		payload["uploaded"] = info.Uploaded
+		payload["state"] = info.State
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	orchURL := config.C.OrchestratorURL + "/internal/proxy/go/stream-stats"
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, orchURL, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		slog.Debug("push stats failed", "stream", contentID, "err", err)
+		return
+	}
+	resp.Body.Close()
 }
 
 // HotSwap signals the manager to switch to a new engine mid-stream.

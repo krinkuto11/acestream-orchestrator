@@ -233,9 +233,20 @@ func (h *Hub) runCleanup() {
 		// Refresh ownership TTL
 		h.rdb.Set(context.Background(), rediskeys.StreamOwner(id), h.workerID, 5*time.Minute)
 
+		localCount := e.clients.LocalCount()
+
 		// Check pending shutdown
-		if !e.shutdownAt.IsZero() && now.After(e.shutdownAt) && e.clients.LocalCount() == 0 {
+		if !e.shutdownAt.IsZero() && now.After(e.shutdownAt) && localCount == 0 {
 			toStop = append(toStop, id)
+			continue
+		}
+
+		// For HLS streams there is no explicit "client disconnected" signal —
+		// clients just stop polling.  Ghost eviction in ClientManager removes
+		// them silently, leaving shutdownAt unset.  Schedule a shutdown whenever
+		// all local clients are gone and at least one has previously connected.
+		if e.shutdownAt.IsZero() && localCount == 0 && e.clients.HadClients() {
+			e.shutdownAt = now.Add(config.C.ChannelShutdownDelay)
 		}
 	}
 	h.mu.Unlock()

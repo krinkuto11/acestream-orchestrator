@@ -100,6 +100,11 @@ func (r *Reader) Start(ctx context.Context) error {
 			everHadData = true
 		}
 		if err != nil {
+			// If the context was cancelled (intentional shutdown), exit cleanly
+			// without logging a spurious "P2P gap" warning.
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if everHadData {
 				slog.Warn("upstream stall (P2P gap), reconnecting", "stream", r.contentID,
 					"attempt", attempt, "err", err)

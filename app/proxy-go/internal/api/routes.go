@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -276,6 +277,38 @@ func (s *Server) handleHLSManifestAPIMode(
 	if seg == nil {
 		http.Error(w, "segmenter unavailable", http.StatusInternalServerError)
 		return
+	}
+
+	// Prebuffer: on the very first manifest request (no segments yet) hold until
+	// we have at least 2 segments so the player has immediate runway.  This mirrors
+	// the TS-mode Probe-Then-Hold pattern adapted to the HLS pull model.
+	if seg.SegmentCount() == 0 {
+		prebufSec := 0
+		if mgr != nil {
+			prebufSec = mgr.PrebufferSeconds()
+		}
+		if prebufSec <= 0 {
+			prebufSec = config.C.ProxyPrebufferSeconds
+		}
+		if prebufSec > 0 {
+			// Calculate how many segments correspond to the prebuffer window.
+			// Default segment target duration is 2 s; request at least 2.
+			targetSegs := prebufSec/2 + 1
+			if targetSegs < 2 {
+				targetSegs = 2
+			}
+			deadline := time.Now().Add(30 * time.Second)
+			for time.Now().Before(deadline) {
+				if seg.SegmentCount() >= targetSegs {
+					break
+				}
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(200 * time.Millisecond):
+				}
+			}
+		}
 	}
 
 	manifest := seg.Manifest(fmt.Sprintf("http://%s", r.Host), streamKey)
@@ -549,7 +582,13 @@ func clientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		return strings.SplitN(xff, ",", 2)[0]
 	}
-	return r.RemoteAddr
+	// Strip port — same client reconnects from a different ephemeral port on every
+	// HLS manifest/segment fetch, which would produce a different client ID.
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 func parseInt(s string, def int) int {

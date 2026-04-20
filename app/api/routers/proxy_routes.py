@@ -2113,3 +2113,77 @@ async def go_proxy_stream_ended(request: Request):
     except Exception as e:
         logger.warning("go_proxy_stream_ended failed: %s", e, exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/internal/proxy/go/stream-stats")
+async def go_proxy_stream_stats(request: Request):
+    """Called by the Go proxy to push live stream statistics.
+
+    For API-mode streams (no stat_url) this carries the full STATUS payload
+    (peers, speed_down, speed_up, downloaded, uploaded) plus the ring-buffer
+    measured bitrate.  For HTTP-mode streams only the measured bitrate is sent
+    so the Python collector's engine stats are enriched without duplication.
+    """
+    body = await request.json()
+
+    # Resolve stream_id — prefer the UUID returned by go_proxy_stream_started,
+    # fall back to the content key so early pushes before registration succeed.
+    stream_id: Optional[str] = body.get("stream_id") or None
+    content_key: Optional[str] = body.get("content_key") or None
+
+    if not stream_id and content_key:
+        for s in state.list_streams(status="started"):
+            if s.key == content_key:
+                stream_id = s.id
+                break
+
+    if not stream_id:
+        return {"ok": False, "reason": "stream not found"}
+
+    from ...models.schemas import StreamStatSnapshot
+    from datetime import datetime, timezone
+
+    bitrate = body.get("bitrate")  # Go-measured ring-buffer bitrate (bytes/s)
+    peers = body.get("peers")
+    speed_down = body.get("speed_down")
+    speed_up = body.get("speed_up")
+    downloaded = body.get("downloaded")
+    uploaded = body.get("uploaded")
+    status_state = body.get("state")
+
+    has_full_stats = peers is not None or speed_down is not None
+
+    if has_full_stats:
+        # API mode: create a full snapshot replacing what Python can't collect.
+        snap = StreamStatSnapshot(
+            ts=datetime.now(timezone.utc),
+            peers=peers,
+            speed_down=speed_down,
+            speed_up=speed_up,
+            downloaded=downloaded,
+            uploaded=uploaded,
+            status=status_state,
+            bitrate=bitrate,
+        )
+        state.append_stat(stream_id, snap)
+    elif bitrate is not None:
+        # HTTP mode: carry forward existing peer/speed values from the latest
+        # stat snapshot so we don't lose them, and inject the measured bitrate.
+        existing = state.get_stream_stats(stream_id)
+        if existing:
+            latest = existing[-1]
+            snap = StreamStatSnapshot(
+                ts=datetime.now(timezone.utc),
+                peers=latest.peers,
+                speed_down=latest.speed_down,
+                speed_up=latest.speed_up,
+                downloaded=latest.downloaded,
+                uploaded=latest.uploaded,
+                status=getattr(latest, "status", None),
+                bitrate=bitrate,
+                livepos=getattr(latest, "livepos", None),
+                proxy_buffer_pieces=getattr(latest, "proxy_buffer_pieces", None),
+            )
+            state.append_stat(stream_id, snap)
+
+    return {"ok": True}

@@ -99,6 +99,14 @@ func (s *Segmenter) Manifest(proxyBase, streamKey string) string {
 	return sb.String()
 }
 
+// SegmentCount returns the number of segments currently in the sliding window.
+func (s *Segmenter) SegmentCount() int {
+	s.mu.RLock()
+	n := len(s.segs)
+	s.mu.RUnlock()
+	return n
+}
+
 // Segment returns the raw TS bytes for the given sequence number.
 func (s *Segmenter) Segment(seq int) ([]byte, bool) {
 	s.mu.RLock()
