@@ -280,8 +280,9 @@ func (s *Server) handleHLSManifestAPIMode(
 	}
 
 	// Prebuffer: on the very first manifest request (no segments yet) hold until
-	// we have at least 2 segments so the player has immediate runway.  This mirrors
-	// the TS-mode Probe-Then-Hold pattern adapted to the HLS pull model.
+	// we have enough segments so the player has immediate runway.
+	// Always wait for at least 1 segment — returning an empty playlist causes
+	// FFmpeg/VLC to abort immediately ("Empty segment") rather than retry.
 	if seg.SegmentCount() == 0 {
 		prebufSec := 0
 		if mgr != nil {
@@ -290,23 +291,22 @@ func (s *Server) handleHLSManifestAPIMode(
 		if prebufSec <= 0 {
 			prebufSec = config.C.ProxyPrebufferSeconds
 		}
+		// Minimum 1; prebufSec > 0 adds extra segments (2 s each, +1 safety margin).
+		targetSegs := 1
 		if prebufSec > 0 {
-			// Calculate how many segments correspond to the prebuffer window.
-			// Default segment target duration is 2 s; request at least 2.
-			targetSegs := prebufSec/2 + 1
-			if targetSegs < 2 {
-				targetSegs = 2
+			if computed := prebufSec/2 + 1; computed > targetSegs {
+				targetSegs = computed
 			}
-			deadline := time.Now().Add(30 * time.Second)
-			for time.Now().Before(deadline) {
-				if seg.SegmentCount() >= targetSegs {
-					break
-				}
-				select {
-				case <-r.Context().Done():
-					return
-				case <-time.After(200 * time.Millisecond):
-				}
+		}
+		deadline := time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) {
+			if seg.SegmentCount() >= targetSegs {
+				break
+			}
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(200 * time.Millisecond):
 			}
 		}
 	}

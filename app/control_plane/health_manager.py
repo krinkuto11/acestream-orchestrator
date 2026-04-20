@@ -201,6 +201,12 @@ class HealthManager:
             all_streams_starved = True
 
             for stream in active_streams:
+                # API-mode streams fetch content via HTTP; peers/speed_down are
+                # P2P metrics and will always be 0 — skip starvation check.
+                if getattr(stream, "control_mode", None) == "api":
+                    all_streams_starved = False
+                    break
+
                 started_at = getattr(stream, "started_at", None)
                 if not isinstance(started_at, datetime):
                     all_streams_starved = False
