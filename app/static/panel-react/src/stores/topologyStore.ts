@@ -361,7 +361,15 @@ const toMbps = (kbpsMaybe: number | null | undefined): number => {
 export const formatThroughputDual = (kbps: number | null | undefined): string => {
   if (kbps == null || Number.isNaN(kbps) || kbps <= 0) return '0 KB/s'
   const mbps = (kbps * 8) / 1000
-  return `${Math.round(kbps)} KB/s | ${mbps.toFixed(1)} Mbps`
+  
+  let kbpsPart: string
+  if (kbps >= 1000) {
+    kbpsPart = `${(kbps / 1024).toFixed(1)} MB/s`
+  } else {
+    kbpsPart = `${Math.round(kbps)} KB/s`
+  }
+
+  return `${kbpsPart} | ${mbps.toFixed(1)} Mbps`
 }
 
 // EMA smoothing to prevent pipes from flashing to 0 during burst waits
