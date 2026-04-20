@@ -20,6 +20,9 @@ import (
 	"github.com/acestream/proxy/internal/upstream"
 )
 
+// apiKeepaliveInterval matches Python's ~1 s STATUS poll cadence.
+const apiKeepaliveInterval = 2 * time.Second
+
 // EngineParams describes an AceStream engine to connect to.
 type EngineParams struct {
 	Host        string
@@ -68,6 +71,11 @@ type Manager struct {
 
 	// failover coordination
 	swapCh chan EngineParams
+
+	// API mode: keep the telnet connection alive for the stream's lifetime.
+	// The engine closes the HTTP content stream when this connection drops.
+	apiMu     sync.Mutex
+	apiClient *aceapi.Client
 
 	tag string
 }
@@ -217,14 +225,15 @@ func (m *Manager) requestViaAPI(ctx context.Context) error {
 	if err := cli.Connect(); err != nil {
 		return fmt.Errorf("ace_api connect: %w", err)
 	}
-	defer cli.Close()
 
 	if err := cli.Authenticate(); err != nil {
+		cli.Close()
 		return fmt.Errorf("ace_api auth: %w", err)
 	}
 
 	info, err := cli.LoadAndStart(m.params.SourceInput, m.params.SourceInputType, m.params.FileIndexes, m.params.Seekback)
 	if err != nil {
+		cli.Close()
 		return fmt.Errorf("ace_api LoadAndStart: %w", err)
 	}
 
@@ -234,6 +243,13 @@ func (m *Manager) requestViaAPI(ctx context.Context) error {
 	m.commandURL = info.CommandURL
 	m.sessionID = info.PlaybackSessionID
 	m.mu.Unlock()
+
+	// Keep the API socket open. The AceStream engine closes the HTTP content
+	// stream the moment its API session disconnects. We hold the client alive
+	// until sendEngineStop() tears it down.
+	m.apiMu.Lock()
+	m.apiClient = cli
+	m.apiMu.Unlock()
 
 	slog.Info("engine API request succeeded", "stream", m.params.ContentID, "playback_url", info.PlaybackURL)
 	return nil
@@ -261,15 +277,30 @@ func (m *Manager) startReadLoop(ctx context.Context) {
 			readerDone <- r.Start(readerCtx)
 		}()
 
+		// API mode: keep the telnet session alive with periodic STATUS pings.
+		// Python sends STATUS roughly every second; we use 2 s.
+		var keepaliveCancel context.CancelFunc
+		if strings.ToLower(m.params.ControlMode) == "api" {
+			kCtx, kCancel := context.WithCancel(ctx)
+			keepaliveCancel = kCancel
+			go m.runAPIKeepalive(kCtx)
+		}
+
+		stopKeepalive := func() {
+			if keepaliveCancel != nil {
+				keepaliveCancel()
+				keepaliveCancel = nil
+			}
+		}
+
 		select {
 		case newEngine := <-m.swapCh:
-			// Hot-swap: cancel old reader, request new engine session
+			stopKeepalive()
 			readerCancel()
 			r.Stop()
 			<-readerDone
 			slog.Info("hot-swapping engine", "stream", m.params.ContentID, "new_engine", fmt.Sprintf("%s:%d", newEngine.Host, newEngine.Port))
 			m.params.Engine = newEngine
-			// Refresh Redis timing keys so the cleanup reaper doesn't kill the stream mid-swap
 			m.touchRedisTimestamp(rediskeys.StreamInitTime(m.params.ContentID), time.Hour)
 			m.touchRedisTimestamp(rediskeys.LastClientDisconnect(m.params.ContentID), 60*time.Second)
 			if err := m.requestStream(ctx); err != nil {
@@ -278,6 +309,7 @@ func (m *Manager) startReadLoop(ctx context.Context) {
 			}
 
 		case err := <-readerDone:
+			stopKeepalive()
 			readerCancel()
 			if err != nil && ctx.Err() == nil {
 				slog.Warn("upstream reader exited", "stream", m.params.ContentID, "err", err)
@@ -287,12 +319,37 @@ func (m *Manager) startReadLoop(ctx context.Context) {
 			return
 
 		case <-ctx.Done():
+			stopKeepalive()
 			readerCancel()
 			r.Stop()
 			<-readerDone
 			return
 		}
 		readerCancel()
+	}
+}
+
+// runAPIKeepalive sends STATUS pings over the open API connection so the engine
+// does not consider the session idle and terminate the content stream.
+func (m *Manager) runAPIKeepalive(ctx context.Context) {
+	ticker := time.NewTicker(apiKeepaliveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.apiMu.Lock()
+			cli := m.apiClient
+			m.apiMu.Unlock()
+			if cli == nil {
+				return
+			}
+			if err := cli.Ping(); err != nil {
+				slog.Debug("API keepalive ping failed", "stream", m.params.ContentID, "err", err)
+				return
+			}
+		}
 	}
 }
 
@@ -377,14 +434,29 @@ func (m *Manager) touchRedisTimestamp(key string, ttl time.Duration) {
 }
 
 // sendEngineStop notifies the engine that this stream session has ended.
+// API mode: sends STOP then closes the telnet connection.
 // HTTP mode: GET command_url?method=stop
-// API mode: handled by the aceapi client lifecycle (connection close is sufficient).
 func (m *Manager) sendEngineStop() {
+	if strings.ToLower(m.params.ControlMode) == "api" {
+		m.apiMu.Lock()
+		cli := m.apiClient
+		m.apiClient = nil
+		m.apiMu.Unlock()
+		if cli != nil {
+			if err := cli.StopPlayback(); err != nil {
+				slog.Debug("API STOP failed", "stream", m.params.ContentID, "err", err)
+			}
+			cli.Close()
+			slog.Debug("API session closed", "stream", m.params.ContentID)
+		}
+		return
+	}
+
 	m.mu.Lock()
 	cmdURL := m.commandURL
 	m.mu.Unlock()
 
-	if cmdURL == "" || strings.ToLower(m.params.ControlMode) == "api" {
+	if cmdURL == "" {
 		return
 	}
 

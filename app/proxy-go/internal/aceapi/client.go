@@ -248,6 +248,26 @@ func (c *Client) Stop() error {
 	return c.write("STOPDL")
 }
 
+// StopPlayback sends STOP to end the active playback session.
+func (c *Client) StopPlayback() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.write("STOP")
+}
+
+// Ping sends a STATUS command and discards the response.
+// Used as a keepalive to prevent the engine from closing an idle API session.
+func (c *Client) Ping() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.write("STATUS"); err != nil {
+		return err
+	}
+	// Drain one line (STATUS response or an event) with a short timeout.
+	_, _ = c.readLine(2 * time.Second)
+	return nil
+}
+
 // ---- internal helpers ----
 
 func (c *Client) write(line string) error {
