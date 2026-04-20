@@ -2055,3 +2055,61 @@ def internal_select_engine():
         "stream_mode": (ConfigHelper.stream_mode() or "TS").upper(),
         "control_mode": (ConfigHelper.control_mode() or "api").lower(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle notifications from the Go proxy
+# ---------------------------------------------------------------------------
+
+@router.post("/internal/proxy/go/stream-started")
+async def go_proxy_stream_started(request: Request):
+    """Called by the Go proxy after it successfully connects to an engine.
+    Registers the stream in the Python state so the GUI shows activity."""
+    body = await request.json()
+    try:
+        from ...data_plane.internal_events import handle_stream_started
+
+        evt = StreamStartedEvent(
+            container_id=body.get("container_id") or None,
+            engine={"host": body["engine_host"], "port": int(body["engine_port"])},
+            stream={
+                "key_type": body.get("key_type", "content_id"),
+                "key": body["key"],
+                "live_delay": int(body.get("live_delay", 0)),
+            },
+            session={
+                "playback_session_id": body.get("playback_session_id") or body["key"],
+                "stat_url": body.get("stat_url") or None,
+                "command_url": body.get("command_url") or None,
+                "is_live": int(body.get("is_live", 0)),
+                "bitrate": int(body["bitrate"]) if body.get("bitrate") else None,
+            },
+            labels={"proxy": "go", **(body.get("labels") or {})},
+        )
+        result = await asyncio.to_thread(handle_stream_started, evt)
+        stream_id = result.id if result else None
+        logger.info("go_proxy_stream_started: registered stream_id=%s key=%s", stream_id, body.get("key"))
+        return {"stream_id": stream_id}
+    except Exception as e:
+        logger.warning("go_proxy_stream_started failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/internal/proxy/go/stream-ended")
+async def go_proxy_stream_ended(request: Request):
+    """Called by the Go proxy when a stream stops."""
+    body = await request.json()
+    try:
+        from ...data_plane.internal_events import handle_stream_ended
+        from ...models.schemas import StreamEndedEvent
+
+        evt = StreamEndedEvent(
+            container_id=body.get("container_id") or None,
+            stream_id=body.get("stream_id") or None,
+            reason=body.get("reason") or "stopped",
+        )
+        await asyncio.to_thread(handle_stream_ended, evt)
+        return {"ok": True}
+    except Exception as e:
+        logger.warning("go_proxy_stream_ended failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))

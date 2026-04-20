@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -67,6 +68,10 @@ type Manager struct {
 	bitrate     int
 	isLive      int
 
+	// pythonStreamID is the opaque ID returned by the orchestrator on stream-started.
+	// It is used when notifying stream-ended so the Python state can find the record.
+	pythonStreamID string
+
 	cancelFn context.CancelFunc
 
 	// failover coordination
@@ -112,7 +117,9 @@ func (m *Manager) Run(ctx context.Context) {
 		m.bitrate = m.params.Bitrate
 		m.isLive = m.params.IsLive
 		m.mu.Unlock()
+		m.notifyStreamStarted()
 		m.startReadLoop(ctx)
+		m.notifyStreamEnded("stopped")
 		m.sendEngineStop()
 		return
 	}
@@ -122,8 +129,99 @@ func (m *Manager) Run(ctx context.Context) {
 		return
 	}
 
+	m.notifyStreamStarted()
 	m.startReadLoop(ctx)
+	m.notifyStreamEnded("stopped")
 	m.sendEngineStop()
+}
+
+// notifyStreamStarted informs the Python orchestrator that this stream is live
+// so the GUI can display it. Failures are non-fatal — we log and continue.
+func (m *Manager) notifyStreamStarted() {
+	m.mu.Lock()
+	sessionID := m.sessionID
+	statURL := m.statURL
+	commandURL := m.commandURL
+	isLive := m.isLive
+	bitrate := m.bitrate
+	m.mu.Unlock()
+
+	body, err := json.Marshal(map[string]any{
+		"container_id":        m.params.Engine.ContainerID,
+		"engine_host":         m.params.Engine.Host,
+		"engine_port":         m.params.Engine.Port,
+		"key_type":            m.params.SourceInputType,
+		"key":                 m.params.ContentID,
+		"playback_session_id": sessionID,
+		"stat_url":            statURL,
+		"command_url":         commandURL,
+		"is_live":             isLive,
+		"bitrate":             bitrate,
+	})
+	if err != nil {
+		return
+	}
+
+	orchURL := config.C.OrchestratorURL + "/internal/proxy/go/stream-started"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, orchURL, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		slog.Warn("notify stream started failed", "stream", m.params.ContentID, "err", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		StreamID string `json:"stream_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil && result.StreamID != "" {
+		m.mu.Lock()
+		m.pythonStreamID = result.StreamID
+		m.mu.Unlock()
+		slog.Debug("stream registered with orchestrator", "stream", m.params.ContentID, "python_id", result.StreamID)
+	}
+}
+
+// notifyStreamEnded informs the Python orchestrator that this stream has stopped.
+func (m *Manager) notifyStreamEnded(reason string) {
+	m.mu.Lock()
+	pythonStreamID := m.pythonStreamID
+	containerID := m.params.Engine.ContainerID
+	m.mu.Unlock()
+
+	body, err := json.Marshal(map[string]any{
+		"container_id": containerID,
+		"stream_id":    pythonStreamID,
+		"reason":       reason,
+	})
+	if err != nil {
+		return
+	}
+
+	orchURL := config.C.OrchestratorURL + "/internal/proxy/go/stream-ended"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, orchURL, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		slog.Debug("notify stream ended failed", "stream", m.params.ContentID, "err", err)
+		return
+	}
+	resp.Body.Close()
 }
 
 // requestStream asks the AceStream engine for a playback URL.
