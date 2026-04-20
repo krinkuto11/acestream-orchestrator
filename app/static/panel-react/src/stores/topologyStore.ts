@@ -577,8 +577,22 @@ const buildSnapshot = (
   const centerY = engineStartY + (tunnelSpan / 2)
 
   const tunnelLocalIndex: Record<string, number> = {}
+  const statsByTunnel: Record<string, { downMbps: number; upMbps: number; downKbps: number; upKbps: number; streams: number }> = {}
+
+  normalizedEngineStats.forEach((entry) => {
+    const tid = entry.assignedTunnel
+    if (!statsByTunnel[tid]) {
+      statsByTunnel[tid] = { downMbps: 0, upMbps: 0, downKbps: 0, upKbps: 0, streams: 0 }
+    }
+    statsByTunnel[tid].downMbps += entry.measuredDownMbps
+    statsByTunnel[tid].upMbps += entry.measuredUpMbps
+    statsByTunnel[tid].downKbps += entry.measuredDownKbps
+    statsByTunnel[tid].upKbps += entry.measuredUpKbps
+    statsByTunnel[tid].streams += entry.streamCount
+  })
 
   if (isVpnDisabledMode) {
+    const total = statsByTunnel[internetNodeId] || { downMbps: 0, upMbps: 0, downKbps: 0, upKbps: 0, streams: 0 }
     nodes.push({
       id: internetNodeId,
       type: 'topologyNode',
@@ -588,8 +602,11 @@ const buildSnapshot = (
         title: 'Internet',
         subtitle: 'Direct egress (VPN disabled)',
         health: 'healthy',
-        bandwidthMbps: isMockMode ? randomBetween(180, 260) : 0,
-        streamCount: 0,
+        bandwidthMbps: isMockMode ? randomBetween(180, 260) : total.downMbps,
+        bandwidthKbps: total.downKbps,
+        uploadMbps: isMockMode ? randomBetween(20, 80) : total.upMbps,
+        uploadKbps: total.upKbps,
+        streamCount: total.streams,
         lifecycle: 'active',
         metadata: {
           connected: true,
@@ -608,6 +625,8 @@ const buildSnapshot = (
           ? 'degraded'
           : 'healthy'
 
+      const total = statsByTunnel[vpnNode.id] || { downMbps: 0, upMbps: 0, downKbps: 0, upKbps: 0, streams: 0 }
+
       nodes.push({
         id: vpnNode.id,
         type: 'topologyNode',
@@ -617,8 +636,11 @@ const buildSnapshot = (
           title: vpnNode.title,
           subtitle: vpnNode.subtitle,
           health,
-          bandwidthMbps: isMockMode ? randomBetween(90, 210) : 0,
-          streamCount: 0,
+          bandwidthMbps: isMockMode ? randomBetween(90, 210) : total.downMbps,
+          bandwidthKbps: total.downKbps,
+          uploadMbps: isMockMode ? randomBetween(10, 50) : total.upMbps,
+          uploadKbps: total.upKbps,
+          streamCount: total.streams,
           lifecycle: vpnNode.lifecycle,
           metadata: {
             connected: vpnNode.connected,
