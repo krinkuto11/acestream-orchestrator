@@ -37,9 +37,14 @@ export function formatBytesPerSecond(bytesPerSecond) {
 
 export function formatBitrate(bitsPerSecond) {
   if (bitsPerSecond == null) return 'N/A'
-  if (bitsPerSecond === 0) return '0 bps'
-  const k = 1000
-  const sizes = ['bps', 'kbps', 'Mbps', 'Gbps']
-  const i = Math.floor(Math.log(bitsPerSecond) / Math.log(k))
-  return Math.round((bitsPerSecond / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
+  if (bitsPerSecond === 0) return '0 Mbps'
+  const mbps = bitsPerSecond / 1000000
+  if (mbps >= 0.1) {
+    return mbps.toFixed(2) + ' Mbps'
+  }
+  const kbps = bitsPerSecond / 1000
+  if (kbps >= 1) {
+    return Math.round(kbps) + ' kbps'
+  }
+  return bitsPerSecond + ' bps'
 }
