@@ -841,13 +841,15 @@ const buildSnapshot = (
     return sum + (found?.data?.bandwidthMbps || 0)
   }, 0)
 
-  // Proxy bandwidth should reflect proxy ingress only, not monitor-side engine traffic.
-  const totalProxyIngressMbps = engineStats.reduce((sum, { engine }) => {
+  const totalProxyIngressKbps = engineStats.reduce((sum, { engine }) => {
     const found = nodes.find((node) => node.id === engine.container_id)
-    return sum + (found?.data?.proxyIngressMbps || 0)
+    return sum + (found?.data?.proxyIngressKbps || 0)
   }, 0)
-  const proxyNodeBandwidthMbps = orchestratorStatus?.proxy?.throughput?.ingress_mbps ?? totalProxyIngressMbps
 
+  const clientList = orchestratorStatus?.proxy?.active_clients?.list || []
+  const activeClients = orchestratorStatus?.proxy?.active_clients?.total ?? clientList.length
+  const totalProxyEgressKbps = clientList.reduce((sum: number, client: any) => sum + (client.bps / 1024), 0)
+  const proxyNodeMbps = orchestratorStatus?.proxy?.throughput?.egress_mbps ?? ((totalProxyEgressKbps * 8) / 1000)
   const activeStreams = orchestratorStatus?.streams?.active ?? workingStreams.length
   
   // 3. Client Nodes and Egress Pipelines
@@ -867,7 +869,8 @@ const buildSnapshot = (
       subtitle: '/ace and /hls pipeline',
       health: (orchestratorStatus?.status === 'healthy' || orchestratorStatus?.proxy?.request_window_1m?.success_rate_percent > 98) ? 'healthy' : 'degraded',
       streamCount: activeStreams,
-      bandwidthMbps: proxyNodeBandwidthMbps,
+      bandwidthMbps: proxyNodeMbps,
+      bandwidthKbps: (proxyNodeMbps * 1000) / 8,
       metadata: {
         successRate: orchestratorStatus?.proxy?.request_window_1m?.success_rate_percent 
           ? `${orchestratorStatus.proxy.request_window_1m.success_rate_percent}%`
