@@ -853,8 +853,6 @@ const buildSnapshot = (
   const activeStreams = orchestratorStatus?.streams?.active ?? workingStreams.length
   
   // 3. Client Nodes and Egress Pipelines
-  const clientList = orchestratorStatus?.proxy?.active_clients?.list || []
-  const activeClients = orchestratorStatus?.proxy?.active_clients?.total ?? clientList.length
 
   const proxyNodeX = engineStartX + (NUM_COLUMNS * COLUMN_SPACING_X) + 160
   const clientNodeX = proxyNodeX + 460
