@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -316,11 +317,20 @@ func parseKV(line string) map[string]string {
 
 func parseStartKV(kv map[string]string) *StartInfo {
 	return &StartInfo{
-		PlaybackURL:       kv["url"],
-		StatURL:           kv["stat_url"],
-		CommandURL:        kv["command_url"],
+		PlaybackURL:       unescape(kv["url"]),
+		StatURL:           unescape(kv["stat_url"]),
+		CommandURL:        unescape(kv["command_url"]),
 		PlaybackSessionID: kv["sid"],
 	}
+}
+
+// unescape percent-decodes a URL field returned by the AceStream API.
+// Falls back to the raw value if decoding fails.
+func unescape(s string) string {
+	if d, err := url.QueryUnescape(s); err == nil {
+		return d
+	}
+	return s
 }
 
 func parseIntField(kv map[string]string, key string) int64 {
