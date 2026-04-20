@@ -5,6 +5,8 @@
 package buffer
 
 import (
+	"io"
+	"net"
 	"sync"
 	"time"
 
@@ -159,9 +161,6 @@ func (rb *RingBuffer) ReadAfter(afterIndex int64, maxChunks int) ([][]byte, int6
 		return nil, afterIndex
 	}
 
-	// How many chunks behind is the client?
-	behind := head - afterIndex
-	// Don't overflow the ring — if client is too far behind, jump to oldest available
 	oldest := rb.head - int64(rb.cap)
 	if oldest < 0 {
 		oldest = 0
@@ -171,22 +170,7 @@ func (rb *RingBuffer) ReadAfter(afterIndex int64, maxChunks int) ([][]byte, int6
 		startIdx = oldest
 	}
 
-	// Adaptive fetch count based on lag
 	fetch := int64(maxChunks)
-	switch {
-	case behind > 100:
-		fetch = 15
-	case behind > 50:
-		fetch = 10
-	case behind > 20:
-		fetch = 5
-	default:
-		fetch = 3
-	}
-	if fetch > int64(maxChunks) {
-		fetch = int64(maxChunks)
-	}
-
 	endIdx := startIdx + fetch
 	if endIdx > rb.head {
 		endIdx = rb.head
@@ -197,7 +181,6 @@ func (rb *RingBuffer) ReadAfter(afterIndex int64, maxChunks int) ([][]byte, int6
 	for i := startIdx; i < endIdx; i++ {
 		slot := int(i) & rb.mask
 		if rb.seq[slot] != i {
-			// Slot overwritten or not yet written — stop here (contiguous only)
 			break
 		}
 		chunks = append(chunks, rb.slots[slot])
@@ -208,6 +191,57 @@ func (rb *RingBuffer) ReadAfter(afterIndex int64, maxChunks int) ([][]byte, int6
 		return nil, afterIndex
 	}
 	return chunks, lastIdx
+}
+
+// WriteAfterTo writes all chunks with index > afterIndex (up to maxChunks)
+// directly to w. Returns bytes written, the last index successfully written,
+// and any error. Uses net.Buffers for zero-copy scatter/gather I/O.
+func (rb *RingBuffer) WriteAfterTo(afterIndex int64, maxChunks int, w io.Writer) (int64, int64, error) {
+	if maxChunks <= 0 {
+		maxChunks = 15
+	}
+
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+
+	head := rb.head - 1
+	if head < 0 || afterIndex >= head {
+		return 0, afterIndex, nil
+	}
+
+	oldest := rb.head - int64(rb.cap)
+	if oldest < 0 {
+		oldest = 0
+	}
+	startIdx := afterIndex + 1
+	if startIdx < oldest {
+		startIdx = oldest
+	}
+
+	fetch := int64(maxChunks)
+	endIdx := startIdx + fetch
+	if endIdx > rb.head {
+		endIdx = rb.head
+	}
+
+	// Prepare net.Buffers for zero-copy write
+	var netBuf net.Buffers
+	var lastIdx = startIdx - 1
+	for i := startIdx; i < endIdx; i++ {
+		slot := int(i) & rb.mask
+		if rb.seq[slot] != i {
+			break
+		}
+		netBuf = append(netBuf, rb.slots[slot])
+		lastIdx = i
+	}
+
+	if len(netBuf) == 0 {
+		return 0, afterIndex, nil
+	}
+
+	n, err := netBuf.WriteTo(w)
+	return n, lastIdx, err
 }
 
 // Wait blocks until a new chunk is available after afterIndex, or until ctx is done.

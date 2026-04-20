@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/http/pprof"
 	"net/url"
 	"regexp"
 	"strings"
@@ -73,6 +74,13 @@ func (s *Server) registerRoutes() {
 
 	// Health
 	s.mux.HandleFunc("/proxy/health", s.handleHealth)
+	
+	// Debug / Profiling
+	s.mux.HandleFunc("/debug/pprof/", pprof.Index)
+	s.mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	s.mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	s.mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	s.mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	// Everything else → Python orchestrator
 	s.mux.HandleFunc("/", s.handlePassthrough)
@@ -279,26 +287,31 @@ func (s *Server) handleHLSManifestAPIMode(
 		return
 	}
 
-	// Prebuffer: on the very first manifest request (no segments yet) hold until
-	// we have enough segments so the player has immediate runway.
-	// Always wait for at least 1 segment — returning an empty playlist causes
-	// FFmpeg/VLC to abort immediately ("Empty segment") rather than retry.
-	if seg.SegmentCount() == 0 {
-		prebufSec := 0
-		if mgr != nil {
-			prebufSec = mgr.PrebufferSeconds()
+	// Prebuffer: hold the manifest request until we have enough segments so 
+	// the player has immediate runway. This prevents 'buffering...' loops 
+	// during startup on jittery connections.
+	
+	prebufSec := 0
+	if mgr != nil {
+		prebufSec = mgr.PrebufferSeconds()
+	}
+	if prebufSec <= 0 {
+		prebufSec = config.C.ProxyPrebufferSeconds
+	}
+	
+	// Target segments: at least 1, otherwise based on prebuffer seconds.
+	targetSegs := 1
+	if prebufSec > 0 {
+		// Assuming ~2.0s per segment (defaultTargetDurSec).
+		// We add +1 for safety margin.
+		if computed := (prebufSec / 2) + 1; computed > targetSegs {
+			targetSegs = computed
 		}
-		if prebufSec <= 0 {
-			prebufSec = config.C.ProxyPrebufferSeconds
-		}
-		// Minimum 1; prebufSec > 0 adds extra segments (2 s each, +1 safety margin).
-		targetSegs := 1
-		if prebufSec > 0 {
-			if computed := prebufSec/2 + 1; computed > targetSegs {
-				targetSegs = computed
-			}
-		}
-		deadline := time.Now().Add(30 * time.Second)
+	}
+
+	if seg.SegmentCount() < targetSegs {
+		slog.Debug("HLS pre-buffering", "stream", streamKey, "current", seg.SegmentCount(), "target", targetSegs)
+		deadline := time.Now().Add(45 * time.Second) // higher deadline for deep pre-buffering
 		for time.Now().Before(deadline) {
 			if seg.SegmentCount() >= targetSegs {
 				break
@@ -306,7 +319,7 @@ func (s *Server) handleHLSManifestAPIMode(
 			select {
 			case <-r.Context().Done():
 				return
-			case <-time.After(200 * time.Millisecond):
+			case <-time.After(250 * time.Millisecond):
 			}
 		}
 	}

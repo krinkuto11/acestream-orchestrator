@@ -17,9 +17,11 @@ import (
 
 const vlcUserAgent = "VLC/3.0.21 LibVLC/3.0.21"
 
-// retryInterval is how long to wait between retries when the engine returns an
-// empty response (not yet buffered any data).
-const retryInterval = 2 * time.Second
+// retryInterval is replaced by exponential backoff in Start().
+const (
+	initialRetryInterval = 1 * time.Second
+	maxRetryInterval     = 8 * time.Second
+)
 
 // Reader fetches a streaming URL and writes aligned TS chunks to a RingBuffer.
 type Reader struct {
@@ -52,12 +54,6 @@ func New(contentID, url string, buf *buffer.RingBuffer) *Reader {
 	}
 }
 
-// Start begins reading in the current goroutine. It blocks until the stream
-// ends, the context is cancelled, or Stop is called.
-//
-// The AceStream engine returns an immediate EOF with no data while it warms up
-// (typically 2–10 s). Start retries until data flows or ChannelInitGracePeriod
-// elapses so the stream manager doesn't tear down prematurely.
 func (r *Reader) Start(ctx context.Context) error {
 	tag := fmt.Sprintf("[upstream:%s]", r.contentID)
 	slog.Info("upstream reader starting", "stream", r.contentID, "url", r.url)
@@ -77,17 +73,24 @@ func (r *Reader) Start(ctx context.Context) error {
 		}
 
 		if attempt > 0 {
-			// Wait before retry, but honour stop/cancel.
+			// Calculate exponential backoff: 1, 2, 4, 8s (max 8)
+			backoff := initialRetryInterval * time.Duration(1<<(uint(min(attempt-1, 3))))
+			if backoff > maxRetryInterval {
+				backoff = maxRetryInterval
+			}
+
+			slog.Debug("upstream retry backoff", "stream", r.contentID, "wait", backoff, "attempt", attempt)
 			select {
 			case <-r.stopCh:
 				return nil
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(retryInterval):
+			case <-time.After(backoff):
 			}
 		}
 
 		// Only enforce the init deadline before the first byte has arrived.
+
 		// After that, P2P starvation gaps are expected and we retry indefinitely.
 		if !everHadData && time.Now().After(deadline) {
 			return fmt.Errorf("%s engine did not start streaming within %s",

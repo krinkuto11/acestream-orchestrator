@@ -84,6 +84,10 @@ type Config struct {
 
 	// Max clients per stream
 	MaxClientsPerStreamCount int
+
+	// Global limits
+	MaxTotalStreams int
+	MaxMemoryMB     int
 }
 
 func (c *Config) MaxClientsPerStream() int {
@@ -155,6 +159,9 @@ func load() *Config {
 		ListenAddr:      envStr("PROXY_LISTEN_ADDR", ":8000"),
 
 		MaxClientsPerStreamCount: envInt("MAX_CLIENTS_PER_STREAM", 100),
+
+		MaxTotalStreams: envInt("MAX_TOTAL_STREAMS", 150),
+		MaxMemoryMB:     envInt("MAX_MEMORY_MB", 2048), // 2GB
 	}
 }
 

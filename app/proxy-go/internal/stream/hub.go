@@ -72,9 +72,73 @@ func (h *Hub) StartStream(ctx context.Context, p StreamParams) bool {
 		return false
 	}
 
+	// ENFORCE LIMITS: Check if we can start a new stream
+	if h.atGlobalLimits() {
+		if !h.evictOldestIdle() {
+			slog.Warn("resource limits reached, cannot start new stream", "stream", contentID)
+			return false
+		}
+	}
+
 	buf := buffer.New(config.C.BufferChunkSize, 16)
 	cm := newClientManager(contentID, h.workerID, h.rdb)
 	mgr := newManager(p, buf, cm, h)
+...
+func (h *Hub) atGlobalLimits() bool {
+	count := len(h.streams)
+	if config.C.MaxTotalStreams > 0 && count >= config.C.MaxTotalStreams {
+		return true
+	}
+
+	if config.C.MaxMemoryMB > 0 {
+		var totalMemBytes int64
+		for _, e := range h.streams {
+			totalMemBytes += int64(e.buf.TargetChunkSize() * 16) // roughly
+		}
+		if totalMemBytes >= int64(config.C.MaxMemoryMB)*1024*1024 {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Hub) evictOldestIdle() bool {
+	var oldestID string
+	var oldestTime time.Time
+
+	for id, e := range h.streams {
+		if !e.shutdownAt.IsZero() {
+			if oldestID == "" || e.shutdownAt.Before(oldestTime) {
+				oldestID = id
+				oldestTime = e.shutdownAt
+			}
+		}
+	}
+
+	if oldestID != "" {
+		slog.Info("evicting idle stream due to resource limits", "stream", oldestID)
+		// We call removeStream internally while holding the lock.
+		// NOTE: StopStream normally locks, but here we are already locked.
+		// I should refactor StopStream or use removeStream.
+		h.removeStreamLocked(oldestID)
+		return true
+	}
+	return false
+}
+
+func (h *Hub) removeStreamLocked(contentID string) {
+	e, ok := h.streams[contentID]
+	if ok {
+		delete(h.streams, contentID)
+		e.cancelFn()
+		e.clients.Stop()
+		e.buf.Stop()
+		if e.segmenter != nil {
+			e.segmenter.Stop()
+		}
+		h.flushRedis(contentID)
+	}
+}
 
 	// Always use context.Background() for stream lifecycle — never the request
 	// context, which is cancelled as soon as the HTTP handler returns.

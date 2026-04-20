@@ -160,20 +160,48 @@ func (s *Segmenter) run() {
 					pkt := chunk[off : off+ts.PacketSize]
 					acc = append(acc, pkt...)
 
-					pcr, hasPCR := ts.FindPCR(pkt)
-					if !hasPCR {
+					res := ts.FindPCR(pkt)
+					if res.Discontinuity {
+						slog.Info("TS discontinuity detected", "stream", s.contentID)
+						if len(acc) > ts.PacketSize {
+							dur := s.targetDur
+							if segStart >= 0 && res.HasPCR {
+								dur = res.Value - segStart
+							}
+							s.pushSegment(localSeq, acc, dur)
+							localSeq++
+						}
+						acc = nil
+						segStart = -1
+						if res.HasPCR {
+							segStart = res.Value
+						}
 						continue
 					}
 
+					if !res.HasPCR {
+						continue
+					}
+
+					pcr := res.Value
 					if segStart < 0 {
 						segStart = pcr
 						continue
 					}
 
-					// Handle PCR rollover (~26.5 hour wrap)
+					// Handle PCR rollover (~26.5 hour wrap) or large backwards jumps
 					elapsed := pcr - segStart
-					if elapsed < 0 {
+					if elapsed < -pcrRollover/2 {
+						// Likely rollover
 						elapsed += pcrRollover
+					} else if elapsed < 0 || elapsed > 60.0 {
+						// Large jump (backwards or forwards) - force cut
+						slog.Info("large PCR jump detected, forcing cut", "stream", s.contentID, "jump", elapsed)
+						s.pushSegment(localSeq, acc, s.targetDur)
+						localSeq++
+						acc = nil
+						segStart = pcr
+						continue
 					}
 
 					if elapsed >= s.targetDur {

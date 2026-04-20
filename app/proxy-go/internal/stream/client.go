@@ -125,25 +125,22 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 		default:
 		}
 
-		chunks, newIdx := cs.buf.ReadAfter(cs.localIndex, 15)
-		if len(chunks) > 0 {
+		n, newIdx, err := cs.buf.WriteAfterTo(cs.localIndex, 15, cs.w)
+		if n > 0 {
 			emptyCount = 0
-			for _, chunk := range chunks {
-				if _, err := cs.w.Write(chunk); err != nil {
-					slog.Debug("client write error", "stream", cs.contentID, "client", cs.clientID, "err", err)
-					return
-				}
-				cs.bytesSent += int64(len(chunk))
-				cs.videoByteSent += int64(len(chunk))
-				cs.chunksSent++
-			}
+			cs.bytesSent += n
+			cs.videoByteSent += n
+			cs.chunksSent += (newIdx - cs.localIndex)
 			if cs.flusher != nil {
 				cs.flusher.Flush()
 			}
+			cs.cm.UpdateStats(cs.clientID, n, newIdx-cs.localIndex)
 			cs.localIndex = newIdx
-			cs.updateChunkRate(len(chunks))
-			cs.cm.UpdateStats(cs.clientID, int64(sumSizes(chunks)), int64(len(chunks)))
+			cs.updateChunkRate(int(newIdx - cs.localIndex))
 			cs.applyPacing()
+		} else if err != nil {
+			slog.Debug("client write error", "stream", cs.contentID, "client", cs.clientID, "err", err)
+			return
 		} else {
 			emptyCount++
 			if emptyCount > maxEmpty {
@@ -166,21 +163,19 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 func (cs *ClientStreamer) sendFirstChunk(ctx context.Context) bool {
 	cfg := config.C
 	for {
-		chunks, newIdx := cs.buf.ReadAfter(cs.localIndex, 1)
-		if len(chunks) > 0 {
-			chunk := chunks[0]
-			if _, err := cs.w.Write(chunk); err != nil {
-				return false
-			}
-			cs.bytesSent += int64(len(chunk))
-			cs.videoByteSent += int64(len(chunk))
+		n, newIdx, err := cs.buf.WriteAfterTo(cs.localIndex, 1, cs.w)
+		if n > 0 {
+			cs.bytesSent += n
+			cs.videoByteSent += n
 			cs.chunksSent++
 			if cs.flusher != nil {
 				cs.flusher.Flush()
 			}
 			cs.localIndex = newIdx
-			cs.cm.UpdateStats(cs.clientID, int64(len(chunk)), 1)
+			cs.cm.UpdateStats(cs.clientID, n, 1)
 			return true
+		} else if err != nil {
+			return false
 		}
 		select {
 		case <-ctx.Done():
