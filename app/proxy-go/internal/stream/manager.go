@@ -1,0 +1,412 @@
+package stream
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/acestream/proxy/internal/aceapi"
+	"github.com/acestream/proxy/internal/buffer"
+	"github.com/acestream/proxy/internal/config"
+	"github.com/acestream/proxy/internal/rediskeys"
+	"github.com/acestream/proxy/internal/upstream"
+)
+
+// EngineParams describes an AceStream engine to connect to.
+type EngineParams struct {
+	Host        string
+	Port        int
+	APIPort     int
+	ContainerID string
+}
+
+// StreamParams is the full set of arguments for starting a stream.
+type StreamParams struct {
+	ContentID         string
+	SourceInput       string
+	SourceInputType   string // content_id | infohash | torrent_url | direct_url | raw_data
+	FileIndexes       string
+	Seekback          int
+	Engine            EngineParams
+	WorkerID          string
+	PlaybackURL       string // pre-supplied (skip engine request)
+	PlaybackSessionID string
+	StatURL           string
+	CommandURL        string
+	IsLive            int
+	Bitrate           int // bytes/s
+	ControlMode       string // "http" or "api"
+	StreamMode        string // "TS" or "HLS"
+	PrebufferSeconds  int    // 0 = disabled; from GUI setting proxy_prebuffer_seconds
+}
+
+// Manager handles one stream's lifecycle: engine connection, upstream reading, failover.
+type Manager struct {
+	params    StreamParams
+	buf       *buffer.RingBuffer
+	clients   *ClientManager
+	hub       *Hub
+
+	mu          sync.Mutex
+	connected   bool
+	playbackURL string
+	statURL     string
+	commandURL  string
+	sessionID   string
+	bitrate     int
+	isLive      int
+
+	cancelFn context.CancelFunc
+
+	// failover coordination
+	swapCh chan EngineParams
+
+	tag string
+}
+
+func newManager(p StreamParams, buf *buffer.RingBuffer, cm *ClientManager, hub *Hub) *Manager {
+	return &Manager{
+		params:  p,
+		buf:     buf,
+		clients: cm,
+		hub:     hub,
+		swapCh:  make(chan EngineParams, 1),
+		tag:     fmt.Sprintf("[stream:%s]", p.ContentID),
+	}
+}
+
+// Run is the main goroutine for the stream. It blocks until the stream ends or ctx is cancelled.
+func (m *Manager) Run(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	m.cancelFn = cancel
+	defer cancel()
+
+	slog.Info("stream manager starting", "stream", m.params.ContentID)
+
+	// Record connection attempt timestamp in Redis
+	m.touchRedisTimestamp(rediskeys.ConnectionAttempt(m.params.ContentID), time.Hour)
+
+	// If a pre-supplied playback URL was provided, skip the engine request
+	if m.params.PlaybackURL != "" {
+		m.mu.Lock()
+		m.playbackURL = m.params.PlaybackURL
+		m.statURL = m.params.StatURL
+		m.commandURL = m.params.CommandURL
+		m.sessionID = m.params.PlaybackSessionID
+		m.bitrate = m.params.Bitrate
+		m.isLive = m.params.IsLive
+		m.mu.Unlock()
+		m.startReadLoop(ctx)
+		m.sendEngineStop()
+		return
+	}
+
+	if err := m.requestStream(ctx); err != nil {
+		slog.Error("stream request failed", "stream", m.params.ContentID, "err", err)
+		return
+	}
+
+	m.startReadLoop(ctx)
+	m.sendEngineStop()
+}
+
+// requestStream asks the AceStream engine for a playback URL.
+func (m *Manager) requestStream(ctx context.Context) error {
+	if strings.ToLower(m.params.ControlMode) == "api" {
+		return m.requestViaAPI(ctx)
+	}
+	return m.requestViaHTTP(ctx)
+}
+
+func (m *Manager) requestViaHTTP(ctx context.Context) error {
+	ep := m.params.Engine
+	params := url.Values{}
+	params.Set("format", "json")
+	params.Set("file_indexes", m.params.FileIndexes)
+	if m.params.Seekback > 0 {
+		params.Set("seekback", strconv.Itoa(m.params.Seekback))
+	}
+
+	switch m.params.SourceInputType {
+	case "infohash":
+		params.Set("id", m.params.SourceInput)
+		params.Set("infohash", m.params.SourceInput)
+	case "torrent_url":
+		params.Set("torrent_url", m.params.SourceInput)
+	case "direct_url":
+		params.Set("direct_url", m.params.SourceInput)
+		params.Set("url", m.params.SourceInput)
+	case "raw_data":
+		params.Set("raw_data", m.params.SourceInput)
+	default:
+		params.Set("id", m.params.SourceInput)
+	}
+
+	engineURL := fmt.Sprintf("http://%s:%d/ace/getstream?%s", ep.Host, ep.Port, params.Encode())
+	slog.Info("requesting stream via HTTP", "stream", m.params.ContentID, "engine", fmt.Sprintf("%s:%d", ep.Host, ep.Port))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, engineURL, nil)
+	if err != nil {
+		return err
+	}
+
+	cli := &http.Client{Timeout: config.C.UpstreamConnectTimeout + 5*time.Second}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return fmt.Errorf("engine http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read engine response: %w", err)
+	}
+
+	var envelope struct {
+		Error    string `json:"error"`
+		Response struct {
+			PlaybackURL       string `json:"playback_url"`
+			StatURL           string `json:"stat_url"`
+			CommandURL        string `json:"command_url"`
+			PlaybackSessionID string `json:"playback_session_id"`
+			IsLive            int    `json:"is_live"`
+			Bitrate           int    `json:"bitrate"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return fmt.Errorf("parse engine response: %w", err)
+	}
+	if envelope.Error != "" {
+		return fmt.Errorf("engine error: %s", envelope.Error)
+	}
+	r := envelope.Response
+	if r.PlaybackURL == "" {
+		return fmt.Errorf("engine returned empty playback_url")
+	}
+
+	m.mu.Lock()
+	m.playbackURL = r.PlaybackURL
+	m.statURL = r.StatURL
+	m.commandURL = r.CommandURL
+	m.sessionID = r.PlaybackSessionID
+	m.bitrate = r.Bitrate
+	m.isLive = r.IsLive
+	m.mu.Unlock()
+
+	m.persistBitrate(r.Bitrate)
+	slog.Info("engine HTTP request succeeded", "stream", m.params.ContentID, "bitrate_bps", r.Bitrate)
+	return nil
+}
+
+func (m *Manager) requestViaAPI(ctx context.Context) error {
+	ep := m.params.Engine
+	apiPort := ep.APIPort
+	if apiPort == 0 {
+		apiPort = 62062
+	}
+
+	cli := aceapi.New(ep.Host, apiPort)
+	if err := cli.Connect(); err != nil {
+		return fmt.Errorf("ace_api connect: %w", err)
+	}
+	defer cli.Close()
+
+	if err := cli.Authenticate(); err != nil {
+		return fmt.Errorf("ace_api auth: %w", err)
+	}
+
+	info, err := cli.LoadAndStart(m.params.SourceInput, m.params.SourceInputType, m.params.FileIndexes, m.params.Seekback)
+	if err != nil {
+		return fmt.Errorf("ace_api LoadAndStart: %w", err)
+	}
+
+	m.mu.Lock()
+	m.playbackURL = info.PlaybackURL
+	m.statURL = info.StatURL
+	m.commandURL = info.CommandURL
+	m.sessionID = info.PlaybackSessionID
+	m.mu.Unlock()
+
+	slog.Info("engine API request succeeded", "stream", m.params.ContentID, "playback_url", info.PlaybackURL)
+	return nil
+}
+
+// startReadLoop runs the HTTP upstream reader, restarting if a hot-swap is signalled.
+func (m *Manager) startReadLoop(ctx context.Context) {
+	for {
+		m.mu.Lock()
+		purl := m.playbackURL
+		m.connected = true
+		m.mu.Unlock()
+
+		if purl == "" {
+			slog.Error("no playback URL, cannot start read loop", "stream", m.params.ContentID)
+			return
+		}
+
+		m.buf.Reset()
+		r := upstream.New(m.params.ContentID, purl, m.buf)
+		readerCtx, readerCancel := context.WithCancel(ctx)
+
+		readerDone := make(chan error, 1)
+		go func() {
+			readerDone <- r.Start(readerCtx)
+		}()
+
+		select {
+		case newEngine := <-m.swapCh:
+			// Hot-swap: cancel old reader, request new engine session
+			readerCancel()
+			r.Stop()
+			<-readerDone
+			slog.Info("hot-swapping engine", "stream", m.params.ContentID, "new_engine", fmt.Sprintf("%s:%d", newEngine.Host, newEngine.Port))
+			m.params.Engine = newEngine
+			// Refresh Redis timing keys so the cleanup reaper doesn't kill the stream mid-swap
+			m.touchRedisTimestamp(rediskeys.StreamInitTime(m.params.ContentID), time.Hour)
+			m.touchRedisTimestamp(rediskeys.LastClientDisconnect(m.params.ContentID), 60*time.Second)
+			if err := m.requestStream(ctx); err != nil {
+				slog.Error("engine request failed after swap", "stream", m.params.ContentID, "err", err)
+				return
+			}
+
+		case err := <-readerDone:
+			readerCancel()
+			if err != nil && ctx.Err() == nil {
+				slog.Warn("upstream reader exited", "stream", m.params.ContentID, "err", err)
+			} else {
+				slog.Info("upstream reader finished", "stream", m.params.ContentID)
+			}
+			return
+
+		case <-ctx.Done():
+			readerCancel()
+			r.Stop()
+			<-readerDone
+			return
+		}
+		readerCancel()
+	}
+}
+
+// HotSwap signals the manager to switch to a new engine mid-stream.
+func (m *Manager) HotSwap(ep EngineParams) {
+	select {
+	case m.swapCh <- ep:
+	default:
+		// swap already pending
+	}
+}
+
+// Stop cancels the stream.
+func (m *Manager) Stop() {
+	if m.cancelFn != nil {
+		m.cancelFn()
+	}
+}
+
+// Bitrate returns the stream's current bitrate in bytes/sec.
+func (m *Manager) Bitrate() int {
+	m.mu.Lock()
+	b := m.bitrate
+	m.mu.Unlock()
+	return b
+}
+
+// Connected returns true once the upstream reader has started.
+func (m *Manager) Connected() bool {
+	m.mu.Lock()
+	c := m.connected
+	m.mu.Unlock()
+	return c
+}
+
+// ControlMode returns "http" or "api" for this stream.
+func (m *Manager) ControlMode() string {
+	return m.params.ControlMode
+}
+
+// PrebufferSeconds returns the prebuffer hold duration for this stream.
+func (m *Manager) PrebufferSeconds() int {
+	return m.params.PrebufferSeconds
+}
+
+// StreamMode returns "TS" or "HLS" for this stream.
+func (m *Manager) StreamMode() string {
+	return m.params.StreamMode
+}
+
+// EngineHost returns the current engine hostname.
+func (m *Manager) EngineHost() string {
+	m.mu.Lock()
+	h := m.params.Engine.Host
+	m.mu.Unlock()
+	return h
+}
+
+// EnginePort returns the current engine port.
+func (m *Manager) EnginePort() int {
+	m.mu.Lock()
+	p := m.params.Engine.Port
+	m.mu.Unlock()
+	return p
+}
+
+func (m *Manager) persistBitrate(bps int) {
+	if m.hub == nil || bps <= 0 {
+		return
+	}
+	ctx := context.Background()
+	m.hub.rdb.HSet(ctx, rediskeys.StreamMetadata(m.params.ContentID), "bitrate", strconv.Itoa(bps))
+}
+
+// touchRedisTimestamp writes the current Unix timestamp (as float string) to key with the given TTL.
+func (m *Manager) touchRedisTimestamp(key string, ttl time.Duration) {
+	if m.hub == nil {
+		return
+	}
+	val := fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9)
+	m.hub.rdb.Set(context.Background(), key, val, ttl)
+}
+
+// sendEngineStop notifies the engine that this stream session has ended.
+// HTTP mode: GET command_url?method=stop
+// API mode: handled by the aceapi client lifecycle (connection close is sufficient).
+func (m *Manager) sendEngineStop() {
+	m.mu.Lock()
+	cmdURL := m.commandURL
+	m.mu.Unlock()
+
+	if cmdURL == "" || strings.ToLower(m.params.ControlMode) == "api" {
+		return
+	}
+
+	stopURL := cmdURL
+	if strings.Contains(stopURL, "?") {
+		stopURL += "&method=stop"
+	} else {
+		stopURL += "?method=stop"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, stopURL, nil)
+	if err != nil {
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		slog.Debug("engine stop request failed", "stream", m.params.ContentID, "err", err)
+		return
+	}
+	resp.Body.Close()
+	slog.Debug("engine stop sent", "stream", m.params.ContentID)
+}

@@ -2030,3 +2030,28 @@ def update_proxy_config(
         "hls_max_initial_segments": ProxyConfig.HLS_MAX_INITIAL_SEGMENTS,
         "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
     }
+
+
+# ---------------------------------------------------------------------------
+# Internal endpoint consumed by the Go proxy — engine selection
+# ---------------------------------------------------------------------------
+
+@router.get("/internal/proxy/select-engine")
+def internal_select_engine():
+    """Return the best available engine for the Go proxy to connect to.
+
+    Called by the Go proxy at stream-start time. Returns JSON with host, port,
+    api_port, container_id, and proxy_prebuffer_seconds.
+    Reachable only from localhost (no auth required).
+    """
+    from ...proxy.config_helper import ConfigHelper
+    engine, _ = select_best_engine_shared()
+    return {
+        "host": engine.host,
+        "port": engine.port,
+        "api_port": engine.api_port or 62062,
+        "container_id": engine.container_id,
+        "proxy_prebuffer_seconds": int(ConfigHelper.proxy_prebuffer_seconds()),
+        "stream_mode": (ConfigHelper.stream_mode() or "TS").upper(),
+        "control_mode": (ConfigHelper.control_mode() or "api").lower(),
+    }
