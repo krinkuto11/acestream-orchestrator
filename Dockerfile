@@ -98,7 +98,7 @@ def start_redis():
     redis_cmd = [
         '/usr/bin/redis-server',
         '--daemonize', 'yes',
-        '--bind', '127.0.0.1',
+        '--bind', '0.0.0.0',
         '--port', '6379',
         '--save', '',
         '--appendonly', 'no',
