@@ -143,6 +143,9 @@ class State(StateStore):
                 self._streams_by_key[st.key].add(st.id)
             if stream_id not in eng.streams:
                 eng.streams.append(stream_id)
+            
+            # Recalculate engine totals immediately on new stream
+            self._recalculate_engine_aggregates(key)
 
             if evt.labels:
                 def _to_int(v):
@@ -256,6 +259,9 @@ class State(StateStore):
                         engine_became_idle = True
                         container_id_for_cleanup = target_stream.container_id
 
+                    # Ensure engine aggregates are zeroed/updated when a stream leaves
+                    self._recalculate_engine_aggregates(target_stream.container_id)
+
                 self.streams.pop(target_stream.id, None)
                 if target_stream.key and target_stream.key in self._streams_by_key:
                     indexed_ids = self._streams_by_key[target_stream.key]
@@ -263,6 +269,9 @@ class State(StateStore):
                     if not indexed_ids:
                         self._streams_by_key.pop(target_stream.key, None)
                 self.stream_stats.pop(target_stream.id, None)
+
+                # Proactively clear monitor sessions for this stream to avoid "stuck yellow pipes"
+                self.monitor_sessions.pop(target_stream.id, None)
 
         if ended_stream_payloads:
             payloads_for_db = [dict(item) for item in ended_stream_payloads]
@@ -510,15 +519,7 @@ class State(StateStore):
                     st.proxy_buffer_pieces = snap.proxy_buffer_pieces
 
             if st and st.container_id:
-                engine = self.engines.get(st.container_id)
-                if engine:
-                    engine_streams = [
-                        self.streams.get(sid) for sid in engine.streams
-                        if sid in self.streams
-                    ]
-                    engine.total_speed_down = sum(int(s.speed_down or 0) for s in engine_streams if s and s.status == "started")
-                    engine.total_speed_up = sum(int(s.speed_up or 0) for s in engine_streams if s and s.status == "started")
-                    engine.stream_count = len([s for s in engine_streams if s and s.status == "started"])
+                self._recalculate_engine_aggregates(st.container_id)
 
             from ..core.config import cfg as _cfg
             if len(arr) > _cfg.STATS_HISTORY_MAX:
@@ -565,6 +566,22 @@ class State(StateStore):
                 "stream_stats_updated",
                 {"stream_id": stream_id},
             )
+    def _recalculate_engine_aggregates(self, engine_id: str):
+        """Recalculate total throughput and peer counts for an engine. Internal use only (lock expected)."""
+        eng = self.engines.get(engine_id)
+        if not eng:
+            return
+
+        engine_streams = [
+            self.streams.get(sid) for sid in eng.streams
+            if sid in self.streams
+        ]
+        active_streams = [s for s in engine_streams if s and s.status == "started"]
+
+        eng.total_speed_down = sum(int(s.speed_down or 0) for s in active_streams)
+        eng.total_speed_up = sum(int(s.speed_up or 0) for s in active_streams)
+        eng.total_peers = sum(int(s.peers or 0) for s in active_streams)
+        eng.stream_count = len(active_streams)
 
     def set_engine_vpn(self, container_id: str, vpn_container: str):
         update_payload = None
