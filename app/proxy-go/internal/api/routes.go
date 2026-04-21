@@ -76,12 +76,13 @@ func (s *Server) registerRoutes() {
 	// Health
 	s.mux.HandleFunc("/proxy/health", s.handleHealth)
 	
-	// Debug / Profiling
-	s.mux.HandleFunc("/debug/pprof/", pprof.Index)
-	s.mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	s.mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	s.mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	s.mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	// Debug / Profiling — gated behind API key when one is configured.
+	// /debug/pprof/profile burns a CPU core for 30 s, so anonymous access is dangerous.
+	s.mux.HandleFunc("/debug/pprof/", requireAPIKey(pprof.Index))
+	s.mux.HandleFunc("/debug/pprof/cmdline", requireAPIKey(pprof.Cmdline))
+	s.mux.HandleFunc("/debug/pprof/profile", requireAPIKey(pprof.Profile))
+	s.mux.HandleFunc("/debug/pprof/symbol", requireAPIKey(pprof.Symbol))
+	s.mux.HandleFunc("/debug/pprof/trace", requireAPIKey(pprof.Trace))
 
 	// Everything else → Python orchestrator
 	s.mux.HandleFunc("/", s.handlePassthrough)
@@ -130,8 +131,19 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 			PrebufferSeconds: prebufferSeconds,
 		}
 		s.hub.StartStream(r.Context(), p)
-		time.Sleep(50 * time.Millisecond)
-		mgr, buf, cm = s.hub.GetEntry(streamKey)
+		deadline := time.Now().Add(500 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			mgr, buf, cm = s.hub.GetEntry(streamKey)
+			if mgr != nil {
+				break
+			}
+			select {
+			case <-r.Context().Done():
+				http.Error(w, "request cancelled", http.StatusServiceUnavailable)
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
 		if mgr == nil {
 			http.Error(w, "stream start failed", http.StatusInternalServerError)
 			return
@@ -157,6 +169,13 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 	clientIP := clientIP(r)
 	clientID := buildClientID(clientIP, r.Header.Get("User-Agent"))
 	_ = controlMode // used via mgr.ControlMode() inside the streamer if needed
+
+	// Check capacity before writing headers — once headers are committed a
+	// 503 can no longer be sent; the client would receive a zero-byte TS stream.
+	if !cm.HasCapacity() {
+		http.Error(w, "stream at capacity", http.StatusServiceUnavailable)
+		return
+	}
 
 	w.Header().Set("Content-Type", "video/mp2t")
 	w.Header().Set("Transfer-Encoding", "chunked")
@@ -215,6 +234,7 @@ func (s *Server) handleHLSManifest(w http.ResponseWriter, r *http.Request) {
 		engineURL := fmt.Sprintf("http://%s:%d/ace/manifest.m3u8?id=%s&file_indexes=%s",
 			mgr.EngineHost(), mgr.EnginePort(), url.QueryEscape(inputVal), url.QueryEscape(fileIndexes))
 		sess := hls.NewSession(streamKey, engineURL, fmt.Sprintf("http://%s", r.Host))
+		defer sess.Stop()
 		if err := sess.ServeManifest(r.Context(), w); err != nil {
 			http.Error(w, "manifest error: "+err.Error(), http.StatusBadGateway)
 			return
@@ -240,6 +260,7 @@ func (s *Server) handleHLSManifest(w http.ResponseWriter, r *http.Request) {
 	engineURL := fmt.Sprintf("http://%s:%d/ace/manifest.m3u8?id=%s&file_indexes=%s",
 		ep.EngineParams.Host, ep.EngineParams.Port, url.QueryEscape(inputVal), url.QueryEscape(fileIndexes))
 	sess := hls.NewSession(streamKey, engineURL, fmt.Sprintf("http://%s", r.Host))
+	defer sess.Stop()
 	if err := sess.ServeManifest(r.Context(), w); err != nil {
 		http.Error(w, "manifest error: "+err.Error(), http.StatusBadGateway)
 	}
@@ -272,8 +293,19 @@ func (s *Server) handleHLSManifestAPIMode(
 			PrebufferSeconds: ep.PrebufferSeconds,
 		}
 		s.hub.StartStream(r.Context(), p)
-		time.Sleep(50 * time.Millisecond)
-		_, buf, _ = s.hub.GetEntry(streamKey)
+		deadline := time.Now().Add(500 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			_, buf, _ = s.hub.GetEntry(streamKey)
+			if buf != nil {
+				break
+			}
+			select {
+			case <-r.Context().Done():
+				http.Error(w, "request cancelled", http.StatusServiceUnavailable)
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
 		if buf == nil {
 			http.Error(w, "stream start failed", http.StatusInternalServerError)
 			return
@@ -383,6 +415,7 @@ func (s *Server) handleHLSSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := hls.NewSession(streamKey, "", "")
+	defer sess.Stop()
 	if err := sess.ServeSegment(r.Context(), decodedURL, w); err != nil {
 		http.Error(w, "segment error: "+err.Error(), http.StatusBadGateway)
 	}
@@ -615,4 +648,18 @@ func parseInt(s string, def int) int {
 
 func decodeJSON(r io.Reader, v any) error {
 	return json.NewDecoder(r).Decode(v)
+}
+
+// requireAPIKey wraps a handler so it is only accessible when the request
+// carries the configured API key (X-API-Key header or ?key= query param).
+// If no API key is configured the handler is always allowed through.
+func requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := config.C.APIKey
+		if key != "" && r.Header.Get("X-API-Key") != key && r.URL.Query().Get("key") != key {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
 }

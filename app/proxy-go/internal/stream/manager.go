@@ -77,6 +77,11 @@ type Manager struct {
 	// failover coordination
 	swapCh chan EngineParams
 
+	// pushStatsCh is a single-slot channel for serialising stats pushes.
+	// Callers do a non-blocking send (drop on busy) so a slow orchestrator
+	// cannot cause unbounded goroutine fan-out from the ticker loops.
+	pushStatsCh chan *aceapi.FullStatus
+
 	// API mode: keep the telnet connection alive for the stream's lifetime.
 	// The engine closes the HTTP content stream when this connection drops.
 	apiMu     sync.Mutex
@@ -87,12 +92,13 @@ type Manager struct {
 
 func newManager(p StreamParams, buf *buffer.RingBuffer, cm *ClientManager, hub *Hub) *Manager {
 	return &Manager{
-		params:  p,
-		buf:     buf,
-		clients: cm,
-		hub:     hub,
-		swapCh:  make(chan EngineParams, 1),
-		tag:     fmt.Sprintf("[stream:%s]", p.ContentID),
+		params:      p,
+		buf:         buf,
+		clients:     cm,
+		hub:         hub,
+		swapCh:      make(chan EngineParams, 1),
+		pushStatsCh: make(chan *aceapi.FullStatus, 1),
+		tag:         fmt.Sprintf("[stream:%s]", p.ContentID),
 	}
 }
 
@@ -101,6 +107,8 @@ func (m *Manager) Run(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	m.cancelFn = cancel
 	defer cancel()
+
+	go m.statsPusher(ctx)
 
 	slog.Info("stream manager starting", "stream", m.params.ContentID)
 
@@ -436,6 +444,8 @@ func (m *Manager) startReadLoop(ctx context.Context) {
 func (m *Manager) runAPIKeepalive(ctx context.Context) {
 	ticker := time.NewTicker(apiKeepaliveInterval)
 	defer ticker.Stop()
+	const maxConsecFails = 3
+	consecFails := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -449,11 +459,22 @@ func (m *Manager) runAPIKeepalive(ctx context.Context) {
 			}
 			fullStatus, err := cli.PingWithStatus()
 			if err != nil {
-				slog.Debug("API keepalive ping failed", "stream", m.params.ContentID, "err", err)
-				return
+				consecFails++
+				slog.Debug("API keepalive ping failed", "stream", m.params.ContentID,
+					"err", err, "consecutive_fails", consecFails)
+				if consecFails >= maxConsecFails {
+					slog.Warn("API keepalive: persistent failure, abandoning keepalive",
+						"stream", m.params.ContentID)
+					return
+				}
+				continue
 			}
+			consecFails = 0
 			if fullStatus != nil {
-				go m.pushStats(fullStatus)
+				select {
+				case m.pushStatsCh <- fullStatus:
+				default:
+				}
 			}
 		}
 	}
@@ -500,8 +521,25 @@ func (m *Manager) measureBitrate(ctx context.Context) {
 			// uses the inaccurate engine-reported bitrate — push the measured
 			// value so the latest stat snapshot gets an accurate bitrate.
 			if strings.ToLower(m.params.ControlMode) != "api" {
-				go m.pushStats(nil)
+				select {
+				case m.pushStatsCh <- nil:
+				default:
+				}
 			}
+		}
+	}
+}
+
+// statsPusher drains pushStatsCh and calls pushStats serially. Having a single
+// goroutine here means a slow orchestrator can never cause unbounded goroutine
+// accumulation — excess pushes are dropped by the non-blocking sends upstream.
+func (m *Manager) statsPusher(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case s := <-m.pushStatsCh:
+			m.pushStats(s)
 		}
 	}
 }

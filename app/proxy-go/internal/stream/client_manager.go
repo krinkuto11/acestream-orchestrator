@@ -50,7 +50,8 @@ type ClientManager struct {
 	hadClients bool // true once at least one client (TS or HLS) has ever connected
 	isInitialBuffering bool
 
-	stopCh chan struct{}
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 func newClientManager(contentID, workerID string, rdb *redis.Client) *ClientManager {
@@ -161,6 +162,15 @@ func (cm *ClientManager) HadClients() bool {
 	v := cm.hadClients
 	cm.mu.RUnlock()
 	return v
+}
+
+// HasCapacity returns true if another client can be accepted. Used to gate
+// response headers before committing them to the client.
+func (cm *ClientManager) HasCapacity() bool {
+	cm.mu.RLock()
+	ok := len(cm.clients) < config.C.MaxClientsPerStream()
+	cm.mu.RUnlock()
+	return ok
 }
 
 // LocalCount returns the number of clients managed by this instance.
@@ -281,9 +291,9 @@ func (cm *ClientManager) HeartbeatHLSClient(clientID, ip, userAgent string, byte
 	cm.rdb.Expire(ctx, key, ttl)
 }
 
-// Stop halts the heartbeat goroutine.
+// Stop halts the heartbeat goroutine. Safe to call multiple times.
 func (cm *ClientManager) Stop() {
-	close(cm.stopCh)
+	cm.stopOnce.Do(func() { close(cm.stopCh) })
 }
 
 func (cm *ClientManager) heartbeatLoop() {
@@ -302,6 +312,13 @@ func (cm *ClientManager) heartbeatLoop() {
 }
 
 func (cm *ClientManager) sendHeartbeats() {
+	// Don't refresh Redis keys if the stream has already been stopped.
+	select {
+	case <-cm.stopCh:
+		return
+	default:
+	}
+
 	cm.mu.RLock()
 	clients := make([]*ClientRecord, 0, len(cm.clients))
 	for _, rec := range cm.clients {
@@ -362,7 +379,6 @@ func (cm *ClientManager) evictGhosts() {
 	for _, id := range ghosts {
 		delete(cm.clients, id)
 	}
-	remaining := len(cm.clients)
 	cm.mu.Unlock()
 
 	if len(ghosts) > 0 {
@@ -373,7 +389,12 @@ func (cm *ClientManager) evictGhosts() {
 			cm.rdb.Del(ctx, rediskeys.ClientMetadata(cm.contentID, id))
 		}
 
-		if remaining == 0 {
+		// Re-read the count under the lock to avoid a TOCTOU race with Add():
+		// a new client may have connected between when we released the lock and now.
+		cm.mu.RLock()
+		currentCount := len(cm.clients)
+		cm.mu.RUnlock()
+		if currentCount == 0 {
 			cm.rdb.Set(ctx, rediskeys.LastClientDisconnect(cm.contentID),
 				fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9),
 				config.C.ClientRecordTTL)

@@ -23,6 +23,8 @@ type Hub struct {
 
 	mu       sync.RWMutex
 	streams  map[string]*streamEntry
+
+	stopCh chan struct{}
 }
 
 type streamEntry struct {
@@ -40,9 +42,15 @@ func NewHub(rdb *redis.Client) *Hub {
 		workerID: workerID(),
 		rdb:      rdb,
 		streams:  make(map[string]*streamEntry),
+		stopCh:   make(chan struct{}),
 	}
 	go h.cleanupLoop()
 	return h
+}
+
+// Stop terminates background goroutines. Call once during graceful shutdown.
+func (h *Hub) Stop() {
+	close(h.stopCh)
 }
 
 // StartStream ensures a stream is running. If it already exists and is healthy,
@@ -94,9 +102,12 @@ func (h *Hub) StartStream(ctx context.Context, p StreamParams) bool {
 		cancelFn: cancel,
 	}
 
-	// Claim ownership in Redis
-	h.rdb.Set(ctx, rediskeys.StreamOwner(contentID), h.workerID, 5*time.Minute)
-	h.rdb.Set(ctx, rediskeys.StreamInitTime(contentID), fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9), time.Hour)
+	// Claim ownership in Redis. Always use context.Background() — the caller's
+	// ctx is the HTTP request context and may be cancelled before the write
+	// completes, leaving the stream running but unclaimed in Redis.
+	bgCtx := context.Background()
+	h.rdb.Set(bgCtx, rediskeys.StreamOwner(contentID), h.workerID, 5*time.Minute)
+	h.rdb.Set(bgCtx, rediskeys.StreamInitTime(contentID), fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9), time.Hour)
 
 	go func() {
 		mgr.Run(streamCtx)
@@ -157,7 +168,9 @@ func (h *Hub) removeStreamLocked(contentID string) {
 		if e.segmenter != nil {
 			e.segmenter.Stop()
 		}
-		h.flushRedis(contentID)
+		// flushRedis issues a Redis SCAN+DEL; run it outside the lock to avoid
+		// blocking all other stream handlers during the eviction.
+		go h.flushRedis(contentID)
 	}
 }
 
@@ -281,8 +294,13 @@ func (h *Hub) GetSegmenter(contentID string) *hls.Segmenter {
 func (h *Hub) cleanupLoop() {
 	ticker := time.NewTicker(config.C.CleanupInterval)
 	defer ticker.Stop()
-	for range ticker.C {
-		h.runCleanup()
+	for {
+		select {
+		case <-h.stopCh:
+			return
+		case <-ticker.C:
+			h.runCleanup()
+		}
 	}
 }
 
@@ -290,9 +308,9 @@ func (h *Hub) runCleanup() {
 	h.mu.Lock()
 	now := time.Now()
 	var toStop []string
+	var toRefresh []string
 	for id, e := range h.streams {
-		// Refresh ownership TTL
-		h.rdb.Set(context.Background(), rediskeys.StreamOwner(id), h.workerID, 5*time.Minute)
+		toRefresh = append(toRefresh, id)
 
 		localCount := e.clients.LocalCount()
 
@@ -311,6 +329,12 @@ func (h *Hub) runCleanup() {
 		}
 	}
 	h.mu.Unlock()
+
+	// Refresh ownership TTLs outside the lock — Redis I/O must not hold h.mu.
+	ctx := context.Background()
+	for _, id := range toRefresh {
+		h.rdb.Set(ctx, rediskeys.StreamOwner(id), h.workerID, 5*time.Minute)
+	}
 
 	for _, id := range toStop {
 		slog.Info("cleanup: stopping idle stream", "stream", id)

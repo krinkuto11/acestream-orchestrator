@@ -14,9 +14,17 @@ import (
 )
 
 const (
-	defaultSlots    = 16   // number of ring slots (must be power of two for mask trick)
-	minSafeSlots    = 4
+	defaultSlots = 16 // number of ring slots (must be power of two for mask trick)
+	minSafeSlots = 4
 )
+
+// alwaysReady is a pre-closed channel returned by Wait() when the caller is
+// already ahead of the ring — avoids a make+close allocation on every poll.
+var alwaysReady = func() chan struct{} {
+	c := make(chan struct{})
+	close(c)
+	return c
+}()
 
 // Chunk is a single buffered unit: aligned TS data + the global sequence index.
 type Chunk struct {
@@ -202,10 +210,10 @@ func (rb *RingBuffer) WriteAfterTo(afterIndex int64, maxChunks int, w io.Writer)
 	}
 
 	rb.mu.RLock()
-	defer rb.mu.RUnlock()
 
 	head := rb.head - 1
 	if head < 0 || afterIndex >= head {
+		rb.mu.RUnlock()
 		return 0, afterIndex, nil
 	}
 
@@ -224,7 +232,9 @@ func (rb *RingBuffer) WriteAfterTo(afterIndex int64, maxChunks int, w io.Writer)
 		endIdx = rb.head
 	}
 
-	// Prepare net.Buffers for zero-copy write
+	// Collect slice headers under RLock. The backing arrays are immutable once
+	// written (storeChunk always allocates a fresh []byte and never modifies it),
+	// so it is safe to read them after the lock is released.
 	var netBuf net.Buffers
 	var lastIdx = startIdx - 1
 	for i := startIdx; i < endIdx; i++ {
@@ -235,6 +245,7 @@ func (rb *RingBuffer) WriteAfterTo(afterIndex int64, maxChunks int, w io.Writer)
 		netBuf = append(netBuf, rb.slots[slot])
 		lastIdx = i
 	}
+	rb.mu.RUnlock() // release before blocking I/O — a slow client must not stall the writer
 
 	if len(netBuf) == 0 {
 		return 0, afterIndex, nil
@@ -250,14 +261,12 @@ func (rb *RingBuffer) Wait(afterIndex int64) <-chan struct{} {
 	ch := rb.notify
 	rb.notifyMu.Unlock()
 
-	// Already ahead — return a closed channel so caller doesn't block.
+	// Already ahead — return the shared closed channel so caller doesn't block.
 	rb.mu.RLock()
 	ahead := rb.head-1 > afterIndex
 	rb.mu.RUnlock()
 	if ahead {
-		closed := make(chan struct{})
-		close(closed)
-		return closed
+		return alwaysReady
 	}
 	return ch
 }
@@ -286,7 +295,8 @@ func (rb *RingBuffer) SourceRate() float64 {
 	return r
 }
 
-// Reset discards all accumulated data (e.g. after engine failover).
+// Reset discards all accumulated data (e.g. after engine failover). Rate and
+// freshness state are also cleared so post-swap pacing starts from a clean slate.
 func (rb *RingBuffer) Reset() {
 	rb.mu.Lock()
 	rb.partial = rb.partial[:0]
@@ -294,6 +304,10 @@ func (rb *RingBuffer) Reset() {
 		rb.seq[i] = -1
 		rb.slots[i] = nil
 	}
+	rb.sourceRateEMA = 0
+	rb.rateWindowStart = time.Time{}
+	rb.rateWindowDelta = 0
+	rb.lastWriteTime = time.Time{}
 	rb.mu.Unlock()
 }
 
@@ -327,7 +341,7 @@ func (rb *RingBuffer) updateSourceRate(written int) {
 		rb.mu.Unlock()
 		return
 	}
-	instant := rb.rateWindowDelta / max(0.001, elapsed)
+	instant := rb.rateWindowDelta / maxFloat64(0.001, elapsed)
 	const alpha = 0.15
 	if rb.sourceRateEMA == 0 {
 		rb.sourceRateEMA = instant
@@ -353,7 +367,7 @@ func nextPow2(n int) int {
 	return n
 }
 
-func max(a, b float64) float64 {
+func maxFloat64(a, b float64) float64 {
 	if a > b {
 		return a
 	}

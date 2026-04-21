@@ -59,6 +59,8 @@ func main() {
 	<-quit
 	slog.Info("shutting down")
 
+	hub.Stop()
+
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {

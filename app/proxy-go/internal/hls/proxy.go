@@ -24,6 +24,8 @@ const vlcUserAgent = "VLC/3.0.21 LibVLC/3.0.21"
 type SegmentCache struct {
 	mu      sync.Mutex
 	entries map[string]segmentEntry
+	stopCh  chan struct{}
+	once    sync.Once
 }
 
 type segmentEntry struct {
@@ -32,9 +34,16 @@ type segmentEntry struct {
 }
 
 func newSegmentCache() *SegmentCache {
-	c := &SegmentCache{entries: make(map[string]segmentEntry)}
+	c := &SegmentCache{
+		entries: make(map[string]segmentEntry),
+		stopCh:  make(chan struct{}),
+	}
 	go c.gcLoop()
 	return c
+}
+
+func (sc *SegmentCache) stop() {
+	sc.once.Do(func() { close(sc.stopCh) })
 }
 
 func (sc *SegmentCache) get(key string) ([]byte, bool) {
@@ -55,15 +64,21 @@ func (sc *SegmentCache) set(key string, data []byte, ttl time.Duration) {
 
 func (sc *SegmentCache) gcLoop() {
 	t := time.NewTicker(30 * time.Second)
-	for range t.C {
-		now := time.Now()
-		sc.mu.Lock()
-		for k, e := range sc.entries {
-			if now.After(e.expires) {
-				delete(sc.entries, k)
+	defer t.Stop()
+	for {
+		select {
+		case <-sc.stopCh:
+			return
+		case <-t.C:
+			now := time.Now()
+			sc.mu.Lock()
+			for k, e := range sc.entries {
+				if now.After(e.expires) {
+					delete(sc.entries, k)
+				}
 			}
+			sc.mu.Unlock()
 		}
-		sc.mu.Unlock()
 	}
 }
 
@@ -96,6 +111,12 @@ func NewSession(contentID, upstreamURL, proxyBase string) *ProxySession {
 			},
 		},
 	}
+}
+
+// Stop terminates the background GC goroutine. Must be called when the session
+// is no longer needed to prevent goroutine leaks.
+func (ps *ProxySession) Stop() {
+	ps.cache.stop()
 }
 
 // ServeManifest fetches the upstream manifest and rewrites segment URLs, then writes to w.

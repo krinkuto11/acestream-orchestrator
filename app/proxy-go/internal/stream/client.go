@@ -130,13 +130,14 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 			emptyCount = 0
 			cs.bytesSent += n
 			cs.videoByteSent += n
-			cs.chunksSent += (newIdx - cs.localIndex)
+			delta := newIdx - cs.localIndex
+			cs.chunksSent += delta
 			if cs.flusher != nil {
 				cs.flusher.Flush()
 			}
-			cs.cm.UpdateStats(cs.clientID, n, newIdx-cs.localIndex)
+			cs.cm.UpdateStats(cs.clientID, n, delta)
 			cs.localIndex = newIdx
-			cs.updateChunkRate(int(newIdx - cs.localIndex))
+			cs.updateChunkRate(int(delta))
 			cs.applyPacing()
 		} else if err != nil {
 			slog.Debug("client write error", "stream", cs.contentID, "client", cs.clientID, "err", err)
@@ -262,7 +263,9 @@ func (cs *ClientStreamer) applyPrebuffer(ctx context.Context, seconds int) {
 
 		nullPkts := ts.CreateNullChunk(50, cs.nullCC)
 		cs.nullCC = (cs.nullCC + 50) & 0x0F
-		cs.w.Write(nullPkts) //nolint:errcheck
+		if _, err := cs.w.Write(nullPkts); err != nil {
+			return
+		}
 		if cs.flusher != nil {
 			cs.flusher.Flush()
 		}
@@ -368,10 +371,3 @@ func (cs *ClientStreamer) updateChunkRate(n int) {
 	}
 }
 
-func sumSizes(chunks [][]byte) int {
-	total := 0
-	for _, c := range chunks {
-		total += len(c)
-	}
-	return total
-}
