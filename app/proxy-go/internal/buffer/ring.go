@@ -55,6 +55,7 @@ type RingBuffer struct {
 	sourceRateEMA      float64
 	rateWindowStart    time.Time
 	rateWindowDelta    float64
+	rateWarmupSamples  int // counts EMA updates; higher α used for the first few to shed burst
 }
 
 // New creates a RingBuffer with the given chunk target size (bytes) and slot count.
@@ -307,6 +308,7 @@ func (rb *RingBuffer) Reset() {
 	rb.sourceRateEMA = 0
 	rb.rateWindowStart = time.Time{}
 	rb.rateWindowDelta = 0
+	rb.rateWarmupSamples = 0
 	rb.lastWriteTime = time.Time{}
 	rb.mu.Unlock()
 }
@@ -342,7 +344,15 @@ func (rb *RingBuffer) updateSourceRate(written int) {
 		return
 	}
 	instant := rb.rateWindowDelta / maxFloat64(0.001, elapsed)
-	const alpha = 0.15
+	// AceStream delivers a large burst at stream start (P2P pre-buffering).
+	// The first EMA sample captures that burst and biases the rate high for
+	// a long time with the normal α=0.15. Use a faster-decaying α for the
+	// first few windows so the EMA converges to the true video bitrate quickly.
+	alpha := 0.15
+	if rb.rateWarmupSamples < 6 {
+		alpha = 0.5
+		rb.rateWarmupSamples++
+	}
 	if rb.sourceRateEMA == 0 {
 		rb.sourceRateEMA = instant
 	} else {
