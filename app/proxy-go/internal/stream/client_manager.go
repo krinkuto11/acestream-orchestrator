@@ -204,6 +204,16 @@ func (cm *ClientManager) UpdateStats(clientID string, bytesDelta, chunksDelta in
 	cm.mu.Unlock()
 }
 
+// UpdatePosition stores the client's current runway in seconds (buffered data ahead of playhead).
+// Called from ClientStreamer's delivery loop; flushed to Redis by the heartbeat.
+func (cm *ClientManager) UpdatePosition(clientID string, secondsBehind float64) {
+	cm.mu.Lock()
+	if rec, ok := cm.clients[clientID]; ok {
+		rec.BufferSecondsBehind = secondsBehind
+	}
+	cm.mu.Unlock()
+}
+
 // HeartbeatHLSClient records activity for an HLS client (manifest or segment
 // fetch). HLS clients never go through ClientStreamer, so they must be
 // registered here to be visible to the Python telemetry UI.
@@ -342,6 +352,8 @@ func (cm *ClientManager) sendHeartbeats() {
 		pipe.HSet(ctx, key,
 			"last_active", lastActive,
 			"bps", fmt.Sprintf("%.2f", rec.BPS),
+			"chunks_sent", fmt.Sprintf("%d", rec.ChunksSent),
+			"buffer_seconds_behind", fmt.Sprintf("%.3f", rec.BufferSecondsBehind),
 			"stats_updated_at", nowStr,
 		)
 		pipe.Expire(ctx, key, ttl)

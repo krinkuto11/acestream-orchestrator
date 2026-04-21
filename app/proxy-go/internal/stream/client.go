@@ -154,6 +154,7 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 			cs.cm.UpdateStats(cs.clientID, n, delta)
 			cs.localIndex = newIdx
 			cs.updateChunkRate(int(delta))
+			cs.updateClientPosition()
 			cs.applyPacing()
 		} else if err != nil {
 			slog.Debug("client write error", "stream", cs.contentID, "client", cs.clientID, "err", err)
@@ -388,6 +389,22 @@ func (cs *ClientStreamer) applyPacing() {
 			time.Sleep(time.Duration(wait * float64(time.Second)))
 		}
 	}
+}
+
+// updateClientPosition recomputes the runway in seconds and stores it in the
+// ClientRecord so the heartbeat can flush it to Redis. Called on every
+// successful write; cheap enough to run inline.
+func (cs *ClientStreamer) updateClientPosition() {
+	bps := cs.effectiveBPS()
+	if bps <= 0 {
+		return
+	}
+	runway := cs.buf.Head() - cs.localIndex
+	if runway < 0 {
+		runway = 0
+	}
+	secondsBehind := float64(runway) * float64(cs.buf.TargetChunkSize()) / float64(bps)
+	cs.cm.UpdatePosition(cs.clientID, secondsBehind)
 }
 
 // updateChunkRate maintains the chunk-rate EMA used as pacing fallback.
