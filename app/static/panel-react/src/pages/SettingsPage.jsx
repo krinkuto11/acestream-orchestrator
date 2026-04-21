@@ -237,7 +237,7 @@ function SettingsPageInner({
       </Tabs>
 
       <div
-        className={`fixed bottom-4 left-1/2 z-40 w-[min(960px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-slate-300 bg-white/95 p-3 shadow-xl backdrop-blur dark:border-slate-700 dark:bg-slate-950/95 transition-all ${globalDirty ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+        className={`fixed bottom-4 left-1/2 z-50 w-[min(960px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-slate-300 bg-white/95 p-3 shadow-xl backdrop-blur dark:border-slate-700 dark:bg-slate-950/95 transition-all ${globalDirty ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="text-sm text-slate-700 dark:text-slate-200">

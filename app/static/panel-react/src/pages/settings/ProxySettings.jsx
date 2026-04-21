@@ -526,7 +526,7 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 16, scale: 0.98 }}
             transition={{ type: 'spring', stiffness: 260, damping: 24 }}
-            className="fixed bottom-4 right-4 z-50 w-[min(760px,calc(100vw-1.5rem))]"
+            className="fixed bottom-4 right-4 z-40 w-[min(760px,calc(100vw-1.5rem))]"
             onMouseEnter={() => {
               lifecycleWindowHoveredRef.current = true
               clearLifecycleHideTimeout()
