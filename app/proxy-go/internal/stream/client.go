@@ -13,30 +13,38 @@ import (
 	"github.com/acestream/proxy/internal/ts"
 )
 
-// minRunwayChunks is the minimum number of ring-buffer chunks the proxy tries
-// to keep ahead of any client. Keeping at least this many chunks in reserve
-// means a short upstream stall won't immediately stall the player.
-const minRunwayChunks = 3
-
 const (
-	pacingGracePeriod   = 2 * time.Second
-	maxPacingSleep      = 500 * time.Millisecond
-	starvationLogEvery  = 10 // log every N consecutive empty polls
+	pacingGracePeriod  = 2 * time.Second
+	maxPacingSleep     = 500 * time.Millisecond
+	starvationLogEvery = 10
+
+	// minRunwayChunks is the number of ring-buffer chunks the proxy tries to
+	// keep ahead of any client. Keeping a reserve means short upstream stalls
+	// do not immediately stall the player.
+	minRunwayChunks = 3
+
+	// pcrWarmupBytes is the minimum number of bytes the ring buffer must have
+	// received before we trust its PCR-derived bitrate. A typical stream
+	// delivers the first PCR within the first 20–50 TS packets (~4–10 KB), but
+	// we wait for a second sample (one full PCR interval, ~100 ms) before using
+	// the measurement. 256 KB is a conservative threshold that covers the
+	// worst-case first PCR interval.
+	pcrWarmupBytes = 256 * 1024
 )
 
 // ClientStreamer delivers buffered chunks to one HTTP client with bitrate pacing.
 // Call Stream() in a goroutine; write to w until context is done or stream ends.
 type ClientStreamer struct {
-	contentID   string
-	clientID    string
-	clientIP    string
-	userAgent   string
-	seekback    int
-	manager     *Manager
-	buf         *buffer.RingBuffer
-	cm          *ClientManager
-	w           io.Writer
-	flusher     interface{ Flush() }
+	contentID string
+	clientID  string
+	clientIP  string
+	userAgent string
+	seekback  int
+	manager   *Manager
+	buf       *buffer.RingBuffer
+	cm        *ClientManager
+	w         io.Writer
+	flusher   interface{ Flush() }
 
 	// stats
 	bytesSent  int64
@@ -44,12 +52,12 @@ type ClientStreamer struct {
 	localIndex int64
 
 	// pacing
-	pacingStart     time.Time
-	videoByteSent   int64
-	streamBitrate   int     // bytes/s, engine-reported; used as cap for measured rate
-	pacingBurstSec  float64 // seconds of burst allowance, computed once at delivery start
+	pacingStart    time.Time
+	videoByteSent  int64
+	streamBitrate  int     // engine-reported bytes/s; fallback before PCR stabilises
+	pacingBurstSec float64 // seconds of pre-download allowance, set once at delivery start
 
-	// chunk rate EMA
+	// chunk rate EMA (fallback when PCR bitrate is unavailable)
 	chunkRateEMA      float64
 	lastChunkRateTime time.Time
 
@@ -60,7 +68,6 @@ type ClientStreamer struct {
 }
 
 // NewClientStreamer creates a streamer for the given client.
-// flusher may be nil if the writer does not support flushing.
 func NewClientStreamer(contentID, clientID, ip, userAgent string, seekback int,
 	mgr *Manager, buf *buffer.RingBuffer, cm *ClientManager,
 	w io.Writer, flusher interface{ Flush() }) *ClientStreamer {
@@ -76,7 +83,7 @@ func NewClientStreamer(contentID, clientID, ip, userAgent string, seekback int,
 		cm:                cm,
 		w:                 w,
 		flusher:           flusher,
-		pacingBurstSec:    config.C.PacingBurstSeconds, // refined by initPacingBurst
+		pacingBurstSec:    config.C.PacingBurstSeconds, // may be reduced by initPacingBurst
 		lastChunkRateTime: time.Now(),
 		tag:               fmt.Sprintf("[ts:%s][client:%s]", contentID, clientID),
 	}
@@ -108,7 +115,6 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 	slog.Info("client stream starting", "stream", cs.contentID, "client", cs.clientID,
 		"ip", cs.clientIP, "bitrate_bps", cs.streamBitrate*8)
 
-	// --- Probe: send first real chunk before entering prebuffer hold ---
 	pbSec := cs.manager.PrebufferSeconds()
 	if pbSec <= 0 {
 		pbSec = config.C.ProxyPrebufferSeconds
@@ -120,10 +126,10 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 		cs.applyPrebuffer(ctx, pbSec)
 	}
 
-	// Compute the burst allowance once, now that we know the runway depth.
+	// Compute burst allowance now that we know the runway depth.
 	cs.initPacingBurst()
 
-	// --- Main delivery loop ---
+	// ── Main delivery loop ────────────────────────────────────────────────────
 	cfg := config.C
 	maxEmpty := cfg.NoDataTimeoutChecks
 	emptyCount := 0
@@ -170,7 +176,6 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 }
 
 // sendFirstChunk blocks until one real chunk is available and writes it.
-// Returns false if ctx is cancelled before a chunk arrives.
 func (cs *ClientStreamer) sendFirstChunk(ctx context.Context) bool {
 	cfg := config.C
 	for {
@@ -216,15 +221,8 @@ func (cs *ClientStreamer) waitForReady(ctx context.Context) bool {
 }
 
 // applyPrebuffer holds the stream after the first real chunk (Probe-Then-Hold).
-// It sends null TS packets every 0.5s to keep the HTTP connection alive while
-// waiting for enough chunks to accumulate as runway.
-//
-// Exit conditions (mirrors Python _apply_prebuffer_hold):
-//  - runway >= targetChunks AND (engine has advanced past initial index OR elapsed >= 2s)
-//  - deadline reached (max(30, seconds*2) seconds)
-//  - ctx cancelled
+// Sends null TS packets every 0.5 s to keep the HTTP connection alive.
 func (cs *ClientStreamer) applyPrebuffer(ctx context.Context, seconds int) {
-	// Late-binding bitrate: re-read from manager in case engine response arrived after registration.
 	bitrate := cs.manager.Bitrate()
 	if bitrate <= 0 {
 		bitrate = cs.streamBitrate
@@ -262,7 +260,6 @@ func (cs *ClientStreamer) applyPrebuffer(ctx context.Context, seconds int) {
 		runway := int(head - cs.localIndex)
 		elapsed := time.Since(holdStart).Seconds()
 
-		// has_progressed: engine has written at least one new chunk since we started
 		hasProgressed := head > initialEngineIndex || elapsed >= 2.0
 
 		if runway >= targetChunks && hasProgressed && cs.buf.IsFresh(15*time.Second) {
@@ -284,40 +281,32 @@ func (cs *ClientStreamer) applyPrebuffer(ctx context.Context, seconds int) {
 	slog.Info("prebuffer timeout reached", "stream", cs.contentID, "client", cs.clientID)
 }
 
+// ─── Bitrate ─────────────────────────────────────────────────────────────────
+
 // effectiveBPS returns the bitrate to use for pacing (bytes/s).
-// It prefers the ring buffer's measured ingress rate but caps it at 2× the
-// engine-reported video bitrate so that AceStream's initial data burst —
-// which can be 5-10× the actual video rate — does not inflate the pacing
-// budget and drain the ring buffer immediately.
+//
+// Priority:
+//  1. PCR-derived video bitrate from the ring buffer — accurate from the first
+//     complete PCR interval, immune to AceStream's initial data-transfer burst.
+//  2. Engine-reported estimate — used while PCR hasn't stabilised yet.
 func (cs *ClientStreamer) effectiveBPS() int {
-	bps := cs.streamBitrate
-	if srcRate := cs.buf.SourceRate(); srcRate > 0.1 {
-		measured := int(srcRate * float64(cs.buf.TargetChunkSize()))
-		if measured > 0 {
-			if cs.streamBitrate > 0 && measured > cs.streamBitrate*2 {
-				// Measured rate is more than 2× engine estimate: clamp to 2× so
-				// the AceStream initial burst doesn't blow out the burst budget.
-				bps = cs.streamBitrate * 2
-			} else {
-				bps = measured
-			}
-		}
+	if vbr := cs.buf.VideoBitrate(); vbr >= pcrWarmupBytes {
+		return int(vbr)
 	}
-	return bps
+	return cs.streamBitrate
 }
 
+// ─── Pacing ──────────────────────────────────────────────────────────────────
+
 // initPacingBurst computes cs.pacingBurstSec once, just before the main
-// delivery loop starts. The default burst from config is reduced when the
-// current ring-buffer runway is smaller, so at most (runway - minRunwayChunks)
-// chunks are given away as burst. This keeps at least minRunwayChunks of
-// proxy-side runway intact so short upstream stalls don't immediately stall
-// the player.
+// delivery loop. The config default is reduced when the current ring-buffer
+// runway is shallower than PacingBurstSeconds × bitrate, so the burst cannot
+// drain the ring below minRunwayChunks of reserve.
 func (cs *ClientStreamer) initPacingBurst() {
 	runway := cs.buf.Head() - cs.localIndex
 	safeRunway := runway - int64(minRunwayChunks)
 	if safeRunway <= 0 {
-		// Less runway than the safe floor — keep default, client needs all data.
-		return
+		return // runway already at/below the floor — keep config default
 	}
 	bps := cs.effectiveBPS()
 	if bps <= 0 {
@@ -328,11 +317,18 @@ func (cs *ClientStreamer) initPacingBurst() {
 		cs.pacingBurstSec = runwaySec
 		slog.Debug("pacing burst capped by runway",
 			"stream", cs.contentID, "client", cs.clientID,
-			"burst_s", math.Round(runwaySec*10)/10, "runway_chunks", runway)
+			"burst_s", math.Round(runwaySec*10)/10,
+			"runway_chunks", runway)
 	}
 }
 
-// applyPacing sleeps to keep delivery rate at (bitrate × pacing_multiplier).
+// applyPacing sleeps to keep delivery at effectiveBPS × pacing_multiplier.
+//
+// Multiplier tiers (highest to lowest priority):
+//   runway > 30 chunks  → ProxyMaxCatchupMultiplier (2×) — ring is very full, drain fast
+//   runway > 15 chunks  → 1.5×
+//   runway < 3 chunks   → 1.0× — ring almost empty, stop over-consuming
+//   otherwise           → PacingBitrateMultiplier (1.2×)
 func (cs *ClientStreamer) applyPacing() {
 	if cs.pacingStart.IsZero() {
 		return
@@ -345,8 +341,6 @@ func (cs *ClientStreamer) applyPacing() {
 	cfg := config.C
 	runway := int(cs.buf.Head() - cs.localIndex)
 
-	// Tiered multiplier: speed up to catch up when the ring has slack;
-	// hold at 1.0× when runway is critically low so the ring can refill.
 	mult := cfg.PacingBitrateMultiplier
 	switch {
 	case runway > 30:
@@ -356,7 +350,7 @@ func (cs *ClientStreamer) applyPacing() {
 			mult = 1.5
 		}
 	case runway < minRunwayChunks:
-		// Ring buffer is nearly empty — pace at exactly 1× to stop draining.
+		// Ring nearly empty — pace at exactly 1× to stop draining it.
 		mult = 1.0
 	}
 
@@ -378,11 +372,8 @@ func (cs *ClientStreamer) applyPacing() {
 		return
 	}
 
-	// Fallback: chunk-count pacing
+	// ── Fallback: chunk-count pacing when bitrate is unknown ─────────────────
 	rate := cs.chunkRateEMA
-	if rate <= 0 {
-		rate = cs.buf.SourceRate()
-	}
 	if rate <= 0 {
 		return
 	}
@@ -399,17 +390,20 @@ func (cs *ClientStreamer) applyPacing() {
 	}
 }
 
+// updateChunkRate maintains the chunk-rate EMA used as pacing fallback.
+// Prefers the PCR-derived bitrate when available to avoid egress-speed bias.
 func (cs *ClientStreamer) updateChunkRate(n int) {
-	// Prefer source rate from the buffer (avoids egress-speed contamination)
-	if r := cs.buf.SourceRate(); r > 0.1 {
+	if vbr := cs.buf.VideoBitrate(); vbr >= pcrWarmupBytes {
+		chunkRate := vbr / float64(cs.buf.TargetChunkSize())
 		if cs.chunkRateEMA == 0 {
-			cs.chunkRateEMA = r
+			cs.chunkRateEMA = chunkRate
 		} else {
-			cs.chunkRateEMA = 0.2*r + 0.8*cs.chunkRateEMA
+			cs.chunkRateEMA = 0.2*chunkRate + 0.8*cs.chunkRateEMA
 		}
 		return
 	}
 
+	// Fallback: measure from actual delivery timing.
 	now := time.Now()
 	elapsed := now.Sub(cs.lastChunkRateTime).Seconds()
 	cs.lastChunkRateTime = now
@@ -423,4 +417,3 @@ func (cs *ClientStreamer) updateChunkRate(n int) {
 		cs.chunkRateEMA = 0.2*instant + 0.8*cs.chunkRateEMA
 	}
 }
-

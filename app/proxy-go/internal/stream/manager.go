@@ -480,11 +480,10 @@ func (m *Manager) runAPIKeepalive(ctx context.Context) {
 	}
 }
 
-// measureBitrate periodically computes the actual ingress bitrate from the ring
-// buffer's source-rate EMA and updates m.bitrate + Redis. This replaces the
-// engine-reported estimate (which is set before P2P buffering and may be stale).
-// For HTTP-mode streams it also pushes the measured value to the orchestrator so
-// the dashboard shows accurate bitrate without relying on the engine's value.
+// measureBitrate periodically reads the PCR-derived video bitrate from the ring
+// buffer and updates m.bitrate + Redis. PCR-based measurement is accurate from
+// the first complete PCR interval (~100–200 ms) and is immune to AceStream's
+// initial data-transfer burst, which inflates data-rate metrics for 30–60 s.
 func (m *Manager) measureBitrate(ctx context.Context) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
@@ -493,33 +492,29 @@ func (m *Manager) measureBitrate(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			srcRate := m.buf.SourceRate()
-			if srcRate < 0.05 {
-				continue
+			measured := int(m.buf.VideoBitrate())
+			if measured < 10_000 {
+				continue // PCR not yet stabilised or stream not flowing
 			}
-			
-			// We have data flowing; initial buffering is over.
+
+			// Data is flowing; initial buffering is over.
 			m.clients.SetInitialBuffering(false)
 
-			// Sync buffer index to Redis so Orchestrator telemetry can see engine->proxy flow
+			// Sync buffer head index to Redis for orchestrator telemetry.
 			head := m.buf.Head()
 			if head >= 0 && m.hub != nil {
-				m.hub.rdb.Set(ctx, rediskeys.BufferIndex(m.params.ContentID), strconv.FormatInt(head, 10), time.Hour)
+				m.hub.rdb.Set(ctx, rediskeys.BufferIndex(m.params.ContentID),
+					strconv.FormatInt(head, 10), time.Hour)
 			}
 
-			measured := int(srcRate * float64(m.buf.TargetChunkSize()))
-			if measured < 10_000 {
-				continue // noise — ignore
-			}
 			m.mu.Lock()
 			m.bitrate = measured
 			m.mu.Unlock()
 			m.persistBitrate(measured)
 
-			// API mode pushes full stats (peers/speed) via runAPIKeepalive.
-			// For HTTP mode the Python collector already polls stat_url, but it
-			// uses the inaccurate engine-reported bitrate — push the measured
-			// value so the latest stat snapshot gets an accurate bitrate.
+			// API mode pushes full stats via runAPIKeepalive.
+			// For HTTP mode push the PCR-measured bitrate so the dashboard
+			// shows the true video rate instead of the engine's estimate.
 			if strings.ToLower(m.params.ControlMode) != "api" {
 				select {
 				case m.pushStatsCh <- nil:
@@ -555,10 +550,9 @@ func (m *Manager) pushStats(full *aceapi.FullStatus) {
 	contentID := m.params.ContentID
 	m.mu.Unlock()
 
-	srcRate := m.buf.SourceRate()
-	bitrate := 0
-	if srcRate > 0.05 {
-		bitrate = int(srcRate * float64(m.buf.TargetChunkSize()))
+	bitrate := int(m.buf.VideoBitrate())
+	if bitrate < 10_000 {
+		bitrate = 0
 	}
 
 	payload := map[string]any{
