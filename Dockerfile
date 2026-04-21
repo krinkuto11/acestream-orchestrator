@@ -102,7 +102,8 @@ def start_redis():
         '--port', '6379',
         '--save', '',
         '--appendonly', 'no',
-        '--dir', '/tmp'
+        '--dir', '/tmp',
+        '--protected-mode', 'no'
     ]
     subprocess.run(redis_cmd, check=True)
     print("Redis server started", flush=True)
