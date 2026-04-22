@@ -357,6 +357,12 @@ func (s *Server) handleHLSManifestAPIMode(
 		}
 	}
 
+	if seg.SegmentCount() == 0 {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "stream not ready", http.StatusServiceUnavailable)
+		return
+	}
+
 	manifest := seg.Manifest(fmt.Sprintf("http://%s", r.Host), streamKey)
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")

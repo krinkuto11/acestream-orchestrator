@@ -90,3 +90,4 @@ context
 .claude
 .pytest_cache
 aceserve-x86_64
+load_tests
