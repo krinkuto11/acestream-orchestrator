@@ -375,6 +375,8 @@ function StreamCard({
   const [extendedStats, setExtendedStats] = useState(null)
   const [clients, setClients] = useState([])
   const [clientsLoading, setClientsLoading] = useState(true)
+  const [detailsLoading, setDetailsLoading] = useState(false)
+  const [detailsLive, setDetailsLive] = useState(false)
 
   useEffect(() => {
     setLocalStream(stream)
