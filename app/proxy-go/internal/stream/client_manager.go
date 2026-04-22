@@ -333,12 +333,31 @@ func (cm *ClientManager) sendHeartbeats() {
 	default:
 	}
 
-	cm.mu.RLock()
+	cm.mu.Lock()
+	now := time.Now()
 	clients := make([]*ClientRecord, 0, len(cm.clients))
 	for _, rec := range cm.clients {
+		// Calculate BPS for TS clients (HLS is updated in HeartbeatHLSClient)
+		if rec.LastRequestKind == "TS" {
+			dt := now.Sub(rec.PrevUpdatedAt).Seconds()
+			if dt >= 1.0 {
+				deltaBytes := rec.BytesSent - rec.PrevBytesSent
+				instantBPS := float64(deltaBytes) * 8.0 / dt
+
+				if rec.BPS == 0 {
+					rec.BPS = instantBPS
+				} else {
+					const alpha = 0.3
+					rec.BPS = (rec.BPS * (1.0 - alpha)) + (instantBPS * alpha)
+				}
+
+				rec.PrevBytesSent = rec.BytesSent
+				rec.PrevUpdatedAt = now
+			}
+		}
 		clients = append(clients, rec)
 	}
-	cm.mu.RUnlock()
+	cm.mu.Unlock()
 
 	if len(clients) == 0 {
 		return

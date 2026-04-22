@@ -308,10 +308,25 @@ def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
     current_client_bytes: Dict[str, int] = {}
     current_stream_ingress_bytes: Dict[str, int] = {}
 
-    # Throughput calculation for Go Data Plane should ideally be done 
-    # by reading Redis keys or having the Go proxy push metrics.
-    # For now, we return 0 for legacy proxy deltas.
-    pass
+    from ..data_plane.client_tracker import client_tracking_service
+    
+    # 1. Aggregate egress bytes from all active TS/HLS clients
+    # get_all_active_clients pulls from Redis hashes (populated by Go proxy)
+    all_clients = client_tracking_service.get_all_active_clients()
+    for client in all_clients:
+        cid = client.get("id")
+        bytes_sent = client.get("bytes_sent")
+        if cid and bytes_sent is not None:
+            current_client_bytes[str(cid)] = int(bytes_sent)
+
+    # 2. Aggregate ingress bytes from all active streams
+    # list_streams_with_stats pulls from state.stream_stats (populated by engine monitor)
+    active_streams = state.list_streams_with_stats(status="started")
+    for s in active_streams:
+        # For ingress, we use 'downloaded' total from the engine side.
+        # This represents data arriving into the orchestrator/proxy cluster.
+        if s.key and s.downloaded is not None:
+            current_stream_ingress_bytes[str(s.key)] = int(s.downloaded)
 
     with _proxy_io_lock:
         delta_ts_egress = 0
