@@ -95,7 +95,8 @@ class Cfg(BaseModel):
     ACE_LIVE_EDGE_DELAY: int = 0
     PROXY_INITIAL_DATA_WAIT_TIMEOUT: int = 10
     PROXY_STREAM_TIMEOUT: int = 60
-    PROXY_PREBUFFER_SECONDS: int = 0
+    PROXY_PREBUFFER_SECONDS: int = 3
+    PACING_BITRATE_MULTIPLIER: float = 1.5
     STREAM_MODE: str = "TS"
     
     # HLS settings

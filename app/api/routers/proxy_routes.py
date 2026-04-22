@@ -385,7 +385,8 @@ def internal_select_engine():
         "port": engine.port,
         "api_port": engine.api_port or 62062,
         "container_id": engine.container_id,
-        "proxy_prebuffer_seconds": getattr(cfg, "PROXY_PREBUFFER_SECONDS", 0),
+        "proxy_prebuffer_seconds": getattr(cfg, "PROXY_PREBUFFER_SECONDS", 3),
+        "pacing_bitrate_multiplier": getattr(cfg, "PACING_BITRATE_MULTIPLIER", 1.5),
         "stream_mode": getattr(cfg, "STREAM_MODE", "TS").upper(),
         "control_mode": getattr(cfg, "CONTROL_MODE", "api").lower(),
     }

@@ -135,6 +135,7 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 			ControlMode:      controlMode,
 			StreamMode:       streamMode,
 			PrebufferSeconds: prebufferSeconds,
+			PacingMultiplier: ep.PacingMultiplier,
 		}
 		s.hub.StartStream(r.Context(), p)
 		deadline := time.Now().Add(500 * time.Millisecond)
@@ -297,6 +298,7 @@ func (s *Server) handleHLSManifestAPIMode(
 			ControlMode:      ep.ControlMode,
 			StreamMode:       "HLS",
 			PrebufferSeconds: ep.PrebufferSeconds,
+			PacingMultiplier: ep.PacingMultiplier,
 		}
 		s.hub.StartStream(r.Context(), p)
 		deadline := time.Now().Add(500 * time.Millisecond)
@@ -506,6 +508,7 @@ func (s *Server) recordHLSClient(streamKey string, bytesDelta int64, r *http.Req
 type engineSelection struct {
 	stream.EngineParams
 	PrebufferSeconds int
+	PacingMultiplier float64
 	StreamMode       string // "TS" or "HLS"
 	ControlMode      string // "http" or "api"
 }
@@ -534,8 +537,9 @@ func (s *Server) selectEngine() (engineSelection, error) {
 		Port             int    `json:"port"`
 		APIPort          int    `json:"api_port"`
 		ContainerID      string `json:"container_id"`
-		PrebufferSeconds int    `json:"proxy_prebuffer_seconds"`
-		StreamMode       string `json:"stream_mode"`
+		PrebufferSeconds int     `json:"proxy_prebuffer_seconds"`
+		PacingMultiplier float64 `json:"pacing_bitrate_multiplier"`
+		StreamMode       string  `json:"stream_mode"`
 		ControlMode      string `json:"control_mode"`
 	}
 	if err := decodeJSON(resp.Body, &result); err != nil {
@@ -561,6 +565,7 @@ func (s *Server) selectEngine() (engineSelection, error) {
 			ContainerID: result.ContainerID,
 		},
 		PrebufferSeconds: result.PrebufferSeconds,
+		PacingMultiplier: result.PacingMultiplier,
 		StreamMode:       strings.ToUpper(result.StreamMode),
 		ControlMode:      strings.ToLower(result.ControlMode),
 	}, nil

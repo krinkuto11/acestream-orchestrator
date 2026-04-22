@@ -50,6 +50,7 @@ type StreamParams struct {
 	ControlMode       string // "http" or "api"
 	StreamMode        string // "TS" or "HLS"
 	PrebufferSeconds  int    // 0 = disabled; from GUI setting proxy_prebuffer_seconds
+	PacingMultiplier  float64
 }
 
 // Manager handles one stream's lifecycle: engine connection, upstream reading, failover.
@@ -652,6 +653,11 @@ func (m *Manager) ControlMode() string {
 // PrebufferSeconds returns the prebuffer hold duration for this stream.
 func (m *Manager) PrebufferSeconds() int {
 	return m.params.PrebufferSeconds
+}
+
+// PacingMultiplier returns the pacing bitrate multiplier for this stream.
+func (m *Manager) PacingMultiplier() float64 {
+	return m.params.PacingMultiplier
 }
 
 // StreamMode returns "TS" or "HLS" for this stream.

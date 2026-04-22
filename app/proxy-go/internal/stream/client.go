@@ -345,7 +345,11 @@ func (cs *ClientStreamer) applyPacing() {
 	cfg := config.C
 	runway := int(cs.buf.Head() - cs.localIndex)
 
-	mult := cfg.PacingBitrateMultiplier
+	mult := cs.manager.PacingMultiplier()
+	if mult <= 0 {
+		mult = cfg.PacingBitrateMultiplier
+	}
+
 	switch {
 	case runway > 30:
 		mult = cfg.ProxyMaxCatchupMultiplier

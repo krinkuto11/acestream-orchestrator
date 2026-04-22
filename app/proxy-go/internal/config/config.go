@@ -134,9 +134,9 @@ func load() *Config {
 		InitialDataCheckInterval: envDuration("INITIAL_DATA_CHECK_INTERVAL_MS", 200*time.Millisecond),
 
 		PacingBurstSeconds:        envFloat("PACING_BURST_SECONDS", 15.0),
-		PacingBitrateMultiplier:   envFloat("PACING_BITRATE_MULTIPLIER", 1.20),
+		PacingBitrateMultiplier:   envFloat("PACING_BITRATE_MULTIPLIER", 1.5),
 		ProxyMaxCatchupMultiplier: envFloat("PROXY_MAX_CATCHUP_MULTIPLIER", 2.0),
-		ProxyPrebufferSeconds:     envInt("PROXY_PREBUFFER_SECONDS", 0),
+		ProxyPrebufferSeconds:     envInt("PROXY_PREBUFFER_SECONDS", 3),
 
 		MaxRetries:        envInt("MAX_RETRIES", 3),
 		RetryWaitInterval: envDuration("RETRY_WAIT_INTERVAL_MS", 500*time.Millisecond),
