@@ -52,7 +52,6 @@ def _is_db_effectively_empty() -> bool:
             "orchestrator_settings": SettingsPersistence._default_orchestrator_settings(),
             "proxy_settings": SettingsPersistence._default_proxy_settings(),
             "vpn_settings": SettingsPersistence._default_vpn_settings(),
-            "loop_detection_settings": SettingsPersistence._default_loop_detection_settings(),
         }
 
         row_vpn = SettingsPersistence.normalize_vpn_config(dict(row.vpn_settings or {}))
@@ -71,7 +70,6 @@ def _is_db_effectively_empty() -> bool:
             and dict(row.orchestrator_settings or {}) == defaults["orchestrator_settings"]
             and dict(row.proxy_settings or {}) == defaults["proxy_settings"]
             and row_vpn == default_vpn
-            and dict(row.loop_detection_settings or {}) == defaults["loop_detection_settings"]
             and not has_vpn_credentials
         )
         return is_default

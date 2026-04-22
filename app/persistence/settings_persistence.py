@@ -485,9 +485,17 @@ class SettingsPersistence:
                 "orchestrator_settings": cls._default_orchestrator_settings(),
                 "proxy_settings": cls._default_proxy_settings(),
                 "vpn_settings": cls._default_vpn_settings(),
-                and cached_vpn_no_creds == default_vpn
-                and not cached_credentials
-            )
+            }
+
+            for category, default_val in defaults.items():
+                cached = cls._cache.get(category) or {}
+                if category == "vpn_settings":
+                    cached_no_creds = {k: v for k, v in cached.items() if k != "credentials"}
+                    if cached_no_creds != default_val or cached.get("credentials"):
+                        return True
+                elif cached != default_val:
+                    return True
+            return False
 
     @classmethod
     def _get_cached_category(cls, category: str) -> Dict[str, Any]:
