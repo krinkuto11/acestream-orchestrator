@@ -393,6 +393,7 @@ class ClientTrackingService:
                     from ..shared.redis_keys import RedisKeys
                     # Use minimal subset for high-frequency updates to reduce Redis load
                     ttl = 60 # Default TTL
+                    update_mapping = {
                         "bps": str(current.get("bps")),
                         "bytes_sent": str(current.get("bytes_sent")),
                         "requests_total": str(current.get("requests_total")),
