@@ -58,6 +58,7 @@ class EngineSettingsUpdate(BaseModel):
     total_max_upload_rate: Optional[int] = None
     live_cache_type: Optional[str] = None
     buffer_time: Optional[int] = None
+    max_peers: Optional[int] = None
     memory_limit: Optional[str] = None
     parameters: Optional[List[Dict[str, Any]]] = None
     torrent_folder_mount_enabled: Optional[bool] = None
@@ -502,6 +503,7 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
         "total_max_upload_rate",
         "live_cache_type",
         "buffer_time",
+        "max_peers",
         "memory_limit",
         "parameters",
         "torrent_folder_mount_enabled",

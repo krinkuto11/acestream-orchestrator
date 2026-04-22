@@ -67,6 +67,7 @@ class EngineConfig(BaseModel):
     total_max_upload_rate: int = 0
     live_cache_type: str = "memory"  # memory|disk
     buffer_time: int = 10
+    max_peers: int = 50
 
     memory_limit: Optional[str] = None
     parameters: List[EngineParameter] = Field(default_factory=list)
@@ -138,6 +139,7 @@ def _normalize_legacy_payload(data: Dict[str, Any]) -> Dict[str, Any]:
         "total_max_upload_rate": int(up_rate or 0),
         "live_cache_type": str(data.get("live_cache_type") or "memory"),
         "buffer_time": int(data.get("buffer_time") or 10),
+        "max_peers": int(data.get("max_peers") or 50),
         "memory_limit": data.get("memory_limit"),
         "parameters": data.get("parameters") or [],
         "torrent_folder_mount_enabled": bool(data.get("torrent_folder_mount_enabled", False)),

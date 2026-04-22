@@ -21,6 +21,7 @@ LIVE_SETTABLE_FIELDS = frozenset({
     "total_max_download_rate",
     "buffer_time",
     "live_cache_type",
+    "max_peers",
 })
 
 # Fields that require a container restart (CLI args or Docker-level config).
@@ -65,6 +66,7 @@ def _build_payload(engine_config) -> dict:
         "download_limit": int(engine_config.total_max_download_rate),
         "live_buffer": int(engine_config.buffer_time),
         "live_cache_type": str(engine_config.live_cache_type),
+        "max_peers": int(engine_config.max_peers),
     }
 
 
@@ -86,13 +88,14 @@ def apply_settings_to_engine(
     try:
         resp = httpx.patch(url, json=payload, headers={"x-api-key": token}, timeout=5.0)
         if resp.status_code in (200, 204):
-            log_msg = "settings applied to %s (upload=%s download=%s buffer=%s cache=%s)"
+            log_msg = "settings applied to %s (upload=%s download=%s buffer=%s cache=%s peers=%s)"
             log_args = (
                 container_name,
                 payload["upload_limit"],
                 payload["download_limit"],
                 payload["live_buffer"],
                 payload["live_cache_type"],
+                payload["max_peers"],
             )
             if quiet:
                 logger.debug(log_msg, *log_args)
@@ -140,12 +143,13 @@ def apply_settings_to_all_engines(engine_config) -> Dict[str, bool]:
             summary += f" (failures: {', '.join(failures)})"
 
         logger.info(
-            "%s (upload=%s download=%s buffer=%s cache=%s)",
+            "%s (upload=%s download=%s buffer=%s cache=%s peers=%s)",
             summary,
             payload["upload_limit"],
             payload["download_limit"],
             payload["live_buffer"],
             payload["live_cache_type"],
+            payload["max_peers"],
         )
 
     return results

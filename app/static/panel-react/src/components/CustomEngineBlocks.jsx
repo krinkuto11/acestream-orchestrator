@@ -77,6 +77,18 @@ export function EngineConfiguration({ engineSettings, onSettingChange, disabled 
             disabled={disabled}
           />
         </div>
+
+        <div className="space-y-2">
+          <Label>Max Peers</Label>
+          <Input
+            type="number"
+            min="0"
+            value={engineSettings.max_peers ?? 50}
+            onChange={(e) => updateNumber('max_peers', e.target.value, 50)}
+            disabled={disabled}
+          />
+          <p className="text-xs text-muted-foreground">0 = unlimited</p>
+        </div>
       </div>
     </div>
   )

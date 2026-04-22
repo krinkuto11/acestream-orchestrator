@@ -1,28 +1,19 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import EngineList from '@/components/EngineList'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { RefreshCw, AlertCircle, CheckCircle, Save, Settings2 } from 'lucide-react'
+import { AlertCircle, Save, Settings2 } from 'lucide-react'
 import { useNotifications } from '@/context/NotificationContext'
 import { EngineConfiguration } from '@/components/CustomEngineBlocks'
 import { ManualEngineList } from '@/components/ManualEngineList'
 
 export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKey, fetchJSON }) {
   const { addNotification } = useNotifications()
-  const [reprovisionStatus, setReprovisionStatus] = useState(null)
-  const [isReprovisioning, setIsReprovisioning] = useState(false)
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false)
-  const [showErrorMessage, setShowErrorMessage] = useState(false)
-  const reprovisionInProgressRef = useRef(false)
 
-  // Engine settings state
   const [engineSettings, setEngineSettings] = useState({
     min_replicas: 2,
     max_replicas: 6,
@@ -31,6 +22,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     total_max_download_rate: 0,
     total_max_upload_rate: 0,
     buffer_time: 10,
+    max_peers: 50,
     memory_limit: null,
     manual_mode: false,
     manual_engines: []
@@ -39,10 +31,8 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const [savingSettings, setSavingSettings] = useState(false)
   const [settingsChanged, setSettingsChanged] = useState(false)
 
-  // Cache stats state
   const [cacheStats, setCacheStats] = useState({ total_bytes: 0, volume_count: 0 })
 
-  // Load engine settings
   const loadEngineSettings = useCallback(async () => {
     try {
       setLoadingSettings(true)
@@ -57,7 +47,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     }
   }, [orchUrl, fetchJSON])
 
-  // Load cache statistics
   const loadCacheStats = useCallback(async () => {
     try {
       const stats = await fetchJSON(`${orchUrl}/api/v1/engine-cache/stats`)
@@ -70,8 +59,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   useEffect(() => {
     loadEngineSettings()
     loadCacheStats()
-
-    // Refresh stats every 30s
     const interval = setInterval(loadCacheStats, 30000)
     return () => clearInterval(interval)
   }, [loadEngineSettings, loadCacheStats])
@@ -84,134 +71,14 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
-  const applyReprovisionStatus = useCallback((status) => {
-    const wasReprovisioning = Boolean(reprovisionInProgressRef.current)
-    const inProgress = status?.in_progress === true || status?.status === 'in_progress'
-
-    setReprovisionStatus(status)
-    setIsReprovisioning(inProgress)
-    reprovisionInProgressRef.current = inProgress
-
-    if (inProgress) {
-      setShowSuccessMessage(false)
-      setShowErrorMessage(false)
-    }
-
-    if (wasReprovisioning && !inProgress) {
-      setReprovisionStatus((prev) => ({
-        ...prev,
-        status: 'success',
-        message: 'Reprovisioning completed successfully.'
-      }))
-      setShowSuccessMessage(true)
-      setTimeout(() => setShowSuccessMessage(false), 10000)
-    }
-  }, [])
-
-  useEffect(() => {
-    let eventSource = null
-    let reconnectTimer = null
-    let fallbackInterval = null
-    let closed = false
-
-    const checkReprovisionStatus = async () => {
-      try {
-        const status = await fetchJSON(`${orchUrl}/api/v1/settings/engine/reprovision/status`)
-        applyReprovisionStatus(status)
-      } catch (err) {
-        if (reprovisionInProgressRef.current) {
-          setReprovisionStatus((prev) => ({
-            ...prev,
-            status: 'error',
-            message: 'Failed to refresh reprovision status. Retrying...'
-          }))
-          setShowErrorMessage(true)
-          setTimeout(() => setShowErrorMessage(false), 15000)
-        }
-      }
-    }
-
-    const connect = () => {
-      if (closed) {
-        return
-      }
-
-      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
-        checkReprovisionStatus()
-        fallbackInterval = setInterval(checkReprovisionStatus, 2000)
-        return
-      }
-
-      const streamUrl = new URL(`${orchUrl}/api/v1/settings/engine/reprovision/status/stream`)
-      if (apiKey) {
-        streamUrl.searchParams.set('api_key', apiKey)
-      }
-
-      eventSource = new EventSource(streamUrl.toString())
-
-      const handleStatusUpdate = (event) => {
-        try {
-          const parsed = JSON.parse(event.data)
-          applyReprovisionStatus(parsed?.payload || null)
-        } catch (err) {
-          console.error('Failed to parse reprovision SSE payload:', err)
-        }
-      }
-
-      eventSource.addEventListener('reprovision_status', handleStatusUpdate)
-      eventSource.onmessage = handleStatusUpdate
-
-      eventSource.onerror = () => {
-        if (eventSource) {
-          eventSource.close()
-          eventSource = null
-        }
-
-        if (!closed) {
-          reconnectTimer = window.setTimeout(connect, 2000)
-        }
-      }
-    }
-
-    connect()
-
-    return () => {
-      closed = true
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer)
-      }
-      if (fallbackInterval) {
-        clearInterval(fallbackInterval)
-      }
-      if (eventSource) {
-        eventSource.close()
-      }
-    }
-  }, [orchUrl, fetchJSON, applyReprovisionStatus, apiKey])
-
-  // Clear success/error message when component unmounts (user navigates away)
-  useEffect(() => {
-    return () => {
-      // Clear the status when leaving the page
-      setReprovisionStatus(null)
-      setIsReprovisioning(false)
-      reprovisionInProgressRef.current = false
-      setShowSuccessMessage(false)
-      setShowErrorMessage(false)
-    }
-  }, [])
-
-  // Handle settings change
   const handleSettingChange = (key, value) => {
     setEngineSettings(prev => ({ ...prev, [key]: value }))
     setSettingsChanged(true)
   }
 
-  // Save engine settings
   const handleSaveSettings = useCallback(async () => {
     try {
       setSavingSettings(true)
-
       await fetchJSON(`${orchUrl}/api/v1/settings/engine`, {
         method: 'POST',
         headers: {
@@ -220,7 +87,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
         },
         body: JSON.stringify(engineSettings)
       })
-
       addNotification('Engine settings saved successfully', 'success')
       setSettingsChanged(false)
     } catch (err) {
@@ -229,8 +95,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
       setSavingSettings(false)
     }
   }, [orchUrl, fetchJSON, engineSettings, apiKey])
-
-
 
   return (
     <div className="space-y-6">
@@ -250,65 +114,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
         )}
       </div>
 
-      {/* Reprovisioning Progress */}
-      {isReprovisioning && (
-        <Card>
-          <CardContent className="pt-6">
-            <Alert>
-              <RefreshCw className="h-4 w-4 animate-spin" />
-              <AlertDescription>
-                <div className="space-y-2">
-                  <p className="font-medium">Reprovisioning in progress...</p>
-                  <p className="text-sm text-muted-foreground">
-                    {reprovisionStatus?.message || 'Engines are being reprovisioned with new settings.'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Phase: {reprovisionStatus?.current_phase || 'provisioning'}
-                  </p>
-                  {(() => {
-                    const total = Number(reprovisionStatus?.total_engines || 0)
-                    const provisioned = Number(reprovisionStatus?.engines_provisioned || 0)
-                    const progress = total > 0
-                      ? Math.max(0, Math.min(100, Math.round((provisioned / total) * 100)))
-                      : (reprovisionStatus?.current_phase === 'complete' ? 100 : 0)
-                    return <Progress value={progress} className="w-full mt-2" />
-                  })()}
-                </div>
-              </AlertDescription>
-            </Alert>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Success message after reprovisioning */}
-      {!isReprovisioning && showSuccessMessage && reprovisionStatus?.status === 'success' && (
-        <Card>
-          <CardContent className="pt-6">
-            <Alert variant="default" className="border-green-500 bg-green-50 dark:bg-green-950">
-              <CheckCircle className="h-4 w-4 text-green-600" />
-              <AlertDescription className="text-green-800 dark:text-green-200">
-                {reprovisionStatus.message}
-              </AlertDescription>
-            </Alert>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Error message after reprovisioning */}
-      {!isReprovisioning && showErrorMessage && reprovisionStatus?.status === 'error' && (
-        <Card>
-          <CardContent className="pt-6">
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                {reprovisionStatus.message}
-              </AlertDescription>
-            </Alert>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Tabs for Engine Status and Configuration */}
       <Tabs defaultValue="status" className="w-full">
         <TabsList className="grid w-full grid-cols-2 border-slate-700 bg-slate-900/90 text-slate-300">
           <TabsTrigger
@@ -325,7 +130,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
           </TabsTrigger>
         </TabsList>
 
-        {/* Engine Status Tab */}
         <TabsContent value="status" className="space-y-6 mt-6">
           <EngineList
             engines={engines}
@@ -334,7 +138,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
           />
         </TabsContent>
 
-        {/* Engine Configuration Tab */}
         <TabsContent value="configuration" className="space-y-6 mt-6">
           <Card>
             <CardHeader>
@@ -447,69 +250,18 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
               )}
 
               {/* Save Settings Button */}
-              <div className="flex justify-end gap-2 pt-4 border-t">
-                {settingsChanged && (
-                  <Button
-                    onClick={handleSaveSettings}
-                    disabled={savingSettings || loadingSettings}
-                    className="flex items-center gap-2"
-                  >
-                    <Save className="h-4 w-4" />
-                    {savingSettings ? 'Saving...' : 'Save Settings'}
-                  </Button>
-                )}
+              <div className="flex justify-end pt-4 border-t">
                 <Button
-                  variant={settingsChanged ? "outline" : "default"}
-                  onClick={() => {
-                    if (window.confirm('Are you sure you want to reprovision all engines with the new settings? This will interrupt all active streams.')) {
-                      // Save settings first if there are changes
-                      const savePromise = settingsChanged ? handleSaveSettings() : Promise.resolve()
-                      savePromise.then(() => {
-                        // Trigger reprovision after saving
-                        fetchJSON(`${orchUrl}/api/v1/settings/engine/reprovision`, {
-                          method: 'POST',
-                          headers: {
-                            'Authorization': `Bearer ${apiKey}`
-                          }
-                        }).then(() => {
-                          setIsReprovisioning(true)
-                          reprovisionInProgressRef.current = true
-                          setShowSuccessMessage(false)
-                          setShowErrorMessage(false)
-                          setReprovisionStatus((prev) => ({
-                            ...prev,
-                            in_progress: true,
-                            status: 'in_progress',
-                            current_phase: 'provisioning',
-                            message: 'Rolling update scheduled. Waiting for controller reconciliation...'
-                          }))
-                          addNotification('Reprovisioning started', 'success')
-                        }).catch(err => {
-                          addNotification(`Failed to start reprovision: ${err.message}`, 'error')
-                        })
-                      })
-                    }
-                  }}
-                  disabled={isReprovisioning || loadingSettings}
+                  onClick={handleSaveSettings}
+                  disabled={savingSettings || loadingSettings || !settingsChanged}
                   className="flex items-center gap-2"
                 >
-                  <RefreshCw className={isReprovisioning ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-                  {isReprovisioning ? 'Reprovisioning...' : (settingsChanged ? 'Save & Reprovision' : 'Reprovision')}
+                  <Save className="h-4 w-4" />
+                  {savingSettings ? 'Saving...' : 'Save Settings'}
                 </Button>
               </div>
-
-              {settingsChanged && (
-                <Alert>
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    You have unsaved changes. Click "Save Settings" to persist them, or "Save & Reprovision" to apply them immediately to all engines.
-                  </AlertDescription>
-                </Alert>
-              )}
             </CardContent>
           </Card>
-
-
         </TabsContent>
       </Tabs>
     </div>
