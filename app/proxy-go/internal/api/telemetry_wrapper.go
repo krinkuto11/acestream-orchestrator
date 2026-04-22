@@ -61,7 +61,12 @@ func withTelemetry(mode string, next http.HandlerFunc) http.HandlerFunc {
 			ttfbSecs = duration // If nothing wrote, TTFB is the whole duration
 		}
 
+		endpoint := r.URL.Path
+		if r.Pattern != "" {
+			endpoint = r.Pattern
+		}
+
 		success := tw.statusCode >= 200 && tw.statusCode < 400
-		telemetry.DefaultTelemetry.ObserveRequest(mode, r.URL.Path, duration, success, tw.statusCode, ttfbSecs)
+		telemetry.DefaultTelemetry.ObserveRequest(mode, endpoint, duration, success, tw.statusCode, ttfbSecs)
 	}
 }
