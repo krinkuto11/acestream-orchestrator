@@ -763,6 +763,7 @@ class ClientTrackingService:
                     # This is O(N) where N is number of clients in stream, much faster than KEYS *
                     raw_client_ids = self._redis.smembers(client_set_key)
                     if raw_client_ids:
+                        logger.debug(f"[Tracker] Found {len(raw_client_ids)} client IDs in Redis for stream {normalized_stream_id}")
                         # Use pipelining to fetch all metadata hashes in one round-trip
                         pipe = self._redis.pipeline()
                         client_ids = []

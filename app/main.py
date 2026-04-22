@@ -78,6 +78,8 @@ from .vpn.vpn_credentials import credential_manager
 from .vpn.proton_updater import ProtonServerUpdater, ProtonFilterConfig
 from .vpn.vpn_servers_refresh import vpn_servers_refresh_service
 from .shared.utils import get_client_ip, sanitize_stream_id
+from .data_plane.client_tracker import client_tracking_service
+from .shared.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -607,6 +609,9 @@ async def lifespan(app: FastAPI):
 
     # Load state from database first
     load_state_from_db()
+    
+    # Initialize client tracker with Redis for cross-plane visibility
+    client_tracking_service.set_redis_client(get_redis_client())
     
     # Initialize looping streams tracker with configured retention
     looping_streams_tracker.set_retention_minutes(cfg.STREAM_LOOP_RETENTION_MINUTES)
