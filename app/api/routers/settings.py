@@ -776,18 +776,7 @@ async def export_settings(api_key_param: str = Depends(require_api_key)):
             except Exception as e:
                 logger.warning(f"Failed to export proxy settings: {e}")
 
-            try:
-                loop_settings = {
-                    "enabled": cfg.STREAM_LOOP_DETECTION_ENABLED,
-                    "threshold_seconds": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S,
-                    "check_interval_seconds": cfg.STREAM_LOOP_CHECK_INTERVAL_S,
-                    "retention_minutes": cfg.STREAM_LOOP_RETENTION_MINUTES,
-                }
-                loop_json = json.dumps(loop_settings, indent=2)
-                zip_file.writestr("loop_detection_settings.json", loop_json)
-                logger.info("Added loop detection settings to backup")
-            except Exception as e:
-                logger.warning(f"Failed to export loop detection settings: {e}")
+
 
             try:
                 from ...persistence.settings_persistence import SettingsPersistence
@@ -828,7 +817,6 @@ async def import_settings_data(
     request: Request,
     import_engine_config: bool = Query(True),
     import_proxy: bool = Query(True),
-    import_loop_detection: bool = Query(True),
     import_engine: bool = Query(True),
     import_custom_variant: Optional[bool] = Query(None),
     import_templates: Optional[bool] = Query(None),
@@ -850,7 +838,6 @@ async def import_settings_data(
         imported = {
             "engine_config": False,
             "proxy": False,
-            "loop_detection": False,
             "engine": False,
             "errors": [],
         }
@@ -925,39 +912,7 @@ async def import_settings_data(
                     logger.error(error_msg)
                     imported["errors"].append(error_msg)
 
-            if import_loop_detection and "loop_detection_settings.json" in zip_file.namelist():
-                try:
-                    from ...data_plane.looping_streams import looping_streams_tracker
 
-                    loop_data = zip_file.read("loop_detection_settings.json").decode("utf-8")
-                    loop_dict = json.loads(loop_data)
-
-                    cfg.STREAM_LOOP_DETECTION_ENABLED = loop_dict.get(
-                        "enabled", cfg.STREAM_LOOP_DETECTION_ENABLED
-                    )
-                    cfg.STREAM_LOOP_DETECTION_THRESHOLD_S = loop_dict.get(
-                        "threshold_seconds", cfg.STREAM_LOOP_DETECTION_THRESHOLD_S
-                    )
-                    cfg.STREAM_LOOP_CHECK_INTERVAL_S = loop_dict.get(
-                        "check_interval_seconds", cfg.STREAM_LOOP_CHECK_INTERVAL_S
-                    )
-                    cfg.STREAM_LOOP_RETENTION_MINUTES = loop_dict.get(
-                        "retention_minutes", cfg.STREAM_LOOP_RETENTION_MINUTES
-                    )
-
-                    looping_streams_tracker.set_retention_minutes(cfg.STREAM_LOOP_RETENTION_MINUTES)
-
-                    if SettingsPersistence.save_loop_detection_config(loop_dict):
-                        imported["loop_detection"] = True
-                        logger.info("Imported loop detection settings")
-                    else:
-                        error_msg = "Failed to persist loop detection settings to file"
-                        logger.error(error_msg)
-                        imported["errors"].append(error_msg)
-                except Exception as e:
-                    error_msg = f"Failed to import loop detection settings: {e}"
-                    logger.error(error_msg)
-                    imported["errors"].append(error_msg)
 
             if import_engine and "engine_settings.json" in zip_file.namelist():
                 try:

@@ -198,19 +198,9 @@ async def get_stream_livepos(stream_id: str):
             raise HTTPException(status_code=500, detail=f"Error processing livepos data: {str(e)}")
 
     try:
-        from ...data_plane.hls_segmenter import hls_segmenter_service
         from ...data_plane.legacy_stream_monitoring import legacy_stream_monitoring_service
 
         probe = None
-
-        if not probe:
-            probe = await asyncio.to_thread(
-                hls_segmenter_service.collect_legacy_stats_probe,
-                stream.key,
-                1,
-                1.0,
-                True,
-            )
 
         if not probe:
             reusable = await legacy_stream_monitoring_service.get_reusable_session_for_content(stream.key)
@@ -430,111 +420,7 @@ async def batch_stop_streams(command_urls: List[str]):
     }
 
 
-@router.get("/stream-loop-detection/config")
-def get_stream_loop_detection_config():
-    """Get current stream loop detection configuration."""
-    return {
-        "enabled": cfg.STREAM_LOOP_DETECTION_ENABLED,
-        "threshold_seconds": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S,
-        "threshold_minutes": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S / 60,
-        "threshold_hours": cfg.STREAM_LOOP_DETECTION_THRESHOLD_S / 3600,
-        "check_interval_seconds": cfg.STREAM_LOOP_CHECK_INTERVAL_S,
-        "retention_minutes": cfg.STREAM_LOOP_RETENTION_MINUTES,
-    }
 
-
-@router.post("/stream-loop-detection/config", dependencies=[Depends(require_api_key)])
-async def update_stream_loop_detection_config(
-    enabled: bool,
-    threshold_seconds: int,
-    check_interval_seconds: Optional[int] = None,
-    retention_minutes: Optional[int] = None,
-):
-    """Update stream loop detection configuration."""
-    from ...data_plane.stream_loop_detector import stream_loop_detector
-    from ...data_plane.looping_streams import looping_streams_tracker
-
-    if threshold_seconds < 60:
-        raise HTTPException(status_code=400, detail="Threshold must be at least 60 seconds")
-
-    if check_interval_seconds is not None and check_interval_seconds < 5:
-        raise HTTPException(status_code=400, detail="Check interval must be at least 5 seconds")
-
-    if retention_minutes is not None and retention_minutes < 0:
-        raise HTTPException(status_code=400, detail="Retention minutes must be 0 or greater")
-
-    cfg.STREAM_LOOP_DETECTION_ENABLED = enabled
-    cfg.STREAM_LOOP_DETECTION_THRESHOLD_S = threshold_seconds
-
-    if check_interval_seconds is not None:
-        cfg.STREAM_LOOP_CHECK_INTERVAL_S = check_interval_seconds
-
-    if retention_minutes is not None:
-        cfg.STREAM_LOOP_RETENTION_MINUTES = retention_minutes
-        looping_streams_tracker.set_retention_minutes(retention_minutes)
-
-    if enabled:
-        await stream_loop_detector.stop()
-        await stream_loop_detector.start()
-        logger.info(
-            f"Stream loop detection restarted with threshold {threshold_seconds}s, check_interval {cfg.STREAM_LOOP_CHECK_INTERVAL_S}s"
-        )
-    else:
-        await stream_loop_detector.stop()
-        logger.info("Stream loop detection disabled")
-
-    from ...persistence.settings_persistence import SettingsPersistence
-
-    config_to_save = {
-        "enabled": enabled,
-        "threshold_seconds": threshold_seconds,
-        "check_interval_seconds": cfg.STREAM_LOOP_CHECK_INTERVAL_S,
-        "retention_minutes": cfg.STREAM_LOOP_RETENTION_MINUTES,
-    }
-    if SettingsPersistence.save_loop_detection_config(config_to_save):
-        logger.info("Loop detection configuration persisted to JSON file")
-
-    return {
-        "message": "Stream loop detection configuration updated and persisted",
-        "enabled": enabled,
-        "threshold_seconds": threshold_seconds,
-        "threshold_minutes": threshold_seconds / 60,
-        "threshold_hours": threshold_seconds / 3600,
-        "check_interval_seconds": cfg.STREAM_LOOP_CHECK_INTERVAL_S,
-        "retention_minutes": cfg.STREAM_LOOP_RETENTION_MINUTES,
-    }
-
-
-@router.get("/looping-streams")
-def get_looping_streams():
-    """Get list of AceStream IDs that have been detected as looping."""
-    from ...data_plane.looping_streams import looping_streams_tracker
-
-    return {
-        "stream_ids": list(looping_streams_tracker.get_looping_stream_ids()),
-        "streams": looping_streams_tracker.get_looping_streams(),
-        "retention_minutes": looping_streams_tracker.get_retention_minutes() or 0,
-    }
-
-
-@router.delete("/looping-streams/{stream_id}", dependencies=[Depends(require_api_key)])
-def remove_looping_stream(stream_id: str):
-    """Manually remove a stream ID from the looping streams list."""
-    from ...data_plane.looping_streams import looping_streams_tracker
-
-    if looping_streams_tracker.remove_looping_stream(stream_id):
-        return {"message": f"Stream {stream_id} removed from looping list"}
-    else:
-        raise HTTPException(status_code=404, detail=f"Stream {stream_id} not found in looping list")
-
-
-@router.post("/looping-streams/clear", dependencies=[Depends(require_api_key)])
-def clear_all_looping_streams():
-    """Clear all looping streams from the tracker."""
-    from ...data_plane.looping_streams import looping_streams_tracker
-
-    looping_streams_tracker.clear_all()
-    return {"message": "All looping streams cleared"}
 
 
 @router.get("/api/v1/streams/{stream_id}/details/stream")

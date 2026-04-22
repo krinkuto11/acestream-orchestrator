@@ -16,7 +16,6 @@ from ..shared.constants import VLC_USER_AGENT
 from ..services.state import state
 from ..core.config import cfg
 from ..infrastructure.engine_selection import select_best_engine
-from .hls_segmenter import hls_segmenter_service
 
 logger = logging.getLogger(__name__)
 
@@ -464,7 +463,7 @@ class LegacyStreamMonitoringService:
             self._publish_session_state(monitor_id, session)
 
         if session.get("status") in {"dead", "stopped", "deleted"}:
-            hls_segmenter_service.stop_segmenter_nowait(monitor_id)
+            pass
 
     async def _append_sample(self, monitor_id: str, sample: Dict[str, Any]):
         async with self._lock:
@@ -919,7 +918,6 @@ class LegacyStreamMonitoringService:
                 session["ended_at"] = self._utc_iso()
                 session["status"] = "stopped"
                 self._publish_session_state(monitor_id, session)
-        hls_segmenter_service.stop_segmenter_nowait(monitor_id)
         return True
 
     async def stop_all(self) -> int:
@@ -959,7 +957,6 @@ class LegacyStreamMonitoringService:
                 "monitor": deleted_payload,
             }
         )
-        hls_segmenter_service.stop_segmenter_nowait(monitor_id)
 
         return True
 

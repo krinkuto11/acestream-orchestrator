@@ -117,16 +117,6 @@ class Cfg(BaseModel):
     DB_URL: str = os.getenv("DB_URL", _default_db_url)
     AUTO_DELETE: bool = True
     DEBUG_MODE: bool = False
-    # Stream loop detection configuration
-    # Threshold for detecting stale streams (in seconds)
-    # If live_last is behind current time by this amount, stream will be stopped
-    STREAM_LOOP_DETECTION_THRESHOLD_S: int = 3600  # Default 1 hour
-    STREAM_LOOP_DETECTION_ENABLED: bool = False
-    # Check interval for stream loop detection (in seconds)
-    STREAM_LOOP_CHECK_INTERVAL_S: int = 10  # Default 10 seconds
-    # Retention time for looping stream IDs in the tracker (in minutes)
-    # 0 or None = indefinite retention
-    STREAM_LOOP_RETENTION_MINUTES: int = 0  # Default indefinite
     CLIENT_RECORD_TTL_S: int = 60
 
     @model_validator(mode='after')

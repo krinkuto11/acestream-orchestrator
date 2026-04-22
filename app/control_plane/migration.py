@@ -59,17 +59,7 @@ async def migrate_stream(
     result: Dict[str, Any] = {"migrated": True, "old_container_id": old_container_id}
     session_updates: Dict[str, Any] = {}
 
-    # 1. Handle HLS Segmenter migration if active
-    try:
-        from ..data_plane.hls_segmenter import hls_segmenter_service
-        if hls_segmenter_service.has_session(normalized_key):
-            hls_result = hls_segmenter_service.migrate_session(normalized_key, {"new_engine": selected_engine})
-            if hls_result.get("migrated"):
-                session_updates.update(hls_result.get("session_updates") or {})
-                if hls_result.get("target_seekback") is not None:
-                    session_updates["target_seekback"] = hls_result["target_seekback"]
-    except Exception as e:
-        logger.warning("HLS segmenter migration failed for key=%s: %s", normalized_key, e)
+
 
     # 2. Update state (which triggers Redis update and notifies Go data plane)
     try:

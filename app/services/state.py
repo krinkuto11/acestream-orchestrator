@@ -292,13 +292,7 @@ class State(StateStore):
             except Exception as e:
                 logger.warning(f"Failed to clean up metrics for stream {stream_id_for_metrics}: {e}")
 
-        if st and st.key:
-            # External HLS segmenter cleanup (API mode)
-            try:
-                from ..data_plane.hls_segmenter import hls_segmenter_service
-                hls_segmenter_service.stop_segmenter_nowait(st.key, emit_stream_ended=False)
-            except Exception as e:
-                logger.warning(f"Failed to schedule external HLS segmenter cleanup for stream {st.key}: {e}")
+
 
         if st:
             self.broadcast_state_change(

@@ -12,7 +12,6 @@ This also removes old stream records from the database to prevent unbounded grow
 import asyncio
 import logging
 from ..services.state import state
-from .hls_segmenter import hls_segmenter_service
 from ..core.config import cfg
 
 logger = logging.getLogger(__name__)

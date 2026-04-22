@@ -165,14 +165,7 @@ class SettingsPersistence:
 
         return normalized
 
-    @staticmethod
-    def _default_loop_detection_settings() -> Dict[str, Any]:
-        return {
-            "enabled": bool(getattr(cfg, "STREAM_LOOP_DETECTION_ENABLED", False)),
-            "threshold_seconds": int(getattr(cfg, "STREAM_LOOP_DETECTION_THRESHOLD_S", 3600)),
-            "check_interval_seconds": int(getattr(cfg, "STREAM_LOOP_CHECK_INTERVAL_S", 10)),
-            "retention_minutes": int(getattr(cfg, "STREAM_LOOP_RETENTION_MINUTES", 0)),
-        }
+
 
     @staticmethod
     def _default_vpn_settings() -> Dict[str, Any]:
@@ -382,7 +375,6 @@ class SettingsPersistence:
             orchestrator_settings=cls._default_orchestrator_settings(),
             proxy_settings=cls._default_proxy_settings(),
             vpn_settings=cls._default_vpn_settings(),
-            loop_detection_settings=cls._default_loop_detection_settings(),
         )
         session.add(row)
         session.flush()
@@ -425,7 +417,6 @@ class SettingsPersistence:
         orchestrator_settings = cls._deepcopy(row.orchestrator_settings) or cls._default_orchestrator_settings()
         proxy_settings = cls.normalize_proxy_config(cls._deepcopy(row.proxy_settings) or cls._default_proxy_settings())
         vpn_settings = cls.normalize_vpn_config(cls._deepcopy(row.vpn_settings) or cls._default_vpn_settings())
-        loop_detection_settings = cls._deepcopy(row.loop_detection_settings) or cls._default_loop_detection_settings()
 
         credentials = cls._normalize_credentials(
             cls._load_credentials_from_db(session, row.id),
@@ -440,7 +431,6 @@ class SettingsPersistence:
             "orchestrator_settings": orchestrator_settings,
             "proxy_settings": proxy_settings,
             "vpn_settings": vpn_settings,
-            "loop_detection_settings": loop_detection_settings,
         }
 
     @classmethod
@@ -481,7 +471,6 @@ class SettingsPersistence:
                     "orchestrator_settings": cls._default_orchestrator_settings(),
                     "proxy_settings": cls._default_proxy_settings(),
                     "vpn_settings": {**cls._default_vpn_settings(), "credentials": []},
-                    "loop_detection_settings": cls._default_loop_detection_settings(),
                 }
                 cls._cache_initialized = True
 
@@ -496,22 +485,8 @@ class SettingsPersistence:
                 "orchestrator_settings": cls._default_orchestrator_settings(),
                 "proxy_settings": cls._default_proxy_settings(),
                 "vpn_settings": cls._default_vpn_settings(),
-                "loop_detection_settings": cls._default_loop_detection_settings(),
-            }
-
-            cached_vpn = cls.normalize_vpn_config(dict(cls._cache.get("vpn_settings") or {}))
-            default_vpn = cls.normalize_vpn_config(dict(defaults["vpn_settings"]))
-            cached_vpn_no_creds = {k: v for k, v in cached_vpn.items() if k != "credentials"}
-            cached_credentials = list((cls._cache.get("vpn_settings") or {}).get("credentials") or [])
-
-            return not (
-                cls._cache.get("engine_config") == defaults["engine_config"]
-                and cls._cache.get("engine_settings") == defaults["engine_settings"]
-                and cls._cache.get("orchestrator_settings") == defaults["orchestrator_settings"]
-                and cls._cache.get("proxy_settings") == defaults["proxy_settings"]
                 and cached_vpn_no_creds == default_vpn
                 and not cached_credentials
-                and cls._cache.get("loop_detection_settings") == defaults["loop_detection_settings"]
             )
 
     @classmethod
@@ -586,13 +561,7 @@ class SettingsPersistence:
     def save_proxy_config(config: Dict[str, Any]) -> bool:
         return SettingsPersistence._save_category("proxy_settings", config)
 
-    @staticmethod
-    def load_loop_detection_config() -> Optional[Dict[str, Any]]:
-        return SettingsPersistence._get_cached_category("loop_detection_settings")
 
-    @staticmethod
-    def save_loop_detection_config(config: Dict[str, Any]) -> bool:
-        return SettingsPersistence._save_category("loop_detection_settings", config)
 
     @staticmethod
     def load_engine_settings() -> Optional[Dict[str, Any]]:

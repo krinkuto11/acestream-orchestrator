@@ -66,13 +66,10 @@ from .vpn.gluetun import gluetun_monitor
 from .infrastructure.docker_stats import get_container_stats, get_multiple_container_stats, get_total_stats
 from .infrastructure.docker_stats_collector import docker_stats_collector
 from .persistence.cache import start_cleanup_task, stop_cleanup_task, invalidate_cache, get_cache
-from .data_plane.stream_loop_detector import stream_loop_detector
-from .data_plane.looping_streams import looping_streams_tracker
 from .vpn.vpn_controller import vpn_controller
 from .persistence.db_maintenance import db_maintenance_service
 from .observability.cache_monitoring_service import start_cache_monitoring
 from .data_plane.legacy_stream_monitoring import legacy_stream_monitoring_service
-from .data_plane.hls_segmenter import hls_segmenter_service
 from .infrastructure.docker_client import get_client, docker_event_watcher
 from .vpn.vpn_credentials import credential_manager
 from .vpn.proton_updater import ProtonServerUpdater, ProtonFilterConfig
@@ -420,22 +417,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to load persisted proxy settings: {e}")
     
-    # Load loop detection settings
-    try:
-        loop_settings = SettingsPersistence.load_loop_detection_config()
-        if loop_settings:
-            logger.debug("Loading persisted loop detection settings")
-            if 'enabled' in loop_settings:
-                cfg.STREAM_LOOP_DETECTION_ENABLED = loop_settings['enabled']
-            if 'threshold_seconds' in loop_settings:
-                cfg.STREAM_LOOP_DETECTION_THRESHOLD_S = loop_settings['threshold_seconds']
-            if 'check_interval_seconds' in loop_settings:
-                cfg.STREAM_LOOP_CHECK_INTERVAL_S = loop_settings['check_interval_seconds']
-            if 'retention_minutes' in loop_settings:
-                cfg.STREAM_LOOP_RETENTION_MINUTES = loop_settings['retention_minutes']
-            logger.debug("Loop detection settings loaded from persistent storage")
-    except Exception as e:
-        logger.warning(f"Failed to load persisted loop detection settings: {e}")
+
     
     # Load engine settings
     try:
@@ -613,9 +595,6 @@ async def lifespan(app: FastAPI):
     # Initialize client tracker with Redis for cross-plane visibility
     client_tracking_service.set_redis_client(get_redis_client())
     
-    # Initialize looping streams tracker with configured retention
-    looping_streams_tracker.set_retention_minutes(cfg.STREAM_LOOP_RETENTION_MINUTES)
-    
     state.set_desired_replica_count(cfg.MIN_REPLICAS)
     target_config_hash = compute_current_engine_config_hash()
     target_config = state.set_target_engine_config(target_config_hash)
@@ -644,8 +623,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(health_monitor.start())  # Start health monitoring  
     asyncio.create_task(health_manager.start())  # Start proactive health management
     asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
-    asyncio.create_task(stream_loop_detector.start())  # Start stream loop detection
-    asyncio.create_task(looping_streams_tracker.start())  # Start looping streams tracker
+
     asyncio.create_task(db_maintenance_service.start())  # Start daily DB pruning and vacuum
     
     # Start engine cache manager background tasks
@@ -675,8 +653,7 @@ async def lifespan(app: FastAPI):
         await vpn_controller.stop()  # Stop VPN reconciliation controller
     await engine_controller.stop()  # Stop declarative engine controller
     await docker_event_watcher.stop()  # Stop Docker event watcher
-    await stream_loop_detector.stop()  # Stop stream loop detector
-    await looping_streams_tracker.stop()  # Stop looping streams tracker
+
     await db_maintenance_service.stop()  # Stop DB maintenance loop
     await vpn_servers_refresh_service.stop()  # Stop VPN servers refresh loop
     await legacy_stream_monitoring_service.stop_all()  # Stop legacy monitor sessions
@@ -820,8 +797,6 @@ _TAG_BY_SEGMENT = {
     "engine-cache": "Cache",
     "engine": "Settings",
     "custom-variant": "Settings",
-    "stream-loop-detection": "Streams",
-    "looping-streams": "Streams",
     "containers": "Orchestrator",
     "provision": "Orchestrator",
     "scale": "Orchestrator",

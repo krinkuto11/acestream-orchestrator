@@ -425,46 +425,10 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
         dt = now - _last_engine_ingress_sample_ts
 
     try:
-        # 1. Collect ingress from API-mode HLS streams (managed by Python)
-        from ..data_plane.hls_segmenter import hls_segmenter_service
-        
+        # 1. Go Proxy Managed Streams (via State Snapshots)
+        # Fetch the latest stats pushed by the Go proxy into the Orchestrator state.
         for s in active_streams:
-            container_id = s.container_id
-            stream_key = getattr(s, "key", None)
-            if not container_id or not stream_key:
-                continue
-
-            if hls_segmenter_service and hls_segmenter_service.has_session(stream_key):
-                try:
-                    probe = hls_segmenter_service.collect_legacy_stats_probe(stream_key)
-                    if probe:
-                        # Attempt to use real cumulative downloaded bytes first
-                        downloaded = probe.get("downloaded")
-                        if downloaded is None:
-                            downloaded = probe.get("http_downloaded")
-                        
-                        # Fallback: if 'downloaded' is missing/static but we have speed, estimate progress
-                        if (downloaded is None or downloaded == 0) and dt > 0:
-                            speed_kbps = float(probe.get("speed_down") or probe.get("http_speed_down") or 0)
-                            if speed_kbps > 0:
-                                prev_sim = _hls_simulated_downloaded.get(stream_key, 0)
-                                inc = int(speed_kbps * 1024 * dt)
-                                downloaded = prev_sim + inc
-                                _hls_simulated_downloaded[stream_key] = downloaded
-                        elif downloaded is not None:
-                            # Keep our simulator in sync with reality if reality shows up
-                            _hls_simulated_downloaded[stream_key] = int(downloaded)
-
-                        if downloaded is not None:
-                            current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + int(downloaded)
-                except Exception:
-                    continue
-
-        # 2. Go Proxy Managed Streams (via State Snapshots)
-        # If an engine wasn't found in HLS managers, check the 
-        # latest stats pushed by the Go proxy into the Orchestrator state.
-        for s in active_streams:
-            if not s.container_id or s.container_id in current_engine_bytes:
+            if not s.container_id:
                 continue
             
             # Fetch latest stats snapshot which includes 'downloaded' total from Go

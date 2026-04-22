@@ -199,16 +199,9 @@ class Collector:
             # Legacy stats can only be queried on the same API session used for START,
             # so we read them from the in-process proxy stream manager.
             # API-mode HLS sessions are controlled by external segmenter service.
-            from ..data_plane.hls_segmenter import hls_segmenter_service
             from ..data_plane.legacy_stream_monitoring import legacy_stream_monitoring_service
 
-            async with self._legacy_probe_semaphore:
-                probe = await asyncio.to_thread(
-                    hls_segmenter_service.collect_legacy_stats_probe,
-                    stream.key,
-                    1,
-                    1.0,
-                )
+            probe = None
 
             if not probe:
                 # Stream may be reusing a monitoring session (no direct legacy socket on proxy side).
@@ -281,46 +274,7 @@ def _get_proxy_stream_buffer_pieces(stream_key: str) -> Optional[int]:
     try:
         from ..data_plane.client_tracker import client_tracking_service
 
-        # 1. Check HLS Segmenter (API mode HLS)
-        try:
-            from ..data_plane.hls_segmenter import hls_segmenter_service
-            
-            # Use the segmenter service to calculate the lag for API-mode HLS.
-            # We treat 'monitor_id' as the stream_key for external segmenters.
-            if hls_segmenter_service.has_session(stream_key):
-                latest_seq = hls_segmenter_service._latest_manifest_sequence(stream_key)
-                
-                if latest_seq is not None:
-                    api_hls_clients = client_tracking_service.get_stream_clients(
-                        stream_key,
-                        protocol="HLS",
-                    )
-                    
-                    if api_hls_clients:
-                        min_client_seq = latest_seq
-                        has_active_clients = False
 
-                        for client in api_hls_clients:
-                            c_seq = client.get("last_sequence")
-                            if c_seq is not None:
-                                try:
-                                    c_seq_int = int(c_seq)
-                                    if c_seq_int < min_client_seq:
-                                        min_client_seq = c_seq_int
-                                    has_active_clients = True
-                                except (TypeError, ValueError):
-                                    continue
-                        
-                        if has_active_clients:
-                            # Lag is the number of segments between head and slowest client.
-                            return max(0, latest_seq - min_client_seq)
-                
-                # If no clients or sequence not available, fall back to manifest window depth
-                lag_seconds = hls_segmenter_service.estimate_manifest_buffer_seconds_behind(stream_key)
-                # Normalize seconds to a 'pieces' equivalent (roughly 1 piece per second)
-                return int(lag_seconds)
-        except Exception:
-            pass
 
         # 2. Check Redis for Go Data Plane stats (TS or HLS)
         try:

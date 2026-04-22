@@ -12,6 +12,7 @@ import (
 
 	"github.com/acestream/proxy/internal/buffer"
 	"github.com/acestream/proxy/internal/config"
+	"github.com/acestream/proxy/internal/telemetry"
 	"github.com/acestream/proxy/internal/ts"
 )
 
@@ -28,17 +29,19 @@ type Reader struct {
 	contentID string
 	url       string
 	buf       *buffer.RingBuffer
+	mode      string
 
 	client *http.Client
 	stopCh chan struct{}
 }
 
 // New creates a Reader for the given URL/buffer pair.
-func New(contentID, url string, buf *buffer.RingBuffer) *Reader {
+func New(contentID, url string, buf *buffer.RingBuffer, mode string) *Reader {
 	return &Reader{
 		contentID: contentID,
 		url:       url,
 		buf:       buf,
+		mode:      mode,
 		stopCh:    make(chan struct{}),
 		client: &http.Client{
 			// No total Timeout here — we use an idle-reset context inside readOnce
@@ -183,6 +186,7 @@ func (r *Reader) readOnce(ctx context.Context, tag string) (int, error) {
 			if len(aligned) > 0 {
 				written := r.buf.Write(aligned)
 				chunkCount += written
+				telemetry.DefaultTelemetry.ObserveIngress(r.mode, int64(len(aligned)))
 			}
 		}
 		if readErr != nil {

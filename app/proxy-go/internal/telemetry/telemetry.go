@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/acestream/proxy/internal/config"
+	"github.com/acestream/proxy/internal/metrics"
 )
 
 // RequestEvent represents a single request observation.
@@ -54,6 +56,12 @@ func NewTelemetryTracker() *TelemetryTracker {
 }
 
 func (t *TelemetryTracker) ObserveRequest(mode, endpoint string, durationSecs float64, success bool, statusCode int, ttfbSecs float64) {
+	metrics.HttpRequestsTotal.WithLabelValues(mode, endpoint, fmt.Sprintf("%d", statusCode)).Inc()
+	metrics.HttpRequestDurationSeconds.WithLabelValues(mode, endpoint).Observe(durationSecs)
+	if ttfbSecs > 0 {
+		metrics.HttpTtfbSeconds.WithLabelValues(mode, endpoint).Observe(ttfbSecs)
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.batch.Requests = append(t.batch.Requests, RequestEvent{
@@ -67,15 +75,27 @@ func (t *TelemetryTracker) ObserveRequest(mode, endpoint string, durationSecs fl
 }
 
 func (t *TelemetryTracker) ObserveConnect(mode string) {
+	metrics.ActiveSessions.WithLabelValues(mode).Inc()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.batch.Connects = append(t.batch.Connects, mode)
 }
 
 func (t *TelemetryTracker) ObserveDisconnect(mode string) {
+	metrics.ActiveSessions.WithLabelValues(mode).Dec()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.batch.Disconnects = append(t.batch.Disconnects, mode)
+}
+
+func (t *TelemetryTracker) ObserveIngress(mode string, bytes int64) {
+	metrics.BytesIngressTotal.WithLabelValues(mode).Add(float64(bytes))
+}
+
+func (t *TelemetryTracker) ObserveEgress(mode string, bytes int64) {
+	metrics.BytesEgressTotal.WithLabelValues(mode).Add(float64(bytes))
 }
 
 func (t *TelemetryTracker) worker() {

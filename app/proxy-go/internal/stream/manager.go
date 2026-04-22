@@ -377,7 +377,7 @@ func (m *Manager) startReadLoop(ctx context.Context) {
 		}
 
 		m.buf.Reset()
-		r := upstream.New(m.params.ContentID, purl, m.buf)
+		r := upstream.New(m.params.ContentID, purl, m.buf, m.params.StreamMode)
 		readerCtx, readerCancel := context.WithCancel(ctx)
 
 		readerDone := make(chan error, 1)

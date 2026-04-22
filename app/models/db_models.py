@@ -90,7 +90,6 @@ class RuntimeSettingsRow(Base):
     # proxy_settings stores dynamic proxy config including proxy_prebuffer_seconds.
     proxy_settings: Mapped[dict] = mapped_column(JSON, default=dict)
     vpn_settings: Mapped[dict] = mapped_column(JSON, default=dict)
-    loop_detection_settings: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,

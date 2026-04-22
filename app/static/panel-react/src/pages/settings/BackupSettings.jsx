@@ -15,7 +15,6 @@ export function BackupSettings({ apiKey, orchUrl }) {
   const [importOptions, setImportOptions] = useState({
     engine_config: true,
     proxy: true,
-    loop_detection: true,
     engine: true,
   })
   const [importResult, setImportResult] = useState(null)
@@ -87,7 +86,6 @@ export function BackupSettings({ apiKey, orchUrl }) {
       const params = new URLSearchParams({
         import_engine_config: importOptions.engine_config,
         import_proxy: importOptions.proxy,
-        import_loop_detection: importOptions.loop_detection,
         import_engine: importOptions.engine,
       })
       
@@ -110,7 +108,6 @@ export function BackupSettings({ apiKey, orchUrl }) {
       const messages = []
       if (imported.engine_config) messages.push('Global engine config')
       if (imported.proxy) messages.push('Proxy settings')
-      if (imported.loop_detection) messages.push('Loop detection settings')
       if (imported.engine) messages.push('Engine settings')
       
       if (messages.length > 0) {
@@ -149,7 +146,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
           </CardTitle>
           <CardDescription>
             Export and import your orchestrator settings including global engine configuration,
-            engine runtime settings, proxy settings, and loop detection settings.
+            engine runtime settings, and proxy settings.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -180,10 +177,6 @@ export function BackupSettings({ apiKey, orchUrl }) {
                 <li className="flex items-center gap-2">
                   <CheckCircle className="h-3 w-3" />
                   Proxy configuration
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle className="h-3 w-3" />
-                  Loop detection settings
                 </li>
               </ul>
             </div>
@@ -252,19 +245,7 @@ export function BackupSettings({ apiKey, orchUrl }) {
                   </Label>
                 </div>
                 
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="import-loop-detection"
-                    checked={importOptions.loop_detection}
-                    onCheckedChange={() => toggleImportOption('loop_detection')}
-                  />
-                  <Label
-                    htmlFor="import-loop-detection"
-                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                  >
-                    Loop Detection Settings
-                  </Label>
-                </div>
+
               </div>
               
               {/* File Upload */}
@@ -309,9 +290,6 @@ export function BackupSettings({ apiKey, orchUrl }) {
                       )}
                       {importResult.imported.proxy && (
                         <Badge variant="success">Proxy Settings</Badge>
-                      )}
-                      {importResult.imported.loop_detection && (
-                        <Badge variant="success">Loop Detection</Badge>
                       )}
                     </div>
                     {importResult.imported.errors?.length > 0 && (

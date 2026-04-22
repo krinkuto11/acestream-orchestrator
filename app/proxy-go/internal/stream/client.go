@@ -10,6 +10,7 @@ import (
 
 	"github.com/acestream/proxy/internal/buffer"
 	"github.com/acestream/proxy/internal/config"
+	"github.com/acestream/proxy/internal/telemetry"
 	"github.com/acestream/proxy/internal/ts"
 )
 
@@ -151,6 +152,7 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 			if cs.flusher != nil {
 				cs.flusher.Flush()
 			}
+			telemetry.DefaultTelemetry.ObserveEgress("TS", n)
 			cs.cm.UpdateStats(cs.clientID, n, delta)
 			cs.localIndex = newIdx
 			cs.updateChunkRate(int(delta))
@@ -188,6 +190,7 @@ func (cs *ClientStreamer) sendFirstChunk(ctx context.Context) bool {
 			if cs.flusher != nil {
 				cs.flusher.Flush()
 			}
+			telemetry.DefaultTelemetry.ObserveEgress("TS", n)
 			cs.localIndex = newIdx
 			cs.cm.UpdateStats(cs.clientID, n, 1)
 			return true

@@ -21,10 +21,13 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/acestream/proxy/internal/buffer"
 	"github.com/acestream/proxy/internal/config"
 	"github.com/acestream/proxy/internal/hls"
 	"github.com/acestream/proxy/internal/stream"
+	"github.com/acestream/proxy/internal/telemetry"
 )
 
 var fileIndexRE = regexp.MustCompile(`^\d+(,\d+)*$`)
@@ -75,6 +78,9 @@ func (s *Server) registerRoutes() {
 
 	// Health
 	s.mux.HandleFunc("/proxy/health", s.handleHealth)
+
+	// Metrics
+	s.mux.Handle("/metrics", promhttp.Handler())
 	
 	// Debug / Profiling — gated behind API key when one is configured.
 	// /debug/pprof/profile burns a CPU core for 30 s, so anonymous access is dangerous.
@@ -489,6 +495,9 @@ func (s *Server) recordHLSClient(streamKey string, bytesDelta int64, r *http.Req
 	ua := r.Header.Get("User-Agent")
 	cid := buildClientID(ip, ua)
 	cm.HeartbeatHLSClient(cid, ip, ua, bytesDelta)
+	if bytesDelta > 0 {
+		telemetry.DefaultTelemetry.ObserveEgress("HLS", bytesDelta)
+	}
 }
 
 // --- Engine selection (calls Python orchestrator internal API) ---
