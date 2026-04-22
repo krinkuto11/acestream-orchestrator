@@ -37,4 +37,9 @@ var (
 		Name: "acestream_proxy_bytes_egress_total",
 		Help: "The total number of bytes sent to clients.",
 	}, []string{"mode"})
+
+	ConnectionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "acestream_proxy_connections_total",
+		Help: "The total number of client connections established.",
+	}, []string{"mode"})
 )

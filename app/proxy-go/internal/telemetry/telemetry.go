@@ -76,6 +76,7 @@ func (t *TelemetryTracker) ObserveRequest(mode, endpoint string, durationSecs fl
 
 func (t *TelemetryTracker) ObserveConnect(mode string) {
 	metrics.ActiveSessions.WithLabelValues(mode).Inc()
+	metrics.ConnectionsTotal.WithLabelValues(mode).Inc()
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
