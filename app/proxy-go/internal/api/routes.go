@@ -80,7 +80,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/proxy/health", s.handleHealth)
 
 	// Metrics
-	s.mux.Handle("/metrics", promhttp.Handler())
+	s.mux.Handle("/metrics/proxy", promhttp.Handler())
 	
 	// Debug / Profiling — gated behind API key when one is configured.
 	// /debug/pprof/profile burns a CPU core for 30 s, so anonymous access is dangerous.
