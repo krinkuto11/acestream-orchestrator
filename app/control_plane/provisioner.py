@@ -609,6 +609,17 @@ def execute_engine_spec(spec: EngineSpec):
 
         # Success at the API level (request submitted)
         _decrement_vpn_pending_counter(spec.vpn_container_id)
+
+        # Schedule a one-shot settings push once the engine becomes healthy.
+        try:
+            from ..infrastructure.engine_config import get_config as get_engine_config
+            from ..infrastructure.engine_settings_applier import schedule_post_start_settings
+            engine_cfg = get_engine_config()
+            if engine_cfg:
+                schedule_post_start_settings(container_name, engine_cfg)
+        except Exception as _e:
+            logger.debug("Could not schedule post-start settings push for %s: %s", container_name, _e)
+
         return container
     except Exception as e:
         logger.error(f"Docker API failed to provision {container_name}: {e}")

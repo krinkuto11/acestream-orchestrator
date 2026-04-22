@@ -547,8 +547,31 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
             cfg.MAX_REPLICAS,
         )
 
-    engine_controller.request_reconcile(reason="engine_settings_update")
-    rollout = _trigger_engine_generation_rollout(reason="engine_settings_update")
+    from ...infrastructure.engine_settings_applier import (
+        LIVE_SETTABLE_FIELDS,
+        RESTART_REQUIRED_FIELDS,
+        apply_settings_to_all_engines,
+    )
+
+    # Determine which categories of fields actually changed.
+    old_dump = existing_engine_config.model_dump(mode="json")
+    new_dump = updated_engine_config.model_dump(mode="json")
+    changed_fields = {k for k in new_dump if new_dump[k] != old_dump.get(k)}
+
+    live_changed = bool(changed_fields & LIVE_SETTABLE_FIELDS)
+    restart_required = bool(changed_fields & RESTART_REQUIRED_FIELDS)
+
+    # Push live-settable settings immediately to all healthy engines.
+    live_update_results: dict = {}
+    if live_changed:
+        live_update_results = apply_settings_to_all_engines(updated_engine_config)
+        logger.info("Live settings pushed to %d engine(s)", len(live_update_results))
+
+    # Trigger a rolling reprovision only when restart-required settings changed.
+    rollout: dict = {}
+    if restart_required:
+        engine_controller.request_reconcile(reason="engine_settings_update")
+        rollout = _trigger_engine_generation_rollout(reason="engine_settings_update")
 
     return {
         "message": "Engine settings updated and persisted",
@@ -556,7 +579,12 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
         **updated_engine_config.model_dump(mode="json"),
         "platform": current_platform,
         "image": resolve_engine_image(current_platform),
+        "live_update": {
+            "applied": live_changed,
+            "engines": live_update_results,
+        },
         "rolling_update": {
+            "triggered": restart_required,
             "changed": bool(rollout.get("changed")),
             "target_generation": rollout.get("generation"),
             "target_hash": rollout.get("config_hash"),
