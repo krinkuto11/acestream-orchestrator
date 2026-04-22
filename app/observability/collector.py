@@ -198,44 +198,20 @@ class Collector:
         try:
             # Legacy stats can only be queried on the same API session used for START,
             # so we read them from the in-process proxy stream manager.
-            from ..proxy.server import ProxyServer
-            from ..proxy.hls_proxy import HLSProxyServer
+            # API-mode HLS sessions are controlled by external segmenter service.
             from ..data_plane.hls_segmenter import hls_segmenter_service
+            from ..data_plane.legacy_stream_monitoring import legacy_stream_monitoring_service
 
-            proxy = ProxyServer.get_instance()
-            manager = proxy.stream_managers.get(stream.key) if proxy else None
-            probe = None
-
-            if manager:
-                async with self._legacy_probe_semaphore:
-                    probe = await asyncio.to_thread(
-                        manager.collect_legacy_stats_probe,
-                        1,
-                        1.0,
-                    )
-
-            if not probe:
-                # Try integrated HLS Proxy
-                hls_proxy = HLSProxyServer.get_instance()
-                hls_manager = hls_proxy.stream_managers.get(stream.key) if hls_proxy else None
-                if hls_manager:
-                    async with self._legacy_probe_semaphore:
-                        probe = await asyncio.to_thread(hls_manager.collect_legacy_stats_probe)
-
-            if not probe:
-                # API-mode HLS sessions are controlled by external segmenter service.
-                async with self._legacy_probe_semaphore:
-                    probe = await asyncio.to_thread(
-                        hls_segmenter_service.collect_legacy_stats_probe,
-                        stream.key,
-                        1,
-                        1.0,
-                    )
+            async with self._legacy_probe_semaphore:
+                probe = await asyncio.to_thread(
+                    hls_segmenter_service.collect_legacy_stats_probe,
+                    stream.key,
+                    1,
+                    1.0,
+                )
 
             if not probe:
                 # Stream may be reusing a monitoring session (no direct legacy socket on proxy side).
-                from ..data_plane.legacy_stream_monitoring import legacy_stream_monitoring_service
-
                 reusable = await legacy_stream_monitoring_service.get_reusable_session_for_content(stream.key)
                 if reusable:
                     probe = reusable.get("latest_status") or None
@@ -305,42 +281,7 @@ def _get_proxy_stream_buffer_pieces(stream_key: str) -> Optional[int]:
     try:
         from ..data_plane.client_tracker import client_tracking_service
 
-        # 1. Check HLS Proxy (HTTP mode HLS)
-        try:
-            from ..proxy.hls_proxy import HLSProxyServer
-            hls_proxy = HLSProxyServer.get_instance()
-            if hls_proxy:
-                buffer = hls_proxy.stream_buffers.get(stream_key)
-                
-                if buffer and buffer.keys():
-                    latest_seq = max(buffer.keys())
-
-                    hls_clients = client_tracking_service.get_stream_clients(
-                        stream_key,
-                        protocol="HLS",
-                        worker_id="hls_proxy",
-                    )
-                    if hls_clients:
-                        min_client_seq = latest_seq
-                        has_active_clients = False
-
-                        for client in hls_clients:
-                            c_seq = client.get("last_sequence")
-                            if c_seq is not None:
-                                if c_seq < min_client_seq:
-                                    min_client_seq = c_seq
-                                has_active_clients = True
-                        
-                        if has_active_clients:
-                            # Lag is the number of segments between head and slowest client
-                            return max(0, latest_seq - min_client_seq)
-                    
-                    # If no clients, just show the current buffer size
-                    return len(buffer.keys())
-        except Exception:
-            pass
-
-        # 2. Check HLS Segmenter (API mode HLS)
+        # 1. Check HLS Segmenter (API mode HLS)
         try:
             from ..data_plane.hls_segmenter import hls_segmenter_service
             
@@ -353,7 +294,6 @@ def _get_proxy_stream_buffer_pieces(stream_key: str) -> Optional[int]:
                     api_hls_clients = client_tracking_service.get_stream_clients(
                         stream_key,
                         protocol="HLS",
-                        worker_id="api_hls_segmenter",
                     )
                     
                     if api_hls_clients:
@@ -382,53 +322,48 @@ def _get_proxy_stream_buffer_pieces(stream_key: str) -> Optional[int]:
         except Exception:
             pass
 
-        # 3. Check TS Proxy (HTTP and API mode MPEG-TS)
-        from ..proxy.manager import ProxyManager
-        from ..proxy.redis_keys import RedisKeys
-        proxy = ProxyManager.get_instance()
-        rc = getattr(proxy, "redis_client", None)
-        if rc:
-            b_val = rc.get(RedisKeys.buffer_index(stream_key))
-            if not b_val:
-                return 0
-            latest_idx = int(b_val)
-
-            client_ids = rc.smembers(RedisKeys.clients(stream_key)) or []
-            if not client_ids:
+        # 2. Check Redis for Go Data Plane stats (TS or HLS)
+        try:
+            from ..shared.redis_client import get_redis_client
+            from ..shared.redis_keys import RedisKeys
+            
+            redis_client = get_redis_client()
+            if not redis_client:
                 return 0
 
-            min_client_idx = latest_idx
-            from ..proxy.config_helper import Config as ProxyConfig
-            chunk_size = int(getattr(ProxyConfig, "BUFFER_CHUNK_SIZE", 188 * 5644))
-
-            has_clients = False
-            for cid in client_ids:
-                if isinstance(cid, bytes): cid = cid.decode("utf-8")
-                client_key = RedisKeys.client_metadata(stream_key, cid)
-                
-                # Fetch both bytes_sent and initial_index to calculate absolute chunk position
-                client_data = rc.hmget(client_key, ["bytes_sent", "initial_index"])
-                if client_data and any(v is not None for v in client_data):
-                    try:
-                        b_sent = int(client_data[0] or 0)
-                        initial_idx = int(client_data[1] or 0)
+            # For Go Proxy (HLS or TS), buffer_index stores the latest sequence number
+            idx_key = RedisKeys.buffer_index(stream_key)
+            latest_idx_raw = redis_client.get(idx_key)
+            
+            if latest_idx_raw is not None:
+                try:
+                    latest_seq = int(latest_idx_raw)
+                    clients = client_tracking_service.get_stream_clients(stream_key)
+                    
+                    if clients:
+                        min_client_seq = latest_seq
+                        has_active_clients = False
+                        for client in clients:
+                            c_seq = client.get("last_sequence")
+                            if c_seq is not None:
+                                try:
+                                    c_seq_int = int(c_seq)
+                                    if c_seq_int < min_client_seq:
+                                        min_client_seq = c_seq_int
+                                    has_active_clients = True
+                                except (TypeError, ValueError):
+                                    continue
                         
-                        # Absolute client position = start position + chunks consumed
-                        c_idx = initial_idx + (b_sent // chunk_size)
-                        
-                        if c_idx < min_client_idx:
-                            min_client_idx = c_idx
-                        has_clients = True
-                    except (TypeError, ValueError):
-                        continue
+                        if has_active_clients:
+                            return max(0, latest_seq - min_client_seq)
+                except (TypeError, ValueError):
+                    pass
+        except Exception:
+            pass
 
-            if has_clients:
-                # Buffer size is distance between last written chunk and furthest client
-                return max(0, latest_idx - min_client_idx)
-            return 0
+        return 0
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).debug(f"Failed to get proxy buffer pieces for {stream_key}: {e}")
+        logger.debug(f"Failed to get proxy buffer pieces for {stream_key}: {e}")
     return None
 
 collector = Collector()

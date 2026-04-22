@@ -16,7 +16,7 @@ from ...core.config import cfg
 from ...api.auth import require_api_key
 from ...services.state import state
 from ...observability.event_logger import event_logger
-from ...proxy.utils import sanitize_stream_id, get_client_ip
+from ...shared.utils import sanitize_stream_id, get_client_ip
 from ...models.schemas import StreamState, StreamStatSnapshot, StreamStartedEvent, StreamEndedEvent
 from ...api.sse_helpers import _format_sse_message, _validate_sse_api_key
 
@@ -198,21 +198,10 @@ async def get_stream_livepos(stream_id: str):
             raise HTTPException(status_code=500, detail=f"Error processing livepos data: {str(e)}")
 
     try:
-        from ...proxy.server import ProxyServer
         from ...data_plane.hls_segmenter import hls_segmenter_service
         from ...data_plane.legacy_stream_monitoring import legacy_stream_monitoring_service
 
-        proxy = ProxyServer.get_instance()
-        manager = proxy.stream_managers.get(stream.key) if proxy else None
         probe = None
-
-        if manager:
-            probe = await asyncio.to_thread(
-                manager.collect_legacy_stats_probe,
-                1,
-                1.0,
-                True,
-            )
 
         if not probe:
             probe = await asyncio.to_thread(
@@ -561,7 +550,6 @@ async def stream_stream_details(
     _validate_sse_api_key(request, api_key)
 
     from ...data_plane.client_tracker import client_tracking_service
-    from ...proxy.config_helper import Config as ProxyConfig
     from ...main import _prune_client_tracker_if_due
 
     async def _event_generator():
@@ -631,7 +619,7 @@ async def stream_stream_details(
             stream_key = str(getattr(stream_state, "key", "") or "")
             if stream_key:
                 with suppress(Exception):
-                    _prune_client_tracker_if_due(ttl_s=float(ProxyConfig.CLIENT_RECORD_TTL), min_interval_s=3.0)
+                    _prune_client_tracker_if_due(ttl_s=float(cfg.CLIENT_RECORD_TTL_S), min_interval_s=3.0)
                     tracker_payload = client_tracking_service.get_stream_clients_payload(stream_key)
                     clients = tracker_payload.get("clients", [])
                     if not clients and getattr(stream_state, "status", None) == "started":

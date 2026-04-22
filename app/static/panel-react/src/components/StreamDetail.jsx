@@ -17,9 +17,6 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronUp,
-  Pause,
-  Save,
-  PlayCircle,
   Users,
   Download,
   Upload,
@@ -108,79 +105,6 @@ function formatTimelineTimestamp(value) {
   }
 }
 
-function LiveSeekSlider({
-  min,
-  max,
-  value,
-  onChange,
-  onCommit,
-  disabled,
-  bufferStart,
-  bufferEnd,
-}) {
-  const totalRange = Math.max(1, max - min)
-  const toPercent = (point) => clamp(((point - min) / totalRange) * 100, 0, 100)
-
-  const selectedPercent = toPercent(value)
-  const bufferStartPercent = toPercent(bufferStart)
-  const bufferEndPercent = toPercent(bufferEnd)
-  const bufferLeft = Math.min(bufferStartPercent, bufferEndPercent)
-  const bufferWidth = Math.max(0, Math.abs(bufferEndPercent - bufferStartPercent))
-
-  return (
-    <div className="space-y-3">
-      <div className="relative pt-4">
-        <div className="relative h-3 rounded-full bg-muted">
-          <div
-            className="absolute top-0 h-3 rounded-full bg-emerald-500/60"
-            style={{ left: `${bufferLeft}%`, width: `${bufferWidth}%` }}
-          />
-          <div
-            className="absolute top-0 h-3 rounded-full bg-primary/80"
-            style={{ left: 0, width: `${selectedPercent}%` }}
-          />
-          <div className="absolute -top-1 right-0 h-5 w-[2px] bg-red-500" />
-          <div
-            className="absolute top-1/2 z-20 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-primary shadow-lg transition-all duration-300"
-            style={{ left: `${selectedPercent}%` }}
-          />
-        </div>
-
-        <input
-          type="range"
-          min={min}
-          max={max}
-          step={1}
-          value={value}
-          onChange={(event) => onChange(Number.parseInt(event.target.value, 10))}
-          onMouseUp={onCommit}
-          onTouchEnd={onCommit}
-          onKeyUp={(event) => {
-            if (event.key === 'Enter') onCommit()
-          }}
-          disabled={disabled}
-          className="absolute inset-0 h-3 w-full cursor-pointer opacity-0"
-          aria-label="Live seek timeline"
-        />
-      </div>
-
-      <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
-        <div>
-          <p>Window Start</p>
-          <p className="font-medium text-foreground">{formatTimelineTimestamp(min)}</p>
-        </div>
-        <div>
-          <p>Selected</p>
-          <p className="font-medium text-foreground">{formatTimelineTimestamp(value)}</p>
-        </div>
-        <div className="text-right">
-          <p>Live Edge</p>
-          <p className="font-medium text-foreground">{formatTimelineTimestamp(max)}</p>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, onClose }) {
   const [stats, setStats] = useState([])
@@ -194,21 +118,6 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
     is_live: Boolean(stream?.is_live),
     livepos: stream?.livepos || null,
   })
-  const [seekValue, setSeekValue] = useState(null)
-  const [seekLoading, setSeekLoading] = useState(false)
-  const [seekError, setSeekError] = useState(null)
-  const [seekMessage, setSeekMessage] = useState(null)
-  const [isPaused, setIsPaused] = useState(Boolean(stream?.paused))
-  const [controlLoading, setControlLoading] = useState(false)
-  const [controlError, setControlError] = useState(null)
-  const [controlMessage, setControlMessage] = useState(null)
-  const [saveDialogOpen, setSaveDialogOpen] = useState(false)
-  const [savePath, setSavePath] = useState('')
-  const [saveIndex, setSaveIndex] = useState('0')
-
-  useEffect(() => {
-    setIsPaused(Boolean(stream?.paused))
-  }, [stream?.paused])
 
   useEffect(() => {
     if (!stream?.id) return undefined
@@ -373,173 +282,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
   const timelineLastTs = Number.parseInt(String(liveposTimeline.last_ts ?? liveposTimeline.live_last ?? ''), 10)
   const timelinePos = Number.parseInt(String(liveposTimeline.pos ?? ''), 10)
 
-  useEffect(() => {
-    if (Number.isFinite(timelinePos)) {
-      setSeekValue(timelinePos)
-    }
-  }, [timelinePos])
 
-  const canSeekTimeline = Boolean(
-    liveposData?.has_livepos
-    && liveposData?.is_live
-    && Number.isFinite(timelineFirstTs)
-    && Number.isFinite(timelineLastTs)
-    && timelineLastTs > timelineFirstTs,
-  )
-
-  const handleSeekCommit = useCallback(async () => {
-    const selected = Number.parseInt(String(seekValue ?? ''), 10)
-    if (!canSeekTimeline || !Number.isFinite(selected)) return
-
-    if (selected >= timelineLastTs) {
-      setSeekMessage('Already at live edge.')
-      return
-    }
-
-    setSeekLoading(true)
-    setSeekError(null)
-    setSeekMessage(null)
-
-    try {
-      const headers = {
-        'Content-Type': 'application/json',
-      }
-      if (apiKey) {
-        headers.Authorization = `Bearer ${apiKey}`
-      }
-
-      const response = await fetch(
-        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/seek`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ target_timestamp: selected }),
-        },
-      )
-
-      let payload = null
-      try {
-        payload = await response.json()
-      } catch {
-        payload = null
-      }
-
-      if (!response.ok) {
-        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
-      }
-
-      if (payload?.status === 'seek_issued') {
-        setSeekMessage(`Seek issued for ${formatTimelineTimestamp(selected)}`)
-      } else {
-        setSeekMessage(`Seek applied to ${formatTimelineTimestamp(selected)}`)
-      }
-    } catch (err) {
-      setSeekError(err?.message || String(err))
-    } finally {
-      setSeekLoading(false)
-    }
-  }, [apiKey, canSeekTimeline, seekValue, timelineLastTs, orchUrl, stream.id])
-
-  const handlePauseResume = useCallback(async (shouldPause) => {
-    if (!apiKey) {
-      setControlError('Set API key in Settings to use media controls.')
-      return
-    }
-
-    setControlLoading(true)
-    setControlError(null)
-    setControlMessage(null)
-
-    try {
-      const action = shouldPause ? 'pause' : 'resume'
-      const response = await fetch(
-        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/${action}`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-          },
-        },
-      )
-
-      let payload = null
-      try {
-        payload = await response.json()
-      } catch {
-        payload = null
-      }
-
-      if (!response.ok) {
-        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
-      }
-
-      setIsPaused(shouldPause)
-      setControlMessage(shouldPause ? 'Stream paused.' : 'Stream resumed.')
-    } catch (err) {
-      setControlError(err?.message || 'Failed to update playback state')
-    } finally {
-      setControlLoading(false)
-    }
-  }, [apiKey, orchUrl, stream.id])
-
-  const handleSaveStream = useCallback(async () => {
-    if (!apiKey) {
-      setControlError('Set API key in Settings to use media controls.')
-      return
-    }
-
-    const normalizedPath = String(savePath || '').trim()
-    if (!normalizedPath) {
-      setControlError('Save path is required.')
-      return
-    }
-
-    const parsedIndex = Number.parseInt(String(saveIndex || '0'), 10)
-    if (!Number.isFinite(parsedIndex) || parsedIndex < 0) {
-      setControlError('Save index must be a non-negative integer.')
-      return
-    }
-
-    setControlLoading(true)
-    setControlError(null)
-    setControlMessage(null)
-
-    try {
-      const response = await fetch(
-        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/save`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            path: normalizedPath,
-            index: parsedIndex,
-            infohash: resolvedInfohash || undefined,
-          }),
-        },
-      )
-
-      let payload = null
-      try {
-        payload = await response.json()
-      } catch {
-        payload = null
-      }
-
-      if (!response.ok) {
-        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
-      }
-
-      setControlMessage(`Save command issued for index ${parsedIndex}.`)
-      setSaveDialogOpen(false)
-    } catch (err) {
-      setControlError(err?.message || 'Failed to issue save command')
-    } finally {
-      setControlLoading(false)
-    }
-  }, [apiKey, orchUrl, stream.id, savePath, saveIndex, resolvedInfohash])
 
   const chartData = useMemo(() => ({
     labels: stats.map((sample) => new Date(sample.ts).toLocaleTimeString()),
@@ -740,39 +483,6 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
             isLive={Boolean(liveposData?.is_live)}
           />
 
-          {canSeekTimeline ? (
-            <div className="space-y-2">
-              <LiveSeekSlider
-                min={timelineFirstTs}
-                max={timelineLastTs}
-                value={seekValue ?? timelinePos ?? timelineLastTs}
-                onChange={setSeekValue}
-                onCommit={handleSeekCommit}
-                disabled={seekLoading || !isApiMode}
-                bufferStart={timelineFirstTs}
-                bufferEnd={timelineLastTs}
-              />
-
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSeekCommit}
-                  disabled={seekLoading || !isApiMode}
-                >
-                  {seekLoading ? 'Applying...' : 'Apply Catch-up'}
-                </Button>
-                {!isApiMode && (
-                  <Badge variant="outline">LIVESEEK requires API mode</Badge>
-                )}
-              </div>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">Live timeline is unavailable for this stream.</p>
-          )}
-
-          {seekMessage && <p className="text-xs text-emerald-600 dark:text-emerald-400">{seekMessage}</p>}
-          {seekError && <p className="text-xs text-destructive">{seekError}</p>}
         </div>
 
         <div className="h-80 rounded-xl border bg-muted/20 p-3">
@@ -789,30 +499,6 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
 
         <div className="rounded-xl border bg-background/95 p-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/75 space-y-2">
           <div className="flex flex-wrap gap-2">
-            {isApiMode ? (
-              <>
-                <Button
-                  variant="outline"
-                  disabled={controlLoading || !apiKey}
-                  onClick={() => handlePauseResume(!isPaused)}
-                  className="flex items-center gap-2"
-                >
-                  {isPaused ? <PlayCircle className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-                  {isPaused ? 'Resume' : 'Pause'}
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={controlLoading || !apiKey}
-                  onClick={() => setSaveDialogOpen(true)}
-                  className="flex items-center gap-2"
-                >
-                  <Save className="h-4 w-4" />
-                  Save
-                </Button>
-              </>
-            ) : (
-              <Badge variant="outline">Pause/Save require API mode</Badge>
-            )}
 
             <Button
               variant="destructive"
@@ -832,49 +518,7 @@ function StreamDetail({ stream, orchUrl, apiKey, onStopStream, onDeleteEngine, o
             </Button>
           </div>
 
-          {controlLoading && <p className="text-xs text-muted-foreground">Sending control command...</p>}
-          {controlMessage && <p className="text-xs text-emerald-600 dark:text-emerald-400">{controlMessage}</p>}
-          {controlError && <p className="text-xs text-destructive">{controlError}</p>}
 
-          <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Save Stream File</DialogTitle>
-                <DialogDescription>
-                  Issue SAVE for this stream to store a file on disk from the active AceStream session.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Destination path</p>
-                  <Input
-                    value={savePath}
-                    onChange={(event) => setSavePath(event.target.value)}
-                    placeholder="/downloads"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">File index</p>
-                  <Input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={saveIndex}
-                    onChange={(event) => setSaveIndex(event.target.value)}
-                    placeholder="0"
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleSaveStream} disabled={controlLoading}>
-                  Save Now
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
         </div>
       </CardContent>
     </Card>

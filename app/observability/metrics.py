@@ -239,9 +239,9 @@ def observe_proxy_egress_bytes(mode: str, byte_count: int):
 def _compute_proxy_clients_snapshot() -> Dict[str, Any]:
     """Unified snapshot of active TS/HLS clients from the central tracker."""
     from ..data_plane.client_tracker import client_tracking_service
-    from ..proxy.config_helper import Config as ProxyConfig
-
-    client_tracking_service.prune_stale_clients(float(getattr(ProxyConfig, "CLIENT_RECORD_TTL", 60)))
+    
+    # Prune stale clients (TTL roughly 60s)
+    client_tracking_service.prune_stale_clients(60.0)
     clients = client_tracking_service.get_all_active_clients()
     ts_clients_count = sum(1 for row in clients if str(row.get("protocol", "")).upper() == "TS")
     hls_clients_count = sum(1 for row in clients if str(row.get("protocol", "")).upper() == "HLS")
@@ -308,47 +308,10 @@ def _compute_proxy_throughput_snapshot() -> Dict[str, float]:
     current_client_bytes: Dict[str, int] = {}
     current_stream_ingress_bytes: Dict[str, int] = {}
 
-    try:
-        from ..proxy.manager import ProxyManager
-        from ..proxy.redis_keys import RedisKeys
-        from ..proxy.config_helper import Config as ProxyConfig
-
-        proxy = ProxyManager.get_instance()
-        redis_client = getattr(proxy, "redis_client", None)
-        if redis_client:
-            active_streams = state.list_streams(status="started")
-            if not active_streams:
-                # Fallback for transitional states where streams may not yet be marked as started.
-                active_streams = state.list_streams()
-            active_keys = {s.key for s in active_streams if s.key}
-            chunk_size = int(getattr(ProxyConfig, "BUFFER_CHUNK_SIZE", 188 * 5644))
-
-            for stream_key in active_keys:
-                try:
-                    buffer_index_raw = redis_client.get(RedisKeys.buffer_index(stream_key))
-                    buffer_index = int(buffer_index_raw or 0)
-                    current_stream_ingress_bytes[stream_key] = max(0, buffer_index) * chunk_size
-                except Exception:
-                    continue
-
-                try:
-                    client_ids = redis_client.smembers(RedisKeys.clients(stream_key)) or []
-                except Exception:
-                    client_ids = []
-
-                for client_id_raw in client_ids:
-                    try:
-                        client_id = client_id_raw.decode("utf-8") if isinstance(client_id_raw, bytes) else str(client_id_raw)
-                        client_key = RedisKeys.client_metadata(stream_key, client_id)
-                        bytes_sent_raw = redis_client.hget(client_key, "bytes_sent")
-                        if bytes_sent_raw is None:
-                            continue
-                        bytes_sent = int(bytes_sent_raw.decode("utf-8") if isinstance(bytes_sent_raw, bytes) else bytes_sent_raw)
-                        current_client_bytes[f"{stream_key}:{client_id}"] = max(0, bytes_sent)
-                    except Exception:
-                        continue
-    except Exception:
-        pass
+    # Throughput calculation for Go Data Plane should ideally be done 
+    # by reading Redis keys or having the Go proxy push metrics.
+    # For now, we return 0 for legacy proxy deltas.
+    pass
 
     with _proxy_io_lock:
         delta_ts_egress = 0
@@ -442,64 +405,6 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
 
     current_engine_bytes: Dict[str, int] = {}  # container_id -> total ingress bytes
 
-    try:
-        from ..proxy.manager import ProxyManager
-        from ..proxy.redis_keys import RedisKeys
-        from ..proxy.config_helper import Config as ProxyConfig
-
-        proxy = ProxyManager.get_instance()
-        redis_client = getattr(proxy, "redis_client", None)
-        if redis_client:
-            active_streams = state.list_streams(status="started")
-            if not active_streams:
-                active_streams = state.list_streams()
-            chunk_size = int(getattr(ProxyConfig, "BUFFER_CHUNK_SIZE", 188 * 5644))
-
-            # --- 1. TS Engines (via Redis Buffer) ---
-            for s in active_streams:
-                if not s.key or not s.container_id:
-                    continue
-                try:
-                    buffer_index_raw = redis_client.get(RedisKeys.buffer_index(s.key))
-                    if buffer_index_raw is not None:
-                        buffer_index = int(buffer_index_raw or 0)
-                        ingress_bytes = max(0, buffer_index) * chunk_size
-                        current_engine_bytes[s.container_id] = current_engine_bytes.get(s.container_id, 0) + ingress_bytes
-                except Exception:
-                    continue
-    except Exception:
-        pass
-
-    # --- 2. HLS Engines (Internal Proxy or External Segmenter) ---
-    try:
-        from ..proxy.hls_proxy import HLSProxyServer
-        from ..data_plane.hls_segmenter import hls_segmenter_service
-
-        # Calculate time-step for synthetic cumulative increments
-        dt = 0.0
-        if _last_engine_ingress_sample_ts is not None:
-            dt = max(0.0, now - _last_engine_ingress_sample_ts)
-
-        # 2a. Internal HLS Proxy
-        hls_proxy = HLSProxyServer.get_instance()
-        if hls_proxy:
-            managers = getattr(hls_proxy, "stream_managers", {}) or {}
-            for channel_id, manager in managers.items():
-                container_id = getattr(manager, "engine_container_id", None)
-                if not container_id:
-                    continue
-                total_fetched = getattr(manager, "total_bytes_fetched", 0) or 0
-                if total_fetched > 0:
-                    current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + int(total_fetched)
-
-        # 2b. External HLS Segmenter Service (API mode)
-        if hls_segmenter_service:
-            sessions = getattr(hls_segmenter_service, "_sessions", {}) or {}
-            for stream_key, session in sessions.items():
-                container_id = getattr(session, "container_id", None)
-                if not container_id:
-                    continue
-                
                 try:
                     probe = hls_segmenter_service.collect_legacy_stats_probe(stream_key)
                     if probe:

@@ -10,9 +10,9 @@ from typing import Any, Callable, Dict, List, Optional
 import os
 from urllib.parse import urlparse
 
-from ..proxy.ace_api_client import AceLegacyApiClient
-from ..proxy.http_streamer import HTTPStreamReader
-from ..proxy.constants import VLC_USER_AGENT
+from .ace_api_client import AceLegacyApiClient
+from .http_streamer import HTTPStreamReader
+from ..shared.constants import VLC_USER_AGENT
 from ..services.state import state
 from ..core.config import cfg
 from ..infrastructure.engine_selection import select_best_engine

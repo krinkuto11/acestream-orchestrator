@@ -671,38 +671,40 @@ def update_settings_bundle(payload: SettingsBundleUpdate):
                 setattr(cfg, _cfg_attr, _value)
 
     if "proxy_settings" in updates:
-        from ...proxy.utils import get_client_ip  # noqa: just to confirm proxy import works
         proxy_settings = SettingsPersistence.load_proxy_config() or {}
         if "initial_data_wait_timeout" in proxy_settings:
-            ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT = proxy_settings["initial_data_wait_timeout"]
-        if "initial_data_check_interval" in proxy_settings:
-            ProxyConfig.INITIAL_DATA_CHECK_INTERVAL = proxy_settings["initial_data_check_interval"]
-        if "no_data_timeout_checks" in proxy_settings:
-            ProxyConfig.NO_DATA_TIMEOUT_CHECKS = proxy_settings["no_data_timeout_checks"]
-        if "no_data_check_interval" in proxy_settings:
-            ProxyConfig.NO_DATA_CHECK_INTERVAL = proxy_settings["no_data_check_interval"]
-        if "connection_timeout" in proxy_settings:
-            ProxyConfig.CONNECTION_TIMEOUT = proxy_settings["connection_timeout"]
+            cfg.PROXY_INITIAL_DATA_WAIT_TIMEOUT = proxy_settings["initial_data_wait_timeout"]
         if "stream_timeout" in proxy_settings:
-            ProxyConfig.STREAM_TIMEOUT = proxy_settings["stream_timeout"]
-        if "channel_shutdown_delay" in proxy_settings:
-            ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_settings["channel_shutdown_delay"]
+            cfg.PROXY_STREAM_TIMEOUT = proxy_settings["stream_timeout"]
         if "proxy_prebuffer_seconds" in proxy_settings:
-            ProxyConfig.PROXY_PREBUFFER_SECONDS = max(0, int(proxy_settings["proxy_prebuffer_seconds"]))
+            cfg.PROXY_PREBUFFER_SECONDS = max(0, int(proxy_settings["proxy_prebuffer_seconds"]))
         if "stream_mode" in proxy_settings:
-            ProxyConfig.STREAM_MODE = proxy_settings["stream_mode"]
+            cfg.STREAM_MODE = proxy_settings["stream_mode"]
         if "control_mode" in proxy_settings:
-            from ...proxy.constants import normalize_proxy_mode
-            from ...proxy.constants import PROXY_MODE_API
-            ProxyConfig.CONTROL_MODE = normalize_proxy_mode(proxy_settings["control_mode"], default=PROXY_MODE_API) or PROXY_MODE_API
-        if "legacy_api_preflight_tier" in proxy_settings:
-            tier = str(proxy_settings["legacy_api_preflight_tier"]).strip().lower()
-            if tier in ["light", "deep"]:
-                ProxyConfig.LEGACY_API_PREFLIGHT_TIER = tier
+            from ...shared.proxy_modes import normalize_proxy_mode, PROXY_MODE_API
+            cfg.PROXY_CONTROL_MODE = normalize_proxy_mode(proxy_settings["control_mode"], default=PROXY_MODE_API) or PROXY_MODE_API
         if "max_streams_per_engine" in proxy_settings:
             cfg.MAX_STREAMS_PER_ENGINE = int(proxy_settings["max_streams_per_engine"])
         if "ace_live_edge_delay" in proxy_settings:
             cfg.ACE_LIVE_EDGE_DELAY = max(0, int(proxy_settings["ace_live_edge_delay"]))
+        
+        # HLS settings
+        if "hls_max_segments" in proxy_settings:
+            cfg.HLS_MAX_SEGMENTS = int(proxy_settings["hls_max_segments"])
+        if "hls_initial_segments" in proxy_settings:
+            cfg.HLS_INITIAL_SEGMENTS = int(proxy_settings["hls_initial_segments"])
+        if "hls_window_size" in proxy_settings:
+            cfg.HLS_WINDOW_SIZE = int(proxy_settings["hls_window_size"])
+        if "hls_buffer_ready_timeout" in proxy_settings:
+            cfg.HLS_BUFFER_READY_TIMEOUT = int(proxy_settings["hls_buffer_ready_timeout"])
+        if "hls_first_segment_timeout" in proxy_settings:
+            cfg.HLS_FIRST_SEGMENT_TIMEOUT = int(proxy_settings["hls_first_segment_timeout"])
+        if "hls_initial_buffer_seconds" in proxy_settings:
+            cfg.HLS_INITIAL_BUFFER_SECONDS = int(proxy_settings["hls_initial_buffer_seconds"])
+        if "hls_max_initial_segments" in proxy_settings:
+            cfg.HLS_MAX_INITIAL_SEGMENTS = int(proxy_settings["hls_max_initial_segments"])
+        if "hls_segment_fetch_interval" in proxy_settings:
+            cfg.HLS_SEGMENT_FETCH_INTERVAL = float(proxy_settings["hls_segment_fetch_interval"])
 
     if "vpn_settings" in updates:
         vpn_settings = SettingsPersistence.load_vpn_config() or {}
@@ -754,18 +756,19 @@ async def export_settings(api_key_param: str = Depends(require_api_key)):
                 logger.warning(f"Failed to export global engine config: {e}")
 
             try:
-                from ...proxy.config_helper import Config as ProxyConfig, ConfigHelper
-
                 proxy_settings = {
-                    "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
-                    "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
-                    "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
-                    "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
-                    "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
-                    "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
-                    "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-                    "proxy_prebuffer_seconds": ConfigHelper.proxy_prebuffer_seconds(),
-                    "stream_mode": ProxyConfig.STREAM_MODE,
+                    "initial_data_wait_timeout": cfg.PROXY_INITIAL_DATA_WAIT_TIMEOUT,
+                    "stream_timeout": cfg.PROXY_STREAM_TIMEOUT,
+                    "proxy_prebuffer_seconds": cfg.PROXY_PREBUFFER_SECONDS,
+                    "stream_mode": cfg.STREAM_MODE,
+                    "hls_max_segments": cfg.HLS_MAX_SEGMENTS,
+                    "hls_initial_segments": cfg.HLS_INITIAL_SEGMENTS,
+                    "hls_window_size": cfg.HLS_WINDOW_SIZE,
+                    "hls_buffer_ready_timeout": cfg.HLS_BUFFER_READY_TIMEOUT,
+                    "hls_first_segment_timeout": cfg.HLS_FIRST_SEGMENT_TIMEOUT,
+                    "hls_initial_buffer_seconds": cfg.HLS_INITIAL_BUFFER_SECONDS,
+                    "hls_max_initial_segments": cfg.HLS_MAX_INITIAL_SEGMENTS,
+                    "hls_segment_fetch_interval": cfg.HLS_SEGMENT_FETCH_INTERVAL,
                 }
                 proxy_json = json.dumps(proxy_settings, indent=2)
                 zip_file.writestr("proxy_settings.json", proxy_json)

@@ -12,9 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..proxy.config_helper import ConfigHelper
-from ..proxy.hls_utils import get_hls_padding_comment, get_ts_null_padding
-from ..proxy.utils import sanitize_stream_id
+from ..shared.hls_utils import get_hls_padding_comment, get_ts_null_padding
+from ..shared.utils import sanitize_stream_id
 
 logger = logging.getLogger(__name__)
 
@@ -714,8 +713,8 @@ class HLSSegmenterService:
 
     async def start_segmenter(self, monitor_id: str, source_mpegts_url: str, metadata: Optional[Dict[str, Any]] = None) -> Path:
         """Start FFmpeg HLS segmenter and wait until prebuffer is reached."""
-        # Determine target prebuffer duration from ConfigHelper
-        target_prebuffer = ConfigHelper.hls_initial_buffer_seconds()
+        # Determine target prebuffer duration from config
+        target_prebuffer = getattr(cfg, "HLS_INITIAL_BUFFER_SECONDS", 10)
         # Ensure we don't timeout prematurely if prebuffer is long
         timeout_s = max(15.0, float(target_prebuffer) + 30.0)
         

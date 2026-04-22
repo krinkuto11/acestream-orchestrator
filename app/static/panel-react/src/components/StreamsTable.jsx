@@ -14,9 +14,6 @@ import {
   Clock,
   ExternalLink,
   Download,
-  Pause,
-  PlayCircle,
-  Save,
   Server,
   StopCircle,
   Trash2,
@@ -98,9 +95,6 @@ function mergeStreamSnapshot(baseStream, payload) {
     next.livepos = payload.livepos
   }
 
-  if (typeof payload?.paused === 'boolean') {
-    next.paused = payload.paused
-  }
 
   return next
 }
@@ -315,9 +309,6 @@ function StreamStatusBadge({ isActive, isPaused, isPrebuffering, isDownloadStopp
   if (isDownloadStopped) {
     return <Badge variant="destructive">DOWNLOAD STOPPED</Badge>
   }
-  if (isActive && isPaused) {
-    return <Badge className="bg-amber-500 text-white hover:bg-amber-600 border-transparent">PAUSED</Badge>
-  }
   if (isPrebuffering) {
     return <Badge className="bg-orange-500 text-white hover:bg-orange-600 border-transparent">PREBUFFERING</Badge>
   }
@@ -384,15 +375,6 @@ function StreamCard({
   const [extendedStats, setExtendedStats] = useState(null)
   const [clients, setClients] = useState([])
   const [clientsLoading, setClientsLoading] = useState(true)
-  const [isPaused, setIsPaused] = useState(Boolean(stream.paused))
-  const [detailsLive, setDetailsLive] = useState(false)
-  const [detailsLoading, setDetailsLoading] = useState(false)
-  const [controlLoading, setControlLoading] = useState(false)
-  const [controlError, setControlError] = useState(null)
-  const [controlMessage, setControlMessage] = useState(null)
-  const [saveDialogOpen, setSaveDialogOpen] = useState(false)
-  const [savePath, setSavePath] = useState('')
-  const [saveIndex, setSaveIndex] = useState('0')
 
   useEffect(() => {
     setLocalStream(stream)
@@ -417,9 +399,6 @@ function StreamCard({
   const hasNoEngineControlLinks = !localStream?.stat_url && !localStream?.command_url
   const isApiMode = hasApiControlLabel || hasNoEngineControlLinks
 
-  useEffect(() => {
-    setIsPaused(Boolean(localStream?.paused))
-  }, [localStream?.paused])
 
   useEffect(() => {
     if (!stream?.id || !isStreamActiveStatus(stream?.status)) return undefined
@@ -545,107 +524,6 @@ function StreamCard({
     }
   }, [isExpanded, stream?.id, stream?.status, orchUrl, apiKey])
 
-  const handlePauseResume = useCallback(async (shouldPause) => {
-    if (!apiKey) {
-      setControlError('Set API key in Settings to use media controls.')
-      return
-    }
-
-    setControlLoading(true)
-    setControlError(null)
-    setControlMessage(null)
-
-    try {
-      const action = shouldPause ? 'pause' : 'resume'
-      const response = await fetch(
-        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/${action}`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-          },
-        },
-      )
-
-      let payload = null
-      try {
-        payload = await response.json()
-      } catch {
-        payload = null
-      }
-
-      if (!response.ok) {
-        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
-      }
-
-      setIsPaused(shouldPause)
-      setLocalStream((prev) => ({ ...prev, paused: shouldPause }))
-      setControlMessage(shouldPause ? 'Stream paused.' : 'Stream resumed.')
-    } catch (err) {
-      setControlError(err?.message || 'Failed to update playback state')
-    } finally {
-      setControlLoading(false)
-    }
-  }, [apiKey, orchUrl, stream.id])
-
-  const handleSaveStream = useCallback(async () => {
-    if (!apiKey) {
-      setControlError('Set API key in Settings to use media controls.')
-      return
-    }
-
-    const normalizedPath = String(savePath || '').trim()
-    if (!normalizedPath) {
-      setControlError('Save path is required.')
-      return
-    }
-
-    const parsedIndex = Number.parseInt(String(saveIndex || '0'), 10)
-    if (!Number.isFinite(parsedIndex) || parsedIndex < 0) {
-      setControlError('Save index must be a non-negative integer.')
-      return
-    }
-
-    setControlLoading(true)
-    setControlError(null)
-    setControlMessage(null)
-
-    try {
-      const response = await fetch(
-        `${orchUrl}/api/v1/streams/${encodeURIComponent(stream.id)}/save`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            path: normalizedPath,
-            index: parsedIndex,
-            infohash: resolvedInfohash || undefined,
-          }),
-        },
-      )
-
-      let payload = null
-      try {
-        payload = await response.json()
-      } catch {
-        payload = null
-      }
-
-      if (!response.ok) {
-        throw new Error(payload?.detail || `HTTP ${response.status}: ${response.statusText}`)
-      }
-
-      setSaveDialogOpen(false)
-      setControlMessage(`Save command issued for index ${parsedIndex}.`)
-    } catch (err) {
-      setControlError(err?.message || 'Failed to issue save command')
-    } finally {
-      setControlLoading(false)
-    }
-  }, [apiKey, orchUrl, stream.id, savePath, saveIndex, resolvedInfohash])
 
   const displayId = getStreamDisplayId(localStream)
   const title = extendedStats?.title || displayId
@@ -671,7 +549,6 @@ function StreamCard({
               <div className="flex items-center gap-2">
                 <StreamStatusBadge
                   isActive={isActive}
-                  isPaused={isPaused}
                   isPrebuffering={isPrebuffering}
                   isDownloadStopped={isDownloadStopped}
                 />
@@ -766,10 +643,6 @@ function StreamCard({
               </Button>
             </div>
 
-            {detailsLoading && <p className="text-xs text-muted-foreground">Waiting for realtime stream snapshot...</p>}
-            {controlLoading && <p className="text-xs text-muted-foreground">Sending control command...</p>}
-            {controlMessage && <p className="text-xs text-emerald-600 dark:text-emerald-400">{controlMessage}</p>}
-            {controlError && <p className="text-xs text-destructive">{controlError}</p>}
           </div>
         </CardContent>
       )}

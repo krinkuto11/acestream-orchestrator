@@ -1,6 +1,5 @@
 """
-Redis key patterns for AceStream Proxy.
-Adapted from ts_proxy - centralizing key patterns for maintainability.
+Shared Redis key patterns for AceStream orchestrator and data plane.
 """
 
 class RedisKeys:

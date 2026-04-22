@@ -21,6 +21,9 @@ _default_db_url = f"sqlite:///{_default_db_path}"
 class Cfg(BaseModel):
     APP_PORT: int = int(os.getenv("APP_PORT", 8000))
     DOCKER_NETWORK: str | None = os.getenv("DOCKER_NETWORK")
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+    REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
     ENGINE_VARIANT: str = os.getenv("ENGINE_VARIANT", _default_variant)
     ENGINE_ARM32_VERSION: str = os.getenv("ENGINE_ARM32_VERSION", "arm32-v3.2.13")
     ENGINE_ARM64_VERSION: str = os.getenv("ENGINE_ARM64_VERSION", "arm64-v3.2.13")
@@ -90,6 +93,20 @@ class Cfg(BaseModel):
     ACE_MAP_HTTPS: bool = os.getenv("ACE_MAP_HTTPS", "false").lower() == "true"
     PROXY_CONTROL_MODE: str = PROXY_MODE_API
     ACE_LIVE_EDGE_DELAY: int = 0
+    PROXY_INITIAL_DATA_WAIT_TIMEOUT: int = 10
+    PROXY_STREAM_TIMEOUT: int = 60
+    PROXY_PREBUFFER_SECONDS: int = 0
+    STREAM_MODE: str = "TS"
+    
+    # HLS settings
+    HLS_MAX_SEGMENTS: int = 20
+    HLS_INITIAL_SEGMENTS: int = 3
+    HLS_WINDOW_SIZE: int = 6
+    HLS_BUFFER_READY_TIMEOUT: int = 30
+    HLS_FIRST_SEGMENT_TIMEOUT: int = 30
+    HLS_INITIAL_BUFFER_SECONDS: int = 10
+    HLS_MAX_INITIAL_SEGMENTS: int = 10
+    HLS_SEGMENT_FETCH_INTERVAL: float = 0.5
     
     # Engine resource limits
     ENGINE_MEMORY_LIMIT: str | None = os.getenv("ENGINE_MEMORY_LIMIT")
@@ -110,6 +127,7 @@ class Cfg(BaseModel):
     # Retention time for looping stream IDs in the tracker (in minutes)
     # 0 or None = indefinite retention
     STREAM_LOOP_RETENTION_MINUTES: int = 0  # Default indefinite
+    CLIENT_RECORD_TTL_S: int = 60
 
     @model_validator(mode='after')
     def validate_replicas(self):

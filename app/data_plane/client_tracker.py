@@ -3,7 +3,7 @@ import logging
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
-from ..proxy.utils import sanitize_stream_id
+from ..shared.utils import sanitize_stream_id
 
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ class ClientTrackingService:
             return
 
         try:
-            from ..proxy.redis_keys import RedisKeys
+            from ..shared.redis_keys import RedisKeys
             
             # Build event payload compatible with proxy/client_manager.py format
             event_data = {
@@ -119,7 +119,7 @@ class ClientTrackingService:
             # to avoid 'blind overwrite' from other workers calling position updates.
             if current is None and self._redis:
                 try:
-                    from ..proxy.redis_keys import RedisKeys
+                    from ..shared.redis_keys import RedisKeys
                     client_key = RedisKeys.client_metadata(normalized_stream_id, normalized_client_id)
                     raw_data = self._redis.hgetall(client_key)
                     if raw_data:
@@ -216,8 +216,8 @@ class ClientTrackingService:
         # to ensure that Redis sets and TTLs are refreshed if they expired
         # but the client is still active in memory.
         try:
-            from ..proxy.constants import EventType
-            from ..proxy.redis_keys import RedisKeys
+            from ..shared.constants import EventType
+            from ..shared.redis_keys import RedisKeys
             
             if created:
                 self._publish_client_event(EventType.CLIENT_CONNECTED, normalized_stream_id, row)
@@ -234,8 +234,8 @@ class ClientTrackingService:
                 self._redis.sadd(client_set_key, normalized_client_id)
                 
                 # Use a generous TTL (60s default) to handle client cleanup
-                from ..proxy.config_helper import Config
-                ttl = int(Config.CLIENT_RECORD_TTL)
+                from ..core.config import cfg
+                ttl = 60 # Default TTL if not otherwise specified
                 self._redis.expire(client_key, ttl)
                 self._redis.expire(client_set_key, ttl)
         except Exception as e:
@@ -390,11 +390,9 @@ class ClientTrackingService:
             # Update Redis if available to keep state fresh across workers
             if self._redis:
                 try:
-                    from ..proxy.redis_keys import RedisKeys
-                    from ..proxy.config_helper import Config
-                    client_key = RedisKeys.client_metadata(normalized_stream_id, normalized_client_id)
+                    from ..shared.redis_keys import RedisKeys
                     # Use minimal subset for high-frequency updates to reduce Redis load
-                    update_mapping = {
+                    ttl = 60 # Default TTL
                         "bps": str(current.get("bps")),
                         "bytes_sent": str(current.get("bytes_sent")),
                         "requests_total": str(current.get("requests_total")),
@@ -407,7 +405,7 @@ class ClientTrackingService:
                     self._redis.hset(client_key, mapping=update_mapping)
                     
                     # Refresh TTL for both individual client and the stream's client set
-                    ttl = int(Config.CLIENT_RECORD_TTL)
+                    ttl = 60
                     self._redis.expire(client_key, ttl)
                     client_set_key = RedisKeys.clients(normalized_stream_id)
                     self._redis.expire(client_set_key, ttl)
@@ -475,7 +473,7 @@ class ClientTrackingService:
             # Update Redis if available
             if self._redis:
                 try:
-                    from ..proxy.redis_keys import RedisKeys
+                    from ..shared.redis_keys import RedisKeys
                     client_key = RedisKeys.client_metadata(normalized_stream_id, normalized_client_id)
                     self._redis.hset(client_key, mapping={
                         "buffer_seconds_behind": str(current.get("buffer_seconds_behind")),
@@ -519,8 +517,8 @@ class ClientTrackingService:
             protocol = self._normalize_protocol(row.get("protocol"))
             self._emit_disconnect_metric(protocol)
             try:
-                from ..proxy.constants import EventType
-                from ..proxy.redis_keys import RedisKeys
+                from ..shared.constants import EventType
+                from ..shared.redis_keys import RedisKeys
                 
                 stream_id = str(row.get("stream_id"))
                 client_id = str(row.get("client_id"))
@@ -582,8 +580,8 @@ class ClientTrackingService:
             p = self._normalize_protocol(row.get("protocol"))
             self._emit_disconnect_metric(p)
             try:
-                from ..proxy.constants import EventType
-                from ..proxy.redis_keys import RedisKeys
+                from ..shared.constants import EventType
+                from ..shared.redis_keys import RedisKeys
                 
                 client_id = str(row.get("client_id"))
                 
@@ -643,8 +641,8 @@ class ClientTrackingService:
             p = self._normalize_protocol(row.get("protocol"))
             self._emit_disconnect_metric(p)
             try:
-                from ..proxy.constants import EventType
-                from ..proxy.redis_keys import RedisKeys
+                from ..shared.constants import EventType
+                from ..shared.redis_keys import RedisKeys
                 
                 client_id = str(row.get("client_id"))
                 
@@ -757,7 +755,7 @@ class ClientTrackingService:
             # 1. Fetch from Redis first for cross-worker parity
             if self._redis:
                 try:
-                    from ..proxy.redis_keys import RedisKeys
+                    from ..shared.redis_keys import RedisKeys
                     client_set_key = RedisKeys.clients(normalized_stream_id)
                     
                     # Get all client IDs for this stream from the set

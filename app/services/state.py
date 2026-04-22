@@ -293,22 +293,7 @@ class State(StateStore):
                 logger.warning(f"Failed to clean up metrics for stream {stream_id_for_metrics}: {e}")
 
         if st and st.key:
-            try:
-                from ..proxy.server import ProxyServer
-                proxy_server = ProxyServer.get_instance()
-                proxy_server.stop_stream_by_key(st.key)
-                logger.debug(f"Synchronized TS proxy cleanup for stream key={st.key}")
-            except Exception as e:
-                logger.warning(f"Failed to synchronize TS proxy cleanup for stream {st.key}: {e}")
-
-            try:
-                from ..proxy.hls_proxy import HLSProxyServer
-                hls_proxy = HLSProxyServer.get_instance()
-                hls_proxy.stop_stream_by_key(st.key)
-                logger.debug(f"Synchronized HLS proxy cleanup for stream key={st.key}")
-            except Exception as e:
-                logger.warning(f"Failed to synchronize HLS proxy cleanup for stream {st.key}: {e}")
-
+            # External HLS segmenter cleanup (API mode)
             try:
                 from ..data_plane.hls_segmenter import hls_segmenter_service
                 hls_segmenter_service.stop_segmenter_nowait(st.key, emit_stream_ended=False)

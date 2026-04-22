@@ -14,9 +14,8 @@ logger = logging.getLogger(__name__)
 
 def _get_proxy_redis_client() -> Any:
     try:
-        from app.proxy.manager import ProxyManager
-
-        return ProxyManager.get_instance().redis_client
+        from ..shared.redis_client import get_redis_client
+        return get_redis_client()
     except Exception:
         return None
 

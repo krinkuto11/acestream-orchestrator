@@ -134,7 +134,7 @@ def recover_stream(stream_id: str, dead_vpn: Optional[str] = None, failure_reaso
     def _recovery_task():
         try:
             from ..services.state import state
-            from ..proxy.manager import ProxyManager
+            from ..control_plane.migration import migrate_stream
             from ..infrastructure.engine_selection import select_best_engine
 
             # Wait for state to synchronize globally.
@@ -212,8 +212,9 @@ def recover_stream(stream_id: str, dead_vpn: Optional[str] = None, failure_reaso
                 
                 logger.info(f"Selected new engine {new_engine.container_id} for stream {stream_id}. Triggering migration API...")
                 
-                # Instruct the proxy to hot-swap to the new engine via the ProxyManager facade
-                migration_result = ProxyManager.migrate_stream(stream_state.key, new_engine)
+                # Instruct the data plane to hot-swap to the new engine via the new migration service
+                import asyncio
+                migration_result = asyncio.run(migrate_stream(stream_state.key, new_engine))
 
                 if migration_result.get("migrated"):
                     logger.info(f"Successfully migrated stream {stream_id} to engine {new_engine.container_id}.")

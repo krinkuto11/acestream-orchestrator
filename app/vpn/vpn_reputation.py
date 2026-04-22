@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..infrastructure import docker_client
-from ..proxy import manager
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +37,8 @@ class VPNReputationManager:
 
     def _get_proxy_redis_client(self):
         try:
-            return manager.ProxyManager.get_instance().redis_client
+            from ..shared.redis_client import get_redis_client
+            return get_redis_client()
         except Exception as e:
             logger.debug("Unable to acquire Proxy Redis client: %s", e)
             return None

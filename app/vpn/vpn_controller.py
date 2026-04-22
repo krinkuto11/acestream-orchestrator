@@ -422,10 +422,9 @@ class VPNController:
 
                     self._stream_migration_attempts.add(token)
                     try:
-                        from ..proxy.manager import ProxyManager
+                        from ..control_plane.migration import migrate_stream
 
-                        result = await asyncio.to_thread(
-                            ProxyManager.migrate_stream,
+                        result = await migrate_stream(
                             stream.key,
                             None,
                             engine.container_id,

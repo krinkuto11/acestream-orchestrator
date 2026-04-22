@@ -77,10 +77,7 @@ from .infrastructure.docker_client import get_client, docker_event_watcher
 from .vpn.vpn_credentials import credential_manager
 from .vpn.proton_updater import ProtonServerUpdater, ProtonFilterConfig
 from .vpn.vpn_servers_refresh import vpn_servers_refresh_service
-from .proxy.utils import get_client_ip, sanitize_stream_id
-from .proxy.manager import ProxyManager
-from .proxy.ace_api_client import AceLegacyApiClient, AceLegacyApiError
-from .proxy.constants import PROXY_MODE_HTTP, PROXY_MODE_API, normalize_proxy_mode
+from .shared.utils import get_client_ip, sanitize_stream_id
 
 logger = logging.getLogger(__name__)
 
@@ -294,27 +291,6 @@ def _mark_engines_draining_for_reprovision(reason: str = "engine_settings_reprov
 
     return marked
 
-def _init_proxy_server():
-    """Initialize ProxyServer and HLSProxyServer in background thread during startup.
-    
-    This prevents blocking when /proxy/streams/{stream_key}/clients or /ace/getstream
-    endpoints are called from the panel while streams are active. Lazy initialization
-    of these singletons connects to Redis and sets up data structures, which can block
-    HTTP responses in single-worker uvicorn mode.
-    """
-    try:
-        from .proxy.server import ProxyServer
-        ProxyServer.get_instance()
-        logger.info("ProxyServer pre-initialized during startup")
-    except Exception as e:
-        logger.warning(f"Failed to pre-initialize ProxyServer: {e}")
-    
-    try:
-        from .proxy.hls_proxy import HLSProxyServer
-        HLSProxyServer.get_instance()
-        logger.info("HLSProxyServer pre-initialized during startup")
-    except Exception as e:
-        logger.warning(f"Failed to pre-initialize HLSProxyServer: {e}")
 
 
 async def _refresh_vpn_servers_before_vpn_provision(vpn_controller_enabled: bool) -> None:
@@ -422,8 +398,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to load global engine config during startup: {e}")
     
-    # Load persisted settings (Proxy and Loop Detection)
-    from .proxy.config_helper import Config as ProxyConfig
     
     _loaded_live_edge_from_proxy = False
 
@@ -432,38 +406,8 @@ async def lifespan(app: FastAPI):
         proxy_settings = SettingsPersistence.load_proxy_config()
         if proxy_settings:
             logger.debug("Loading persisted proxy settings")
-            if 'initial_data_wait_timeout' in proxy_settings:
-                ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT = proxy_settings['initial_data_wait_timeout']
-            if 'initial_data_check_interval' in proxy_settings:
-                ProxyConfig.INITIAL_DATA_CHECK_INTERVAL = proxy_settings['initial_data_check_interval']
-            if 'no_data_timeout_checks' in proxy_settings:
-                ProxyConfig.NO_DATA_TIMEOUT_CHECKS = proxy_settings['no_data_timeout_checks']
-            if 'no_data_check_interval' in proxy_settings:
-                ProxyConfig.NO_DATA_CHECK_INTERVAL = proxy_settings['no_data_check_interval']
-            if 'connection_timeout' in proxy_settings:
-                ProxyConfig.CONNECTION_TIMEOUT = proxy_settings['connection_timeout']
-            if 'upstream_connect_timeout' in proxy_settings:
-                ProxyConfig.UPSTREAM_CONNECT_TIMEOUT = proxy_settings['upstream_connect_timeout']
-            if 'upstream_read_timeout' in proxy_settings:
-                ProxyConfig.UPSTREAM_READ_TIMEOUT = proxy_settings['upstream_read_timeout']
-            if 'stream_timeout' in proxy_settings:
-                ProxyConfig.STREAM_TIMEOUT = proxy_settings['stream_timeout']
-            if 'channel_shutdown_delay' in proxy_settings:
-                ProxyConfig.CHANNEL_SHUTDOWN_DELAY = proxy_settings['channel_shutdown_delay']
-            if 'proxy_prebuffer_seconds' in proxy_settings:
-                ProxyConfig.PROXY_PREBUFFER_SECONDS = max(0, int(proxy_settings['proxy_prebuffer_seconds']))
             if 'max_streams_per_engine' in proxy_settings:
                 cfg.MAX_STREAMS_PER_ENGINE = proxy_settings['max_streams_per_engine']
-            if 'stream_mode' in proxy_settings:
-                # Validate stream_mode before loading
-                mode = proxy_settings['stream_mode']
-                ProxyConfig.STREAM_MODE = mode
-            if 'control_mode' in proxy_settings:
-                ProxyConfig.CONTROL_MODE = _resolve_control_mode(proxy_settings['control_mode'])
-            if 'legacy_api_preflight_tier' in proxy_settings:
-                tier = str(proxy_settings['legacy_api_preflight_tier']).strip().lower()
-                if tier in ['light', 'deep']:
-                    ProxyConfig.LEGACY_API_PREFLIGHT_TIER = tier
             if 'ace_live_edge_delay' in proxy_settings:
                 try:
                     cfg.ACE_LIVE_EDGE_DELAY = max(0, int(proxy_settings['ace_live_edge_delay']))
@@ -689,14 +633,6 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Dynamic VPN controller disabled in settings")
     
-    # Initialize ProxyServer in background to avoid blocking later API calls
-    init_thread = threading.Thread(target=_init_proxy_server, daemon=True, name="ProxyServer-Init")
-    init_thread.start()
-    # Note: We don't wait for ProxyServer initialization to complete because:
-    # 1. The app won't receive HTTP requests until lifespan completes
-    # 2. By the time panel loads, initialization should be done (happens in parallel)
-    # 3. ProxyServer.get_instance() is thread-safe (singleton pattern)
-    
     # Start remaining monitoring services
     asyncio.create_task(collector.start())
     asyncio.create_task(stream_cleanup.start())  # Start stream cleanup service
@@ -819,10 +755,6 @@ if os.path.exists(panel_dir) and os.path.isdir(panel_dir):
     app.mount("/panel", StaticFiles(directory=panel_dir), name="panel")
 else:
     logger.warning(f"Panel directory {panel_dir} not found. /panel endpoint will not be available.")
-
-def _resolve_control_mode(mode=None):
-    """Normalize control mode to canonical values (http/api) with legacy aliases."""
-    return normalize_proxy_mode(mode, default=PROXY_MODE_API) or PROXY_MODE_API
 
 
 # ---------------------------------------------------------------------------

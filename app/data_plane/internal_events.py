@@ -35,8 +35,8 @@ def handle_stream_started(evt: StreamStartedEvent) -> StreamState:
     try:
         # Commit pending reservation
         try:
-            from app.proxy.manager import ProxyManager
-            redis = ProxyManager.get_instance().redis_client
+            from ..shared.redis_client import get_redis_client
+            redis = get_redis_client()
             if redis and evt.container_id:
                 pending_key = f"ace_proxy:engine:{evt.container_id}:pending"
                 decr_script = """

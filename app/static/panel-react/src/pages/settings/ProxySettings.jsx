@@ -11,9 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { AnimatePresence, motion } from 'framer-motion'
-import { AlertCircle, EyeOff, FlaskConical, Loader2 } from 'lucide-react'
-import { getLifecycleCopy, InteractiveStreamLifecycle } from '@/components/settings/InteractiveStreamLifecycle'
+import { Loader2 } from 'lucide-react'
 import { SettingRow } from '@/components/settings/SettingRow'
 import { useSettingsForm } from '@/context/SettingsFormContext'
 
@@ -42,13 +40,6 @@ const DEFAULTS = {
   hls_segment_fetch_interval: 0.5,
 }
 
-const PREFLIGHT_INPUT_OPTIONS = {
-  content_id: { label: 'Content ID', param: 'id', placeholder: 'PID or acestream content_id' },
-  infohash: { label: 'Infohash', param: 'infohash', placeholder: '40-char infohash' },
-  torrent_url: { label: 'Torrent URL', param: 'torrent_url', placeholder: 'https://example.com/file.torrent' },
-  direct_url: { label: 'Direct URL', param: 'direct_url', placeholder: 'magnet:?xt=... or https://media.example/stream' },
-  raw_data: { label: 'Raw Torrent Data', param: 'raw_data', placeholder: 'Base64/raw torrent payload' },
-}
 
 const LIFECYCLE_HELPER_HIDDEN_KEY = 'proxy.settings.lifecycleHelper.hidden'
 
@@ -63,17 +54,6 @@ const normalizeControlMode = (value) => {
   return 'http'
 }
 
-const extractLoadRespFiles = (payload) => {
-  const files = payload?.result?.loadresp?.files
-  if (!Array.isArray(files)) return []
-
-  return files.map((entry, idx) => {
-    const label = typeof entry === 'string' ? entry : (entry?.filename || entry?.name || `File ${idx}`)
-    const indexRaw = entry?.index ?? entry?.file_index ?? idx
-    const index = Number.isFinite(Number(indexRaw)) ? Number(indexRaw) : idx
-    return { index, label }
-  })
-}
 
 export function ProxySettings({ apiKey, orchUrl, authRequired }) {
   const sectionId = 'proxy'
@@ -96,46 +76,12 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
     }
   })
 
-  const [diagOpen, setDiagOpen] = useState(false)
-  const [diagType, setDiagType] = useState('content_id')
-  const [diagInput, setDiagInput] = useState('')
-  const [diagFileIndexes, setDiagFileIndexes] = useState('0')
-  const [diagTier, setDiagTier] = useState('light')
-  const [diagRunning, setDiagRunning] = useState(false)
-  const [diagError, setDiagError] = useState('')
-  const [diagResult, setDiagResult] = useState(null)
-  const [showDiagRaw, setShowDiagRaw] = useState(false)
 
   const dirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(initialState),
     [draft, initialState],
   )
 
-  const preflightMetrics = useMemo(() => {
-    const probe = diagResult?.result?.status_probe
-    if (!probe) return null
-
-    const livepos = probe.livepos
-    let runway = null
-    if (livepos?.pos && (livepos?.last_ts || livepos?.live_last)) {
-      const pos = Number(livepos.pos)
-      const last = Number(livepos.last_ts || livepos.live_last)
-      if (Number.isFinite(pos) && Number.isFinite(last)) {
-        runway = Math.max(0, last - pos)
-      }
-    }
-
-    return {
-      status: probe.status_text || probe.status || 'N/A',
-      peers: probe.peers ?? 0,
-      httpPeers: probe.http_peers ?? 0,
-      speed: probe.speed_down ?? 0,
-      runway,
-      checks: diagResult?.result?.availability_checks || {},
-    }
-  }, [diagResult])
-
-  const preflightFiles = useMemo(() => extractLoadRespFiles(diagResult), [diagResult])
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -338,43 +284,6 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
     },
   })
 
-  const runDiagnostics = async () => {
-    const selected = PREFLIGHT_INPUT_OPTIONS[diagType] || PREFLIGHT_INPUT_OPTIONS.content_id
-    const normalizedInput = String(diagInput || '').trim()
-    if (!normalizedInput) {
-      setDiagError(`${selected.label} is required`)
-      setDiagResult(null)
-      return
-    }
-
-    setDiagRunning(true)
-    setDiagError('')
-    setDiagResult(null)
-
-    try {
-      const headers = {}
-      if (String(apiKey || '').trim()) {
-        headers.Authorization = `Bearer ${String(apiKey).trim()}`
-      }
-
-      const params = new URLSearchParams()
-      params.set(selected.param, normalizedInput)
-      params.set('file_indexes', String(diagFileIndexes || '0').trim() || '0')
-      params.set('tier', diagTier)
-
-      const response = await fetch(`${orchUrl}/api/v1/ace/preflight?${params.toString()}`, { headers })
-      const payload = await response.json().catch(() => null)
-      if (!response.ok) {
-        throw new Error(payload?.detail || `HTTP ${response.status}`)
-      }
-      setDiagResult(payload)
-      setShowDiagRaw(false)
-    } catch (diagFailure) {
-      setDiagError(diagFailure.message || String(diagFailure))
-    } finally {
-      setDiagRunning(false)
-    }
-  }
 
   if (loading) {
     return (
@@ -398,10 +307,6 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
               <CardTitle>Routing Controls</CardTitle>
               <CardDescription>Proxy mode, engine control path, and stream density limits.</CardDescription>
             </div>
-            <Button type="button" variant="outline" onClick={() => setDiagOpen(true)}>
-              <FlaskConical className="mr-2 h-4 w-4" />
-              Preflight Diagnostics
-            </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -562,172 +467,6 @@ export function ProxySettings({ apiKey, orchUrl, authRequired }) {
         )}
       </AnimatePresence>
 
-      <Dialog open={diagOpen} onOpenChange={setDiagOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Proxy Preflight Diagnostics</DialogTitle>
-            <DialogDescription>
-              Operational tool. Runs immediately and does not participate in global settings dirty state.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3">
-            <SettingRow label="Input Type" description="Content identifier format used for diagnostics.">
-              <Select value={diagType} onValueChange={setDiagType}>
-                <SelectTrigger className="max-w-sm"><SelectValue placeholder="Select input type" /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(PREFLIGHT_INPUT_OPTIONS).map(([value, option]) => (
-                    <SelectItem key={value} value={value}>{option.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </SettingRow>
-
-            <SettingRow label={(PREFLIGHT_INPUT_OPTIONS[diagType] || PREFLIGHT_INPUT_OPTIONS.content_id).label} description="Resource selector for this preflight request.">
-              <Input value={diagInput} onChange={(e) => setDiagInput(e.target.value)} placeholder={(PREFLIGHT_INPUT_OPTIONS[diagType] || PREFLIGHT_INPUT_OPTIONS.content_id).placeholder} />
-            </SettingRow>
-
-            <SettingRow label="File Index" description="Index for multi-file torrents.">
-              <Input value={diagFileIndexes} type="number" min={0} step={1} onChange={(e) => setDiagFileIndexes(e.target.value)} className="max-w-xs" />
-            </SettingRow>
-
-            <SettingRow label="Tier" description="light resolves only; deep performs start/status/stop.">
-              <Select value={diagTier} onValueChange={setDiagTier}>
-                <SelectTrigger className="max-w-sm"><SelectValue placeholder="Select tier" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="light">light</SelectItem>
-                  <SelectItem value="deep">deep</SelectItem>
-                </SelectContent>
-              </Select>
-            </SettingRow>
-
-            {diagError && <p className="text-sm text-red-600 dark:text-red-400">{diagError}</p>}
-
-            {diagResult && (
-              <div className="space-y-4">
-                <div className="rounded-md border p-3 text-sm space-y-3 bg-muted/20">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="font-semibold flex items-center gap-2">
-                        Availability: 
-                        <span className={diagResult?.result?.available ? 'text-emerald-600' : 'text-amber-600'}>
-                          {diagResult?.result?.available ? 'Available' : 'Unavailable'}
-                        </span>
-                      </p>
-                      <p className="text-xs text-muted-foreground">Control Mode: {diagResult?.control_mode || draft.control_mode}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs font-medium">Engine Context</p>
-                      <p className="text-[10px] text-muted-foreground font-mono">
-                        {diagResult?.engine?.container_id?.slice(0, 12) || 'local'} 
-                        ({diagResult?.engine?.host}:{diagResult?.engine?.port})
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 border-t pt-3">
-                    <div>
-                      <p className="text-[10px] uppercase text-muted-foreground font-bold">Peers</p>
-                      <p className="text-sm font-mono">
-                        {preflightMetrics?.peers || 0}
-                        {preflightMetrics?.httpPeers > 0 && <span className="text-[10px] ml-1 opacity-70">+{preflightMetrics.httpPeers}h</span>}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase text-muted-foreground font-bold">Down Speed</p>
-                      <p className="text-sm font-mono">{(preflightMetrics?.speed || 0).toLocaleString()} KB/s</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase text-muted-foreground font-bold">Status</p>
-                      <p className="text-sm font-medium truncate">{preflightMetrics?.status || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase text-muted-foreground font-bold">Initial Runway</p>
-                      <p className="text-sm font-mono text-blue-600 dark:text-blue-400">
-                        {preflightMetrics?.runway != null ? `${preflightMetrics.runway}s` : 'N/A'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {preflightMetrics?.checks && (
-                    <div className="flex gap-4 border-t pt-2 mt-1">
-                      <div className="flex items-center gap-1.5">
-                        <div className={`h-1.5 w-1.5 rounded-full ${preflightMetrics.checks.transport_signal ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                        <span className="text-[10px] text-muted-foreground">Transport Signal</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <div className={`h-1.5 w-1.5 rounded-full ${preflightMetrics.checks.progression_signal ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                        <span className="text-[10px] text-muted-foreground">Progression Signal</span>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="border-t pt-2">
-                    <p className="text-[10px] uppercase text-muted-foreground font-bold">Infohash</p>
-                    <p className="text-xs font-mono break-all opacity-80">{diagResult?.result?.infohash || 'N/A'}</p>
-                  </div>
-
-                  {preflightFiles.length > 0 && (
-                    <div className="mt-2 text-xs text-muted-foreground bg-background/50 rounded p-2">
-                      <p className="font-medium text-foreground mb-1">Files ({preflightFiles.length}):</p>
-                      <ul className="space-y-1">
-                        {preflightFiles.slice(0, 20).map((entry) => (
-                          <li key={`${entry.index}-${entry.label}`} className="truncate">
-                            <span className="opacity-50 mr-1">[{entry.index}]</span> {entry.label}
-                          </li>
-                        ))}
-                        {preflightFiles.length > 20 && (
-                          <li className="italic pt-1">... and {preflightFiles.length - 20} more files</li>
-                        )}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-medium text-muted-foreground">Technical Investigation</p>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="h-7 text-[10px]" 
-                      onClick={() => setShowDiagRaw(!showDiagRaw)}
-                    >
-                      {showDiagRaw ? 'Hide Raw JSON' : 'Show Raw JSON'}
-                    </Button>
-                  </div>
-                  
-                  {showDiagRaw && (
-                    <div className="relative group">
-                      <pre className="text-[10px] p-3 rounded bg-slate-950 text-slate-50 overflow-auto max-h-[300px] font-mono leading-relaxed">
-                        {JSON.stringify(diagResult, null, 2)}
-                      </pre>
-                      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button 
-                          variant="secondary" 
-                          size="sm" 
-                          className="h-6 text-[10px]"
-                          onClick={() => navigator.clipboard.writeText(JSON.stringify(diagResult, null, 2))}
-                        >
-                          Copy JSON
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDiagOpen(false)}>Close</Button>
-            <Button type="button" onClick={runDiagnostics} disabled={diagRunning}>
-              {diagRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertCircle className="mr-2 h-4 w-4" />}
-              {diagRunning ? 'Running...' : 'Run Preflight'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
