@@ -73,6 +73,7 @@ def apply_settings_to_engine(
     host: str,
     port: int,
     engine_config,
+    quiet: bool = False,
 ) -> bool:
     """PATCH /api/v1/settings on a single running engine. Returns True on success."""
     token = get_engine_token(container_name)
@@ -85,14 +86,18 @@ def apply_settings_to_engine(
     try:
         resp = httpx.patch(url, json=payload, headers={"x-api-key": token}, timeout=5.0)
         if resp.status_code in (200, 204):
-            logger.info(
-                "settings applied to %s (upload=%s download=%s buffer=%s cache=%s)",
+            log_msg = "settings applied to %s (upload=%s download=%s buffer=%s cache=%s)"
+            log_args = (
                 container_name,
                 payload["upload_limit"],
                 payload["download_limit"],
                 payload["live_buffer"],
                 payload["live_cache_type"],
             )
+            if quiet:
+                logger.debug(log_msg, *log_args)
+            else:
+                logger.info(log_msg, *log_args)
             return True
         logger.warning(
             "settings push to %s returned HTTP %d: %s",
@@ -121,7 +126,28 @@ def apply_settings_to_all_engines(engine_config) -> Dict[str, bool]:
             host=engine.host,
             port=engine.port,
             engine_config=engine_config,
+            quiet=True,
         )
+
+    # Log consolidated summary
+    successes = [n for n, ok in results.items() if ok]
+    failures = [n for n, ok in results.items() if not ok]
+
+    if successes or failures:
+        payload = _build_payload(engine_config)
+        summary = f"settings applied to {len(successes)}/{len(results)} engines"
+        if failures:
+            summary += f" (failures: {', '.join(failures)})"
+
+        logger.info(
+            "%s (upload=%s download=%s buffer=%s cache=%s)",
+            summary,
+            payload["upload_limit"],
+            payload["download_limit"],
+            payload["live_buffer"],
+            payload["live_cache_type"],
+        )
+
     return results
 
 

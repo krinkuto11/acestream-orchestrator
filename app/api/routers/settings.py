@@ -565,7 +565,6 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
     live_update_results: dict = {}
     if live_changed:
         live_update_results = apply_settings_to_all_engines(updated_engine_config)
-        logger.info("Live settings pushed to %d engine(s)", len(live_update_results))
 
     # Trigger a rolling reprovision only when restart-required settings changed.
     rollout: dict = {}
