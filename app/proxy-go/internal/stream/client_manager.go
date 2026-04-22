@@ -11,6 +11,7 @@ import (
 
 	"github.com/acestream/proxy/internal/config"
 	"github.com/acestream/proxy/internal/rediskeys"
+	"github.com/acestream/proxy/internal/telemetry"
 )
 
 // ClientRecord holds metadata for one connected client.
@@ -129,6 +130,7 @@ func (cm *ClientManager) Add(clientID, ip, userAgent string, initialIndex int64)
 
 	slog.Info("client connected", "stream", cm.contentID, "client", clientID, "ip", ip,
 		"local", len(cm.clients))
+	telemetry.DefaultTelemetry.ObserveConnect("TS")
 	return true
 }
 
@@ -152,6 +154,7 @@ func (cm *ClientManager) Remove(clientID string) {
 
 	slog.Info("client disconnected", "stream", cm.contentID, "client", clientID,
 		"remaining_local", remaining)
+	telemetry.DefaultTelemetry.ObserveDisconnect("TS")
 }
 
 // HadClients returns true once at least one client has ever connected.
@@ -287,6 +290,7 @@ func (cm *ClientManager) HeartbeatHLSClient(clientID, ip, userAgent string, byte
 		cm.rdb.SAdd(ctx, setKey, clientID)
 		cm.rdb.Expire(ctx, setKey, ttl)
 		slog.Info("hls client connected", "stream", cm.contentID, "client", clientID, "ip", ip)
+		telemetry.DefaultTelemetry.ObserveConnect("HLS")
 	} else {
 		// Incremental update: refresh presence fields only.
 		cm.rdb.HSet(ctx, key,
@@ -399,6 +403,7 @@ func (cm *ClientManager) evictGhosts() {
 		for _, id := range ghosts {
 			cm.rdb.SRem(ctx, rediskeys.Clients(cm.contentID), id)
 			cm.rdb.Del(ctx, rediskeys.ClientMetadata(cm.contentID, id))
+			telemetry.DefaultTelemetry.ObserveDisconnect("TS/HLS Ghost") // We can refine this later
 		}
 
 		// Re-read the count under the lock to avoid a TOCTOU race with Add():

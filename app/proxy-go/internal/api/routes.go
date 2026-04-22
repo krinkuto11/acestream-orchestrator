@@ -63,11 +63,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) registerRoutes() {
 	// Proxy-native endpoints
-	s.mux.HandleFunc("/ace/getstream", s.handleGetStream)
-	s.mux.HandleFunc("/ace/manifest.m3u8", s.handleHLSManifest)
-	s.mux.HandleFunc("/ace/hls/segment", s.handleHLSSegment)
-	s.mux.HandleFunc("/ace/hls/segment.ts", s.handleHLSSegment)
-	s.mux.HandleFunc("/ace/hls/", s.handleHLSSegmentLegacy)  // /ace/hls/{id}/segment/{path}
+	s.mux.HandleFunc("/ace/getstream", withTelemetry("TS", s.handleGetStream))
+	s.mux.HandleFunc("/ace/manifest.m3u8", withTelemetry("HLS", s.handleHLSManifest))
+	s.mux.HandleFunc("/ace/hls/segment", withTelemetry("HLS", s.handleHLSSegment))
+	s.mux.HandleFunc("/ace/hls/segment.ts", withTelemetry("HLS", s.handleHLSSegment))
+	s.mux.HandleFunc("/ace/hls/", withTelemetry("HLS", s.handleHLSSegmentLegacy))  // /ace/hls/{id}/segment/{path}
 
 	// Internal control endpoints (called by Python orchestrator)
 	s.mux.HandleFunc("/internal/proxy/stop", s.handleInternalStop)

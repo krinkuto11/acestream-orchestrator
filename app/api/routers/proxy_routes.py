@@ -43,6 +43,20 @@ class StreamSaveRequest(BaseModel):
     infohash: Optional[str] = None
 
 
+class TelemetryRequestEvent(BaseModel):
+    mode: str
+    endpoint: str
+    duration_seconds: float
+    success: bool
+    status_code: int
+    ttfb_seconds: float
+
+class TelemetryBatchRequest(BaseModel):
+    requests: list[TelemetryRequestEvent] = []
+    connects: list[str] = []
+    disconnects: list[str] = []
+
+
 # ---------------------------------------------------------------------------
 # Stream-input helpers (duplicated from main.py to avoid circular imports)
 # ---------------------------------------------------------------------------
@@ -643,6 +657,24 @@ async def get_stream_clients(stream_key: str):
     except Exception as e:
         logger.error(f"Error getting clients for stream {stream_key}: {e}")
         return {"clients": []}
+
+@router.post("/internal/proxy/go/telemetry")
+async def receive_go_proxy_telemetry(payload: TelemetryBatchRequest):
+    """Receive batched RED telemetry from the Go Proxy."""
+    from ...observability.metrics import observe_proxy_request, observe_proxy_ttfb, observe_proxy_client_connect, observe_proxy_client_disconnect
+    
+    for req in payload.requests:
+        observe_proxy_request(req.mode, req.endpoint, req.duration_seconds, req.success, req.status_code)
+        if req.ttfb_seconds > 0:
+            observe_proxy_ttfb(req.mode, req.endpoint, req.ttfb_seconds)
+            
+    for mode in payload.connects:
+        observe_proxy_client_connect(mode)
+        
+    for mode in payload.disconnects:
+        observe_proxy_client_disconnect(mode)
+        
+    return {"status": "ok"}
 
 
 @router.get("/debug/sync-check")
