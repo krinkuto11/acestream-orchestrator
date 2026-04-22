@@ -404,7 +404,22 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
     global _last_engine_ingress_rate_bps, _last_engine_rate_ts
 
     current_engine_bytes: Dict[str, int] = {}  # container_id -> total ingress bytes
+    active_streams = state.list_streams(status="started")
+    dt = 0.0
+    if _last_engine_ingress_sample_ts:
+        dt = now - _last_engine_ingress_sample_ts
 
+    try:
+        # 1. Collect ingress from API-mode HLS streams (managed by Python)
+        from ..data_plane.hls_segmenter import hls_segmenter_service
+        
+        for s in active_streams:
+            container_id = s.container_id
+            stream_key = getattr(s, "key", None)
+            if not container_id or not stream_key:
+                continue
+
+            if hls_segmenter_service and hls_segmenter_service.has_session(stream_key):
                 try:
                     probe = hls_segmenter_service.collect_legacy_stats_probe(stream_key)
                     if probe:
@@ -429,14 +444,9 @@ def _compute_per_engine_ingress_snapshot() -> Dict[str, float]:
                             current_engine_bytes[container_id] = current_engine_bytes.get(container_id, 0) + int(downloaded)
                 except Exception:
                     continue
-            
-        # 2b. External HLS Segmenter Service (API mode)
-        if hls_segmenter_service:
-            # ... (existing hls_segmenter_service logic)
-            pass
 
-        # --- 3. Go Proxy Managed Streams (via State Snapshots) ---
-        # If an engine wasn't found in TS Redis or local HLS managers, check the 
+        # 2. Go Proxy Managed Streams (via State Snapshots)
+        # If an engine wasn't found in HLS managers, check the 
         # latest stats pushed by the Go proxy into the Orchestrator state.
         for s in active_streams:
             if not s.container_id or s.container_id in current_engine_bytes:
