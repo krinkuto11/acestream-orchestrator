@@ -11,9 +11,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Loader2 } from 'lucide-react'
+import { Loader2, EyeOff } from 'lucide-react'
 import { SettingRow } from '@/components/settings/SettingRow'
 import { useSettingsForm } from '@/context/SettingsFormContext'
+import { AnimatePresence, motion } from 'framer-motion'
+import { InteractiveStreamLifecycle, getLifecycleCopy } from '@/components/settings/InteractiveStreamLifecycle'
 
 const DEFAULTS = {
   initial_data_wait_timeout: 10,
