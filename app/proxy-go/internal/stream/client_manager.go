@@ -114,6 +114,8 @@ func (cm *ClientManager) Add(clientID, ip, userAgent string, initialIndex int64)
 		"last_active", fmt.Sprintf("%f", float64(now.UnixNano())/1e9),
 		"initial_index", fmt.Sprintf("%d", initialIndex),
 		"worker_id", cm.workerID,
+		"bytes_sent", "0",
+		"chunks_sent", "0",
 		"requests_total", "1",
 		"bps", "0",
 		"stats_updated_at", fmt.Sprintf("%f", float64(now.UnixNano())/1e9),
@@ -374,8 +376,10 @@ func (cm *ClientManager) sendHeartbeats() {
 		lastActive := fmt.Sprintf("%f", float64(rec.LastActive.UnixNano())/1e9)
 		pipe.HSet(ctx, key,
 			"last_active", lastActive,
+			"bytes_sent", fmt.Sprintf("%d", rec.BytesSent),
 			"bps", fmt.Sprintf("%.2f", rec.BPS),
 			"chunks_sent", fmt.Sprintf("%d", rec.ChunksSent),
+			"requests_total", fmt.Sprintf("%d", rec.RequestsTotal),
 			"buffer_seconds_behind", fmt.Sprintf("%.3f", rec.BufferSecondsBehind),
 			"stats_updated_at", nowStr,
 		)
