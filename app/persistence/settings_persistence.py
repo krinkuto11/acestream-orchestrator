@@ -28,8 +28,8 @@ class SettingsPersistence:
     @staticmethod
     def _default_engine_config() -> Dict[str, Any]:
         return {
-            "download_limit": 0,
-            "upload_limit": 0,
+            "total_max_download_rate": 0,
+            "total_max_upload_rate": 0,
             "live_cache_type": "memory",
             "buffer_time": 10,
             "memory_limit": None,

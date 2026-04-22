@@ -48,8 +48,8 @@ export function EngineConfiguration({ engineSettings, onSettingChange, disabled 
           <Input
             type="number"
             min="0"
-            value={engineSettings.download_limit ?? 0}
-            onChange={(e) => updateNumber('download_limit', e.target.value, 0)}
+            value={engineSettings.total_max_download_rate ?? 0}
+            onChange={(e) => updateNumber('total_max_download_rate', e.target.value, 0)}
             disabled={disabled}
           />
         </div>
@@ -59,8 +59,8 @@ export function EngineConfiguration({ engineSettings, onSettingChange, disabled 
           <Input
             type="number"
             min="0"
-            value={engineSettings.upload_limit ?? 0}
-            onChange={(e) => updateNumber('upload_limit', e.target.value, 0)}
+            value={engineSettings.total_max_upload_rate ?? 0}
+            onChange={(e) => updateNumber('total_max_upload_rate', e.target.value, 0)}
             disabled={disabled}
           />
         </div>

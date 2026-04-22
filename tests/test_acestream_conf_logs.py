@@ -84,7 +84,7 @@ def verify_fix_logic():
     
     try:
         # Import the actual function to test
-        from app.services.provisioner import AceProvisionRequest
+        from app.control_plane.provisioner import AceProvisionRequest
         
         # Simulate the fixed logic
         def simulate_conf_logic(req_env):

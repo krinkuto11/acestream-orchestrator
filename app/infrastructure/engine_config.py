@@ -63,8 +63,8 @@ class EngineParameter(BaseModel):
 class EngineConfig(BaseModel):
     """Single global engine customization model."""
 
-    download_limit: int = 0
-    upload_limit: int = 0
+    total_max_download_rate: int = 0
+    total_max_upload_rate: int = 0
     live_cache_type: str = "memory"  # memory|disk
     buffer_time: int = 10
 
@@ -124,9 +124,18 @@ def _normalize_legacy_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(data, dict):
         return {}
 
+    # Support both old names for migration and new names
+    down_rate = data.get("total_max_download_rate")
+    if down_rate is None:
+        down_rate = data.get("download_limit")
+    
+    up_rate = data.get("total_max_upload_rate")
+    if up_rate is None:
+        up_rate = data.get("upload_limit")
+
     normalized: Dict[str, Any] = {
-        "download_limit": int(data.get("download_limit") or 0),
-        "upload_limit": int(data.get("upload_limit") or 0),
+        "total_max_download_rate": int(down_rate or 0),
+        "total_max_upload_rate": int(up_rate or 0),
         "live_cache_type": str(data.get("live_cache_type") or "memory"),
         "buffer_time": int(data.get("buffer_time") or 10),
         "memory_limit": data.get("memory_limit"),
@@ -150,7 +159,9 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Optional[EngineConfi
     persisted = SettingsPersistence.load_engine_config()
     if persisted:
         try:
-            return EngineConfig(**persisted)
+            # Re-normalize to handle field rename in persisted data
+            normalized = _normalize_legacy_payload(persisted)
+            return EngineConfig(**normalized)
         except Exception as exc:
             logger.error("Failed to parse persisted engine config: %s", exc)
 
@@ -212,8 +223,8 @@ def _parameter_to_cli_tokens(parameter: EngineParameter) -> List[str]:
 def build_engine_customization_args(config: EngineConfig) -> List[str]:
     """Build sanitized customization args (never includes orchestrator-owned ports)."""
     args: List[str] = [
-        "--max-download-speed", str(int(config.download_limit)),
-        "--max-upload-speed", str(int(config.upload_limit)),
+        "--total-max-download-rate", str(int(config.total_max_download_rate)),
+        "--total-max-upload-rate", str(int(config.total_max_upload_rate)),
         "--live-buffer", str(int(config.buffer_time)),
     ]
 

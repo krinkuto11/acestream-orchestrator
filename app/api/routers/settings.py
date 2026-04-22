@@ -54,8 +54,8 @@ class EngineSettingsUpdate(BaseModel):
     manual_mode: Optional[bool] = None
     manual_engines: Optional[List[Dict[str, Any]]] = None
 
-    download_limit: Optional[int] = None
-    upload_limit: Optional[int] = None
+    total_max_download_rate: Optional[int] = None
+    total_max_upload_rate: Optional[int] = None
     live_cache_type: Optional[str] = None
     buffer_time: Optional[int] = None
     memory_limit: Optional[str] = None
@@ -498,8 +498,8 @@ async def update_engine_settings(settings: EngineSettingsUpdate):
     engine_payload = existing_engine_config.model_dump(mode="json")
 
     for field in (
-        "download_limit",
-        "upload_limit",
+        "total_max_download_rate",
+        "total_max_upload_rate",
         "live_cache_type",
         "buffer_time",
         "memory_limit",
