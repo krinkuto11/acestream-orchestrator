@@ -19,13 +19,27 @@ import (
 
 const vlcUserAgent = "VLC/3.0.21 LibVLC/3.0.21"
 
+// sharedHLSClient is reused for all manifest and segment fetches across sessions.
+// A single shared transport pool avoids creating a new TCP connection on every
+// segment request (which is what happened when each ProxySession owned its own
+// http.Client). Context deadlines on individual requests provide per-call timeouts.
+var sharedHLSClient = &http.Client{
+	Timeout: 15 * time.Second,
+	Transport: &http.Transport{
+		DisableKeepAlives:   false,
+		MaxIdleConns:        32,
+		MaxIdleConnsPerHost: 8,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 5 * time.Second,
+	},
+}
+
 // ProxySession handles HLS proxying for one stream.
 // It fetches the upstream manifest periodically and rewrites segment URLs.
 type ProxySession struct {
 	contentID   string
 	upstreamURL string // full .m3u8 URL on the engine
 	proxyBase   string // base URL of the proxy (for rewriting)
-	httpClient  *http.Client
 }
 
 // NewSession creates a new HLS proxy session.
@@ -36,15 +50,6 @@ func NewSession(contentID, upstreamURL, proxyBase string) *ProxySession {
 		contentID:   contentID,
 		upstreamURL: upstreamURL,
 		proxyBase:   strings.TrimRight(proxyBase, "/"),
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				DisableKeepAlives:   false,
-				MaxIdleConns:        4,
-				IdleConnTimeout:     90 * time.Second,
-				TLSHandshakeTimeout: 5 * time.Second,
-			},
-		},
 	}
 }
 
@@ -86,7 +91,7 @@ func (ps *ProxySession) ServeSegment(ctx context.Context, segmentURL string, w h
 	req.Header.Set("User-Agent", vlcUserAgent)
 	req.Header.Set("Accept", "*/*")
 
-	resp, err := ps.httpClient.Do(req)
+	resp, err := sharedHLSClient.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("segment fetch: %w", err)
 	}
@@ -120,7 +125,7 @@ func (ps *ProxySession) fetchManifest(ctx context.Context) (string, error) {
 	}
 	req.Header.Set("User-Agent", vlcUserAgent)
 
-	resp, err := ps.httpClient.Do(req)
+	resp, err := sharedHLSClient.Do(req)
 	if err != nil {
 		return "", err
 	}

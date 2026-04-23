@@ -313,7 +313,8 @@ func (cm *ClientManager) Stop() {
 }
 
 func (cm *ClientManager) heartbeatLoop() {
-	ticker := time.NewTicker(config.C.Load().ClientHeartbeatInterval)
+	interval := config.C.Load().ClientHeartbeatInterval
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -321,6 +322,10 @@ func (cm *ClientManager) heartbeatLoop() {
 		case <-cm.stopCh:
 			return
 		case <-ticker.C:
+			if newInterval := config.C.Load().ClientHeartbeatInterval; newInterval != interval {
+				ticker.Reset(newInterval)
+				interval = newInterval
+			}
 			cm.sendHeartbeats()
 			cm.evictGhosts()
 		}
@@ -404,7 +409,11 @@ func (cm *ClientManager) evictGhosts() {
 		return
 	}
 
-	var ghosts []string
+	type eviction struct {
+		id       string
+		protocol string
+	}
+	var ghosts []eviction
 	now := time.Now()
 	for id, rec := range cm.clients {
 		timeout := tsGhostTimeout
@@ -412,25 +421,23 @@ func (cm *ClientManager) evictGhosts() {
 			timeout = hlsGhostTimeout
 		}
 		if now.Sub(rec.LastActive) > timeout {
-			ghosts = append(ghosts, id)
+			ghosts = append(ghosts, eviction{id: id, protocol: rec.LastRequestKind})
 		}
 	}
-	for _, id := range ghosts {
-		delete(cm.clients, id)
+	for _, g := range ghosts {
+		delete(cm.clients, g.id)
 	}
 	cm.mu.Unlock()
 
 	if len(ghosts) > 0 {
 		slog.Debug("evicted ghost clients", "stream", cm.contentID, "count", len(ghosts))
 		ctx := context.Background()
-		for _, id := range ghosts {
-			cm.rdb.SRem(ctx, rediskeys.Clients(cm.contentID), id)
-			cm.rdb.Del(ctx, rediskeys.ClientMetadata(cm.contentID, id))
-			telemetry.DefaultTelemetry.ObserveDisconnect("TS/HLS Ghost") // We can refine this later
+		for _, g := range ghosts {
+			cm.rdb.SRem(ctx, rediskeys.Clients(cm.contentID), g.id)
+			cm.rdb.Del(ctx, rediskeys.ClientMetadata(cm.contentID, g.id))
+			telemetry.DefaultTelemetry.ObserveDisconnect(g.protocol)
 		}
 
-		// Re-read the count under the lock to avoid a TOCTOU race with Add():
-		// a new client may have connected between when we released the lock and now.
 		cm.mu.RLock()
 		currentCount := len(cm.clients)
 		cm.mu.RUnlock()

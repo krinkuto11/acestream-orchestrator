@@ -14,6 +14,7 @@ import (
 
 	"github.com/acestream/proxy/internal/api"
 	"github.com/acestream/proxy/internal/config"
+	"github.com/acestream/proxy/internal/hls"
 	"github.com/acestream/proxy/internal/stream"
 )
 
@@ -72,6 +73,7 @@ func main() {
 	slog.Info("shutting down")
 
 	hub.Stop()
+	hls.DefaultCache.Stop()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

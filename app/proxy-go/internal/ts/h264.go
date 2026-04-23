@@ -3,10 +3,10 @@ package ts
 import "bytes"
 
 // IsKeyframe returns true if the MPEG-TS packet contains the start of an
-// H.264 IDR frame (keyframe) or a sequence/picture parameter set (SPS/PPS).
+// H.264 or HEVC IDR frame, or a codec parameter set (SPS/PPS/VPS).
 //
-// It performs a "shallow" scan of the packet's payload for H.264 NAL unit
-// start codes (0x000001 or 0x00000001).
+// It performs a shallow scan of the packet's payload for NAL unit start
+// codes (0x000001 or 0x00000001) and checks both H.264 and HEVC NAL types.
 func IsKeyframe(pkt []byte) bool {
 	if len(pkt) < PacketSize || pkt[0] != SyncByte {
 		return false
@@ -63,12 +63,16 @@ func IsKeyframe(pkt []byte) bool {
 			}
 
 			if nalIdx != -1 && nalIdx < len(es) {
-				nalType := es[nalIdx] & 0x1F
-				// NAL unit types:
-				// 5: Coded slice of an IDR picture (Keyframe)
-				// 7: Sequence Parameter Set (SPS)
-				// 8: Picture Parameter Set (PPS)
-				if nalType == 5 || nalType == 7 || nalType == 8 {
+				b := es[nalIdx]
+				// H.264: NAL type is the low 5 bits.
+				// Types: 5=IDR, 7=SPS, 8=PPS.
+				if h264 := b & 0x1F; h264 == 5 || h264 == 7 || h264 == 8 {
+					return true
+				}
+				// HEVC: NAL type is bits [14:9] of the 2-byte NAL header,
+				// i.e. (first_byte >> 1) & 0x3F.
+				// Types: 19=IDR_W_RADL, 20=IDR_N_LP, 32=VPS, 33=SPS, 34=PPS.
+				if hevc := (b >> 1) & 0x3F; hevc == 19 || hevc == 20 || hevc == 32 || hevc == 33 || hevc == 34 {
 					return true
 				}
 			}
