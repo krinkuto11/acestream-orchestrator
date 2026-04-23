@@ -168,8 +168,6 @@ def update_proxy_config(
     channel_shutdown_delay: Optional[int] = None,
     proxy_prebuffer_seconds: Optional[int] = None,
     pacing_bitrate_multiplier: Optional[float] = None,
-    upstream_connect_timeout: Optional[int] = None,
-    upstream_read_timeout: Optional[int] = None,
     max_streams_per_engine: Optional[int] = None,
     stream_mode: Optional[str] = None,
     control_mode: Optional[str] = None,
