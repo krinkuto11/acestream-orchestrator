@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/acestream/proxy/internal/buffer"
+	"github.com/acestream/proxy/internal/config"
 	"github.com/acestream/proxy/internal/ts"
 )
 
@@ -47,17 +49,21 @@ type hlsSegment struct {
 // NewSegmenter creates a Segmenter and starts the background slicing goroutine.
 // buf must already be filling with TS data.
 func NewSegmenter(contentID string, buf *buffer.RingBuffer) *Segmenter {
+	windowSize := config.C.Load().HLSWindowSize
+	if windowSize <= 0 {
+		windowSize = defaultWindowSize
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Segmenter{
 		contentID:  contentID,
 		buf:        buf,
 		targetDur:  defaultTargetDurSec,
-		windowSize: defaultWindowSize,
+		windowSize: windowSize,
 		ctx:        ctx,
 		cancel:     cancel,
 	}
 	go s.run()
-	slog.Info("hls segmenter started", "stream", contentID)
+	slog.Info("hls segmenter started", "stream", contentID, "window_size", windowSize)
 	return s
 }
 
@@ -94,7 +100,7 @@ func (s *Segmenter) Manifest(proxyBase, streamKey string) string {
 	fmt.Fprintf(&sb, "#EXT-X-MEDIA-SEQUENCE:%d\n", segs[0].seq)
 	for _, seg := range segs {
 		fmt.Fprintf(&sb, "#EXTINF:%.3f,\n", seg.duration)
-		fmt.Fprintf(&sb, "%s/ace/hls/segment.ts?stream=%s&seq=%d\n", base, streamKey, seg.seq)
+		fmt.Fprintf(&sb, "%s/ace/hls/segment.ts?stream=%s&seq=%d\n", base, url.QueryEscape(streamKey), seg.seq)
 	}
 	return sb.String()
 }
@@ -174,7 +180,12 @@ func (s *Segmenter) run() {
 					res := ts.FindPCR(pkt)
 					if res.Discontinuity {
 						slog.Info("TS discontinuity detected", "stream", s.contentID)
-						if len(acc) > ts.PacketSize {
+						// The current packet was already appended to acc. Remove it so
+						// it becomes the first packet of the new segment, not the last
+						// packet of the closing one — otherwise segment boundary timing
+						// is off by one packet and PCR duration measurements are wrong.
+						acc = acc[:len(acc)-ts.PacketSize]
+						if len(acc) >= ts.PacketSize {
 							dur := s.targetDur
 							if segStart >= 0 && res.HasPCR {
 								dur = res.Value - segStart
@@ -182,7 +193,8 @@ func (s *Segmenter) run() {
 							s.pushSegment(localSeq, acc, dur)
 							localSeq++
 						}
-						acc = nil
+						// New segment begins with the discontinuity packet.
+						acc = append(acc[:0], pkt...)
 						segStart = -1
 						if res.HasPCR {
 							segStart = res.Value
@@ -215,11 +227,20 @@ func (s *Segmenter) run() {
 						continue
 					}
 
+					// Force cut if we've gone way over target duration without finding a keyframe
+					maxDur := s.targetDur * 2.5
+					
 					if elapsed >= s.targetDur {
-						s.pushSegment(localSeq, acc, elapsed)
-						localSeq++
-						acc = nil
-						segStart = pcr // next segment starts at this PCR
+						isKeyframe := res.RandomAccess || ts.IsKeyframe(pkt)
+						if isKeyframe || elapsed >= maxDur {
+							if elapsed >= maxDur && !isKeyframe {
+								slog.Debug("forcing segment cut on non-keyframe (timeout)", "stream", s.contentID, "elapsed", elapsed)
+							}
+							s.pushSegment(localSeq, acc, elapsed)
+							localSeq++
+							acc = nil
+							segStart = pcr // next segment starts at this PCR
+						}
 					}
 				}
 			}

@@ -327,6 +327,9 @@ class ProxySettingsSchema(BaseModel):
     stream_timeout: int = 60
     channel_shutdown_delay: int = 5
     proxy_prebuffer_seconds: int = 0
+    pacing_bitrate_multiplier: float = 1.5
+    upstream_connect_timeout: int = 3
+    upstream_read_timeout: int = 90
     max_streams_per_engine: int = 3
     stream_mode: str = "TS"
     control_mode: str = "api"

@@ -88,7 +88,7 @@ func (h *Hub) StartStream(ctx context.Context, p StreamParams) bool {
 		}
 	}
 
-	buf := buffer.New(config.C.BufferChunkSize, 16)
+	buf := buffer.New(config.C.Load().BufferChunkSize, 16)
 	cm := newClientManager(contentID, h.workerID, h.rdb)
 	mgr := newManager(p, buf, cm, h)
 
@@ -121,11 +121,11 @@ func (h *Hub) StartStream(ctx context.Context, p StreamParams) bool {
 
 func (h *Hub) atGlobalLimits() bool {
 	count := len(h.streams)
-	if config.C.MaxTotalStreams > 0 && count >= config.C.MaxTotalStreams {
+	if config.C.Load().MaxTotalStreams > 0 && count >= config.C.Load().MaxTotalStreams {
 		return true
 	}
 
-	if config.C.MaxMemoryMB > 0 {
+	if config.C.Load().MaxMemoryMB > 0 {
 		var totalMemBytes int64
 		for _, e := range h.streams {
 			totalMemBytes += int64(e.buf.TargetChunkSize() * 16) // roughly
@@ -136,8 +136,8 @@ func (h *Hub) atGlobalLimits() bool {
 		if hls.DefaultCache != nil {
 			totalMemBytes += hls.DefaultCache.TotalBytes()
 		}
-		if totalMemBytes >= int64(config.C.MaxMemoryMB)*1024*1024 {
-			slog.Debug("global memory limit reached", "used_bytes", totalMemBytes, "limit_mb", config.C.MaxMemoryMB)
+		if totalMemBytes >= int64(config.C.Load().MaxMemoryMB)*1024*1024 {
+			slog.Debug("global memory limit reached", "used_bytes", totalMemBytes, "limit_mb", config.C.Load().MaxMemoryMB)
 			return true
 		}
 	}
@@ -263,6 +263,7 @@ func (h *Hub) removeStream(contentID string) {
 	}
 	h.mu.Unlock()
 	if ok {
+		e.cancelFn()
 		e.clients.Stop()
 		e.buf.Stop()
 		if e.segmenter != nil {
@@ -299,7 +300,7 @@ func (h *Hub) GetSegmenter(contentID string) *hls.Segmenter {
 }
 
 func (h *Hub) cleanupLoop() {
-	ticker := time.NewTicker(config.C.CleanupInterval)
+	ticker := time.NewTicker(config.C.Load().CleanupInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -332,7 +333,7 @@ func (h *Hub) runCleanup() {
 		// them silently, leaving shutdownAt unset.  Schedule a shutdown whenever
 		// all local clients are gone and at least one has previously connected.
 		if e.shutdownAt.IsZero() && localCount == 0 && e.clients.HadClients() {
-			e.shutdownAt = now.Add(config.C.ChannelShutdownDelay)
+			e.shutdownAt = now.Add(config.C.Load().ChannelShutdownDelay)
 		}
 	}
 	h.mu.Unlock()

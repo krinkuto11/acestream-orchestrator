@@ -150,6 +150,12 @@ func (c *Client) LoadAndStart(contentID, mode, fileIndexes string, seekback int)
 		fileIndexes = "0"
 	}
 
+	// raw_data (base64 torrent content) has no telnet API equivalent; use
+	// HTTP control mode instead.
+	if mode == "raw_data" {
+		return nil, &Error{"raw_data input type is not supported in API control mode; set control_mode=http"}
+	}
+
 	// LOADASYNC (not needed for direct_url)
 	if mode != "direct_url" {
 		var loadCmd string

@@ -5,6 +5,7 @@ type PCRResult struct {
 	Value         float64
 	HasPCR        bool
 	Discontinuity bool
+	RandomAccess  bool
 }
 
 // FindPCR scans one 188-byte TS packet for timing info.
@@ -26,6 +27,7 @@ func FindPCR(pkt []byte) PCRResult {
 	res := PCRResult{}
 	flags := pkt[5]
 	res.Discontinuity = (flags & 0x80) != 0
+	res.RandomAccess = (flags & 0x40) != 0
 
 	// bit 4 = PCR_flag
 	if flags&0x10 != 0 && adaptLen >= 7 {

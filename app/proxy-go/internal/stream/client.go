@@ -24,13 +24,11 @@ const (
 	// do not immediately stall the player.
 	minRunwayChunks = 3
 
-	// pcrWarmupBytes is the minimum number of bytes the ring buffer must have
-	// received before we trust its PCR-derived bitrate. A typical stream
-	// delivers the first PCR within the first 20–50 TS packets (~4–10 KB), but
-	// we wait for a second sample (one full PCR interval, ~100 ms) before using
-	// the measurement. 256 KB is a conservative threshold that covers the
-	// worst-case first PCR interval.
-	pcrWarmupBytes = 256 * 1024
+	// pcrMinStableBPS is the minimum PCR-derived bitrate (bytes/s) we accept
+	// before trusting the ring-buffer measurement for pacing. Below this the
+	// PCR hasn't had enough samples to stabilise (first ~200 ms) or the stream
+	// isn't flowing yet. 256 KB/s ≈ 2 Mbps — well below any live TV stream.
+	pcrMinStableBPS = 256 * 1024
 )
 
 // ClientStreamer delivers buffered chunks to one HTTP client with bitrate pacing.
@@ -84,7 +82,7 @@ func NewClientStreamer(contentID, clientID, ip, userAgent string, seekback int,
 		cm:                cm,
 		w:                 w,
 		flusher:           flusher,
-		pacingBurstSec:    config.C.PacingBurstSeconds, // may be reduced by initPacingBurst
+		pacingBurstSec:    config.C.Load().PacingBurstSeconds, // may be reduced by initPacingBurst
 		lastChunkRateTime: time.Now(),
 		tag:               fmt.Sprintf("[ts:%s][client:%s]", contentID, clientID),
 	}
@@ -118,7 +116,7 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 
 	pbSec := cs.manager.PrebufferSeconds()
 	if pbSec <= 0 {
-		pbSec = config.C.ProxyPrebufferSeconds
+		pbSec = config.C.Load().ProxyPrebufferSeconds
 	}
 	if pbSec > 0 {
 		if !cs.sendFirstChunk(ctx) {
@@ -131,7 +129,7 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 	cs.initPacingBurst()
 
 	// ── Main delivery loop ────────────────────────────────────────────────────
-	cfg := config.C
+	cfg := config.C.Load()
 	maxEmpty := cfg.NoDataTimeoutChecks
 	emptyCount := 0
 
@@ -180,7 +178,7 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 
 // sendFirstChunk blocks until one real chunk is available and writes it.
 func (cs *ClientStreamer) sendFirstChunk(ctx context.Context) bool {
-	cfg := config.C
+	cfg := config.C.Load()
 	for {
 		n, newIdx, err := cs.buf.WriteAfterTo(cs.localIndex, 1, cs.w)
 		if n > 0 {
@@ -208,7 +206,7 @@ func (cs *ClientStreamer) sendFirstChunk(ctx context.Context) bool {
 
 // waitForReady blocks until the manager is connected and first data is in the buffer.
 func (cs *ClientStreamer) waitForReady(ctx context.Context) bool {
-	deadline := time.Now().Add(config.C.ChannelInitGracePeriod)
+	deadline := time.Now().Add(config.C.Load().ChannelInitGracePeriod)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -237,7 +235,7 @@ func (cs *ClientStreamer) applyPrebuffer(ctx context.Context, seconds int) {
 
 	chunkSize := cs.buf.TargetChunkSize()
 	if chunkSize <= 0 {
-		chunkSize = config.C.BufferChunkSize
+		chunkSize = config.C.Load().BufferChunkSize
 	}
 
 	targetChunks := int(math.Ceil(float64(seconds) * float64(bitrate) / float64(chunkSize)))
@@ -294,7 +292,7 @@ func (cs *ClientStreamer) applyPrebuffer(ctx context.Context, seconds int) {
 //     complete PCR interval, immune to AceStream's initial data-transfer burst.
 //  2. Engine-reported estimate — used while PCR hasn't stabilised yet.
 func (cs *ClientStreamer) effectiveBPS() int {
-	if vbr := cs.buf.VideoBitrate(); vbr >= pcrWarmupBytes {
+	if vbr := cs.buf.VideoBitrate(); vbr >= pcrMinStableBPS {
 		return int(vbr)
 	}
 	return cs.streamBitrate
@@ -342,7 +340,7 @@ func (cs *ClientStreamer) applyPacing() {
 		return
 	}
 
-	cfg := config.C
+	cfg := config.C.Load()
 	runway := int(cs.buf.Head() - cs.localIndex)
 
 	mult := cs.manager.PacingMultiplier()
@@ -354,8 +352,11 @@ func (cs *ClientStreamer) applyPacing() {
 	case runway > 30:
 		mult = cfg.ProxyMaxCatchupMultiplier
 	case runway > 15:
-		if mult < 1.5 {
-			mult = 1.5
+		// Mid-catchup: 75% of the max multiplier, capped below by the configured
+		// normal multiplier so we never slow down relative to the baseline.
+		midMult := cfg.ProxyMaxCatchupMultiplier * 0.75
+		if mult < midMult {
+			mult = midMult
 		}
 	case runway < minRunwayChunks:
 		// Ring nearly empty — pace at exactly 1× to stop draining it.
@@ -417,7 +418,7 @@ func (cs *ClientStreamer) updateClientPosition() {
 // updateChunkRate maintains the chunk-rate EMA used as pacing fallback.
 // Prefers the PCR-derived bitrate when available to avoid egress-speed bias.
 func (cs *ClientStreamer) updateChunkRate(n int) {
-	if vbr := cs.buf.VideoBitrate(); vbr >= pcrWarmupBytes {
+	if vbr := cs.buf.VideoBitrate(); vbr >= pcrMinStableBPS {
 		chunkRate := vbr / float64(cs.buf.TargetChunkSize())
 		if cs.chunkRateEMA == 0 {
 			cs.chunkRateEMA = chunkRate

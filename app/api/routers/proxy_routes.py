@@ -123,37 +123,36 @@ async def receive_go_proxy_telemetry(payload: TelemetryBatchRequest):
 def get_proxy_config():
     """Get current proxy configuration settings."""
     from ...infrastructure.engine_config import detect_platform
+    from ...persistence.settings_persistence import SettingsPersistence
 
-    return {
+    persisted = SettingsPersistence.load_proxy_config() or {}
+    
+    # Base defaults that might not be in SettingsPersistence but are needed by the UI/Proxy
+    base_config = {
         "vlc_user_agent": "AceStream-Orchestrator/1.0",
-        "initial_data_wait_timeout": cfg.PROXY_INITIAL_DATA_WAIT_TIMEOUT,
-        "initial_data_check_interval": 0.2,
-        "no_data_timeout_checks": 60,
-        "no_data_check_interval": 1,
-        "connection_timeout": 30,
-        "upstream_connect_timeout": 3,
-        "upstream_read_timeout": 90,
-        "stream_timeout": 60,
-        "chunk_size": 32768,
-        "buffer_chunk_size": 131072,
-        "redis_chunk_ttl": 60,
-        "channel_shutdown_delay": 5,
-        "proxy_prebuffer_seconds": 0,
-        "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
-        "stream_mode": "TS",
-        "control_mode": "api",
-        "legacy_api_preflight_tier": "light",
-        "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
         "engine_variant": f"global-{detect_platform()}",
-        "hls_max_segments": 20,
-        "hls_initial_segments": 3,
-        "hls_window_size": 6,
-        "hls_buffer_ready_timeout": 30,
-        "hls_first_segment_timeout": 30,
-        "hls_initial_buffer_seconds": 10,
-        "hls_max_initial_segments": 10,
-        "hls_segment_fetch_interval": 0.5,
     }
+    
+    return {**base_config, **persisted}
+
+
+def notify_proxy_config_update():
+    """Publish the current proxy configuration to Redis for the Go proxy to consume."""
+    import json
+    from ...persistence.settings_persistence import SettingsPersistence
+    from ...shared.redis_client import get_redis_client
+
+    try:
+        config = get_proxy_config()
+        rdb = get_redis_client()
+        # We publish the full config to the 'proxy_config_updates' channel
+        rdb.publish("proxy_config_updates", json.dumps(config))
+        logger.info("Published proxy configuration update to Redis")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to publish proxy configuration update: {e}")
+        return False
+
 
 
 @router.post("/proxy/config", dependencies=[Depends(require_api_key)])
@@ -168,6 +167,7 @@ def update_proxy_config(
     stream_timeout: Optional[int] = None,
     channel_shutdown_delay: Optional[int] = None,
     proxy_prebuffer_seconds: Optional[int] = None,
+    pacing_bitrate_multiplier: Optional[float] = None,
     max_streams_per_engine: Optional[int] = None,
     stream_mode: Optional[str] = None,
     control_mode: Optional[str] = None,
@@ -183,193 +183,52 @@ def update_proxy_config(
     hls_segment_fetch_interval: Optional[float] = None,
 ):
     """Update proxy configuration settings at runtime."""
-    return {"message": "Config updates are currently disabled during migration"}
-
-    if initial_data_check_interval is not None:
-        if initial_data_check_interval < 0.1 or initial_data_check_interval > 2.0:
-            raise HTTPException(status_code=400, detail="initial_data_check_interval must be between 0.1 and 2.0 seconds")
-        ProxyConfig.INITIAL_DATA_CHECK_INTERVAL = initial_data_check_interval
-
-    if no_data_timeout_checks is not None:
-        if no_data_timeout_checks < 5 or no_data_timeout_checks > 600:
-            raise HTTPException(status_code=400, detail="no_data_timeout_checks must be between 5 and 600")
-        ProxyConfig.NO_DATA_TIMEOUT_CHECKS = no_data_timeout_checks
-
-    if no_data_check_interval is not None:
-        if no_data_check_interval < 0.01 or no_data_check_interval > 1.0:
-            raise HTTPException(status_code=400, detail="no_data_check_interval must be between 0.01 and 1.0 seconds")
-        ProxyConfig.NO_DATA_CHECK_INTERVAL = no_data_check_interval
-
-    if connection_timeout is not None:
-        if connection_timeout < 5 or connection_timeout > 60:
-            raise HTTPException(status_code=400, detail="connection_timeout must be between 5 and 60 seconds")
-        ProxyConfig.CONNECTION_TIMEOUT = connection_timeout
-
-    if upstream_connect_timeout is not None:
-        if upstream_connect_timeout < 1 or upstream_connect_timeout > 60:
-            raise HTTPException(status_code=400, detail="upstream_connect_timeout must be between 1 and 60 seconds")
-        ProxyConfig.UPSTREAM_CONNECT_TIMEOUT = upstream_connect_timeout
-
-    if upstream_read_timeout is not None:
-        if upstream_read_timeout < 1 or upstream_read_timeout > 120:
-            raise HTTPException(status_code=400, detail="upstream_read_timeout must be between 1 and 120 seconds")
-        ProxyConfig.UPSTREAM_READ_TIMEOUT = upstream_read_timeout
-
-    if stream_timeout is not None:
-        if stream_timeout < 10 or stream_timeout > 300:
-            raise HTTPException(status_code=400, detail="stream_timeout must be between 10 and 300 seconds")
-        ProxyConfig.STREAM_TIMEOUT = stream_timeout
-
-    if channel_shutdown_delay is not None:
-        if channel_shutdown_delay < 1 or channel_shutdown_delay > 60:
-            raise HTTPException(status_code=400, detail="channel_shutdown_delay must be between 1 and 60 seconds")
-        ProxyConfig.CHANNEL_SHUTDOWN_DELAY = channel_shutdown_delay
-
-    if proxy_prebuffer_seconds is not None:
-        if proxy_prebuffer_seconds < 0 or proxy_prebuffer_seconds > 300:
-            raise HTTPException(status_code=400, detail="proxy_prebuffer_seconds must be between 0 and 300 seconds")
-        ProxyConfig.PROXY_PREBUFFER_SECONDS = int(proxy_prebuffer_seconds)
-
-    if max_streams_per_engine is not None:
-        if max_streams_per_engine < 1 or max_streams_per_engine > 20:
-            raise HTTPException(status_code=400, detail="max_streams_per_engine must be between 1 and 20")
-        cfg.MAX_STREAMS_PER_ENGINE = max_streams_per_engine
-
-    if stream_mode is not None:
-        if stream_mode not in ['TS', 'HLS']:
-            raise HTTPException(status_code=400, detail="stream_mode must be either 'TS' or 'HLS'")
-        ProxyConfig.STREAM_MODE = stream_mode
-
-    if control_mode is not None:
-        normalized_control_mode = normalize_proxy_mode(control_mode, default=None)
-        if normalized_control_mode not in [PROXY_MODE_HTTP, PROXY_MODE_API]:
-            raise HTTPException(status_code=400, detail="control_mode must be either 'http' or 'api'")
-        ProxyConfig.CONTROL_MODE = normalized_control_mode
-
-    if legacy_api_preflight_tier is not None:
-        normalized_tier = str(legacy_api_preflight_tier).strip().lower()
-        if normalized_tier not in ['light', 'deep']:
-            raise HTTPException(status_code=400, detail="legacy_api_preflight_tier must be either 'light' or 'deep'")
-        ProxyConfig.LEGACY_API_PREFLIGHT_TIER = normalized_tier
-
-    if ace_live_edge_delay is not None:
-        if ace_live_edge_delay < 0:
-            raise HTTPException(status_code=400, detail="ace_live_edge_delay must be >= 0")
-        cfg.ACE_LIVE_EDGE_DELAY = ace_live_edge_delay
-
-    if hls_max_segments is not None:
-        if hls_max_segments < 5 or hls_max_segments > 100:
-            raise HTTPException(status_code=400, detail="hls_max_segments must be between 5 and 100")
-        ProxyConfig.HLS_MAX_SEGMENTS = hls_max_segments
-
-    if hls_initial_segments is not None:
-        if hls_initial_segments < 1 or hls_initial_segments > 10:
-            raise HTTPException(status_code=400, detail="hls_initial_segments must be between 1 and 10")
-        ProxyConfig.HLS_INITIAL_SEGMENTS = hls_initial_segments
-
-    if hls_window_size is not None:
-        if hls_window_size < 3 or hls_window_size > 20:
-            raise HTTPException(status_code=400, detail="hls_window_size must be between 3 and 20")
-        ProxyConfig.HLS_WINDOW_SIZE = hls_window_size
-
-    if hls_buffer_ready_timeout is not None:
-        if hls_buffer_ready_timeout < 5 or hls_buffer_ready_timeout > 120:
-            raise HTTPException(status_code=400, detail="hls_buffer_ready_timeout must be between 5 and 120 seconds")
-        ProxyConfig.HLS_BUFFER_READY_TIMEOUT = hls_buffer_ready_timeout
-
-    if hls_first_segment_timeout is not None:
-        if hls_first_segment_timeout < 5 or hls_first_segment_timeout > 120:
-            raise HTTPException(status_code=400, detail="hls_first_segment_timeout must be between 5 and 120 seconds")
-        ProxyConfig.HLS_FIRST_SEGMENT_TIMEOUT = hls_first_segment_timeout
-
-    if hls_initial_buffer_seconds is not None:
-        if hls_initial_buffer_seconds < 5 or hls_initial_buffer_seconds > 60:
-            raise HTTPException(status_code=400, detail="hls_initial_buffer_seconds must be between 5 and 60 seconds")
-        ProxyConfig.HLS_INITIAL_BUFFER_SECONDS = hls_initial_buffer_seconds
-
-    if hls_max_initial_segments is not None:
-        if hls_max_initial_segments < 1 or hls_max_initial_segments > 20:
-            raise HTTPException(status_code=400, detail="hls_max_initial_segments must be between 1 and 20")
-        ProxyConfig.HLS_MAX_INITIAL_SEGMENTS = hls_max_initial_segments
-
-    if hls_segment_fetch_interval is not None:
-        if hls_segment_fetch_interval < 0.1 or hls_segment_fetch_interval > 2.0:
-            raise HTTPException(status_code=400, detail="hls_segment_fetch_interval must be between 0.1 and 2.0")
-        ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL = hls_segment_fetch_interval
-
-    logger.info(
-        f"Proxy configuration updated: "
-        f"initial_data_wait_timeout={ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT}, "
-        f"initial_data_check_interval={ProxyConfig.INITIAL_DATA_CHECK_INTERVAL}, "
-        f"no_data_timeout_checks={ProxyConfig.NO_DATA_TIMEOUT_CHECKS}, "
-        f"no_data_check_interval={ProxyConfig.NO_DATA_CHECK_INTERVAL}, "
-        f"connection_timeout={ProxyConfig.CONNECTION_TIMEOUT}, "
-        f"upstream_connect_timeout={ProxyConfig.UPSTREAM_CONNECT_TIMEOUT}, "
-        f"upstream_read_timeout={ProxyConfig.UPSTREAM_READ_TIMEOUT}, "
-        f"stream_timeout={ProxyConfig.STREAM_TIMEOUT}, "
-        f"channel_shutdown_delay={ProxyConfig.CHANNEL_SHUTDOWN_DELAY}, "
-        f"proxy_prebuffer_seconds={int(ProxyConfig.PROXY_PREBUFFER_SECONDS)}, "
-        f"max_streams_per_engine={cfg.MAX_STREAMS_PER_ENGINE}, "
-        f"stream_mode={ProxyConfig.STREAM_MODE}, "
-        f"control_mode={_resolve_control_mode(ProxyConfig.CONTROL_MODE)}, "
-        f"legacy_api_preflight_tier={str(ProxyConfig.LEGACY_API_PREFLIGHT_TIER).strip().lower()}, "
-        f"ace_live_edge_delay={cfg.ACE_LIVE_EDGE_DELAY}"
-    )
-
-    config_to_save = {
-        "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
-        "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
-        "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
-        "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
-        "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
-        "upstream_connect_timeout": ProxyConfig.UPSTREAM_CONNECT_TIMEOUT,
-        "upstream_read_timeout": ProxyConfig.UPSTREAM_READ_TIMEOUT,
-        "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
-        "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-        "proxy_prebuffer_seconds": int(ProxyConfig.PROXY_PREBUFFER_SECONDS),
-        "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
-        "stream_mode": ProxyConfig.STREAM_MODE,
-        "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
-        "legacy_api_preflight_tier": str(ProxyConfig.LEGACY_API_PREFLIGHT_TIER).strip().lower(),
-        "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
-        "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
-        "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
-        "hls_window_size": ProxyConfig.HLS_WINDOW_SIZE,
-        "hls_buffer_ready_timeout": ProxyConfig.HLS_BUFFER_READY_TIMEOUT,
-        "hls_first_segment_timeout": ProxyConfig.HLS_FIRST_SEGMENT_TIMEOUT,
-        "hls_initial_buffer_seconds": ProxyConfig.HLS_INITIAL_BUFFER_SECONDS,
-        "hls_max_initial_segments": ProxyConfig.HLS_MAX_INITIAL_SEGMENTS,
-        "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
+    from ...persistence.settings_persistence import SettingsPersistence
+    
+    current = SettingsPersistence.load_proxy_config() or {}
+    
+    updates = {
+        "initial_data_wait_timeout": initial_data_wait_timeout,
+        "initial_data_check_interval": initial_data_check_interval,
+        "no_data_timeout_checks": no_data_timeout_checks,
+        "no_data_check_interval": no_data_check_interval,
+        "connection_timeout": connection_timeout,
+        "upstream_connect_timeout": upstream_connect_timeout,
+        "upstream_read_timeout": upstream_read_timeout,
+        "stream_timeout": stream_timeout,
+        "channel_shutdown_delay": channel_shutdown_delay,
+        "proxy_prebuffer_seconds": proxy_prebuffer_seconds,
+        "pacing_bitrate_multiplier": pacing_bitrate_multiplier,
+        "max_streams_per_engine": max_streams_per_engine,
+        "stream_mode": stream_mode,
+        "control_mode": control_mode,
+        "legacy_api_preflight_tier": legacy_api_preflight_tier,
+        "ace_live_edge_delay": ace_live_edge_delay,
+        "hls_max_segments": hls_max_segments,
+        "hls_initial_segments": hls_initial_segments,
+        "hls_window_size": hls_window_size,
+        "hls_buffer_ready_timeout": hls_buffer_ready_timeout,
+        "hls_first_segment_timeout": hls_first_segment_timeout,
+        "hls_initial_buffer_seconds": hls_initial_buffer_seconds,
+        "hls_max_initial_segments": hls_max_initial_segments,
+        "hls_segment_fetch_interval": hls_segment_fetch_interval,
     }
-    if SettingsPersistence.save_proxy_config(config_to_save):
-        logger.info("Proxy configuration persisted to RuntimeSettings DB")
+    
+    # Filter out None values
+    updates = {k: v for k, v in updates.items() if v is not None}
+    
+    if not updates:
+        return {"message": "No updates provided", "config": current}
+        
+    merged = {**current, **updates}
+    
+    if SettingsPersistence.save_proxy_config(merged):
+        logger.info("Proxy configuration updated and persisted")
+        notify_proxy_config_update()
+        return {"message": "Proxy configuration updated and persisted", "config": merged}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to persist proxy configuration")
 
-    return {
-        "message": "Proxy configuration updated and persisted",
-        "initial_data_wait_timeout": ProxyConfig.INITIAL_DATA_WAIT_TIMEOUT,
-        "initial_data_check_interval": ProxyConfig.INITIAL_DATA_CHECK_INTERVAL,
-        "no_data_timeout_checks": ProxyConfig.NO_DATA_TIMEOUT_CHECKS,
-        "no_data_check_interval": ProxyConfig.NO_DATA_CHECK_INTERVAL,
-        "connection_timeout": ProxyConfig.CONNECTION_TIMEOUT,
-        "upstream_connect_timeout": ProxyConfig.UPSTREAM_CONNECT_TIMEOUT,
-        "upstream_read_timeout": ProxyConfig.UPSTREAM_READ_TIMEOUT,
-        "stream_timeout": ProxyConfig.STREAM_TIMEOUT,
-        "channel_shutdown_delay": ProxyConfig.CHANNEL_SHUTDOWN_DELAY,
-        "proxy_prebuffer_seconds": int(ProxyConfig.PROXY_PREBUFFER_SECONDS),
-        "max_streams_per_engine": cfg.MAX_STREAMS_PER_ENGINE,
-        "stream_mode": ProxyConfig.STREAM_MODE,
-        "control_mode": _resolve_control_mode(ProxyConfig.CONTROL_MODE),
-        "legacy_api_preflight_tier": str(ProxyConfig.LEGACY_API_PREFLIGHT_TIER).strip().lower(),
-        "ace_live_edge_delay": cfg.ACE_LIVE_EDGE_DELAY,
-        "hls_max_segments": ProxyConfig.HLS_MAX_SEGMENTS,
-        "hls_initial_segments": ProxyConfig.HLS_INITIAL_SEGMENTS,
-        "hls_window_size": ProxyConfig.HLS_WINDOW_SIZE,
-        "hls_buffer_ready_timeout": ProxyConfig.HLS_BUFFER_READY_TIMEOUT,
-        "hls_first_segment_timeout": ProxyConfig.HLS_FIRST_SEGMENT_TIMEOUT,
-        "hls_initial_buffer_seconds": ProxyConfig.HLS_INITIAL_BUFFER_SECONDS,
-        "hls_max_initial_segments": ProxyConfig.HLS_MAX_INITIAL_SEGMENTS,
-        "hls_segment_fetch_interval": ProxyConfig.HLS_SEGMENT_FETCH_INTERVAL,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -379,17 +238,22 @@ def update_proxy_config(
 @router.get("/internal/proxy/select-engine")
 def internal_select_engine():
     """Return the best available engine for the Go proxy to connect to."""
+    from ...persistence.settings_persistence import SettingsPersistence
+    
+    proxy_settings = SettingsPersistence.load_proxy_config() or {}
     engine, _ = select_best_engine_shared()
+    
     return {
         "host": engine.host,
         "port": engine.port,
         "api_port": engine.api_port or 62062,
         "container_id": engine.container_id,
-        "proxy_prebuffer_seconds": getattr(cfg, "PROXY_PREBUFFER_SECONDS", 3),
-        "pacing_bitrate_multiplier": getattr(cfg, "PACING_BITRATE_MULTIPLIER", 1.5),
-        "stream_mode": getattr(cfg, "STREAM_MODE", "TS").upper(),
-        "control_mode": getattr(cfg, "CONTROL_MODE", "api").lower(),
+        "proxy_prebuffer_seconds": int(proxy_settings.get("proxy_prebuffer_seconds", 3)),
+        "pacing_bitrate_multiplier": float(proxy_settings.get("pacing_bitrate_multiplier", 1.5)),
+        "stream_mode": str(proxy_settings.get("stream_mode", "TS")).upper(),
+        "control_mode": str(proxy_settings.get("control_mode", "api")).lower(),
     }
+
 
 
 # ---------------------------------------------------------------------------

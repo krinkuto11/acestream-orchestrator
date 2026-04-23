@@ -14,6 +14,7 @@ import (
 
 	"github.com/acestream/proxy/internal/api"
 	"github.com/acestream/proxy/internal/config"
+	"github.com/acestream/proxy/internal/hls"
 	"github.com/acestream/proxy/internal/stream"
 )
 
@@ -22,7 +23,7 @@ func main() {
 		Level: slog.LevelInfo,
 	})))
 
-	cfg := config.C
+	cfg := config.C.Load()
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr: fmt.Sprintf("%s:%d", cfg.RedisHost, cfg.RedisPort),
@@ -37,6 +38,17 @@ func main() {
 	}
 	cancel()
 
+	// 1. Initial fetch from Orchestrator API
+	if err := config.UpdateFromAPI(cfg.OrchestratorURL); err != nil {
+		slog.Warn("failed to fetch initial config from orchestrator, using env defaults", "err", err)
+	}
+	
+	// Re-load cfg after initial fetch to get the latest values for startup
+	cfg = config.C.Load()
+
+	// 2. Subscribe to live updates via Redis
+	config.SubscribeRedisUpdates(rdb)
+
 	hub := stream.NewHub(rdb)
 	srv := api.NewServer(hub, cfg.OrchestratorURL)
 
@@ -44,6 +56,7 @@ func main() {
 		Addr:    cfg.ListenAddr,
 		Handler: srv,
 	}
+
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -60,6 +73,7 @@ func main() {
 	slog.Info("shutting down")
 
 	hub.Stop()
+	hls.DefaultCache.Stop()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

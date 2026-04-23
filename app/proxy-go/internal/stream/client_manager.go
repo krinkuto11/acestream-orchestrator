@@ -80,9 +80,9 @@ func (cm *ClientManager) Add(clientID, ip, userAgent string, initialIndex int64)
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	if len(cm.clients) >= config.C.MaxClientsPerStream() {
+	if len(cm.clients) >= config.C.Load().MaxClientsPerStream() {
 		slog.Warn("rejecting client: max capacity reached",
-			"stream", cm.contentID, "client", clientID, "max", config.C.MaxClientsPerStream())
+			"stream", cm.contentID, "client", clientID, "max", config.C.Load().MaxClientsPerStream())
 		return false
 	}
 
@@ -102,7 +102,7 @@ func (cm *ClientManager) Add(clientID, ip, userAgent string, initialIndex int64)
 	cm.hadClients = true
 
 	ctx := context.Background()
-	ttl := config.C.ClientRecordTTL
+	ttl := config.C.Load().ClientRecordTTL
 	key := rediskeys.ClientMetadata(cm.contentID, clientID)
 	cm.rdb.HSet(ctx, key,
 		"client_id", clientID,
@@ -151,7 +151,7 @@ func (cm *ClientManager) Remove(clientID string) {
 	if remaining == 0 {
 		cm.rdb.Set(ctx, rediskeys.LastClientDisconnect(cm.contentID),
 			fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9),
-			config.C.ClientRecordTTL)
+			config.C.Load().ClientRecordTTL)
 	}
 
 	slog.Info("client disconnected", "stream", cm.contentID, "client", clientID,
@@ -173,7 +173,7 @@ func (cm *ClientManager) HadClients() bool {
 // response headers before committing them to the client.
 func (cm *ClientManager) HasCapacity() bool {
 	cm.mu.RLock()
-	ok := len(cm.clients) < config.C.MaxClientsPerStream()
+	ok := len(cm.clients) < config.C.Load().MaxClientsPerStream()
 	cm.mu.RUnlock()
 	return ok
 }
@@ -268,7 +268,7 @@ func (cm *ClientManager) HeartbeatHLSClient(clientID, ip, userAgent string, byte
 	cm.mu.Unlock()
 
 	ctx := context.Background()
-	ttl := config.C.ClientRecordTTL
+	ttl := config.C.Load().ClientRecordTTL
 	key := rediskeys.ClientMetadata(cm.contentID, clientID)
 
 	if !exists {
@@ -313,7 +313,8 @@ func (cm *ClientManager) Stop() {
 }
 
 func (cm *ClientManager) heartbeatLoop() {
-	ticker := time.NewTicker(config.C.ClientHeartbeatInterval)
+	interval := config.C.Load().ClientHeartbeatInterval
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -321,6 +322,10 @@ func (cm *ClientManager) heartbeatLoop() {
 		case <-cm.stopCh:
 			return
 		case <-ticker.C:
+			if newInterval := config.C.Load().ClientHeartbeatInterval; newInterval != interval {
+				ticker.Reset(newInterval)
+				interval = newInterval
+			}
 			cm.sendHeartbeats()
 			cm.evictGhosts()
 		}
@@ -366,7 +371,7 @@ func (cm *ClientManager) sendHeartbeats() {
 	}
 
 	ctx := context.Background()
-	ttl := config.C.ClientRecordTTL
+	ttl := config.C.Load().ClientRecordTTL
 	setKey := rediskeys.Clients(cm.contentID)
 
 	nowStr := fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9)
@@ -395,8 +400,8 @@ func (cm *ClientManager) sendHeartbeats() {
 }
 
 func (cm *ClientManager) evictGhosts() {
-	tsGhostTimeout := config.C.ClientHeartbeatInterval * 5
-	hlsGhostTimeout := config.C.HLSClientIdleTimeout
+	tsGhostTimeout := config.C.Load().ClientHeartbeatInterval * 5
+	hlsGhostTimeout := config.C.Load().HLSClientIdleTimeout
 
 	cm.mu.Lock()
 	if cm.isInitialBuffering {
@@ -404,7 +409,11 @@ func (cm *ClientManager) evictGhosts() {
 		return
 	}
 
-	var ghosts []string
+	type eviction struct {
+		id       string
+		protocol string
+	}
+	var ghosts []eviction
 	now := time.Now()
 	for id, rec := range cm.clients {
 		timeout := tsGhostTimeout
@@ -412,32 +421,30 @@ func (cm *ClientManager) evictGhosts() {
 			timeout = hlsGhostTimeout
 		}
 		if now.Sub(rec.LastActive) > timeout {
-			ghosts = append(ghosts, id)
+			ghosts = append(ghosts, eviction{id: id, protocol: rec.LastRequestKind})
 		}
 	}
-	for _, id := range ghosts {
-		delete(cm.clients, id)
+	for _, g := range ghosts {
+		delete(cm.clients, g.id)
 	}
 	cm.mu.Unlock()
 
 	if len(ghosts) > 0 {
 		slog.Debug("evicted ghost clients", "stream", cm.contentID, "count", len(ghosts))
 		ctx := context.Background()
-		for _, id := range ghosts {
-			cm.rdb.SRem(ctx, rediskeys.Clients(cm.contentID), id)
-			cm.rdb.Del(ctx, rediskeys.ClientMetadata(cm.contentID, id))
-			telemetry.DefaultTelemetry.ObserveDisconnect("TS/HLS Ghost") // We can refine this later
+		for _, g := range ghosts {
+			cm.rdb.SRem(ctx, rediskeys.Clients(cm.contentID), g.id)
+			cm.rdb.Del(ctx, rediskeys.ClientMetadata(cm.contentID, g.id))
+			telemetry.DefaultTelemetry.ObserveDisconnect(g.protocol)
 		}
 
-		// Re-read the count under the lock to avoid a TOCTOU race with Add():
-		// a new client may have connected between when we released the lock and now.
 		cm.mu.RLock()
 		currentCount := len(cm.clients)
 		cm.mu.RUnlock()
 		if currentCount == 0 {
 			cm.rdb.Set(ctx, rediskeys.LastClientDisconnect(cm.contentID),
 				fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9),
-				config.C.ClientRecordTTL)
+				config.C.Load().ClientRecordTTL)
 		}
 	}
 }

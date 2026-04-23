@@ -91,3 +91,4 @@ context
 .pytest_cache
 aceserve-x86_64
 load_tests
+dispatcharr_proxy
