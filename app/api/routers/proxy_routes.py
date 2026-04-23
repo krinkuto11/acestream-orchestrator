@@ -167,6 +167,9 @@ def update_proxy_config(
     stream_timeout: Optional[int] = None,
     channel_shutdown_delay: Optional[int] = None,
     proxy_prebuffer_seconds: Optional[int] = None,
+    pacing_bitrate_multiplier: Optional[float] = None,
+    upstream_connect_timeout: Optional[int] = None,
+    upstream_read_timeout: Optional[int] = None,
     max_streams_per_engine: Optional[int] = None,
     stream_mode: Optional[str] = None,
     control_mode: Optional[str] = None,
@@ -197,6 +200,7 @@ def update_proxy_config(
         "stream_timeout": stream_timeout,
         "channel_shutdown_delay": channel_shutdown_delay,
         "proxy_prebuffer_seconds": proxy_prebuffer_seconds,
+        "pacing_bitrate_multiplier": pacing_bitrate_multiplier,
         "max_streams_per_engine": max_streams_per_engine,
         "stream_mode": stream_mode,
         "control_mode": control_mode,
@@ -236,17 +240,22 @@ def update_proxy_config(
 @router.get("/internal/proxy/select-engine")
 def internal_select_engine():
     """Return the best available engine for the Go proxy to connect to."""
+    from ...persistence.settings_persistence import SettingsPersistence
+    
+    proxy_settings = SettingsPersistence.load_proxy_config() or {}
     engine, _ = select_best_engine_shared()
+    
     return {
         "host": engine.host,
         "port": engine.port,
         "api_port": engine.api_port or 62062,
         "container_id": engine.container_id,
-        "proxy_prebuffer_seconds": getattr(cfg, "PROXY_PREBUFFER_SECONDS", 3),
-        "pacing_bitrate_multiplier": getattr(cfg, "PACING_BITRATE_MULTIPLIER", 1.5),
-        "stream_mode": getattr(cfg, "STREAM_MODE", "TS").upper(),
-        "control_mode": getattr(cfg, "CONTROL_MODE", "api").lower(),
+        "proxy_prebuffer_seconds": int(proxy_settings.get("proxy_prebuffer_seconds", 3)),
+        "pacing_bitrate_multiplier": float(proxy_settings.get("pacing_bitrate_multiplier", 1.5)),
+        "stream_mode": str(proxy_settings.get("stream_mode", "TS")).upper(),
+        "control_mode": str(proxy_settings.get("control_mode", "api")).lower(),
     }
+
 
 
 # ---------------------------------------------------------------------------
