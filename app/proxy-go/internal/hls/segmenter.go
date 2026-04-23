@@ -215,11 +215,20 @@ func (s *Segmenter) run() {
 						continue
 					}
 
+					// Force cut if we've gone way over target duration without finding a keyframe
+					maxDur := s.targetDur * 2.5
+					
 					if elapsed >= s.targetDur {
-						s.pushSegment(localSeq, acc, elapsed)
-						localSeq++
-						acc = nil
-						segStart = pcr // next segment starts at this PCR
+						isKeyframe := res.RandomAccess || ts.IsKeyframe(pkt)
+						if isKeyframe || elapsed >= maxDur {
+							if elapsed >= maxDur && !isKeyframe {
+								slog.Debug("forcing segment cut on non-keyframe (timeout)", "stream", s.contentID, "elapsed", elapsed)
+							}
+							s.pushSegment(localSeq, acc, elapsed)
+							localSeq++
+							acc = nil
+							segStart = pcr // next segment starts at this PCR
+						}
 					}
 				}
 			}
