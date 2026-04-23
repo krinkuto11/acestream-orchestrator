@@ -133,9 +133,9 @@ func UpdateFromAPI(orchestratorURL string) error {
 			time.Sleep(1 * time.Second)
 			continue
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
 			lastErr = fmt.Errorf("orchestrator returned status %d", resp.StatusCode)
 			cancel()
 			time.Sleep(1 * time.Second)
@@ -143,14 +143,15 @@ func UpdateFromAPI(orchestratorURL string) error {
 		}
 
 		var updates map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&updates); err != nil {
-			cancel()
-			return err
+		decodeErr := json.NewDecoder(resp.Body).Decode(&updates)
+		resp.Body.Close()
+		cancel()
+		if decodeErr != nil {
+			return decodeErr
 		}
 
 		ApplyUpdates(updates)
 		slog.Info("Configuration updated from API")
-		cancel()
 		return nil
 	}
 
@@ -158,19 +159,20 @@ func UpdateFromAPI(orchestratorURL string) error {
 }
 
 // SubscribeRedisUpdates listens for configuration changes on a Redis channel.
+// Re-subscribes automatically after connection loss.
 func SubscribeRedisUpdates(rdb *redis.Client) {
 	ctx := context.Background()
-	pubsub := rdb.Subscribe(ctx, "proxy_config_updates")
 
 	go func() {
-		defer pubsub.Close()
-		slog.Info("Subscribed to proxy_config_updates Redis channel")
-
+		slog.Info("subscribed to proxy_config_updates Redis channel")
+		pubsub := rdb.Subscribe(ctx, "proxy_config_updates")
 		for {
 			msg, err := pubsub.ReceiveMessage(ctx)
 			if err != nil {
-				slog.Error("Redis Pub/Sub error", "err", err)
+				slog.Error("Redis Pub/Sub error, resubscribing in 5 s", "err", err)
+				pubsub.Close()
 				time.Sleep(5 * time.Second)
+				pubsub = rdb.Subscribe(ctx, "proxy_config_updates")
 				continue
 			}
 
@@ -238,6 +240,38 @@ func ApplyUpdates(updates map[string]interface{}) {
 			newCfg.HLSMaxInitialSegments = toInt(v)
 		case "hls_segment_fetch_interval":
 			newCfg.HLSSegmentFetchInterval = toFloat(v)
+		case "hls_client_idle_timeout":
+			newCfg.HLSClientIdleTimeout = toDuration(v, time.Second)
+		case "pacing_bitrate_multiplier":
+			newCfg.PacingBitrateMultiplier = toFloat(v)
+		case "proxy_max_catchup_multiplier":
+			newCfg.ProxyMaxCatchupMultiplier = toFloat(v)
+		case "pacing_burst_seconds":
+			newCfg.PacingBurstSeconds = toFloat(v)
+		case "channel_init_grace_period":
+			newCfg.ChannelInitGracePeriod = toDuration(v, time.Second)
+		case "client_heartbeat_interval":
+			newCfg.ClientHeartbeatInterval = toDuration(v, time.Second)
+		case "client_record_ttl":
+			newCfg.ClientRecordTTL = toDuration(v, time.Second)
+		case "max_clients_per_stream":
+			newCfg.MaxClientsPerStreamCount = toInt(v)
+		case "max_total_streams":
+			newCfg.MaxTotalStreams = toInt(v)
+		case "max_memory_mb":
+			newCfg.MaxMemoryMB = toInt(v)
+		case "cleanup_interval":
+			newCfg.CleanupInterval = toDuration(v, time.Second)
+		case "keepalive_interval":
+			newCfg.KeepaliveInterval = toDuration(v, time.Millisecond)
+		case "buffer_chunk_size":
+			// Note: only affects streams started after this update; existing ring
+			// buffers keep their original chunk size for their lifetime.
+			if n := toInt(v); n > 0 {
+				if aligned := (n / 188) * 188; aligned > 0 {
+					newCfg.BufferChunkSize = aligned
+				}
+			}
 		}
 	}
 

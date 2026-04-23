@@ -1,6 +1,9 @@
 package ts
 
-import "log/slog"
+import (
+	"bytes"
+	"log/slog"
+)
 
 const (
 	PacketSize      = 188
@@ -90,7 +93,7 @@ func (h *SyncHunter) lockedPath() []byte {
 func (h *SyncHunter) huntPath() []byte {
 	need := PacketSize * h.requiredConfirmations
 	for len(h.buf) >= need {
-		idx := indexByte(h.buf, SyncByte)
+		idx := bytes.IndexByte(h.buf, SyncByte)
 		if idx < 0 {
 			// No sync byte at all — keep last byte in case it starts a packet
 			h.buf = h.buf[len(h.buf)-1:]
@@ -134,11 +137,3 @@ func (h *SyncHunter) Reset() {
 	h.buf = h.buf[:0]
 }
 
-func indexByte(b []byte, c byte) int {
-	for i, v := range b {
-		if v == c {
-			return i
-		}
-	}
-	return -1
-}

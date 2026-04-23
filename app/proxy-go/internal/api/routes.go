@@ -72,9 +72,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/ace/hls/segment.ts", withTelemetry("HLS", s.handleHLSSegment))
 	s.mux.HandleFunc("/ace/hls/", withTelemetry("HLS", s.handleHLSSegmentLegacy))  // /ace/hls/{id}/segment/{path}
 
-	// Internal control endpoints (called by Python orchestrator)
-	s.mux.HandleFunc("/internal/proxy/stop", s.handleInternalStop)
-	s.mux.HandleFunc("/internal/proxy/swap", s.handleInternalSwap)
+	// Internal control endpoints (called by Python orchestrator).
+	// Gated with requireAPIKey so external clients cannot terminate streams;
+	// no-ops when APIKey is empty (backward-compatible).
+	s.mux.HandleFunc("/internal/proxy/stop", requireAPIKey(s.handleInternalStop))
+	s.mux.HandleFunc("/internal/proxy/swap", requireAPIKey(s.handleInternalSwap))
 
 	// Health
 	s.mux.HandleFunc("/proxy/health", s.handleHealth)
@@ -137,22 +139,17 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 			PrebufferSeconds: prebufferSeconds,
 			PacingMultiplier: ep.PacingMultiplier,
 		}
-		s.hub.StartStream(r.Context(), p)
-		deadline := time.Now().Add(500 * time.Millisecond)
-		for time.Now().Before(deadline) {
-			mgr, buf, cm = s.hub.GetEntry(streamKey)
-			if mgr != nil {
-				break
-			}
-			select {
-			case <-r.Context().Done():
-				http.Error(w, "request cancelled", http.StatusServiceUnavailable)
-				return
-			case <-time.After(10 * time.Millisecond):
-			}
-		}
+		// StartStream adds the entry to the hub synchronously before returning.
+		// If it returns false and GetEntry still finds nothing, the hub hit its
+		// resource limit and could not evict an idle stream.
+		started := s.hub.StartStream(r.Context(), p)
+		mgr, buf, cm = s.hub.GetEntry(streamKey)
 		if mgr == nil {
-			http.Error(w, "stream start failed", http.StatusInternalServerError)
+			if !started {
+				http.Error(w, "stream at capacity: resource limit reached", http.StatusServiceUnavailable)
+			} else {
+				http.Error(w, "stream start failed", http.StatusInternalServerError)
+			}
 			return
 		}
 	} else {
@@ -300,22 +297,14 @@ func (s *Server) handleHLSManifestAPIMode(
 			PrebufferSeconds: ep.PrebufferSeconds,
 			PacingMultiplier: ep.PacingMultiplier,
 		}
-		s.hub.StartStream(r.Context(), p)
-		deadline := time.Now().Add(500 * time.Millisecond)
-		for time.Now().Before(deadline) {
-			_, buf, _ = s.hub.GetEntry(streamKey)
-			if buf != nil {
-				break
-			}
-			select {
-			case <-r.Context().Done():
-				http.Error(w, "request cancelled", http.StatusServiceUnavailable)
-				return
-			case <-time.After(10 * time.Millisecond):
-			}
-		}
+		started := s.hub.StartStream(r.Context(), p)
+		_, buf, _ = s.hub.GetEntry(streamKey)
 		if buf == nil {
-			http.Error(w, "stream start failed", http.StatusInternalServerError)
+			if !started {
+				http.Error(w, "stream at capacity: resource limit reached", http.StatusServiceUnavailable)
+			} else {
+				http.Error(w, "stream start failed", http.StatusInternalServerError)
+			}
 			return
 		}
 	} else {
@@ -386,7 +375,9 @@ func (s *Server) handleHLSManifestAPIMode(
 
 func (s *Server) handleHLSSegment(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	streamKey := sanitizeID(q.Get("stream"))
+	// Use validateStreamKey (not sanitizeID) — hub-generated keys may contain
+	// a ':' separator (e.g. "content_id:a3b4c5d6") that sanitizeID would mangle.
+	streamKey := validateStreamKey(q.Get("stream"))
 	if streamKey == "" {
 		http.Error(w, "stream param required", http.StatusBadRequest)
 		return
@@ -430,9 +421,12 @@ func (s *Server) handleHLSSegment(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := hls.NewSession(streamKey, "", "")
 	defer sess.Stop()
-	if err := sess.ServeSegment(r.Context(), decodedURL, w); err != nil {
+	n, err := sess.ServeSegment(r.Context(), decodedURL, w)
+	if err != nil {
 		http.Error(w, "segment error: "+err.Error(), http.StatusBadGateway)
+		return
 	}
+	s.recordHLSClient(streamKey, n, r)
 }
 
 // --- HLS legacy segment handler (/ace/hls/{content_id}/segment/{path}) ---
@@ -640,6 +634,25 @@ func sanitizeID(v string) string {
 			sb.WriteRune(r)
 		} else {
 			sb.WriteRune('_')
+		}
+	}
+	return sb.String()
+}
+
+// validateStreamKey accepts the same characters as sanitizeID plus ':'.
+// Stream keys built by buildStreamKey may contain a colon separator
+// (e.g. "content_id:a3b4c5d6") which sanitizeID would mangle. This
+// function is used only for the ?stream= parameter in HLS segment URLs,
+// where the value is always a hub-generated key, never raw user input.
+func validateStreamKey(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	var sb strings.Builder
+	for _, r := range strings.ToLower(v) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '.' || r == '-' || r == '|' || r == ':' {
+			sb.WriteRune(r)
 		}
 	}
 	return sb.String()

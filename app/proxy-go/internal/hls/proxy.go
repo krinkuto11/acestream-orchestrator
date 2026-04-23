@@ -68,36 +68,37 @@ func (ps *ProxySession) ServeManifest(ctx context.Context, w http.ResponseWriter
 }
 
 // ServeSegment fetches a segment by its original upstream URL (cached) and streams it to w.
-func (ps *ProxySession) ServeSegment(ctx context.Context, segmentURL string, w http.ResponseWriter) error {
+// Returns the number of bytes written so callers can account for egress.
+func (ps *ProxySession) ServeSegment(ctx context.Context, segmentURL string, w http.ResponseWriter) (int64, error) {
 	if DefaultCache != nil {
 		if data, ok := DefaultCache.Get(segmentURL); ok {
 			w.Header().Set("Content-Type", "video/MP2T")
 			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 			w.Write(data) //nolint:errcheck
-			return nil
+			return int64(len(data)), nil
 		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, segmentURL, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("User-Agent", vlcUserAgent)
 	req.Header.Set("Accept", "*/*")
 
 	resp, err := ps.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("segment fetch: %w", err)
+		return 0, fmt.Errorf("segment fetch: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("segment returned HTTP %d", resp.StatusCode)
+		return 0, fmt.Errorf("segment returned HTTP %d", resp.StatusCode)
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("segment read: %w", err)
+		return 0, fmt.Errorf("segment read: %w", err)
 	}
 
 	ttl := time.Duration(config.C.Load().HLSClientIdleTimeout) * 2
@@ -108,7 +109,7 @@ func (ps *ProxySession) ServeSegment(ctx context.Context, segmentURL string, w h
 	w.Header().Set("Content-Type", "video/MP2T")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.Write(data) //nolint:errcheck
-	return nil
+	return int64(len(data)), nil
 }
 
 // fetchManifest retrieves the raw .m3u8 content from the engine.

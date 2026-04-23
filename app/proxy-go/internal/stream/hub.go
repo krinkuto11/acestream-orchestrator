@@ -263,6 +263,7 @@ func (h *Hub) removeStream(contentID string) {
 	}
 	h.mu.Unlock()
 	if ok {
+		e.cancelFn()
 		e.clients.Stop()
 		e.buf.Stop()
 		if e.segmenter != nil {
