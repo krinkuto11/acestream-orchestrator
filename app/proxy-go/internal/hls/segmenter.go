@@ -107,6 +107,17 @@ func (s *Segmenter) SegmentCount() int {
 	return n
 }
 
+// MemoryUsage returns the total memory in bytes consumed by the segment window.
+func (s *Segmenter) MemoryUsage() int64 {
+	s.mu.RLock()
+	var total int64
+	for _, seg := range s.segs {
+		total += int64(len(seg.data))
+	}
+	s.mu.RUnlock()
+	return total
+}
+
 // Segment returns the raw TS bytes for the given sequence number.
 func (s *Segmenter) Segment(seq int) ([]byte, bool) {
 	s.mu.RLock()

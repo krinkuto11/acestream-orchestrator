@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/acestream/proxy/internal/config"
@@ -20,75 +19,12 @@ import (
 
 const vlcUserAgent = "VLC/3.0.21 LibVLC/3.0.21"
 
-// SegmentCache caches raw segment bytes with a TTL.
-type SegmentCache struct {
-	mu      sync.Mutex
-	entries map[string]segmentEntry
-	stopCh  chan struct{}
-	once    sync.Once
-}
-
-type segmentEntry struct {
-	data    []byte
-	expires time.Time
-}
-
-func newSegmentCache() *SegmentCache {
-	c := &SegmentCache{
-		entries: make(map[string]segmentEntry),
-		stopCh:  make(chan struct{}),
-	}
-	go c.gcLoop()
-	return c
-}
-
-func (sc *SegmentCache) stop() {
-	sc.once.Do(func() { close(sc.stopCh) })
-}
-
-func (sc *SegmentCache) get(key string) ([]byte, bool) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	e, ok := sc.entries[key]
-	if !ok || time.Now().After(e.expires) {
-		return nil, false
-	}
-	return e.data, true
-}
-
-func (sc *SegmentCache) set(key string, data []byte, ttl time.Duration) {
-	sc.mu.Lock()
-	sc.entries[key] = segmentEntry{data: data, expires: time.Now().Add(ttl)}
-	sc.mu.Unlock()
-}
-
-func (sc *SegmentCache) gcLoop() {
-	t := time.NewTicker(30 * time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-sc.stopCh:
-			return
-		case <-t.C:
-			now := time.Now()
-			sc.mu.Lock()
-			for k, e := range sc.entries {
-				if now.After(e.expires) {
-					delete(sc.entries, k)
-				}
-			}
-			sc.mu.Unlock()
-		}
-	}
-}
-
 // ProxySession handles HLS proxying for one stream.
 // It fetches the upstream manifest periodically and rewrites segment URLs.
 type ProxySession struct {
 	contentID   string
 	upstreamURL string // full .m3u8 URL on the engine
 	proxyBase   string // base URL of the proxy (for rewriting)
-	cache       *SegmentCache
 	httpClient  *http.Client
 }
 
@@ -100,7 +36,6 @@ func NewSession(contentID, upstreamURL, proxyBase string) *ProxySession {
 		contentID:   contentID,
 		upstreamURL: upstreamURL,
 		proxyBase:   strings.TrimRight(proxyBase, "/"),
-		cache:       newSegmentCache(),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -113,10 +48,8 @@ func NewSession(contentID, upstreamURL, proxyBase string) *ProxySession {
 	}
 }
 
-// Stop terminates the background GC goroutine. Must be called when the session
-// is no longer needed to prevent goroutine leaks.
 func (ps *ProxySession) Stop() {
-	ps.cache.stop()
+	// No-op. Global cache manages its own GC.
 }
 
 // ServeManifest fetches the upstream manifest and rewrites segment URLs, then writes to w.
@@ -136,11 +69,13 @@ func (ps *ProxySession) ServeManifest(ctx context.Context, w http.ResponseWriter
 
 // ServeSegment fetches a segment by its original upstream URL (cached) and streams it to w.
 func (ps *ProxySession) ServeSegment(ctx context.Context, segmentURL string, w http.ResponseWriter) error {
-	if data, ok := ps.cache.get(segmentURL); ok {
-		w.Header().Set("Content-Type", "video/MP2T")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-		w.Write(data) //nolint:errcheck
-		return nil
+	if DefaultCache != nil {
+		if data, ok := DefaultCache.Get(segmentURL); ok {
+			w.Header().Set("Content-Type", "video/MP2T")
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+			w.Write(data) //nolint:errcheck
+			return nil
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, segmentURL, nil)
@@ -166,7 +101,9 @@ func (ps *ProxySession) ServeSegment(ctx context.Context, segmentURL string, w h
 	}
 
 	ttl := time.Duration(config.C.HLSClientIdleTimeout) * 2
-	ps.cache.set(segmentURL, data, ttl)
+	if DefaultCache != nil {
+		DefaultCache.Set(segmentURL, data, ttl)
+	}
 
 	w.Header().Set("Content-Type", "video/MP2T")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))

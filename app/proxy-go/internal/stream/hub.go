@@ -129,8 +129,15 @@ func (h *Hub) atGlobalLimits() bool {
 		var totalMemBytes int64
 		for _, e := range h.streams {
 			totalMemBytes += int64(e.buf.TargetChunkSize() * 16) // roughly
+			if e.segmenter != nil {
+				totalMemBytes += e.segmenter.MemoryUsage()
+			}
+		}
+		if hls.DefaultCache != nil {
+			totalMemBytes += hls.DefaultCache.TotalBytes()
 		}
 		if totalMemBytes >= int64(config.C.MaxMemoryMB)*1024*1024 {
+			slog.Debug("global memory limit reached", "used_bytes", totalMemBytes, "limit_mb", config.C.MaxMemoryMB)
 			return true
 		}
 	}

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -161,7 +163,7 @@ func load() *Config {
 		MaxClientsPerStreamCount: envInt("MAX_CLIENTS_PER_STREAM", 100),
 
 		MaxTotalStreams: envInt("MAX_TOTAL_STREAMS", 150),
-		MaxMemoryMB:     envInt("MAX_MEMORY_MB", 2048), // 2GB
+		MaxMemoryMB:     envInt("MAX_MEMORY_MB", dynamicMemoryLimitMB(2048)),
 	}
 }
 
@@ -201,4 +203,44 @@ func envDuration(key string, def time.Duration) time.Duration {
 		}
 	}
 	return def
+}
+
+func dynamicMemoryLimitMB(fallback int) int {
+	// Try cgroups v2
+	if data, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
+		s := strings.TrimSpace(string(data))
+		if s != "max" {
+			if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+				return int(float64(v/1024/1024) * 0.85) // 85% of container limit
+			}
+		}
+	}
+
+	// Try cgroups v1
+	if data, err := os.ReadFile("/sys/fs/cgroup/memory/memory.limit_in_bytes"); err == nil {
+		s := strings.TrimSpace(string(data))
+		if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+			// Ignore artificially high un-bounded limits (e.g. 9223372036854771712)
+			if v < 9000000000000000000 {
+				return int(float64(v/1024/1024) * 0.85)
+			}
+		}
+	}
+
+	// Try bare-metal Linux
+	if data, err := os.ReadFile("/proc/meminfo"); err == nil {
+		lines := bytes.Split(data, []byte("\n"))
+		for _, line := range lines {
+			if bytes.HasPrefix(line, []byte("MemTotal:")) {
+				fields := bytes.Fields(line)
+				if len(fields) >= 2 {
+					if kb, err := strconv.ParseInt(string(fields[1]), 10, 64); err == nil {
+						return int(float64(kb/1024) * 0.85)
+					}
+				}
+			}
+		}
+	}
+
+	return fallback
 }
