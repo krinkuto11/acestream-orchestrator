@@ -164,37 +164,30 @@ def test_autoscaler_with_circuit_breaker():
         print("✅ Autoscaler circuit breaker integration tests passed!")
 
 def test_health_manager_with_circuit_breaker():
-    """Test health manager integration with circuit breaker."""
+    """Health manager evictions should not depend on provisioning circuit breaker."""
     import asyncio
-    from unittest.mock import AsyncMock
+    from unittest.mock import Mock
+    from app.services.health_manager import EngineHealthStatus
     
     async def run_test():
-        with patch('app.services.health_manager.state') as mock_state, \
-             patch('app.services.health_manager.start_acestream') as mock_start, \
-             patch('app.services.health_manager.cfg') as mock_cfg, \
+        with patch('app.services.health_manager.state.remove_engine') as mock_remove, \
+             patch('app.services.health_manager.stop_container') as mock_stop, \
              patch('app.services.health_manager.circuit_breaker_manager') as mock_breaker:
-            
-            mock_cfg.MIN_REPLICAS = 2
-            mock_cfg.ENGINE_VARIANT = "krinkuto11-amd64"
-            
-            # Mock circuit breaker initially blocking operations
-            mock_breaker.can_provision.return_value = False
-            
+
             from app.services.health_manager import HealthManager
-            
+
             health_manager = HealthManager()
-            
-            # Test replacement engine starting with circuit breaker open
-            await health_manager._start_replacement_engines(1)
-            
-            # Should have checked circuit breaker
-            mock_breaker.can_provision.assert_called_with("replacement")
-            
-            # Should not have attempted provisioning due to circuit breaker
-            assert not mock_start.called
-            
+            engine = Mock(container_id='e-test-1')
+            health_manager._engine_health['e-test-1'] = EngineHealthStatus('e-test-1')
+
+            await health_manager._replace_engine(engine)
+
+            mock_stop.assert_called_once_with('e-test-1')
+            mock_remove.assert_called_once_with('e-test-1')
+            mock_breaker.can_provision.assert_not_called()
+
             print("✅ Health manager circuit breaker integration tests passed!")
-    
+
     asyncio.run(run_test())
 
 def test_circuit_breaker_status():

@@ -1,8 +1,9 @@
-import React from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SettingRow } from '@/components/settings/SettingRow'
+import { useSettingsForm } from '@/context/SettingsFormContext'
 
 export function GeneralSettings({
   apiKey,
@@ -10,8 +11,76 @@ export function GeneralSettings({
   refreshInterval,
   setRefreshInterval,
   maxEventsDisplay,
-  setMaxEventsDisplay
+  setMaxEventsDisplay,
+  authRequired,
 }) {
+  const sectionId = 'general'
+  const { registerSection, unregisterSection, setSectionDirty } = useSettingsForm()
+
+  const [initialState, setInitialState] = useState({
+    apiKey: apiKey || '',
+    refreshInterval: Number(refreshInterval || 1000),
+    maxEventsDisplay: Number(maxEventsDisplay || 100),
+  })
+  const [draft, setDraft] = useState(initialState)
+
+  useEffect(() => {
+    const next = {
+      apiKey: apiKey || '',
+      refreshInterval: Number(refreshInterval || 1000),
+      maxEventsDisplay: Number(maxEventsDisplay || 100),
+    }
+    setInitialState(next)
+    setDraft(next)
+  }, [apiKey, refreshInterval, maxEventsDisplay])
+
+  const dirty = useMemo(
+    () => JSON.stringify(draft) !== JSON.stringify(initialState),
+    [draft, initialState],
+  )
+
+  useEffect(() => {
+    const save = async () => {
+      const normalized = {
+        apiKey: String(draft.apiKey || '').trim(),
+        refreshInterval: Number(draft.refreshInterval || 1000),
+        maxEventsDisplay: Number(draft.maxEventsDisplay || 100),
+      }
+      setApiKey(normalized.apiKey)
+      setRefreshInterval(normalized.refreshInterval)
+      setMaxEventsDisplay(normalized.maxEventsDisplay)
+      setInitialState(normalized)
+      setSectionDirty(sectionId, false)
+    }
+
+    const discard = () => {
+      setDraft(initialState)
+      setSectionDirty(sectionId, false)
+    }
+
+    registerSection(sectionId, {
+      title: 'General',
+      requiresAuth: false,
+      save,
+      discard,
+    })
+
+    return () => unregisterSection(sectionId)
+  }, [
+    draft,
+    initialState,
+    registerSection,
+    setApiKey,
+    setMaxEventsDisplay,
+    setRefreshInterval,
+    setSectionDirty,
+    unregisterSection,
+  ])
+
+  useEffect(() => {
+    setSectionDirty(sectionId, dirty)
+  }, [dirty, setSectionDirty])
+
   return (
     <div className="space-y-6">
       <Card>
@@ -20,19 +89,25 @@ export function GeneralSettings({
           <CardDescription>Configure API access and authentication</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="api-key">API Key</Label>
+          <SettingRow
+            label="API Key"
+            description="Used for protected operations when server authentication is enabled."
+            htmlFor="api-key"
+          >
             <Input
               id="api-key"
               type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
+              value={draft.apiKey}
+              onChange={(e) => setDraft((prev) => ({ ...prev, apiKey: e.target.value }))}
               placeholder="Enter your API key"
+              className="max-w-md"
             />
-            <p className="text-xs text-muted-foreground">
-              Required for protected endpoints (provisioning, deletion, configuration updates)
-            </p>
-          </div>
+          </SettingRow>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {authRequired
+              ? 'Server status: authentication is required for protected endpoints.'
+              : 'Server status: authentication is currently disabled and API key is optional.'}
+          </p>
         </CardContent>
       </Card>
 
@@ -42,11 +117,14 @@ export function GeneralSettings({
           <CardDescription>Customize dashboard refresh and display options</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="refresh-interval">Auto Refresh Interval</Label>
-            <Select 
-              value={refreshInterval.toString()} 
-              onValueChange={(val) => setRefreshInterval(Number(val))}
+          <SettingRow
+            label="Auto Refresh Interval"
+            description="How often dashboard data refreshes from the server."
+            htmlFor="refresh-interval"
+          >
+            <Select
+              value={String(draft.refreshInterval)}
+              onValueChange={(val) => setDraft((prev) => ({ ...prev, refreshInterval: Number(val) }))}
             >
               <SelectTrigger id="refresh-interval">
                 <SelectValue />
@@ -60,16 +138,16 @@ export function GeneralSettings({
                 <SelectItem value="60000">1 minute</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
-              How often the dashboard refreshes data from the server
-            </p>
-          </div>
+          </SettingRow>
 
-          <div className="space-y-2">
-            <Label htmlFor="max-events">Event Log Display Limit</Label>
-            <Select 
-              value={maxEventsDisplay.toString()} 
-              onValueChange={(val) => setMaxEventsDisplay(Number(val))}
+          <SettingRow
+            label="Event Log Display Limit"
+            description="Maximum number of events shown in the Events page list."
+            htmlFor="max-events"
+          >
+            <Select
+              value={String(draft.maxEventsDisplay)}
+              onValueChange={(val) => setDraft((prev) => ({ ...prev, maxEventsDisplay: Number(val) }))}
             >
               <SelectTrigger id="max-events">
                 <SelectValue />
@@ -81,10 +159,7 @@ export function GeneralSettings({
                 <SelectItem value="500">500 events</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
-              Maximum number of events to display in the Event Log page
-            </p>
-          </div>
+          </SettingRow>
         </CardContent>
       </Card>
     </div>

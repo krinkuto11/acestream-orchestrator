@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -25,7 +25,8 @@ import {
   ArrowUp,
   ArrowDown,
   Check,
-  X
+  Timer,
+  Zap,
 } from 'lucide-react'
 import { timeAgo, formatTime, formatBytes, formatBytesPerSecond } from '../utils/formatters'
 import {
@@ -34,17 +35,54 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 
-// Simple in-memory cache for engine stats to prevent flickering
-const statsCache = new Map()
-const STATS_CACHE_TTL = 3000 // 3 seconds
+const normalizeLifecycle = (value) => {
+  return String(value || '').trim().toLowerCase() === 'draining' ? 'draining' : 'active'
+}
 
-function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMode = null }) {
+const collectDrainingVpnContainers = (vpnStatus) => {
+  const draining = new Set()
+  if (!vpnStatus) return draining
+
+  const candidates = [
+    ...(Array.isArray(vpnStatus?.vpn_nodes) ? vpnStatus.vpn_nodes : []),
+    ...(Array.isArray(vpnStatus?.nodes) ? vpnStatus.nodes : []),
+    vpnStatus?.vpn1,
+    vpnStatus?.vpn2,
+  ].filter(Boolean)
+
+  for (const node of candidates) {
+    const lifecycle = normalizeLifecycle(node?.lifecycle)
+    if (lifecycle !== 'draining') continue
+    const name = String(node?.container_name || node?.container || node?.name || '').trim()
+    if (name) {
+      draining.add(name)
+    }
+  }
+
+  return draining
+}
+
+const resolveEngineLifecycle = (engine, drainingVpnContainers) => {
+  const directLifecycle = normalizeLifecycle(
+    engine?.lifecycle
+    ?? engine?.vpn_lifecycle
+    ?? engine?.labels?.['acestream.lifecycle']
+    ?? null,
+  )
+
+  if (directLifecycle === 'draining') return 'draining'
+
+  const vpnContainer = String(engine?.vpn_container || '').trim()
+  if (vpnContainer && drainingVpnContainers.has(vpnContainer)) {
+    return 'draining'
+  }
+
+  return 'active'
+}
+
+function EngineTableRow({ engine, onDelete, showVpnLabel = false, vpnMode = null, drainingVpnContainers }) {
   const [isExpanded, setIsExpanded] = useState(false)
-  const [stats, setStats] = useState(() => {
-    // Initialize with cached stats if available
-    const cached = statsCache.get(engine.container_id)
-    return cached?.data || null
-  })
+  const [stats, setStats] = useState(engine?.docker_stats || null)
   
   const healthColors = {
     healthy: 'success',
@@ -54,44 +92,13 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
   
   const healthStatus = engine.health_status || 'unknown'
   const healthVariant = healthColors[healthStatus] || 'outline'
+  const lifecycle = resolveEngineLifecycle(engine, drainingVpnContainers)
+  const isDraining = lifecycle === 'draining'
 
-  // Fetch Docker stats continuously
+  // Stats are delivered by the global SSE snapshot payload.
   useEffect(() => {
-    const fetchStats = async () => {
-      // Check cache first
-      const cached = statsCache.get(engine.container_id)
-      const now = Date.now()
-      
-      if (cached && (now - cached.timestamp) < STATS_CACHE_TTL) {
-        // Use cached data
-        setStats(cached.data)
-        return
-      }
-      
-      try {
-        const response = await fetch(`${orchUrl}/api/v1/engines/${engine.container_id}/stats`)
-        if (response.ok) {
-          const data = await response.json()
-          setStats(data)
-          // Update cache
-          statsCache.set(engine.container_id, {
-            data,
-            timestamp: now
-          })
-        }
-      } catch (err) {
-        console.error('Failed to fetch engine stats:', err)
-      }
-    }
-    
-    // Fetch immediately
-    fetchStats()
-    
-    // Refresh stats every 3 seconds
-    const interval = setInterval(fetchStats, 3000)
-    
-    return () => clearInterval(interval)
-  }, [engine.container_id, orchUrl])
+    setStats(engine?.docker_stats || null)
+  }, [engine?.docker_stats])
 
   // Format CPU and RAM as text
   const cpuText = stats ? `${stats.cpu_percent.toFixed(1)}%` : 'N/A'
@@ -133,10 +140,22 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
           </Badge>
         </TableCell>
         <TableCell className="text-center">
+          <Badge
+            variant={isDraining ? 'warning' : 'success'}
+            className="mx-auto flex w-fit items-center gap-1"
+          >
+            {isDraining ? <Timer className="h-3 w-3" /> : <Check className="h-3 w-3" />}
+            {isDraining ? 'Draining' : 'Active'}
+          </Badge>
+        </TableCell>
+        <TableCell className="text-center">
           {engine.forwarded ? (
-            <Check className="h-5 w-5 text-green-500 mx-auto" />
+            <Badge variant="outline" className="mx-auto flex w-fit items-center gap-1 border-amber-400/70 bg-amber-500/10 text-amber-300">
+              <Zap className="h-3 w-3" />
+              Forwarded Leader
+            </Badge>
           ) : (
-            <X className="h-5 w-5 text-red-500 mx-auto" />
+            <span className="text-sm text-muted-foreground">Worker</span>
           )}
         </TableCell>
         {vpnMode && (
@@ -200,7 +219,7 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
       </TableRow>
       {isExpanded && (
         <TableRow>
-          <TableCell colSpan={vpnMode ? 16 : 15} className="p-6 bg-muted/50">
+          <TableCell colSpan={vpnMode ? 17 : 16} className="p-6 bg-muted/50">
             <div className="space-y-6">
               {/* Engine Details */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -299,10 +318,11 @@ function EngineTableRow({ engine, onDelete, showVpnLabel = false, orchUrl, vpnMo
   )
 }
 
-function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUrl, vpnMode = null }) {
+function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, vpnMode = null, vpnStatus = null }) {
   // State for sorting
   const [sortColumn, setSortColumn] = useState(null)
   const [sortDirection, setSortDirection] = useState('asc')
+  const drainingVpnContainers = useMemo(() => collectDrainingVpnContainers(vpnStatus), [vpnStatus])
   
   // Handle column header click for sorting
   const handleSort = (column) => {
@@ -383,10 +403,15 @@ function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUr
                 Health <SortIcon column="health_status" />
               </TableHead>
               <TableHead 
+                className="text-center"
+              >
+                Lifecycle
+              </TableHead>
+              <TableHead 
                 className="cursor-pointer select-none text-center"
                 onClick={() => handleSort('forwarded')}
               >
-                Forwarded <SortIcon column="forwarded" />
+                Role <SortIcon column="forwarded" />
               </TableHead>
               {vpnMode && (
                 <TableHead className="text-center">
@@ -440,7 +465,7 @@ function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUr
           <TableBody>
             {sortedEngines.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={vpnMode ? 16 : 15} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={vpnMode ? 17 : 16} className="text-center py-8 text-muted-foreground">
                   No engines available
                 </TableCell>
               </TableRow>
@@ -451,8 +476,8 @@ function EngineTableView({ engines, onDeleteEngine, showVpnLabel = false, orchUr
                   engine={engine}
                   onDelete={onDeleteEngine}
                   showVpnLabel={showVpnLabel}
-                  orchUrl={orchUrl}
                   vpnMode={vpnMode}
+                  drainingVpnContainers={drainingVpnContainers}
                 />
               ))
             )}

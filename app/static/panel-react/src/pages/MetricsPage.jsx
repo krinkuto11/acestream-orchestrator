@@ -96,6 +96,26 @@ export function MetricsPage({ apiKey, orchUrl }) {
     memoryBytes: [],
   })
 
+  const applySnapshot = useCallback((data) => {
+    setSnapshot(data)
+    setError(null)
+
+    const persistedHistory = data?.history
+    if (persistedHistory && Array.isArray(persistedHistory.timestamps)) {
+      setHistory({
+        timestamps: persistedHistory.timestamps.map(ts => new Date(ts)),
+        egressMbps: persistedHistory.egressMbps || [],
+        ingressMbps: persistedHistory.ingressMbps || [],
+        activeStreams: persistedHistory.activeStreams || [],
+        activeClients: persistedHistory.activeClients || [],
+        successRate: persistedHistory.successRate || [],
+        ttfbP95Ms: persistedHistory.ttfbP95Ms || [],
+        cpuPercent: persistedHistory.cpuPercent || [],
+        memoryBytes: persistedHistory.memoryBytes || [],
+      })
+    }
+  }, [])
+
   const fetchSnapshot = useCallback(async () => {
     try {
       const headers = {}
@@ -109,36 +129,77 @@ export function MetricsPage({ apiKey, orchUrl }) {
       }
 
       const data = await response.json()
-      setSnapshot(data)
-      setError(null)
-
-      const persistedHistory = data?.history
-      if (persistedHistory && Array.isArray(persistedHistory.timestamps)) {
-        setHistory({
-          timestamps: persistedHistory.timestamps.map(ts => new Date(ts)),
-          egressMbps: persistedHistory.egressMbps || [],
-          ingressMbps: persistedHistory.ingressMbps || [],
-          activeStreams: persistedHistory.activeStreams || [],
-          activeClients: persistedHistory.activeClients || [],
-          successRate: persistedHistory.successRate || [],
-          ttfbP95Ms: persistedHistory.ttfbP95Ms || [],
-          cpuPercent: persistedHistory.cpuPercent || [],
-          memoryBytes: persistedHistory.memoryBytes || [],
-        })
-      }
+      applySnapshot(data)
     } catch (err) {
       setError(err.message || String(err))
     } finally {
       setLoading(false)
     }
-  }, [orchUrl, apiKey, windowSeconds])
+  }, [orchUrl, apiKey, windowSeconds, applySnapshot])
 
   useEffect(() => {
+    let eventSource = null
+    let reconnectTimer = null
+    let closed = false
+
+    const connect = () => {
+      if (closed) {
+        return
+      }
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchSnapshot()
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/metrics/stream`)
+      streamUrl.searchParams.set('window_seconds', String(windowSeconds))
+      streamUrl.searchParams.set('max_points', '360')
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleMetricsSnapshot = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          applySnapshot(parsed?.payload || null)
+          setLoading(false)
+        } catch (err) {
+          console.error('Failed to parse metrics SSE payload:', err)
+        }
+      }
+
+      eventSource.addEventListener('metrics_snapshot', handleMetricsSnapshot)
+      eventSource.onmessage = handleMetricsSnapshot
+
+      eventSource.onerror = () => {
+        setLoading(false)
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
     setLoading(true)
-    fetchSnapshot()
-    const interval = setInterval(fetchSnapshot, 1000)
-    return () => clearInterval(interval)
-  }, [fetchSnapshot])
+    connect()
+
+    return () => {
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
+    }
+  }, [orchUrl, apiKey, windowSeconds, fetchSnapshot, applySnapshot])
 
   const labels = history.timestamps.map(ts => ts.toLocaleTimeString())
   const chartData = (label, data, borderColor, backgroundColor) => ({

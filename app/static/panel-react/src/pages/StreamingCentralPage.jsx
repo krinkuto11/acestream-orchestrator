@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo } from 'react'
 import ReactECharts from 'echarts-for-react'
-import { AlertTriangle, GaugeCircle, Network, Server, ShieldAlert, Tv, Waves, Workflow } from 'lucide-react'
+import { AlertTriangle, GaugeCircle, KeyRound, Network, Server, ShieldAlert, Tv, Waves, Workflow } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -147,6 +147,7 @@ export function StreamingCentralPage({
   const { resolvedTheme } = useTheme()
   const {
     kpiHistory,
+    vpnLeaseSummary,
     dashboardSnapshot,
     engineStatsById,
     engineInspectById,
@@ -157,9 +158,15 @@ export function StreamingCentralPage({
     logsLoadingByContainerId,
     logsErrorByContainerId,
     ingestLiveSnapshot,
+    setDashboardSnapshot,
+    setEngineStartEvents,
+    setVpnLeaseSummary,
     refreshBackendTelemetry,
     openEngineLogs,
     closeEngineLogs,
+    setContainerLogsSnapshot,
+    setContainerLogsLoading,
+    setContainerLogsError,
     fetchContainerLogs,
   } = useStreamingCentralStore((state) => state)
 
@@ -176,7 +183,7 @@ export function StreamingCentralPage({
     refreshBackendTelemetry({ orchUrl, apiKey })
     const interval = window.setInterval(() => {
       refreshBackendTelemetry({ orchUrl, apiKey })
-    }, 4000)
+    }, 30000)
 
     return () => {
       window.clearInterval(interval)
@@ -184,17 +191,372 @@ export function StreamingCentralPage({
   }, [orchUrl, apiKey, refreshBackendTelemetry])
 
   useEffect(() => {
-    if (!selectedEngineId) return undefined
+    let eventSource = null
+    let reconnectTimer = null
+    let fallbackInterval = null
+    let closed = false
 
-    fetchContainerLogs({ orchUrl, apiKey, containerId: selectedEngineId })
-    const interval = window.setInterval(() => {
-      fetchContainerLogs({ orchUrl, apiKey, containerId: selectedEngineId })
-    }, 2500)
+    const fetchMetricsFallback = async () => {
+      try {
+        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+        const response = await fetch(`${orchUrl}/api/v1/metrics/dashboard?window_seconds=900&max_points=240`, {
+          headers,
+        })
+        if (!response.ok) return
+        const payload = await response.json()
+        setDashboardSnapshot(payload)
+      } catch {
+        // Best-effort telemetry update.
+      }
+    }
+
+    const connect = () => {
+      if (closed) return
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchMetricsFallback()
+        fallbackInterval = window.setInterval(fetchMetricsFallback, 10000)
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/metrics/stream`)
+      streamUrl.searchParams.set('window_seconds', '900')
+      streamUrl.searchParams.set('max_points', '240')
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleMetricsSnapshot = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          setDashboardSnapshot(parsed?.payload || null)
+        } catch {
+          // Ignore malformed frames and keep existing snapshot.
+        }
+      }
+
+      eventSource.addEventListener('metrics_snapshot', handleMetricsSnapshot)
+      eventSource.onmessage = handleMetricsSnapshot
+
+      eventSource.onerror = () => {
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    connect()
 
     return () => {
-      window.clearInterval(interval)
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (fallbackInterval) {
+        window.clearInterval(fallbackInterval)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
     }
-  }, [selectedEngineId, orchUrl, apiKey, fetchContainerLogs])
+  }, [orchUrl, apiKey, setDashboardSnapshot])
+
+  useEffect(() => {
+    let eventSource = null
+    let reconnectTimer = null
+    let fallbackInterval = null
+    let closed = false
+
+    const applyEngineEvents = (events) => {
+      const filtered = (Array.isArray(events) ? events : []).filter((event) => {
+        const category = String(event?.category || '').toLowerCase()
+        return category === 'created'
+      })
+      setEngineStartEvents(filtered)
+    }
+
+    const fetchEventsFallback = async () => {
+      try {
+        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+        const response = await fetch(`${orchUrl}/api/v1/events?event_type=engine&category=created&limit=100`, {
+          headers,
+        })
+        if (!response.ok) return
+        const payload = await response.json()
+        applyEngineEvents(payload)
+      } catch {
+        // Best-effort telemetry update.
+      }
+    }
+
+    const connect = () => {
+      if (closed) return
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchEventsFallback()
+        fallbackInterval = window.setInterval(fetchEventsFallback, 10000)
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/events/live`)
+      streamUrl.searchParams.set('event_type', 'engine')
+      streamUrl.searchParams.set('limit', '100')
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleEventsSnapshot = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          const events = parsed?.payload?.events || []
+          applyEngineEvents(events)
+        } catch {
+          // Ignore malformed frames and keep existing events.
+        }
+      }
+
+      eventSource.addEventListener('events_snapshot', handleEventsSnapshot)
+      eventSource.onmessage = handleEventsSnapshot
+
+      eventSource.onerror = () => {
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (fallbackInterval) {
+        window.clearInterval(fallbackInterval)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
+    }
+  }, [orchUrl, apiKey, setEngineStartEvents])
+
+  useEffect(() => {
+    let eventSource = null
+    let reconnectTimer = null
+    let fallbackInterval = null
+    let closed = false
+
+    const fetchVpnLeases = async () => {
+      try {
+        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+        const response = await fetch(`${orchUrl}/api/v1/vpn/leases`, { headers })
+        if (!response.ok) return
+        const payload = await response.json()
+        setVpnLeaseSummary(payload)
+      } catch {
+        // Best-effort telemetry update.
+      }
+    }
+
+    const connect = () => {
+      if (closed) {
+        return
+      }
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchVpnLeases()
+        fallbackInterval = window.setInterval(fetchVpnLeases, 10000)
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/vpn/leases/stream`)
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleLeaseSnapshot = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          setVpnLeaseSummary(parsed?.payload || null)
+        } catch {
+          // Ignore malformed frame and keep latest summary.
+        }
+      }
+
+      eventSource.addEventListener('vpn_leases_snapshot', handleLeaseSnapshot)
+      eventSource.onmessage = handleLeaseSnapshot
+
+      eventSource.onerror = () => {
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (fallbackInterval) {
+        window.clearInterval(fallbackInterval)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
+    }
+  }, [orchUrl, apiKey])
+
+  useEffect(() => {
+    if (!selectedEngineId) return undefined
+
+    let eventSource = null
+    let reconnectTimer = null
+    let fallbackInterval = null
+    let closed = false
+
+    const fetchLogsFallback = () => {
+      fetchContainerLogs({ orchUrl, apiKey, containerId: selectedEngineId })
+    }
+
+    const connect = () => {
+      if (closed) {
+        return
+      }
+
+      setContainerLogsLoading({ containerId: selectedEngineId, loading: true })
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchLogsFallback()
+        fallbackInterval = window.setInterval(fetchLogsFallback, 2500)
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/containers/${encodeURIComponent(selectedEngineId)}/logs/stream`)
+      streamUrl.searchParams.set('tail', '300')
+      streamUrl.searchParams.set('since_seconds', '1200')
+      streamUrl.searchParams.set('interval_seconds', '2.5')
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      const handleLogsSnapshot = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          setContainerLogsSnapshot({
+            containerId: selectedEngineId,
+            payload: parsed?.payload || {},
+          })
+        } catch {
+          setContainerLogsError({
+            containerId: selectedEngineId,
+            error: 'Failed to parse logs stream payload',
+          })
+        }
+      }
+
+      const handleLogsErrorEvent = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          setContainerLogsError({
+            containerId: selectedEngineId,
+            error: parsed?.payload?.detail || 'logs_stream_error',
+          })
+        } catch {
+          setContainerLogsError({
+            containerId: selectedEngineId,
+            error: 'logs_stream_error',
+          })
+        }
+      }
+
+      eventSource.addEventListener('container_logs_snapshot', handleLogsSnapshot)
+      eventSource.addEventListener('container_logs_error', handleLogsErrorEvent)
+
+      eventSource.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          const eventType = String(parsed?.type || '')
+          if (eventType === 'container_logs_snapshot') {
+            setContainerLogsSnapshot({
+              containerId: selectedEngineId,
+              payload: parsed?.payload || {},
+            })
+          } else if (eventType === 'container_logs_error') {
+            setContainerLogsError({
+              containerId: selectedEngineId,
+              error: parsed?.payload?.detail || 'logs_stream_error',
+            })
+          }
+        } catch {
+          setContainerLogsError({
+            containerId: selectedEngineId,
+            error: 'Failed to parse logs stream payload',
+          })
+        }
+      }
+
+      eventSource.onerror = () => {
+        setContainerLogsLoading({ containerId: selectedEngineId, loading: false })
+
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (fallbackInterval) {
+        window.clearInterval(fallbackInterval)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
+    }
+  }, [
+    selectedEngineId,
+    orchUrl,
+    apiKey,
+    fetchContainerLogs,
+    setContainerLogsSnapshot,
+    setContainerLogsLoading,
+    setContainerLogsError,
+  ])
 
   const vpnIncident =
     (vpnStatus?.mode === 'redundant' && (!vpnStatus?.vpn1?.connected || !vpnStatus?.vpn2?.connected)) ||
@@ -360,9 +722,38 @@ export function StreamingCentralPage({
   const unhealthyEnginesValue = Number(
     orchestratorStatus?.engines?.unhealthy ?? (engines || []).filter((engine) => engine.health_status === 'unhealthy').length,
   )
+  const runningEnginesValue = Number(orchestratorStatus?.engines?.running ?? (engines || []).length)
   const breakerState = orchestratorStatus?.provisioning?.circuit_breaker_state || 'unknown'
-  const capacityUsed = orchestratorStatus?.capacity?.used ?? 0
-  const capacityTotal = orchestratorStatus?.capacity?.total ?? 0
+  const capacityUsed = Number(orchestratorStatus?.capacity?.used ?? 0)
+  const capacityTotal = Number(orchestratorStatus?.capacity?.total ?? 0)
+  const capacityMax = Number(orchestratorStatus?.capacity?.max_replicas ?? capacityTotal)
+
+  const credentialSummary = useMemo(() => {
+    const statusSummary = vpnStatus?.lease_summary || vpnStatus?.credentials_summary || null
+    const merged = vpnLeaseSummary || statusSummary || {}
+    const leased = Number(merged?.leased ?? merged?.active_leases ?? 0)
+    const total = Number(
+      merged?.max_vpn_capacity
+      ?? merged?.total
+      ?? merged?.pool_size
+      ?? merged?.credentials_total
+      ?? ((Number(merged?.available ?? 0) + leased) || 0),
+    )
+    return {
+      leased,
+      total: Math.max(total, leased),
+    }
+  }, [vpnLeaseSummary, vpnStatus])
+
+  const provisioningBlocked = orchestratorStatus?.provisioning?.can_provision === false
+  const provisioningBlockedReason = orchestratorStatus?.provisioning?.blocked_reason
+  const provisioningRecoveryEta =
+    orchestratorStatus?.provisioning?.blocked_reason_details?.recovery_eta_seconds ?? null
+
+  const vpnCredentialPoints = useMemo(() => {
+    const pointCount = Math.max(4, kpiHistory.timestamps?.length || 0)
+    return Array.from({ length: pointCount }).map(() => credentialSummary.leased)
+  }, [credentialSummary.leased, kpiHistory.timestamps])
 
   const vpnEssentials = useMemo(() => {
     if (!vpnStatus || vpnStatus.mode === 'disabled') {
@@ -434,6 +825,17 @@ export function StreamingCentralPage({
         </Alert>
       )}
 
+      {provisioningBlocked && provisioningBlockedReason && (
+        <Alert variant="warning" className="border-amber-500/60 bg-amber-500/10">
+          <AlertTriangle className="h-4 w-4 text-amber-300" />
+          <AlertTitle>Provisioning Blocked</AlertTitle>
+          <AlertDescription>
+            {provisioningBlockedReason}
+            {typeof provisioningRecoveryEta === 'number' ? ` Recovery ETA: ${provisioningRecoveryEta}s.` : ''}
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Tabs defaultValue="pulse" className="space-y-3">
         <TabsList className="grid w-full grid-cols-4 border-slate-700 bg-slate-900/90 text-slate-300">
           <TabsTrigger value="pulse" className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50">Global Pulse</TabsTrigger>
@@ -444,7 +846,7 @@ export function StreamingCentralPage({
 
         <TabsContent value="pulse" className="space-y-3">
           <div className="grid grid-cols-12 gap-4">
-            <div className="col-span-12 sm:col-span-6 xl:col-span-3">
+            <div className="col-span-12 sm:col-span-6 xl:col-span-2">
               <KpiTile
                 title="Active Streams"
                 value={activeStreamsValue}
@@ -453,7 +855,7 @@ export function StreamingCentralPage({
                 icon={Tv}
               />
             </div>
-            <div className="col-span-12 sm:col-span-6 xl:col-span-3">
+            <div className="col-span-12 sm:col-span-6 xl:col-span-2">
               <KpiTile
                 title="Global Egress"
                 value={egressDisplay.value}
@@ -465,11 +867,21 @@ export function StreamingCentralPage({
             </div>
             <div className="col-span-12 sm:col-span-6 xl:col-span-3">
               <KpiTile
-                title="Healthy Engines"
-                value={healthyEnginesValue}
+                title="Engine Capacity"
+                value={`${runningEnginesValue} / ${capacityUsed}`}
+                suffix={capacityMax > 0 ? `(max ${capacityMax})` : ''}
                 points={kpiHistory.healthyEngines}
-                tone="amber"
+                tone={runningEnginesValue >= capacityMax && capacityMax > 0 ? 'rose' : 'amber'}
                 icon={Server}
+              />
+            </div>
+            <div className="col-span-12 sm:col-span-6 xl:col-span-2">
+              <KpiTile
+                title="VPN Credentials"
+                value={`${credentialSummary.leased} / ${credentialSummary.total}`}
+                points={vpnCredentialPoints}
+                tone={credentialSummary.leased > 0 ? 'amber' : 'default'}
+                icon={KeyRound}
               />
             </div>
             <div className="col-span-12 sm:col-span-6 xl:col-span-3">
@@ -500,7 +912,7 @@ export function StreamingCentralPage({
                 </div>
                 <div className="rounded-md border border-border bg-muted/40 p-3">
                   <p className="text-xs uppercase tracking-wider text-muted-foreground">Capacity</p>
-                  <p className="mt-0.5 font-semibold text-foreground">{capacityUsed} / {capacityTotal}</p>
+                  <p className="mt-0.5 font-semibold text-foreground">{runningEnginesValue} / {capacityUsed} (max {capacityMax || capacityTotal})</p>
                 </div>
                 <div className="rounded-md border border-border bg-muted/40 p-3">
                   <p className="text-xs uppercase tracking-wider text-muted-foreground">Circuit breaker</p>

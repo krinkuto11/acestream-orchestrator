@@ -1,0 +1,261 @@
+"""
+Replica validation service - provides reliable Docker socket validation and replica counting.
+Ensures consistent state synchronization between in-memory state and actual Docker containers.
+"""
+import logging
+import time
+from typing import Dict, List, Set, Tuple, Optional
+from datetime import datetime, timezone
+from .health import list_managed
+from ..services.state import state
+from ..core.config import cfg
+
+logger = logging.getLogger(__name__)
+
+class ReplicaValidator:
+    """Centralized service for validating replica counts against Docker socket."""
+    
+    def __init__(self):
+        self._last_validation = None
+        self._validation_cache_ttl_s = 5  # Cache validation results for 5 seconds
+        self._cached_result = None
+        self._sync_lock = None  # Will be initialized as RLock when needed
+        self._last_sync_time = None
+        self._min_sync_interval_s = 2  # Minimum time between synchronization operations
+    
+    def _get_sync_lock(self):
+        """Get or create the synchronization lock."""
+        if self._sync_lock is None:
+            import threading
+            self._sync_lock = threading.RLock()
+        return self._sync_lock
+    
+    def get_docker_container_status(self) -> Dict[str, any]:
+        """
+        Get comprehensive status from Docker socket with retry logic.
+        
+        Returns a dict with Docker container information, or an error dict if Docker
+        is temporarily unavailable. Distinguishes between temporary unavailability
+        and actual container loss to prevent premature state cleanup.
+        """
+        max_retries = 3
+        retry_delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                managed_containers = list_managed()
+                running_containers = [c for c in managed_containers if c.status == "running"]
+                
+                container_ids = {c.id for c in running_containers}
+                container_details = {}
+                
+                # Build container details with error handling for each container
+                for c in managed_containers:
+                    try:
+                        container_details[c.id] = {
+                            'status': c.status,
+                            'name': c.name,
+                            'labels': c.labels or {},
+                            'created': c.attrs.get('Created', '') if hasattr(c, 'attrs') else '',
+                            'ports': c.attrs.get('NetworkSettings', {}).get('Ports', {}) if hasattr(c, 'attrs') else {}
+                        }
+                    except Exception as e:
+                        logger.warning(f"Failed to get details for container {c.id[:12]}: {e}")
+                        container_details[c.id] = {
+                            'status': getattr(c, 'status', 'unknown'),
+                            'name': getattr(c, 'name', 'unknown'),
+                            'labels': {},
+                            'created': '',
+                            'ports': {}
+                        }
+                
+                result = {
+                    'total_managed': len(managed_containers),
+                    'total_running': len(running_containers),
+                    'running_container_ids': container_ids,
+                    'container_details': container_details,
+                    'containers': running_containers,
+                    'docker_available': True
+                }
+                
+                logger.debug(f"Docker status: managed={result['total_managed']}, running={result['total_running']}")
+                return result
+                
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Docker socket temporarily unavailable (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error(f"Failed to get Docker container status after {max_retries} attempts: {e}")
+                    return {
+                        'total_managed': 0,
+                        'total_running': 0,
+                        'running_container_ids': set(),
+                        'container_details': {},
+                        'containers': [],
+                        'docker_available': False,
+                        'error': str(e)
+                    }
+    
+    def validate_and_sync_state(self, force_reindex: bool = False) -> Tuple[int, int, int]:
+        """
+        Return replica counts from in-memory declarative state only.
+
+        In the informer/controller architecture, transient Docker-vs-state mismatches are
+        expected during rollouts and startup. This method is intentionally side-effect free:
+        it never reindexes, never mutates state, and never performs blocking Docker calls.
+
+        Returns: (total_running, used_engines, free_count)
+        """
+        del force_reindex  # intentionally ignored in declarative mode
+
+        with self._get_sync_lock():
+            now = datetime.now(timezone.utc)
+
+            if (
+                self._cached_result
+                and self._last_validation
+                and (now - self._last_validation).total_seconds() < self._validation_cache_ttl_s
+            ):
+                return self._cached_result
+
+            all_engines = state.list_engines()
+            active_streams = state.list_streams(status="started")
+            monitor_container_ids = state.get_active_monitor_container_ids()
+
+            managed_engines = [e for e in all_engines if not e.labels.get("manual")]
+            total_running = len(managed_engines)
+
+            used_container_ids = {stream.container_id for stream in active_streams}
+            used_container_ids.update(monitor_container_ids)
+            used_engines = len(used_container_ids)
+
+            free_count = total_running - used_engines
+            result = (total_running, used_engines, free_count)
+            self._cached_result = result
+            self._last_validation = now
+            return result
+    
+    def request_sync_coordination(self, source: str) -> bool:
+        """
+        Request coordination for sync operations.
+        Returns True if the caller should proceed with sync, False if another sync is in progress.
+        """
+        with self._get_sync_lock():
+            now = datetime.now(timezone.utc)
+            
+            # If a sync happened very recently, skip this one
+            if (self._last_sync_time and 
+                (now - self._last_sync_time).total_seconds() < self._min_sync_interval_s):
+                logger.debug(f"Sync coordination: denying request from {source} - too frequent (last sync: {self._last_sync_time})")
+                return False
+            
+            logger.debug(f"Sync coordination: allowing request from {source}")
+            # Update the last sync time to prevent other rapid requests
+            self._last_sync_time = now
+            return True
+    
+    def _sync_state_with_docker(self, orphaned_engines: Set[str], docker_status: Dict[str, any]):
+        """Synchronize state with Docker containers."""
+        # Remove orphaned engines from state
+        for container_id in orphaned_engines:
+            logger.info(f"Removing orphaned engine {container_id[:12]} from state")
+            state.remove_engine(container_id)
+        
+        # Trigger reindex to pick up missing containers
+        try:
+            from ..persistence.reindex import reindex_existing
+            logger.info("Running reindex to sync with Docker containers")
+            reindex_existing()
+        except Exception as e:
+            logger.error(f"Failed to reindex: {e}")
+    
+    def get_replica_deficit(self, min_replicas: int) -> int:
+        """Calculate how many additional replicas are needed."""
+        total_running, used_engines, free_count = self.validate_and_sync_state()
+        deficit = min_replicas - free_count
+        return max(0, deficit)
+    
+    def get_validation_status(self) -> Dict[str, any]:
+        """Get current validation status for monitoring/debugging."""
+        try:
+            all_engines = state.list_engines()
+            active_streams = state.list_streams(status="started")
+            docker_status = self.get_docker_container_status()
+            
+            used_container_ids = {stream.container_id for stream in active_streams}
+            
+            state_container_ids = {engine.container_id for engine in all_engines if not engine.labels.get("manual")}
+            running_container_ids = docker_status['running_container_ids']
+            
+            orphaned_engines = state_container_ids - running_container_ids
+            missing_engines = running_container_ids - state_container_ids
+            
+            total_running = docker_status['total_running']
+            used_engines = len(used_container_ids)
+            free_count = total_running - used_engines
+            
+            return {
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'state_consistent': len([e for e in all_engines if not e.labels.get("manual")]) == total_running,
+                'counts': {
+                    'state_engines': len([e for e in all_engines if not e.labels.get("manual")]),
+                    'docker_running': total_running,
+                    'docker_total': docker_status['total_managed'],
+                    'used_engines': used_engines,
+                    'free_engines': free_count
+                },
+                'discrepancies': {
+                    'orphaned_in_state': len(orphaned_engines),
+                    'missing_from_state': len(missing_engines),
+                    'orphaned_ids': list(orphaned_engines),
+                    'missing_ids': list(missing_engines)
+                },
+                'cache_info': {
+                    'last_validation': self._last_validation.isoformat() if self._last_validation else None,
+                    'cache_ttl_s': self._validation_cache_ttl_s,
+                    'has_cached_result': self._cached_result is not None
+                },
+                'config': {
+                    'min_replicas': cfg.MIN_REPLICAS,
+                    'max_replicas': cfg.MAX_REPLICAS,
+                    'deficit': max(0, cfg.MIN_REPLICAS - free_count)
+                }
+            }
+        except Exception as e:
+            return {
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'error': str(e),
+                'state_consistent': False
+            }
+    
+    def is_state_consistent(self) -> bool:
+        """Check if state is consistent with Docker without forcing sync."""
+        try:
+            all_engines = state.list_engines()
+            docker_status = self.get_docker_container_status()
+            
+            state_count = len([e for e in all_engines if not e.labels.get("manual")])
+            docker_count = docker_status['total_running']
+            
+            return state_count == docker_count
+        except Exception as e:
+            logger.error(f"Error checking state consistency: {e}")
+            return False
+    
+    def get_docker_active_replicas_count(self) -> int:
+        """
+        Get the actual number of running containers from Docker socket.
+        This is the most reliable source of truth for MAX_REPLICAS enforcement.
+        """
+        try:
+            docker_status = self.get_docker_container_status()
+            return docker_status['total_running']
+        except Exception as e:
+            logger.error(f"Error getting Docker active replicas count: {e}")
+            return 0
+
+
+# Global instance
+replica_validator = ReplicaValidator()

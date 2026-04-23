@@ -55,12 +55,31 @@ function AppContent() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [enginesData, streamsData, vpnData, orchStatus] = await Promise.all([
+      const [enginesData, startedStreamsData, pendingFailoverStreamsData, vpnData, orchStatus, engineStatsData] = await Promise.all([
         fetchJSON(`${orchUrl}/api/v1/engines`),
         fetchJSON(`${orchUrl}/api/v1/streams?status=started`),
+        fetchJSON(`${orchUrl}/api/v1/streams?status=pending_failover`).catch(() => []),
         fetchJSON(`${orchUrl}/api/v1/vpn/status`).catch(() => ({ enabled: false })),
-        fetchJSON(`${orchUrl}/api/v1/orchestrator/status`).catch(() => null)
+        fetchJSON(`${orchUrl}/api/v1/orchestrator/status`).catch(() => null),
+        fetchJSON(`${orchUrl}/api/v1/engines/stats/all`).catch(() => ({}))
       ])
+
+      const streamsById = new Map()
+      ;(Array.isArray(startedStreamsData) ? startedStreamsData : []).forEach((stream) => {
+        streamsById.set(String(stream?.id || ''), stream)
+      })
+      ;(Array.isArray(pendingFailoverStreamsData) ? pendingFailoverStreamsData : []).forEach((stream) => {
+        const key = String(stream?.id || '')
+        if (!streamsById.has(key)) {
+          streamsById.set(key, stream)
+        }
+      })
+      const streamsData = Array.from(streamsById.values())
+
+      const mergedEngines = (Array.isArray(enginesData) ? enginesData : []).map((engine) => ({
+        ...engine,
+        docker_stats: engineStatsData?.[engine.container_id] || null,
+      }))
       
       let vpnDataWithIp = vpnData
       if (vpnData.enabled && vpnData.connected) {
@@ -72,7 +91,7 @@ function AppContent() {
         }
       }
       
-      setEngines(enginesData)
+      setEngines(mergedEngines)
       setStreams(streamsData)
       setVpnStatus(vpnDataWithIp)
       setOrchestratorStatus(orchStatus)
@@ -88,11 +107,88 @@ function AppContent() {
   }, [orchUrl, fetchJSON, addNotification])
 
   useEffect(() => {
-    fetchData()
-    const intervalMs = Math.max(1000, Number(refreshInterval) || 1000)
-    const interval = setInterval(fetchData, intervalMs)
-    return () => clearInterval(interval)
-  }, [fetchData, refreshInterval])
+    let eventSource = null
+    let reconnectTimer = null
+    let closed = false
+
+    const applyPayload = (payload = {}) => {
+      const nextEngines = Array.isArray(payload.engines) ? payload.engines : []
+      const nextStreams = Array.isArray(payload.streams) ? payload.streams : []
+      const nextEngineStats = payload.engine_docker_stats || {}
+
+      const mergedEngines = nextEngines.map((engine) => ({
+        ...engine,
+        docker_stats: nextEngineStats?.[engine.container_id] || null,
+      }))
+
+      setEngines(mergedEngines)
+      setStreams(nextStreams)
+      setVpnStatus(payload.vpn_status || { enabled: false })
+      setOrchestratorStatus(payload.orchestrator_status || null)
+      setLastUpdate(new Date())
+      setIsConnected(true)
+      setIsInitialLoad(false)
+    }
+
+    const connect = () => {
+      if (closed) {
+        return
+      }
+
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+        fetchData()
+        return
+      }
+
+      const streamUrl = new URL(`${orchUrl}/api/v1/events/stream`)
+      if (apiKey) {
+        streamUrl.searchParams.set('api_key', apiKey)
+      }
+
+      eventSource = new EventSource(streamUrl.toString())
+
+      eventSource.onopen = () => {
+        setIsConnected(true)
+      }
+
+      const handleSsePayload = (event) => {
+        try {
+          const parsed = JSON.parse(event.data)
+          applyPayload(parsed?.payload || {})
+        } catch (err) {
+          console.warn('Failed to parse SSE payload:', err)
+        }
+      }
+
+      eventSource.addEventListener('full_sync', handleSsePayload)
+      eventSource.onmessage = handleSsePayload
+
+      eventSource.onerror = () => {
+        setIsConnected(false)
+        setIsInitialLoad(false)
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 2000)
+        }
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (eventSource) {
+        eventSource.close()
+      }
+    }
+  }, [orchUrl, apiKey, fetchData])
 
   const handleDeleteEngine = useCallback(async (containerId) => {
     if (!window.confirm('Are you sure you want to delete this engine?')) {
@@ -179,7 +275,7 @@ function AppContent() {
                 <MetricsPage apiKey={apiKey} orchUrl={orchUrl} />
               } />
               <Route path="/stream-monitoring" element={
-                <StreamMonitoringPage apiKey={apiKey} orchUrl={orchUrl} />
+                <StreamMonitoringPage apiKey={apiKey} orchUrl={orchUrl} streams={streams} />
               } />
               <Route path="/routing-topology" element={
                 <RoutingTopologyPage

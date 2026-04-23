@@ -1,8 +1,8 @@
-import { AlertTriangle, GitBranch, Server, ShieldCheck, Users } from 'lucide-react'
+import { AlertTriangle, GitBranch, Server, ShieldCheck, Timer, Users, Zap } from 'lucide-react'
 import { Handle, Position, type NodeProps } from 'reactflow'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import type { TopologyNodeData } from '@/stores/topologyStore'
+import { formatThroughputDual, type TopologyNodeData } from '@/stores/topologyStore'
 
 const formatBytes = (bytes: number, decimals = 2) => {
   if (bytes === 0) return '0 Bytes'
@@ -119,10 +119,12 @@ const healthLabelByState = {
 export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
   const Icon = iconByKind[data.kind] || Server
   const theme = themeByKind[data.kind] || themeByKind.engine
+  const isDraining = data.lifecycle === 'draining'
 
   const vpnIp = data.kind === 'vpn' ? String(data.metadata?.publicIp || '') : null
   const vpnCountry = data.kind === 'vpn' ? String(data.metadata?.country || '') : null
   const vpnProvider = data.kind === 'vpn' ? String(data.metadata?.provider || '') : null
+  const vpnHostname = data.kind === 'vpn' ? String(data.metadata?.assignedHostname || '') : null
   const flag = countryToFlag(vpnCountry)
 
   return (
@@ -131,6 +133,7 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
         'relative min-w-[210px] rounded-xl border p-3 shadow-2xl transition-all',
         theme.wrapper,
         healthClassByState[data.health],
+        isDraining && 'border-amber-400 border-dashed opacity-85',
         selected && 'ring-2 ring-sky-400 shadow-sky-500/20',
       )}
     >
@@ -156,31 +159,96 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
           </div>
         </div>
 
-        <Badge
-          variant={data.health === 'down' ? 'destructive' : data.health === 'degraded' ? 'warning' : 'outline'}
-          className={cn(
-            "text-[10px] font-semibold uppercase",
-            data.health === 'healthy' && `border-emerald-500/40 text-emerald-400 bg-emerald-500/10`
+        <div className="flex flex-col items-end gap-1">
+          <Badge
+            variant={data.health === 'down' ? 'destructive' : data.health === 'degraded' ? 'warning' : 'outline'}
+            className={cn(
+              "text-[10px] font-semibold uppercase",
+              data.health === 'healthy' && `border-emerald-500/40 text-emerald-400 bg-emerald-500/10`
+            )}
+          >
+            {healthLabelByState[data.health]}
+          </Badge>
+          {data.kind === 'engine' && data.forwarded && (
+            <Badge variant="outline" className="h-5 gap-1 border-amber-400/60 bg-amber-500/10 px-1.5 text-[9px] font-semibold text-amber-200">
+              <Zap className="h-2.5 w-2.5" />
+              Forwarded
+            </Badge>
           )}
-        >
-          {healthLabelByState[data.health]}
-        </Badge>
+          {isDraining && (
+            <Badge variant="warning" className="gap-1 border-amber-400/60 bg-amber-500/15 text-[10px] font-semibold uppercase text-amber-200">
+              <Zap className="h-3 w-3" />
+              Draining
+            </Badge>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
         {/* VPN Specific Details Restored */}
         {data.kind === 'vpn' && (
           <div className="rounded-lg border border-indigo-600 bg-[#312e81] p-2 space-y-1.5 mb-1.5">
-            {vpnIp && (
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[11px] font-semibold text-indigo-100">{vpnIp}</span>
-                {flag && <span className="text-sm shadow-sm">{flag}</span>}
+            <div className="flex items-center justify-between">
+              {vpnIp && (
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[11px] font-semibold text-indigo-100">{vpnIp}</span>
+                  {flag && <span className="text-sm shadow-sm">{flag}</span>}
+                </div>
+              )}
+              {data.load !== undefined && data.load !== null && !isNaN(data.load) && (
+                <div className="flex items-center gap-2 px-1.5 py-0.5 rounded-md bg-black/30 border border-white/10" title={`Server Load: ${data.load}%`}>
+                  <div className="relative h-4 w-4">
+                    {/* Background Ring (Secondary track) */}
+                    <svg className="h-full w-full" viewBox="0 0 16 16">
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="7"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        className="text-white/10"
+                      />
+                      {/* Progress Ring (Battery indicator) */}
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="7"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeDasharray={44}
+                        strokeDashoffset={44 - (44 * Math.min(100, Math.max(0, data.load))) / 100}
+                        strokeLinecap="round"
+                        className={cn(
+                          "transition-all duration-500 ease-out",
+                          data.load < 40 ? "text-emerald-400 drop-shadow-[0_0_3px_rgba(52,211,153,0.8)]" :
+                          data.load < 80 ? "text-amber-400 drop-shadow-[0_0_3px_rgba(251,191,36,0.8)]" :
+                          "text-rose-500 drop-shadow-[0_0_3px_rgba(244,63,94,0.8)]"
+                        )}
+                        transform="rotate(-90 8 8)"
+                      />
+                    </svg>
+                  </div>
+                  <span className="text-[10px] font-bold text-white/90 tabular-nums">
+                    {Math.round(data.load)}%
+                  </span>
+                </div>
+              )}
+            </div>
+            {(vpnProvider || vpnHostname) && (
+              <div className="space-y-1">
+                {vpnHostname && (
+                  <p className="text-[9px] font-mono text-indigo-200 truncate" title={vpnHostname}>
+                    {vpnHostname}
+                  </p>
+                )}
+                {vpnProvider && (
+                  <p className="text-[10px] font-medium text-indigo-300 leading-none">
+                    {vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}
+                  </p>
+                )}
               </div>
-            )}
-            {vpnProvider && (
-              <p className="text-[10px] font-medium text-indigo-300 leading-none">
-                {vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}
-              </p>
             )}
           </div>
         )}
@@ -198,23 +266,27 @@ export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
             <div className="flex flex-col p-1 px-1.5 rounded bg-[#1e1b4b] border border-indigo-800">
               <span className="text-[8px] text-emerald-400 font-bold uppercase leading-none mb-1">Down</span>
               <div className="flex items-baseline gap-1">
-                <span className="text-base font-bold leading-none tracking-tight">{data.bandwidthMbps.toFixed(1)}</span>
-                <span className="text-[8px] font-medium text-indigo-300">Mbps</span>
+                <span className="text-[10px] font-bold leading-none tracking-tight">
+                  {formatThroughputDual(data.bandwidthKbps)}
+                </span>
               </div>
             </div>
             <div className="flex flex-col p-1 px-1.5 rounded bg-[#1e1b4b] border border-indigo-800">
               <span className="text-[8px] text-rose-400 font-bold uppercase leading-none mb-1">Up</span>
               <div className="flex items-baseline gap-1">
-                <span className="text-base font-bold leading-none tracking-tight">{(data.uploadMbps || 0).toFixed(1)}</span>
-                <span className="text-[8px] font-medium text-indigo-300">Mbps</span>
+                <span className="text-[10px] font-bold leading-none tracking-tight">
+                  {formatThroughputDual(data.uploadKbps)}
+                </span>
               </div>
             </div>
           </div>
         ) : data.kind === 'proxy' ? (
           <div className={cn("flex items-center justify-between rounded-md border p-1.5 px-2 shadow-sm", theme.box)}>
-            <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>Throughput</span>
-            <span className="text-sm font-semibold">
-              {data.bandwidthMbps.toFixed(1)} <span className="text-[9px] font-normal text-fuchsia-300/80 ml-0.5">Mbps</span>
+            <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>
+              {data.kind === 'proxy' ? 'Throughput' : 'Egress (to Proxy)'}
+            </span>
+            <span className="text-[10px] font-bold">
+              {formatThroughputDual(data.kind === 'proxy' ? data.bandwidthKbps : data.proxyIngressKbps)}
             </span>
           </div>
         ) : data.kind === 'client' && (

@@ -1,221 +1,135 @@
 #!/usr/bin/env python3
 """
-Test that custom engine variants correctly use the orchestrator's port range.
-
-This specifically tests the fix for the issue where custom engine templates
-in single VPN mode and no-VPN mode were not using the provisioner's port range,
-causing the engine to default to port 6878.
+Test unified global engine command configuration and port argument composition.
 """
-import pytest
-from unittest.mock import patch, MagicMock
-import os
+
+from unittest.mock import patch
+
+from app.services.engine_config import EngineConfig
 
 
-@patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
-def test_custom_amd64_variant_uses_cmd_based_port_allocation(mock_detect):
-    """
-    Test that custom amd64 variants correctly use CMD-based
-    port configuration instead of CONF.
-    
-    This verifies that the variant config includes the necessary fields
-    (is_custom=True, base_cmd) that trigger the accurate port allocation
-    path in the provisioner, ensuring engines use the orchestrator's port range
-    instead of defaulting to port 6878.
-    """
+@patch('app.services.engine_config.detect_platform', return_value='amd64')
+def test_build_custom_variant_config_stays_port_agnostic(mock_detect):
+    """Custom config command should not embed orchestrator-owned port flags."""
     from app.services.custom_variant_config import (
         CustomVariantConfig,
         CustomVariantParameter,
-        build_variant_config_from_custom
+        build_variant_config_from_custom,
     )
-    
-    # Create a custom amd64 variant config with parameters
+
     config = CustomVariantConfig(
-        enabled=True,
-        platform='amd64',
-        arm_version='3.2.13',
+        download_limit=1000,
+        upload_limit=500,
+        live_cache_type='disk',
+        buffer_time=10,
         parameters=[
             CustomVariantParameter(name='--client-console', type='flag', value=True, enabled=True),
-            CustomVariantParameter(name='--bind-all', type='flag', value=True, enabled=True),
-            CustomVariantParameter(name='--live-cache-size', type='bytes', value=268435456, enabled=True),
-        ]
+        ],
     )
-    
-    # Build the variant config
+
     variant_config = build_variant_config_from_custom(config)
-    
-    # Verify the variant config has is_custom=True and base_cmd
-    assert variant_config.get("is_custom") is True, "Custom variant should have is_custom=True"
-    assert variant_config.get("config_type") == "cmd", "AMD64 custom variant should have config_type=cmd"
-    assert variant_config.get("base_cmd") is not None, "AMD64 custom variant should have base_cmd"
-    
-    print("✅ Custom variant config correctly has is_custom=True and base_cmd")
+
+    assert variant_config.get('is_custom') is True
+    assert variant_config.get('config_type') == 'cmd'
+    base_cmd = variant_config.get('base_cmd')
+    assert isinstance(base_cmd, list)
+    assert 'python' in base_cmd
+    assert 'main.py' in base_cmd
+    assert '--http-port' not in base_cmd
+    assert '--https-port' not in base_cmd
+    assert '--api-port' not in base_cmd
+    assert '--port' not in base_cmd
 
 
-@patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
-def test_port_allocation_logic_for_custom_variant(mock_detect):
-    """
-    Test the port allocation logic correctly identifies custom variants
-    that should use cmd based execution.
-    """
-    from app.services.custom_variant_config import (
-        CustomVariantConfig,
-        CustomVariantParameter,
-        build_variant_config_from_custom
-    )
-    
-    # Create a custom amd64 variant config
-    config = CustomVariantConfig(
-        enabled=True,
-        platform='amd64',
-        arm_version='3.2.13',
-        parameters=[
-            CustomVariantParameter(name='--client-console', type='flag', value=True, enabled=True),
-        ]
-    )
-    variant_config = build_variant_config_from_custom(config)
-    
-    uses_cmd_args = (
-        variant_config.get("is_custom") and variant_config.get("base_cmd") is not None
-    )
-    
-    assert uses_cmd_args is True, "Custom variant should use base_cmd"
-    print("✅ Port allocation logic correctly identifies custom variant for base_cmd")
-
-
-@patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
-@patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
-def test_standard_AceServe_variant_still_works(mock_is_custom, mock_detect):
-    """
-    Test that the standard AceServe-amd64 variant correctly uses CMD-based config.
-    """
+@patch('app.services.engine_config.detect_platform', return_value='amd64')
+@patch('app.services.engine_config.get_config', return_value=EngineConfig(download_limit=0, upload_limit=0, live_cache_type='memory', buffer_time=10))
+def test_variant_adapter_uses_runtime_platform_and_global_config(mock_get_config, mock_detect):
+    """Variant adapter should use runtime platform and global config payload."""
     from app.services.provisioner import get_variant_config
-    
-    # Get the standard AceServe-amd64 variant config
-    variant_config = get_variant_config("AceServe-amd64")
-    
-    assert variant_config.get("config_type") == "cmd", "AceServe-amd64 should have config_type=cmd"
-    assert variant_config.get("base_cmd") is not None, "AceServe-amd64 should have base_cmd"
-    assert variant_config.get("is_custom") is not True, "AceServe-amd64 should not be custom"
-    
-    print("✅ Standard AceServe-amd64 variant still works correctly")
+
+    variant_config = get_variant_config('AceServe-arm64')
+
+    assert variant_config.get('config_type') == 'cmd'
+    assert variant_config.get('is_custom') is True
+    assert variant_config.get('image', '').endswith('latest-amd64')
+
+    base_cmd = variant_config.get('base_cmd')
+    assert isinstance(base_cmd, list)
+    assert 'python' in base_cmd
+    assert '--download-limit' in base_cmd
+    assert '--disable-upnp' in base_cmd
 
 
-@patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
-@patch('app.services.custom_variant_config.is_custom_variant_enabled', return_value=False)
-def test_standard_krinkuto_variant_still_works(mock_is_custom, mock_detect):
-    """
-    Test that the standard krinkuto11-amd64 variant still uses CONF correctly.
-    """
+@patch('app.services.engine_config.detect_platform', return_value='amd64')
+@patch('app.services.engine_config.get_config', return_value=EngineConfig(live_cache_type='memory'))
+def test_variant_adapter_enforces_memory_cache_runtime_flags(mock_get_config, mock_detect):
+    """Memory cache mode should include mandatory flags and fixed live mem cache size."""
     from app.services.provisioner import get_variant_config
-    
-    # Get the standard krinkuto11-amd64 variant config
-    variant_config = get_variant_config("krinkuto11-amd64")
-    
-    assert variant_config.get("config_type") == "cmd", "krinkuto11-amd64 should have config_type=cmd"
-    assert variant_config.get("base_cmd") is not None, "krinkuto11-amd64 should have base_cmd"
-    assert variant_config.get("is_custom") is not True, "krinkuto11-amd64 should not be custom"
-    
-    print("✅ Standard krinkuto11-amd64 variant still works correctly")
+
+    variant_config = get_variant_config('global')
+    base_cmd = variant_config.get('base_cmd', [])
+
+    assert '--disable-sentry' in base_cmd
+    assert '--log-stdout' in base_cmd
+    assert '--disable-upnp' in base_cmd
+    assert '--live-cache-type' in base_cmd
+    assert 'memory' in base_cmd
+    assert '--live-mem-cache-size' in base_cmd
+    assert '104857600' in base_cmd
 
 
-@patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
-def test_arm_custom_variant_uses_cmd_with_port_args(mock_detect):
-    """
-    Test that custom ARM variants correctly use cmd with port arguments.
-    """
-    from app.services.custom_variant_config import (
-        CustomVariantConfig,
-        CustomVariantParameter,
-        build_variant_config_from_custom
-    )
-    
-    # Create a custom arm64 variant config
-    config = CustomVariantConfig(
-        enabled=True,
-        platform='arm64',
-        arm_version='3.2.13',
-        parameters=[
-            CustomVariantParameter(name='--client-console', type='flag', value=True, enabled=True),
-            CustomVariantParameter(name='--bind-all', type='flag', value=True, enabled=True),
-        ]
-    )
-    
-    variant_config = build_variant_config_from_custom(config)
-    
-    assert variant_config.get("is_custom") is True, "Custom variant should have is_custom=True"
-    assert variant_config.get("config_type") == "cmd", "ARM64 custom variant should have config_type=cmd"
-    assert variant_config.get("base_cmd") is not None, "ARM64 custom variant should have base_cmd"
-    assert isinstance(variant_config.get("base_cmd"), list), "base_cmd should be a list"
-    
-    print("✅ ARM custom variant correctly uses cmd configuration")
+@patch('app.services.engine_config.detect_platform', return_value='amd64')
+@patch('app.services.engine_config.get_config', return_value=EngineConfig(live_cache_type='disk'))
+def test_variant_adapter_omits_live_mem_size_for_disk_cache(mock_get_config, mock_detect):
+    """Disk cache mode should keep mandatory flags but omit live mem cache size."""
+    from app.services.provisioner import get_variant_config
+
+    variant_config = get_variant_config('global')
+    base_cmd = variant_config.get('base_cmd', [])
+
+    assert '--disable-sentry' in base_cmd
+    assert '--log-stdout' in base_cmd
+    assert '--disable-upnp' in base_cmd
+    assert '--live-cache-type' in base_cmd
+    assert 'disk' in base_cmd
+    assert '--live-mem-cache-size' not in base_cmd
 
 
-@patch('app.services.custom_variant_config.detect_platform', return_value='amd64')
-def test_uses_acestream_args_condition_comprehensive(mock_detect):
-    """
-    Comprehensive test for the uses_acestream_args condition in provisioner.
-    Tests all combinations of is_custom and base_args.
-    """
-    
-    test_cases = [
-        # (is_custom, base_args, expected_uses_acestream_args, description)
-        (True, "--some-args", True, "Custom variant with base_args should use ACESTREAM_ARGS"),
-        (True, "", True, "Custom variant with empty base_args should use ACESTREAM_ARGS"),
-        (True, None, False, "Custom variant without base_args should NOT use ACESTREAM_ARGS"),
-        (False, "--some-args", False, "Non-custom variant with base_args: condition doesn't apply (AceServe uses separate check)"),
-        (None, "--some-args", False, "Variant without is_custom flag: should NOT use ACESTREAM_ARGS"),
-    ]
-    
-    for is_custom, base_args, expected, description in test_cases:
-        variant_config = {
-            "config_type": "env",
-            "image": "test-image"
-        }
-        if is_custom is not None:
-            variant_config["is_custom"] = is_custom
-        if base_args is not None:
-            variant_config["base_args"] = base_args
-        
-        # Mirror the condition from provisioner.py:
-        # uses_acestream_args = (
-        #     cfg.ENGINE_VARIANT == "AceServe-amd64" or 
-        #     (variant_config.get("is_custom") and variant_config.get("base_args") is not None)
-        # )
-        # For this test, we only check the custom variant part (not AceServe-amd64 case)
-        uses_acestream_args = (
-            variant_config.get("is_custom") and variant_config.get("base_args") is not None
-        )
-        
-        # Convert to bool for comparison (handles None case)
-        assert bool(uses_acestream_args) == expected, f"Failed: {description}"
-    
-    print("✅ All uses_acestream_args condition tests passed")
+@patch('app.services.engine_config.detect_platform', return_value='amd64')
+@patch('app.services.engine_config.get_config', return_value=EngineConfig())
+def test_orchestrator_appends_ports_to_base_command(mock_get_config, mock_detect):
+    """Provisioner model: base command plus orchestrator-managed port args."""
+    from app.services.provisioner import get_variant_config
+
+    c_http = 40123
+    c_api = 40124
+    p2p_port = 12345
+
+    variant_config = get_variant_config('global')
+    base_cmd = variant_config.get('base_cmd', [])
+    cmd = base_cmd + ['--http-port', str(c_http), '--api-port', str(c_api), '--port', str(p2p_port)]
+
+    assert '--http-port' in cmd
+    assert str(c_http) in cmd
+    assert '--api-port' in cmd
+    assert str(c_api) in cmd
+    assert '--port' in cmd
+    assert str(p2p_port) in cmd
 
 
 if __name__ == '__main__':
     import sys
-    sys.path.insert(0, '.')
-    
-    print("🧪 Testing Custom Variant Port Configuration Fix")
-    print("=" * 60)
-    
+
     success = True
     try:
-        test_custom_amd64_variant_uses_cmd_based_port_allocation()
-        test_port_allocation_logic_for_custom_variant()
-        test_standard_AceServe_variant_still_works()
-        test_standard_krinkuto_variant_still_works()
-        test_arm_custom_variant_uses_cmd_with_port_args()
-        test_uses_acestream_args_condition_comprehensive()
+        test_build_custom_variant_config_stays_port_agnostic()
+        test_variant_adapter_uses_runtime_platform_and_global_config()
+        test_orchestrator_appends_ports_to_base_command()
     except Exception as e:
-        print(f"\n❌ Test failed with error: {e}")
+        print(f"\nTest failed with error: {e}")
         import traceback
+
         traceback.print_exc()
         success = False
-    
-    if success:
-        print("\n" + "=" * 60)
-        print("🎉 ALL TESTS PASSED!")
-        print("=" * 60)
-    
+
     sys.exit(0 if success else 1)

@@ -1,4 +1,13 @@
-from legacy_api_monitoring_suite.run_suite import LegacyStreamMonitor, SuiteConfig, parse_hashes_file
+import pytest
+
+legacy_suite = pytest.importorskip(
+    "legacy_api_monitoring_suite.run_suite",
+    reason="legacy_api_monitoring_suite is an optional external package",
+)
+
+LegacyStreamMonitor = legacy_suite.LegacyStreamMonitor
+SuiteConfig = legacy_suite.SuiteConfig
+parse_hashes_file = legacy_suite.parse_hashes_file
 
 
 def _cfg():

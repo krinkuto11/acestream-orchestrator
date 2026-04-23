@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { BaseEdge, EdgeLabelRenderer, EdgeProps, getSmoothStepPath } from 'reactflow'
 import { cn } from '@/lib/utils'
 
@@ -41,22 +41,92 @@ export function TopologyEdge({
 
   const isFailover = style.strokeDasharray != null
   const isMonitoringRoute = data?.monitoringActive === true
-  const bandwidth = (data?.bandwidthMbps || 0) + (data?.uploadMbps || 0)
-  const isActive = bandwidth > 0.1
+  const isDrainingRoute = data?.drainingRoute === true
+  const isPrebuffering = data?.isPrebuffering === true
+
+  const rawBandwidth = (data?.bandwidthMbps || 0) + (data?.uploadMbps || 0)
+  const flowActive = data?.flowActive === undefined ? rawBandwidth > 0.2 : data.flowActive === true
+  const [isMounted, setIsMounted] = useState(false)
+  const [shouldAnimateFlowChange, setShouldAnimateFlowChange] = useState(false)
+  const previousFlowActiveRef = useRef(flowActive)
+
+  // Set mounted state exclusively to suppress CSS animations on first render
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
+
+  // Only animate mask sweeps when flow flips on/off; ignore regular throughput/layout updates.
+  useEffect(() => {
+    if (!isMounted) {
+      previousFlowActiveRef.current = flowActive
+      return
+    }
+
+    if (previousFlowActiveRef.current === flowActive) {
+      return
+    }
+
+    previousFlowActiveRef.current = flowActive
+    setShouldAnimateFlowChange(true)
+    const timer = setTimeout(() => setShouldAnimateFlowChange(false), 520)
+    return () => clearTimeout(timer)
+  }, [flowActive, isMounted])
   
-  // The store dictates the base stroke color. 
-  // We ensure it's visible and high-contrast.
-  const finalStyle = {
+  // Estimate length of the step path for drawing animation
+  const pathLength = useMemo(() => {
+    return Math.abs(targetX - sourceX) + Math.abs(targetY - sourceY) + 100
+  }, [targetX, sourceX, targetY, sourceY])
+
+  const baseStrokeWidth = (style.strokeWidth as number || 2.2) * 1.2
+  const safeMaskId = `mask-sweep-${id.replace(/[^a-zA-Z0-9_-]/g, '')}`
+
+  // Memoize mask style so React avoids mutating the SVG <defs> 60x a second during bandwidth updates, 
+  // which crashes the WebKit/Blink transition engines and forces spammy re-animations.
+  const maskStyle = useMemo(() => ({
+    strokeDasharray: pathLength,
+    strokeDashoffset: flowActive ? 0 : pathLength,
+    animation: 'none',
+    transition: (isMounted && shouldAnimateFlowChange) ? 'stroke-dashoffset 0.5s ease-in-out' : 'none',
+  }), [flowActive, isMounted, pathLength, shouldAnimateFlowChange])
+
+  // Background empty pipe
+  const trackStyle = {
     ...style,
-    stroke: isActive ? ((isFailover || isMonitoringRoute) ? '#f59e0b' : '#22c55e') : '#64748b',
-    strokeWidth: (style.strokeWidth as number || 2.2) * 1.2, // Slightly thicker for better visibility
-    strokeOpacity: isActive ? 1 : 0.4,
-    transition: 'all 0.3s ease',
+    stroke: '#64748b',
+    strokeWidth: baseStrokeWidth,
+    strokeOpacity: 0.3,
+    strokeDasharray: (isDrainingRoute || isFailover) ? '8 5' : style.strokeDasharray,
+  }
+
+  // Foreground colored dashed pipe, revealed by the sweeping mask
+  const fillStyle = {
+    ...style,
+    stroke: isPrebuffering 
+      ? '#f59e0b' 
+      : (isFailover || isMonitoringRoute || isDrainingRoute) ? '#f59e0b' : '#22c55e',
+    strokeWidth: baseStrokeWidth,
+    strokeOpacity: 1,
+    strokeDasharray: '8 6', // Always dashed
+    mask: `url(#${safeMaskId})`,
   }
 
   return (
     <>
-      <BaseEdge path={edgePath} markerEnd={markerEnd} style={finalStyle} />
+      <defs>
+        <mask id={safeMaskId}>
+          <path
+            d={edgePath}
+            fill="none"
+            stroke="white"
+            strokeWidth={baseStrokeWidth * 3} // Ensure the mask fully envelopes the path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={maskStyle}
+          />
+        </mask>
+      </defs>
+      <BaseEdge path={edgePath} markerEnd={markerEnd} style={trackStyle} />
+      <BaseEdge path={edgePath} style={fillStyle} />
       <EdgeLabelRenderer>
         <div
           style={{
@@ -71,11 +141,13 @@ export function TopologyEdge({
           <div 
             className={cn(
               "px-2 py-0.5 rounded-md border text-[11px] font-semibold transition-colors duration-300 shadow-md flex items-center gap-2",
-              (isFailover || isMonitoringRoute)
-                ? "border-amber-400 bg-[#020617] text-amber-400" 
-                : isActive 
-                  ? "border-emerald-400 bg-[#020617] text-emerald-400" 
-                  : "border-slate-600 bg-[#020617] text-slate-400"
+              isPrebuffering
+                ? "border-amber-500 bg-amber-500/10 text-amber-500 animate-pulse"
+                : (isFailover || isMonitoringRoute || isDrainingRoute)
+                  ? "border-amber-400 bg-[#020617] text-amber-400" 
+                  : flowActive 
+                    ? "border-emerald-400 bg-[#020617] text-emerald-400" 
+                    : "border-slate-600 bg-[#020617] text-slate-400"
             )}
           >
             {data?.uploadMbps !== undefined ? (
@@ -90,9 +162,19 @@ export function TopologyEdge({
                 </div>
               </div>
             ) : (
-              <span className="tabular-nums font-bold">{data.bandwidthMbps.toFixed(1)}</span>
+              <div className="flex items-center gap-1.5">
+                {isPrebuffering && (
+                  <span className="relative flex h-1.5 w-1.5 mr-0.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                  </span>
+                )}
+                <span className="tabular-nums font-bold">
+                  {isPrebuffering ? 'PREBUFFERING' : data.bandwidthMbps.toFixed(1)}
+                </span>
+              </div>
             )}
-            <span className="text-[10px] text-slate-500 font-medium ml-0.5 uppercase">Mbps</span>
+            {!isPrebuffering && <span className="text-[10px] text-slate-500 font-medium ml-0.5 uppercase">Mbps</span>}
           </div>
         </div>
       </EdgeLabelRenderer>

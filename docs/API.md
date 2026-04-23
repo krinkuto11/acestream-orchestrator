@@ -39,6 +39,68 @@ Response:
   "container_https_port":45109
 }
 ```
+
+## Settings
+### GET /settings/vpn
+
+Returns persisted VPN configuration including static and dynamic VPN management fields.
+
+### POST /settings/vpn
+
+Updates VPN configuration at runtime and persists it.
+
+Request fields (all optional):
+- `enabled`
+- `vpn_mode` (`single` or `redundant`)
+- `container_name`
+- `container_name_2`
+- `api_port`
+- `port_range_1`
+- `port_range_2`
+- `health_check_interval_s`
+- `port_cache_ttl_s`
+- `restart_engines_on_reconnect`
+- `unhealthy_restart_timeout_s`
+- `dynamic_vpn_management`
+- `providers` (list of provider names, e.g. `protonvpn`, `mullvad`)
+- `protocol` (`wireguard` or `openvpn`)
+- `regions` (list of regions/countries/cities, can be prefixed as `country:`, `city:`, `region:`, `hostname:`)
+- `credentials` (list of JSON objects used for dynamic VPN node provisioning)
+- `trigger_migration` (optional bool; when toggling VPN state, marks engines that do not match the new target state as draining so new streams migrate without dropping active sessions)
+- `vpn_servers_auto_refresh` (bool; enables scheduled server-list refresh)
+- `vpn_servers_refresh_period_s` (int; refresh interval in seconds, minimum 60)
+- `vpn_servers_refresh_source` (`proton_paid` or `gluetun_official`)
+- `vpn_servers_gluetun_json_mode` (`none`, `update`, or `replace`)
+- `vpn_servers_storage_path` (optional directory path to write server list files)
+- `vpn_servers_official_url` (optional URL for official Gluetun catalog source)
+- `vpn_servers_proton_credentials_source` (`env` or `settings`)
+- `vpn_servers_proton_username_env`, `vpn_servers_proton_password_env`, `vpn_servers_proton_totp_code_env`, `vpn_servers_proton_totp_secret_env`
+- `vpn_servers_proton_username`, `vpn_servers_proton_password`, `vpn_servers_proton_totp_code`, `vpn_servers_proton_totp_secret`
+- Proton filter controls: `vpn_servers_filter_ipv6`, `vpn_servers_filter_secure_core`, `vpn_servers_filter_tor`, `vpn_servers_filter_free_tier` (`include|exclude|only`)
+
+Example dynamic request payload:
+
+```json
+{
+  "enabled": true,
+  "dynamic_vpn_management": true,
+  "protocol": "wireguard",
+  "providers": ["protonvpn"],
+  "regions": ["country:Spain", "country:France"],
+  "credentials": [
+    {
+      "provider": "protonvpn",
+      "protocol": "wireguard",
+      "wireguard_private_key": "<base64-private-key-1>"
+    },
+    {
+      "provider": "protonvpn",
+      "protocol": "wireguard",
+      "wireguard_private_key": "<base64-private-key-2>"
+    }
+  ]
+}
+```
 ## Events
 ### POST /events/stream_started
 Body:
@@ -236,6 +298,31 @@ Response:
    }
    ```
 
+ - POST /proxy/migrate-stream (protected) → Trigger on-demand stream migration
+   - Triggers TS/HLS stream migration via proxy manager without waiting for background draining reconciliation.
+   - Body:
+   ```json
+   {
+     "stream_key": "b3bdd6ef7f795c4f321a3ce5cf4907338f462929",
+     "old_container_id": "optional-source-container-id",
+     "new_container_id": "optional-target-container-id"
+   }
+   ```
+   - Notes:
+     - `stream_key` is required.
+     - If `new_container_id` is omitted, orchestrator auto-selects a healthy target engine.
+     - If `old_container_id` is provided, selection avoids reusing that engine.
+   - Response:
+   ```json
+   {
+     "migrated": true,
+     "stream_key": "b3bdd6ef7f795c4f321a3ce5cf4907338f462929",
+     "old_container_id": "...",
+     "new_container_id": "...",
+     "state_streams_reassigned": 1
+   }
+   ```
+
 ### Read Operations
 
  - GET /engines → EngineState[]
@@ -318,6 +405,26 @@ Response:
 
  - GET /vpn/publicip → Get VPN public IP address
    - Returns the public IP address of the VPN connection
+
+ - POST /vpn/proton/refresh (protected) → Refresh Proton paid server catalog with token-based 2FA support
+   - Fetches Proton logical servers using username/password and optional TOTP
+   - Writes `servers-proton.json` and optionally updates `servers.json`
+   - Request body fields:
+     - `proton_username`, `proton_password` (optional if provided via env/secrets)
+     - `proton_totp_code` (one-time 2FA token) or `proton_totp_secret` (base32 secret for code generation)
+     - `storage_path` (directory path where server files will be written)
+     - `gluetun_json_mode` (`none`, `replace`, or `update`)
+     - filters: `ipv6`, `secure_core`, `tor`, `free_tier` (`include|exclude|only`)
+
+ - POST /vpn/servers/refresh (protected) → Refresh VPN server list from configured source
+   - Uses persisted VPN refresh settings by default
+   - Optional body overrides:
+     - `source` (`proton_paid` or `gluetun_official`)
+     - `gluetun_json_mode` (`none`, `update`, or `replace`)
+     - `reason` (string for audit/status)
+
+ - GET /vpn/servers/refresh/status → Current scheduler status and last refresh result
+   - Includes whether scheduler is running, in-progress state, last success/error, and effective config snapshot
 
  - GET /health/status → Detailed health status and management information
    - Returns comprehensive health summary including healthy/unhealthy engine counts

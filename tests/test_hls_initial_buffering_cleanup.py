@@ -7,7 +7,11 @@ and channels were stopped prematurely during initial buffering.
 
 import time
 import threading
+import pytest
 from unittest.mock import Mock, MagicMock
+
+pytest.importorskip("m3u8", reason="m3u8 dependency is required for HLS proxy tests")
+
 from app.proxy.hls_proxy import StreamManager, ClientManager
 
 

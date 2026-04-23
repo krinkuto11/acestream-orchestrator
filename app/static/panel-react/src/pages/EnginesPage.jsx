@@ -1,50 +1,29 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import EngineList from '@/components/EngineList'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { RefreshCw, AlertCircle, CheckCircle, Save, Settings2 } from 'lucide-react'
+import { AlertCircle, Save, Settings2 } from 'lucide-react'
 import { useNotifications } from '@/context/NotificationContext'
-import { CustomEngineBlocks } from '@/components/CustomEngineBlocks'
+import { EngineConfiguration } from '@/components/CustomEngineBlocks'
 import { ManualEngineList } from '@/components/ManualEngineList'
-
-// Platform-specific variants mapping
-const VARIANT_OPTIONS = {
-  amd64: [
-    { value: 'AceServe-amd64', label: 'AceServe Default (AMD64)' },
-    { value: 'custom', label: 'Custom Engine' }
-  ],
-  arm64: [
-    { value: 'AceServe-arm64', label: 'AceServe Default (ARM64)' },
-    { value: 'custom', label: 'Custom Engine' }
-  ],
-  arm32: [
-    { value: 'AceServe-arm32', label: 'AceServe Default (ARM32)' },
-    { value: 'custom', label: 'Custom Engine' }
-  ]
-}
 
 export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKey, fetchJSON }) {
   const { addNotification } = useNotifications()
-  const [reprovisionStatus, setReprovisionStatus] = useState(null)
-  const [isReprovisioning, setIsReprovisioning] = useState(false)
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false)
-  const [showErrorMessage, setShowErrorMessage] = useState(false)
 
-  // Engine settings state
   const [engineSettings, setEngineSettings] = useState({
     min_replicas: 2,
     max_replicas: 6,
     auto_delete: true,
-    engine_variant: '',
-    use_custom_variant: false,
-    platform: '',
+    live_cache_type: 'memory',
+    total_max_download_rate: 0,
+    total_max_upload_rate: 0,
+    buffer_time: 10,
+    max_peers: 50,
+    memory_limit: null,
     manual_mode: false,
     manual_engines: []
   })
@@ -52,10 +31,8 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const [savingSettings, setSavingSettings] = useState(false)
   const [settingsChanged, setSettingsChanged] = useState(false)
 
-  // Cache stats state
   const [cacheStats, setCacheStats] = useState({ total_bytes: 0, volume_count: 0 })
 
-  // Load engine settings
   const loadEngineSettings = useCallback(async () => {
     try {
       setLoadingSettings(true)
@@ -70,7 +47,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     }
   }, [orchUrl, fetchJSON])
 
-  // Load cache statistics
   const loadCacheStats = useCallback(async () => {
     try {
       const stats = await fetchJSON(`${orchUrl}/api/v1/engine-cache/stats`)
@@ -83,8 +59,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   useEffect(() => {
     loadEngineSettings()
     loadCacheStats()
-
-    // Refresh stats every 30s
     const interval = setInterval(loadCacheStats, 30000)
     return () => clearInterval(interval)
   }, [loadEngineSettings, loadCacheStats])
@@ -97,63 +71,14 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
-  // Poll for reprovision status
-  useEffect(() => {
-    const checkReprovisionStatus = async () => {
-      try {
-        const status = await fetchJSON(`${orchUrl}/api/v1/custom-variant/reprovision/status`)
-        const wasReprovisioning = isReprovisioning
-
-        setReprovisionStatus(status)
-        setIsReprovisioning(status.in_progress)
-
-        // When reprovisioning completes, show success/error message briefly
-        if (wasReprovisioning && !status.in_progress) {
-          if (status.status === 'success') {
-            setShowSuccessMessage(true)
-            // Auto-dismiss success message after 10 seconds
-            setTimeout(() => setShowSuccessMessage(false), 10000)
-          } else if (status.status === 'error') {
-            setShowErrorMessage(true)
-            // Auto-dismiss error message after 15 seconds
-            setTimeout(() => setShowErrorMessage(false), 15000)
-          }
-        }
-      } catch (err) {
-        // Ignore errors
-      }
-    }
-
-    // Initial check
-    checkReprovisionStatus()
-
-    // Poll every 2 seconds
-    const interval = setInterval(checkReprovisionStatus, 2000)
-    return () => clearInterval(interval)
-  }, [orchUrl, fetchJSON, isReprovisioning])
-
-  // Clear success/error message when component unmounts (user navigates away)
-  useEffect(() => {
-    return () => {
-      // Clear the status when leaving the page
-      setReprovisionStatus(null)
-      setIsReprovisioning(false)
-      setShowSuccessMessage(false)
-      setShowErrorMessage(false)
-    }
-  }, [])
-
-  // Handle settings change
   const handleSettingChange = (key, value) => {
     setEngineSettings(prev => ({ ...prev, [key]: value }))
     setSettingsChanged(true)
   }
 
-  // Save engine settings
   const handleSaveSettings = useCallback(async () => {
     try {
       setSavingSettings(true)
-
       await fetchJSON(`${orchUrl}/api/v1/settings/engine`, {
         method: 'POST',
         headers: {
@@ -162,7 +87,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
         },
         body: JSON.stringify(engineSettings)
       })
-
       addNotification('Engine settings saved successfully', 'success')
       setSettingsChanged(false)
     } catch (err) {
@@ -171,8 +95,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
       setSavingSettings(false)
     }
   }, [orchUrl, fetchJSON, engineSettings, apiKey])
-
-
 
   return (
     <div className="space-y-6">
@@ -192,75 +114,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
         )}
       </div>
 
-      {/* Reprovisioning Progress */}
-      {isReprovisioning && (
-        <Card>
-          <CardContent className="pt-6">
-            <Alert>
-              <RefreshCw className="h-4 w-4 animate-spin" />
-              <AlertDescription>
-                <div className="space-y-2">
-                  <p className="font-medium">Reprovisioning in progress...</p>
-                  <p className="text-sm text-muted-foreground">
-                    {reprovisionStatus?.message || 'Engines are being reprovisioned with new settings.'}
-                  </p>
-                  {(() => {
-                    // Calculate progress percentage based on current phase and counts
-                    let progress = 0
-                    if (reprovisionStatus) {
-                      const { current_phase, engines_stopped = 0, total_engines = 0 } = reprovisionStatus
-
-                      if (current_phase === 'stopping' && total_engines > 0) {
-                        // Stopping phase: 0-40% of progress
-                        progress = Math.round((engines_stopped / total_engines) * 40)
-                      } else if (current_phase === 'cleaning') {
-                        // Cleaning phase: 40-50% of progress
-                        progress = 45
-                      } else if (current_phase === 'provisioning') {
-                        // Provisioning phase: 50-100% of progress
-                        progress = 50 + Math.round((engines_stopped / Math.max(total_engines, 1)) * 50)
-                      } else if (current_phase === 'complete') {
-                        progress = 100
-                      }
-                    }
-                    return <Progress value={progress} className="w-full mt-2" />
-                  })()}
-                </div>
-              </AlertDescription>
-            </Alert>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Success message after reprovisioning */}
-      {!isReprovisioning && showSuccessMessage && reprovisionStatus?.status === 'success' && (
-        <Card>
-          <CardContent className="pt-6">
-            <Alert variant="default" className="border-green-500 bg-green-50 dark:bg-green-950">
-              <CheckCircle className="h-4 w-4 text-green-600" />
-              <AlertDescription className="text-green-800 dark:text-green-200">
-                {reprovisionStatus.message}
-              </AlertDescription>
-            </Alert>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Error message after reprovisioning */}
-      {!isReprovisioning && showErrorMessage && reprovisionStatus?.status === 'error' && (
-        <Card>
-          <CardContent className="pt-6">
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                {reprovisionStatus.message}
-              </AlertDescription>
-            </Alert>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Tabs for Engine Status and Configuration */}
       <Tabs defaultValue="status" className="w-full">
         <TabsList className="grid w-full grid-cols-2 border-slate-700 bg-slate-900/90 text-slate-300">
           <TabsTrigger
@@ -273,30 +126,27 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
             value="configuration"
             className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50"
           >
-            Engine Configuration
+            Engine Settings
           </TabsTrigger>
         </TabsList>
 
-        {/* Engine Status Tab */}
         <TabsContent value="status" className="space-y-6 mt-6">
           <EngineList
             engines={engines}
             onDeleteEngine={onDeleteEngine}
             vpnStatus={vpnStatus}
-            orchUrl={orchUrl}
           />
         </TabsContent>
 
-        {/* Engine Configuration Tab */}
         <TabsContent value="configuration" className="space-y-6 mt-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Settings2 className="h-5 w-5" />
-                Engine Configuration
+                  Engine Settings
               </CardTitle>
               <CardDescription>
-                Configure engine variant, replica counts, and automatic cleanup settings
+                Configure global engine customization, replica counts, and automatic cleanup settings
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -323,13 +173,10 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
 
               {!engineSettings.manual_mode ? (
                 <>
-                  {/* Engine Blocks Selection */}
-                  <CustomEngineBlocks
-                    orchUrl={orchUrl}
-                    apiKey={apiKey}
-                    fetchJSON={fetchJSON}
+                  <EngineConfiguration
                     engineSettings={engineSettings}
                     onSettingChange={handleSettingChange}
+                    disabled={loadingSettings}
                   />
 
                   {/* MIN_REPLICAS */}
@@ -403,58 +250,18 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
               )}
 
               {/* Save Settings Button */}
-              <div className="flex justify-end gap-2 pt-4 border-t">
-                {settingsChanged && (
-                  <Button
-                    onClick={handleSaveSettings}
-                    disabled={savingSettings || loadingSettings}
-                    className="flex items-center gap-2"
-                  >
-                    <Save className="h-4 w-4" />
-                    {savingSettings ? 'Saving...' : 'Save Settings'}
-                  </Button>
-                )}
+              <div className="flex justify-end pt-4 border-t">
                 <Button
-                  variant={settingsChanged ? "outline" : "default"}
-                  onClick={() => {
-                    if (window.confirm('Are you sure you want to reprovision all engines with the new settings? This will interrupt all active streams.')) {
-                      // Save settings first if there are changes
-                      const savePromise = settingsChanged ? handleSaveSettings() : Promise.resolve()
-                      savePromise.then(() => {
-                        // Trigger reprovision after saving
-                        fetchJSON(`${orchUrl}/api/v1/custom-variant/reprovision`, {
-                          method: 'POST',
-                          headers: {
-                            'Authorization': `Bearer ${apiKey}`
-                          }
-                        }).then(() => {
-                          addNotification('Reprovisioning started', 'success')
-                        }).catch(err => {
-                          addNotification(`Failed to start reprovision: ${err.message}`, 'error')
-                        })
-                      })
-                    }
-                  }}
-                  disabled={isReprovisioning || loadingSettings}
+                  onClick={handleSaveSettings}
+                  disabled={savingSettings || loadingSettings || !settingsChanged}
                   className="flex items-center gap-2"
                 >
-                  <RefreshCw className={isReprovisioning ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-                  {isReprovisioning ? 'Reprovisioning...' : (settingsChanged ? 'Save & Reprovision' : 'Reprovision')}
+                  <Save className="h-4 w-4" />
+                  {savingSettings ? 'Saving...' : 'Save Settings'}
                 </Button>
               </div>
-
-              {settingsChanged && (
-                <Alert>
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    You have unsaved changes. Click "Save Settings" to persist them, or "Save & Reprovision" to apply them immediately to all engines.
-                  </AlertDescription>
-                </Alert>
-              )}
             </CardContent>
           </Card>
-
-
         </TabsContent>
       </Tabs>
     </div>

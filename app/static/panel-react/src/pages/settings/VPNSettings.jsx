@@ -1,387 +1,870 @@
-import React, { useState, useEffect } from 'react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import React, { useEffect, useMemo, useState } from 'react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Info, ShieldCheck, ShieldOff } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import { AlertCircle, Plus, ShieldCheck, ShieldOff, Trash2, Zap, ZapOff, UploadCloud, ChevronDown, ChevronUp } from 'lucide-react'
+import { SettingRow } from '@/components/settings/SettingRow'
+import { useSettingsForm } from '@/context/SettingsFormContext'
+
+const PROVIDER_OPTIONS = [
+  { value: 'protonvpn', label: 'ProtonVPN' },
+  { value: 'private internet access', label: 'Private Internet Access (PIA)' },
+  { value: 'privatevpn', label: 'PrivateVPN' },
+  { value: 'perfect privacy', label: 'Perfect Privacy' },
+  { value: 'mullvad', label: 'Mullvad' },
+  { value: 'windscribe', label: 'Windscribe' },
+  { value: 'custom', label: 'Custom Provider' },
+]
+
+const PORT_FORWARDING_SUPPORTED = new Set([
+  'private internet access',
+  'protonvpn',
+  'perfect privacy',
+  'privatevpn',
+])
+
+const VPN_SERVER_REFRESH_SOURCE_OPTIONS = [
+  { value: 'proton_paid', label: 'Proton Paid Catalog (auth required)' },
+  { value: 'gluetun_official', label: 'Official Gluetun Catalog (public, may be outdated)' },
+]
+
+const GLUETUN_JSON_MODE_OPTIONS = [
+  { value: 'update', label: 'Update providers in existing servers.json' },
+  { value: 'replace', label: 'Replace servers.json completely' },
+  { value: 'none', label: 'Do not modify servers.json' },
+]
+
+const PROTON_CREDENTIALS_SOURCE_OPTIONS = [
+  { value: 'env', label: 'Environment Variables' },
+  { value: 'settings', label: 'Store in Settings' },
+]
 
 const DEFAULTS = {
   enabled: false,
-  vpn_mode: 'single',
-  container_name: '',
-  container_name_2: '',
   api_port: 8001,
-  port_range_1: '',
-  port_range_2: '',
   health_check_interval_s: 5,
   port_cache_ttl_s: 60,
   restart_engines_on_reconnect: true,
   unhealthy_restart_timeout_s: 60,
+  preferred_engines_per_vpn: 10,
+  protocol: 'wireguard',
+  provider: 'protonvpn',
+  regionsText: '',
+  vpn_servers_auto_refresh: false,
+  vpn_servers_refresh_period_s: 86400,
+  vpn_servers_refresh_source: 'gluetun_official',
+  vpn_servers_gluetun_json_mode: 'update',
+  vpn_servers_storage_path: '',
+  vpn_servers_official_url: 'https://raw.githubusercontent.com/qdm12/gluetun/master/internal/storage/servers.json',
+  vpn_servers_proton_credentials_source: 'env',
+  vpn_servers_proton_username_env: 'PROTON_USERNAME',
+  vpn_servers_proton_password_env: 'PROTON_PASSWORD',
+  vpn_servers_proton_totp_code_env: 'PROTON_TOTP_CODE',
+  vpn_servers_proton_totp_secret_env: 'PROTON_TOTP_SECRET',
+  vpn_servers_proton_username: '',
+  vpn_servers_proton_password: '',
+  vpn_servers_proton_totp_code: '',
+  vpn_servers_proton_totp_secret: '',
 }
 
-export function VPNSettings({ apiKey, orchUrl }) {
-  const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState(null)
-  const [error, setError] = useState(null)
-  const [showExpert, setShowExpert] = useState(false)
+const toNumber = (value, fallback = 0) => {
+  const next = Number(value)
+  return Number.isFinite(next) ? next : fallback
+}
 
-  // Basic settings
-  const [enabled, setEnabled] = useState(DEFAULTS.enabled)
-  const [vpnMode, setVpnMode] = useState(DEFAULTS.vpn_mode)
-  const [containerName, setContainerName] = useState(DEFAULTS.container_name)
-  const [containerName2, setContainerName2] = useState(DEFAULTS.container_name_2)
-  const [apiPort, setApiPort] = useState(DEFAULTS.api_port)
+const normalizeProvider = (provider) => {
+  const value = String(provider || '').trim().toLowerCase()
+  if (value === 'pia') return 'private internet access'
+  return value
+}
 
-  // Expert settings
-  const [portRange1, setPortRange1] = useState(DEFAULTS.port_range_1)
-  const [portRange2, setPortRange2] = useState(DEFAULTS.port_range_2)
-  const [healthCheckIntervalS, setHealthCheckIntervalS] = useState(DEFAULTS.health_check_interval_s)
-  const [portCacheTtlS, setPortCacheTtlS] = useState(DEFAULTS.port_cache_ttl_s)
-  const [restartEnginesOnReconnect, setRestartEnginesOnReconnect] = useState(DEFAULTS.restart_engines_on_reconnect)
-  const [unhealthyRestartTimeoutS, setUnhealthyRestartTimeoutS] = useState(DEFAULTS.unhealthy_restart_timeout_s)
+const isForwardingSupported = (provider) => PORT_FORWARDING_SUPPORTED.has(normalizeProvider(provider))
 
-  const isRedundant = vpnMode === 'redundant'
+const mask = (value, left = 4, right = 3) => {
+  const text = String(value || '').trim()
+  if (!text) return 'N/A'
+  if (text.length <= left + right) return text
+  return `${text.slice(0, left)}...${text.slice(-right)}`
+}
 
-  useEffect(() => {
-    fetchConfig()
-  }, [orchUrl])
+const parseRegionsInput = (value) => String(value || '')
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean)
 
-  const fetchConfig = async () => {
+export function VPNSettings({ apiKey, orchUrl, authRequired }) {
+  const sectionId = 'vpn'
+  const { registerSection, unregisterSection, setSectionDirty, setSectionSaving } = useSettingsForm()
+
+  const [loading, setLoading] = useState(true)
+  const [initialState, setInitialState] = useState(DEFAULTS)
+  const [draft, setDraft] = useState(DEFAULTS)
+  const [initialCredentials, setInitialCredentials] = useState([])
+  const [credentials, setCredentials] = useState([])
+  const [leaseSummary, setLeaseSummary] = useState(null)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [refreshStatus, setRefreshStatus] = useState(null)
+  const [refreshingServers, setRefreshingServers] = useState(false)
+
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [expertOpen, setExpertOpen] = useState(false)
+  const [dialogLoading, setDialogLoading] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
+
+  // Per-Credential Settings
+  const [credentialProvider, setCredentialProvider] = useState('protonvpn')
+  const [credentialMode, setCredentialMode] = useState('wireguard')
+  const [credentialRegions, setCredentialRegions] = useState('')
+  const [credentialPortForwarding, setCredentialPortForwarding] = useState(true)
+  const [wgText, setWgText] = useState('')
+  const [openvpnUser, setOpenvpnUser] = useState('')
+  const [openvpnPassword, setOpenvpnPassword] = useState('')
+
+  const dirty = useMemo(() => {
+    return JSON.stringify(draft) !== JSON.stringify(initialState)
+      || JSON.stringify(credentials) !== JSON.stringify(initialCredentials)
+  }, [draft, initialState, credentials, initialCredentials])
+
+  const sheetProviderNormalized = useMemo(() => normalizeProvider(credentialProvider), [credentialProvider])
+  const sheetProviderSupportsForwarding = useMemo(() => isForwardingSupported(sheetProviderNormalized), [sheetProviderNormalized])
+  const hasCredentials = credentials.length > 0
+  const vpnToggleDisabled = !hasCredentials && !draft.enabled
+  
+  const leasesByCredentialId = useMemo(() => {
+    const byCredentialId = new Map()
+    const leases = Array.isArray(leaseSummary?.leases) ? leaseSummary.leases : []
+    for (const lease of leases) {
+      const credentialId = String(lease?.credential_id || '').trim()
+      if (!credentialId) continue
+      byCredentialId.set(credentialId, lease)
+    }
+    return byCredentialId
+  }, [leaseSummary])
+
+  const fetchLeases = async () => {
     try {
-      const response = await fetch(`${orchUrl}/api/v1/settings/vpn`)
-      if (response.ok) {
-        const data = await response.json()
-        setEnabled(data.enabled ?? DEFAULTS.enabled)
-        setVpnMode(data.vpn_mode ?? DEFAULTS.vpn_mode)
-        setContainerName(data.container_name ?? DEFAULTS.container_name)
-        setContainerName2(data.container_name_2 ?? DEFAULTS.container_name_2)
-        setApiPort(data.api_port ?? DEFAULTS.api_port)
-        setPortRange1(data.port_range_1 ?? DEFAULTS.port_range_1)
-        setPortRange2(data.port_range_2 ?? DEFAULTS.port_range_2)
-        setHealthCheckIntervalS(data.health_check_interval_s ?? DEFAULTS.health_check_interval_s)
-        setPortCacheTtlS(data.port_cache_ttl_s ?? DEFAULTS.port_cache_ttl_s)
-        setRestartEnginesOnReconnect(data.restart_engines_on_reconnect ?? DEFAULTS.restart_engines_on_reconnect)
-        setUnhealthyRestartTimeoutS(data.unhealthy_restart_timeout_s ?? DEFAULTS.unhealthy_restart_timeout_s)
-      }
-    } catch (err) {
-      console.error('Failed to fetch VPN config:', err)
+      const response = await fetch(`${orchUrl}/api/v1/vpn/leases`)
+      if (!response.ok) return
+      const payload = await response.json()
+      setLeaseSummary(payload)
+    } catch {
+      // non-blocking
     }
   }
 
-  const saveConfig = async () => {
-    if (!apiKey) {
-      setError('API Key is required to update settings')
-      return
-    }
-    setLoading(true)
-    setMessage(null)
-    setError(null)
-
-    const payload = {
-      enabled,
-      vpn_mode: vpnMode,
-      container_name: containerName,
-      container_name_2: containerName2,
-      api_port: apiPort,
-      port_range_1: portRange1,
-      port_range_2: portRange2,
-      health_check_interval_s: healthCheckIntervalS,
-      port_cache_ttl_s: portCacheTtlS,
-      restart_engines_on_reconnect: restartEnginesOnReconnect,
-      unhealthy_restart_timeout_s: unhealthyRestartTimeoutS,
-    }
-
+  const fetchRefreshStatus = async () => {
     try {
-      const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(payload),
-      })
-      if (response.ok) {
-        const data = await response.json()
-        setMessage(data.message || 'VPN settings saved successfully')
-        await fetchConfig()
-      } else {
-        const errorData = await response.json()
-        setError(errorData.detail || 'Failed to update VPN configuration')
+      const response = await fetch(`${orchUrl}/api/v1/vpn/servers/refresh/status`)
+      if (!response.ok) return
+      const payload = await response.json()
+      setRefreshStatus(payload)
+    } catch {
+      // non-blocking
+    }
+  }
+
+  const fetchConfig = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      let payload = null
+
+      const consolidated = await fetch(`${orchUrl}/api/v1/settings`)
+      if (consolidated.ok) {
+        const settingsBundle = await consolidated.json().catch(() => ({}))
+        payload = settingsBundle?.vpn_settings || null
       }
-    } catch (err) {
-      setError('Failed to save VPN configuration: ' + err.message)
+
+      if (!payload) {
+        const response = await fetch(`${orchUrl}/api/v1/settings/vpn`)
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        payload = await response.json()
+      }
+
+      const normalized = {
+        enabled: Boolean(payload?.enabled),
+        api_port: toNumber(payload?.api_port, DEFAULTS.api_port),
+        health_check_interval_s: toNumber(payload?.health_check_interval_s, DEFAULTS.health_check_interval_s),
+        port_cache_ttl_s: toNumber(payload?.port_cache_ttl_s, DEFAULTS.port_cache_ttl_s),
+        restart_engines_on_reconnect: Boolean(payload?.restart_engines_on_reconnect),
+        unhealthy_restart_timeout_s: toNumber(payload?.unhealthy_restart_timeout_s, DEFAULTS.unhealthy_restart_timeout_s),
+        preferred_engines_per_vpn: toNumber(payload?.preferred_engines_per_vpn, DEFAULTS.preferred_engines_per_vpn),
+        protocol: String(payload?.protocol || DEFAULTS.protocol).toLowerCase(),
+        provider: normalizeProvider(payload?.provider || DEFAULTS.provider),
+        regionsText: Array.isArray(payload?.regions) ? payload.regions.join(', ') : '',
+        vpn_servers_auto_refresh: Boolean(payload?.vpn_servers_auto_refresh),
+        vpn_servers_refresh_period_s: toNumber(payload?.vpn_servers_refresh_period_s, DEFAULTS.vpn_servers_refresh_period_s),
+        vpn_servers_refresh_source: String(payload?.vpn_servers_refresh_source || DEFAULTS.vpn_servers_refresh_source).toLowerCase(),
+        vpn_servers_gluetun_json_mode: String(payload?.vpn_servers_gluetun_json_mode || DEFAULTS.vpn_servers_gluetun_json_mode).toLowerCase(),
+        vpn_servers_storage_path: String(payload?.vpn_servers_storage_path || DEFAULTS.vpn_servers_storage_path),
+        vpn_servers_official_url: String(payload?.vpn_servers_official_url || DEFAULTS.vpn_servers_official_url),
+        vpn_servers_proton_credentials_source: String(payload?.vpn_servers_proton_credentials_source || DEFAULTS.vpn_servers_proton_credentials_source).toLowerCase(),
+        vpn_servers_proton_username_env: String(payload?.vpn_servers_proton_username_env || DEFAULTS.vpn_servers_proton_username_env),
+        vpn_servers_proton_password_env: String(payload?.vpn_servers_proton_password_env || DEFAULTS.vpn_servers_proton_password_env),
+        vpn_servers_proton_totp_code_env: String(payload?.vpn_servers_proton_totp_code_env || DEFAULTS.vpn_servers_proton_totp_code_env),
+        vpn_servers_proton_totp_secret_env: String(payload?.vpn_servers_proton_totp_secret_env || DEFAULTS.vpn_servers_proton_totp_secret_env),
+        vpn_servers_proton_username: String(payload?.vpn_servers_proton_username || ''),
+        vpn_servers_proton_password: String(payload?.vpn_servers_proton_password || ''),
+        vpn_servers_proton_totp_code: String(payload?.vpn_servers_proton_totp_code || ''),
+        vpn_servers_proton_totp_secret: String(payload?.vpn_servers_proton_totp_secret || ''),
+      }
+
+      setInitialState(normalized)
+      setDraft(normalized)
+      const loadedCredentials = Array.isArray(payload?.credentials) ? payload.credentials : []
+      setInitialCredentials(loadedCredentials)
+      setCredentials(loadedCredentials)
+      setSectionDirty(sectionId, false)
+      await fetchLeases()
+      await fetchRefreshStatus()
+    } catch (fetchError) {
+      setError(`Failed to load VPN settings: ${fetchError.message || String(fetchError)}`)
     } finally {
       setLoading(false)
     }
   }
 
+  useEffect(() => {
+    fetchConfig()
+  }, [orchUrl])
+
+  useEffect(() => {
+    const save = async () => {
+      if (authRequired && !String(apiKey || '').trim()) {
+        throw new Error('API key required by server for VPN settings updates')
+      }
+
+      setSectionSaving(sectionId, true)
+      setError('')
+      setMessage('')
+
+      try {
+        const headers = { 'Content-Type': 'application/json' }
+        if (String(apiKey || '').trim()) {
+          headers.Authorization = `Bearer ${String(apiKey).trim()}`
+        }
+
+        const payload = {
+          enabled: Boolean(draft.enabled),
+          api_port: toNumber(draft.api_port, DEFAULTS.api_port),
+          health_check_interval_s: toNumber(draft.health_check_interval_s, DEFAULTS.health_check_interval_s),
+          port_cache_ttl_s: toNumber(draft.port_cache_ttl_s, DEFAULTS.port_cache_ttl_s),
+          restart_engines_on_reconnect: Boolean(draft.restart_engines_on_reconnect),
+          unhealthy_restart_timeout_s: toNumber(draft.unhealthy_restart_timeout_s, DEFAULTS.unhealthy_restart_timeout_s),
+          preferred_engines_per_vpn: Math.max(1, toNumber(draft.preferred_engines_per_vpn, DEFAULTS.preferred_engines_per_vpn)),
+          protocol: draft.protocol, // preserving backend schema
+          provider: draft.provider, // preserving backend schema
+          regions: parseRegionsInput(draft.regionsText), // preserving backend schema
+          credentials,
+          trigger_migration: Boolean(draft.enabled) !== Boolean(initialState.enabled),
+          vpn_servers_auto_refresh: Boolean(draft.vpn_servers_auto_refresh),
+          vpn_servers_refresh_period_s: Math.max(60, toNumber(draft.vpn_servers_refresh_period_s, DEFAULTS.vpn_servers_refresh_period_s)),
+          vpn_servers_refresh_source: String(draft.vpn_servers_refresh_source || DEFAULTS.vpn_servers_refresh_source),
+          vpn_servers_gluetun_json_mode: String(draft.vpn_servers_gluetun_json_mode || DEFAULTS.vpn_servers_gluetun_json_mode),
+          vpn_servers_storage_path: String(draft.vpn_servers_storage_path || '').trim() || null,
+          vpn_servers_official_url: String(draft.vpn_servers_official_url || DEFAULTS.vpn_servers_official_url).trim(),
+          vpn_servers_proton_credentials_source: String(draft.vpn_servers_proton_credentials_source || DEFAULTS.vpn_servers_proton_credentials_source),
+          vpn_servers_proton_username_env: String(draft.vpn_servers_proton_username_env || DEFAULTS.vpn_servers_proton_username_env).trim(),
+          vpn_servers_proton_password_env: String(draft.vpn_servers_proton_password_env || DEFAULTS.vpn_servers_proton_password_env).trim(),
+          vpn_servers_proton_totp_code_env: String(draft.vpn_servers_proton_totp_code_env || DEFAULTS.vpn_servers_proton_totp_code_env).trim(),
+          vpn_servers_proton_totp_secret_env: String(draft.vpn_servers_proton_totp_secret_env || DEFAULTS.vpn_servers_proton_totp_secret_env).trim(),
+          vpn_servers_proton_username: String(draft.vpn_servers_proton_username || '').trim() || null,
+          vpn_servers_proton_password: String(draft.vpn_servers_proton_password || '').trim() || null,
+          vpn_servers_proton_totp_code: String(draft.vpn_servers_proton_totp_code || '').trim() || null,
+          vpn_servers_proton_totp_secret: String(draft.vpn_servers_proton_totp_secret || '').trim() || null,
+        }
+
+        const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        })
+
+        if (!response.ok) {
+          const failure = await response.json().catch(() => ({}))
+          throw new Error(failure?.detail || `HTTP ${response.status}`)
+        }
+
+        const result = await response.json().catch(() => null)
+        setInitialState({ ...draft })
+        setInitialCredentials([...credentials])
+        setSectionDirty(sectionId, false)
+        const marked = Math.max(0, Number(result?.migration_marked_engines || 0))
+        if (Boolean(draft.enabled) !== Boolean(initialState.enabled)) {
+          const targetText = draft.enabled ? 'VPN-backed engines' : 'normal internet engines'
+          setMessage(`VPN settings saved; marked ${marked} engine(s) for migration to ${targetText}`)
+        } else {
+          setMessage('VPN settings saved')
+        }
+        await fetchLeases()
+        await fetchRefreshStatus()
+      } finally {
+        setSectionSaving(sectionId, false)
+      }
+    }
+
+    const discard = () => {
+      setDraft(initialState)
+      setCredentials(initialCredentials)
+      setSectionDirty(sectionId, false)
+      setError('')
+      setMessage('')
+    }
+
+    registerSection(sectionId, {
+      title: 'VPN',
+      requiresAuth: true,
+      save,
+      discard,
+    })
+
+    return () => unregisterSection(sectionId)
+  }, [
+    apiKey,
+    authRequired,
+    credentials,
+    draft,
+    initialState,
+    orchUrl,
+    registerSection,
+    setSectionDirty,
+    setSectionSaving,
+    unregisterSection,
+  ])
+
+  useEffect(() => {
+    setSectionDirty(sectionId, dirty)
+  }, [dirty, setSectionDirty])
+
+  const update = (field, value) => {
+    setDraft((prev) => ({ ...prev, [field]: value }))
+    setError('')
+    setMessage('')
+  }
+
+  const queueVpnEnabled = (value) => {
+    const enabled = Boolean(value)
+
+    if (enabled && !hasCredentials) {
+      setError('Add at least one VPN credential before enabling VPN routing')
+      return
+    }
+
+    setDraft((prev) => ({ ...prev, enabled }))
+    setError('')
+    setMessage(`VPN routing ${enabled ? 'enabled' : 'disabled'} queued; save changes to apply`)
+  }
+
+  const handleDragOver = (e) => {
+    e.preventDefault()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e) => {
+    e.preventDefault()
+    setIsDragging(false)
+  }
+
+  const handleDrop = async (e) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const file = e.dataTransfer.files[0]
+    if (file && (file.name.endsWith('.conf') || file.type === 'text/plain' || file.name.endsWith('.txt'))) {
+      const text = await file.text()
+      setWgText(text)
+    } else {
+      setError('Please drop a valid .conf or text file.')
+    }
+  }
+
+  const addCredential = async () => {
+    setDialogLoading(true)
+    setError('')
+    setMessage('')
+
+    try {
+      let payload = {
+        provider: sheetProviderNormalized,
+        protocol: credentialMode,
+        regions: parseRegionsInput(credentialRegions),
+        port_forwarding: Boolean(credentialPortForwarding && sheetProviderSupportsForwarding),
+      }
+
+      if (credentialMode === 'wireguard') {
+        const confText = String(wgText || '').trim()
+        if (!confText) {
+          throw new Error('Wireguard .conf content is required')
+        }
+
+        const parseResponse = await fetch(`${orchUrl}/api/v1/vpn/parse-wireguard`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_content: confText }),
+        })
+        const parsed = await parseResponse.json().catch(() => null)
+        if (!parseResponse.ok) {
+          throw new Error(parsed?.detail?.message || parsed?.detail || `HTTP ${parseResponse.status}`)
+        }
+
+        payload = {
+          ...payload,
+          private_key: parsed?.private_key,
+          addresses: parsed?.address || (Array.isArray(parsed?.addresses) ? parsed.addresses.join(',') : ''),
+          endpoint: parsed?.endpoint,
+          source: 'sheet-paste.conf',
+        }
+      } else {
+        const username = String(openvpnUser || '').trim()
+        const password = String(openvpnPassword || '').trim()
+        if (!username || !password) {
+          throw new Error('OpenVPN username and password are required')
+        }
+
+        payload = {
+          ...payload,
+          openvpn_user: username,
+          openvpn_password: password,
+          username,
+          password,
+        }
+      }
+
+      const credentialId = String(payload?.id || `cred-draft-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+      setCredentials((prev) => [...prev, { ...payload, id: credentialId }])
+      setMessage('Credential added to draft; save changes to apply')
+      setDialogOpen(false)
+      setWgText('')
+      setOpenvpnUser('')
+      setOpenvpnPassword('')
+      setCredentialRegions('')
+    } catch (addError) {
+      setError(`Failed to add credential: ${addError.message || String(addError)}`)
+    } finally {
+      setDialogLoading(false)
+    }
+  }
+
+  const removeCredential = (credentialId) => {
+    setCredentials((prev) => prev.filter((c) => String(c?.id || '') !== String(credentialId || '')))
+    setError('')
+    setMessage('Credential removal queued; save changes to apply')
+  }
+
+  const refreshServersNow = async () => {
+    if (authRequired && !String(apiKey || '').trim()) {
+      setError('API key required by server for manual VPN server refresh')
+      return
+    }
+
+    setRefreshingServers(true)
+    setError('')
+    setMessage('')
+    try {
+      const headers = { 'Content-Type': 'application/json' }
+      if (String(apiKey || '').trim()) {
+        headers.Authorization = `Bearer ${String(apiKey).trim()}`
+      }
+
+      const response = await fetch(`${orchUrl}/api/v1/vpn/servers/refresh`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          source: draft.vpn_servers_refresh_source,
+          gluetun_json_mode: draft.vpn_servers_gluetun_json_mode,
+          reason: 'manual-ui',
+        }),
+      })
+
+      if (!response.ok) {
+        const failure = await response.json().catch(() => ({}))
+        throw new Error(failure?.detail || `HTTP ${response.status}`)
+      }
+
+      const result = await response.json().catch(() => ({}))
+      const source = String(result?.source || draft.vpn_servers_refresh_source)
+      setMessage(`VPN server list refreshed from ${source}`)
+      await fetchRefreshStatus()
+    } catch (refreshError) {
+      setError(`Failed to refresh VPN server list: ${refreshError.message || String(refreshError)}`)
+    } finally {
+      setRefreshingServers(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="py-10 text-sm text-muted-foreground">Loading VPN settings...</CardContent>
+      </Card>
+    )
+  }
+
   return (
-    <div className="space-y-6">
-      {/* Master VPN toggle */}
+    <div className="space-y-5">
+      {message && <p className="text-sm text-emerald-600 dark:text-emerald-400">{message}</p>}
+      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            {enabled
-              ? <ShieldCheck className="h-5 w-5 text-green-500" />
-              : <ShieldOff className="h-5 w-5 text-muted-foreground" />
-            }
-            VPN Integration (Gluetun)
+            {draft.enabled ? <ShieldCheck className="h-5 w-5 text-emerald-500" /> : <ShieldOff className="h-5 w-5 text-slate-400" />}
+            VPN Controller Settings
           </CardTitle>
-          <CardDescription>
-            Connect to a Gluetun VPN container for routing engine traffic through a VPN.
-            When disabled, engines connect directly without VPN.
-          </CardDescription>
+          <CardDescription>Static VPN controller behavior participates in global save and unsaved-change protection.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-3">
+        <CardContent className="space-y-3">
+          <SettingRow
+            label="Enable VPN Routing"
+            description={
+              Boolean(initialState.enabled)
+                ? 'Disable to stop new engine scheduling on managed VPN nodes.'
+                : 'Route new engine traffic through managed VPN nodes.'
+            }
+            warning={!hasCredentials ? 'Add at least one credential in the pool to enable routing.' : undefined}
+          >
             <Switch
-              id="vpn-enabled"
-              checked={enabled}
-              onCheckedChange={setEnabled}
+              checked={Boolean(draft.enabled)}
+              disabled={vpnToggleDisabled}
+              onCheckedChange={queueVpnEnabled}
             />
-            <div>
-              <Label htmlFor="vpn-enabled" className="text-base font-medium">
-                {enabled ? 'VPN Enabled' : 'VPN Disabled'}
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                {enabled
-                  ? 'Engines will route traffic through the configured Gluetun container.'
-                  : 'Engines connect directly — no VPN routing.'}
-              </p>
+          </SettingRow>
+
+          <SettingRow label="Preferred Engines per VPN Node" description="Scheduler hint for desired VPN node count.">
+            <Input type="number" min={1} max={100} value={draft.preferred_engines_per_vpn} onChange={(e) => update('preferred_engines_per_vpn', toNumber(e.target.value, DEFAULTS.preferred_engines_per_vpn))} className="max-w-xs" />
+          </SettingRow>
+
+          <Collapsible open={expertOpen} onOpenChange={setExpertOpen} className="w-full">
+            <div className="flex items-center mt-6 mb-2">
+              <div className="flex-grow border-t border-muted"></div>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="mx-2 text-xs uppercase tracking-wider text-muted-foreground hover:bg-transparent">
+                  {expertOpen ? 'Hide Expert Settings' : 'Show Expert Settings'}
+                  {expertOpen ? <ChevronUp className="ml-2 h-3 w-3" /> : <ChevronDown className="ml-2 h-3 w-3" />}
+                </Button>
+              </CollapsibleTrigger>
+              <div className="flex-grow border-t border-muted"></div>
             </div>
+            
+            <CollapsibleContent className="space-y-3 pt-2">
+              <SettingRow label="Gluetun API Port" description="Must match Gluetun HTTP control server port.">
+                <Input type="number" min={1} max={65535} value={draft.api_port} onChange={(e) => update('api_port', toNumber(e.target.value, DEFAULTS.api_port))} className="max-w-xs" />
+              </SettingRow>
+
+              <SettingRow label="Health Check Interval (s)" description="VPN health polling cadence.">
+                <Input type="number" min={1} max={120} value={draft.health_check_interval_s} onChange={(e) => update('health_check_interval_s', toNumber(e.target.value, DEFAULTS.health_check_interval_s))} className="max-w-xs" />
+              </SettingRow>
+
+              <SettingRow label="Port Cache TTL (s)" description="Forwarded-port cache TTL.">
+                <Input type="number" min={1} max={300} value={draft.port_cache_ttl_s} onChange={(e) => update('port_cache_ttl_s', toNumber(e.target.value, DEFAULTS.port_cache_ttl_s))} className="max-w-xs" />
+              </SettingRow>
+
+              <SettingRow label="Unhealthy Restart Timeout (s)" description="Restart VPN node after this unhealthy duration.">
+                <Input type="number" min={10} max={600} value={draft.unhealthy_restart_timeout_s} onChange={(e) => update('unhealthy_restart_timeout_s', toNumber(e.target.value, DEFAULTS.unhealthy_restart_timeout_s))} className="max-w-xs" />
+              </SettingRow>
+
+              <SettingRow label="Restart Engines on VPN Reconnect" description="Restart engines when VPN node reconnects to refresh routes.">
+                <Switch checked={Boolean(draft.restart_engines_on_reconnect)} onCheckedChange={(value) => update('restart_engines_on_reconnect', Boolean(value))} />
+              </SettingRow>
+
+              <div className="pt-4 border-t border-border/50 space-y-3">
+                <div className="text-sm font-medium">VPN Server List Refresh</div>
+
+                <SettingRow label="Refresh Source" description="Choose where server catalog updates come from.">
+                  <Select value={draft.vpn_servers_refresh_source} onValueChange={(value) => update('vpn_servers_refresh_source', value)}>
+                    <SelectTrigger className="w-full max-w-md"><SelectValue /></SelectTrigger>
+                    <SelectContent className="dark">
+                      {VPN_SERVER_REFRESH_SOURCE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
+
+                <SettingRow label="Automatic Refresh" description="Periodically refresh VPN provider server lists.">
+                  <Switch checked={Boolean(draft.vpn_servers_auto_refresh)} onCheckedChange={(value) => update('vpn_servers_auto_refresh', Boolean(value))} />
+                </SettingRow>
+
+                <SettingRow label="Refresh Period (s)" description="How often automatic refresh should run.">
+                  <Input type="number" min={60} max={604800} value={draft.vpn_servers_refresh_period_s} onChange={(e) => update('vpn_servers_refresh_period_s', toNumber(e.target.value, DEFAULTS.vpn_servers_refresh_period_s))} className="max-w-xs" />
+                </SettingRow>
+
+                <SettingRow label="servers.json Write Mode" description="How refreshed data is applied to servers.json.">
+                  <Select value={draft.vpn_servers_gluetun_json_mode} onValueChange={(value) => update('vpn_servers_gluetun_json_mode', value)}>
+                    <SelectTrigger className="w-full max-w-md"><SelectValue /></SelectTrigger>
+                    <SelectContent className="dark">
+                      {GLUETUN_JSON_MODE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
+
+                <SettingRow label="Storage Path (Optional)" description="Directory where servers-proton.json / servers-official.json / servers.json are written.">
+                  <Input value={draft.vpn_servers_storage_path} onChange={(e) => update('vpn_servers_storage_path', e.target.value)} placeholder="/data/gluetun" className="max-w-md" />
+                </SettingRow>
+
+                {draft.vpn_servers_refresh_source === 'gluetun_official' && (
+                  <SettingRow label="Official Catalog URL" description="Official Gluetun catalog URL (override if needed).">
+                    <Input value={draft.vpn_servers_official_url} onChange={(e) => update('vpn_servers_official_url', e.target.value)} className="max-w-md" />
+                  </SettingRow>
+                )}
+
+                {draft.vpn_servers_refresh_source === 'proton_paid' && (
+                  <>
+                    <SettingRow label="Proton Credentials Source" description="Use environment variables or persisted settings values.">
+                      <Select value={draft.vpn_servers_proton_credentials_source} onValueChange={(value) => update('vpn_servers_proton_credentials_source', value)}>
+                        <SelectTrigger className="w-full max-w-md"><SelectValue /></SelectTrigger>
+                        <SelectContent className="dark">
+                          {PROTON_CREDENTIALS_SOURCE_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </SettingRow>
+
+                    {draft.vpn_servers_proton_credentials_source === 'env' ? (
+                      <div className="space-y-3">
+                        <SettingRow label="Username Env Var" description="Environment variable containing Proton username.">
+                          <Input value={draft.vpn_servers_proton_username_env} onChange={(e) => update('vpn_servers_proton_username_env', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                        <SettingRow label="Password Env Var" description="Environment variable containing Proton password.">
+                          <Input value={draft.vpn_servers_proton_password_env} onChange={(e) => update('vpn_servers_proton_password_env', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                        <SettingRow label="TOTP Code Env Var" description="Optional one-time TOTP code variable.">
+                          <Input value={draft.vpn_servers_proton_totp_code_env} onChange={(e) => update('vpn_servers_proton_totp_code_env', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                        <SettingRow label="TOTP Secret Env Var" description="Optional base32 TOTP secret variable.">
+                          <Input value={draft.vpn_servers_proton_totp_secret_env} onChange={(e) => update('vpn_servers_proton_totp_secret_env', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <SettingRow label="Proton Username" description="Stored in settings for automated refresh.">
+                          <Input value={draft.vpn_servers_proton_username} onChange={(e) => update('vpn_servers_proton_username', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                        <SettingRow label="Proton Password" description="Stored in settings for automated refresh.">
+                          <Input type="password" value={draft.vpn_servers_proton_password} onChange={(e) => update('vpn_servers_proton_password', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                        <SettingRow label="TOTP Code (Optional)" description="One-time code; if empty, TOTP secret can be used.">
+                          <Input value={draft.vpn_servers_proton_totp_code} onChange={(e) => update('vpn_servers_proton_totp_code', e.target.value)} className="max-w-xs" />
+                        </SettingRow>
+                        <SettingRow label="TOTP Secret (Optional)" description="Base32 secret for automatic token generation.">
+                          <Input type="password" value={draft.vpn_servers_proton_totp_secret} onChange={(e) => update('vpn_servers_proton_totp_secret', e.target.value)} className="max-w-md" />
+                        </SettingRow>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div className="flex items-center gap-3">
+                  <Button type="button" variant="outline" onClick={refreshServersNow} disabled={refreshingServers}>
+                    {refreshingServers ? 'Refreshing...' : 'Refresh VPN Server List Now'}
+                  </Button>
+                  {refreshStatus?.last_finished_at && (
+                    <span className="text-xs text-muted-foreground">
+                      Last run: {new Date(refreshStatus.last_finished_at).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle>Credential Pool</CardTitle>
+              <CardDescription>
+                Credential changes are part of the VPN draft and are applied only when you save.
+              </CardDescription>
+            </div>
+            <Button type="button" onClick={() => setDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Credential
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="secondary">Total: {credentials.length}</Badge>
+            <Badge variant="secondary">Leased: {leaseSummary?.leased ?? 0}</Badge>
+            <Badge variant="secondary">Available: {leaseSummary?.available ?? 0}</Badge>
+          </div>
+
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Provider/Protocol</TableHead>
+                  <TableHead>Identifier</TableHead>
+                  <TableHead>Usage Status</TableHead>
+                  <TableHead>Port Forwarding</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {credentials.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="py-6 text-center text-sm text-muted-foreground">No credentials configured.</TableCell>
+                  </TableRow>
+                ) : (
+                  credentials.map((credential) => {
+                    const protocol = String(credential?.protocol || 'wireguard').toLowerCase()
+                    const provider = normalizeProvider(credential?.provider || 'Unknown')
+                    const hasForwarding = Boolean(credential?.port_forwarding) && isForwardingSupported(provider)
+                    const credentialId = String(credential?.id || '').trim()
+                    const lease = credentialId ? leasesByCredentialId.get(credentialId) : null
+                    const inUse = Boolean(lease)
+                    const containerLabel = String(lease?.container_id || '').trim()
+                    
+                    const identifier = protocol === 'wireguard'
+                      ? `Key ${mask(credential?.private_key || credential?.wireguard_private_key)}`
+                      : `User ${mask(credential?.openvpn_user || credential?.username, 3, 2)}`
+
+                    return (
+                      <TableRow key={String(credential?.id || Math.random())}>
+                        <TableCell>
+                          <div className="font-medium">{provider}</div>
+                          <div className="text-xs uppercase text-muted-foreground">
+                            {protocol}
+                            {credential?.regions && credential.regions.length > 0 && ` • ${credential.regions.join(', ')}`}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm">{identifier}</TableCell>
+                        <TableCell>
+                          {inUse ? (
+                            <div className="space-y-1">
+                              <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">In Use</Badge>
+                              <p className="text-xs text-muted-foreground">
+                                Node: {containerLabel || 'unknown'}
+                              </p>
+                            </div>
+                          ) : (
+                            <Badge variant="outline">Available</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {hasForwarding ? (
+                            <Badge variant="success"><Zap className="mr-1 h-3.5 w-3.5" />Enabled</Badge>
+                          ) : (
+                            <Badge variant="secondary"><ZapOff className="mr-1 h-3.5 w-3.5" />Disabled</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button type="button" variant="ghost" size="icon" onClick={() => removeCredential(credential?.id)}>
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
+                )}
+              </TableBody>
+            </Table>
           </div>
         </CardContent>
       </Card>
 
-      {/* VPN connection config — only when enabled */}
-      {enabled && (
-        <>
-          <Card>
-            <CardHeader>
-              <CardTitle>VPN Connection</CardTitle>
-              <CardDescription>Configure the Gluetun container and VPN mode</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="vpn-mode">VPN Mode</Label>
-                <Select value={vpnMode} onValueChange={setVpnMode}>
-                  <SelectTrigger id="vpn-mode" className="max-w-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="single">Single — one Gluetun container</SelectItem>
-                    <SelectItem value="redundant">Redundant — two Gluetun containers for high-availability</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Single: all engines use one VPN. Redundant: engines split between two VPNs.
-                </p>
-              </div>
+      <Sheet open={dialogOpen} onOpenChange={setDialogOpen}>
+        <SheetContent side="right" className="dark text-foreground w-[400px] sm:w-[540px] overflow-y-auto">
+          <SheetHeader className="mb-6">
+            <SheetTitle>Add VPN Credential</SheetTitle>
+            <SheetDescription>
+              Credential changes stay local until you save settings.
+            </SheetDescription>
+          </SheetHeader>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <Label htmlFor="container-name">
-                    {isRedundant ? 'VPN 1 Container Name' : 'Container Name'}
-                  </Label>
-                  <Input
-                    id="container-name"
-                    type="text"
-                    value={containerName}
-                    onChange={(e) => setContainerName(e.target.value)}
-                    placeholder="gluetun"
-                  />
-                  <p className="text-xs text-muted-foreground">Docker container name of the Gluetun VPN. Default: gluetun</p>
+          <div className="space-y-6">
+            <SettingRow label="Provider" description="VPN service provider.">
+              <Select value={credentialProvider} onValueChange={setCredentialProvider}>
+                <SelectTrigger className="w-full text-foreground"><SelectValue placeholder="Select provider" /></SelectTrigger>
+                <SelectContent className="dark">
+                  {PROVIDER_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingRow>
+
+            <SettingRow label="Protocol" description="Protocol type for this credential.">
+              <Select value={credentialMode} onValueChange={setCredentialMode}>
+                <SelectTrigger className="w-full text-foreground"><SelectValue placeholder="Select protocol" /></SelectTrigger>
+                <SelectContent className="dark">
+                  <SelectItem value="wireguard">Wireguard (.conf text)</SelectItem>
+                  <SelectItem value="openvpn">OpenVPN (username/password)</SelectItem>
+                </SelectContent>
+              </Select>
+            </SettingRow>
+
+            <SettingRow label="Preferred Regions" description="Comma-separated preferred regions (e.g. us-east, nl).">
+              <Input value={credentialRegions} onChange={(e) => setCredentialRegions(e.target.value)} placeholder="us-east, nl, region:paris" className="w-full" />
+            </SettingRow>
+
+            <SettingRow label="Port Forwarding" description="Enable only if credential/provider supports forwarded ports.">
+              <Switch checked={credentialPortForwarding && sheetProviderSupportsForwarding} disabled={!sheetProviderSupportsForwarding} onCheckedChange={setCredentialPortForwarding} />
+            </SettingRow>
+
+            {credentialMode === 'wireguard' ? (
+              <div className="space-y-4">
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer ${
+                    isDragging ? 'border-primary bg-primary/10' : 'border-muted-foreground/25 hover:border-primary/50'
+                  }`}
+                >
+                  <UploadCloud className="mx-auto h-8 w-8 text-muted-foreground mb-3" />
+                  <p className="text-sm font-medium">Drag & drop your .conf file here</p>
+                  <p className="text-xs text-muted-foreground mt-1">or paste the content below</p>
                 </div>
-
-                <div className="space-y-1">
-                  <Label htmlFor="api-port">Gluetun HTTP API Port</Label>
-                  <Input
-                    id="api-port"
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={apiPort}
-                    onChange={(e) => setApiPort(parseInt(e.target.value) || 8001)}
-                    className="max-w-xs"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Must match <code>HTTP_CONTROL_SERVER_ADDRESS</code> in Gluetun. Default: 8001
-                  </p>
-                </div>
-
-                {isRedundant && (
-                  <div className="space-y-1 sm:col-span-2">
-                    <Label htmlFor="container-name-2">VPN 2 Container Name</Label>
-                    <Input
-                      id="container-name-2"
-                      type="text"
-                      value={containerName2}
-                      onChange={(e) => setContainerName2(e.target.value)}
-                      placeholder="gluetun2"
-                      className="max-w-xs"
-                    />
-                    <p className="text-xs text-muted-foreground">Docker container name of the second Gluetun VPN. Default: gluetun2</p>
-                  </div>
-                )}
+                
+                <SettingRow label="Wireguard .conf Content" description="Paste full [Interface]/[Peer] configuration.">
+                  <Textarea value={wgText} onChange={(e) => setWgText(e.target.value)} rows={10} placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;&#10;[Peer]&#10;Endpoint = ..." />
+                </SettingRow>
               </div>
-            </CardContent>
-          </Card>
+            ) : (
+              <div className="space-y-4">
+                <SettingRow label="OpenVPN Username" description="Credential username.">
+                  <Input value={openvpnUser} onChange={(e) => setOpenvpnUser(e.target.value)} className="w-full" />
+                </SettingRow>
+                <SettingRow label="OpenVPN Password" description="Credential password.">
+                  <Input type="password" value={openvpnPassword} onChange={(e) => setOpenvpnPassword(e.target.value)} className="w-full" />
+                </SettingRow>
+              </div>
+            )}
+          </div>
 
-          {/* Expert Toggle */}
-          <button
-            type="button"
-            onClick={() => setShowExpert(!showExpert)}
-            className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {showExpert ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            {showExpert ? 'Hide Expert Settings' : 'Show Expert Settings'}
-          </button>
-
-          {showExpert && (
-            <>
-              {/* Port Ranges for Redundant mode */}
-              {isRedundant && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Redundant Mode Port Ranges</CardTitle>
-                    <CardDescription>
-                      Each VPN needs its own port range to route engines correctly.
-                      These must match the Docker Compose port mappings.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <Label htmlFor="port-range-1">VPN 1 Port Range</Label>
-                        <Input
-                          id="port-range-1"
-                          type="text"
-                          value={portRange1}
-                          onChange={(e) => setPortRange1(e.target.value)}
-                          placeholder="19000-19499"
-                        />
-                        <p className="text-xs text-muted-foreground">Port range for first VPN. Example: 19000-19499</p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="port-range-2">VPN 2 Port Range</Label>
-                        <Input
-                          id="port-range-2"
-                          type="text"
-                          value={portRange2}
-                          onChange={(e) => setPortRange2(e.target.value)}
-                          placeholder="19500-19999"
-                        />
-                        <p className="text-xs text-muted-foreground">Port range for second VPN. Example: 19500-19999</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Health & Recovery */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Health & Recovery Settings</CardTitle>
-                  <CardDescription>How the orchestrator monitors VPN health and recovers from failures</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <Label htmlFor="health-check-interval">Health Check Interval (seconds)</Label>
-                      <Input
-                        id="health-check-interval"
-                        type="number"
-                        min={1} max={60}
-                        value={healthCheckIntervalS}
-                        onChange={(e) => setHealthCheckIntervalS(parseInt(e.target.value) || 5)}
-                        className="max-w-xs"
-                      />
-                      <p className="text-xs text-muted-foreground">How often to check VPN health. Default: 5s</p>
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label htmlFor="port-cache-ttl">Port Cache TTL (seconds)</Label>
-                      <Input
-                        id="port-cache-ttl"
-                        type="number"
-                        min={1} max={300}
-                        value={portCacheTtlS}
-                        onChange={(e) => setPortCacheTtlS(parseInt(e.target.value) || 60)}
-                        className="max-w-xs"
-                      />
-                      <p className="text-xs text-muted-foreground">How long to cache forwarded port info. Default: 60s</p>
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label htmlFor="unhealthy-restart-timeout">Unhealthy Restart Timeout (seconds)</Label>
-                      <Input
-                        id="unhealthy-restart-timeout"
-                        type="number"
-                        min={10} max={600}
-                        value={unhealthyRestartTimeoutS}
-                        onChange={(e) => setUnhealthyRestartTimeoutS(parseInt(e.target.value) || 60)}
-                        className="max-w-xs"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Force-restart VPN container after being unhealthy for this long. Default: 60s
-                      </p>
-                    </div>
-
-                    <div className="flex items-start gap-3 pt-1">
-                      <Switch
-                        id="restart-engines"
-                        checked={restartEnginesOnReconnect}
-                        onCheckedChange={setRestartEnginesOnReconnect}
-                      />
-                      <div>
-                        <Label htmlFor="restart-engines">Restart Engines on VPN Reconnect</Label>
-                        <p className="text-xs text-muted-foreground">
-                          Restart engine containers when VPN reconnects to refresh their network routes. Default: on
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </>
-          )}
-        </>
-      )}
-
-      {/* Save Button */}
-      <div className="pt-2">
-        <Button onClick={saveConfig} disabled={loading || !apiKey}>
-          {loading ? 'Saving...' : 'Save VPN Settings'}
-        </Button>
-        {!apiKey && (
-          <p className="text-xs text-destructive mt-2">API Key is required to update settings</p>
-        )}
-      </div>
-
-      {message && (
-        <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/30 rounded-md">
-          <CheckCircle2 className="h-4 w-4 text-green-500" />
-          <span className="text-sm text-green-600 dark:text-green-400">{message}</span>
-        </div>
-      )}
-
-      {error && (
-        <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive rounded-md">
-          <AlertCircle className="h-4 w-4 text-destructive" />
-          <span className="text-sm text-destructive">{error}</span>
-        </div>
-      )}
-
-      <div className="flex items-start gap-2 p-3 bg-blue-500/10 border border-blue-500/20 rounded-md">
-        <Info className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
-        <p className="text-xs text-blue-600 dark:text-blue-400">
-          <strong>Note:</strong> VPN settings are persisted and applied immediately. The Gluetun monitor will restart
-          automatically to pick up changes. Existing engines are not restarted unless "Restart Engines on VPN Reconnect" is enabled.{' '}
-          <strong>Container names</strong> must match the Docker Compose service names exactly.
-        </p>
-      </div>
+          <SheetFooter className="mt-8">
+            <Button type="button" variant="outline" className="text-foreground" onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button type="button" onClick={addCredential} disabled={dialogLoading}>
+              {dialogLoading ? <><AlertCircle className="mr-2 h-4 w-4" />Saving...</> : <><Plus className="mr-2 h-4 w-4" />Add Credential</>}
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

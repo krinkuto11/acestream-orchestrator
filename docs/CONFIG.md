@@ -42,6 +42,21 @@ The AceStream Orchestrator uses a UI-driven configuration system. All settings a
 - **Unhealthy Restart Timeout (s)**: Force-restart VPN container after this period of unhealthiness. Default: 60s.
 - **Restart Engines on VPN Reconnect**: Refresh engine routes when VPN reconnects. Default: `true`.
 
+### Dynamic VPN Management
+- **Dynamic VPN Management**: Enables controller-managed Gluetun nodes provisioned at runtime from credential pool.
+- **Providers**: Preferred VPN providers for dynamic provisioning.
+- **Protocol**: `wireguard` or `openvpn`.
+- **Regions**: Placement filters (countries/cities/regions/hostnames).
+- **Credentials**: Finite credential pool used for lease-based VPN node provisioning.
+- **Preferred Engines per VPN**: Density target used by the controller to compute desired VPN count.
+
+When dynamic VPN management is enabled, desired VPN nodes are computed as:
+
+- `Required_VPNs = ceil(Total_Engines / Preferred_Engines_Per_VPN)`
+- `Desired_VPNs = min(Required_VPNs, Total_Credentials)`
+
+If engine demand exceeds credential capacity, engine density per VPN increases automatically (dynamic density behavior).
+
 ---
 
 ## Proxy Settings
@@ -91,7 +106,7 @@ A ready-to-use template with all variables is provided in [`.env.example`](../.e
 | `APP_PORT` | `8000` | Port the orchestrator API listens on inside the container. |
 | `DOCKER_NETWORK` | *(none)* | Docker network to attach engine containers to. |
 | `CONTAINER_LABEL` | `ondemand.app=myservice` | Docker label (`key=value`) applied to managed engine containers. |
-| `DB_URL` | `sqlite:///./orchestrator.db` | SQLAlchemy database URL. |
+| `DB_URL` | `sqlite:///.../app/config/orchestrator.db` | SQLAlchemy database URL. Default resolves to the repository `app/config/orchestrator.db` path (inside container: `/app/app/config/orchestrator.db`), so runtime settings persist on the mounted `./config` volume without extra compose configuration. |
 | `AUTO_DELETE` | `true` | Delete idle engines automatically when `IDLE_TTL_S` elapses. |
 | `M3U_TIMEOUT` | `15` | Seconds to wait when fetching an M3U playlist. |
 | `DEBUG_MODE` | `false` | **[UI]** Enable verbose debug logging. |
@@ -132,12 +147,15 @@ A ready-to-use template with all variables is provided in [`.env.example`](../.e
 
 ### VPN (Gluetun)
 
+Orchestrator-managed dynamic VPN provisioning is the recommended mode.
+
 | Variable | Default | Description |
 |---|---|---|
-| `VPN_MODE` | `single` | **[UI]** `single` or `redundant`. |
-| `GLUETUN_CONTAINER_NAME` | *(none)* | **[UI]** Primary Gluetun container name. |
-| `GLUETUN_CONTAINER_NAME_2` | *(none)* | **[UI]** Secondary Gluetun container name (redundant mode). |
-| `GLUETUN_API_PORT` | `8001` | **[UI]** Host port of Gluetun's HTTP control server. Must match `HTTP_CONTROL_SERVER_ADDRESS`. |
+| `DYNAMIC_VPN_MANAGEMENT` | `true` | **[UI]** Compatibility key; runtime enforces dynamic Gluetun node lifecycle. |
+| `VPN_PROVIDER` | `protonvpn` | **[UI]** Default provider for dynamic VPN nodes. |
+| `VPN_PROTOCOL` | `wireguard` | **[UI]** Default protocol for dynamic VPN nodes (`wireguard` or `openvpn`). |
+| `PREFERRED_ENGINES_PER_VPN` | `10` | **[UI]** Target engines per dynamic VPN node; controller scales node count from this density. |
+| `GLUETUN_API_PORT` | `8001` | **[UI]** Control-server port used by the orchestrator to query Gluetun nodes. |
 | `GLUETUN_HEALTH_CHECK_INTERVAL_S` | `5` | **[UI]** Seconds between Gluetun health polls. |
 | `GLUETUN_PORT_CACHE_TTL_S` | `60` | **[UI]** Seconds to cache the forwarded port value. |
 | `VPN_RESTART_ENGINES_ON_RECONNECT` | `true` | **[UI]** Restart VPN-attached engines when the VPN reconnects. |
@@ -188,7 +206,7 @@ A ready-to-use template with all variables is provided in [`.env.example`](../.e
 | Variable | Default | Description |
 |---|---|---|
 | `PROXY_STREAM_MODE` | `TS` | **[UI]** Stream delivery mode: `TS` (MPEG-TS) or `HLS`. |
-| `PROXY_CONTROL_MODE` | `http` | **[UI]** Stream control path: `http` or `api`. Legacy aliases (`LEGACY_HTTP`, `LEGACY_API`) are accepted and normalized. |
+| `PROXY_CONTROL_MODE` | `api` | **[UI]** Stream control path: `http` or `api`. Legacy aliases (`LEGACY_HTTP`, `LEGACY_API`) are accepted and normalized. |
 | `PROXY_LEGACY_API_PREFLIGHT_TIER` | `light` | **[UI]** Preflight depth: `light` (resolve only) or `deep` (resolve + probe + stop). |
 | `PROXY_CONNECTION_TIMEOUT` | `10` | Seconds before a connection attempt to an engine times out. |
 | `PROXY_CLIENT_WAIT_TIMEOUT` | `30` | Seconds a client waits for an engine to accept the stream. |

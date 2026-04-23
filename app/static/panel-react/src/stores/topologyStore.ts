@@ -7,7 +7,7 @@ import type {
   VpnStatusPayload,
 } from '@/types/orchestrator'
 
-export type TunnelId = 'vpn1' | 'vpn2'
+export type TunnelId = string
 export type TopologyNodeKind = 'vpn' | 'engine' | 'proxy' | 'client'
 export type TopologyNodeHealth = 'healthy' | 'degraded' | 'down'
 
@@ -17,11 +17,17 @@ export interface TopologyNodeData {
   subtitle: string
   health: TopologyNodeHealth
   bandwidthMbps: number
+  bandwidthKbps?: number
   uploadMbps?: number
+  uploadKbps?: number
   proxyIngressMbps?: number
+  proxyIngressKbps?: number
   streamCount: number
   vpnTunnel?: TunnelId
+  lifecycle?: 'active' | 'draining'
+  forwarded?: boolean
   failoverActive?: boolean
+  load?: number
   metadata?: Record<string, string | number | boolean | null>
 }
 
@@ -31,7 +37,7 @@ export interface TopologySummary {
   activeStreams: number
   activeClients: number
   failoverEngines: number
-  vpnDown: TunnelId[]
+  vpnDown: string[]
 }
 
 export interface TopologyInputSnapshot {
@@ -48,7 +54,6 @@ interface TopologyState {
   selectedNodeId: string | null
   lastUpdated: string | null
   isMockMode: boolean
-  initializeMock: () => void
   hydrateFromBackend: (snapshot: TopologyInputSnapshot) => void
   simulateTick: () => void
   setSelectedNode: (nodeId: string | null) => void
@@ -78,19 +83,116 @@ const jitter = (value: number, ratio = 0.16, floor = 0): number => {
   return Math.max(floor, value + randomBetween(-delta, delta))
 }
 
+const INTERPOLATION_ALPHA = 0.35
+const INTERPOLATION_EPSILON = 0.05
+const FLOW_DEADBAND_Mbps = 0.35
+const EDGE_FLOW_ACTIVATE_THRESHOLD_Mbps = 0.12
+const EDGE_FLOW_DEACTIVATE_THRESHOLD_Mbps = 0.05
+
+type NodeFlowTarget = {
+  bandwidthMbps: number
+  uploadMbps?: number
+  proxyIngressMbps?: number
+}
+
+type EdgeFlowTarget = {
+  bandwidthMbps: number
+  uploadMbps?: number
+}
+
+const shouldBypassEdgeSmoothing = (
+  sourceKind: TopologyNodeKind | undefined,
+  targetKind: TopologyNodeKind | undefined,
+): boolean => {
+  return (
+    (sourceKind === 'vpn' && targetKind === 'engine') ||
+    (sourceKind === 'engine' && targetKind === 'proxy') ||
+    (sourceKind === 'proxy' && targetKind === 'client')
+  )
+}
+
+const nodeInterpolationTargets = new Map<string, NodeFlowTarget>()
+const edgeInterpolationTargets = new Map<string, EdgeFlowTarget>()
+
+const interpolateNumber = (current: number, target: number, alpha = INTERPOLATION_ALPHA): number => {
+  const next = current + (target - current) * alpha
+  return Math.abs(target - next) <= INTERPOLATION_EPSILON ? target : next
+}
+
+const applyDeadband = (
+  current: number | undefined,
+  target: number | undefined,
+  threshold = FLOW_DEADBAND_Mbps,
+): number | undefined => {
+  if (typeof target !== 'number') return undefined
+  if (typeof current !== 'number') return target
+  return Math.abs(target - current) < threshold ? current : target
+}
+
+const shouldBypassNodeSmoothing = (kind: TopologyNodeKind | undefined): boolean => {
+  return kind === 'vpn' || kind === 'proxy'
+}
+
+const resolveEdgeFlowActive = (
+  previousActive: boolean,
+  currentTotalMbps: number,
+): boolean => {
+  if (previousActive) {
+    return currentTotalMbps > EDGE_FLOW_DEACTIVATE_THRESHOLD_Mbps
+  }
+  return currentTotalMbps > EDGE_FLOW_ACTIVATE_THRESHOLD_Mbps
+}
+
 
 const formatCompactId = (id: string): string => {
   if (!id) return 'unknown'
   return id.length > 12 ? id.slice(0, 12) : id
 }
 
+type VpnNodeDescriptor = {
+  id: string
+  title: string
+  subtitle: string
+  connected: boolean
+  lifecycle: 'active' | 'draining'
+  publicIp: string | null
+  provider: string | null
+  country: string | null
+  assignedHostname?: string | null
+  load?: number | null
+}
+
+const normalizeLifecycle = (value: unknown): 'active' | 'draining' => {
+  return String(value || '').trim().toLowerCase() === 'draining' ? 'draining' : 'active'
+}
+
+const isTruthyConnection = (value: unknown): boolean => {
+  if (typeof value === 'boolean') return value
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized === 'true' || normalized === 'running' || normalized === 'healthy' || normalized === 'ready'
+}
+
+const stableTunnelFromEngineIdentity = (engine: EngineState, tunnelIds: string[]): TunnelId => {
+  const fallbackIds = tunnelIds.length > 0 ? tunnelIds : ['vpn1', 'vpn2']
+  const identity = `${engine.container_id || ''}:${engine.container_name || ''}`
+  let hash = 0
+  for (let i = 0; i < identity.length; i += 1) {
+    hash = ((hash * 31) + identity.charCodeAt(i)) >>> 0
+  }
+  return fallbackIds[hash % fallbackIds.length]
+}
+
 const inferTunnelFromEngine = (
   engine: EngineState,
   index: number,
+  knownTunnelIds: string[],
   vpnStatus?: VpnStatusPayload | null,
 ): TunnelId => {
   const raw = String(engine.vpn_container || '').trim()
   const vpnName = raw.toLowerCase()
+
+  const exactMatch = knownTunnelIds.find((id) => id.toLowerCase() === vpnName)
+  if (exactMatch) return exactMatch
 
   const vpn1Candidates = [
     vpnStatus?.vpn1?.container_name,
@@ -107,49 +209,167 @@ const inferTunnelFromEngine = (
     .map((value) => value.trim().toLowerCase())
 
   // Prefer explicit backend identity over heuristic naming.
-  if (vpn1Candidates.includes(vpnName)) return 'vpn1'
-  if (vpn2Candidates.includes(vpnName)) return 'vpn2'
+  if (vpn1Candidates.includes(vpnName) && knownTunnelIds.length > 0) return knownTunnelIds[0]
+  if (vpn2Candidates.includes(vpnName) && knownTunnelIds.length > 1) return knownTunnelIds[1]
 
   // Fallback heuristics for legacy/custom names.
-  if (vpnName.includes('secondary') || vpnName.includes('backup') || vpnName.includes('vpn2')) {
-    return 'vpn2'
+  if ((vpnName.includes('secondary') || vpnName.includes('backup') || vpnName.includes('vpn2')) && knownTunnelIds.length > 1) {
+    return knownTunnelIds[1]
   }
-  if (vpnName.includes('primary') || vpnName.includes('main') || vpnName.includes('vpn1')) {
-    return 'vpn1'
+  if ((vpnName.includes('primary') || vpnName.includes('main') || vpnName.includes('vpn1')) && knownTunnelIds.length > 0) {
+    return knownTunnelIds[0]
   }
 
-  return index % 2 === 0 ? 'vpn1' : 'vpn2'
+  // Use index as entropy to spread unassigned engines in larger dynamic pools.
+  const stable = stableTunnelFromEngineIdentity(engine, knownTunnelIds)
+  if (knownTunnelIds.length === 0) return stable
+  const stableIndex = knownTunnelIds.indexOf(stable)
+  if (stableIndex === -1) return knownTunnelIds[index % knownTunnelIds.length]
+  return knownTunnelIds[(stableIndex + index) % knownTunnelIds.length]
 }
 
-const deriveTunnelConnectivity = (
+const extractVpnNodes = (
   vpnStatus: VpnStatusPayload | null | undefined,
-  hasRealData: boolean,
-): Record<TunnelId, boolean> => {
-  if (!vpnStatus) {
-    if (hasRealData) {
-      return { vpn1: true, vpn2: true }
-    }
-    // Demo mode intentionally starts with VPN1 down to showcase failover behavior.
-    return { vpn1: false, vpn2: true }
+  orchestratorStatus: OrchestratorStatusResponse | null | undefined,
+  engines: EngineState[],
+  isMockMode: boolean,
+): VpnNodeDescriptor[] => {
+  const nodes: VpnNodeDescriptor[] = []
+  const seen = new Set<string>()
+
+  const hasVpnIdentity = (rawNode: Record<string, unknown>): boolean => {
+    const identity = rawNode.container_name || rawNode.container || rawNode.name || rawNode.id
+    return Boolean(String(identity || '').trim())
   }
 
-  if (vpnStatus.mode === 'disabled') {
-    return { vpn1: true, vpn2: true }
+  const hasMeaningfulSignals = (rawNode: Record<string, unknown>): boolean => {
+    const signalKeys = [
+      'connected',
+      'healthy',
+      'condition',
+      'status',
+      'lifecycle',
+      'public_ip',
+      'provider',
+      'country',
+    ]
+
+    return signalKeys.some((key) => {
+      const value = rawNode[key]
+      if (value == null) return false
+      if (typeof value === 'string') return value.trim().length > 0
+      return true
+    })
   }
 
-  if (vpnStatus.mode === 'single') {
-    return { vpn1: Boolean(vpnStatus.vpn1?.connected), vpn2: true }
+  const upsert = (rawNode: Record<string, unknown>, indexHint: number) => {
+    const name = String(rawNode.container_name || rawNode.container || rawNode.name || rawNode.id || '').trim()
+    if (!name || seen.has(name)) return
+
+    seen.add(name)
+    const connected = isTruthyConnection(rawNode.connected ?? rawNode.healthy ?? rawNode.condition ?? rawNode.status)
+    const provider = rawNode.provider == null ? null : String(rawNode.provider)
+    const country = rawNode.country == null ? null : String(rawNode.country)
+
+    nodes.push({
+      id: name,
+      title: `VPN ${indexHint + 1}`,
+      subtitle: name,
+      connected,
+      lifecycle: normalizeLifecycle(rawNode.lifecycle),
+      publicIp: rawNode.public_ip == null ? null : String(rawNode.public_ip),
+      provider,
+      country,
+      assignedHostname: rawNode.assigned_hostname == null ? null : String(rawNode.assigned_hostname),
+      load: typeof rawNode.load === 'number' ? rawNode.load : null,
+    })
   }
 
-  return {
-    vpn1: Boolean(vpnStatus.vpn1?.connected),
-    vpn2: Boolean(vpnStatus.vpn2?.connected),
+  const vpnStatusAny = (vpnStatus || {}) as Record<string, unknown>
+  const orchestratorAny = (orchestratorStatus || {}) as Record<string, unknown>
+
+  const explicitNodeLists = [
+    vpnStatusAny.vpn_nodes,
+    vpnStatusAny.nodes,
+    (orchestratorAny.vpn as Record<string, unknown> | undefined)?.nodes,
+    orchestratorAny.vpn_nodes,
+  ]
+
+  for (const source of explicitNodeLists) {
+    if (!Array.isArray(source)) continue
+    source.forEach((rawNode, idx) => {
+      if (rawNode && typeof rawNode === 'object') {
+        upsert(rawNode as Record<string, unknown>, nodes.length + idx)
+      }
+    })
   }
+
+  if (nodes.length === 0 && vpnStatus && vpnStatus.mode !== 'disabled') {
+    const legacyNodes = [vpnStatus.vpn1, vpnStatus.vpn2].filter(Boolean)
+    legacyNodes.forEach((legacyNode, idx) => {
+      const legacyRaw = legacyNode as Record<string, unknown>
+      if (!hasVpnIdentity(legacyRaw) && !hasMeaningfulSignals(legacyRaw)) {
+        return
+      }
+
+      upsert(
+        {
+          container_name: legacyNode?.container_name || legacyNode?.container,
+          connected: legacyNode?.connected,
+          lifecycle: (legacyNode as Record<string, unknown>)?.lifecycle,
+          public_ip: legacyNode?.public_ip,
+          provider: legacyNode?.provider,
+          country: legacyNode?.country,
+          assigned_hostname: legacyNode?.assigned_hostname,
+          load: (legacyNode as Record<string, unknown>)?.load,
+        },
+        nodes.length + idx,
+      )
+    })
+  }
+
+  if (nodes.length === 0 && (!vpnStatus || vpnStatus.mode !== 'disabled')) {
+    const vpnNames = Array.from(
+      new Set(
+        engines
+          .map((engine) => String(engine.vpn_container || '').trim())
+          .filter(Boolean),
+      ),
+    )
+    vpnNames.forEach((name, idx) => {
+      upsert({ container_name: name, connected: true, lifecycle: 'active' }, idx)
+    })
+  }
+
+  if (nodes.length === 0 && isMockMode) {
+    upsert({ container_name: 'vpn1', connected: false, lifecycle: 'active' }, 0)
+    upsert({ container_name: 'vpn2', connected: true, lifecycle: 'active' }, 1)
+  }
+
+  return nodes
 }
 
-const toMbps = (speedMaybe: number | null | undefined): number => {
-  if (speedMaybe == null || Number.isNaN(speedMaybe)) return 0
-  return (speedMaybe * 8) / 1000
+const toMbps = (kbpsMaybe: number | null | undefined): number => {
+  if (kbpsMaybe == null || Number.isNaN(kbpsMaybe)) return 0
+  // AceStream reports speed in KB/s. kbps * 8 = kbits/s. / 1000 = Mbps.
+  return (kbpsMaybe * 8) / 1000
+}
+
+/**
+ * Robustly formats a throughput value in both KB/s and Mbps.
+ */
+export const formatThroughputDual = (kbps: number | null | undefined): string => {
+  if (kbps == null || Number.isNaN(kbps) || kbps <= 0) return '0 KB/s'
+  const mbps = (kbps * 8) / 1000
+  
+  let kbpsPart: string
+  if (kbps >= 1000) {
+    kbpsPart = `${(kbps / 1024).toFixed(1)} MB/s`
+  } else {
+    kbpsPart = `${Math.round(kbps)} KB/s`
+  }
+
+  return `${kbpsPart} | ${mbps.toFixed(1)} Mbps`
 }
 
 // EMA smoothing to prevent pipes from flashing to 0 during burst waits
@@ -179,54 +399,11 @@ const buildSnapshot = (
   lastUpdated: string
   isMockMode: boolean
 } => {
-  const isMockMode = !Boolean(engines && engines.length)
+  const isMockMode = false
 
-  const workingEngines: EngineState[] = !isMockMode
-    ? engines || []
-    : Array.from({ length: 8 }).map((_, idx) => {
-        const tunnel = idx % 2 === 0 ? 'vpn1' : 'vpn2'
-        return {
-          container_id: `mock-engine-${idx + 1}`,
-          container_name: `engine-${idx + 1}`,
-          host: '127.0.0.1',
-          port: 6878 + idx,
-          labels: {},
-          forwarded: false,
-          first_seen: new Date(Date.now() - (idx + 1) * 120000).toISOString(),
-          last_seen: new Date().toISOString(),
-          streams: [],
-          health_status: 'healthy',
-          vpn_container: tunnel,
-        }
-      })
+  const workingEngines: EngineState[] = engines || []
 
-  const workingStreams: StreamState[] = !isMockMode
-    ? streams || []
-    : workingEngines.flatMap((engine, idx) => {
-        const streamCount = idx % 3 === 0 ? 2 : 1
-        return Array.from({ length: streamCount }).map((__, streamIdx) => ({
-          id: `mock-stream-${idx + 1}-${streamIdx + 1}`,
-          key_type: 'infohash',
-          key: `3d2b7cfae9aa${idx}${streamIdx}`,
-          file_indexes: '0',
-          seekback: 0,
-          live_delay: 0,
-          container_id: engine.container_id,
-          container_name: engine.container_name,
-          playback_session_id: `session-${idx + 1}-${streamIdx + 1}`,
-          stat_url: `http://127.0.0.1:${engine.port}/webui/api/service`,
-          command_url: `http://127.0.0.1:${engine.port}/ace/getstream`,
-          is_live: true,
-          started_at: new Date(Date.now() - randomBetween(20000, 120000)).toISOString(),
-          status: 'started',
-          paused: false,
-          peers: Math.round(randomBetween(12, 78)),
-          speed_down: Math.round(randomBetween(12, 95) * 1024),
-          speed_up: Math.round(randomBetween(2, 11) * 1024),
-          downloaded: Math.round(randomBetween(12, 480) * 1024 * 1024),
-          uploaded: Math.round(randomBetween(2, 50) * 1024 * 1024),
-        }))
-      })
+  const workingStreams: StreamState[] = streams || []
 
   const streamMap = new Map<string, StreamState[]>()
   for (const stream of workingStreams) {
@@ -235,102 +412,199 @@ const buildSnapshot = (
     streamMap.set(stream.container_id, entry)
   }
 
-  const tunnelConnectivity = deriveTunnelConnectivity(vpnStatus, !isMockMode)
-  const vpnDown = (Object.entries(tunnelConnectivity)
-    .filter(([, connected]) => !connected)
-    .map(([id]) => id)) as TunnelId[]
-
   const nodes: Node<TopologyNodeData>[] = []
   const edges: Edge[] = []
-
-  const isVpnDisabledMode = vpnStatus?.mode === 'disabled'
-  const vpn1NodeId = 'vpn1'
-  const vpn2NodeId = 'vpn2'
   const internetNodeId = 'internet'
   const proxyNodeId = 'proxy-core'
+  const vpnStatusAny = (vpnStatus || {}) as Record<string, unknown>
+  const directPublicIp = String(vpnStatusAny.public_ip || '').trim()
 
   const failoverEngines: string[] = []
+  const previousEdgeFlowById = new Map<string, boolean>()
+  
+  // Robustly resolve which streams belong to which engine, handling ID prefix matches (short vs long) and name fallbacks.
+  const resolveStreamsForEngine = (engine: EngineState): StreamState[] => {
+    // 1. Exact match by containerId (preferred)
+    const direct = streamMap.get(engine.container_id)
+    if (direct) return direct
 
-  // 1. Sort engines so active ones are prioritized at the top
+    // 2. Exact match by containerName
+    if (engine.container_name) {
+      const byName = streamMap.get(engine.container_name)
+      if (byName) return byName
+    }
+
+    // 3. Prefix match (short ID vs long ID)
+    if (engine.container_id.length >= 12) {
+      const shortId = engine.container_id.substring(0, 12)
+      for (const [id, sList] of streamMap.entries()) {
+        if (id.startsWith(shortId) || shortId.startsWith(id.substring(0, 12))) {
+          return sList
+        }
+      }
+    }
+
+    // 4. Fallback search by stream containerName
+    if (engine.container_name) {
+      for (const [id, sList] of streamMap.entries()) {
+        if (sList[0]?.container_name === engine.container_name) {
+          return sList
+        }
+      }
+    }
+
+    return []
+  }
+
+  if (prevState) {
+    prevState.edges.forEach((edge) => {
+      previousEdgeFlowById.set(edge.id, edge.data?.flowActive === true)
+    })
+  }
+
+  const vpnNodes = extractVpnNodes(vpnStatus, orchestratorStatus, workingEngines, isMockMode)
+  const tunnelConnectivity: Record<string, boolean> = {}
+  const vpnLifecycleByTunnel: Record<string, 'active' | 'draining'> = {}
+  for (const node of vpnNodes) {
+    tunnelConnectivity[node.id] = node.connected
+    vpnLifecycleByTunnel[node.id] = node.lifecycle
+  }
+
+  const isVpnDisabledMode = vpnNodes.length === 0
+  const tunnelOrder = isVpnDisabledMode ? [internetNodeId] : vpnNodes.map((node) => node.id)
+  const vpnDown = Object.entries(tunnelConnectivity)
+    .filter(([, connected]) => !connected)
+    .map(([id]) => id)
+
+  const previousEngineOrder = new Map<string, number>()
+  if (prevState) {
+    prevState.nodes
+      .filter((node) => node.data?.kind === 'engine')
+      .forEach((node, index) => {
+        previousEngineOrder.set(node.id, index)
+      })
+  }
+
   const engineStats = workingEngines.map((engine) => {
-    const engineStreams = streamMap.get(engine.container_id) || []
-    const streamMeasuredDownMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_down), 0)
-    const streamMeasuredUpMbps = engineStreams.reduce((sum, stream) => sum + toMbps(stream.speed_up), 0)
-    const reportedTotalDownMbps = toMbps(engine.total_speed_down)
-    const reportedTotalUpMbps = toMbps(engine.total_speed_up)
+    const engineStreams = resolveStreamsForEngine(engine)
+    const streamMeasuredDownKbps = engineStreams.reduce((sum, stream) => sum + (stream.speed_down || 0), 0)
+    const streamMeasuredUpKbps = engineStreams.reduce((sum, stream) => sum + (stream.speed_up || 0), 0)
+    
+    const reportedTotalDownKbps = engine.total_speed_down || 0
+    const reportedTotalUpKbps = engine.total_speed_up || 0
 
     // Prefer backend aggregates when available: they include monitor-session STATUS traffic.
-    const measuredDownMbps = Math.max(streamMeasuredDownMbps, reportedTotalDownMbps)
-    const measuredUpMbps = Math.max(streamMeasuredUpMbps, reportedTotalUpMbps)
+    const measuredDownKbps = Math.max(streamMeasuredDownKbps, reportedTotalDownKbps)
+    const measuredUpKbps = Math.max(streamMeasuredUpKbps, reportedTotalUpKbps)
+    
+    const measuredDownMbps = toMbps(measuredDownKbps)
+    const measuredUpMbps = toMbps(measuredUpKbps)
+
     return {
       engine,
       streamCount: engineStreams.length,
       measuredMbps: measuredDownMbps, // used for sorting
-      streamMeasuredDownMbps,
-      streamMeasuredUpMbps,
+      streamMeasuredDownMbps: toMbps(streamMeasuredDownKbps),
       measuredDownMbps,
       measuredUpMbps,
+      measuredDownKbps,
+      measuredUpKbps,
     }
-  }).sort((a, b) => {
-    if (b.streamCount !== a.streamCount) return b.streamCount - a.streamCount
-    if (b.measuredMbps !== a.measuredMbps) return b.measuredMbps - a.measuredMbps
-    return (a.engine.container_name || '').localeCompare(b.engine.container_name || '')
   })
 
-  const isVpnClusterMode = Boolean(vpnStatus && vpnStatus.mode !== 'disabled')
+  // Keep engine placement stable across updates to prevent pipes appearing to jump between engines.
+  engineStats.sort((a, b) => {
+    const aPrev = previousEngineOrder.get(a.engine.container_id)
+    const bPrev = previousEngineOrder.get(b.engine.container_id)
+
+    if (aPrev !== undefined && bPrev !== undefined) return aPrev - bPrev
+    if (aPrev !== undefined) return -1
+    if (bPrev !== undefined) return 1
+
+    const aName = a.engine.container_name || a.engine.container_id || ''
+    const bName = b.engine.container_name || b.engine.container_id || ''
+    return aName.localeCompare(bName)
+  })
+
+  const isVpnClusterMode = !isVpnDisabledMode
+  const knownTunnelIds = isVpnDisabledMode ? [] : tunnelOrder
   const engineStatsWithTunnel = engineStats.map((entry, index) => ({
     ...entry,
-    assignedTunnel: vpnStatus?.mode === 'single' ? 'vpn1' : inferTunnelFromEngine(entry.engine, index, vpnStatus),
+    assignedTunnel: isVpnDisabledMode
+      ? internetNodeId
+      : inferTunnelFromEngine(entry.engine, index, knownTunnelIds, vpnStatus),
   }))
 
-  // 2. Define Staggered Grid properties
+  const normalizedEngineStats = engineStatsWithTunnel.map((entry, index) => {
+    if (isVpnDisabledMode) return entry
+    const assignedTunnel = knownTunnelIds.includes(entry.assignedTunnel)
+      ? entry.assignedTunnel
+      : knownTunnelIds[index % knownTunnelIds.length]
+    return {
+      ...entry,
+      assignedTunnel,
+    }
+  })
+
   const NUM_COLUMNS = isVpnClusterMode
     ? Math.max(1, Math.min(2, Math.ceil(engineStats.length / 8)))
     : Math.max(1, Math.min(3, Math.ceil(engineStats.length / 6)))
-  const COLUMN_SPACING_X = 340   // 210px node width + 130px gap for pipes and labels
-  const STAGGERED_ROW_SPACING_Y = 140 // Enough vertical space for the node + a gap for horizontal pipes
-  const CLUSTER_GAP_Y = 220 // The vertical space between the bottom of VPN1 and top of VPN2
+  const COLUMN_SPACING_X = 340
+  const STAGGERED_ROW_SPACING_Y = 140
+  const CLUSTER_GAP_Y = 220
 
   const engineStartX = 350
   const engineStartY = 80
 
-  const enginesPerTunnel = engineStatsWithTunnel.reduce(
+  const enginesPerTunnel = normalizedEngineStats.reduce(
     (acc, item) => {
-      acc[item.assignedTunnel] += 1
+      acc[item.assignedTunnel] = (acc[item.assignedTunnel] || 0) + 1
       return acc
     },
-    { vpn1: 0, vpn2: 0 } as Record<TunnelId, number>,
+    {} as Record<string, number>,
   )
 
-  // Calculate bounding boxes for the clusters
-  const vpn1StartY = engineStartY
-  const vpn1Height = Math.max(0, enginesPerTunnel.vpn1 - 1) * STAGGERED_ROW_SPACING_Y
-  const vpn1CenterY = vpn1StartY + (vpn1Height / 2)
+  const tunnelLayout = new Map<string, { startY: number; centerY: number; cols: number; rows: number; height: number }>()
+  let tunnelCursorY = engineStartY
 
-  // VPN2 starts below VPN1
-  const vpn2StartY = vpn1StartY + vpn1Height + CLUSTER_GAP_Y
-  const vpn2Height = Math.max(0, enginesPerTunnel.vpn2 - 1) * STAGGERED_ROW_SPACING_Y
-  const vpn2CenterY = vpn2StartY + (vpn2Height / 2)
+  for (const tunnelId of tunnelOrder) {
+    const tunnelEngineCount = Math.max(0, Number(enginesPerTunnel[tunnelId] || 0))
+    const height = Math.max(0, tunnelEngineCount - 1) * STAGGERED_ROW_SPACING_Y
 
-  const tunnelClusterStartY = {
-    vpn1: vpn1StartY,
-    vpn2: vpn2StartY,
+    tunnelLayout.set(tunnelId, {
+      startY: tunnelCursorY,
+      centerY: tunnelCursorY + (height / 2),
+      cols: NUM_COLUMNS,
+      rows: tunnelEngineCount,
+      height,
+    })
+
+    tunnelCursorY += height + (isVpnClusterMode ? CLUSTER_GAP_Y : 0)
   }
 
-  // Center Y for downstream nodes (Proxy, Clients) spans the entire height.
-  // In VPN-disabled mode we center against the single staggered engine corridor.
-  const isSingleVpn = vpnStatus?.mode === 'single'
-  const totalHeight = isVpnClusterMode
-    ? (isSingleVpn ? vpn1Height : (vpn2StartY + vpn2Height) - engineStartY)
-    : Math.max(0, engineStats.length - 1) * STAGGERED_ROW_SPACING_Y
-  const centerY = engineStartY + (totalHeight / 2)
+  const tunnelSpan = Math.max(
+    0,
+    tunnelCursorY - engineStartY - (isVpnClusterMode ? CLUSTER_GAP_Y : 0),
+  )
+  const centerY = engineStartY + (tunnelSpan / 2)
 
-  const tunnelLocalIndex: Record<TunnelId, number> = {
-    vpn1: 0,
-    vpn2: 0,
-  }
+  const tunnelLocalIndex: Record<string, number> = {}
+  const statsByTunnel: Record<string, { downMbps: number; upMbps: number; downKbps: number; upKbps: number; streams: number }> = {}
+
+  normalizedEngineStats.forEach((entry) => {
+    const tid = entry.assignedTunnel
+    if (!statsByTunnel[tid]) {
+      statsByTunnel[tid] = { downMbps: 0, upMbps: 0, downKbps: 0, upKbps: 0, streams: 0 }
+    }
+    statsByTunnel[tid].downMbps += entry.measuredDownMbps
+    statsByTunnel[tid].upMbps += entry.measuredUpMbps
+    statsByTunnel[tid].downKbps += entry.measuredDownKbps
+    statsByTunnel[tid].upKbps += entry.measuredUpKbps
+    statsByTunnel[tid].streams += entry.streamCount
+  })
 
   if (isVpnDisabledMode) {
+    const total = statsByTunnel[internetNodeId] || { downMbps: 0, upMbps: 0, downKbps: 0, upKbps: 0, streams: 0 }
     nodes.push({
       id: internetNodeId,
       type: 'topologyNode',
@@ -340,64 +614,63 @@ const buildSnapshot = (
         title: 'Internet',
         subtitle: 'Direct egress (VPN disabled)',
         health: 'healthy',
-        bandwidthMbps: isMockMode ? randomBetween(180, 260) : 0,
-        streamCount: 0,
+        bandwidthMbps: isMockMode ? randomBetween(180, 260) : total.downMbps,
+        bandwidthKbps: total.downKbps,
+        uploadMbps: isMockMode ? randomBetween(20, 80) : total.upMbps,
+        uploadKbps: total.upKbps,
+        streamCount: total.streams,
+        lifecycle: 'active',
         metadata: {
           connected: true,
-          publicIp: 'Direct route',
+          publicIp: directPublicIp || 'Unavailable',
           provider: 'WAN',
           country: null,
         },
       },
     })
   } else {
-    nodes.push({
-      id: vpn1NodeId,
-      type: 'topologyNode',
-      position: { x: -240, y: vpn1CenterY },
-      data: {
-        kind: 'vpn',
-        title: 'VPN Tunnel A',
-        subtitle: vpnStatus?.vpn1?.container_name || 'gluetun-primary',
-        health: tunnelConnectivity.vpn1 ? 'healthy' : 'down',
-        bandwidthMbps: isMockMode ? randomBetween(120, 210) : 0,
-        streamCount: 0,
-        metadata: {
-          connected: tunnelConnectivity.vpn1,
-          publicIp: vpnStatus?.vpn1?.public_ip || '185.102.112.44',
-          provider: vpnStatus?.vpn1?.provider || 'ProtonVPN',
-          country: vpnStatus?.vpn1?.country || null,
-        },
-      },
-    })
+    vpnNodes.forEach((vpnNode, idx) => {
+      const layout = tunnelLayout.get(vpnNode.id)
+      const health: TopologyNodeHealth = !vpnNode.connected
+        ? 'down'
+        : vpnNode.lifecycle === 'draining'
+          ? 'degraded'
+          : 'healthy'
 
-    if (vpnStatus?.mode !== 'single') {
+      const total = statsByTunnel[vpnNode.id] || { downMbps: 0, upMbps: 0, downKbps: 0, upKbps: 0, streams: 0 }
+
       nodes.push({
-        id: vpn2NodeId,
+        id: vpnNode.id,
         type: 'topologyNode',
-        position: { x: -240, y: vpn2CenterY },
+        position: { x: -240, y: layout?.centerY ?? (engineStartY + (idx * CLUSTER_GAP_Y)) },
         data: {
           kind: 'vpn',
-          title: 'VPN Tunnel B',
-          subtitle: vpnStatus?.vpn2?.container_name || 'gluetun-secondary',
-          health: tunnelConnectivity.vpn2 ? 'healthy' : 'down',
-          bandwidthMbps: isMockMode ? randomBetween(90, 180) : 0,
-          streamCount: 0,
-          failoverActive: !tunnelConnectivity.vpn1 && tunnelConnectivity.vpn2,
+          title: vpnNode.title,
+          subtitle: vpnNode.subtitle,
+          health,
+          bandwidthMbps: isMockMode ? randomBetween(90, 210) : total.downMbps,
+          bandwidthKbps: total.downKbps,
+          uploadMbps: isMockMode ? randomBetween(10, 50) : total.upMbps,
+          uploadKbps: total.upKbps,
+          streamCount: total.streams,
+          lifecycle: vpnNode.lifecycle,
+          load: vpnNode.load ?? undefined,
           metadata: {
-            connected: tunnelConnectivity.vpn2,
-            publicIp: vpnStatus?.vpn2?.public_ip || '79.127.210.63',
-            provider: vpnStatus?.vpn2?.provider || 'Mullvad',
-            country: vpnStatus?.vpn2?.country || null,
+            connected: vpnNode.connected,
+            publicIp: vpnNode.publicIp,
+            provider: vpnNode.provider,
+            country: vpnNode.country,
+            assignedHostname: vpnNode.assignedHostname,
+            lifecycle: vpnNode.lifecycle,
           },
         },
       })
-    }
+    })
   }
 
-  // 3. Process the nodes using the Zig-Zag Staggered Corridor pattern
-  engineStatsWithTunnel.forEach(({ engine, streamCount, measuredMbps, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, assignedTunnel }, index) => {
-    const engineStreams = streamMap.get(engine.container_id) || []
+  // 3. Process engine nodes with stable staggered lanes
+  normalizedEngineStats.forEach(({ engine, streamCount, streamMeasuredDownMbps, measuredDownMbps, measuredUpMbps, measuredDownKbps, measuredUpKbps, assignedTunnel }, index) => {
+    const engineStreams = resolveStreamsForEngine(engine)
     const monitorStreamCount = Math.max(
       0,
       Number(
@@ -407,33 +680,30 @@ const buildSnapshot = (
     )
     const hasMonitoringSession = monitorStreamCount > 0
 
-    let colIndex: number
-    let currentX: number
-    let currentY: number
-    if (isVpnClusterMode) {
-      const localIndex = tunnelLocalIndex[assignedTunnel]
-      tunnelLocalIndex[assignedTunnel] += 1
+    const localIndex = tunnelLocalIndex[assignedTunnel] || 0
+    tunnelLocalIndex[assignedTunnel] = localIndex + 1
 
-      colIndex = localIndex % NUM_COLUMNS
-      currentX = engineStartX + (colIndex * COLUMN_SPACING_X)
-      // The magic trick: multiply by localIndex directly to guarantee unique Ys inside the cluster
-      currentY = tunnelClusterStartY[assignedTunnel] + (localIndex * STAGGERED_ROW_SPACING_Y)
-    } else {
-      // Determine column (0, 1, 2, 0, 1, 2...)
-      colIndex = index % NUM_COLUMNS
-      // Calculate positions — every index gets a unique Y, creating dedicated horizontal pipe corridors
-      currentX = engineStartX + (colIndex * COLUMN_SPACING_X)
-      currentY = engineStartY + (index * STAGGERED_ROW_SPACING_Y)
-    }
+    const cluster = tunnelLayout.get(assignedTunnel)
+    const colIndex = localIndex % NUM_COLUMNS
+    const currentX = engineStartX + (colIndex * COLUMN_SPACING_X)
+    const currentY = (cluster?.startY ?? engineStartY) + (localIndex * STAGGERED_ROW_SPACING_Y)
 
-    const tunnelHealthy = tunnelConnectivity[assignedTunnel]
-    const backupTunnel = assignedTunnel === 'vpn1' ? 'vpn2' : 'vpn1'
-    const backupHealthy = tunnelConnectivity[backupTunnel]
+    const tunnelHealthy = isVpnDisabledMode ? true : Boolean(tunnelConnectivity[assignedTunnel])
+    const backupTunnel = !isVpnDisabledMode
+      ? tunnelOrder.find((tunnelId) => tunnelId !== assignedTunnel && Boolean(tunnelConnectivity[tunnelId]))
+      : undefined
 
-    const failoverActive = !isVpnDisabledMode && !tunnelHealthy && backupHealthy
+    const failoverActive = !isVpnDisabledMode && !tunnelHealthy && Boolean(backupTunnel)
     const sourceNodeId: TunnelId | 'internet' = isVpnDisabledMode
       ? internetNodeId
-      : (failoverActive ? backupTunnel : assignedTunnel)
+      : (failoverActive ? (backupTunnel as string) : assignedTunnel)
+
+    const engineLifecycle = normalizeLifecycle(
+      (engine as Record<string, unknown>)?.lifecycle
+      ?? (engine as Record<string, unknown>)?.vpn_lifecycle
+      ?? (engine.labels || {})['acestream.lifecycle']
+      ?? vpnLifecycleByTunnel[assignedTunnel],
+    )
 
     // VPN → Engine: P2P download speed.
     // Keep the route visibly active during monitor-only sessions even if Ace reports 0 throughput.
@@ -444,16 +714,28 @@ const buildSnapshot = (
       ? measuredDownMbps
       : (monitoringFloorMbps > 0 ? monitoringFloorMbps : (isMockMode ? randomBetween(8, 72) : 0))
     
-    // Engine → Proxy: Actual per-engine ingress
-    const engineIngressBps = orchestratorStatus?.proxy?.engine_ingress_bps?.[engine.container_id] ?? 0
-    const proxyIngressMbps = engineIngressBps > 0 
-      ? (engineIngressBps * 8) / 1_000_000 
+    // Engine → Proxy: actual per-engine ingress from proxy metrics when available.
+    // If the per-engine ingress map exists, treat missing/zero as zero (authoritative)
+    // so ended routes are deactivated promptly instead of falling back to stream stats.
+    const ingressByEngine = orchestratorStatus?.proxy?.engine_ingress_bps
+    const hasIngressMap = Boolean(ingressByEngine && typeof ingressByEngine === 'object')
+    const engineIngressBps = hasIngressMap
+      ? Number((ingressByEngine as Record<string, number | undefined>)[engine.container_id] ?? 0)
+      : undefined
+    
+    // metrics.py reports ingress in bytes per second. Convert for dual display.
+    const engineIngressKbps = typeof engineIngressBps === 'number'
+      ? engineIngressBps / 1024
+      : (streamCount > 0 ? measuredDownKbps * 0.98 : (isMockMode ? randomBetween(120, 2200) : 0))
+    
+    const proxyIngressMbps = typeof engineIngressBps === 'number'
+      ? (engineIngressBps > 0 ? (engineIngressBps * 8) / 1_000_000 : 0)
       : (streamCount > 0 ? streamMeasuredDownMbps * 0.98 : (isMockMode ? randomBetween(2, 18) : 0))
     
     let health: TopologyNodeHealth = 'healthy'
-    if (engine.health_status === 'unhealthy' || (!tunnelHealthy && !backupHealthy)) {
+    if (engine.health_status === 'unhealthy' || (!tunnelHealthy && !backupTunnel)) {
       health = 'down'
-    } else if (engine.health_status === 'unknown' || failoverActive) {
+    } else if (engine.health_status === 'unknown' || failoverActive || engineLifecycle === 'draining') {
       health = 'degraded'
     }
 
@@ -472,15 +754,22 @@ const buildSnapshot = (
         health,
         streamCount,
         bandwidthMbps,
+        bandwidthKbps: measuredDownKbps,
         uploadMbps: measuredUpMbps > 0 ? measuredUpMbps : (isMockMode ? randomBetween(2, 12) : 0),
+        uploadKbps: measuredUpKbps,
         proxyIngressMbps: proxyIngressMbps,
-        vpnTunnel: isVpnDisabledMode ? undefined : (sourceNodeId as TunnelId),
+        proxyIngressKbps: engineIngressKbps,
+        vpnTunnel: isVpnDisabledMode ? undefined : assignedTunnel,
+        lifecycle: engineLifecycle,
+        forwarded: Boolean(engine.forwarded),
         failoverActive,
         metadata: {
           assignedTunnel,
           activeTunnel: sourceNodeId,
           peers: engineStreams.reduce((sum, stream) => sum + (stream.peers || 0), 0),
+          targetBitrate: engineStreams[0]?.bitrate || null,
           monitorStreamCount,
+          lifecycle: engineLifecycle,
           variant: engine.engine_variant || 'default',
           forwarded: engine.forwarded,
           forwardedPort: engine.forwarded_port || null,
@@ -490,57 +779,73 @@ const buildSnapshot = (
 
     // VPN → Engine edge: shows both download (P2P ingress) and upload (P2P seeding) bandwidth
     const edgeUploadBw = measuredUpMbps > 0 ? measuredUpMbps : (isMockMode ? randomBetween(2, 12) : 0)
+    const edgeIsDraining = engineLifecycle === 'draining' || vpnLifecycleByTunnel[sourceNodeId] === 'draining'
+    const vpnEngineEdgeId = `${sourceNodeId}->${engine.container_id}`
+    const vpnEngineFlowSignal = bandwidthMbps + edgeUploadBw
+    const vpnEngineFlowActive = resolveEdgeFlowActive(
+      previousEdgeFlowById.get(vpnEngineEdgeId) ?? false,
+      vpnEngineFlowSignal,
+    )
     edges.push({
-      id: `${sourceNodeId}->${engine.container_id}`,
+      id: vpnEngineEdgeId,
       type: 'topologyEdge',
       source: sourceNodeId,
       target: engine.container_id,
-      animated: true,
+      animated: vpnEngineFlowActive,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: bandwidthMbps,
         uploadMbps: edgeUploadBw,
         labelPosition: 'near-target',
         monitoringActive: hasMonitoringSession,
+        drainingRoute: edgeIsDraining,
+        flowActive: vpnEngineFlowActive,
       },
       style: {
-        stroke: (failoverActive || hasMonitoringSession) ? '#f59e0b' : '#64748b',
+        stroke: (failoverActive || hasMonitoringSession || edgeIsDraining) ? '#f59e0b' : '#64748b',
         strokeWidth: clamp(1.6 + bandwidthMbps / 55, 1.6, 5.8),
-        strokeDasharray: failoverActive ? '8 5' : undefined,
+        strokeDasharray: (failoverActive || edgeIsDraining) ? '8 5' : undefined,
       },
     })
 
     // Engine → Proxy edge: shows upload bandwidth (proxy ingress)
+    const proxyRouteDraining = engineLifecycle === 'draining'
+    const engineProxyEdgeId = `${engine.container_id}->${proxyNodeId}`
+    const engineProxyFlowActive = resolveEdgeFlowActive(
+      previousEdgeFlowById.get(engineProxyEdgeId) ?? false,
+      proxyIngressMbps,
+    )
     edges.push({
-      id: `${engine.container_id}->${proxyNodeId}`,
+      id: engineProxyEdgeId,
       type: 'topologyEdge',
       source: engine.container_id,
       target: proxyNodeId,
-      animated: true,
+      animated: engineProxyFlowActive,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: proxyIngressMbps,
         labelPosition: 'near-source',
+        drainingRoute: proxyRouteDraining,
+        flowActive: engineProxyFlowActive,
       },
       style: {
-        stroke: '#60a5fa',
+        stroke: proxyRouteDraining ? '#f59e0b' : '#60a5fa',
         strokeWidth: clamp(1.8 + proxyIngressMbps / 48, 1.8, 6.4),
+        strokeDasharray: proxyRouteDraining ? '8 5' : undefined,
       },
     })
   })
 
   if (!isMockMode && !isVpnDisabledMode) {
-    const vpn1Node = nodes.find(n => n.id === vpn1NodeId)
-    const vpn2Node = nodes.find(n => n.id === vpn2NodeId)
-    if (vpn1Node) {
-      const vpn1Engines = nodes.filter(n => n.data.kind === 'engine' && n.data.vpnTunnel === 'vpn1')
-      vpn1Node.data.bandwidthMbps = vpn1Engines.reduce((s, n) => s + (n.data.bandwidthMbps || 0), 0)
-      vpn1Node.data.uploadMbps = vpn1Engines.reduce((s, n) => s + (n.data.uploadMbps || 0), 0)
-    }
-    if (vpn2Node) {
-      const vpn2Engines = nodes.filter(n => n.data.kind === 'engine' && n.data.vpnTunnel === 'vpn2')
-      vpn2Node.data.bandwidthMbps = vpn2Engines.reduce((s, n) => s + (n.data.bandwidthMbps || 0), 0)
-      vpn2Node.data.uploadMbps = vpn2Engines.reduce((s, n) => s + (n.data.uploadMbps || 0), 0)
+    for (const tunnelId of tunnelOrder) {
+      const vpnNode = nodes.find((node) => node.id === tunnelId)
+      if (!vpnNode) continue
+      const vpnEngines = nodes.filter((node) => {
+        if (node.data.kind !== 'engine') return false
+        return String(node.data.metadata?.assignedTunnel || '') === tunnelId
+      })
+      vpnNode.data.bandwidthMbps = vpnEngines.reduce((sum, node) => sum + (node.data.bandwidthMbps || 0), 0)
+      vpnNode.data.uploadMbps = vpnEngines.reduce((sum, node) => sum + (node.data.uploadMbps || 0), 0)
     }
   }
 
@@ -549,25 +854,19 @@ const buildSnapshot = (
     return sum + (found?.data?.bandwidthMbps || 0)
   }, 0)
 
-  // Proxy bandwidth should reflect proxy ingress only, not monitor-side engine traffic.
-  const totalProxyIngressMbps = engineStats.reduce((sum, { engine }) => {
+  const totalProxyIngressKbps = engineStats.reduce((sum, { engine }) => {
     const found = nodes.find((node) => node.id === engine.container_id)
-    return sum + (found?.data?.proxyIngressMbps || 0)
+    return sum + (found?.data?.proxyIngressKbps || 0)
   }, 0)
-  const proxyNodeBandwidthMbps = orchestratorStatus?.proxy?.throughput?.ingress_mbps ?? totalProxyIngressMbps
 
+  const clientList = orchestratorStatus?.proxy?.active_clients?.list || []
+  const activeClients = orchestratorStatus?.proxy?.active_clients?.total ?? clientList.length
+  const totalProxyEgressKbps = clientList.reduce((sum: number, client: any) => sum + (client.bps / 1024), 0)
+  const proxyNodeMbps = orchestratorStatus?.proxy?.throughput?.egress_mbps ?? ((totalProxyEgressKbps * 8) / 1000)
   const activeStreams = orchestratorStatus?.streams?.active ?? workingStreams.length
   
   // 3. Client Nodes and Egress Pipelines
-  const mockClients = [
-    { id: 'mock-1', ip: '192.168.1.45', ua: 'VLC/3.0.18', type: 'TS', connected_at: Date.now() / 1000 - 3600, bps: 4500000, bytes_sent: 1.2 * 1024 * 1024 * 1024 },
-    { id: 'mock-2', ip: '172.16.5.12', ua: 'AppleCoreMedia/1.0.0', type: 'HLS', connected_at: Date.now() / 1000 - 1800, bps: 2800000, bytes_sent: 450 * 1024 * 1024 },
-    { id: 'mock-3', ip: '10.0.0.156', ua: 'ExoPlayerLib/2.18.5', type: 'TS', connected_at: Date.now() / 1000 - 600, bps: 6200000, bytes_sent: 2.8 * 1024 * 1024 * 1024 },
-  ]
-  const clientList = isMockMode ? mockClients : (orchestratorStatus?.proxy?.active_clients?.list || [])
-  const activeClients = isMockMode ? clientList.length : (orchestratorStatus?.proxy?.active_clients?.total ?? clientList.length)
 
-  // Dynamically position downstream nodes based on the number of engine columns
   const proxyNodeX = engineStartX + (NUM_COLUMNS * COLUMN_SPACING_X) + 160
   const clientNodeX = proxyNodeX + 460
 
@@ -581,7 +880,8 @@ const buildSnapshot = (
       subtitle: '/ace and /hls pipeline',
       health: (orchestratorStatus?.status === 'healthy' || orchestratorStatus?.proxy?.request_window_1m?.success_rate_percent > 98) ? 'healthy' : 'degraded',
       streamCount: activeStreams,
-      bandwidthMbps: proxyNodeBandwidthMbps,
+      bandwidthMbps: proxyNodeMbps,
+      bandwidthKbps: (proxyNodeMbps * 1000) / 8,
       metadata: {
         successRate: orchestratorStatus?.proxy?.request_window_1m?.success_rate_percent 
           ? `${orchestratorStatus.proxy.request_window_1m.success_rate_percent}%`
@@ -602,12 +902,14 @@ const buildSnapshot = (
     const nodeX = clientStartX + (index % 2 === 0 ? 0 : 45)
     const nodeY = clientStartY + (index * clientSpacingY)
     const rawClientBw = (client.bps * 8) / 1_000_000
+    const isPrebuffering = Boolean(client.is_prebuffering)
     
     // Retrieve previous client node state
     const prevClientNode = prevState?.nodes.find(n => n.id === cNodeId)
     
-    // Smooth it! (isActive is true simply because the client exists in the list)
-    const clientBwMbps = smoothBandwidth(rawClientBw, prevClientNode?.data?.bandwidthMbps, true)
+    // Treat zero-bitrate clients as inactive to avoid lingering proxy->client pipes.
+    const clientIsActive = rawClientBw > 0.05
+    const clientBwMbps = smoothBandwidth(rawClientBw, prevClientNode?.data?.bandwidthMbps, clientIsActive)
 
     nodes.push({
       id: cNodeId,
@@ -628,16 +930,23 @@ const buildSnapshot = (
       },
     })
 
+    const clientEdgeId = `${proxyNodeId}->${cNodeId}`
+    const clientFlowActive = resolveEdgeFlowActive(
+      previousEdgeFlowById.get(clientEdgeId) ?? false,
+      rawClientBw,
+    ) || isPrebuffering
     edges.push({
-      id: `${proxyNodeId}->${cNodeId}`,
+      id: clientEdgeId,
       type: 'topologyEdge',
       source: proxyNodeId,
       target: cNodeId,
-      animated: true,
+      animated: clientFlowActive,
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
         bandwidthMbps: clientBwMbps,
         protocol: client.type,
+        flowActive: clientFlowActive,
+        isPrebuffering: isPrebuffering,
       },
       style: {
         stroke: '#22c55e',
@@ -694,50 +1003,148 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
   summary: BASE_SUMMARY,
   selectedNodeId: null,
   lastUpdated: null,
-  isMockMode: true,
-
-  initializeMock: () => {
-    const snapshot = buildSnapshot({})
-    set({
-      nodes: snapshot.nodes,
-      edges: snapshot.edges,
-      summary: snapshot.summary,
-      lastUpdated: snapshot.lastUpdated,
-      isMockMode: snapshot.isMockMode,
-      selectedNodeId: null,
-    })
-  },
+  isMockMode: false,
 
   hydrateFromBackend: (snapshot) => {
-    const currentState = get() // <--- Fetch current state
-    const next = buildSnapshot(snapshot, currentState) // <--- Pass it to the builder
+    const currentState = get()
+    const next = buildSnapshot(snapshot, currentState)
     
     set((state) => {
-      // Stabilize nodes: reuse existing object if content is logically same
+      const nextNodeIds = new Set(next.nodes.map((node) => node.id))
+      for (const nodeId of nodeInterpolationTargets.keys()) {
+        if (!nextNodeIds.has(nodeId)) {
+          nodeInterpolationTargets.delete(nodeId)
+        }
+      }
+
       const stabilizedNodes = next.nodes.map((nextNode) => {
         const existingNode = state.nodes.find((n) => n.id === nextNode.id)
+        const bypassSmoothing = shouldBypassNodeSmoothing(nextNode.data?.kind)
+        const targetBandwidth = bypassSmoothing
+          ? (nextNode.data?.bandwidthMbps ?? 0)
+          : applyDeadband(existingNode?.data?.bandwidthMbps, nextNode.data?.bandwidthMbps)
+        const targetUpload = bypassSmoothing
+          ? nextNode.data?.uploadMbps
+          : applyDeadband(existingNode?.data?.uploadMbps, nextNode.data?.uploadMbps)
+        const targetProxyIngress = bypassSmoothing
+          ? nextNode.data?.proxyIngressMbps
+          : applyDeadband(
+            existingNode?.data?.proxyIngressMbps,
+            nextNode.data?.proxyIngressMbps,
+          )
+
+        nodeInterpolationTargets.set(nextNode.id, {
+          bandwidthMbps: targetBandwidth ?? 0,
+          uploadMbps: targetUpload,
+          proxyIngressMbps: targetProxyIngress,
+        })
+
+        if (bypassSmoothing) {
+          return {
+            ...nextNode,
+            data: {
+              ...nextNode.data,
+              bandwidthMbps: targetBandwidth ?? 0,
+              ...(typeof targetUpload === 'number' ? { uploadMbps: targetUpload } : {}),
+              ...(typeof targetProxyIngress === 'number' ? { proxyIngressMbps: targetProxyIngress } : {}),
+            },
+          }
+        }
+
         if (!existingNode) return nextNode
         
-        // Compare data fields and position
         const dataChanged = JSON.stringify(existingNode.data) !== JSON.stringify(nextNode.data)
         const posChanged = 
           existingNode.position.x !== nextNode.position.x || 
           existingNode.position.y !== nextNode.position.y
           
         if (!dataChanged && !posChanged) return existingNode
-        return nextNode
+
+        return {
+          ...nextNode,
+          data: {
+            ...nextNode.data,
+            bandwidthMbps: existingNode.data?.bandwidthMbps ?? nextNode.data.bandwidthMbps,
+            uploadMbps: existingNode.data?.uploadMbps ?? nextNode.data.uploadMbps,
+            proxyIngressMbps: existingNode.data?.proxyIngressMbps ?? nextNode.data.proxyIngressMbps,
+          },
+        }
       })
 
-      // Stabilize edges: reuse existing object if content is logically same
+      const nextEdgeIds = new Set(next.edges.map((edge) => edge.id))
+      for (const edgeId of edgeInterpolationTargets.keys()) {
+        if (!nextEdgeIds.has(edgeId)) {
+          edgeInterpolationTargets.delete(edgeId)
+        }
+      }
+
+      const nextNodeKinds = new Map(
+        next.nodes.map((node) => [node.id, node.data?.kind as TopologyNodeKind | undefined]),
+      )
+
       const stabilizedEdges = next.edges.map((nextEdge) => {
         const existingEdge = state.edges.find((e) => e.id === nextEdge.id)
+        const nextEdgeTargetBandwidth = Number(nextEdge.data?.bandwidthMbps ?? 0)
+        const existingEdgeBandwidth =
+          typeof existingEdge?.data?.bandwidthMbps === 'number'
+            ? Number(existingEdge.data.bandwidthMbps)
+            : undefined
+        const nextEdgeTargetUpload =
+          typeof nextEdge.data?.uploadMbps === 'number' ? nextEdge.data.uploadMbps : undefined
+        const existingEdgeUpload =
+          typeof existingEdge?.data?.uploadMbps === 'number' ? existingEdge.data.uploadMbps : undefined
+
+        const sourceKind = nextNodeKinds.get(nextEdge.source)
+        const targetKind = nextNodeKinds.get(nextEdge.target)
+        const bypassSmoothing = shouldBypassEdgeSmoothing(sourceKind, targetKind)
+
+        if (bypassSmoothing) {
+          edgeInterpolationTargets.set(nextEdge.id, {
+            bandwidthMbps: nextEdgeTargetBandwidth,
+            uploadMbps: nextEdgeTargetUpload,
+          })
+
+          return {
+            ...nextEdge,
+            data: {
+              ...nextEdge.data,
+              bandwidthMbps: nextEdgeTargetBandwidth,
+              ...(typeof nextEdgeTargetUpload === 'number' ? { uploadMbps: nextEdgeTargetUpload } : {}),
+            },
+          }
+        }
+
+        edgeInterpolationTargets.set(nextEdge.id, {
+          bandwidthMbps: applyDeadband(existingEdgeBandwidth, nextEdgeTargetBandwidth) ?? 0,
+          uploadMbps: applyDeadband(existingEdgeUpload, nextEdgeTargetUpload),
+        })
+
         if (!existingEdge) return nextEdge
         
         const styleChanged = JSON.stringify(existingEdge.style) !== JSON.stringify(nextEdge.style)
         const labelChanged = existingEdge.label !== nextEdge.label
+        const flowStateChanged = (existingEdge.data?.flowActive === true) !== (nextEdge.data?.flowActive === true)
         
-        if (!styleChanged && !labelChanged) return existingEdge
-        return nextEdge
+        if (!styleChanged && !labelChanged && !flowStateChanged) return existingEdge
+
+        const currentBandwidth = Number(existingEdge.data?.bandwidthMbps ?? nextEdge.data?.bandwidthMbps ?? 0)
+        const currentUpload =
+          typeof existingEdge.data?.uploadMbps === 'number'
+            ? existingEdge.data.uploadMbps
+            : nextEdge.data?.uploadMbps
+
+        return {
+          ...nextEdge,
+          data: {
+            ...nextEdge.data,
+            bandwidthMbps: currentBandwidth,
+            uploadMbps: currentUpload,
+          },
+          style: {
+            ...nextEdge.style,
+            strokeWidth: existingEdge.style?.strokeWidth ?? nextEdge.style?.strokeWidth,
+          },
+        }
       })
 
       return {
@@ -758,83 +1165,147 @@ export const useTopologyStore = create<TopologyState>((set, get) => ({
       return
     }
 
-    if (!state.isMockMode) {
-      return
-    }
-
     const nextNodes = state.nodes.map((node) => {
       const data = node.data
       if (!data) {
         return node
       }
 
-      if (data.kind === 'vpn') {
-        return {
-          ...node,
-          data: {
-            ...data,
-            bandwidthMbps: jitter(data.bandwidthMbps, 0.08, 12),
-          },
+      const flowTarget = nodeInterpolationTargets.get(node.id)
+
+      if (!flowTarget) {
+        if (!state.isMockMode) {
+          return node
         }
+
+        if (data.kind === 'vpn') {
+          return {
+            ...node,
+            data: {
+              ...data,
+              bandwidthMbps: jitter(data.bandwidthMbps, 0.08, 12),
+            },
+          }
+        }
+
+        if (data.kind === 'engine') {
+          const floor = data.streamCount > 0 ? 1.5 : 0
+          return {
+            ...node,
+            data: {
+              ...data,
+              bandwidthMbps: jitter(data.bandwidthMbps, 0.14, floor),
+            },
+          }
+        }
+
+        if (data.kind === 'proxy' || data.kind === 'client') {
+          return {
+            ...node,
+            data: {
+              ...data,
+              bandwidthMbps: jitter(data.bandwidthMbps, 0.07, 4),
+            },
+          }
+        }
+
+        return node
       }
 
-      if (data.kind === 'engine') {
-        const floor = data.streamCount > 0 ? 1.5 : 0
-        return {
-          ...node,
-          data: {
-            ...data,
-            bandwidthMbps: jitter(data.bandwidthMbps, 0.14, floor),
-          },
-        }
-      }
+      const bypassSmoothing = shouldBypassNodeSmoothing(data.kind)
+      const nextBandwidth = bypassSmoothing
+        ? (flowTarget.bandwidthMbps || 0)
+        : interpolateNumber(data.bandwidthMbps || 0, flowTarget.bandwidthMbps || 0)
+      const nextUpload =
+        typeof data.uploadMbps === 'number' || typeof flowTarget.uploadMbps === 'number'
+          ? (bypassSmoothing
+            ? (flowTarget.uploadMbps ?? 0)
+            : interpolateNumber(data.uploadMbps ?? 0, flowTarget.uploadMbps ?? 0))
+          : undefined
+      const nextProxyIngress =
+        typeof data.proxyIngressMbps === 'number' || typeof flowTarget.proxyIngressMbps === 'number'
+          ? (bypassSmoothing
+            ? (flowTarget.proxyIngressMbps ?? 0)
+            : interpolateNumber(data.proxyIngressMbps ?? 0, flowTarget.proxyIngressMbps ?? 0))
+          : undefined
 
-      if (data.kind === 'proxy' || data.kind === 'client') {
-        return {
-          ...node,
-          data: {
-            ...data,
-            bandwidthMbps: jitter(data.bandwidthMbps, 0.07, 4),
-          },
-        }
+      return {
+        ...node,
+        data: {
+          ...data,
+          bandwidthMbps: nextBandwidth,
+          ...(typeof nextUpload === 'number' ? { uploadMbps: nextUpload } : {}),
+          ...(typeof nextProxyIngress === 'number' ? { proxyIngressMbps: nextProxyIngress } : {}),
+        },
       }
-
-      return node
     })
 
     const nodeMap = new Map(nextNodes.map((node) => [node.id, node]))
 
     const nextEdges = state.edges.map((edge) => {
+      const flowTarget = edgeInterpolationTargets.get(edge.id)
       const sourceNode = nodeMap.get(edge.source)
       const targetNode = nodeMap.get(edge.target)
       
-      let baseBandwidth = 0
+      let targetBandwidth = flowTarget?.bandwidthMbps ?? 0
+      let targetUpload = flowTarget?.uploadMbps
       
-      // VPN -> Engine: use Engine's download speed (stored in bandwidthMbps)
-      if (sourceNode?.data?.kind === 'vpn' && targetNode?.data?.kind === 'engine') {
-        baseBandwidth = targetNode.data.bandwidthMbps || 0
-      } 
-      // Engine -> Proxy: use Engine's proxy ingress speed (stored in proxyIngressMbps)
-      else if (sourceNode?.data?.kind === 'engine' && targetNode?.data?.kind === 'proxy') {
-        baseBandwidth = sourceNode.data.proxyIngressMbps || 0
-      }
-      else {
-        baseBandwidth = sourceNode?.data?.bandwidthMbps || 0
+      if (!flowTarget) {
+        if (sourceNode?.data?.kind === 'vpn' && targetNode?.data?.kind === 'engine') {
+          targetBandwidth = targetNode.data.bandwidthMbps || 0
+          targetUpload = targetNode.data.uploadMbps
+        } else if (sourceNode?.data?.kind === 'engine' && targetNode?.data?.kind === 'proxy') {
+          targetBandwidth = sourceNode.data.proxyIngressMbps || 0
+        } else if (sourceNode?.data?.kind === 'proxy' && targetNode?.data?.kind === 'client') {
+          targetBandwidth = targetNode?.data?.bandwidthMbps || 0
+        } else {
+          targetBandwidth = sourceNode?.data?.bandwidthMbps || 0
+        }
+
+        if (state.isMockMode) {
+          const jitterVal = (Math.random() - 0.5) * (targetBandwidth * 0.05)
+          targetBandwidth = Math.max(0, targetBandwidth + jitterVal)
+          targetUpload =
+            typeof targetUpload === 'number'
+              ? Math.max(0, targetUpload + (Math.random() - 0.5) * (targetUpload * 0.05))
+              : undefined
+        }
       }
 
-      const jitterVal = (Math.random() - 0.5) * (baseBandwidth * 0.05)
-      const nextBandwidth = Math.max(0, baseBandwidth + jitterVal)
+      const currentBandwidth = Number(edge.data?.bandwidthMbps ?? 0)
       const failover = edge.style?.strokeDasharray !== undefined
+
+      const sourceKind = sourceNode?.data?.kind
+      const targetKind = targetNode?.data?.kind
+      const bypassSmoothing = shouldBypassEdgeSmoothing(sourceKind, targetKind)
+
+      const nextBandwidth = bypassSmoothing
+        ? targetBandwidth
+        : interpolateNumber(currentBandwidth, targetBandwidth)
+      const nextUpload =
+        typeof edge.data?.uploadMbps === 'number' || typeof targetUpload === 'number'
+          ? (bypassSmoothing
+            ? (targetUpload ?? 0)
+            : interpolateNumber(edge.data?.uploadMbps ?? 0, targetUpload ?? 0))
+          : undefined
+
+      let strokeWidth = clamp(1.6 + nextBandwidth / (failover ? 58 : 46), 1.6, 8.6)
+      if (sourceNode?.data?.kind === 'engine' && targetNode?.data?.kind === 'proxy') {
+        strokeWidth = clamp(1.8 + nextBandwidth / 48, 1.8, 6.4)
+      } else if (sourceNode?.data?.kind === 'proxy' && targetNode?.data?.kind === 'client') {
+        strokeWidth = clamp(2.2 + nextBandwidth / 35, 2.2, 8.5)
+      }
 
       return {
         ...edge,
         data: {
           ...edge.data,
           bandwidthMbps: nextBandwidth,
+          ...(typeof nextUpload === 'number' ? { uploadMbps: nextUpload } : {}),
         },
         style: {
           ...edge.style,
-          strokeWidth: clamp(1.6 + nextBandwidth / (failover ? 58 : 46), 1.6, 8.6),
+          strokeWidth,
         },
       }
     })

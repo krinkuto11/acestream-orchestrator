@@ -10,17 +10,9 @@ import { Progress } from '@/components/ui/progress'
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import EngineTableView from './EngineTableView'
 
-// Simple in-memory cache for engine stats to prevent flickering when switching tabs
-const statsCache = new Map()
-const STATS_CACHE_TTL = 3000 // 3 seconds
-
-function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
+function EngineCard({ engine, onDelete, showVpnLabel = false }) {
   const [isOpen, setIsOpen] = useState(false)
-  const [stats, setStats] = useState(() => {
-    // Initialize with cached stats if available
-    const cached = statsCache.get(engine.container_id)
-    return cached?.data || null
-  })
+  const [stats, setStats] = useState(engine?.docker_stats || null)
   
   const healthColors = {
     healthy: 'success',
@@ -31,43 +23,10 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
   const healthStatus = engine.health_status || 'unknown'
   const healthVariant = healthColors[healthStatus] || 'outline'
 
-  // Fetch Docker stats continuously (not just when expanded)
+  // Stats are pushed from the app SSE snapshot and attached on each engine row.
   useEffect(() => {
-    const fetchStats = async () => {
-      // Check cache first
-      const cached = statsCache.get(engine.container_id)
-      const now = Date.now()
-      
-      if (cached && (now - cached.timestamp) < STATS_CACHE_TTL) {
-        // Use cached data
-        setStats(cached.data)
-        return
-      }
-      
-      try {
-        const response = await fetch(`${orchUrl}/api/v1/engines/${engine.container_id}/stats`)
-        if (response.ok) {
-          const data = await response.json()
-          setStats(data)
-          // Update cache
-          statsCache.set(engine.container_id, {
-            data,
-            timestamp: now
-          })
-        }
-      } catch (err) {
-        console.error('Failed to fetch engine stats:', err)
-      }
-    }
-    
-    // Fetch immediately
-    fetchStats()
-    
-    // Refresh stats every 3 seconds
-    const interval = setInterval(fetchStats, 3000)
-    
-    return () => clearInterval(interval)
-  }, [engine.container_id, orchUrl])
+    setStats(engine?.docker_stats || null)
+  }, [engine?.docker_stats])
 
   return (
     <Card className="mb-3 hover:bg-accent/5 transition-colors">
@@ -261,7 +220,7 @@ function EngineCard({ engine, onDelete, showVpnLabel = false, orchUrl }) {
   )
 }
 
-function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode, orchUrl }) {
+function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode }) {
   const isEmergencyFailed = emergencyMode?.active && emergencyMode?.failed_vpn === vpnName
   
   return (
@@ -304,7 +263,6 @@ function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode, orchU
             engine={engine}
             onDelete={onDeleteEngine}
             showVpnLabel={false}
-            orchUrl={orchUrl}
           />
         ))
       )}
@@ -312,45 +270,14 @@ function VPNEngineGroup({ vpnName, engines, onDeleteEngine, emergencyMode, orchU
   )
 }
 
-function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
+function EngineList({ engines, onDeleteEngine, vpnStatus }) {
   const isRedundantMode = vpnStatus?.mode === 'redundant'
   const emergencyMode = vpnStatus?.emergency_mode
   
   // Persist view mode in localStorage
   const [viewMode, setViewMode] = useLocalStorage('engine_view_mode', 'cards')
   
-  // State for engines with metrics (for table view)
-  const [enginesWithMetrics, setEnginesWithMetrics] = useState([])
-  
-  // Fetch engines with metrics when in table view
-  useEffect(() => {
-    if (viewMode !== 'table') return
-    
-    const fetchEnginesWithMetrics = async () => {
-      try {
-        const response = await fetch(`${orchUrl}/api/v1/engines/with-metrics`)
-        if (response.ok) {
-          const data = await response.json()
-          setEnginesWithMetrics(data)
-        }
-      } catch (err) {
-        console.error('Failed to fetch engines with metrics:', err)
-        // Fallback to regular engines data
-        setEnginesWithMetrics(engines)
-      }
-    }
-    
-    // Fetch immediately
-    fetchEnginesWithMetrics()
-    
-    // Refresh every 5 seconds when in table view
-    const interval = setInterval(fetchEnginesWithMetrics, 5000)
-    
-    return () => clearInterval(interval)
-  }, [viewMode, orchUrl, engines])
-  
-  // Use enginesWithMetrics for table view, regular engines for card view
-  const displayEngines = viewMode === 'table' ? enginesWithMetrics : engines
+  const displayEngines = engines
   
   // Group engines by VPN in redundant mode
   if (isRedundantMode) {
@@ -414,8 +341,8 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
             engines={displayEngines}
             onDeleteEngine={onDeleteEngine}
             showVpnLabel={true}
-            orchUrl={orchUrl}
             vpnMode={isRedundantMode ? 'redundant' : null}
+            vpnStatus={vpnStatus}
           />
         ) : (
           // Card view - Grid layout for side-by-side VPN groups in redundant mode
@@ -427,7 +354,6 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
                 engines={enginesByVpn[vpn1Name]}
                 onDeleteEngine={onDeleteEngine}
                 emergencyMode={emergencyMode}
-                orchUrl={orchUrl}
               />
             )}
             
@@ -438,7 +364,6 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
                 engines={enginesByVpn[vpn2Name]}
                 onDeleteEngine={onDeleteEngine}
                 emergencyMode={emergencyMode}
-                orchUrl={orchUrl}
               />
             )}
           </div>
@@ -489,8 +414,8 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
           engines={displayEngines}
           onDeleteEngine={onDeleteEngine}
           showVpnLabel={false}
-          orchUrl={orchUrl}
           vpnMode={null}
+          vpnStatus={vpnStatus}
         />
       ) : (
         <>
@@ -507,7 +432,6 @@ function EngineList({ engines, onDeleteEngine, vpnStatus, orchUrl }) {
                 engine={engine}
                 onDelete={onDeleteEngine}
                 showVpnLabel={false}
-                orchUrl={orchUrl}
               />
             ))
           )}

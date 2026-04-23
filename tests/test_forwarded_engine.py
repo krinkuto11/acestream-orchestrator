@@ -186,9 +186,7 @@ def test_forwarded_engine_removal():
     """Test that removing a forwarded engine is handled correctly."""
     import unittest.mock as mock
     
-    with mock.patch('app.services.state.SessionLocal'), \
-         mock.patch('app.core.config.cfg') as mock_cfg:
-        mock_cfg.GLUETUN_CONTAINER_NAME = None
+    with mock.patch('app.services.state.SessionLocal'):
         
         state = State()
         state.clear_state()

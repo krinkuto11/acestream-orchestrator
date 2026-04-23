@@ -23,7 +23,7 @@ def simulate_vpn_recovery_scenario():
     print()
     
     print("📝 Scenario from vpn_exit.log:")
-    print("   - VPN exits emergency mode at 00:23:06.436")
+    print("   - VPN exits degraded NotReady state at 00:23:06.436")
     print("   - Engines provisioned immediately at 00:23:07.280 (before port available)")
     print("   - Port forwarding established at 00:23:19.348 (too late!)")
     print("   - Result: All 5 engines provisioned WITHOUT forwarded port")
@@ -39,7 +39,7 @@ def simulate_vpn_recovery_scenario():
         vpn_monitor = VpnContainerMonitor('gluetun')
         vpn_monitor._last_recovery_time = datetime.now(timezone.utc)
         
-        print("✅ Step 1: VPN exits emergency mode (00:23:06.436)")
+        print("✅ Step 1: VPN exits degraded NotReady state (00:23:06.436)")
         print(f"   - VPN recovery time set: {vpn_monitor._last_recovery_time.strftime('%H:%M:%S')}")
         print(f"   - Recovery stabilization period: {vpn_monitor._recovery_stabilization_period_s}s")
         print()

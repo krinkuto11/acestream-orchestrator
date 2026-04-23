@@ -92,3 +92,68 @@ def test_hls_client_manager_cleanup_inactive_uses_client_last_active():
     assert len(clients) == 1
     assert clients[0]["client_id"] == "10.0.0.1:new"
     assert manager.last_activity["10.0.0.1"] == pytest.approx(now - 5.0, abs=0.01)
+
+
+def test_hls_client_manager_tracks_buffer_seconds_behind():
+    from app.services.client_tracker import client_tracking_service
+
+    stream_id = "test-hls-buffer-seconds"
+    client_tracking_service.unregister_stream(stream_id=stream_id, protocol="HLS")
+    manager = ClientManager(stream_id=stream_id)
+
+    manager.record_activity(
+        client_ip="10.0.0.2",
+        client_id="10.0.0.2:ua2",
+        user_agent="UA/2.0",
+        request_kind="manifest",
+        bytes_sent=256,
+        buffer_seconds_behind=6.75,
+        now=2000.0,
+    )
+
+    clients = manager.list_clients()
+    matching = [c for c in clients if c.get("client_id") == "10.0.0.2:ua2"]
+
+    assert len(matching) == 1
+    # Manifest requests track stream window only; runway remains segment-authoritative.
+    assert matching[0]["buffer_seconds_behind"] == pytest.approx(0.0, abs=0.001)
+    assert matching[0]["stream_buffer_window_seconds"] == pytest.approx(6.75, abs=0.001)
+
+
+def test_hls_client_manager_preserves_window_and_updates_client_runway_on_segment():
+    from app.services.client_tracker import client_tracking_service
+
+    stream_id = "test-hls-window-runway"
+    client_tracking_service.unregister_stream(stream_id=stream_id, protocol="HLS")
+    manager = ClientManager(stream_id=stream_id)
+
+    manager.record_activity(
+        client_ip="10.0.0.3",
+        client_id="10.0.0.3:ua3",
+        user_agent="UA/3.0",
+        request_kind="manifest",
+        bytes_sent=320,
+        stream_buffer_window_seconds=11.0,
+        now=3000.0,
+    )
+
+    manager.record_activity(
+        client_ip="10.0.0.3",
+        client_id="10.0.0.3:ua3",
+        user_agent="UA/3.0",
+        request_kind="segment",
+        bytes_sent=1024,
+        chunks_sent=1,
+        client_runway_seconds=4.25,
+        stream_buffer_window_seconds=11.0,
+        now=3001.0,
+    )
+
+    clients = manager.list_clients()
+    matching = [c for c in clients if c.get("client_id") == "10.0.0.3:ua3"]
+
+    assert len(matching) == 1
+    assert matching[0]["client_runway_seconds"] == pytest.approx(4.25, abs=0.001)
+    assert matching[0]["buffer_seconds_behind"] == pytest.approx(4.25, abs=0.001)
+    assert matching[0]["stream_buffer_window_seconds"] == pytest.approx(11.0, abs=0.001)
+    assert matching[0]["position_source"] == "hls_segment_delta"

@@ -234,6 +234,321 @@ def test_stream_generator_waits_for_fresh_data_not_stale(monkeypatch):
     assert stream_generator._wait_for_initial_data(min_index=36) is True
 
 
+def test_stream_generator_prebuffer_uses_time_holdback(monkeypatch):
+    """Prebuffer should be time-based and not rely on fixed chunk-rate assumptions."""
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    class DummyBuffer:
+        def __init__(self):
+            self.index = 20
+
+    stream_generator.buffer = DummyBuffer()
+
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.proxy_prebuffer_seconds", lambda: 0.05)
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.initial_data_wait_timeout", lambda: 0.01)
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.initial_data_check_interval", lambda: 0.01)
+
+    now = {"value": 1000.0}
+    sleeps = {"count": 0}
+
+    def _time():
+        return now["value"]
+
+    def _sleep(interval):
+        sleeps["count"] += 1
+        now["value"] += interval
+        # Fresh data arrives early, but prebuffer should still wait for elapsed holdback.
+        if sleeps["count"] == 2:
+            stream_generator.buffer.index = 21
+
+    monkeypatch.setattr("app.proxy.stream_generator.time.time", _time)
+    monkeypatch.setattr("app.proxy.stream_generator.time.sleep", _sleep)
+
+    assert stream_generator._wait_for_initial_data(min_index=20) is True
+    assert sleeps["count"] >= 5
+
+
+def test_stream_generator_hot_stream_bypasses_prebuffer_wait(monkeypatch):
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    class DummyBuffer:
+        def __init__(self):
+            self.index = 60
+
+    stream_generator.buffer = DummyBuffer()
+    stream_generator.chunk_rate_ema = 1.5
+
+    sleep_calls = {"count": 0}
+
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.proxy_prebuffer_seconds", lambda: 20)
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.initial_data_wait_timeout", lambda: 35)
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.initial_data_check_interval", lambda: 0.01)
+    monkeypatch.setattr("app.proxy.stream_generator.time.sleep", lambda _interval: sleep_calls.__setitem__("count", sleep_calls["count"] + 1))
+
+    # Existing warm backlog: 40 chunks over baseline; required is ceil(20 * 1.5) == 30.
+    assert stream_generator._wait_for_initial_data(min_index=20) is True
+    assert sleep_calls["count"] == 0
+
+
+def test_stream_generator_setup_reuses_previous_client_baseline(monkeypatch):
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="stable_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    mock_buffer = Mock()
+    mock_buffer.index = 40
+
+    class FakeRedis:
+        def hget(self, _key, field):
+            if field == "initial_index":
+                return b"3"
+            return None
+
+    mock_client_manager = Mock()
+    mock_client_manager.redis_client = FakeRedis()
+    mock_client_manager.add_client = Mock()
+
+    mock_proxy = Mock()
+    mock_proxy.stream_buffers = {"test_content_id": mock_buffer}
+    mock_proxy.client_managers = {"test_content_id": mock_client_manager}
+
+    wait_args = {"min_index": None}
+
+    def fake_wait_for_initial_data(min_index=None):
+        wait_args["min_index"] = min_index
+        return True
+
+    stream_generator._wait_for_initial_data = fake_wait_for_initial_data
+
+    monkeypatch.setattr("app.proxy.server.ProxyServer.get_instance", lambda: mock_proxy)
+    monkeypatch.setattr("app.proxy.stream_generator.ConfigHelper.proxy_prebuffer_seconds", lambda: 20)
+    monkeypatch.setattr(
+        "app.services.client_tracker.client_tracking_service.register_client",
+        lambda **_kwargs: None,
+    )
+
+    assert stream_generator._setup_streaming() is True
+    assert wait_args["min_index"] == 3
+    mock_client_manager.add_client.assert_called_once_with(
+        "stable_client_id",
+        "127.0.0.1",
+        "test_agent",
+        initial_index=3,
+    )
+    assert stream_generator.local_index == 3
+
+
+def test_stream_generator_position_uses_observed_chunk_rate():
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    stream_generator.buffer = Mock()
+    stream_generator.buffer.index = 200
+    stream_generator.local_index = 100
+    stream_generator.chunk_rate_ema = 20.0
+    stream_generator.last_position_update_time = 0.0
+
+    stream_generator.client_manager = Mock()
+    stream_generator.client_manager.update_client_position = Mock()
+
+    stream_generator._maybe_update_client_position()
+
+    stream_generator.client_manager.update_client_position.assert_called_once()
+    _, lag_seconds = stream_generator.client_manager.update_client_position.call_args.args
+    assert lag_seconds == pytest.approx(5.0, abs=0.01)
+
+
+def test_stream_generator_starvation_decay_keeps_runway_before_first_chunk(monkeypatch):
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    stream_generator.buffer = Mock()
+    stream_generator.buffer.index = 40
+    stream_generator.local_index = 0
+    stream_generator.chunk_rate_ema = 2.0
+    stream_generator.chunks_sent = 0
+    stream_generator.last_chunk_sent_time = 1000.0
+    stream_generator.last_position_update_time = 0.0
+
+    stream_generator.client_manager = Mock()
+    stream_generator.client_manager.update_client_position = Mock()
+
+    monkeypatch.setattr("app.proxy.stream_generator.time.time", lambda: 1020.0)
+
+    stream_generator._maybe_update_client_position(force=True, source="ts_starvation_decay")
+
+    stream_generator.client_manager.update_client_position.assert_called_once()
+    _, lag_seconds = stream_generator.client_manager.update_client_position.call_args.args
+    assert lag_seconds == pytest.approx(20.0, abs=0.01)
+
+
+def test_stream_generator_runway_drops_immediately_across_sparse_cursor_jump(monkeypatch):
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    stream_generator.buffer = Mock()
+    stream_generator.buffer.index = 140
+    stream_generator.local_index = 100
+    stream_generator.chunk_rate_ema = 2.0
+    stream_generator.last_position_update_time = 0.0
+
+    stream_generator.client_manager = Mock()
+    stream_generator.client_manager.update_client_position = Mock()
+
+    now = {"value": 100.0}
+    monkeypatch.setattr("app.proxy.stream_generator.time.time", lambda: now["value"])
+
+    stream_generator._maybe_update_client_position(force=True, source="ts_cursor_ema")
+
+    # Simulate reconnect/sparse-range catch-up where cursor jumps to the live edge.
+    stream_generator.local_index = 140
+    now["value"] = 101.0
+    stream_generator._maybe_update_client_position(force=True, source="ts_cursor_ema")
+
+    first_lag = stream_generator.client_manager.update_client_position.call_args_list[0].args[1]
+    second_lag = stream_generator.client_manager.update_client_position.call_args_list[1].args[1]
+
+    assert first_lag == pytest.approx(20.0, abs=0.01)
+    # Without continuity floor, runway should reflect instantaneous truth.
+    assert second_lag == pytest.approx(0.0, abs=0.01)
+
+
+def test_stream_generator_runway_decay_eventually_reaches_zero(monkeypatch):
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    stream_generator.buffer = Mock()
+    stream_generator.buffer.index = 140
+    stream_generator.local_index = 100
+    stream_generator.chunk_rate_ema = 2.0
+    stream_generator.last_position_update_time = 0.0
+
+    stream_generator.client_manager = Mock()
+    stream_generator.client_manager.update_client_position = Mock()
+
+    now = {"value": 100.0}
+    monkeypatch.setattr("app.proxy.stream_generator.time.time", lambda: now["value"])
+
+    stream_generator._maybe_update_client_position(force=True, source="ts_cursor_ema")
+
+    stream_generator.local_index = 140
+    now["value"] = 130.0
+    stream_generator._maybe_update_client_position(force=True, source="ts_cursor_ema")
+
+    second_lag = stream_generator.client_manager.update_client_position.call_args_list[1].args[1]
+    assert second_lag == pytest.approx(0.0, abs=0.01)
+
+
+def test_stream_generator_advances_local_index_with_sparse_ranges():
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    stream_generator.local_index = 100
+    stream_generator.buffer = Mock()
+
+    # Sparse Redis range: only 3 chunks returned but cursor should still move
+    # to the fetched end index.
+    stream_generator._advance_local_index(3, fetched_end_index=110)
+    assert stream_generator.local_index == 110
+
+
+def test_stream_generator_advances_local_index_by_chunk_count_without_fetch_cursor():
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    stream_generator.local_index = 50
+    stream_generator.buffer = Mock()
+    stream_generator.buffer.last_fetch_end_index = None
+
+    stream_generator._advance_local_index(4)
+    assert stream_generator.local_index == 54
+
+
+def test_stream_generator_prefers_call_scoped_fetch_cursor_over_shared_buffer_cursor():
+    from app.proxy.stream_generator import StreamGenerator
+
+    stream_generator = StreamGenerator(
+        content_id="test_content_id",
+        client_id="test_client_id",
+        client_ip="127.0.0.1",
+        client_user_agent="test_agent",
+        stream_initializing=False,
+    )
+
+    stream_generator.local_index = 100
+    stream_generator.buffer = Mock()
+    # Simulate a stale/shared cursor overwritten by another client thread.
+    stream_generator.buffer.last_fetch_end_index = 999
+
+    # This client's own fetch cursor should win.
+    stream_generator._advance_local_index(3, fetched_end_index=110)
+    assert stream_generator.local_index == 110
+
+
 def test_stream_generator_initialization_fails_fast_on_preflight_rejection(monkeypatch):
     from app.proxy.stream_generator import StreamGenerator
 
@@ -300,6 +615,30 @@ def test_stream_generator_initialization_ignores_preflight_rejection_in_http_mod
 
     assert stream_generator._wait_for_initialization() is True
     assert sleep_calls["count"] == 0
+
+
+def test_hls_initial_buffer_prefers_unified_proxy_prebuffer(monkeypatch):
+    from app.proxy.config_helper import ConfigHelper
+
+    monkeypatch.setattr("app.proxy.config_helper.ConfigHelper.proxy_prebuffer_seconds", lambda: 12)
+    monkeypatch.setattr(
+        "app.proxy.config_helper.ConfigHelper._get_proxy_value",
+        lambda key, fallback: 9 if key == "hls_initial_buffer_seconds" else fallback,
+    )
+
+    assert ConfigHelper.hls_initial_buffer_seconds() == 12
+
+
+def test_hls_initial_buffer_falls_back_when_unified_prebuffer_disabled(monkeypatch):
+    from app.proxy.config_helper import ConfigHelper
+
+    monkeypatch.setattr("app.proxy.config_helper.ConfigHelper.proxy_prebuffer_seconds", lambda: 0)
+    monkeypatch.setattr(
+        "app.proxy.config_helper.ConfigHelper._get_proxy_value",
+        lambda key, fallback: 9 if key == "hls_initial_buffer_seconds" else fallback,
+    )
+
+    assert ConfigHelper.hls_initial_buffer_seconds() == 9
 
 
 def test_api_key_is_passed_to_stream_manager():
