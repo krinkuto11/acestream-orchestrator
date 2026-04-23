@@ -51,7 +51,7 @@ func New(contentID, url string, buf *buffer.RingBuffer, mode string) *Reader {
 				MaxIdleConns:        2,
 				IdleConnTimeout:     90 * time.Second,
 				TLSHandshakeTimeout: 5 * time.Second,
-				DialContext:         (&net.Dialer{Timeout: config.C.UpstreamConnectTimeout}).DialContext,
+				DialContext:         (&net.Dialer{Timeout: config.C.Load().UpstreamConnectTimeout}).DialContext,
 			},
 		},
 	}
@@ -61,7 +61,7 @@ func (r *Reader) Start(ctx context.Context) error {
 	tag := fmt.Sprintf("[upstream:%s]", r.contentID)
 	slog.Info("upstream reader starting", "stream", r.contentID, "url", r.url)
 
-	deadline := time.Now().Add(config.C.ChannelInitGracePeriod)
+	deadline := time.Now().Add(config.C.Load().ChannelInitGracePeriod)
 	attempt := 0
 	everHadData := false
 
@@ -97,7 +97,7 @@ func (r *Reader) Start(ctx context.Context) error {
 		// After that, P2P starvation gaps are expected and we retry indefinitely.
 		if !everHadData && time.Now().After(deadline) {
 			return fmt.Errorf("%s engine did not start streaming within %s",
-				tag, config.C.ChannelInitGracePeriod)
+				tag, config.C.Load().ChannelInitGracePeriod)
 		}
 
 		attempt++
@@ -141,7 +141,7 @@ func (r *Reader) readOnce(ctx context.Context, tag string) (int, error) {
 	// Idle-reset context: cancelled when no bytes arrive for UpstreamReadTimeout.
 	idleCtx, idleCancel := context.WithCancel(ctx)
 	defer idleCancel()
-	idleTimer := time.AfterFunc(config.C.UpstreamReadTimeout, idleCancel)
+	idleTimer := time.AfterFunc(config.C.Load().UpstreamReadTimeout, idleCancel)
 	defer idleTimer.Stop()
 
 	req, err := http.NewRequestWithContext(idleCtx, http.MethodGet, r.url, nil)
@@ -181,7 +181,7 @@ func (r *Reader) readOnce(ctx context.Context, tag string) (int, error) {
 
 		n, readErr := resp.Body.Read(rawBuf)
 		if n > 0 {
-			idleTimer.Reset(config.C.UpstreamReadTimeout)
+			idleTimer.Reset(config.C.Load().UpstreamReadTimeout)
 			aligned := hunter.Feed(rawBuf[:n])
 			if len(aligned) > 0 {
 				written := r.buf.Write(aligned)

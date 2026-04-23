@@ -160,7 +160,7 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 		streamMode = mgr.StreamMode()
 		controlMode = mgr.ControlMode()
 		if streamMode == "" {
-			streamMode = strings.ToUpper(config.C.StreamMode)
+			streamMode = strings.ToUpper(config.C.Load().StreamMode)
 		}
 	}
 
@@ -197,7 +197,7 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 	cs.Stream(r.Context())
 
 	if cm.LocalCount() == 0 {
-		s.hub.ScheduleShutdown(streamKey, config.C.ChannelShutdownDelay)
+		s.hub.ScheduleShutdown(streamKey, config.C.Load().ChannelShutdownDelay)
 	}
 }
 
@@ -337,7 +337,7 @@ func (s *Server) handleHLSManifestAPIMode(
 		prebufSec = mgr.PrebufferSeconds()
 	}
 	if prebufSec <= 0 {
-		prebufSec = config.C.ProxyPrebufferSeconds
+		prebufSec = config.C.Load().ProxyPrebufferSeconds
 	}
 	
 	// Target segments: at least 1, otherwise based on prebuffer seconds.
@@ -514,7 +514,7 @@ type engineSelection struct {
 }
 
 func (s *Server) selectEngine() (engineSelection, error) {
-	orchURL := config.C.OrchestratorURL + "/internal/proxy/select-engine"
+	orchURL := config.C.Load().OrchestratorURL + "/internal/proxy/select-engine"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -551,10 +551,10 @@ func (s *Server) selectEngine() (engineSelection, error) {
 
 	// Fall back to env-configured values when orchestrator omits them.
 	if result.StreamMode == "" {
-		result.StreamMode = config.C.StreamMode
+		result.StreamMode = config.C.Load().StreamMode
 	}
 	if result.ControlMode == "" {
-		result.ControlMode = config.C.ControlMode
+		result.ControlMode = config.C.Load().ControlMode
 	}
 
 	return engineSelection{
@@ -675,7 +675,7 @@ func decodeJSON(r io.Reader, v any) error {
 // If no API key is configured the handler is always allowed through.
 func requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		key := config.C.APIKey
+		key := config.C.Load().APIKey
 		if key != "" && r.Header.Get("X-API-Key") != key && r.URL.Query().Get("key") != key {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return

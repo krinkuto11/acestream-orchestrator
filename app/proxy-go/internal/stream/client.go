@@ -84,7 +84,7 @@ func NewClientStreamer(contentID, clientID, ip, userAgent string, seekback int,
 		cm:                cm,
 		w:                 w,
 		flusher:           flusher,
-		pacingBurstSec:    config.C.PacingBurstSeconds, // may be reduced by initPacingBurst
+		pacingBurstSec:    config.C.Load().PacingBurstSeconds, // may be reduced by initPacingBurst
 		lastChunkRateTime: time.Now(),
 		tag:               fmt.Sprintf("[ts:%s][client:%s]", contentID, clientID),
 	}
@@ -118,7 +118,7 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 
 	pbSec := cs.manager.PrebufferSeconds()
 	if pbSec <= 0 {
-		pbSec = config.C.ProxyPrebufferSeconds
+		pbSec = config.C.Load().ProxyPrebufferSeconds
 	}
 	if pbSec > 0 {
 		if !cs.sendFirstChunk(ctx) {
@@ -131,7 +131,7 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 	cs.initPacingBurst()
 
 	// ── Main delivery loop ────────────────────────────────────────────────────
-	cfg := config.C
+	cfg := config.C.Load()
 	maxEmpty := cfg.NoDataTimeoutChecks
 	emptyCount := 0
 
@@ -180,7 +180,7 @@ func (cs *ClientStreamer) Stream(ctx context.Context) {
 
 // sendFirstChunk blocks until one real chunk is available and writes it.
 func (cs *ClientStreamer) sendFirstChunk(ctx context.Context) bool {
-	cfg := config.C
+	cfg := config.C.Load()
 	for {
 		n, newIdx, err := cs.buf.WriteAfterTo(cs.localIndex, 1, cs.w)
 		if n > 0 {
@@ -208,7 +208,7 @@ func (cs *ClientStreamer) sendFirstChunk(ctx context.Context) bool {
 
 // waitForReady blocks until the manager is connected and first data is in the buffer.
 func (cs *ClientStreamer) waitForReady(ctx context.Context) bool {
-	deadline := time.Now().Add(config.C.ChannelInitGracePeriod)
+	deadline := time.Now().Add(config.C.Load().ChannelInitGracePeriod)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -237,7 +237,7 @@ func (cs *ClientStreamer) applyPrebuffer(ctx context.Context, seconds int) {
 
 	chunkSize := cs.buf.TargetChunkSize()
 	if chunkSize <= 0 {
-		chunkSize = config.C.BufferChunkSize
+		chunkSize = config.C.Load().BufferChunkSize
 	}
 
 	targetChunks := int(math.Ceil(float64(seconds) * float64(bitrate) / float64(chunkSize)))
@@ -342,7 +342,7 @@ func (cs *ClientStreamer) applyPacing() {
 		return
 	}
 
-	cfg := config.C
+	cfg := config.C.Load()
 	runway := int(cs.buf.Head() - cs.localIndex)
 
 	mult := cs.manager.PacingMultiplier()

@@ -22,7 +22,7 @@ func main() {
 		Level: slog.LevelInfo,
 	})))
 
-	cfg := config.C
+	cfg := config.C.Load()
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr: fmt.Sprintf("%s:%d", cfg.RedisHost, cfg.RedisPort),
@@ -37,6 +37,17 @@ func main() {
 	}
 	cancel()
 
+	// 1. Initial fetch from Orchestrator API
+	if err := config.UpdateFromAPI(cfg.OrchestratorURL); err != nil {
+		slog.Warn("failed to fetch initial config from orchestrator, using env defaults", "err", err)
+	}
+	
+	// Re-load cfg after initial fetch to get the latest values for startup
+	cfg = config.C.Load()
+
+	// 2. Subscribe to live updates via Redis
+	config.SubscribeRedisUpdates(rdb)
+
 	hub := stream.NewHub(rdb)
 	srv := api.NewServer(hub, cfg.OrchestratorURL)
 
@@ -44,6 +55,7 @@ func main() {
 		Addr:    cfg.ListenAddr,
 		Handler: srv,
 	}
+
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

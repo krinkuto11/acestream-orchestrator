@@ -367,6 +367,8 @@ async def update_orchestrator_settings(settings: OrchestratorSettingsUpdate):
 
     if SettingsPersistence.save_orchestrator_config(current):
         logger.info("Orchestrator settings persisted")
+        from .proxy_routes import notify_proxy_config_update
+        notify_proxy_config_update()
     else:
         logger.warning("Failed to persist orchestrator settings")
 
@@ -725,6 +727,10 @@ def update_settings_bundle(payload: SettingsBundleUpdate):
         if "protocol" in vpn_settings:
             cfg.VPN_PROTOCOL = str(vpn_settings["protocol"] or cfg.VPN_PROTOCOL).strip().lower() or cfg.VPN_PROTOCOL
         cfg.DYNAMIC_VPN_MANAGEMENT = True
+
+    if "proxy_settings" in updates or "orchestrator_settings" in updates:
+        from .proxy_routes import notify_proxy_config_update
+        notify_proxy_config_update()
 
     return {
         "message": "Settings updated",

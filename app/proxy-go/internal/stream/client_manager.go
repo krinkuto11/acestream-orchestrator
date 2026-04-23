@@ -80,9 +80,9 @@ func (cm *ClientManager) Add(clientID, ip, userAgent string, initialIndex int64)
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	if len(cm.clients) >= config.C.MaxClientsPerStream() {
+	if len(cm.clients) >= config.C.Load().MaxClientsPerStream() {
 		slog.Warn("rejecting client: max capacity reached",
-			"stream", cm.contentID, "client", clientID, "max", config.C.MaxClientsPerStream())
+			"stream", cm.contentID, "client", clientID, "max", config.C.Load().MaxClientsPerStream())
 		return false
 	}
 
@@ -102,7 +102,7 @@ func (cm *ClientManager) Add(clientID, ip, userAgent string, initialIndex int64)
 	cm.hadClients = true
 
 	ctx := context.Background()
-	ttl := config.C.ClientRecordTTL
+	ttl := config.C.Load().ClientRecordTTL
 	key := rediskeys.ClientMetadata(cm.contentID, clientID)
 	cm.rdb.HSet(ctx, key,
 		"client_id", clientID,
@@ -151,7 +151,7 @@ func (cm *ClientManager) Remove(clientID string) {
 	if remaining == 0 {
 		cm.rdb.Set(ctx, rediskeys.LastClientDisconnect(cm.contentID),
 			fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9),
-			config.C.ClientRecordTTL)
+			config.C.Load().ClientRecordTTL)
 	}
 
 	slog.Info("client disconnected", "stream", cm.contentID, "client", clientID,
@@ -173,7 +173,7 @@ func (cm *ClientManager) HadClients() bool {
 // response headers before committing them to the client.
 func (cm *ClientManager) HasCapacity() bool {
 	cm.mu.RLock()
-	ok := len(cm.clients) < config.C.MaxClientsPerStream()
+	ok := len(cm.clients) < config.C.Load().MaxClientsPerStream()
 	cm.mu.RUnlock()
 	return ok
 }
@@ -268,7 +268,7 @@ func (cm *ClientManager) HeartbeatHLSClient(clientID, ip, userAgent string, byte
 	cm.mu.Unlock()
 
 	ctx := context.Background()
-	ttl := config.C.ClientRecordTTL
+	ttl := config.C.Load().ClientRecordTTL
 	key := rediskeys.ClientMetadata(cm.contentID, clientID)
 
 	if !exists {
@@ -313,7 +313,7 @@ func (cm *ClientManager) Stop() {
 }
 
 func (cm *ClientManager) heartbeatLoop() {
-	ticker := time.NewTicker(config.C.ClientHeartbeatInterval)
+	ticker := time.NewTicker(config.C.Load().ClientHeartbeatInterval)
 	defer ticker.Stop()
 
 	for {
@@ -366,7 +366,7 @@ func (cm *ClientManager) sendHeartbeats() {
 	}
 
 	ctx := context.Background()
-	ttl := config.C.ClientRecordTTL
+	ttl := config.C.Load().ClientRecordTTL
 	setKey := rediskeys.Clients(cm.contentID)
 
 	nowStr := fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9)
@@ -395,8 +395,8 @@ func (cm *ClientManager) sendHeartbeats() {
 }
 
 func (cm *ClientManager) evictGhosts() {
-	tsGhostTimeout := config.C.ClientHeartbeatInterval * 5
-	hlsGhostTimeout := config.C.HLSClientIdleTimeout
+	tsGhostTimeout := config.C.Load().ClientHeartbeatInterval * 5
+	hlsGhostTimeout := config.C.Load().HLSClientIdleTimeout
 
 	cm.mu.Lock()
 	if cm.isInitialBuffering {
@@ -437,7 +437,7 @@ func (cm *ClientManager) evictGhosts() {
 		if currentCount == 0 {
 			cm.rdb.Set(ctx, rediskeys.LastClientDisconnect(cm.contentID),
 				fmt.Sprintf("%f", float64(time.Now().UnixNano())/1e9),
-				config.C.ClientRecordTTL)
+				config.C.Load().ClientRecordTTL)
 		}
 	}
 }

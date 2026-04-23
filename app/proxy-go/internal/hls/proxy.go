@@ -100,7 +100,7 @@ func (ps *ProxySession) ServeSegment(ctx context.Context, segmentURL string, w h
 		return fmt.Errorf("segment read: %w", err)
 	}
 
-	ttl := time.Duration(config.C.HLSClientIdleTimeout) * 2
+	ttl := time.Duration(config.C.Load().HLSClientIdleTimeout) * 2
 	if DefaultCache != nil {
 		DefaultCache.Set(segmentURL, data, ttl)
 	}

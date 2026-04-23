@@ -133,7 +133,7 @@ func (t *TelemetryTracker) push() {
 		return
 	}
 
-	url := config.C.OrchestratorURL + "/internal/proxy/go/telemetry"
+	url := config.C.Load().OrchestratorURL + "/internal/proxy/go/telemetry"
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -142,8 +142,8 @@ func (t *TelemetryTracker) push() {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if config.C.APIKey != "" {
-		req.Header.Set("X-API-Key", config.C.APIKey)
+	if config.C.Load().APIKey != "" {
+		req.Header.Set("X-API-Key", config.C.Load().APIKey)
 	}
 
 	resp, err := http.DefaultClient.Do(req)

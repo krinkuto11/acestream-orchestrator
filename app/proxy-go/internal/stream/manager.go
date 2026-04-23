@@ -173,7 +173,7 @@ func (m *Manager) notifyStreamStarted() {
 		return
 	}
 
-	orchURL := config.C.OrchestratorURL + "/internal/proxy/go/stream-started"
+	orchURL := config.C.Load().OrchestratorURL + "/internal/proxy/go/stream-started"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -217,7 +217,7 @@ func (m *Manager) notifyStreamEnded(reason string) {
 		return
 	}
 
-	orchURL := config.C.OrchestratorURL + "/internal/proxy/go/stream-ended"
+	orchURL := config.C.Load().OrchestratorURL + "/internal/proxy/go/stream-ended"
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -275,7 +275,7 @@ func (m *Manager) requestViaHTTP(ctx context.Context) error {
 		return err
 	}
 
-	cli := &http.Client{Timeout: config.C.UpstreamConnectTimeout + 5*time.Second}
+	cli := &http.Client{Timeout: config.C.Load().UpstreamConnectTimeout + 5*time.Second}
 	resp, err := cli.Do(req)
 	if err != nil {
 		return fmt.Errorf("engine http request: %w", err)
@@ -595,7 +595,7 @@ func (m *Manager) pushStats(full *aceapi.FullStatus) {
 		return
 	}
 
-	orchURL := config.C.OrchestratorURL + "/internal/proxy/go/stream-stats"
+	orchURL := config.C.Load().OrchestratorURL + "/internal/proxy/go/stream-stats"
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 

@@ -31,7 +31,7 @@ var DefaultCache *GlobalCache
 
 func init() {
 	// Allocate up to 20% of max memory for the HLS HTTP cache.
-	limitMB := int64(config.C.MaxMemoryMB) / 5
+	limitMB := int64(config.C.Load().MaxMemoryMB) / 5
 	if limitMB < 50 {
 		limitMB = 50 // minimum 50MB
 	}

@@ -1,15 +1,27 @@
 package config
 
 import (
-	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
-// C holds all proxy configuration, loaded once from environment at startup.
-var C = load()
+// C holds all proxy configuration, loaded once from environment at startup
+// and updated dynamically via Orchestrator API and Redis.
+var C atomic.Pointer[Config]
+
+func init() {
+	C.Store(load())
+}
 
 type Config struct {
 	// Redis
@@ -25,9 +37,9 @@ type Config struct {
 	ChunkTimeout           time.Duration
 
 	// Buffer
-	BufferChunkSize    int // bytes, aligned to TS packet size
+	BufferChunkSize     int // bytes, aligned to TS packet size
 	InitialBehindChunks int
-	RedisChunkTTL      time.Duration
+	RedisChunkTTL       time.Duration
 
 	// Cleanup
 	CleanupInterval      time.Duration
@@ -51,10 +63,10 @@ type Config struct {
 	InitialDataCheckInterval time.Duration
 
 	// Pacing
-	PacingBurstSeconds       float64
-	PacingBitrateMultiplier  float64
+	PacingBurstSeconds        float64
+	PacingBitrateMultiplier   float64
 	ProxyMaxCatchupMultiplier float64
-	ProxyPrebufferSeconds    int
+	ProxyPrebufferSeconds     int
 
 	// Retries
 	MaxRetries        int
@@ -98,6 +110,184 @@ func (c *Config) MaxClientsPerStream() int {
 	}
 	return c.MaxClientsPerStreamCount
 }
+
+// UpdateFromAPI fetches the current configuration from the Orchestrator.
+func UpdateFromAPI(orchestratorURL string) error {
+	url := fmt.Sprintf("%s/proxy/config", orchestratorURL)
+	slog.Info("Fetching configuration from Orchestrator", "url", url)
+
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			cancel()
+			return err
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			lastErr = err
+			cancel()
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("orchestrator returned status %d", resp.StatusCode)
+			cancel()
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		var updates map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&updates); err != nil {
+			cancel()
+			return err
+		}
+
+		ApplyUpdates(updates)
+		slog.Info("Configuration updated from API")
+		cancel()
+		return nil
+	}
+
+	return fmt.Errorf("failed to fetch config after retries: %v", lastErr)
+}
+
+// SubscribeRedisUpdates listens for configuration changes on a Redis channel.
+func SubscribeRedisUpdates(rdb *redis.Client) {
+	ctx := context.Background()
+	pubsub := rdb.Subscribe(ctx, "proxy_config_updates")
+
+	go func() {
+		defer pubsub.Close()
+		slog.Info("Subscribed to proxy_config_updates Redis channel")
+
+		for {
+			msg, err := pubsub.ReceiveMessage(ctx)
+			if err != nil {
+				slog.Error("Redis Pub/Sub error", "err", err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			var updates map[string]interface{}
+			if err := json.Unmarshal([]byte(msg.Payload), &updates); err != nil {
+				slog.Error("Failed to unmarshal config update from Redis", "err", err)
+				continue
+			}
+
+			ApplyUpdates(updates)
+			slog.Info("Configuration updated via Redis Pub/Sub")
+		}
+	}()
+}
+
+// ApplyUpdates maps JSON fields to Config fields and applies them safely.
+func ApplyUpdates(updates map[string]interface{}) {
+	// Start with a copy of current config
+	old := C.Load()
+	newCfg := *old
+
+	for k, v := range updates {
+		switch k {
+		case "initial_data_wait_timeout":
+			newCfg.InitialDataWaitTimeout = toDuration(v, time.Second)
+		case "initial_data_check_interval":
+			newCfg.InitialDataCheckInterval = toDuration(v, time.Second)
+		case "no_data_timeout_checks":
+			newCfg.NoDataTimeoutChecks = toInt(v)
+		case "no_data_check_interval":
+			newCfg.NoDataCheckInterval = toDuration(v, time.Second)
+		case "connection_timeout":
+			newCfg.ClientWaitTimeout = toDuration(v, time.Second)
+		case "upstream_connect_timeout":
+			newCfg.UpstreamConnectTimeout = toDuration(v, time.Second)
+		case "upstream_read_timeout":
+			newCfg.UpstreamReadTimeout = toDuration(v, time.Second)
+		case "stream_timeout":
+			newCfg.StreamTimeout = toDuration(v, time.Second)
+		case "channel_shutdown_delay":
+			newCfg.ChannelShutdownDelay = toDuration(v, time.Second)
+		case "proxy_prebuffer_seconds":
+			newCfg.ProxyPrebufferSeconds = toInt(v)
+		case "stream_mode":
+			if s, ok := v.(string); ok {
+				newCfg.StreamMode = strings.ToUpper(s)
+			}
+		case "control_mode":
+			if s, ok := v.(string); ok {
+				newCfg.ControlMode = strings.ToLower(s)
+			}
+		case "hls_max_segments":
+			newCfg.HLSMaxSegments = toInt(v)
+		case "hls_initial_segments":
+			newCfg.HLSInitialSegments = toInt(v)
+		case "hls_window_size":
+			newCfg.HLSWindowSize = toInt(v)
+		case "hls_buffer_ready_timeout":
+			newCfg.HLSBufferReadyTimeout = toDuration(v, time.Second)
+		case "hls_first_segment_timeout":
+			newCfg.HLSFirstSegmentTimeout = toDuration(v, time.Second)
+		case "hls_initial_buffer_seconds":
+			newCfg.HLSInitialBufferSeconds = toInt(v)
+		case "hls_max_initial_segments":
+			newCfg.HLSMaxInitialSegments = toInt(v)
+		case "hls_segment_fetch_interval":
+			newCfg.HLSSegmentFetchInterval = toFloat(v)
+		}
+	}
+
+	C.Store(&newCfg)
+}
+
+
+
+func toDuration(v interface{}, unit time.Duration) time.Duration {
+	switch val := v.(type) {
+	case float64:
+		return time.Duration(val * float64(unit))
+	case int:
+		return time.Duration(val) * unit
+	case string:
+		if d, err := time.ParseDuration(val); err == nil {
+			return d
+		}
+		if n, err := strconv.Atoi(val); err == nil {
+			return time.Duration(n) * unit
+		}
+	}
+	return 0
+}
+
+func toInt(v interface{}) int {
+	switch val := v.(type) {
+	case float64:
+		return int(val)
+	case int:
+		return val
+	case string:
+		n, _ := strconv.Atoi(val)
+		return n
+	}
+	return 0
+}
+
+func toFloat(v interface{}) float64 {
+	switch val := v.(type) {
+	case float64:
+		return val
+	case int:
+		return float64(val)
+	case string:
+		f, _ := strconv.ParseFloat(val, 64)
+		return f
+	}
+	return 0
+}
+
 
 func load() *Config {
 	tsPacketSize := 188
