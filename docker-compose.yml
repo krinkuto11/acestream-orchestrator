@@ -1,12 +1,8 @@
-# Docker Compose configuration for standalone mode (no VPN)
-# This is the simplest setup without VPN integration
-# 
+ 
 # Quick Start:
 # 1. Run: docker-compose up -d
 # 2. Access dashboard at http://localhost:8000/panel to configure settings
-#
-# Note: Engine cache strictly uses Docker named volumes for better performance 
-# and automatic cleanup on engine deletion.
+
 
 services:
   orchestrator:
@@ -15,9 +11,13 @@ services:
     # Configuration is now handled via the Web UI Settings panel
     # environment:
     #   - API_KEY=optional_api_key
+    ports:
+    - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./config:/app/app/config
+      #Set this if you want the HLS buffer to be limited by the host's memory.
+      - /sys/fs/cgroup/memory.max:/host_cgroup/memory.max:ro 
     restart: on-failure
     networks:
       - aceserver
