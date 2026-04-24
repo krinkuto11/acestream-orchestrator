@@ -824,11 +824,15 @@ class VPNProvisioner:
                 ],
             }
             for env_key, aliases in wg_map.items():
+                # If already set by mandatory logic (e.g. custom provider IP/Port), don't overwrite
+                if env.get(env_key):
+                    continue
+
                 for alias in aliases:
                     value = credential.get(alias)
                     if value is not None and str(value).strip() != "":
                         env[env_key] = str(value)
-                        break
+                        break  # Found a valid value, skip remaining aliases
         else:
             optional_map = {
                 "openvpn_protocol": "OPENVPN_PROTOCOL",
