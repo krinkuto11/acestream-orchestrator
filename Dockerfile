@@ -49,6 +49,12 @@ WORKDIR /proxy
 COPY app/proxy-go/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o acestream-proxy ./cmd/proxy
 
+# Stage 4b: Build Go control plane binary
+FROM golang:1.23 AS go-cp-builder
+WORKDIR /controlplane
+COPY app/controlplane-go/ .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o acestream-controlplane ./cmd/controlplane
+
 # Stage 5: Final runtime image with Distroless
 FROM gcr.io/distroless/python3-debian12:latest
 WORKDIR /app
@@ -71,8 +77,12 @@ COPY --from=dependency-builder /bundle/ /
 # Copy Go proxy binary
 COPY --from=go-builder /proxy/acestream-proxy /usr/local/bin/acestream-proxy
 
-# Startup script: Redis → Go proxy (port 8000) → Python FastAPI (port 8001)
+# Copy Go control plane binary
+COPY --from=go-cp-builder /controlplane/acestream-controlplane /usr/local/bin/acestream-controlplane
+
+# Startup script: Redis → Go proxy (port 8000) → Go control plane (port 8082) → Python FastAPI (port 8001)
 # Go proxy reverse-proxies all non-stream requests to Python, so clients always hit port 8000.
+# Go control plane manages engine lifecycle; Python API/UI remains at port 8001.
 COPY --chmod=755 <<'EOF' /app/start.py
 #!/usr/bin/env python3
 import os
@@ -135,8 +145,27 @@ def start_go_proxy():
     print(f"Go proxy started (pid={p.pid})", flush=True)
     return p
 
+def start_go_controlplane():
+    env = os.environ.copy()
+    env.setdefault('CP_LISTEN_ADDR', ':8082')
+    env.setdefault('REDIS_HOST', 'localhost')
+    env.setdefault('REDIS_PORT', '6379')
+    # Tell Python to delegate Docker lifecycle to Go
+    env['GO_CONTROL_PLANE_URL'] = 'http://localhost:8082'
+    p = subprocess.Popen(
+        ['/usr/local/bin/acestream-controlplane'],
+        env=env,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
+    _procs.append(p)
+    print(f"Go control plane started (pid={p.pid})", flush=True)
+    return p
+
 def start_python():
     env = os.environ.copy()
+    # Signal Python to skip its own control loops
+    env.setdefault('GO_CONTROL_PLANE_URL', 'http://localhost:8082')
     p = subprocess.Popen(
         [
             'python3', '-m', 'uvicorn',
@@ -157,18 +186,20 @@ def start_python():
 def main():
     print("Starting AceStream Orchestrator Stack...", flush=True)
     start_redis()
-    
-    # Start Go data plane and Python control plane
-    go_proc = start_go_proxy()
+
+    go_proxy_proc = start_go_proxy()
+    go_cp_proc = start_go_controlplane()
     py_proc = start_python()
 
     print("Orchestrator stack initialized. Monitoring processes...", flush=True)
-    
-    # Monitor: exit if either child dies unexpectedly
+
     while True:
         time.sleep(2)
-        if go_proc.poll() is not None:
-            print(f"CRITICAL: Go proxy exited (code={go_proc.returncode}), stopping stack", flush=True)
+        if go_proxy_proc.poll() is not None:
+            print(f"CRITICAL: Go proxy exited (code={go_proxy_proc.returncode}), stopping stack", flush=True)
+            _stop_all()
+        if go_cp_proc.poll() is not None:
+            print(f"CRITICAL: Go control plane exited (code={go_cp_proc.returncode}), stopping stack", flush=True)
             _stop_all()
         if py_proc.poll() is not None:
             print(f"CRITICAL: Python orchestrator exited (code={py_proc.returncode}), stopping stack", flush=True)

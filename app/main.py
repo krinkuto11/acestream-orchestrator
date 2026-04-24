@@ -77,6 +77,7 @@ from .vpn.vpn_servers_refresh import vpn_servers_refresh_service
 from .shared.utils import get_client_ip, sanitize_stream_id
 from .data_plane.client_tracker import client_tracking_service
 from .shared.redis_client import get_redis_client
+from .shared.go_state_bridge import GoStateBridge, publish_stream_count
 
 logger = logging.getLogger(__name__)
 
@@ -609,19 +610,44 @@ async def lifespan(app: FastAPI):
         name="initial-vpn-refresh"
     )
 
-    await docker_event_watcher.start()
-    await engine_controller.start()
+    # Determine whether the Go control plane sidecar is managing Docker lifecycle.
+    _go_cp_enabled = bool(os.environ.get("GO_CONTROL_PLANE_URL", "").strip())
+
+    _go_bridge = None
+    if _go_cp_enabled:
+        _redis = get_redis_client()
+        _go_bridge = GoStateBridge(state, _redis)
+        _go_bridge.start()
+        logger.info("Go control plane sidecar active — Python control loops disabled")
+    else:
+        await docker_event_watcher.start()
+        await engine_controller.start()
 
     if vpn_controller_enabled:
         await vpn_controller.start()
     else:
         logger.info("Dynamic VPN controller disabled in settings")
-    
+
+    # Publish stream counts to Redis so Go autoscaler stays up to date.
+    async def _publish_stream_counts_loop():
+        _rdb = get_redis_client()
+        while True:
+            try:
+                for eng in state.list_engines():
+                    count = len([s for s in (eng.streams or []) if s])
+                    publish_stream_count(_rdb, eng.container_id, count)
+            except Exception:
+                pass
+            await asyncio.sleep(10)
+
+    asyncio.create_task(_publish_stream_counts_loop())
+
     # Start remaining monitoring services
     asyncio.create_task(collector.start())
     asyncio.create_task(stream_cleanup.start())  # Start stream cleanup service
-    asyncio.create_task(health_monitor.start())  # Start health monitoring  
-    asyncio.create_task(health_manager.start())  # Start proactive health management
+    if not _go_cp_enabled:
+        asyncio.create_task(health_monitor.start())  # Start health monitoring
+        asyncio.create_task(health_manager.start())  # Start proactive health management
     asyncio.create_task(docker_stats_collector.start())  # Start Docker stats collection
 
     asyncio.create_task(db_maintenance_service.start())  # Start daily DB pruning and vacuum
@@ -644,15 +670,19 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
+    if _go_bridge is not None:
+        _go_bridge.stop()
     await collector.stop()
     await stream_cleanup.stop()  # Stop stream cleanup service
-    await health_monitor.stop()  # Stop health monitoring
-    await health_manager.stop()  # Stop health management
+    if not _go_cp_enabled:
+        await health_monitor.stop()  # Stop health monitoring
+        await health_manager.stop()  # Stop health management
     await docker_stats_collector.stop()  # Stop Docker stats collector
     if vpn_controller.is_running():
         await vpn_controller.stop()  # Stop VPN reconciliation controller
-    await engine_controller.stop()  # Stop declarative engine controller
-    await docker_event_watcher.stop()  # Stop Docker event watcher
+    if not _go_cp_enabled:
+        await engine_controller.stop()  # Stop declarative engine controller
+        await docker_event_watcher.stop()  # Stop Docker event watcher
 
     await db_maintenance_service.stop()  # Stop DB maintenance loop
     await vpn_servers_refresh_service.stop()  # Stop VPN servers refresh loop
