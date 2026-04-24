@@ -99,7 +99,7 @@ class VPNProvisioner:
         )
         require_port_forwarding = str(env.get("VPN_PORT_FORWARDING") or "").strip().lower() == "on"
         catalog_filename = self._get_effective_catalog_filename(settings)
-        if not has_explicit_server_pin:
+        if not has_explicit_server_pin and provider != "custom":
             safe_hostname = await asyncio.to_thread(
                 vpn_reputation_manager.get_safe_hostname,
                 provider,
