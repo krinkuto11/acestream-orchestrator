@@ -5,6 +5,9 @@ from typing import Dict, List, Optional
 _PRIVATE_KEY_RE = re.compile(r"^\s*PrivateKey\s*=\s*(?P<value>[^\r\n#;]+)", re.IGNORECASE | re.MULTILINE)
 _ADDRESS_RE = re.compile(r"^\s*Address\s*=\s*(?P<value>[^\r\n#;]+)", re.IGNORECASE | re.MULTILINE)
 _ENDPOINT_RE = re.compile(r"^\s*Endpoint\s*=\s*(?P<value>[^\r\n#;]+)", re.IGNORECASE | re.MULTILINE)
+_PUBLIC_KEY_RE = re.compile(r"^\s*PublicKey\s*=\s*(?P<value>[^\r\n#;]+)", re.IGNORECASE | re.MULTILINE)
+_PRESHARED_KEY_RE = re.compile(r"^\s*PresharedKey\s*=\s*(?P<value>[^\r\n#;]+)", re.IGNORECASE | re.MULTILINE)
+_MTU_RE = re.compile(r"^\s*MTU\s*=\s*(?P<value>[^\r\n#;]+)", re.IGNORECASE | re.MULTILINE)
 
 
 def _extract_first(pattern: re.Pattern[str], text: str) -> Optional[str]:
@@ -29,6 +32,9 @@ def parse_wireguard_conf(file_content: str) -> Dict[str, object]:
     private_key = _extract_first(_PRIVATE_KEY_RE, file_content)
     address_value = _extract_first(_ADDRESS_RE, file_content)
     endpoint = _extract_first(_ENDPOINT_RE, file_content)
+    public_key = _extract_first(_PUBLIC_KEY_RE, file_content)
+    preshared_key = _extract_first(_PRESHARED_KEY_RE, file_content)
+    mtu = _extract_first(_MTU_RE, file_content)
 
     addresses = _split_csv_values(address_value)
 
@@ -37,9 +43,15 @@ def parse_wireguard_conf(file_content: str) -> Dict[str, object]:
         "address": address_value,
         "addresses": addresses,
         "endpoint": endpoint,
+        "public_key": public_key,
+        "preshared_key": preshared_key,
+        "mtu": mtu,
         "port_forwarding": True,
         "PrivateKey": private_key,
         "Address": address_value,
         "Endpoint": endpoint,
-        "is_valid": bool(private_key and address_value and endpoint),
+        "PublicKey": public_key,
+        "PresharedKey": preshared_key,
+        "MTU": mtu,
+        "is_valid": bool(private_key and address_value and endpoint and public_key),
     }

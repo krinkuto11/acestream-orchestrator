@@ -89,7 +89,7 @@ class VPNProvisioner:
             credential=credential,
             regions=regions,
             port_forwarding_supported=port_forwarding_supported,
-            ignore_endpoint=True,
+            ignore_endpoint=(provider != "custom"),
         )
         safe_hostname: Optional[str] = None
         has_explicit_server_pin = bool(
@@ -309,7 +309,8 @@ class VPNProvisioner:
             allow_ipv6_wireguard=allow_ipv6_wireguard,
             ignore_endpoint=ignore_endpoint,
         )
-        self._apply_region_env(env=env, provider=provider, regions=regions, credential=credential)
+        if provider != "custom":
+            self._apply_region_env(env=env, provider=provider, regions=regions, credential=credential)
         self._apply_port_forwarding_env(
             env=env,
             provider=provider,
