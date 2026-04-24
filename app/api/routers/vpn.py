@@ -77,6 +77,13 @@ class VPNCredentialUpsert(BaseModel):
     endpoint_port: Optional[str] = None
     source: Optional[str] = None
     port_forwarding: Optional[bool] = True
+    # Aliases for parser compatibility
+    PublicKey: Optional[str] = None
+    PresharedKey: Optional[str] = None
+    MTU: Optional[str] = None
+    PrivateKey: Optional[str] = None
+    Address: Optional[str] = None
+    Endpoint: Optional[str] = None
 
 
 def _load_vpn_settings_for_credential_ops() -> Dict[str, Any]:
