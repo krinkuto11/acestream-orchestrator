@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import logging
 import os
+import socket
 import uuid
 from contextlib import suppress
 from typing import Any, Dict, List, Optional
@@ -304,6 +305,7 @@ class VPNProvisioner:
 
         self._apply_credential_env(
             env=env,
+            provider=provider,
             protocol=protocol,
             credential=credential,
             allow_ipv6_wireguard=allow_ipv6_wireguard,
@@ -385,6 +387,7 @@ class VPNProvisioner:
         cls,
         *,
         env: Dict[str, str],
+        provider: str,
         protocol: str,
         credential: Dict[str, Any],
         allow_ipv6_wireguard: bool = False,
@@ -432,6 +435,30 @@ class VPNProvisioner:
             if endpoints and not ignore_endpoint:
                 # Gluetun expects pluralized endpoint variable.
                 env["WIREGUARD_ENDPOINTS"] = str(endpoints)
+
+                # For custom providers, Gluetun requires explicit IP and Port.
+                # Domain names are NOT supported by Gluetun for WIREGUARD_ENDPOINT_IP yet,
+                # so we attempt to resolve it here.
+                if provider == "custom":
+                    endpoint_str = str(endpoints).strip().split(",")[0].strip()
+                    if ":" in endpoint_str:
+                        host_part, port_part = endpoint_str.rsplit(":", 1)
+                        if port_part.isdigit():
+                            env.setdefault("WIREGUARD_ENDPOINT_PORT", port_part)
+
+                            # Resolve hostname to IP if needed
+                            resolved_ip = host_part
+                            try:
+                                ipaddress.ip_address(host_part)
+                            except ValueError:
+                                # Not a valid IP, try resolving
+                                try:
+                                    resolved_ip = socket.gethostbyname(host_part)
+                                    logger.info("Resolved Wireguard endpoint hostname '%s' to '%s'", host_part, resolved_ip)
+                                except Exception as e:
+                                    logger.warning("Failed to resolve Wireguard endpoint hostname '%s': %s", host_part, e)
+
+                            env.setdefault("WIREGUARD_ENDPOINT_IP", resolved_ip)
         else:
             username = credential.get("openvpn_user") or credential.get("username") or credential.get("user")
             password = credential.get("openvpn_password") or credential.get("password") or credential.get("pass")
@@ -764,18 +791,27 @@ class VPNProvisioner:
     @staticmethod
     def _apply_optional_credential_env(*, env: Dict[str, str], protocol: str, credential: Dict[str, Any]):
         if protocol == "wireguard":
-            optional_map = {
-                "wireguard_public_key": "WIREGUARD_PUBLIC_KEY",
-                "wireguard_preshared_key": "WIREGUARD_PRESHARED_KEY",
-                "wireguard_endpoint_ip": "WIREGUARD_ENDPOINT_IP",
-                "endpoint_ip": "WIREGUARD_ENDPOINT_IP",
-                "wireguard_endpoint_port": "WIREGUARD_ENDPOINT_PORT",
-                "endpoint_port": "WIREGUARD_ENDPOINT_PORT",
-                "wireguard_allowed_ips": "WIREGUARD_ALLOWED_IPS",
-                "wireguard_implementation": "WIREGUARD_IMPLEMENTATION",
-                "wireguard_mtu": "WIREGUARD_MTU",
-                "wireguard_persistent_keepalive_interval": "WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL",
+            # Map of environment variable name to list of potential credential keys (aliases)
+            wg_map = {
+                "WIREGUARD_PUBLIC_KEY": ["wireguard_public_key", "public_key", "PublicKey", "wg_public_key"],
+                "WIREGUARD_PRESHARED_KEY": ["wireguard_preshared_key", "preshared_key", "PresharedKey", "wg_preshared_key"],
+                "WIREGUARD_ENDPOINT_IP": ["wireguard_endpoint_ip", "endpoint_ip", "EndpointIP", "ip"],
+                "WIREGUARD_ENDPOINT_PORT": ["wireguard_endpoint_port", "endpoint_port", "EndpointPort", "port"],
+                "WIREGUARD_ALLOWED_IPS": ["wireguard_allowed_ips", "allowed_ips", "AllowedIPs"],
+                "WIREGUARD_IMPLEMENTATION": ["wireguard_implementation"],
+                "WIREGUARD_MTU": ["wireguard_mtu", "mtu", "MTU", "wg_mtu"],
+                "WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL": [
+                    "wireguard_persistent_keepalive_interval",
+                    "persistent_keepalive",
+                    "PersistentKeepalive",
+                ],
             }
+            for env_key, aliases in wg_map.items():
+                for alias in aliases:
+                    value = credential.get(alias)
+                    if value is not None and str(value).strip() != "":
+                        env[env_key] = str(value)
+                        break
         else:
             optional_map = {
                 "openvpn_protocol": "OPENVPN_PROTOCOL",
@@ -787,12 +823,11 @@ class VPNProvisioner:
                 "openvpn_ciphers": "OPENVPN_CIPHERS",
                 "openvpn_auth": "OPENVPN_AUTH",
             }
-
-        for source_key, env_key in optional_map.items():
-            value = credential.get(source_key)
-            if value is None or str(value).strip() == "":
-                continue
-            env[env_key] = str(value)
+            for source_key, env_key in optional_map.items():
+                value = credential.get(source_key)
+                if value is None or str(value).strip() == "":
+                    continue
+                env[env_key] = str(value)
 
     @staticmethod
     def _build_labels(
