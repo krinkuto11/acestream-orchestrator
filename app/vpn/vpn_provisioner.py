@@ -433,18 +433,16 @@ class VPNProvisioner:
                 or credential.get("Endpoint")
             )
             if endpoints and not ignore_endpoint:
-                # Gluetun expects pluralized endpoint variable.
-                env["WIREGUARD_ENDPOINTS"] = str(endpoints)
-
-                # For custom providers, Gluetun requires explicit IP and Port.
-                # Domain names are NOT supported by Gluetun for WIREGUARD_ENDPOINT_IP yet,
-                # so we attempt to resolve it here.
+                # For custom providers, Gluetun requires explicit IP and Port via
+                # WIREGUARD_ENDPOINT_IP and WIREGUARD_ENDPOINT_PORT.
+                # Setting WIREGUARD_ENDPOINTS (plural) can interfere with its internal
+                # server selection/filtering logic, so we omit it for 'custom'.
                 if provider == "custom":
                     endpoint_str = str(endpoints).strip().split(",")[0].strip()
                     if ":" in endpoint_str:
                         host_part, port_part = endpoint_str.rsplit(":", 1)
                         if port_part.isdigit():
-                            env.setdefault("WIREGUARD_ENDPOINT_PORT", port_part)
+                            env["WIREGUARD_ENDPOINT_PORT"] = port_part
 
                             # Resolve hostname to IP if needed
                             resolved_ip = host_part
@@ -458,7 +456,20 @@ class VPNProvisioner:
                                 except Exception as e:
                                     logger.warning("Failed to resolve Wireguard endpoint hostname '%s': %s", host_part, e)
 
-                            env.setdefault("WIREGUARD_ENDPOINT_IP", resolved_ip)
+                            env["WIREGUARD_ENDPOINT_IP"] = resolved_ip
+
+                    # Ensure WIREGUARD_PUBLIC_KEY is set early for custom provider validation
+                    public_key = (
+                        credential.get("wireguard_public_key")
+                        or credential.get("public_key")
+                        or credential.get("PublicKey")
+                        or credential.get("wg_public_key")
+                    )
+                    if public_key:
+                        env["WIREGUARD_PUBLIC_KEY"] = str(public_key)
+                else:
+                    # Gluetun expects pluralized endpoint variable for native providers.
+                    env["WIREGUARD_ENDPOINTS"] = str(endpoints)
         else:
             username = credential.get("openvpn_user") or credential.get("username") or credential.get("user")
             password = credential.get("openvpn_password") or credential.get("password") or credential.get("pass")
