@@ -351,17 +351,36 @@ class VPNCredentialSchema(BaseModel):
     protocol: Optional[str] = None
     private_key: Optional[str] = None
     wireguard_private_key: Optional[str] = None
+    public_key: Optional[str] = None
+    wireguard_public_key: Optional[str] = None
+    preshared_key: Optional[str] = None
+    wireguard_preshared_key: Optional[str] = None
+    mtu: Optional[str] = None
+    wireguard_mtu: Optional[str] = None
     addresses: Optional[str] = None
     wireguard_addresses: Optional[str] = None
     endpoint: Optional[str] = None
     endpoints: Optional[str] = None
     wireguard_endpoints: Optional[str] = None
+    endpoint_ip: Optional[str] = None
+    endpoint_port: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
     openvpn_user: Optional[str] = None
     openvpn_password: Optional[str] = None
     source: Optional[str] = None
     port_forwarding: Optional[bool] = True
+    # Aliases for parser compatibility
+    PublicKey: Optional[str] = None
+    PresharedKey: Optional[str] = None
+    MTU: Optional[str] = None
+    PrivateKey: Optional[str] = None
+    Address: Optional[str] = None
+    Endpoint: Optional[str] = None
+
+
+    class Config:
+        extra = "allow"
 
 
 class VPNSettingsSchema(BaseModel):

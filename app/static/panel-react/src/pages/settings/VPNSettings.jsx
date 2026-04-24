@@ -427,9 +427,8 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
         payload = {
           ...payload,
-          private_key: parsed?.private_key,
+          ...parsed,
           addresses: parsed?.address || (Array.isArray(parsed?.addresses) ? parsed.addresses.join(',') : ''),
-          endpoint: parsed?.endpoint,
           source: 'sheet-paste.conf',
         }
       } else {

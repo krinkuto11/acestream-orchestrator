@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import logging
 import os
+import socket
 import uuid
 from contextlib import suppress
 from typing import Any, Dict, List, Optional
@@ -89,7 +90,7 @@ class VPNProvisioner:
             credential=credential,
             regions=regions,
             port_forwarding_supported=port_forwarding_supported,
-            ignore_endpoint=True,
+            ignore_endpoint=(provider != "custom"),
         )
         safe_hostname: Optional[str] = None
         has_explicit_server_pin = bool(
@@ -98,7 +99,7 @@ class VPNProvisioner:
         )
         require_port_forwarding = str(env.get("VPN_PORT_FORWARDING") or "").strip().lower() == "on"
         catalog_filename = self._get_effective_catalog_filename(settings)
-        if not has_explicit_server_pin:
+        if not has_explicit_server_pin and provider != "custom":
             safe_hostname = await asyncio.to_thread(
                 vpn_reputation_manager.get_safe_hostname,
                 provider,
@@ -121,7 +122,12 @@ class VPNProvisioner:
 
         image = str(settings.get("image") or self._default_image)
         network = cfg.DOCKER_NETWORK or get_orchestrator_network()
-        cap_add, devices, volumes = self._build_runtime_privileges(protocol=protocol, settings=settings, credential=credential)
+        cap_add, devices, volumes = self._build_runtime_privileges(
+            provider=provider,
+            protocol=protocol,
+            settings=settings,
+            credential=credential,
+        )
 
         try:
             container = await asyncio.to_thread(
@@ -277,8 +283,9 @@ class VPNProvisioner:
             "VPN_SERVICE_PROVIDER": provider,
             "VPN_TYPE": protocol,
             "HTTP_CONTROL_SERVER_ADDRESS": f":{cfg.GLUETUN_API_PORT}",
-            "GLUETUN_SERVERS_JSON_PATH": "/gluetun/servers.json",
         }
+        if provider != "custom":
+            env["GLUETUN_SERVERS_JSON_PATH"] = "/gluetun/servers.json"
 
         auth_default_role = credential.get("http_control_server_auth_default_role")
         if auth_default_role is None:
@@ -304,12 +311,14 @@ class VPNProvisioner:
 
         self._apply_credential_env(
             env=env,
+            provider=provider,
             protocol=protocol,
             credential=credential,
             allow_ipv6_wireguard=allow_ipv6_wireguard,
             ignore_endpoint=ignore_endpoint,
         )
-        self._apply_region_env(env=env, provider=provider, regions=regions, credential=credential)
+        if provider != "custom":
+            self._apply_region_env(env=env, provider=provider, regions=regions, credential=credential)
         self._apply_port_forwarding_env(
             env=env,
             provider=provider,
@@ -384,6 +393,7 @@ class VPNProvisioner:
         cls,
         *,
         env: Dict[str, str],
+        provider: str,
         protocol: str,
         credential: Dict[str, Any],
         allow_ipv6_wireguard: bool = False,
@@ -428,9 +438,47 @@ class VPNProvisioner:
                 or credential.get("endpoint")
                 or credential.get("Endpoint")
             )
+            public_key = None
             if endpoints and not ignore_endpoint:
-                # Gluetun expects pluralized endpoint variable.
-                env["WIREGUARD_ENDPOINTS"] = str(endpoints)
+                if provider == "custom":
+                    endpoint_str = str(endpoints).strip().split(",")[0].strip()
+                    if ":" in endpoint_str:
+                        host_part, port_part = endpoint_str.rsplit(":", 1)
+                        if port_part.isdigit():
+                            env["WIREGUARD_ENDPOINT_PORT"] = port_part
+
+                            # Resolve hostname to IP if needed
+                            resolved_ip = host_part
+                            try:
+                                ipaddress.ip_address(host_part)
+                            except ValueError:
+                                # Not a valid IP, try resolving
+                                try:
+                                    resolved_ip = socket.gethostbyname(host_part)
+                                    logger.info("Resolved Wireguard endpoint hostname '%s' to '%s'", host_part, resolved_ip)
+                                except Exception as e:
+                                    logger.warning("Failed to resolve Wireguard endpoint hostname '%s': %s", host_part, e)
+
+                            env["WIREGUARD_ENDPOINT_IP"] = resolved_ip
+
+                    public_key = (
+                        credential.get("wireguard_public_key")
+                        or credential.get("public_key")
+                        or credential.get("PublicKey")
+                        or credential.get("wg_public_key")
+                    )
+
+                    if public_key:
+                        env["WIREGUARD_PUBLIC_KEY"] = str(public_key)
+                    else:
+                        logger.warning(
+                            "Mandatory 'WIREGUARD_PUBLIC_KEY' is missing from credential payload for custom provider! "
+                            "Gluetun will likely fail to start. Keys found in credential: %s",
+                            list(credential.keys()),
+                        )
+                else:
+                    # Gluetun expects pluralized endpoint variable for native providers.
+                    env["WIREGUARD_ENDPOINTS"] = str(endpoints)
         else:
             username = credential.get("openvpn_user") or credential.get("username") or credential.get("user")
             password = credential.get("openvpn_password") or credential.get("password") or credential.get("pass")
@@ -763,18 +811,31 @@ class VPNProvisioner:
     @staticmethod
     def _apply_optional_credential_env(*, env: Dict[str, str], protocol: str, credential: Dict[str, Any]):
         if protocol == "wireguard":
-            optional_map = {
-                "wireguard_public_key": "WIREGUARD_PUBLIC_KEY",
-                "wireguard_preshared_key": "WIREGUARD_PRESHARED_KEY",
-                "wireguard_endpoint_ip": "WIREGUARD_ENDPOINT_IP",
-                "endpoint_ip": "WIREGUARD_ENDPOINT_IP",
-                "wireguard_endpoint_port": "WIREGUARD_ENDPOINT_PORT",
-                "endpoint_port": "WIREGUARD_ENDPOINT_PORT",
-                "wireguard_allowed_ips": "WIREGUARD_ALLOWED_IPS",
-                "wireguard_implementation": "WIREGUARD_IMPLEMENTATION",
-                "wireguard_mtu": "WIREGUARD_MTU",
-                "wireguard_persistent_keepalive_interval": "WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL",
+            # Map of environment variable name to list of potential credential keys (aliases)
+            wg_map = {
+                "WIREGUARD_PUBLIC_KEY": ["wireguard_public_key", "public_key", "PublicKey", "wg_public_key"],
+                "WIREGUARD_PRESHARED_KEY": ["wireguard_preshared_key", "preshared_key", "PresharedKey", "wg_preshared_key"],
+                "WIREGUARD_ENDPOINT_IP": ["wireguard_endpoint_ip", "endpoint_ip", "EndpointIP", "ip"],
+                "WIREGUARD_ENDPOINT_PORT": ["wireguard_endpoint_port", "endpoint_port", "EndpointPort", "port"],
+                "WIREGUARD_ALLOWED_IPS": ["wireguard_allowed_ips", "allowed_ips", "AllowedIPs"],
+                "WIREGUARD_IMPLEMENTATION": ["wireguard_implementation"],
+                "WIREGUARD_MTU": ["wireguard_mtu", "mtu", "MTU", "wg_mtu"],
+                "WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL": [
+                    "wireguard_persistent_keepalive_interval",
+                    "persistent_keepalive",
+                    "PersistentKeepalive",
+                ],
             }
+            for env_key, aliases in wg_map.items():
+                # If already set by mandatory logic (e.g. custom provider IP/Port), don't overwrite
+                if env.get(env_key):
+                    continue
+
+                for alias in aliases:
+                    value = credential.get(alias)
+                    if value is not None and str(value).strip() != "":
+                        env[env_key] = str(value)
+                        break  # Found a valid value, skip remaining aliases
         else:
             optional_map = {
                 "openvpn_protocol": "OPENVPN_PROTOCOL",
@@ -786,12 +847,11 @@ class VPNProvisioner:
                 "openvpn_ciphers": "OPENVPN_CIPHERS",
                 "openvpn_auth": "OPENVPN_AUTH",
             }
-
-        for source_key, env_key in optional_map.items():
-            value = credential.get(source_key)
-            if value is None or str(value).strip() == "":
-                continue
-            env[env_key] = str(value)
+            for source_key, env_key in optional_map.items():
+                value = credential.get(source_key)
+                if value is None or str(value).strip() == "":
+                    continue
+                env[env_key] = str(value)
 
     @staticmethod
     def _build_labels(
@@ -812,9 +872,10 @@ class VPNProvisioner:
             labels["acestream.vpn.credential_id"] = credential_id
         return labels
 
-    @staticmethod
     def _build_runtime_privileges(
+        self,
         *,
+        provider: str,
         protocol: str,
         settings: Dict[str, Any],
         credential: Dict[str, Any],
@@ -835,16 +896,18 @@ class VPNProvisioner:
             volumes["/lib/modules"] = {"bind": "/lib/modules", "mode": "ro"}
 
         # Share the orchestrator's refreshed servers.json catalog with Gluetun
-        # via a named Docker volume (no host paths required).  Gluetun reads its
+        # via a named Docker volume (no host paths required). Gluetun reads its
         # servers list from /gluetun/ on startup; mounting our volume there
         # ensures it validates SERVER_HOSTNAMES against our up-to-date data
         # rather than the potentially stale catalog bundled in its Docker image.
-        # Use 'rw' mode because Gluetun attempts to write metadata to this
-        # directory on startup; 'ro' results in "read-only file system" warnings.
-        volumes[gluetun_servers_volume.VOLUME_NAME] = {
-            "bind": "/gluetun",
-            "mode": "rw",
-        }
+        #
+        # For 'custom' providers, we skip this to avoid shadowing user configuration
+        # files (like custom.conf) that may be mounted to /gluetun/.
+        if provider != "custom":
+            volumes[gluetun_servers_volume.VOLUME_NAME] = {
+                "bind": "/gluetun",
+                "mode": "rw",
+            }
 
         return cap_add, devices, volumes
 

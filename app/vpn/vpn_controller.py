@@ -251,17 +251,23 @@ class VPNController:
         try:
             # If dynamic management is active and we rely on a catalog that doesn't exist yet,
             # wait for the initial background refresh to complete before attempting to pick a hostname.
-            provider = str(settings.get("provider", "protonvpn")).strip().lower()
-            catalog_file = "servers-proton.json" if provider == "protonvpn" else "servers.json"
+            # Skip catalog availability check if global provider is custom, OR if we have custom credentials
+            # that might be used (since provisioner prioritizes credential provider).
+            global_provider = str(settings.get("provider", "protonvpn")).strip().lower()
+            credentials = list(settings.get("credentials") or [])
+            has_custom_creds = any(str(c.get("provider") or "").strip().lower() == "custom" for c in credentials)
             
-            if not vpn_reputation_manager.is_catalog_available(catalog_file):
-                logger.info(
-                    "VPN servers catalog '%s' not found; waiting for initial refresh before provisioning node...",
-                    catalog_file
-                )
-                # We wait up to 60s for the first refresh. If it takes longer (slow internet), 
-                # we'll proceed and let the reputation manager log its usual warnings.
-                await vpn_servers_refresh_service.wait_for_initial_refresh(timeout=60.0)
+            if global_provider != "custom" and not has_custom_creds:
+                catalog_file = vpn_provisioner._get_effective_catalog_filename(settings)
+                
+                if not vpn_reputation_manager.is_catalog_available(catalog_file):
+                    logger.info(
+                        "VPN servers catalog '%s' not found; waiting for initial refresh before provisioning node...",
+                        catalog_file
+                    )
+                    # We wait up to 60s for the first refresh. If it takes longer (slow internet), 
+                    # we'll proceed and let the reputation manager log its usual warnings.
+                    await vpn_servers_refresh_service.wait_for_initial_refresh(timeout=60.0)
 
             result = await vpn_provisioner.provision_node(settings)
             logger.info(
