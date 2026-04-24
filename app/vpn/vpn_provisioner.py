@@ -122,7 +122,12 @@ class VPNProvisioner:
 
         image = str(settings.get("image") or self._default_image)
         network = cfg.DOCKER_NETWORK or get_orchestrator_network()
-        cap_add, devices, volumes = self._build_runtime_privileges(protocol=protocol, settings=settings, credential=credential)
+        cap_add, devices, volumes = self._build_runtime_privileges(
+            provider=provider,
+            protocol=protocol,
+            settings=settings,
+            credential=credential,
+        )
 
         try:
             container = await asyncio.to_thread(
@@ -278,8 +283,9 @@ class VPNProvisioner:
             "VPN_SERVICE_PROVIDER": provider,
             "VPN_TYPE": protocol,
             "HTTP_CONTROL_SERVER_ADDRESS": f":{cfg.GLUETUN_API_PORT}",
-            "GLUETUN_SERVERS_JSON_PATH": "/gluetun/servers.json",
         }
+        if provider != "custom":
+            env["GLUETUN_SERVERS_JSON_PATH"] = "/gluetun/servers.json"
 
         auth_default_role = credential.get("http_control_server_auth_default_role")
         if auth_default_role is None:
@@ -859,9 +865,10 @@ class VPNProvisioner:
             labels["acestream.vpn.credential_id"] = credential_id
         return labels
 
-    @staticmethod
     def _build_runtime_privileges(
+        self,
         *,
+        provider: str,
         protocol: str,
         settings: Dict[str, Any],
         credential: Dict[str, Any],
@@ -882,16 +889,18 @@ class VPNProvisioner:
             volumes["/lib/modules"] = {"bind": "/lib/modules", "mode": "ro"}
 
         # Share the orchestrator's refreshed servers.json catalog with Gluetun
-        # via a named Docker volume (no host paths required).  Gluetun reads its
+        # via a named Docker volume (no host paths required). Gluetun reads its
         # servers list from /gluetun/ on startup; mounting our volume there
         # ensures it validates SERVER_HOSTNAMES against our up-to-date data
         # rather than the potentially stale catalog bundled in its Docker image.
-        # Use 'rw' mode because Gluetun attempts to write metadata to this
-        # directory on startup; 'ro' results in "read-only file system" warnings.
-        volumes[gluetun_servers_volume.VOLUME_NAME] = {
-            "bind": "/gluetun",
-            "mode": "rw",
-        }
+        #
+        # For 'custom' providers, we skip this to avoid shadowing user configuration
+        # files (like custom.conf) that may be mounted to /gluetun/.
+        if provider != "custom":
+            volumes[gluetun_servers_volume.VOLUME_NAME] = {
+                "bind": "/gluetun",
+                "mode": "rw",
+            }
 
         return cap_add, devices, volumes
 
