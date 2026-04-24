@@ -438,11 +438,8 @@ class VPNProvisioner:
                 or credential.get("endpoint")
                 or credential.get("Endpoint")
             )
+            public_key = None
             if endpoints and not ignore_endpoint:
-                # For custom providers, Gluetun requires explicit IP and Port via
-                # WIREGUARD_ENDPOINT_IP and WIREGUARD_ENDPOINT_PORT.
-                # Setting WIREGUARD_ENDPOINTS (plural) can interfere with its internal
-                # server selection/filtering logic, so we omit it for 'custom'.
                 if provider == "custom":
                     endpoint_str = str(endpoints).strip().split(",")[0].strip()
                     if ":" in endpoint_str:
@@ -464,13 +461,13 @@ class VPNProvisioner:
 
                             env["WIREGUARD_ENDPOINT_IP"] = resolved_ip
 
-                    # Ensure WIREGUARD_PUBLIC_KEY is set early for custom provider validation
                     public_key = (
                         credential.get("wireguard_public_key")
                         or credential.get("public_key")
                         or credential.get("PublicKey")
                         or credential.get("wg_public_key")
                     )
+
                     if public_key:
                         env["WIREGUARD_PUBLIC_KEY"] = str(public_key)
                     else:
