@@ -251,8 +251,13 @@ class VPNController:
         try:
             # If dynamic management is active and we rely on a catalog that doesn't exist yet,
             # wait for the initial background refresh to complete before attempting to pick a hostname.
-            provider = str(settings.get("provider", "protonvpn")).strip().lower()
-            if provider != "custom":
+            # Skip catalog availability check if global provider is custom, OR if we have custom credentials
+            # that might be used (since provisioner prioritizes credential provider).
+            global_provider = str(settings.get("provider", "protonvpn")).strip().lower()
+            credentials = list(settings.get("credentials") or [])
+            has_custom_creds = any(str(c.get("provider") or "").strip().lower() == "custom" for c in credentials)
+            
+            if global_provider != "custom" and not has_custom_creds:
                 catalog_file = vpn_provisioner._get_effective_catalog_filename(settings)
                 
                 if not vpn_reputation_manager.is_catalog_available(catalog_file):

@@ -473,6 +473,12 @@ class VPNProvisioner:
                     )
                     if public_key:
                         env["WIREGUARD_PUBLIC_KEY"] = str(public_key)
+                    else:
+                        logger.warning(
+                            "Mandatory 'WIREGUARD_PUBLIC_KEY' is missing from credential payload for custom provider! "
+                            "Gluetun will likely fail to start. Keys found in credential: %s",
+                            list(credential.keys()),
+                        )
                 else:
                     # Gluetun expects pluralized endpoint variable for native providers.
                     env["WIREGUARD_ENDPOINTS"] = str(endpoints)

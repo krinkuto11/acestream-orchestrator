@@ -84,6 +84,9 @@ class VPNCredentialUpsert(BaseModel):
     PrivateKey: Optional[str] = None
     Address: Optional[str] = None
     Endpoint: Optional[str] = None
+    
+    class Config:
+        extra = "allow"
 
 
 def _load_vpn_settings_for_credential_ops() -> Dict[str, Any]:

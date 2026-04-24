@@ -379,6 +379,10 @@ class VPNCredentialSchema(BaseModel):
     Endpoint: Optional[str] = None
 
 
+    class Config:
+        extra = "allow"
+
+
 class VPNSettingsSchema(BaseModel):
     enabled: bool = False
     dynamic_vpn_management: bool = True
