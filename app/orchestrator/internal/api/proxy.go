@@ -741,7 +741,25 @@ func decodeJSON(r io.Reader, v any) error {
 func requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := config.C.Load().APIKey
-		if key != "" && r.Header.Get("X-API-Key") != key && r.URL.Query().Get("key") != key {
+		if key == "" {
+			next(w, r)
+			return
+		}
+		// Accept X-API-Key header, Authorization: Bearer <token>, or ?key= query param.
+		provided := r.Header.Get("X-API-Key")
+		if provided == "" {
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				provided = strings.TrimPrefix(auth, "Bearer ")
+			}
+		}
+		if provided == "" {
+			provided = r.URL.Query().Get("key")
+		}
+		if provided == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if provided != key {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

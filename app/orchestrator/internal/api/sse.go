@@ -111,11 +111,16 @@ func sseAPIKeyOK(r *http.Request) bool {
 	if key == "" {
 		return true
 	}
-	if r.URL.Query().Get("api_key") == key {
+	if r.URL.Query().Get("api_key") == key || r.URL.Query().Get("key") == key {
 		return true
 	}
 	if r.Header.Get("X-API-Key") == key {
 		return true
+	}
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		if strings.TrimPrefix(auth, "Bearer ") == key {
+			return true
+		}
 	}
 	return false
 }
@@ -277,7 +282,7 @@ func (s *ProxyServer) handleSSEContainerLogs(w http.ResponseWriter, r *http.Requ
 	sseHeaders(w)
 
 	sendLogs := func() bool {
-		lines, err := cpdocker.GetContainerLogs(r.Context(), id, "100", false)
+		lines, err := cpdocker.GetContainerLogs(r.Context(), id, "100", false, 0)
 		if err != nil {
 			slog.Warn("SSE logs: get container logs failed", "id", id, "err", err)
 			return writeSSEEvent(w, "error", map[string]string{"error": err.Error()})
@@ -458,6 +463,7 @@ func (s *ProxyServer) handleSSEReprovisionStatus(w http.ResponseWriter, r *http.
 // ─── State snapshot helpers ───────────────────────────────────────────────────
 
 func (s *ProxyServer) buildStatePayload() map[string]any {
+	cfg := config.C.Load()
 	engines := s.st.ListEngines()
 	streams := s.st.ListStreams()
 	vpns := s.st.ListVPNNodes()
@@ -474,6 +480,13 @@ func (s *ProxyServer) buildStatePayload() map[string]any {
 		}
 	}
 
+	activeStreams := 0
+	for _, st := range streams {
+		if st.Status == "started" {
+			activeStreams++
+		}
+	}
+
 	var vpnHealthy int
 	for _, n := range vpns {
 		if n.Healthy {
@@ -481,34 +494,92 @@ func (s *ProxyServer) buildStatePayload() map[string]any {
 		}
 	}
 
-	vpnStatus := map[string]any{
-		"vpn_enabled":   config.C.Load().VPNEnabled,
-		"nodes_total":   len(vpns),
-		"nodes_healthy": vpnHealthy,
-		"vpn_nodes":     vpns,
+	// Circuit-breaker state for provisioning section.
+	cbState := "closed"
+	var lastFailure any
+	if s.cb != nil {
+		cbStatus := s.cb.GetStatus()
+		if gen, ok := cbStatus["general"].(map[string]any); ok {
+			if st, ok := gen["state"].(string); ok && st != "" {
+				cbState = st
+			}
+			lastFailure = gen["last_failure_time"]
+		}
+	}
+	canProvision := cbState == "closed"
+
+	streamCounts := s.st.GetStreamCounts()
+	monCounts := s.st.GetMonitorCounts()
+	usedCapacity := 0
+	for _, e := range engines {
+		if streamCounts[e.ContainerID]+monCounts[e.ContainerID] > 0 {
+			usedCapacity++
+		}
+	}
+	totalCapacity := len(engines)
+	availableCapacity := totalCapacity - usedCapacity
+	if availableCapacity < 0 {
+		availableCapacity = 0
+	}
+
+	var overallStatus string
+	switch {
+	case len(engines) == 0:
+		overallStatus = "unavailable"
+	case !canProvision:
+		overallStatus = "degraded"
+	default:
+		overallStatus = "healthy"
 	}
 
 	orchestratorStatus := map[string]any{
-		"engines_total":     len(engines),
-		"engines_healthy":   healthy,
-		"engines_unhealthy": unhealthy,
-		"streams_active":    len(streams),
-		"vpn_nodes":         len(vpns),
-		"timestamp":         time.Now().UTC(),
+		"status": overallStatus,
+		"engines": map[string]any{
+			"total":     len(engines),
+			"healthy":   healthy,
+			"unhealthy": unhealthy,
+			"draining":  draining,
+		},
+		"streams": map[string]any{
+			"active": activeStreams,
+			"total":  len(streams),
+		},
+		"capacity": map[string]any{
+			"total":        totalCapacity,
+			"used":         usedCapacity,
+			"available":    availableCapacity,
+			"max_replicas": cfg.MaxReplicas,
+			"min_replicas": cfg.MinReplicas,
+		},
+		"vpn": map[string]any{
+			"enabled":     cfg.VPNEnabled,
+			"nodes_total": len(vpns),
+			"healthy":     vpnHealthy,
+		},
+		"provisioning": map[string]any{
+			"can_provision":         canProvision,
+			"circuit_breaker_state": cbState,
+			"last_failure":          lastFailure,
+		},
+		"timestamp": time.Now().UTC(),
 	}
 
 	return map[string]any{
-		"engines":              engines,
-		"streams":              streams,
-		"vpn_nodes":            vpns,
-		"engines_total":        len(engines),
-		"engines_healthy":      healthy,
-		"engines_unhealthy":    unhealthy,
-		"engines_draining":     draining,
-		"streams_active":       len(streams),
-		"vpn_status":           vpnStatus,
-		"orchestrator_status":  orchestratorStatus,
-		"timestamp":            time.Now().UTC(),
+		"engines":             engines,
+		"streams":             streams,
+		"vpn_nodes":           vpns,
+		"engines_total":       len(engines),
+		"engines_healthy":     healthy,
+		"engines_unhealthy":   unhealthy,
+		"engines_draining":    draining,
+		"streams_active":      activeStreams,
+		"orchestrator_status": orchestratorStatus,
+		"health": map[string]any{
+			"status":            overallStatus,
+			"healthy_engines":   healthy,
+			"unhealthy_engines": unhealthy,
+		},
+		"timestamp": time.Now().UTC(),
 	}
 }
 

@@ -152,7 +152,7 @@ func (s *OrchestratorServer) handleStreamStarted(w http.ResponseWriter, r *http.
 	}
 	st := s.st.OnStreamStarted(ev)
 	slog.Info("Stream started", "content_id", ev.ContentID, "engine_id", ev.EngineID)
-	writeJSON(w, http.StatusCreated, st)
+	writeJSON(w, http.StatusOK, st)
 }
 
 func (s *OrchestratorServer) handleStreamEnded(w http.ResponseWriter, r *http.Request) {

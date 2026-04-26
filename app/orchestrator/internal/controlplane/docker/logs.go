@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -14,8 +15,8 @@ import (
 
 // GetContainerLogs fetches the tail of logs from a container.
 // tail: number of lines ("100", "all", etc.)
-// stderr: include stderr
-func GetContainerLogs(ctx context.Context, containerID, tail string, timestamps bool) ([]string, error) {
+// sinceUnix: if > 0, only return logs after this Unix timestamp
+func GetContainerLogs(ctx context.Context, containerID, tail string, timestamps bool, sinceUnix int64) ([]string, error) {
 	cli, err := engine.NewDockerClientExported()
 	if err != nil {
 		return nil, err
@@ -31,6 +32,9 @@ func GetContainerLogs(ctx context.Context, containerID, tail string, timestamps 
 		ShowStderr: true,
 		Tail:       tail,
 		Timestamps: timestamps,
+	}
+	if sinceUnix > 0 {
+		opts.Since = strconv.FormatInt(sinceUnix, 10)
 	}
 
 	rc, err := cli.ContainerLogs(ctx, containerID, opts)

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const maxStatHistory = 720 // matches Python's default stats_history_max
+
 // Store is the unified in-memory state for both planes.
 // Control-plane owns engine/VPN lifecycle; proxy plane owns stream state.
 // All exported methods are safe for concurrent use.
@@ -27,7 +29,8 @@ type Store struct {
 	targetConfigGeneration int
 
 	// ─── Proxy-plane state ────────────────────────────────────────────────────
-	streams map[string]*StreamState // contentID -> StreamState
+	streams map[string]*StreamState   // contentID -> StreamState
+	stats   map[string][]*StatSnapshot // contentID -> ring-buffer of snapshots
 }
 
 var Global = newStore()
@@ -42,6 +45,7 @@ func newStore() *Store {
 		forwardedPending: make(map[string]bool),
 		emptyAt:          make(map[string]time.Time),
 		streams:          make(map[string]*StreamState),
+		stats:            make(map[string][]*StatSnapshot),
 	}
 	return s
 }
@@ -511,30 +515,104 @@ func (s *Store) OnStreamStarted(ev StreamStartedEvent) *StreamState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC()
+
+	// Resolve the canonical content ID: prefer ev.ContentID, fall back to
+	// ev.Stream.Key (Python-format nested event).
+	contentID := ev.ContentID
+	if contentID == "" && ev.Stream != nil {
+		contentID = ev.Stream.Key
+	}
+
 	st := &StreamState{
-		ID:           ev.ContentID,
-		ContentID:    ev.ContentID,
+		ID:           contentID,
+		ContentID:    contentID,
 		EngineID:     ev.EngineID,
 		EngineName:   ev.EngineName,
 		StartedAt:    now,
 		LastActivity: now,
+		Status:       "started",
+		FileIndexes:  "0",
+		Clients:      []map[string]any{},
 	}
-	s.streams[ev.ContentID] = st
-	s.streamCounts[ev.EngineID]++
+
+	// Populate from Python nested fields when present.
+	if ev.ContainerID != "" {
+		st.ContainerID = ev.ContainerID
+		if st.EngineID == "" {
+			st.EngineID = ev.ContainerID
+		}
+	}
+	if ev.Stream != nil {
+		st.KeyType = ev.Stream.KeyType
+		st.Key = ev.Stream.Key
+		if ev.Stream.FileIndexes != "" {
+			st.FileIndexes = ev.Stream.FileIndexes
+		}
+		st.Seekback = ev.Stream.Seekback
+		st.LiveDelay = ev.Stream.LiveDelay
+		st.ControlMode = ev.Stream.ControlMode
+		if contentID == "" {
+			st.ID = ev.Stream.Key
+			st.ContentID = ev.Stream.Key
+		}
+	}
+	if st.Key == "" {
+		st.Key = contentID
+	}
+	if st.KeyType == "" {
+		st.KeyType = "content_id"
+	}
+	if ev.Session != nil {
+		st.PlaybackSessionID = ev.Session.PlaybackSessionID
+		st.StatURL = ev.Session.StatURL
+		st.CommandURL = ev.Session.CommandURL
+		st.IsLive = ev.Session.IsLive != 0
+		st.Bitrate = ev.Session.Bitrate
+	}
+	// Derive ContainerName from EngineName if not set directly.
+	if st.ContainerName == "" {
+		st.ContainerName = ev.EngineName
+	}
+
+	s.streams[st.ID] = st
+	if st.EngineID != "" {
+		s.streamCounts[st.EngineID]++
+	}
 	return st
 }
 
 func (s *Store) OnStreamEnded(ev StreamEndedEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st, ok := s.streams[ev.ContentID]
+
+	// Resolve ID: ev.ContentID is the primary key; ev.StreamID is a Python UUID
+	// alias — try both.
+	id := ev.ContentID
+	st, ok := s.streams[id]
+	if !ok && ev.StreamID != "" {
+		for _, candidate := range s.streams {
+			if candidate.ID == ev.StreamID {
+				st = candidate
+				id = candidate.ID
+				ok = true
+				break
+			}
+		}
+	}
 	if !ok {
 		return
 	}
-	delete(s.streams, ev.ContentID)
+
+	now := time.Now().UTC()
+	st.Status = "ended"
+	st.EndedAt = &now
+
+	delete(s.streams, id)
 	if st.EngineID != "" && s.streamCounts[st.EngineID] > 0 {
 		s.streamCounts[st.EngineID]--
 	}
+	// Retain stats a bit longer by NOT deleting the stats ring buffer here;
+	// GC can happen on a separate sweep if needed.
 }
 
 func (s *Store) GetStream(contentID string) (*StreamState, bool) {
@@ -564,5 +642,71 @@ func (s *Store) UpdateStreamActivity(contentID string) {
 	defer s.mu.Unlock()
 	if st, ok := s.streams[contentID]; ok {
 		st.LastActivity = time.Now().UTC()
+	}
+}
+
+// ─── Stats ring-buffer ────────────────────────────────────────────────────────
+
+// AppendStat adds a snapshot to the per-stream ring buffer and updates the
+// latest stats on the StreamState itself.
+func (s *Store) AppendStat(contentID string, snap *StatSnapshot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	hist := s.stats[contentID]
+	hist = append(hist, snap)
+	if len(hist) > maxStatHistory {
+		hist = hist[len(hist)-maxStatHistory:]
+	}
+	s.stats[contentID] = hist
+
+	// Reflect latest values on the live stream state.
+	if st, ok := s.streams[contentID]; ok {
+		st.LastActivity = time.Now().UTC()
+		if snap.Peers != nil {
+			st.Peers = snap.Peers
+		}
+		if snap.SpeedDown != nil {
+			st.SpeedDown = snap.SpeedDown
+		}
+		if snap.SpeedUp != nil {
+			st.SpeedUp = snap.SpeedUp
+		}
+		if snap.Downloaded != nil {
+			st.Downloaded = snap.Downloaded
+		}
+		if snap.Uploaded != nil {
+			st.Uploaded = snap.Uploaded
+		}
+		if snap.Bitrate != nil {
+			st.Bitrate = snap.Bitrate
+		}
+		if snap.Livepos != nil {
+			st.Livepos = snap.Livepos
+		}
+		if snap.ProxyBufferPieces != nil {
+			st.ProxyBufferPieces = snap.ProxyBufferPieces
+		}
+	}
+}
+
+// GetStats returns a copy of the stats ring buffer for the given stream.
+func (s *Store) GetStats(contentID string) []*StatSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	hist := s.stats[contentID]
+	out := make([]*StatSnapshot, len(hist))
+	copy(out, hist)
+	return out
+}
+
+// PruneStats removes the stats buffer for streams that no longer exist.
+func (s *Store) PruneStats() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id := range s.stats {
+		if _, ok := s.streams[id]; !ok {
+			delete(s.stats, id)
+		}
 	}
 }

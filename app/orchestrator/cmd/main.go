@@ -88,35 +88,31 @@ func main() {
 		prov       *vpnpkg.Provisioner
 		svcRefresh *vpnpkg.ServersRefreshService
 	)
-	if cfg.VPNEnabled {
-		serversDir := cfg.ServersJSONDir
-		if serversDir == "" {
-			serversDir = "/app/data/vpn-servers"
-		}
-
-		creds = vpnpkg.NewCredentialManager()
-		// Load credentials from persistent settings if available.
-		if settingsStore != nil {
-			vpnSettings := settingsStore.Get("vpn_settings")
-			if rawCreds, ok := vpnSettings["credentials"].([]any); ok {
-				credList := make([]map[string]interface{}, 0, len(rawCreds))
-				for _, c := range rawCreds {
-					if m, ok := c.(map[string]interface{}); ok {
-						credList = append(credList, m)
-					}
-				}
-				if err := creds.Configure(credList); err != nil {
-					slog.Warn("VPN credential configure failed", "err", err)
+	// ── VPN subsystems ────────────────────────────────────────────────────────
+	serversDir := cfg.ServersJSONDir
+	if serversDir == "" {
+		serversDir = "/app/data/vpn-servers"
+	}
+	creds = vpnpkg.NewCredentialManager()
+	if settingsStore != nil {
+		vpnSettings := settingsStore.Get("vpn_settings")
+		if rawCreds, ok := vpnSettings["credentials"].([]any); ok {
+			credList := make([]map[string]interface{}, 0, len(rawCreds))
+			for _, c := range rawCreds {
+				if m, ok := c.(map[string]interface{}); ok {
+					credList = append(credList, m)
 				}
 			}
+			if err := creds.Configure(credList); err != nil {
+				slog.Warn("VPN credential configure failed", "err", err)
+			}
 		}
-
-		rep = vpnpkg.NewReputationManager(rdb, serversDir)
-		prov = vpnpkg.NewProvisioner(creds, rep)
-		svcRefresh = vpnpkg.NewServersRefreshService(serversDir, rep)
-		go svcRefresh.Run(appCtx, cfg.VPNServersAutoRefresh, cfg.VPNServersRefreshPeriod)
 	}
- 
+	rep = vpnpkg.NewReputationManager(rdb, serversDir)
+	prov = vpnpkg.NewProvisioner(creds, rep)
+	svcRefresh = vpnpkg.NewServersRefreshService(serversDir, rep)
+	go svcRefresh.Run(appCtx, cfg.VPNServersAutoRefresh, cfg.VPNServersRefreshPeriod)
+
 	vpnManager := vpnpkg.NewLifecycleManager(pub, prov)
 	go vpnManager.Run(appCtx)
 
@@ -127,6 +123,12 @@ func main() {
 	// Bootstrap Docker state before starting the controller.
 	if ok := cpdocker.Reindex(appCtx); !ok {
 		slog.Warn("Docker reindex failed; engine state may be incomplete on first reconcile")
+	}
+
+	// Restore VPN leases from discovered Docker state.
+	if creds != nil && prov != nil {
+		nodes, _ := prov.ListManagedNodes(appCtx, false)
+		creds.RestoreLeases(nodes)
 	}
 
 	ctrl.Start(appCtx)

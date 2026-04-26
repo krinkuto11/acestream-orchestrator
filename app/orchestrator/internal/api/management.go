@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +21,10 @@ import (
 )
 
 func (s *ProxyServer) registerManagementRoutes() {
+		// ── Events (proxy-plane POST) ─────────────────────────────────────────────
+	s.mux.HandleFunc("POST /api/v1/events/stream_started", s.mgHandleEventStreamStarted)
+	s.mux.HandleFunc("POST /api/v1/events/stream_ended", s.mgHandleEventStreamEnded)
+
 	// ── Engines ───────────────────────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/engines", s.mgHandleListEngines)
 	s.mux.HandleFunc("GET /api/v1/engines/with-metrics", s.mgHandleEnginesWithMetrics)
@@ -59,6 +65,7 @@ func (s *ProxyServer) registerManagementRoutes() {
 	s.mux.HandleFunc("POST /api/v1/vpn/servers/refresh", requireAPIKey(s.mgHandleVPNServersRefresh))
 
 	// ── VPN settings & status ─────────────────────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/vpn/publicip", s.mgHandleVPNPublicIP)
 	s.mux.HandleFunc("GET /api/v1/vpn/status", s.mgHandleVPNStatus)
 	s.mux.HandleFunc("GET /api/v1/vpn/leases", s.mgHandleVPNCredentials)
 	s.mux.HandleFunc("GET /api/v1/vpn/config", s.mgHandleGetVPNConfig)
@@ -137,35 +144,77 @@ func (s *ProxyServer) mgHandleListEngines(w http.ResponseWriter, r *http.Request
 	monCounts := s.st.GetMonitorCounts()
 
 	type engineOut struct {
-		ContainerID   string `json:"container_id"`
-		ContainerName string `json:"container_name"`
-		Host          string `json:"host"`
-		Port          int    `json:"port"`
-		APIPort       int    `json:"api_port"`
-		Forwarded     bool   `json:"forwarded"`
-		VPNContainer  string `json:"vpn_container,omitempty"`
-		HealthStatus  string `json:"health_status"`
-		Draining      bool   `json:"draining"`
-		DrainReason   string `json:"drain_reason,omitempty"`
-		StreamCount   int    `json:"stream_count"`
-		MonitorCount  int    `json:"monitor_count"`
+		ContainerID        string            `json:"container_id"`
+		ContainerName      string            `json:"container_name"`
+		Host               string            `json:"host"`
+		Port               int               `json:"port"`
+		APIPort            int               `json:"api_port"`
+		Labels             map[string]string `json:"labels"`
+		Forwarded          bool              `json:"forwarded"`
+		VPNContainer       string            `json:"vpn_container,omitempty"`
+		HealthStatus       string            `json:"health_status"`
+		P2PPort            int               `json:"p2p_port,omitempty"`
+		FirstSeen          time.Time         `json:"first_seen"`
+		LastSeen           time.Time         `json:"last_seen"`
+		Draining           bool              `json:"draining"`
+		DrainReason        string            `json:"drain_reason,omitempty"`
+		StreamCount        int               `json:"stream_count"`
+		MonitorCount       int               `json:"monitor_count"`
+		TotalPeers         int               `json:"total_peers"`
+		TotalSpeedDown     int               `json:"total_speed_down"`
+		TotalSpeedUp       int               `json:"total_speed_up"`
+		MonitorStreamCount int               `json:"monitor_stream_count"`
+		MonitorSpeedDown   int               `json:"monitor_speed_down"`
+		MonitorSpeedUp     int               `json:"monitor_speed_up"`
+		LastHealthCheck    *time.Time        `json:"last_health_check,omitempty"`
+		LastStreamUsage    *time.Time        `json:"last_stream_usage,omitempty"`
+		EngineVariant      string            `json:"engine_variant,omitempty"`
+		Platform           string            `json:"platform,omitempty"`
+		Version            string            `json:"version,omitempty"`
+		ForwardedPort      *int              `json:"forwarded_port,omitempty"`
+		Streams            []string          `json:"streams"`
 	}
 
 	out := make([]engineOut, 0, len(engines))
 	for _, e := range engines {
+		labels := e.Labels
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		streams := e.Streams
+		if streams == nil {
+			streams = []string{}
+		}
 		out = append(out, engineOut{
-			ContainerID:   e.ContainerID,
-			ContainerName: e.ContainerName,
-			Host:          e.Host,
-			Port:          e.Port,
-			APIPort:       e.APIPort,
-			Forwarded:     e.Forwarded,
-			VPNContainer:  e.VPNContainer,
-			HealthStatus:  string(e.HealthStatus),
-			Draining:      e.Draining,
-			DrainReason:   e.DrainReason,
-			StreamCount:   streamCounts[e.ContainerID],
-			MonitorCount:  monCounts[e.ContainerID],
+			ContainerID:        e.ContainerID,
+			ContainerName:      e.ContainerName,
+			Host:               e.Host,
+			Port:               e.Port,
+			APIPort:            e.APIPort,
+			Labels:             labels,
+			Forwarded:          e.Forwarded,
+			VPNContainer:       e.VPNContainer,
+			HealthStatus:       string(e.HealthStatus),
+			P2PPort:            e.P2PPort,
+			FirstSeen:          e.FirstSeen,
+			LastSeen:           e.LastSeen,
+			Draining:           e.Draining,
+			DrainReason:        e.DrainReason,
+			StreamCount:        streamCounts[e.ContainerID],
+			MonitorCount:       monCounts[e.ContainerID],
+			TotalPeers:         e.TotalPeers,
+			TotalSpeedDown:     e.TotalSpeedDown,
+			TotalSpeedUp:       e.TotalSpeedUp,
+			MonitorStreamCount: e.MonitorStreamCount,
+			MonitorSpeedDown:   e.MonitorSpeedDown,
+			MonitorSpeedUp:     e.MonitorSpeedUp,
+			LastHealthCheck:    e.LastHealthCheck,
+			LastStreamUsage:    e.LastStreamUsage,
+			EngineVariant:      e.EngineVariant,
+			Platform:           e.Platform,
+			Version:            e.Version,
+			ForwardedPort:      e.ForwardedPort,
+			Streams:            streams,
 		})
 	}
 	mgWriteJSON(w, http.StatusOK, out)
@@ -271,7 +320,13 @@ func (s *ProxyServer) mgHandleContainerLogs(w http.ResponseWriter, r *http.Reque
 	id := r.PathValue("id")
 	tail := r.URL.Query().Get("tail")
 	timestamps := r.URL.Query().Get("timestamps") == "true"
-	lines, err := cpdocker.GetContainerLogs(r.Context(), id, tail, timestamps)
+	var sinceUnix int64
+	if ss := r.URL.Query().Get("since_seconds"); ss != "" {
+		if n, err := strconv.Atoi(ss); err == nil && n > 0 {
+			sinceUnix = time.Now().Unix() - int64(n)
+		}
+	}
+	lines, err := cpdocker.GetContainerLogs(r.Context(), id, tail, timestamps, sinceUnix)
 	if err != nil {
 		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -292,61 +347,133 @@ func (s *ProxyServer) mgHandleListStreams(w http.ResponseWriter, r *http.Request
 
 func (s *ProxyServer) mgHandleDeleteStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	_, ok := s.st.GetStream(id)
+	st, ok := s.st.GetStream(id)
 	if !ok {
 		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "stream not found"})
 		return
 	}
-	s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: id})
-	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	if st.CommandURL != "" {
+		stopURL := st.CommandURL + "?method=stop"
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if req, err := http.NewRequestWithContext(ctx, http.MethodGet, stopURL, nil); err == nil {
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				slog.Warn("stop command failed for stream", "id", id, "err", err)
+			} else {
+				resp.Body.Close()
+			}
+		}
+	}
+	s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: id, Reason: "manual_stop_via_api"})
+	mgWriteJSON(w, http.StatusOK, map[string]string{"message": "Stream stopped successfully", "stream_id": id})
 }
 
 func (s *ProxyServer) mgHandleBatchStopStreams(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		StreamIDs []string `json:"stream_ids"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+	var commandURLs []string
+	if err := json.NewDecoder(r.Body).Decode(&commandURLs); err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json: expected array of command_urls"})
 		return
 	}
-	stopped := 0
-	for _, id := range body.StreamIDs {
-		if _, ok := s.st.GetStream(id); ok {
-			s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: id})
-			stopped++
-		}
+	type result struct {
+		CommandURL string `json:"command_url"`
+		Success    bool   `json:"success"`
+		Message    string `json:"message"`
+		StreamID   string `json:"stream_id,omitempty"`
 	}
-	mgWriteJSON(w, http.StatusOK, map[string]any{"stopped": stopped})
+	results := make([]result, 0, len(commandURLs))
+	successCount := 0
+	for _, cmdURL := range commandURLs {
+		res := result{CommandURL: cmdURL}
+		var found *state.StreamState
+		for _, s := range s.st.ListStreams() {
+			if s.CommandURL == cmdURL {
+				found = s
+				break
+			}
+		}
+		if found == nil {
+			res.Message = "Stream not found"
+			results = append(results, res)
+			continue
+		}
+		res.StreamID = found.ID
+		if found.Status != "started" {
+			res.Message = fmt.Sprintf("Stream is not active (status: %s)", found.Status)
+			results = append(results, res)
+			continue
+		}
+		stopURL := cmdURL + "?method=stop"
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		if req, err := http.NewRequestWithContext(ctx, http.MethodGet, stopURL, nil); err == nil {
+			if resp, err := http.DefaultClient.Do(req); err != nil {
+				slog.Warn("batch stop command failed", "url", cmdURL, "err", err)
+			} else {
+				resp.Body.Close()
+			}
+		}
+		cancel()
+		s.st.OnStreamEnded(state.StreamEndedEvent{
+			ContentID:   found.ID,
+			ContainerID: found.ContainerID,
+			Reason:      "batch_stop_via_api",
+		})
+		res.Success = true
+		res.Message = "Stream stopped successfully"
+		successCount++
+		results = append(results, res)
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{
+		"total":         len(commandURLs),
+		"success_count": successCount,
+		"failure_count": len(commandURLs) - successCount,
+		"results":       results,
+	})
 }
 
 func (s *ProxyServer) mgHandleStreamStats(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.st.GetStream(id); !ok {
+		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "stream not found"})
+		return
+	}
+	snaps := s.st.GetStats(id)
+	if snaps == nil {
+		snaps = []*state.StatSnapshot{}
+	}
+	mgWriteJSON(w, http.StatusOK, snaps)
+}
+
+func (s *ProxyServer) mgHandleStreamExtendedStats(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	st, ok := s.st.GetStream(id)
 	if !ok {
 		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "stream not found"})
 		return
 	}
-	mgWriteJSON(w, http.StatusOK, []any{map[string]any{
-		"content_id":     st.ContentID,
-		"engine_id":      st.EngineID,
+	mgWriteJSON(w, http.StatusOK, map[string]any{
+		"available":      true,
+		"stream_id":      id,
+		"peers":          st.Peers,
+		"speed_down":     st.SpeedDown,
+		"speed_up":       st.SpeedUp,
+		"downloaded":     st.Downloaded,
+		"uploaded":       st.Uploaded,
+		"bitrate":        st.Bitrate,
+		"livepos":        st.Livepos,
 		"active_clients": st.ActiveClients,
-		"started_at":     st.StartedAt,
-		"last_activity":  st.LastActivity,
-	}})
-}
-
-func (s *ProxyServer) mgHandleStreamExtendedStats(w http.ResponseWriter, r *http.Request) {
-	s.mgHandleStreamStats(w, r)
+		"status":         st.Status,
+	})
 }
 
 func (s *ProxyServer) mgHandleStreamLivepos(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	_, ok := s.st.GetStream(id)
+	st, ok := s.st.GetStream(id)
 	if !ok {
 		mgWriteJSON(w, http.StatusNotFound, map[string]string{"error": "stream not found"})
 		return
 	}
-	mgWriteJSON(w, http.StatusOK, map[string]any{"content_id": id, "livepos": nil})
+	mgWriteJSON(w, http.StatusOK, map[string]any{"content_id": id, "livepos": st.Livepos})
 }
 
 // ─── Provisioning ────────────────────────────────────────────────────────────
@@ -400,15 +527,27 @@ func (s *ProxyServer) mgHandleReconcile(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *ProxyServer) mgHandleByLabel(w http.ResponseWriter, r *http.Request) {
-	engines := s.st.ListEngines()
-	label := r.URL.Query().Get("label")
+	// Python uses `key` param, not `label`
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		key = r.URL.Query().Get("label")
+	}
 	value := r.URL.Query().Get("value")
-	if label == "" {
+	engines := s.st.ListEngines()
+	if key == "" {
 		mgWriteJSON(w, http.StatusOK, engines)
 		return
 	}
-	// Engines in state don't have user-visible label filtering; return empty filtered set
-	mgWriteJSON(w, http.StatusOK, map[string]any{"engines": []any{}, "label": label, "value": value})
+	var matched []*state.Engine
+	for _, e := range engines {
+		if v, ok := e.Labels[key]; ok && (value == "" || v == value) {
+			matched = append(matched, e)
+		}
+	}
+	if matched == nil {
+		matched = []*state.Engine{}
+	}
+	mgWriteJSON(w, http.StatusOK, map[string]any{"engines": matched, "key": key, "value": value})
 }
 
 // ─── VPN nodes ───────────────────────────────────────────────────────────────
@@ -630,6 +769,17 @@ func (s *ProxyServer) mgHandleUpdateAllSettings(w http.ResponseWriter, r *http.R
 				}
 			case "vpn_settings":
 				config.ApplyVPNSettings(payload)
+				if s.creds != nil {
+					if c, ok := payload["credentials"].([]any); ok {
+						var mapped []map[string]any
+						for _, item := range c {
+							if m, ok := item.(map[string]any); ok {
+								mapped = append(mapped, m)
+							}
+						}
+						s.creds.Configure(mapped)
+					}
+				}
 				if s.vpnMgr != nil {
 					s.vpnMgr.Nudge("settings_change")
 				}
@@ -707,6 +857,17 @@ func (s *ProxyServer) mgHandleSetSettingsCategory(cat string) http.HandlerFunc {
 			}
 		case "vpn_settings":
 			config.ApplyVPNSettings(payload)
+			if s.creds != nil {
+				if c, ok := payload["credentials"].([]any); ok {
+					var mapped []map[string]any
+					for _, item := range c {
+						if m, ok := item.(map[string]any); ok {
+							mapped = append(mapped, m)
+						}
+					}
+					s.creds.Configure(mapped)
+				}
+			}
 			markedCount := 0
 			// If VPN was toggled, mark engines for migration immediately.
 			targetHash := cpengine.ComputeConfigHash()
@@ -910,23 +1071,117 @@ func (s *ProxyServer) mgHandleOrchestratorStatus(w http.ResponseWriter, r *http.
 	engines := s.st.ListEngines()
 	streams := s.st.ListStreams()
 	vpns := s.st.ListVPNNodes()
-	var healthy, unhealthy int
+
+	var healthy, unhealthy, draining int
 	for _, e := range engines {
-		if e.HealthStatus == state.HealthHealthy {
+		switch {
+		case e.Draining:
+			draining++
+		case e.HealthStatus == state.HealthHealthy:
 			healthy++
-		} else if e.HealthStatus == state.HealthUnhealthy {
+		case e.HealthStatus == state.HealthUnhealthy:
 			unhealthy++
 		}
 	}
+
+	activeStreams := 0
+	for _, st := range streams {
+		if st.Status == "started" {
+			activeStreams++
+		}
+	}
+
+	vpnEnabled := cfg.VPNEnabled
+	vpnHealthy := 0
+	for _, v := range vpns {
+		if v.Healthy {
+			vpnHealthy++
+		}
+	}
+
+	var cbState string
+	var lastFailure any
+	if s.cb != nil {
+		cbStatus := s.cb.GetStatus()
+		if gen, ok := cbStatus["general"].(map[string]any); ok {
+			cbState, _ = gen["state"].(string)
+			lastFailure = gen["last_failure_time"]
+		}
+	}
+	if cbState == "" {
+		cbState = "closed"
+	}
+
+	totalCapacity := len(engines)
+	usedCapacity := 0
+	streamCounts := s.st.GetStreamCounts()
+	monCounts := s.st.GetMonitorCounts()
+	for _, e := range engines {
+		if streamCounts[e.ContainerID]+monCounts[e.ContainerID] > 0 {
+			usedCapacity++
+		}
+	}
+	availableCapacity := totalCapacity - usedCapacity
+	if availableCapacity < 0 {
+		availableCapacity = 0
+	}
+
+	canProvision := cbState == "closed"
+	var blockedReason any
+	if !canProvision {
+		blockedReason = map[string]any{
+			"code":    "circuit_breaker",
+			"message": fmt.Sprintf("Provisioning circuit breaker is %s", cbState),
+		}
+	}
+
+	var overallStatus string
+	switch {
+	case len(engines) == 0:
+		overallStatus = "unavailable"
+	case !canProvision:
+		overallStatus = "degraded"
+	default:
+		overallStatus = "healthy"
+	}
+
 	mgWriteJSON(w, http.StatusOK, map[string]any{
-		"engines_total":     len(engines),
-		"engines_healthy":   healthy,
-		"engines_unhealthy": unhealthy,
-		"streams_active":    len(streams),
-		"vpn_nodes":         len(vpns),
-		"proxy_listen":      cfg.ProxyListenAddr,
-		"orchestrator":      cfg.OrchestratorListenAddr,
-		"timestamp":         time.Now().UTC(),
+		"status": overallStatus,
+		"engines": map[string]any{
+			"total":    len(engines),
+			"healthy":  healthy,
+			"unhealthy": unhealthy,
+			"draining": draining,
+		},
+		"streams": map[string]any{
+			"active": activeStreams,
+			"total":  len(streams),
+		},
+		"capacity": map[string]any{
+			"total":        totalCapacity,
+			"used":         usedCapacity,
+			"available":    availableCapacity,
+			"max_replicas": cfg.MaxReplicas,
+			"min_replicas": cfg.MinReplicas,
+		},
+		"vpn": map[string]any{
+			"enabled":   vpnEnabled,
+			"nodes_total": len(vpns),
+			"healthy":   vpnHealthy,
+		},
+		"provisioning": map[string]any{
+			"can_provision":        canProvision,
+			"circuit_breaker_state": cbState,
+			"last_failure":         lastFailure,
+			"blocked_reason":       blockedReason,
+		},
+		"config": map[string]any{
+			"proxy_listen":  cfg.ProxyListenAddr,
+			"orchestrator":  cfg.OrchestratorListenAddr,
+			"auto_delete":    cfg.AutoDelete,
+			"grace_period_s": cfg.GracePeriod.Seconds(),
+		},
+		"timestamp": time.Now().UTC(),
 	})
 }
 
@@ -961,12 +1216,28 @@ func (s *ProxyServer) mgHandleCacheClear(w http.ResponseWriter, r *http.Request)
 // ─── M3U ─────────────────────────────────────────────────────────────────────
 
 func (s *ProxyServer) mgHandleModifyM3U(w http.ResponseWriter, r *http.Request) {
-	m3uURL := r.URL.Query().Get("url")
+	// Accept both ?m3u_url= (Python compat) and ?url= (legacy)
+	m3uURL := r.URL.Query().Get("m3u_url")
 	if m3uURL == "" {
-		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "url parameter required"})
+		m3uURL = r.URL.Query().Get("url")
+	}
+	if m3uURL == "" {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "m3u_url parameter required"})
 		return
 	}
-	host := r.Host
+	// Allow caller to override host and port
+	host := r.URL.Query().Get("host")
+	if host == "" {
+		host = r.Host
+	}
+	if port := r.URL.Query().Get("port"); port != "" {
+		// Replace or append port on host
+		if h, _, hasPort := strings.Cut(host, ":"); hasPort {
+			host = h + ":" + port
+		} else {
+			host = host + ":" + port
+		}
+	}
 	if host == "" {
 		host = "localhost:8000"
 	}
@@ -1020,9 +1291,13 @@ func (s *ProxyServer) mgHandleVersion(w http.ResponseWriter, r *http.Request) {
 
 func (s *ProxyServer) mgHandleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	apiKey := config.C.Load().APIKey
+	mode := "none"
+	if apiKey != "" {
+		mode = "bearer"
+	}
 	mgWriteJSON(w, http.StatusOK, map[string]any{
-		"auth_enabled": apiKey != "",
-		"status":       "ok",
+		"required": apiKey != "",
+		"mode":     mode,
 	})
 }
 
@@ -1126,6 +1401,70 @@ func parseWireGuardConfig(cfg string) map[string]any {
 		}
 	}
 	return result
+}
+
+// ─── VPN public IP ────────────────────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleVPNPublicIP(w http.ResponseWriter, r *http.Request) {
+	nodes := s.st.ListVPNNodes()
+	// Find the first healthy VPN node and query its Gluetun API for the public IP.
+	for _, n := range nodes {
+		if !n.Healthy || n.AssignedHostname == "" {
+			continue
+		}
+		gluetunPort := config.C.Load().GluetunAPIPort
+		url := fmt.Sprintf("http://%s:%d/v1/publicip/ip", n.AssignedHostname, gluetunPort)
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		resp, err := http.DefaultClient.Do(req)
+		cancel()
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+		var payload map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err == nil {
+			if ip, ok := payload["public_ip"].(string); ok && ip != "" {
+				mgWriteJSON(w, http.StatusOK, map[string]string{"public_ip": ip})
+				return
+			}
+		}
+	}
+	mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Unable to retrieve public IP"})
+}
+
+// ─── Proxy-plane event endpoints ─────────────────────────────────────────────
+
+func (s *ProxyServer) mgHandleEventStreamStarted(w http.ResponseWriter, r *http.Request) {
+	var ev state.StreamStartedEvent
+	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	contentID := ev.ContentID
+	if contentID == "" && ev.Stream != nil {
+		contentID = ev.Stream.Key
+	}
+	if contentID == "" {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "content_id required"})
+		return
+	}
+	st := s.st.OnStreamStarted(ev)
+	mgWriteJSON(w, http.StatusOK, st)
+}
+
+func (s *ProxyServer) mgHandleEventStreamEnded(w http.ResponseWriter, r *http.Request) {
+	var ev state.StreamEndedEvent
+	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if ev.ContentID == "" && ev.StreamID == "" {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "content_id or stream_id required"})
+		return
+	}
+	s.st.OnStreamEnded(ev)
+	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "ended"})
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
