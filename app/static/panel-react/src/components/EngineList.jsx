@@ -78,7 +78,7 @@ function EngineCard({ engine, onDelete, showVpnLabel = false }) {
         <div className="grid grid-cols-2 gap-4 mb-3">
           <div>
             <p className="text-xs text-muted-foreground">Active Streams</p>
-            <p className="text-sm font-medium">{engine.streams.length}</p>
+            <p className="text-sm font-medium">{engine.stream_count ?? engine.streams?.length ?? 0}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Last Used</p>

@@ -43,17 +43,11 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Stage 4: Build Go proxy binary
-FROM golang:1.23 AS go-builder
-WORKDIR /proxy
-COPY app/proxy-go/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o acestream-proxy ./cmd/proxy
-
-# Stage 4b: Build Go control plane binary
-FROM golang:1.23 AS go-cp-builder
-WORKDIR /controlplane
-COPY app/controlplane-go/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o acestream-controlplane ./cmd/controlplane
+# Stage 4: Build Go unified binary (proxy + orchestrator + controlplane)
+FROM golang:1.25 AS go-builder
+WORKDIR /orchestrator
+COPY app/orchestrator/ .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o acestream-unified ./cmd
 
 # Stage 5: Final runtime image with Distroless
 FROM gcr.io/distroless/python3-debian12:latest
@@ -74,17 +68,22 @@ COPY --from=panel-builder /build/panel ./app/static/panel
 # Copy collected binary dependencies (Redis, GPG)
 COPY --from=dependency-builder /bundle/ /
 
-# Copy Go proxy binary
-COPY --from=go-builder /proxy/acestream-proxy /usr/local/bin/acestream-proxy
+# Copy Go unified binary
+COPY --from=go-builder /orchestrator/acestream-unified /usr/local/bin/acestream-unified
 
-# Copy Go control plane binary
-COPY --from=go-cp-builder /controlplane/acestream-controlplane /usr/local/bin/acestream-controlplane
-
-# Startup script: Redis → Go proxy (port 8000) → Go control plane (port 8082) → Python FastAPI (port 8001)
-# Go proxy reverse-proxies all non-stream requests to Python, so clients always hit port 8000.
-# Go control plane manages engine lifecycle; Python API/UI remains at port 8001.
+# Startup: Redis → acestream-unified (proxy :8000 + orchestrator :8083 + controlplane) → proton-sidecar (:9099)
+# acestream-unified is the single Go binary for all planes.
+# proton-sidecar is the only Python process; it handles Proton VPN server list updates.
 COPY --chmod=755 <<'EOF' /app/start.py
 #!/usr/bin/env python3
+"""
+AceStream Orchestrator startup script (unified Go binary).
+
+Process tree:
+  Redis             → in-process key/value store
+  acestream-unified → proxy (:8000) + orchestrator (:8083) + controlplane (embedded)
+  proton-sidecar    → optional Proton VPN server updater (:9099)
+"""
 import os
 import sys
 import time
@@ -105,7 +104,7 @@ signal.signal(signal.SIGTERM, _stop_all)
 signal.signal(signal.SIGINT, _stop_all)
 
 def start_redis():
-    redis_cmd = [
+    subprocess.run([
         '/usr/bin/redis-server',
         '--daemonize', 'yes',
         '--bind', '0.0.0.0',
@@ -113,15 +112,14 @@ def start_redis():
         '--save', '',
         '--appendonly', 'no',
         '--dir', '/tmp',
-        '--protected-mode', 'no'
-    ]
-    subprocess.run(redis_cmd, check=True)
-    print("Redis server started", flush=True)
+        '--protected-mode', 'no',
+    ], check=True)
+    print("Redis started", flush=True)
     for _ in range(50):
         try:
             r = subprocess.run(['/usr/bin/redis-cli', 'ping'], capture_output=True, timeout=1)
             if r.returncode == 0:
-                print("Redis is ready", flush=True)
+                print("Redis ready", flush=True)
                 return
         except Exception:
             pass
@@ -129,81 +127,61 @@ def start_redis():
     print("Redis failed to start", flush=True)
     sys.exit(1)
 
-def start_go_proxy():
+def start_go_acestream():
     env = os.environ.copy()
     env.setdefault('PROXY_LISTEN_ADDR', ':8000')
-    env.setdefault('ORCHESTRATOR_URL', 'http://localhost:8001')
+    env.setdefault('ORCHESTRATOR_LISTEN_ADDR', ':8083')
     env.setdefault('REDIS_HOST', 'localhost')
     env.setdefault('REDIS_PORT', '6379')
     p = subprocess.Popen(
-        ['/usr/local/bin/acestream-proxy'],
-        env=env,
-        stdout=sys.stdout,
-        stderr=sys.stderr,
+        ['/usr/local/bin/acestream-unified'],
+        env=env, stdout=sys.stdout, stderr=sys.stderr,
     )
     _procs.append(p)
-    print(f"Go proxy started (pid={p.pid})", flush=True)
+    print(f"Go unified binary started (pid={p.pid})", flush=True)
     return p
 
-def start_go_controlplane():
+def start_proton_sidecar():
+    """Start the Proton VPN server updater sidecar (optional)."""
+    if os.getenv('DISABLE_PROTON_SIDECAR', '').lower() in ('1', 'true', 'yes'):
+        print("Proton sidecar disabled via DISABLE_PROTON_SIDECAR", flush=True)
+        return None
     env = os.environ.copy()
-    env.setdefault('CP_LISTEN_ADDR', ':8082')
-    env.setdefault('REDIS_HOST', 'localhost')
-    env.setdefault('REDIS_PORT', '6379')
-    # Tell Python to delegate Docker lifecycle to Go
-    env['GO_CONTROL_PLANE_URL'] = 'http://localhost:8082'
-    p = subprocess.Popen(
-        ['/usr/local/bin/acestream-controlplane'],
-        env=env,
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-    )
-    _procs.append(p)
-    print(f"Go control plane started (pid={p.pid})", flush=True)
-    return p
-
-def start_python():
-    env = os.environ.copy()
-    # Signal Python to skip its own control loops
-    env.setdefault('GO_CONTROL_PLANE_URL', 'http://localhost:8082')
+    env.setdefault('PROTON_STORAGE_PATH', '/data/proton')
     p = subprocess.Popen(
         [
             'python3', '-m', 'uvicorn',
-            'app.main:app',
+            'app.proton_service:app',
             '--host', '127.0.0.1',
-            '--port', '8001',
+            '--port', '9099',
             '--no-access-log',
         ],
         cwd='/app',
-        env=env,
-        stdout=sys.stdout,
-        stderr=sys.stderr,
+        env=env, stdout=sys.stdout, stderr=sys.stderr,
     )
     _procs.append(p)
-    print(f"Python orchestrator process started (pid={p.pid})", flush=True)
+    print(f"Proton sidecar started (pid={p.pid})", flush=True)
     return p
 
 def main():
-    print("Starting AceStream Orchestrator Stack...", flush=True)
+    print("Starting AceStream Orchestrator Stack (unified Go binary)...", flush=True)
     start_redis()
 
-    go_proxy_proc = start_go_proxy()
-    go_cp_proc = start_go_controlplane()
-    py_proc = start_python()
+    go_proc = start_go_acestream()
+    proton_proc = start_proton_sidecar()
 
-    print("Orchestrator stack initialized. Monitoring processes...", flush=True)
+    print("Stack initialized. Monitoring critical processes...", flush=True)
 
     while True:
         time.sleep(2)
-        if go_proxy_proc.poll() is not None:
-            print(f"CRITICAL: Go proxy exited (code={go_proxy_proc.returncode}), stopping stack", flush=True)
+        if go_proc.poll() is not None:
+            print(f"CRITICAL: Go unified binary exited (code={go_proc.returncode})", flush=True)
             _stop_all()
-        if go_cp_proc.poll() is not None:
-            print(f"CRITICAL: Go control plane exited (code={go_cp_proc.returncode}), stopping stack", flush=True)
-            _stop_all()
-        if py_proc.poll() is not None:
-            print(f"CRITICAL: Python orchestrator exited (code={py_proc.returncode}), stopping stack", flush=True)
-            _stop_all()
+        # Proton sidecar is optional — restart it if it dies, don't kill the stack.
+        if proton_proc is not None and proton_proc.poll() is not None:
+            print(f"WARNING: Proton sidecar exited (code={proton_proc.returncode}), restarting...", flush=True)
+            _procs.remove(proton_proc)
+            proton_proc = start_proton_sidecar()
 
 if __name__ == '__main__':
     main()

@@ -1,0 +1,663 @@
+package engine
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"math"
+	"os"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+
+	dockertypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	dockerimage "github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
+
+	"github.com/acestream/acestream/internal/config"
+	"github.com/acestream/acestream/internal/state"
+	"github.com/acestream/acestream/internal/controlplane/vpn"
+)
+
+// ResourceScheduler atomically resolves VPN node, port assignments, and
+// forwarding election for a new engine — the exact Go equivalent of the
+// Python ResourceScheduler.
+type ResourceScheduler struct{}
+
+var Scheduler = &ResourceScheduler{}
+
+// ScheduleNewEngine resolves all resources and returns an immutable EngineSpec.
+// extraReservedNames prevents name collisions during burst provisioning.
+func (rs *ResourceScheduler) ScheduleNewEngine(extraReservedNames []string) (*state.EngineSpec, error) {
+	cfg := config.C.Load()
+	st := state.Global
+
+	image := resolveEngineImage()
+	memLimit := cfg.EngineMemoryLimit
+	variantName := fmt.Sprintf("global-%s", detectPlatform())
+
+	// Schedule resources under a lock-free approach: we use atomic state reads
+	// combined with per-VPN pending counters to prevent double-allocation.
+	vpnContainer, err := rs.selectVPNContainer()
+	if err != nil {
+		return nil, err
+	}
+
+	if vpnContainer != "" {
+		if !isVPNHealthy(vpnContainer) {
+			return nil, fmt.Errorf("VPN '%s' is not healthy - cannot schedule", vpnContainer)
+		}
+		st.IncrVPNPending(vpnContainer)
+	}
+
+	ports, err := Alloc.AllocateEnginePorts(
+		vpnContainer != "",
+		vpnContainer,
+		0, 0, 0, 0,
+		cfg.ACEMapHTTPS,
+	)
+	if err != nil {
+		if vpnContainer != "" {
+			st.DecrVPNPending(vpnContainer)
+		}
+		return nil, fmt.Errorf("port allocation failed: %w", err)
+	}
+
+	forwarded, p2pPort := rs.electForwardedEngine(context.Background(), vpnContainer)
+
+	existingNames := st.ListEngineNames()
+	allExcluded := append(existingNames, extraReservedNames...)
+	containerName := generateContainerName("acestream", allExcluded)
+
+	labelKey := cfg.ContainerLabelKey
+	labelVal := cfg.ContainerLabelVal
+	configHash := ComputeConfigHash()
+
+	labels := map[string]string{
+		labelKey:                             labelVal,
+		"acestream.http_port":                strconv.Itoa(ports.ContainerHTTPPort),
+		"acestream.https_port":               strconv.Itoa(ports.ContainerHTTPSPort),
+		"acestream.api_port":                 strconv.Itoa(ports.ContainerAPIPort),
+		"host.http_port":                     strconv.Itoa(ports.HostHTTPPort),
+		"host.api_port":                      strconv.Itoa(ports.HostAPIPort),
+		"acestream.engine_variant":           variantName,
+		"acestream.config_hash":              configHash,
+		"acestream.config_generation":        "1",
+	}
+	if vpnContainer != "" {
+		labels["acestream.vpn_container"] = vpnContainer
+	}
+	if forwarded {
+		labels["acestream.forwarded"] = "true"
+	}
+	if ports.HostHTTPSPort != 0 {
+		labels["host.https_port"] = strconv.Itoa(ports.HostHTTPSPort)
+	}
+
+	// Docker port bindings (only when NOT behind a VPN network namespace)
+	var dockerPorts map[string]int
+	if vpnContainer == "" {
+		dockerPorts = map[string]int{
+			fmt.Sprintf("%d/tcp", ports.ContainerHTTPPort): ports.HostHTTPPort,
+			fmt.Sprintf("%d/tcp", ports.ContainerAPIPort):  ports.HostAPIPort,
+		}
+		if ports.HostHTTPSPort != 0 {
+			dockerPorts[fmt.Sprintf("%d/tcp", ports.ContainerHTTPSPort)] = ports.HostHTTPSPort
+		}
+	}
+
+	networkMode := "bridge"
+	if vpnContainer != "" {
+		networkMode = fmt.Sprintf("container:%s", vpnContainer)
+	} else if cfg.DockerNetwork != "" {
+		networkMode = cfg.DockerNetwork
+	}
+ 
+	cmd := buildCommand(ports.ContainerHTTPPort, ports.ContainerAPIPort, p2pPort, cfg)
+
+	spec := &state.EngineSpec{
+		ContainerName:      containerName,
+		Image:              image,
+		Command:            cmd,
+		Labels:             labels,
+		NetworkMode:        networkMode,
+		Ports:              dockerPorts,
+		MemLimit:           memLimit,
+		VPNContainerID:     vpnContainer,
+		HostHTTPPort:       ports.HostHTTPPort,
+		ContainerHTTPPort:  ports.ContainerHTTPPort,
+		HostAPIPort:        ports.HostAPIPort,
+		ContainerAPIPort:   ports.ContainerAPIPort,
+		ContainerHTTPSPort: ports.ContainerHTTPSPort,
+		HostHTTPSPort:      ports.HostHTTPSPort,
+		Forwarded:          forwarded,
+		P2PPort:            p2pPort,
+	}
+
+	return spec, nil
+}
+
+// ReleaseSpec frees all resources reserved by a spec (called on failure).
+func ReleaseSpec(spec *state.EngineSpec) {
+	if spec == nil {
+		return
+	}
+	Alloc.ReleaseFromLabels(spec.Labels)
+	if spec.VPNContainerID != "" {
+		state.Global.DecrVPNPending(spec.VPNContainerID)
+	}
+}
+
+// ExecuteSpec creates the Docker container described by spec.
+func ExecuteSpec(ctx context.Context, spec *state.EngineSpec) (string, error) {
+	cli, err := newDockerClient()
+	if err != nil {
+		return "", fmt.Errorf("docker client: %w", err)
+	}
+	defer cli.Close()
+
+	hostConfig := &container.HostConfig{
+		NetworkMode: container.NetworkMode(spec.NetworkMode),
+		AutoRemove:  true,
+		Init:        boolPtr(true),
+	}
+	if spec.MemLimit != "" {
+		mem, err := parseMemory(spec.MemLimit)
+		if err == nil {
+			hostConfig.Memory = mem
+		}
+	}
+
+	// Port bindings
+	portBindings := buildPortBindings(spec.Ports)
+	hostConfig.PortBindings = portBindings
+
+	containerConfig := &container.Config{
+		Image:  spec.Image,
+		Cmd:    spec.Command,
+		Labels: spec.Labels,
+	}
+
+	if err := ensureImage(ctx, cli, spec.Image); err != nil {
+		ReleaseSpec(spec)
+		return "", fmt.Errorf("image pull %s: %w", spec.Image, err)
+	}
+
+	net := &network.NetworkingConfig{}
+
+	resp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, net, nil, spec.ContainerName)
+	if err != nil {
+		ReleaseSpec(spec)
+		return "", fmt.Errorf("container create: %w", err)
+	}
+
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		ReleaseSpec(spec)
+		return "", fmt.Errorf("container start: %w", err)
+	}
+
+	// Release pending counter now that Docker accepted the request
+	if spec.VPNContainerID != "" {
+		state.Global.DecrVPNPending(spec.VPNContainerID)
+	}
+
+	slog.Info("engine container started", "name", spec.ContainerName, "id", resp.ID[:12], "vpn", spec.VPNContainerID)
+	return resp.ID, nil
+}
+
+// StopContainer stops (or force-kills) a container by ID.
+func StopContainer(ctx context.Context, containerID string, force bool) error {
+	cli, err := newDockerClient()
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	if force {
+		return cli.ContainerKill(ctx, containerID, "SIGKILL")
+	}
+	timeout := 5
+	return cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+}
+
+// ListManagedContainers returns all running containers with the managed label.
+func ListManagedContainers(ctx context.Context) ([]dockertypes.Container, error) {
+	cli, err := newDockerClient()
+	if err != nil {
+		return nil, err
+	}
+	defer cli.Close()
+
+	cfg := config.C.Load()
+	f := filters.NewArgs()
+	f.Add("label", fmt.Sprintf("%s=%s", cfg.ContainerLabelKey, cfg.ContainerLabelVal))
+	f.Add("status", "running")
+
+	return cli.ContainerList(ctx, container.ListOptions{Filters: f, All: false})
+}
+
+// ListManagedVPNContainers returns running Gluetun dynamic containers.
+func ListManagedVPNContainers(ctx context.Context) ([]dockertypes.Container, error) {
+	cli, err := newDockerClient()
+	if err != nil {
+		return nil, err
+	}
+	defer cli.Close()
+
+	f := filters.NewArgs()
+	f.Add("label", "acestream-orchestrator.managed=true")
+	f.Add("label", "role=vpn_node")
+	f.Add("status", "running")
+
+	return cli.ContainerList(ctx, container.ListOptions{Filters: f, All: false})
+}
+
+// StopAllManaged stops all managed engines and VPN nodes in parallel.
+func StopAllManaged(ctx context.Context) {
+	cli, err := newDockerClient()
+	if err != nil {
+		slog.Error("StopAllManaged: docker client unavailable", "err", err)
+		return
+	}
+	defer cli.Close()
+
+	engines, _ := ListManagedContainers(ctx)
+	vpns, _ := ListManagedVPNContainers(ctx)
+
+	if len(engines) == 0 && len(vpns) == 0 {
+		return
+	}
+
+	slog.Info("stopping all managed containers", "engines", len(engines), "vpns", len(vpns))
+
+	var wg sync.WaitGroup
+	for _, c := range engines {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if err := StopContainer(ctx, id, true); err != nil {
+				slog.Warn("failed to stop engine", "id", id[:min12(len(id))], "err", err)
+			}
+		}(c.ID)
+	}
+	for _, c := range vpns {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if err := StopContainer(ctx, id, true); err != nil {
+				slog.Warn("failed to stop vpn", "id", id[:min12(len(id))], "err", err)
+			}
+		}(c.ID)
+	}
+	wg.Wait()
+	slog.Info("all managed containers stopped")
+}
+
+// ─── VPN node selection ──────────────────────────────────────────────────────
+
+func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
+	cfg := config.C.Load()
+	st := state.Global
+
+	dynamicNodes := st.ListVPNNodes()
+	if len(dynamicNodes) == 0 {
+		return "", nil // No VPN management
+	}
+
+	// Filter to ready, managed, non-draining dynamic nodes
+	var readyNodes []*state.VPNNode
+	var rejectReasons []string
+	for _, n := range dynamicNodes {
+		if !n.ManagedDynamic {
+			continue
+		}
+		ok, reason := isNodeReady(n)
+		if !ok {
+			rejectReasons = append(rejectReasons, fmt.Sprintf("%s: %s", n.ContainerName, reason))
+			continue
+		}
+		if st.IsVPNNodeDraining(n.ContainerName) {
+			rejectReasons = append(rejectReasons, fmt.Sprintf("%s: draining", n.ContainerName))
+			continue
+		}
+		readyNodes = append(readyNodes, n)
+	}
+
+	if len(readyNodes) == 0 {
+		diag := strings.Join(rejectReasons, "; ")
+		if diag == "" {
+			diag = "none found"
+		}
+		return "", fmt.Errorf("no healthy active dynamic VPN nodes available (%s) - cannot schedule AceStream engine", diag)
+	}
+
+	// Balanced density: calculate effective per-node limit
+	maxPerVPN := cfg.PreferredEnginesPerVPN
+	desired := st.GetDesiredReplicas()
+	effectiveLimit := maxPerVPN
+	if maxPerVPN > 0 && desired > 0 {
+		requiredNodes := int(math.Ceil(float64(desired) / float64(maxPerVPN)))
+		if requiredNodes < 1 {
+			requiredNodes = 1
+		}
+		effectiveLimit = int(math.Ceil(float64(desired) / float64(requiredNodes)))
+		if effectiveLimit > maxPerVPN {
+			effectiveLimit = maxPerVPN
+		}
+	}
+
+	type candidate struct {
+		node *state.VPNNode
+		load int
+	}
+	var candidates []candidate
+	for _, n := range readyNodes {
+		current := len(st.GetEnginesByVPN(n.ContainerName))
+		pending := st.GetVPNPending(n.ContainerName)
+		total := current + pending
+		if effectiveLimit <= 0 || total < effectiveLimit {
+			candidates = append(candidates, candidate{n, total})
+		} else {
+			rejectReasons = append(rejectReasons, fmt.Sprintf("%s: at balanced capacity (%d/%d)", n.ContainerName, total, effectiveLimit))
+		}
+	}
+
+	if len(candidates) == 0 {
+		diag := strings.Join(rejectReasons, "; ")
+		return "", fmt.Errorf("resource restriction: %s - cannot schedule AceStream engine", diag)
+	}
+
+	// Pick the least-loaded node
+	best := candidates[0]
+	for _, c := range candidates[1:] {
+		if c.load < best.load {
+			best = c
+		}
+	}
+
+	slog.Info("scheduling new engine on VPN node", "vpn", best.node.ContainerName, "load", best.load, "limit", effectiveLimit)
+	return best.node.ContainerName, nil
+}
+
+func isNodeReady(n *state.VPNNode) (bool, string) {
+	if n.ContainerName == "" {
+		return false, "no_name"
+	}
+
+	cond := strings.ToLower(strings.TrimSpace(n.Condition))
+	if cond != "" {
+		if cond != "ready" {
+			return false, "condition_" + cond
+		}
+	} else if !n.Healthy {
+		status := strings.ToLower(strings.TrimSpace(n.Status))
+		if status == "unhealthy" || status == "down" {
+			return false, "node_" + status
+		}
+		// Heuristic: if there are healthy engines on this node, it is ready
+		engines := state.Global.GetEnginesByVPN(n.ContainerName)
+		for _, e := range engines {
+			if e.HealthStatus == state.HealthHealthy {
+				return true, "ready_via_heuristic"
+			}
+		}
+		return false, "not_healthy"
+	}
+
+	// Docker "running" can precede Gluetun API readiness
+	if strings.ToLower(n.Status) == "running" {
+		if !vpn.IsControlAPIReachable(n.ContainerName, true) {
+			engines := state.Global.GetEnginesByVPN(n.ContainerName)
+			for _, e := range engines {
+				if e.HealthStatus == state.HealthHealthy {
+					return true, "ready_via_heuristic_api_down"
+				}
+			}
+			return false, "api_unreachable/not_connected"
+		}
+	}
+
+	return true, "ready"
+}
+
+func isVPNHealthy(vpnContainer string) bool {
+	n, ok := state.Global.GetVPNNode(vpnContainer)
+	if ok && !n.Healthy {
+		return false
+	}
+	return vpn.IsControlAPIReachable(vpnContainer, false)
+}
+
+// ─── Forwarded engine election ───────────────────────────────────────────────
+
+func (rs *ResourceScheduler) electForwardedEngine(ctx context.Context, vpnContainer string) (forwarded bool, p2pPort int) {
+	if vpnContainer == "" {
+		return false, 0
+	}
+
+	st := state.Global
+
+	if !nodeSupportsPortForwarding(vpnContainer) {
+		slog.Warn("VPN does not support port forwarding; using internal P2P port", "vpn", vpnContainer)
+		return false, Alloc.AllocInternalP2PPort(vpnContainer)
+	}
+
+	hasExisting := st.HasForwardedEngineForVPN(vpnContainer)
+	hasPending := st.IsForwardedPending(vpnContainer)
+
+	if !hasExisting && !hasPending {
+		p := vpn.WaitForForwardedPort(ctx, vpnContainer)
+		if p > 0 {
+			slog.Info("elected forwarded engine", "vpn", vpnContainer, "p2p_port", p)
+			return true, p
+		}
+		// Could not get port; use internal port, no forwarding
+		slog.Warn("could not elect leader for PF-enabled VPN; using internal port", "vpn", vpnContainer)
+		return false, Alloc.AllocInternalP2PPort(vpnContainer)
+	}
+
+	// Slot already taken or pending
+	return false, Alloc.AllocInternalP2PPort(vpnContainer)
+}
+
+func nodeSupportsPortForwarding(vpnContainer string) bool {
+	n, ok := state.Global.GetVPNNode(vpnContainer)
+	if !ok {
+		return true // assume yes when not tracked
+	}
+	if n.PortForwardingSupported {
+		return true
+	}
+	if n.Provider != "" {
+		return vpn.ProviderSupportsForwarding(n.Provider)
+	}
+	return true
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+func detectPlatform() string {
+	arch := runtime.GOARCH
+	switch arch {
+	case "arm64":
+		return "arm64"
+	case "arm":
+		return "arm32"
+	default:
+		return "x86_64"
+	}
+}
+
+func resolveEngineImage() string {
+	cfg := config.C.Load()
+	variant := cfg.EngineVariant
+	if variant != "" {
+		return variant
+	}
+	arch := detectPlatform()
+	switch arch {
+	case "arm64":
+		return "ghcr.io/krinkuto11/acestream:latest-arm64"
+	case "arm32":
+		return "ghcr.io/krinkuto11/acestream:latest-arm64"
+	default:
+		return "ghcr.io/krinkuto11/acestream:latest-amd64"
+	}
+}
+
+func buildCommand(httpPort, apiPort, p2pPort int, cfg *config.Config) []string {
+	cmd := []string{
+		"python", "main.py",
+		"--http-port", strconv.Itoa(httpPort),
+		"--api-port", strconv.Itoa(apiPort),
+	}
+	if p2pPort > 0 {
+		cmd = append(cmd, "--port", strconv.Itoa(p2pPort))
+	}
+	if cfg.EngineMaxDownloadRate > 0 {
+		cmd = append(cmd, "--max-download-speed", strconv.Itoa(cfg.EngineMaxDownloadRate))
+	}
+	if cfg.EngineMaxUploadRate > 0 {
+		cmd = append(cmd, "--max-upload-speed", strconv.Itoa(cfg.EngineMaxUploadRate))
+	}
+	if cfg.EngineLiveCacheType != "" {
+		cmd = append(cmd, "--live-cache-type", cfg.EngineLiveCacheType)
+	}
+	if cfg.EngineBufferTime > 0 {
+		cmd = append(cmd, "--live-buffer", strconv.Itoa(cfg.EngineBufferTime))
+	}
+	return cmd
+}
+
+func ComputeConfigHash() string {
+	cfg := config.C.Load()
+	s := fmt.Sprintf("%s|%s|%s|%t|%t|%s|%s|%d|%d|%s|%d",
+		cfg.EngineMemoryLimit,
+		cfg.DockerNetwork,
+		cfg.EngineVariant,
+		cfg.ACEMapHTTPS,
+		cfg.VPNEnabled,
+		cfg.VPNProvider,
+		cfg.VPNProtocol,
+		cfg.EngineMaxDownloadRate,
+		cfg.EngineMaxUploadRate,
+		cfg.EngineLiveCacheType,
+		cfg.EngineBufferTime,
+	)
+	h := sha256.Sum256([]byte(s))
+	return fmt.Sprintf("%x", h[:8])
+}
+
+func generateContainerName(prefix string, excluded []string) string {
+	excSet := make(map[string]struct{}, len(excluded))
+	for _, n := range excluded {
+		excSet[n] = struct{}{}
+	}
+	hostname, _ := os.Hostname()
+	base := fmt.Sprintf("%s-%s", prefix, hostname[:min8(len(hostname))])
+	for i := 1; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		if _, taken := excSet[candidate]; !taken {
+			return candidate
+		}
+	}
+	return fmt.Sprintf("%s-%d", base, 999)
+}
+
+func min8(n int) int {
+	if n < 8 {
+		return n
+	}
+	return 8
+}
+
+func newDockerClient() (*client.Client, error) {
+	opts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
+	return client.NewClientWithOpts(opts...)
+}
+
+// NewDockerClientExported is the exported form of newDockerClient, used by
+// packages outside this one (e.g. docker/events.go) that need a raw client.
+func NewDockerClientExported() (*client.Client, error) {
+	return newDockerClient()
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func parseMemory(s string) (int64, error) {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	multiplier := int64(1)
+	switch {
+	case strings.HasSuffix(s, "G"):
+		multiplier = 1 << 30
+		s = s[:len(s)-1]
+	case strings.HasSuffix(s, "M"):
+		multiplier = 1 << 20
+		s = s[:len(s)-1]
+	case strings.HasSuffix(s, "K"):
+		multiplier = 1 << 10
+		s = s[:len(s)-1]
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return n * multiplier, nil
+}
+
+func ensureImage(ctx context.Context, cli *client.Client, ref string) error {
+	imgs, err := cli.ImageList(ctx, dockerimage.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("reference", ref)),
+	})
+	if err != nil {
+		return err
+	}
+	if len(imgs) > 0 {
+		return nil
+	}
+	slog.Info("pulling image", "image", ref)
+	rc, err := cli.ImagePull(ctx, ref, dockerimage.PullOptions{})
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	dec := json.NewDecoder(rc)
+	for {
+		var msg struct {
+			Error string `json:"error"`
+		}
+		if err := dec.Decode(&msg); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+		if msg.Error != "" {
+			return fmt.Errorf("%s", msg.Error)
+		}
+	}
+	slog.Info("image pulled", "image", ref)
+	return nil
+}
+
+func buildPortBindings(ports map[string]int) nat.PortMap {
+	if len(ports) == 0 {
+		return nil
+	}
+	pm := make(nat.PortMap, len(ports))
+	for containerPort, hostPort := range ports {
+		pm[nat.Port(containerPort)] = []nat.PortBinding{
+			{HostIP: "0.0.0.0", HostPort: strconv.Itoa(hostPort)},
+		}
+	}
+	return pm
+}
