@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	dockerimage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	dockerclient "github.com/docker/docker/client"
 
 	"github.com/acestream/acestream/internal/config"
 	"github.com/acestream/acestream/internal/state"
@@ -227,12 +227,12 @@ func (p *Provisioner) ListManagedNodes(ctx context.Context, includeStopped bool)
 			break
 		}
 		nodes = append(nodes, map[string]interface{}{
-			"container_id":             c.ID,
-			"container_name":           name,
-			"status":                   c.State,
-			"provider":                 labels["acestream.vpn.provider"],
-			"protocol":                 labels["acestream.vpn.protocol"],
-			"credential_id":            labels["acestream.vpn.credential_id"],
+			"container_id":              c.ID,
+			"container_name":            name,
+			"status":                    c.State,
+			"provider":                  labels["acestream.vpn.provider"],
+			"protocol":                  labels["acestream.vpn.protocol"],
+			"credential_id":             labels["acestream.vpn.credential_id"],
 			"port_forwarding_supported": labels["acestream.vpn.port_forwarding_supported"] == "true",
 		})
 	}
@@ -333,15 +333,15 @@ func buildGluetunEnv(
 ) (map[string]string, error) {
 	cfg := config.C.Load()
 	env := map[string]string{
-		"VPN_SERVICE_PROVIDER":           provider,
-		"VPN_TYPE":                       protocol,
-		"HTTP_CONTROL_SERVER_ADDRESS":    fmt.Sprintf(":%d", cfg.GluetunAPIPort),
-		"GLUETUN_SERVERS_JSON_PATH":      "/gluetun/servers.json",
+		"VPN_SERVICE_PROVIDER":                  provider,
+		"VPN_TYPE":                              protocol,
+		"HTTP_CONTROL_SERVER_ADDRESS":           fmt.Sprintf(":%d", cfg.GluetunAPIPort),
+		"GLUETUN_SERVERS_JSON_PATH":             "/gluetun/servers.json",
 		"HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE": `{"auth":"none"}`,
-		"HTTP_CONTROL_SERVER_LOG":        "off",
-		"BLOCK_MALICIOUS":                "off",
-		"BLOCK_ADS":                      "off",
-		"BLOCK_SURVEILLANCE":             "off",
+		"HTTP_CONTROL_SERVER_LOG":               "off",
+		"BLOCK_MALICIOUS":                       "off",
+		"BLOCK_ADS":                             "off",
+		"BLOCK_SURVEILLANCE":                    "off",
 	}
 
 	// TZ
@@ -557,19 +557,19 @@ func applyOptionalCredentialEnv(env map[string]string, protocol string, cred map
 	var optionalMap map[string]string
 	if protocol == "wireguard" {
 		optionalMap = map[string]string{
-			"wireguard_public_key":                   "WIREGUARD_PUBLIC_KEY",
-			"wireguard_preshared_key":                "WIREGUARD_PRESHARED_KEY",
-			"wireguard_endpoint_ip":                  "WIREGUARD_ENDPOINT_IP",
-			"endpoint_ip":                            "WIREGUARD_ENDPOINT_IP",
-			"wireguard_endpoint_port":                "WIREGUARD_ENDPOINT_PORT",
-			"endpoint_port":                          "WIREGUARD_ENDPOINT_PORT",
-			"wireguard_allowed_ips":                  "WIREGUARD_ALLOWED_IPS",
-			"wireguard_implementation":               "WIREGUARD_IMPLEMENTATION",
-			"wireguard_mtu":                          "WIREGUARD_MTU",
+			"wireguard_public_key":                    "WIREGUARD_PUBLIC_KEY",
+			"wireguard_preshared_key":                 "WIREGUARD_PRESHARED_KEY",
+			"wireguard_endpoint_ip":                   "WIREGUARD_ENDPOINT_IP",
+			"endpoint_ip":                             "WIREGUARD_ENDPOINT_IP",
+			"wireguard_endpoint_port":                 "WIREGUARD_ENDPOINT_PORT",
+			"endpoint_port":                           "WIREGUARD_ENDPOINT_PORT",
+			"wireguard_allowed_ips":                   "WIREGUARD_ALLOWED_IPS",
+			"wireguard_implementation":                "WIREGUARD_IMPLEMENTATION",
+			"wireguard_mtu":                           "WIREGUARD_MTU",
 			"wireguard_persistent_keepalive_interval": "WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL",
 		}
 		// Default MTU for Wireguard to avoid slow path discovery (6 seconds).
-		env["WIREGUARD_MTU"] = "1280"
+		//env["WIREGUARD_MTU"] = "1280"
 	} else {
 		optionalMap = map[string]string{
 			"openvpn_protocol":      "OPENVPN_PROTOCOL",
@@ -684,10 +684,10 @@ func applyPFFilterGuard(
 
 func buildLabels(provider, protocol, credentialID string, pfSupported bool) map[string]string {
 	labels := map[string]string{
-		"acestream-orchestrator.managed":       "true",
-		"role":                                 "vpn_node",
-		"acestream.vpn.provider":               provider,
-		"acestream.vpn.protocol":               protocol,
+		"acestream-orchestrator.managed":          "true",
+		"role":                                    "vpn_node",
+		"acestream.vpn.provider":                  provider,
+		"acestream.vpn.protocol":                  protocol,
 		"acestream.vpn.port_forwarding_supported": boolStr(pfSupported),
 	}
 	if credentialID != "" {
@@ -699,8 +699,8 @@ func buildLabels(provider, protocol, credentialID string, pfSupported bool) map[
 // ── Resolution helpers ────────────────────────────────────────────────────────
 
 var providerAliases = map[string]string{
-	"pia":                    "private internet access",
-	"privateinternetaccess":  "private internet access",
+	"pia":                     "private internet access",
+	"privateinternetaccess":   "private internet access",
 	"private_internet_access": "private internet access",
 }
 
