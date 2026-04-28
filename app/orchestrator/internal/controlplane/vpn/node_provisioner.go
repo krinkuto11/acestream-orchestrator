@@ -558,6 +558,8 @@ func applyOptionalCredentialEnv(env map[string]string, protocol string, cred map
 			"wireguard_mtu":                          "WIREGUARD_MTU",
 			"wireguard_persistent_keepalive_interval": "WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL",
 		}
+		// Default MTU for Wireguard to avoid slow path discovery (6 seconds).
+		env["WIREGUARD_MTU"] = "1400"
 	} else {
 		optionalMap = map[string]string{
 			"openvpn_protocol":      "OPENVPN_PROTOCOL",
