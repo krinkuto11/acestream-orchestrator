@@ -201,8 +201,9 @@ func Reindex(ctx context.Context) bool {
 					}
 				}
 			}
-			}
 		}
+
+
 
 		if isManagedVPN || isDynamicVPN {
 			runningVPNs[containerName] = true
@@ -240,6 +241,7 @@ func Reindex(ctx context.Context) bool {
 			}
 		}
 	}
+
 
 	// Update stats for all running engines
 	engineIDs := make([]string, 0, len(runningEngines))
