@@ -62,6 +62,9 @@ type VPNNode struct {
 	LastSeen                time.Time  `json:"last_seen"`
 	DrainingSince           *time.Time `json:"draining_since,omitempty"`
 	UnhealthySince          *time.Time `json:"unhealthy_since,omitempty"`
+	// ControlHost is the resolved IP address of the container's Gluetun API.
+	// It is preferred over ContainerName for cross-Docker-network connectivity.
+	ControlHost string `json:"control_host,omitempty"`
 }
 
 // EngineSpec is the complete, immutable plan for a new engine.

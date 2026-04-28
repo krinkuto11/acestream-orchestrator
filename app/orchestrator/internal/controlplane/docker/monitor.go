@@ -205,6 +205,18 @@ func Reindex(ctx context.Context) bool {
 
 		if isManagedVPN || isDynamicVPN {
 			runningVPNs[containerName] = true
+
+			// Resolve internal IP for cross-network Gluetun API access.
+			controlHost := ""
+			if ns := c.NetworkSettings; ns != nil {
+				for _, ep := range ns.Networks {
+					if ep != nil && ep.IPAddress != "" {
+						controlHost = ep.IPAddress
+						break
+					}
+				}
+			}
+
 			if _, exists := st.GetVPNNode(containerName); !exists {
 				provider := strings.ToLower(strings.TrimSpace(attrs["provider"]))
 				node := &state.VPNNode{
@@ -216,10 +228,14 @@ func Reindex(ctx context.Context) bool {
 					ManagedDynamic:          isDynamicVPN,
 					PortForwardingSupported: attrs["port_forwarding_supported"] == "true",
 					Lifecycle:               "active",
+					ControlHost:             controlHost,
 				}
 				st.UpsertVPNNode(node)
-				slog.Info("Reindex: discovered untracked VPN node", "name", containerName)
+				slog.Info("Reindex: discovered untracked VPN node", "name", containerName, "control_host", controlHost)
 				changed = true
+			} else if controlHost != "" {
+				// Update ControlHost on existing nodes if missing (e.g. after restart).
+				st.UpdateVPNNodeControlHost(containerName, controlHost)
 			}
 		}
 	}

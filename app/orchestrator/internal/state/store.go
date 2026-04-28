@@ -314,6 +314,16 @@ func (s *Store) SetVPNNodeLifecycle(name, lifecycle string) {
 	}
 }
 
+// UpdateVPNNodeControlHost stores the resolved IP address for the container's
+// Gluetun control API so callers can prefer IP over container-name DNS.
+func (s *Store) UpdateVPNNodeControlHost(name, host string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n, ok := s.vpnNodes[name]; ok && host != "" {
+		n.ControlHost = host
+	}
+}
+
 func (s *Store) ListDrainingVPNNodes() []*VPNNode {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

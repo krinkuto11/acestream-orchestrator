@@ -115,7 +115,7 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 		image = "qmcgaw/gluetun"
 	}
 
-	containerID, err := p.startContainer(ctx, image, containerName, env, labels)
+	containerID, controlHost, err := p.startContainer(ctx, image, containerName, env, labels)
 	if err != nil {
 		p.creds.ReleaseLease(containerName)
 		return nil, fmt.Errorf("starting container: %w", err)
@@ -133,6 +133,7 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 		ManagedDynamic:          true,
 		AssignedHostname:        assignedHostname,
 		PortForwardingSupported: pfSupported,
+		ControlHost:             controlHost,
 		FirstSeen:               now,
 		LastSeen:                now,
 	})
@@ -232,19 +233,22 @@ func (p *Provisioner) ListManagedNodes(ctx context.Context, includeStopped bool)
 	return nodes, nil
 }
 
-// startContainer creates and starts a Gluetun container.
+// startContainer creates and starts a Gluetun container. It returns the
+// container ID and the resolved internal IP address (for cross-network API
+// reachability). If the IP cannot be determined, an empty string is returned
+// and the caller should fall back to the container name.
 func (p *Provisioner) startContainer(
 	ctx context.Context,
 	image, name string,
 	envMap map[string]string,
 	labels map[string]string,
-) (string, error) {
+) (containerID, controlHost string, err error) {
 	cli, err := dockerclient.NewClientWithOpts(
 		dockerclient.FromEnv,
 		dockerclient.WithAPIVersionNegotiation(),
 	)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer cli.Close()
 
@@ -278,7 +282,7 @@ func (p *Provisioner) startContainer(
 	}
 
 	if err := ensureImage(ctx, cli, image); err != nil {
-		return "", fmt.Errorf("image pull %s: %w", image, err)
+		return "", "", fmt.Errorf("image pull %s: %w", image, err)
 	}
 
 	containerCfg := &container.Config{
@@ -289,15 +293,27 @@ func (p *Provisioner) startContainer(
 
 	resp, err := cli.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, name)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-		return "", err
+		return "", "", err
 	}
 
-	return resp.ID, nil
+	// Inspect to resolve the container's internal IP for cross-network API access.
+	if info, inspErr := cli.ContainerInspect(ctx, resp.ID); inspErr == nil {
+		if ns := info.NetworkSettings; ns != nil {
+			for _, ep := range ns.Networks {
+				if ep != nil && ep.IPAddress != "" {
+					controlHost = ep.IPAddress
+					break
+				}
+			}
+		}
+	}
+
+	return resp.ID, controlHost, nil
 }
 
 // ── Env building ──────────────────────────────────────────────────────────────

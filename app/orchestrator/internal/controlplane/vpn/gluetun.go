@@ -12,11 +12,19 @@ import (
 	"time"
 
 	"github.com/acestream/acestream/internal/config"
+	"github.com/acestream/acestream/internal/state"
 )
 
 // controlAPIURL returns the Gluetun control API base URL for a given container.
+// It prefers the stored ControlHost (IP address) over the container name so
+// that the API is reachable even when the orchestrator and the Gluetun
+// container are attached to different Docker networks.
 func controlAPIURL(vpnContainer string) string {
-	return fmt.Sprintf("http://%s:%d", vpnContainer, config.C.Load().GluetunAPIPort)
+	host := vpnContainer
+	if n, ok := state.Global.GetVPNNode(vpnContainer); ok && n.ControlHost != "" {
+		host = n.ControlHost
+	}
+	return fmt.Sprintf("http://%s:%d", host, config.C.Load().GluetunAPIPort)
 }
 
 // ── Forwarded-port cache ──────────────────────────────────────────────────────
@@ -61,6 +69,14 @@ func evictPortCache(vpnContainer string) {
 
 // IsControlAPIReachable checks whether the Gluetun control API is up and
 // (optionally) reports connected=true.
+//
+// Connectivity detection strategy:
+//  1. GET /v1/publicip/ip — if it returns a non-empty public_ip, the VPN tunnel
+//     is provably up (this endpoint is always auth-free in Gluetun).
+//  2. Fallback to /v1/openvpn/status or /v1/wireguard/status. A 401 on these
+//     endpoints means the API server is up and auth is configured on the
+//     endpoint (e.g. via a persistent auth/config.toml in the Gluetun volume);
+//     the tunnel is considered connected in that case too.
 func IsControlAPIReachable(vpnContainer string, requireConnected bool) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -85,7 +101,18 @@ func IsControlAPIReachable(vpnContainer string, requireConnected bool) bool {
 		return true
 	}
 
-	// Try OpenVPN first, then WireGuard
+	// Primary connectivity signal: parse the public IP from the response body.
+	// A non-empty public_ip means the VPN tunnel is carrying internet traffic.
+	// This endpoint is always auth-free in Gluetun regardless of auth config.
+	body, _ := io.ReadAll(resp.Body)
+	var ipResp struct {
+		IP string `json:"public_ip"`
+	}
+	if err := json.Unmarshal(body, &ipResp); err == nil && ipResp.IP != "" {
+		return true
+	}
+
+	// Fallback: try OpenVPN status.
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel2()
 
@@ -100,17 +127,22 @@ func IsControlAPIReachable(vpnContainer string, requireConnected bool) bool {
 	}
 	defer resp2.Body.Close()
 
-	body, _ := io.ReadAll(resp2.Body)
+	// 401 = auth required = server is up = treat as connected.
+	if resp2.StatusCode == http.StatusUnauthorized {
+		return true
+	}
+
+	body2, _ := io.ReadAll(resp2.Body)
 	var statusResp struct {
 		Status string `json:"status"`
 	}
-	if err := json.Unmarshal(body, &statusResp); err != nil {
+	if err := json.Unmarshal(body2, &statusResp); err != nil {
 		return isWireguardConnected(vpnContainer)
 	}
 	if strings.ToLower(statusResp.Status) == "running" {
 		return true
 	}
-	// OpenVPN returned but reported not-running — try WireGuard before giving up
+	// OpenVPN returned but reported not-running — try WireGuard before giving up.
 	return isWireguardConnected(vpnContainer)
 }
 
@@ -128,6 +160,11 @@ func isWireguardConnected(vpnContainer string) bool {
 		return false
 	}
 	defer resp.Body.Close()
+
+	// 401 = auth required = server is up = treat as connected.
+	if resp.StatusCode == http.StatusUnauthorized {
+		return true
+	}
 
 	body, _ := io.ReadAll(resp.Body)
 	var s struct {
