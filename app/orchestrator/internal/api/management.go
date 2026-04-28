@@ -175,6 +175,9 @@ func (s *ProxyServer) mgHandleListEngines(w http.ResponseWriter, r *http.Request
 		Platform           string            `json:"platform,omitempty"`
 		Version            string            `json:"version,omitempty"`
 		ForwardedPort      *int              `json:"forwarded_port,omitempty"`
+		CPUPercent         float64           `json:"cpu_percent"`
+		MemoryUsage        int64             `json:"memory_usage"`
+		MemoryPercent      float64           `json:"memory_percent"`
 		Streams            []string          `json:"streams"`
 	}
 
@@ -217,6 +220,9 @@ func (s *ProxyServer) mgHandleListEngines(w http.ResponseWriter, r *http.Request
 			Platform:           e.Platform,
 			Version:            e.Version,
 			ForwardedPort:      e.ForwardedPort,
+			CPUPercent:         e.CPUPercent,
+			MemoryUsage:        e.MemoryUsage,
+			MemoryPercent:      e.MemoryPercent,
 			Streams:            streams,
 		})
 	}

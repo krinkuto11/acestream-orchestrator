@@ -60,6 +60,9 @@ func (s *Store) AddEngine(e *Engine) {
 	}
 	e.LastSeen = time.Now().UTC()
 	s.engines[e.ContainerID] = e
+	if e.Forwarded && e.VPNContainer != "" {
+		delete(s.forwardedPending, e.VPNContainer)
+	}
 }
 
 func (s *Store) GetEngine(id string) (*Engine, bool) {
@@ -126,6 +129,16 @@ func (s *Store) UpdateEngineHost(id, host string) {
 	defer s.mu.Unlock()
 	if e, ok := s.engines[id]; ok {
 		e.Host = host
+	}
+}
+
+func (s *Store) UpdateEngineStats(id string, cpu float64, memUsage int64, memPercent float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e, ok := s.engines[id]; ok {
+		e.CPUPercent = cpu
+		e.MemoryUsage = memUsage
+		e.MemoryPercent = memPercent
 	}
 }
 
@@ -220,6 +233,28 @@ func (s *Store) IsForwardedPending(vpn string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.forwardedPending[vpn]
+}
+
+// TryClaimForwardedSlot atomically claims the forwarded-engine slot for a VPN
+// node. It returns true only if no forwarded engine is already registered AND
+// no other goroutine has already claimed the pending slot. This prevents the
+// double-election race when two engines are scheduled concurrently for the same
+// VPN node.
+func (s *Store) TryClaimForwardedSlot(vpn string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Check existing registered engines
+	for _, e := range s.engines {
+		if e.VPNContainer == vpn && e.Forwarded {
+			return false
+		}
+	}
+	// Check pending flag
+	if s.forwardedPending[vpn] {
+		return false
+	}
+	s.forwardedPending[vpn] = true
+	return true
 }
 
 // ─── VPN Nodes ───────────────────────────────────────────────────────────────

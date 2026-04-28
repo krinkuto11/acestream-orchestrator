@@ -526,21 +526,23 @@ func (rs *ResourceScheduler) electForwardedEngine(ctx context.Context, vpnContai
 		return false, Alloc.AllocInternalP2PPort(vpnContainer)
 	}
 
-	hasExisting := st.HasForwardedEngineForVPN(vpnContainer)
-	hasPending := st.IsForwardedPending(vpnContainer)
-
-	if !hasExisting && !hasPending {
-		p := vpn.WaitForForwardedPort(ctx, vpnContainer)
-		if p > 0 {
-			slog.Info("elected forwarded engine", "vpn", vpnContainer, "p2p_port", p)
-			return true, p
-		}
-		// Could not get port; use internal port, no forwarding
-		slog.Warn("could not elect leader for PF-enabled VPN; using internal port", "vpn", vpnContainer)
+	// Atomically claim the forwarded slot. Only the first of N concurrent
+	// scheduling goroutines will win; all others fall through to internal port.
+	if !st.TryClaimForwardedSlot(vpnContainer) {
+		// Slot already taken by an existing engine or a concurrent goroutine.
 		return false, Alloc.AllocInternalP2PPort(vpnContainer)
 	}
 
-	// Slot already taken or pending
+	p := vpn.WaitForForwardedPort(ctx, vpnContainer)
+	if p > 0 {
+		slog.Info("elected forwarded engine", "vpn", vpnContainer, "p2p_port", p)
+		// Leave the pending flag set; it will be cleared when the engine is
+		// registered (AddEngine marks forwarded=true) or on cleanup.
+		return true, p
+	}
+	// Could not get port — release the claim so a future engine can try again.
+	slog.Warn("could not elect leader for PF-enabled VPN; using internal port", "vpn", vpnContainer)
+	st.SetForwardedPending(vpnContainer, false)
 	return false, Alloc.AllocInternalP2PPort(vpnContainer)
 }
 

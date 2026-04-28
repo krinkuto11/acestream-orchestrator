@@ -42,6 +42,9 @@ type Engine struct {
 	Platform           string     `json:"platform,omitempty"`
 	Version            string     `json:"version,omitempty"`
 	ForwardedPort      *int       `json:"forwarded_port,omitempty"`
+	CPUPercent         float64    `json:"cpu_percent"`
+	MemoryUsage        int64      `json:"memory_usage"`
+	MemoryPercent      float64    `json:"memory_percent"`
 	Streams            []string   `json:"streams"`
 }
 

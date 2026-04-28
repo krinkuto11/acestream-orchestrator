@@ -201,6 +201,7 @@ func Reindex(ctx context.Context) bool {
 					}
 				}
 			}
+			}
 		}
 
 		if isManagedVPN || isDynamicVPN {
@@ -239,6 +240,19 @@ func Reindex(ctx context.Context) bool {
 			}
 		}
 	}
+
+	// Update stats for all running engines
+	engineIDs := make([]string, 0, len(runningEngines))
+	for id := range runningEngines {
+		engineIDs = append(engineIDs, id)
+	}
+	if len(engineIDs) > 0 {
+		statsMap := GetAllContainerStats(ctx, engineIDs)
+		for id, s := range statsMap {
+			st.UpdateEngineStats(id, s.CPUPercent, s.MemoryUsage, s.MemoryPercent)
+		}
+	}
+
 
 	// Remove stale engines (tracked but no longer running).
 	for _, e := range st.ListEngines() {
