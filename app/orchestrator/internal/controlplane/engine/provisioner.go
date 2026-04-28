@@ -488,17 +488,19 @@ func isNodeReady(n *state.VPNNode) (bool, string) {
 		return false, "not_healthy"
 	}
 
-	// Docker "running" can precede Gluetun API readiness
-	if strings.ToLower(n.Status) == "running" {
-		if !vpn.IsControlAPIReachable(n.ContainerName, true) {
-			engines := state.Global.GetEnginesByVPN(n.ContainerName)
-			for _, e := range engines {
-				if e.HealthStatus == state.HealthHealthy {
-					return true, "ready_via_heuristic_api_down"
-				}
+	// Docker "running" can precede Gluetun API readiness.
+	// We now rely on the background health monitor to update n.Healthy.
+	// If the node is not yet marked healthy, we don't block with a synchronous
+	// API call here, which keeps the scheduling loop fast.
+	if strings.ToLower(n.Status) == "running" && !n.Healthy {
+		// Heuristic: if there are healthy engines on this node, it is ready
+		engines := state.Global.GetEnginesByVPN(n.ContainerName)
+		for _, e := range engines {
+			if e.HealthStatus == state.HealthHealthy {
+				return true, "ready_via_heuristic"
 			}
-			return false, "api_unreachable/not_connected"
 		}
+		return false, "awaiting_background_health_check"
 	}
 
 	return true, "ready"

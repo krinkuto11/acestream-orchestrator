@@ -53,11 +53,16 @@ func (s *ServersRefreshService) Run(ctx context.Context, autoRefresh bool, perio
 		if err := s.RefreshOfficial(ctx); err != nil {
 			slog.Warn("Initial VPN servers refresh failed", "err", err)
 		}
-	}
-
-	if !autoRefresh {
-		// Service is configured but auto-refresh is disabled.
-		// Still signal initial done so provisioning is not blocked.
+	} else {
+		// Even if auto-refresh is disabled, ensure we have a catalog if it's
+		// missing entirely (e.g. first run).
+		if !s.rep.IsCatalogAvailable("servers.json") {
+			slog.Info("VPN servers catalog missing; performing one-time download")
+			if err := s.RefreshOfficial(ctx); err != nil {
+				slog.Warn("One-time VPN servers download failed", "err", err)
+			}
+		}
+		// Signal initial done so provisioning is not blocked.
 		s.once.Do(func() { close(s.initialDone) })
 		<-ctx.Done()
 		return

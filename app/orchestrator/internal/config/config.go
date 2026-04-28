@@ -509,7 +509,7 @@ func load() *Config {
 		ACEMapHTTPS:   envBool("ACE_MAP_HTTPS", false),
 
 		GluetunAPIPort:             envInt("GLUETUN_API_PORT", 8001),
-		GluetunHealthCheckInterval: envDur("GLUETUN_HEALTH_CHECK_INTERVAL_S", 5*time.Second),
+		GluetunHealthCheckInterval: envDur("GLUETUN_HEALTH_CHECK_INTERVAL_S", 1*time.Second),
 		GluetunPortCacheTTL:        envDur("GLUETUN_PORT_CACHE_TTL_S", 60*time.Second),
 		PreferredEnginesPerVPN:     envInt("PREFERRED_ENGINES_PER_VPN", 10),
 		GluetunPortRange1:          envStr("GLUETUN_PORT_RANGE_1", ""),

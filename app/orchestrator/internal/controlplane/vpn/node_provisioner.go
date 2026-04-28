@@ -627,13 +627,13 @@ func applyPFFilterGuard(
 
 			sProto := normalizeProtocol(strVal(s["vpn"]))
 			if normalProto != "" && sProto != "" && sProto != normalProto {
-				break
+				continue
 			}
 			if normalProto != "" && sProto == "" {
-				break
+				continue
 			}
 			if !serverSupportsPF(s) {
-				break
+				continue
 			}
 			isCompatible = true
 			compatible = append(compatible, hn)

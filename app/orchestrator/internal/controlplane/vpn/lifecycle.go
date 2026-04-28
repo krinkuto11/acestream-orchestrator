@@ -48,9 +48,12 @@ func (lm *LifecycleManager) Run(ctx context.Context) {
 	cfg := config.C.Load()
 	ticker := time.NewTicker(cfg.VPNDrainingCheckInterval)
 	defer ticker.Stop()
+	healthTicker := time.NewTicker(cfg.GluetunHealthCheckInterval)
+	defer healthTicker.Stop()
 
 	slog.Info("VPNLifecycleManager started",
 		"check_interval", cfg.VPNDrainingCheckInterval,
+		"health_interval", cfg.GluetunHealthCheckInterval,
 		"vpn_enabled", cfg.VPNEnabled,
 	)
 
@@ -61,6 +64,8 @@ func (lm *LifecycleManager) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			lm.reconcile(ctx)
+		case <-healthTicker.C:
+			lm.monitorHealth(ctx)
 		case <-lm.nudge:
 			lm.reconcile(ctx)
 		}
@@ -280,6 +285,26 @@ func (lm *LifecycleManager) destroyVPN(ctx context.Context, node *state.VPNNode)
 
 	lm.pub.RemoveVPNNode(ctx, node.ContainerName)
 	slog.Info("VPN node destroyed", "name", node.ContainerName)
+}
+
+// monitorHealth probes all active dynamic VPN nodes and updates their health in state.
+func (lm *LifecycleManager) monitorHealth(ctx context.Context) {
+	st := state.Global
+	for _, node := range st.ListVPNNodes() {
+		if !node.ManagedDynamic || node.Lifecycle == "draining" {
+			continue
+		}
+		// Probe Gluetun API.
+		healthy := IsControlAPIReachable(node.ContainerName, true)
+		if node.Healthy != healthy {
+			slog.Info("VPN node health changed", "name", node.ContainerName, "healthy", healthy)
+			st.SetVPNNodeHealthy(node.ContainerName, healthy)
+			// Publish update so proxy event stream reflects health.
+			if updated, ok := st.GetVPNNode(node.ContainerName); ok {
+				lm.pub.PublishVPNNode(ctx, updated)
+			}
+		}
+	}
 }
 
 // syncManagedNodesToState reconciles Docker-reported managed VPN containers into
