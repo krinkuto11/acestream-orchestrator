@@ -72,12 +72,16 @@ func (s *Store) GetEngine(id string) (*Engine, bool) {
 	return e, ok
 }
 
-func (s *Store) RemoveEngine(id string) {
+func (s *Store) RemoveEngine(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.engines[id]; !ok {
+		return false
+	}
 	delete(s.engines, id)
 	delete(s.emptyAt, id)
 	delete(s.streamCounts, id)
+	return true
 }
 
 func (s *Store) ListEngines() []*Engine {

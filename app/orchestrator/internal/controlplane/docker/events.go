@@ -201,11 +201,11 @@ func (w *EventWatcher) handleEngineStart(ctx context.Context, containerID, conta
 }
 
 func (w *EventWatcher) handleEngineStop(ctx context.Context, containerID, containerName string, attrs map[string]string) {
-	st := state.Global
-	engine.Alloc.ReleaseFromLabels(attrs)
-	st.RemoveEngine(containerID)
-	w.pub.RemoveEngine(ctx, containerID)
-	slog.Info("engine deregistered", "id", containerID[:min12(len(containerID))], "name", containerName)
+	if state.Global.RemoveEngine(containerID) {
+		engine.Alloc.ReleaseFromLabels(attrs)
+		w.pub.RemoveEngine(ctx, containerID)
+		slog.Info("engine deregistered", "id", containerID[:min12(len(containerID))], "name", containerName)
+	}
 }
 
 func (w *EventWatcher) handleVPNStart(ctx context.Context, containerID, containerName string, attrs map[string]string) {

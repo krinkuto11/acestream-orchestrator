@@ -42,9 +42,9 @@ func (lm *LifecycleManager) SetNudger(f func(string)) {
 }
 
 func (lm *LifecycleManager) Nudge(reason string) {
-	slog.Info("VPN lifecycle nudged", "reason", reason)
 	select {
 	case lm.nudge <- struct{}{}:
+		slog.Info("VPN lifecycle nudged", "reason", reason)
 	default:
 	}
 }
@@ -171,12 +171,9 @@ func (lm *LifecycleManager) reconcileScale(ctx context.Context) {
 
 func (lm *LifecycleManager) provisionOne(ctx context.Context) {
 	slog.Info("Provisioning dynamic VPN node")
-	result, err := lm.prov.ProvisionNode(ctx)
-	if err != nil {
+	if _, err := lm.prov.ProvisionNode(ctx); err != nil {
 		slog.Error("Failed to provision dynamic VPN node", "err", err)
-		return
 	}
-	slog.Info("Dynamic VPN node provisioned", "name", result.ContainerName, "hostname", result.AssignedHostname)
 }
 
 func (lm *LifecycleManager) scaleDownIdle(ctx context.Context, desiredVPNs int) {

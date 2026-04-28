@@ -259,10 +259,11 @@ func Reindex(ctx context.Context) bool {
 	// Remove stale engines (tracked but no longer running).
 	for _, e := range st.ListEngines() {
 		if !runningEngines[e.ContainerID] {
-			engine.Alloc.ReleaseFromLabels(e.Labels)
-			st.RemoveEngine(e.ContainerID)
-			slog.Info("Reindex: removed stale engine", "name", e.ContainerName)
-			changed = true
+			if st.RemoveEngine(e.ContainerID) {
+				engine.Alloc.ReleaseFromLabels(e.Labels)
+				slog.Info("Reindex: removed stale engine", "name", e.ContainerName)
+				changed = true
+			}
 		}
 	}
 
