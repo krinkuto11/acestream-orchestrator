@@ -621,7 +621,8 @@ func (s *ProxyServer) mgHandleVPNServersRefresh(w http.ResponseWriter, r *http.R
 		return
 	}
 	go func() {
-		if err := s.svcRefresh.RefreshOfficial(r.Context()); err != nil {
+		// Use a background context because this goroutine outlives the HTTP request.
+		if err := s.svcRefresh.RefreshOfficial(context.Background()); err != nil {
 			slog.Warn("VPN servers manual refresh failed", "err", err)
 		}
 	}()
@@ -763,7 +764,7 @@ func (s *ProxyServer) mgHandleUpdateAllSettings(w http.ResponseWriter, r *http.R
 				}
 			case "engine_config":
 				config.ApplyEngineConfig(payload)
-				go cpengine.PushEngineConfig(r.Context(), payload)
+				go cpengine.PushEngineConfig(context.Background(), payload)
 				if s.ctrl != nil {
 					s.ctrl.EnsureMinimum()
 				}
@@ -854,7 +855,7 @@ func (s *ProxyServer) mgHandleSetSettingsCategory(cat string) http.HandlerFunc {
 		case "engine_config":
 			config.ApplyEngineConfig(payload)
 			// Push live-settable fields to running engines without restart.
-			go cpengine.PushEngineConfig(r.Context(), payload)
+			go cpengine.PushEngineConfig(context.Background(), payload)
 			if s.ctrl != nil {
 				s.ctrl.EnsureMinimum()
 			}
