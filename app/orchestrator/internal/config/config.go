@@ -311,9 +311,20 @@ func ApplyOrchestratorSettings(m map[string]any) {
 			if s, ok := v.(string); ok {
 				n.ACEHTTPSRange = parseRange(s)
 			}
+		case "docker_network":
+			if s, ok := v.(string); ok {
+				n.DockerNetwork = s
+			}
 		}
 	}
 	C.Store(&n)
+}
+
+func UpdateDockerNetwork(n string) {
+	old := C.Load()
+	ncfg := *old
+	ncfg.DockerNetwork = n
+	C.Store(&ncfg)
 }
 
 // ApplyEngineConfig merges an engine_config map into the live config.

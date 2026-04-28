@@ -269,10 +269,12 @@ func (p *Provisioner) startContainer(
 	netCfg := &network.NetworkingConfig{}
 	dockerNet := config.C.Load().DockerNetwork
 	if dockerNet != "" {
-		netCfg.EndpointsConfig = map[string]*network.EndpointSettings{
-			dockerNet: {},
-		}
 		hostCfg.NetworkMode = container.NetworkMode(dockerNet)
+		if dockerNet != "host" && dockerNet != "none" {
+			netCfg.EndpointsConfig = map[string]*network.EndpointSettings{
+				dockerNet: {},
+			}
+		}
 	}
 
 	if err := ensureImage(ctx, cli, image); err != nil {

@@ -81,6 +81,15 @@ func main() {
 		}
 	}
 
+	// ── Docker Network Detection ───────────────────────────────────────────────
+	if cfg.DockerNetwork == "" {
+		if net := cpdocker.DetectSelfNetwork(context.Background()); net != "" {
+			slog.Info("Docker network not specified; detected self network", "network", net)
+			config.UpdateDockerNetwork(net)
+			cfg = config.C.Load()
+		}
+	}
+
 	// ── Application context ────────────────────────────────────────────────────
 	appCtx, appCancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer appCancel()

@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -243,4 +244,36 @@ func Reindex(ctx context.Context) bool {
 	}
 
 	return changed
+}
+
+// DetectSelfNetwork tries to find the network name of the current container.
+func DetectSelfNetwork(ctx context.Context) string {
+	cli, err := engine.NewDockerClientExported()
+	if err != nil {
+		return ""
+	}
+	defer cli.Close()
+
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		return ""
+	}
+
+	info, err := cli.ContainerInspect(ctx, hostname)
+	if err != nil {
+		// If we're not in a container, this will fail, which is expected.
+		return ""
+	}
+
+	// Try to find a non-default network first (e.g. from Docker Compose)
+	for name := range info.NetworkSettings.Networks {
+		if name != "bridge" && name != "host" && name != "none" {
+			return name
+		}
+	}
+	// Fallback to the first available network
+	for name := range info.NetworkSettings.Networks {
+		return name
+	}
+	return ""
 }
