@@ -365,6 +365,66 @@ func CleanupManaged(ctx context.Context, prov *vpn.Provisioner) {
 
 // ─── VPN node selection ──────────────────────────────────────────────────────
 
+// CheckVPNSchedulable returns nil if at least one healthy, non-draining VPN
+// node has capacity, without allocating any resources. Used as a pre-flight
+// check before spawning N provisioning goroutines so that "VPN not ready" is
+// logged exactly once per reconcile cycle rather than N times.
+func (rs *ResourceScheduler) CheckVPNSchedulable() error {
+	cfg := config.C.Load()
+	st := state.Global
+
+	nodes := st.ListVPNNodes()
+	if len(nodes) == 0 {
+		if cfg.VPNEnabled {
+			return fmt.Errorf("VPN is enabled; awaiting VPN node provisioning - cannot schedule AceStream engine")
+		}
+		return nil
+	}
+
+	maxPerVPN := cfg.PreferredEnginesPerVPN
+	desired := st.GetDesiredReplicas()
+	effectiveLimit := maxPerVPN
+	if maxPerVPN > 0 && desired > 0 {
+		requiredNodes := int(math.Ceil(float64(desired) / float64(maxPerVPN)))
+		if requiredNodes < 1 {
+			requiredNodes = 1
+		}
+		effectiveLimit = int(math.Ceil(float64(desired) / float64(requiredNodes)))
+		if effectiveLimit > maxPerVPN {
+			effectiveLimit = maxPerVPN
+		}
+	}
+
+	var rejectReasons []string
+	for _, n := range nodes {
+		if !n.ManagedDynamic {
+			continue
+		}
+		ok, reason := isNodeReady(n)
+		if !ok {
+			rejectReasons = append(rejectReasons, fmt.Sprintf("%s: %s", n.ContainerName, reason))
+			continue
+		}
+		if st.IsVPNNodeDraining(n.ContainerName) {
+			rejectReasons = append(rejectReasons, fmt.Sprintf("%s: draining", n.ContainerName))
+			continue
+		}
+		// At least one ready node with capacity — schedulable.
+		engineCount := len(st.GetEnginesByVPN(n.ContainerName))
+		pending := st.GetVPNPending(n.ContainerName)
+		if effectiveLimit <= 0 || engineCount+pending < effectiveLimit {
+			return nil
+		}
+		rejectReasons = append(rejectReasons, fmt.Sprintf("%s: at balanced capacity (%d/%d)", n.ContainerName, engineCount+pending, effectiveLimit))
+	}
+
+	diag := strings.Join(rejectReasons, "; ")
+	if diag == "" {
+		diag = "none found"
+	}
+	return fmt.Errorf("no healthy active dynamic VPN nodes available (%s) - cannot schedule AceStream engine", diag)
+}
+
 func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 	cfg := config.C.Load()
 	st := state.Global

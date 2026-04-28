@@ -23,10 +23,18 @@ type LifecycleManager struct {
 	pub  *state.RedisPublisher
 	prov *Provisioner
 
-	activeDrains  sync.Map // containerName -> struct{}
+	activeDrains   sync.Map // containerName -> struct{}
 	activeHealings sync.Map
 	nudge          chan struct{}
 	nudger         func(string)
+	wg             sync.WaitGroup
+}
+
+// Wait blocks until the Run goroutine has fully exited. Call after the context
+// passed to Run has been cancelled to ensure no in-flight reconciliation races
+// with container cleanup during shutdown.
+func (lm *LifecycleManager) Wait() {
+	lm.wg.Wait()
 }
 
 func NewLifecycleManager(pub *state.RedisPublisher, prov *Provisioner) *LifecycleManager {
@@ -50,6 +58,9 @@ func (lm *LifecycleManager) Nudge(reason string) {
 }
 
 func (lm *LifecycleManager) Run(ctx context.Context) {
+	lm.wg.Add(1)
+	defer lm.wg.Done()
+
 	cfg := config.C.Load()
 	ticker := time.NewTicker(cfg.VPNDrainingCheckInterval)
 	defer ticker.Stop()

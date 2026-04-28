@@ -215,25 +215,41 @@ func main() {
 	<-appCtx.Done()
 	slog.Info("shutdown signal received")
 
+	// 1. Stop the engine controller — no new provisioning intents accepted.
+	slog.Info("stopping engine controller")
 	ctrl.Stop()
-	monSvc.StopAll()
-	hub.Stop()
-	hls.DefaultCache.Stop()
- 
-	// Ensure all managed containers are stopped on exit.
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), 20*time.Second)
-	cpengine.StopAllManaged(stopCtx)
-	stopCancel()
+	slog.Info("engine controller stopped")
 
+	// 2. Wait for the VPN lifecycle manager to finish its current reconcile
+	//    before we start destroying containers underneath it.
+	slog.Info("waiting for VPN lifecycle manager")
+	vpnManager.Wait()
+	slog.Info("VPN lifecycle manager stopped")
+
+	// 3. Drain in-flight HTTP requests before killing the containers they talk to.
+	//    Engines stay alive during this window so proxied streams can finish.
+	slog.Info("draining HTTP servers")
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutCancel()
-
 	if err := proxyHTTP.Shutdown(shutCtx); err != nil {
 		slog.Error("proxy graceful shutdown failed", "err", err)
 	}
 	if err := orchSrv.Shutdown(shutCtx); err != nil {
 		slog.Error("orchestrator graceful shutdown failed", "err", err)
 	}
+	slog.Info("HTTP servers drained")
+
+	// 4. Stop ancillary services that may still be writing to state or Redis.
+	monSvc.StopAll()
+	hub.Stop()
+	hls.DefaultCache.Stop()
+
+	// 5. Kill all managed containers (engines + VPN nodes).
+	slog.Info("stopping all managed containers")
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	cpengine.StopAllManaged(stopCtx)
+	stopCancel()
+	slog.Info("all managed containers stopped")
 
 	slog.Info("AceStream stopped")
 }
