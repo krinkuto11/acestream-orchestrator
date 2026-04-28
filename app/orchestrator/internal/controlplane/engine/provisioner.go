@@ -195,8 +195,19 @@ func ExecuteSpec(ctx context.Context, spec *state.EngineSpec) (string, error) {
 
 	resp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, net, nil, spec.ContainerName)
 	if err != nil {
-		ReleaseSpec(spec)
-		return "", fmt.Errorf("container create: %w", err)
+		// AutoRemove:true removes the container asynchronously after the process
+		// exits.  If the controller deleted the old container a moment ago, its
+		// name may still be reserved while Docker's cleanup is in flight.  Detect
+		// the conflict, force-remove the stale entry, and retry once.
+		if strings.Contains(err.Error(), "already in use") || strings.Contains(err.Error(), "Conflict") {
+			slog.Warn("container name conflict; force-removing stale container and retrying", "name", spec.ContainerName)
+			_ = cli.ContainerRemove(ctx, spec.ContainerName, container.RemoveOptions{Force: true})
+			resp, err = cli.ContainerCreate(ctx, containerConfig, hostConfig, net, nil, spec.ContainerName)
+		}
+		if err != nil {
+			ReleaseSpec(spec)
+			return "", fmt.Errorf("container create: %w", err)
+		}
 	}
 
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
@@ -262,6 +273,8 @@ func ListManagedVPNContainers(ctx context.Context) ([]dockertypes.Container, err
 }
 
 // StopAllManaged stops all managed engines and VPN nodes in parallel.
+// VPN containers are force-removed (not just killed) to prevent Docker's
+// restart policy from bringing them back up.
 func StopAllManaged(ctx context.Context) {
 	cli, err := newDockerClient()
 	if err != nil {
@@ -293,13 +306,68 @@ func StopAllManaged(ctx context.Context) {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
-			if err := StopContainer(ctx, id, true); err != nil {
-				slog.Warn("failed to stop vpn", "id", id[:min12(len(id))], "err", err)
+			if err := cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
+				slog.Warn("failed to remove VPN container", "id", id[:min12(len(id))], "err", err)
 			}
 		}(c.ID)
 	}
 	wg.Wait()
 	slog.Info("all managed containers stopped")
+}
+
+// CleanupManaged stops all managed engine containers and destroys all managed
+// VPN nodes (releasing credential leases). Called on startup to clear any
+// containers left from a previous run before the lifecycle manager starts.
+func CleanupManaged(ctx context.Context, prov *vpn.Provisioner) {
+	engines, _ := ListManagedContainers(ctx)
+	vpns, _ := ListManagedVPNContainers(ctx)
+
+	if len(engines) == 0 && len(vpns) == 0 {
+		return
+	}
+
+	slog.Info("cleaning up managed containers from previous run", "engines", len(engines), "vpns", len(vpns))
+
+	cli, err := newDockerClient()
+	if err != nil {
+		slog.Error("CleanupManaged: docker client unavailable", "err", err)
+		return
+	}
+	defer cli.Close()
+
+	var wg sync.WaitGroup
+	for _, c := range engines {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if err := StopContainer(ctx, id, true); err != nil {
+				slog.Warn("cleanup: failed to stop engine", "id", id[:min12(len(id))], "err", err)
+			}
+		}(c.ID)
+	}
+	for _, c := range vpns {
+		wg.Add(1)
+		go func(c dockertypes.Container) {
+			defer wg.Done()
+			name := ""
+			for _, n := range c.Names {
+				name = strings.TrimPrefix(n, "/")
+				break
+			}
+			if prov != nil && name != "" {
+				if err := prov.DestroyNode(ctx, name); err != nil {
+					slog.Warn("cleanup: failed to destroy VPN node", "name", name, "err", err)
+				}
+				return
+			}
+			// Fallback: no provisioner or no name — force-remove by ID.
+			if err := cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+				slog.Warn("cleanup: failed to remove VPN container", "id", c.ID[:min12(len(c.ID))], "err", err)
+			}
+		}(c)
+	}
+	wg.Wait()
+	slog.Info("managed container cleanup complete")
 }
 
 // ─── VPN node selection ──────────────────────────────────────────────────────
@@ -310,7 +378,14 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 
 	dynamicNodes := st.ListVPNNodes()
 	if len(dynamicNodes) == 0 {
-		return "", nil // No VPN management
+		// If VPN is enabled but no nodes are tracked yet, the lifecycle manager
+		// is still provisioning the first gluetun container.  Block engine
+		// creation with a transient error so we don't accidentally create
+		// non-VPN engines while VPN is meant to be active.
+		if cfg.VPNEnabled {
+			return "", fmt.Errorf("VPN is enabled; awaiting VPN node provisioning - cannot schedule AceStream engine")
+		}
+		return "", nil // VPN not enabled — no VPN needed
 	}
 
 	// Filter to ready, managed, non-draining dynamic nodes

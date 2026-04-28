@@ -408,7 +408,7 @@ func load() *Config {
 		RedisHost: envStr("REDIS_HOST", "localhost"),
 		RedisPort: envInt("REDIS_PORT", 6379),
 		RedisDB:   envInt("REDIS_DB", 0),
-		DBPath:    envStr("ACESTREAM_DB_PATH", "/data/acestream.db"),
+		DBPath:    envStr("ACESTREAM_DB_PATH", "/app/app/config/acestream.db"),
 		APIKey:    envStr("API_KEY", ""),
 
 		OrchestratorListenAddr: envStr("ORCHESTRATOR_LISTEN_ADDR", ":8083"),

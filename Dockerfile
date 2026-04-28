@@ -147,7 +147,7 @@ def start_proton_sidecar():
         print("Proton sidecar disabled via DISABLE_PROTON_SIDECAR", flush=True)
         return None
     env = os.environ.copy()
-    env.setdefault('PROTON_STORAGE_PATH', '/data/proton')
+    env.setdefault('PROTON_STORAGE_PATH', '/app/app/config/proton')
     p = subprocess.Popen(
         [
             'python3', '-m', 'uvicorn',

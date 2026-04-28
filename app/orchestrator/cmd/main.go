@@ -106,7 +106,7 @@ func main() {
 	// ── VPN subsystems ────────────────────────────────────────────────────────
 	serversDir := cfg.ServersJSONDir
 	if serversDir == "" {
-		serversDir = "/app/data/vpn-servers"
+		serversDir = "/app/app/config/vpn-servers"
 	}
 	creds = vpnpkg.NewCredentialManager()
 	if settingsStore != nil {
@@ -136,15 +136,22 @@ func main() {
 	eventWatcher := cpdocker.NewEventWatcher(pub, ctrl, dockerMon)
 
 	// Bootstrap Docker state before starting the controller.
-	if ok := cpdocker.Reindex(appCtx); !ok {
-		slog.Warn("Docker reindex failed; engine state may be incomplete on first reconcile")
-	}
+	// Reindex logs its own errors internally; the bool only indicates whether any
+	// containers were found, so we discard it here.
+	cpdocker.Reindex(appCtx)
 
 	// Restore VPN leases from discovered Docker state.
 	if creds != nil && prov != nil {
 		nodes, _ := prov.ListManagedNodes(appCtx, false)
 		creds.RestoreLeases(nodes)
 	}
+
+	// Clean up any managed containers left from a previous run before the
+	// lifecycle manager starts. This prevents config-drift replacement churn and
+	// VPN health-check failures that would block engine provisioning.
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	cpengine.CleanupManaged(cleanupCtx, prov)
+	cleanupCancel()
 
 	ctrl.Start(appCtx)
 	ctrl.EnsureMinimum()
