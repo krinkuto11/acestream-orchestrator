@@ -366,9 +366,12 @@ func CleanupManaged(ctx context.Context, prov *vpn.Provisioner) {
 // ─── VPN node selection ──────────────────────────────────────────────────────
 
 // CheckVPNSchedulable returns nil if at least one healthy, non-draining VPN
-// node has capacity, without allocating any resources. Used as a pre-flight
-// check before spawning N provisioning goroutines so that "VPN not ready" is
-// logged exactly once per reconcile cycle rather than N times.
+// node exists, without allocating any resources. Used as a pre-flight check
+// before spawning N provisioning goroutines so that "VPN not ready" is logged
+// exactly once per reconcile cycle rather than N times.
+// PreferredEnginesPerVPN is a scheduling preference, not a hard gate here —
+// the actual placement in selectVPNContainer will prefer under-limit nodes but
+// will overflow onto the least-loaded node if all are at the soft limit.
 func (rs *ResourceScheduler) CheckVPNSchedulable() error {
 	cfg := config.C.Load()
 	st := state.Global
@@ -379,20 +382,6 @@ func (rs *ResourceScheduler) CheckVPNSchedulable() error {
 			return fmt.Errorf("VPN is enabled; awaiting VPN node provisioning - cannot schedule AceStream engine")
 		}
 		return nil
-	}
-
-	maxPerVPN := cfg.PreferredEnginesPerVPN
-	desired := st.GetDesiredReplicas()
-	effectiveLimit := maxPerVPN
-	if maxPerVPN > 0 && desired > 0 {
-		requiredNodes := int(math.Ceil(float64(desired) / float64(maxPerVPN)))
-		if requiredNodes < 1 {
-			requiredNodes = 1
-		}
-		effectiveLimit = int(math.Ceil(float64(desired) / float64(requiredNodes)))
-		if effectiveLimit > maxPerVPN {
-			effectiveLimit = maxPerVPN
-		}
 	}
 
 	var rejectReasons []string
@@ -409,13 +398,7 @@ func (rs *ResourceScheduler) CheckVPNSchedulable() error {
 			rejectReasons = append(rejectReasons, fmt.Sprintf("%s: draining", n.ContainerName))
 			continue
 		}
-		// At least one ready node with capacity — schedulable.
-		engineCount := len(st.GetEnginesByVPN(n.ContainerName))
-		pending := st.GetVPNPending(n.ContainerName)
-		if effectiveLimit <= 0 || engineCount+pending < effectiveLimit {
-			return nil
-		}
-		rejectReasons = append(rejectReasons, fmt.Sprintf("%s: at balanced capacity (%d/%d)", n.ContainerName, engineCount+pending, effectiveLimit))
+		return nil // at least one healthy, non-draining node available
 	}
 
 	diag := strings.Join(rejectReasons, "; ")
@@ -483,10 +466,16 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 		}
 	}
 
-	// Atomically select the least-loaded node and claim a pending slot.
-	// A single lock prevents concurrent goroutines from all reading load=0
-	// and over-assigning to the same node.
+	// Prefer under-limit nodes; fall back to least-loaded if all are at the
+	// soft limit so that PreferredEnginesPerVPN stays a preference, not a gate.
 	chosen, load := st.SelectAndClaimVPN(readyNames, effectiveLimit)
+	if chosen == "" {
+		chosen, load = st.SelectAndClaimVPN(readyNames, 0)
+		if chosen != "" {
+			slog.Info("scheduling engine above preferred limit (soft overflow)",
+				"vpn", chosen, "load", load, "preferred_limit", effectiveLimit)
+		}
+	}
 	if chosen == "" {
 		diag := strings.Join(rejectReasons, "; ")
 		return "", fmt.Errorf("resource restriction: %s - cannot schedule AceStream engine", diag)
