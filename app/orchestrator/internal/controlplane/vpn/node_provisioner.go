@@ -333,6 +333,9 @@ func buildGluetunEnv(
 		"GLUETUN_SERVERS_JSON_PATH":      "/gluetun/servers.json",
 		"HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE": `{"auth":"none"}`,
 		"HTTP_CONTROL_SERVER_LOG":        "off",
+		"BLOCK_MALICIOUS":                "off",
+		"BLOCK_ADS":                      "off",
+		"BLOCK_SURVEILLANCE":             "off",
 	}
 
 	// TZ
@@ -560,7 +563,7 @@ func applyOptionalCredentialEnv(env map[string]string, protocol string, cred map
 			"wireguard_persistent_keepalive_interval": "WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL",
 		}
 		// Default MTU for Wireguard to avoid slow path discovery (6 seconds).
-		env["WIREGUARD_MTU"] = "1400"
+		env["WIREGUARD_MTU"] = "1420"
 	} else {
 		optionalMap = map[string]string{
 			"openvpn_protocol":      "OPENVPN_PROTOCOL",
