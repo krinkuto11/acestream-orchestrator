@@ -41,6 +41,7 @@ type Controller struct {
 	wg       sync.WaitGroup
 	intentMu sync.Mutex
 	intSeq   atomic.Int64
+	vpnNudge func(string)
 }
 
 // NewController creates a new EngineController.
@@ -78,6 +79,10 @@ func (c *Controller) Nudge(reason string) {
 }
 
 func (c *Controller) IsRunning() bool { return c.running.Load() }
+
+func (c *Controller) SetVPNNudger(f func(string)) {
+	c.vpnNudge = f
+}
 
 // ─── Autoscaler ───────────────────────────────────────────────────────────────
 
@@ -281,6 +286,9 @@ func (c *Controller) doReconcile() {
 				if err != nil {
 					if isTransientVPNError(err) {
 						slog.Info("create intent blocked awaiting VPN readiness", "err", err)
+						if c.vpnNudge != nil {
+							c.vpnNudge("engine_blocked_by_vpn")
+						}
 					} else {
 						slog.Error("unexpected scheduling error", "err", err)
 					}

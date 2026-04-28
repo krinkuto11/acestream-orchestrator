@@ -139,6 +139,7 @@ func main() {
 
 	vpnManager := vpnpkg.NewLifecycleManager(pub, prov)
 	vpnManager.SetNudger(ctrl.Nudge)
+	ctrl.SetVPNNudger(vpnManager.Nudge)
 	go vpnManager.Run(appCtx)
 
 	// ── Controlplane: Docker monitor + event watcher ───────────────────────────
