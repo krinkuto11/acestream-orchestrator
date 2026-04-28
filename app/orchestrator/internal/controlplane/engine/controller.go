@@ -687,11 +687,12 @@ func isTransientVPNError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
+	msg := strings.ToLower(err.Error())
 	return containsAny(msg, []string{
 		"no healthy active dynamic vpn nodes",
 		"cannot schedule acestream engine",
 		"control api not reachable",
+		"awaiting vpn node provisioning",
 	})
 }
 

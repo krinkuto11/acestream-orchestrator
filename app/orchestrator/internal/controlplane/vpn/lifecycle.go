@@ -42,7 +42,7 @@ func (lm *LifecycleManager) SetNudger(f func(string)) {
 }
 
 func (lm *LifecycleManager) Nudge(reason string) {
-	slog.Debug("VPN lifecycle nudged", "reason", reason)
+	slog.Info("VPN lifecycle nudged", "reason", reason)
 	select {
 	case lm.nudge <- struct{}{}:
 	default:
