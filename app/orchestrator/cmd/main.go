@@ -229,7 +229,7 @@ func main() {
 	// 3. Drain in-flight HTTP requests before killing the containers they talk to.
 	//    Engines stay alive during this window so proxied streams can finish.
 	slog.Info("draining HTTP servers")
-	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutCancel()
 	if err := proxyHTTP.Shutdown(shutCtx); err != nil {
 		slog.Error("proxy graceful shutdown failed", "err", err)

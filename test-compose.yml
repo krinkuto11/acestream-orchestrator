@@ -15,6 +15,7 @@ services:
     # Configuration is now handled via the Web UI Settings panel
     # environment:
     #   - API_KEY=optional_api_key
+    stop_grace_period: 45s
     ports:
     - "8000:8000"
     volumes:
