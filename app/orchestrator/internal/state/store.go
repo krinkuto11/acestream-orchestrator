@@ -614,10 +614,30 @@ func (s *Store) OnStreamStarted(ev StreamStartedEvent) *StreamState {
 		st.IsLive = ev.Session.IsLive != 0
 		st.Bitrate = ev.Session.Bitrate
 	}
-	// Derive ContainerName from EngineName if not set directly.
-	if st.ContainerName == "" {
-		st.ContainerName = ev.EngineName
+
+	// Resolve EngineName and ContainerName from the engine registry if missing.
+	if st.EngineID != "" {
+		if st.ContainerID == "" {
+			st.ContainerID = st.EngineID
+		}
+		if e, ok := s.engines[st.EngineID]; ok {
+			if st.EngineName == "" {
+				st.EngineName = e.ContainerName
+			}
+			if st.ContainerName == "" {
+				st.ContainerName = e.ContainerName
+			}
+		}
 	}
+
+	// Fallback for EngineName/ContainerName
+	if st.EngineName == "" && st.EngineID != "" {
+		st.EngineName = st.EngineID
+	}
+	if st.ContainerName == "" {
+		st.ContainerName = st.EngineName
+	}
+
 
 	s.streams[st.ID] = st
 	if st.EngineID != "" {
