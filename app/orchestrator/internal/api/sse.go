@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -111,16 +114,18 @@ func sseAPIKeyOK(r *http.Request) bool {
 	if key == "" {
 		return true
 	}
-	if r.URL.Query().Get("api_key") == key || r.URL.Query().Get("key") == key {
+	kb := []byte(key)
+	match := func(provided string) bool {
+		return provided != "" && subtle.ConstantTimeCompare([]byte(provided), kb) == 1
+	}
+	if match(r.URL.Query().Get("api_key")) || match(r.URL.Query().Get("key")) {
 		return true
 	}
-	if r.Header.Get("X-API-Key") == key {
+	if match(r.Header.Get("X-API-Key")) {
 		return true
 	}
 	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-		if strings.TrimPrefix(auth, "Bearer ") == key {
-			return true
-		}
+		return match(strings.TrimPrefix(auth, "Bearer "))
 	}
 	return false
 }
@@ -616,5 +621,7 @@ func (s *ProxyServer) RunSSEPublisher(ctx context.Context) {
 
 func stateHash(m map[string]any) string {
 	b, _ := json.Marshal(m)
-	return fmt.Sprintf("%d", len(b))
+	h := fnv.New64a()
+	h.Write(b)
+	return strconv.FormatUint(h.Sum64(), 16)
 }

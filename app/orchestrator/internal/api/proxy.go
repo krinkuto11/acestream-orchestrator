@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/sha1"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -459,6 +460,7 @@ func (s *ProxyServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 // ─── Monitor handlers ─────────────────────────────────────────────────────────
 
 func (s *ProxyServer) handleMonitorStart(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 	var req monitor.StartRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
@@ -517,6 +519,7 @@ func (s *ProxyServer) handleMonitorReusable(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *ProxyServer) handleMonitorParseM3U(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MiB — M3U files can be large
 	var body struct {
 		M3UContent string `json:"m3u_content"`
 	}
@@ -759,7 +762,7 @@ func requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if provided != key {
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(key)) != 1 {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

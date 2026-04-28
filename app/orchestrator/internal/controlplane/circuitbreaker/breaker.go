@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/acestream/acestream/internal/metrics"
 )
 
 type State int
@@ -101,6 +103,12 @@ func (b *Breaker) ForceReset() {
 	b.failureCount = 0
 }
 
+func (b *Breaker) IsOpen() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.state == StateOpen
+}
+
 func (b *Breaker) Status() map[string]any {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -148,34 +156,48 @@ func (m *Manager) RecordSuccess(op string) {
 	m.mu.RLock()
 	b, ok := m.breakers[op]
 	if !ok {
+		op = "general"
 		b = m.breakers["general"]
 	}
 	m.mu.RUnlock()
 	b.RecordSuccess()
+	m.emitCBMetric(op, b)
 }
 
 func (m *Manager) RecordFailure(op string) {
 	m.mu.RLock()
 	b, ok := m.breakers[op]
 	if !ok {
+		op = "general"
 		b = m.breakers["general"]
 	}
 	m.mu.RUnlock()
 	b.RecordFailure()
+	m.emitCBMetric(op, b)
 }
 
 func (m *Manager) ForceReset(op string) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if op == "" {
-		for _, b := range m.breakers {
+		for name, b := range m.breakers {
 			b.ForceReset()
+			m.emitCBMetric(name, b)
 		}
 		return
 	}
 	if b, ok := m.breakers[op]; ok {
 		b.ForceReset()
+		m.emitCBMetric(op, b)
 	}
+}
+
+func (m *Manager) emitCBMetric(name string, b *Breaker) {
+	v := 0.0
+	if b.IsOpen() {
+		v = 1.0
+	}
+	metrics.CPCircuitBreakerOpen.WithLabelValues(name).Set(v)
 }
 
 func (m *Manager) GetStatus() map[string]any {

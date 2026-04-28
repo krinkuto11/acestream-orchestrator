@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,6 +20,8 @@ import (
 	cpengine "github.com/acestream/acestream/internal/controlplane/engine"
 	"github.com/acestream/acestream/internal/state"
 )
+
+const maxJSONBodyBytes = 10 << 20 // 10 MiB
 
 func (s *ProxyServer) registerManagementRoutes() {
 		// ── Events (proxy-plane POST) ─────────────────────────────────────────────
@@ -68,18 +71,18 @@ func (s *ProxyServer) registerManagementRoutes() {
 	s.mux.HandleFunc("GET /api/v1/vpn/publicip", s.mgHandleVPNPublicIP)
 	s.mux.HandleFunc("GET /api/v1/vpn/status", s.mgHandleVPNStatus)
 	s.mux.HandleFunc("GET /api/v1/vpn/leases", s.mgHandleVPNCredentials)
-	s.mux.HandleFunc("GET /api/v1/vpn/config", s.mgHandleGetVPNConfig)
+	s.mux.HandleFunc("GET /api/v1/vpn/config", requireAPIKey(s.mgHandleGetVPNConfig))
 	s.mux.HandleFunc("POST /api/v1/vpn/config", requireAPIKey(s.mgHandleSetVPNConfig))
-	s.mux.HandleFunc("GET /api/v1/settings/vpn", s.mgHandleGetVPNConfig)
+	s.mux.HandleFunc("GET /api/v1/settings/vpn", requireAPIKey(s.mgHandleGetVPNConfig))
 	s.mux.HandleFunc("POST /api/v1/settings/vpn", requireAPIKey(s.mgHandleSetVPNConfig))
 	s.mux.HandleFunc("POST /api/v1/vpn/parse-wireguard", requireAPIKey(s.mgHandleParseWireGuard))
 	s.mux.HandleFunc("POST /api/v1/vpn/proton/refresh", requireAPIKey(s.mgHandleProtonRefresh))
 	s.mux.HandleFunc("GET /api/v1/vpn/servers/refresh/status", s.mgHandleVPNServersRefreshStatus)
 
 	// ── Settings ──────────────────────────────────────────────────────────────
-	s.mux.HandleFunc("GET /api/v1/settings", s.mgHandleGetAllSettings)
+	s.mux.HandleFunc("GET /api/v1/settings", requireAPIKey(s.mgHandleGetAllSettings))
 	s.mux.HandleFunc("POST /api/v1/settings", requireAPIKey(s.mgHandleUpdateAllSettings))
-	s.mux.HandleFunc("GET /api/v1/settings/export", s.mgHandleExportSettings)
+	s.mux.HandleFunc("GET /api/v1/settings/export", requireAPIKey(s.mgHandleExportSettings))
 	s.mux.HandleFunc("POST /api/v1/settings/import", requireAPIKey(s.mgHandleImportSettings))
 	s.mux.HandleFunc("GET /api/v1/settings/engine/config", s.mgHandleGetSettingsCategory("engine_config"))
 	s.mux.HandleFunc("POST /api/v1/settings/engine/config", requireAPIKey(s.mgHandleSetSettingsCategory("engine_config")))
@@ -370,6 +373,7 @@ func (s *ProxyServer) mgHandleDeleteStream(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *ProxyServer) mgHandleBatchStopStreams(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
 	var commandURLs []string
 	if err := json.NewDecoder(r.Body).Decode(&commandURLs); err != nil {
 		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json: expected array of command_urls"})
@@ -649,6 +653,7 @@ func (s *ProxyServer) mgHandleSetVPNConfig(w http.ResponseWriter, r *http.Reques
 		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
 	var payload map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
@@ -662,6 +667,7 @@ func (s *ProxyServer) mgHandleSetVPNConfig(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *ProxyServer) mgHandleParseWireGuard(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
 	var body struct {
 		Config      string `json:"config"`
 		FileContent string `json:"file_content"`
@@ -735,6 +741,7 @@ func (s *ProxyServer) mgHandleUpdateAllSettings(w http.ResponseWriter, r *http.R
 		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
 	var body map[string]map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
@@ -764,6 +771,7 @@ func (s *ProxyServer) mgHandleUpdateAllSettings(w http.ResponseWriter, r *http.R
 				}
 			case "engine_config":
 				config.ApplyEngineConfig(payload)
+				go cpengine.PushEngineConfig(r.Context(), payload)
 				if s.ctrl != nil {
 					s.ctrl.EnsureMinimum()
 				}
@@ -828,6 +836,7 @@ func (s *ProxyServer) mgHandleSetSettingsCategory(cat string) http.HandlerFunc {
 			mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
 		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
@@ -852,6 +861,8 @@ func (s *ProxyServer) mgHandleSetSettingsCategory(cat string) http.HandlerFunc {
 			}
 		case "engine_config":
 			config.ApplyEngineConfig(payload)
+			// Push live-settable fields to running engines without restart.
+			go cpengine.PushEngineConfig(r.Context(), payload)
 			if s.ctrl != nil {
 				s.ctrl.EnsureMinimum()
 			}
@@ -933,6 +944,7 @@ func (s *ProxyServer) mgHandleAddVPNCredential(w http.ResponseWriter, r *http.Re
 		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
 	var cred map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&cred); err != nil {
 		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
@@ -1223,6 +1235,11 @@ func (s *ProxyServer) mgHandleModifyM3U(w http.ResponseWriter, r *http.Request) 
 	}
 	if m3uURL == "" {
 		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "m3u_url parameter required"})
+		return
+	}
+	// Reject non-HTTP(S) schemes to prevent SSRF via file://, gopher://, etc.
+	if parsed, err := url.Parse(m3uURL); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "m3u_url must use http or https scheme"})
 		return
 	}
 	// Allow caller to override host and port

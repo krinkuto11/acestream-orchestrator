@@ -62,6 +62,13 @@ func (s *SettingsStore) GetValue(category, key string, def any) any {
 
 // Save replaces one category atomically (DB + cache).
 func (s *SettingsStore) Save(category string, payload map[string]any) error {
+	// Normalize before persisting so values in the DB are always clean.
+	switch category {
+	case "proxy_settings":
+		payload = normalizeProxySettings(payload)
+	case "vpn_settings":
+		payload = normalizeVPNSettings(payload)
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", category, err)
@@ -408,4 +415,203 @@ func deepCopyCategories(cats map[string]map[string]any) map[string]map[string]an
 		out[k] = deepCopyMap(v)
 	}
 	return out
+}
+
+// ── Normalization ─────────────────────────────────────────────────────────────
+
+func normalizeProxySettings(m map[string]any) map[string]any {
+	out := deepCopyMap(m)
+
+	// Integer fields
+	for _, k := range []string{
+		"initial_data_wait_timeout", "no_data_timeout_checks",
+		"connection_timeout", "upstream_connect_timeout", "upstream_read_timeout",
+		"stream_timeout", "channel_shutdown_delay", "max_streams_per_engine",
+		"hls_max_segments", "hls_initial_segments", "hls_window_size",
+		"hls_buffer_ready_timeout", "hls_first_segment_timeout",
+		"hls_initial_buffer_seconds", "hls_max_initial_segments",
+		"ace_live_edge_delay",
+	} {
+		if v, ok := out[k]; ok {
+			out[k] = toIntNorm(v)
+		}
+	}
+
+	// Float fields
+	for _, k := range []string{
+		"initial_data_check_interval", "no_data_check_interval",
+		"proxy_prebuffer_seconds", "pacing_bitrate_multiplier",
+		"hls_segment_fetch_interval",
+	} {
+		if v, ok := out[k]; ok {
+			out[k] = toFloatNorm(v)
+		}
+	}
+
+	// Enum: stream_mode
+	if v, ok := out["stream_mode"].(string); ok {
+		if v != "TS" && v != "HLS" {
+			out["stream_mode"] = "TS"
+		}
+	}
+
+	// Enum: control_mode
+	if v, ok := out["control_mode"].(string); ok {
+		if v != "http" && v != "api" {
+			out["control_mode"] = "api"
+		}
+	}
+
+	// Enum: legacy_api_preflight_tier
+	if v, ok := out["legacy_api_preflight_tier"].(string); ok {
+		valid := map[string]bool{"light": true, "standard": true, "heavy": true}
+		if !valid[v] {
+			out["legacy_api_preflight_tier"] = "light"
+		}
+	}
+
+	// Clamp max_streams_per_engine to [1, 20]
+	if v, ok := out["max_streams_per_engine"]; ok {
+		n := toIntNorm(v)
+		if n < 1 {
+			n = 1
+		} else if n > 20 {
+			n = 20
+		}
+		out["max_streams_per_engine"] = n
+	}
+
+	// Clamp proxy_prebuffer_seconds to [0, 30]
+	if v, ok := out["proxy_prebuffer_seconds"]; ok {
+		f := toFloatNorm(v)
+		if f < 0 {
+			f = 0
+		} else if f > 30 {
+			f = 30
+		}
+		out["proxy_prebuffer_seconds"] = f
+	}
+
+	return out
+}
+
+func normalizeVPNSettings(m map[string]any) map[string]any {
+	out := deepCopyMap(m)
+
+	// Legacy key migrations
+	if _, ok := out["providers"]; ok {
+		delete(out, "providers")
+	}
+	for _, stale := range []string{"vpn_mode", "container_name", "vpn_container_name"} {
+		delete(out, stale)
+	}
+
+	// Boolean fields
+	for _, k := range []string{
+		"enabled", "dynamic_vpn_management", "restart_engines_on_reconnect",
+		"vpn_servers_auto_refresh",
+	} {
+		if v, ok := out[k]; ok {
+			out[k] = toBoolNorm(v)
+		}
+	}
+
+	// Integer fields
+	for _, k := range []string{
+		"preferred_engines_per_vpn", "api_port",
+		"unhealthy_restart_timeout_s", "port_cache_ttl_s",
+		"health_check_interval_s", "vpn_servers_refresh_period_s",
+	} {
+		if v, ok := out[k]; ok {
+			out[k] = toIntNorm(v)
+		}
+	}
+
+	// Enum: protocol
+	if v, ok := out["protocol"].(string); ok {
+		if v != "wireguard" && v != "openvpn" {
+			out["protocol"] = "wireguard"
+		}
+	}
+
+	// Enum: vpn_servers_refresh_source
+	if v, ok := out["vpn_servers_refresh_source"].(string); ok {
+		valid := map[string]bool{"proton_paid": true, "gluetun_official": true}
+		if !valid[v] {
+			out["vpn_servers_refresh_source"] = "gluetun_official"
+		}
+	}
+
+	// Enum: vpn_servers_gluetun_json_mode
+	if v, ok := out["vpn_servers_gluetun_json_mode"].(string); ok {
+		if v != "update" && v != "replace" {
+			out["vpn_servers_gluetun_json_mode"] = "update"
+		}
+	}
+
+	// Enum: vpn_servers_proton_credentials_source
+	if v, ok := out["vpn_servers_proton_credentials_source"].(string); ok {
+		if v != "env" && v != "settings" {
+			out["vpn_servers_proton_credentials_source"] = "env"
+		}
+	}
+
+	// Enum: filter fields (exclude/include/only)
+	for _, k := range []string{
+		"vpn_servers_filter_ipv6", "vpn_servers_filter_secure_core",
+		"vpn_servers_filter_tor", "vpn_servers_filter_free_tier",
+	} {
+		if v, ok := out[k].(string); ok {
+			if v != "exclude" && v != "include" && v != "only" {
+				out[k] = "include"
+			}
+		}
+	}
+
+	return out
+}
+
+// toIntNorm coerces a JSON-decoded numeric value to int.
+func toIntNorm(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	case float32:
+		return int(n)
+	}
+	return 0
+}
+
+// toFloatNorm coerces a JSON-decoded numeric value to float64.
+func toFloatNorm(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	}
+	return 0
+}
+
+// toBoolNorm coerces common truthy representations to bool.
+func toBoolNorm(v any) bool {
+	switch b := v.(type) {
+	case bool:
+		return b
+	case int:
+		return b != 0
+	case float64:
+		return b != 0
+	case string:
+		return b == "true" || b == "1" || b == "yes"
+	}
+	return false
 }

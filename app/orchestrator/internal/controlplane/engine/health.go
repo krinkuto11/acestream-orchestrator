@@ -163,18 +163,24 @@ func (hm *HealthManager) checkAndManage(ctx context.Context) {
 		hm.mu.Unlock()
 	}
 
-	slog.Debug("health check complete", "healthy", len(healthy), "unhealthy", len(unhealthy))
+	isManualMode := config.C.Load().ManualMode
+	slog.Debug("health check complete", "healthy", len(healthy), "unhealthy", len(unhealthy), "manual_mode", isManualMode)
 
-	// Detect zero-peer starvation across healthy engines
-	hm.detectStarvation(healthy)
+	// Detect zero-peer starvation across healthy engines (skipped in manual mode)
+	if !isManualMode {
+		hm.detectStarvation(healthy)
+	}
 
 	// Wait for VPN recovery if target node is not ready
 	if hm.shouldWaitForVPNRecovery(healthy) {
 		return
 	}
 
-	// Evict durably unhealthy engines (one at a time, with cooldown)
-	hm.evictUnhealthy(ctx, unhealthy)
+	// Evict durably unhealthy engines (one at a time, with cooldown).
+	// Evictions are disabled in manual mode.
+	if !isManualMode {
+		hm.evictUnhealthy(ctx, unhealthy)
+	}
 }
 
 // probeHealth checks the AceStream engine's get_status API endpoint.
@@ -203,9 +209,20 @@ func probeHealth(host string, port int) bool {
 	return json.Unmarshal(body, &v) == nil
 }
 
+const starvationMinAge = 3 * time.Minute
+
 func (hm *HealthManager) detectStarvation(healthy []*state.Engine) {
 	st := state.Global
 	now := time.Now().UTC()
+
+	// Build a map from engineContainerID -> streams on that engine.
+	allStreams := st.ListStreams()
+	streamsByEngine := make(map[string][]*state.StreamState)
+	for _, s := range allStreams {
+		if s.ContainerID != "" && s.Status == "started" {
+			streamsByEngine[s.ContainerID] = append(streamsByEngine[s.ContainerID], s)
+		}
+	}
 
 	vpnNodesByName := make(map[string]*state.VPNNode)
 	for _, n := range st.ListVPNNodes() {
@@ -213,22 +230,69 @@ func (hm *HealthManager) detectStarvation(healthy []*state.Engine) {
 	}
 
 	for _, e := range healthy {
-		streamCount := st.GetStreamCount(e.ContainerID)
-		if streamCount == 0 {
+		engineStreams := streamsByEngine[e.ContainerID]
+		if len(engineStreams) == 0 {
 			continue
 		}
 
-		_ = now // placeholder: real starvation check requires per-stream peer stats
-		// from the data plane's Redis keys. We skip it here unless stream stats
-		// are present in the control plane state. The data plane handles its own
-		// starvation detection via the proxy.
-		//
-		// If integration is needed, read from Redis:
-		//   ace_proxy:stream:{key}:metadata and check peers/speed_down.
-		//
-		// For Phase 1, we mark VPN node draining only when the data plane
-		// publishes "stream_starved:{containerID}" to Redis channel cp:state_changed.
-		// This is handled in docker/events.go handleStateChange().
+		allStarved := true
+		for _, s := range engineStreams {
+			// API-mode streams don't use P2P; skip starvation check.
+			if s.ControlMode == "api" {
+				allStarved = false
+				break
+			}
+			// Grace period: don't flag streams that just started.
+			if now.Sub(s.StartedAt) <= starvationMinAge {
+				allStarved = false
+				break
+			}
+			// Check the latest stat snapshot for zero peers and zero speed.
+			snaps := st.GetStats(s.ID)
+			if len(snaps) == 0 {
+				allStarved = false
+				break
+			}
+			latest := snaps[len(snaps)-1]
+			peers := 0
+			if latest.Peers != nil {
+				peers = *latest.Peers
+			}
+			speedDown := 0
+			if latest.SpeedDown != nil {
+				speedDown = *latest.SpeedDown
+			}
+			if peers != 0 || speedDown != 0 {
+				allStarved = false
+				break
+			}
+		}
+
+		if !allStarved {
+			continue
+		}
+
+		vpnContainer := e.VPNContainer
+		if vpnContainer == "" {
+			continue
+		}
+		node, ok := vpnNodesByName[vpnContainer]
+		if !ok {
+			continue
+		}
+		if st.IsVPNNodeDraining(vpnContainer) {
+			continue
+		}
+
+		slog.Warn("zero-peer starvation detected across all streams; draining VPN node",
+			"engine", e.ContainerID[:min12(len(e.ContainerID))],
+			"vpn", vpnContainer,
+			"streams", len(engineStreams),
+		)
+		if node.AssignedHostname != "" {
+			slog.Info("blacklisting starved VPN hostname", "hostname", node.AssignedHostname)
+		}
+		st.SetVPNNodeDraining(vpnContainer)
 	}
 }
 

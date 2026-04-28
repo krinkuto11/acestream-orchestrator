@@ -59,10 +59,25 @@ func main() {
 			slog.Warn("SettingsStore init failed", "err", err)
 		} else {
 			settingsStore = s
+			// Rehydrate all persisted settings into the live config atomically,
+			// so runtime behaviour matches what was last saved in the dashboard.
 			if ps := s.Get("proxy_settings"); len(ps) > 0 {
 				config.ApplySettings(ps)
-				cfg = config.C.Load()
 			}
+			if es := s.Get("engine_settings"); len(es) > 0 {
+				config.ApplyEngineSettings(es)
+			}
+			if os := s.Get("orchestrator_settings"); len(os) > 0 {
+				config.ApplyOrchestratorSettings(os)
+			}
+			if ec := s.Get("engine_config"); len(ec) > 0 {
+				config.ApplyEngineConfig(ec)
+			}
+			if vs := s.Get("vpn_settings"); len(vs) > 0 {
+				config.ApplyVPNSettings(vs)
+			}
+			cfg = config.C.Load()
+			slog.Info("persisted settings applied to live config")
 		}
 	}
 

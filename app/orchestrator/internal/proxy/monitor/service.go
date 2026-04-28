@@ -790,6 +790,18 @@ func (s *Service) publishMonitorCounts(ctx context.Context) {
 	}
 	s.mu.RUnlock()
 
+	// Update in-memory state directly (unified binary — no Redis roundtrip needed).
+	// We must also zero out engines that no longer have active monitor sessions.
+	existing := s.st.GetMonitorCounts()
+	for cid := range existing {
+		if _, still := counts[cid]; !still {
+			s.st.SetMonitorCount(cid, 0)
+		}
+	}
+	for cid, n := range counts {
+		s.st.SetMonitorCount(cid, n)
+	}
+
 	if len(counts) == 0 {
 		return
 	}

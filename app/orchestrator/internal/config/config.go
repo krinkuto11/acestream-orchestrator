@@ -171,6 +171,7 @@ type Config struct {
 
 	// ── Misc ────────────────────────────────────────────────────────────────
 	AutoDelete bool
+	ManualMode bool
 }
 
 func (c *Config) MaxClientsPerStream() int {
@@ -259,6 +260,10 @@ func ApplyEngineSettings(m map[string]any) {
 			if b, ok := v.(bool); ok {
 				n.AutoDelete = b
 			}
+		case "manual_mode":
+			if b, ok := v.(bool); ok {
+				n.ManualMode = b
+			}
 		}
 	}
 	C.Store(&n)
@@ -333,22 +338,58 @@ func ApplyEngineConfig(m map[string]any) {
 }
 
 // ApplyVPNSettings merges a vpn_settings map into the live config.
+// Keys match what the settings store persists (not the legacy env-var names).
 func ApplyVPNSettings(m map[string]any) {
 	old := C.Load()
 	n := *old
 	for k, v := range m {
 		switch k {
-		case "vpn_enabled":
+		case "enabled":
 			if b, ok := v.(bool); ok {
 				n.VPNEnabled = b
 			}
-		case "vpn_provider":
-			if s, ok := v.(string); ok {
+		case "provider":
+			if s, ok := v.(string); ok && s != "" {
 				n.VPNProvider = s
 			}
-		case "vpn_protocol":
-			if s, ok := v.(string); ok {
+		case "protocol":
+			if s, ok := v.(string); ok && s != "" {
 				n.VPNProtocol = s
+			}
+		case "regions":
+			switch rv := v.(type) {
+			case []string:
+				n.VPNRegions = rv
+			case []any:
+				var regions []string
+				for _, r := range rv {
+					if s, ok := r.(string); ok && s != "" {
+						regions = append(regions, s)
+					}
+				}
+				n.VPNRegions = regions
+			}
+		case "api_port":
+			if p := toInt(v); p > 0 {
+				n.GluetunAPIPort = p
+			}
+		case "preferred_engines_per_vpn":
+			if p := toInt(v); p > 0 {
+				n.PreferredEnginesPerVPN = p
+			}
+		case "dynamic_vpn_management":
+			// informational only; not a config field
+		case "vpn_servers_auto_refresh":
+			if b, ok := v.(bool); ok {
+				n.VPNServersAutoRefresh = b
+			}
+		case "vpn_servers_refresh_period_s":
+			if d := toDur(v, time.Second); d > 0 {
+				n.VPNServersRefreshPeriod = d
+			}
+		case "vpn_servers_refresh_source":
+			if s, ok := v.(string); ok {
+				n.VPNServersRefreshSource = s
 			}
 		}
 	}

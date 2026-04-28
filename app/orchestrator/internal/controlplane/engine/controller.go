@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -84,6 +85,10 @@ func (c *Controller) IsRunning() bool { return c.running.Load() }
 // This is the Go equivalent of Python's ensure_minimum().
 func (c *Controller) EnsureMinimum() {
 	cfg := config.C.Load()
+	if cfg.ManualMode {
+		slog.Debug("autoscaler paused: manual mode is enabled")
+		return
+	}
 	st := state.Global
 
 	engines := st.ListEngines()
@@ -220,6 +225,9 @@ func (c *Controller) reconcilerLoop(ctx context.Context) {
 
 func (c *Controller) doReconcile() {
 	cfg := config.C.Load()
+	if cfg.ManualMode {
+		return
+	}
 	st := state.Global
 
 	desired := st.GetDesiredReplicas()
@@ -361,6 +369,21 @@ func (c *Controller) doReconcile() {
 	metrics.CPEnginesTotal.WithLabelValues("healthy").Set(float64(healthy))
 	metrics.CPEnginesTotal.WithLabelValues("unhealthy").Set(float64(unhealthy))
 	metrics.CPEnginesTotal.WithLabelValues("unknown").Set(float64(unknown))
+
+	var vpnHealthy, vpnDraining, vpnUnhealthy int
+	for _, n := range state.Global.ListVPNNodes() {
+		switch {
+		case n.Lifecycle == "draining":
+			vpnDraining++
+		case n.Healthy:
+			vpnHealthy++
+		default:
+			vpnUnhealthy++
+		}
+	}
+	metrics.CPVPNNodesTotal.WithLabelValues("healthy").Set(float64(vpnHealthy))
+	metrics.CPVPNNodesTotal.WithLabelValues("draining").Set(float64(vpnDraining))
+	metrics.CPVPNNodesTotal.WithLabelValues("unhealthy").Set(float64(vpnUnhealthy))
 }
 
 func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired int) {
@@ -533,6 +556,14 @@ func (c *Controller) executeIntent(ctx context.Context, it intent, consecutiveFa
 		_, err := ExecuteSpec(ctx, it.spec)
 		state.Global.RemoveIntent(it.id)
 		if err != nil {
+			errMsg := strings.ToLower(err.Error())
+			// Detect host-level seccomp/BPF ceiling — fast-open the circuit breaker.
+			if strings.Contains(errMsg, "seccomp") || strings.Contains(errMsg, "errno 524") ||
+				strings.Contains(errMsg, "failed to create shim task") {
+				slog.Error("CRITICAL: host OS seccomp limit reached; new containers cannot start",
+					"err", err)
+				*consecutiveFailures = max(*consecutiveFailures, 5)
+			}
 			c.cb.RecordFailure("general")
 			*consecutiveFailures++
 			metrics.CPProvisioningTotal.WithLabelValues("failed").Inc()
