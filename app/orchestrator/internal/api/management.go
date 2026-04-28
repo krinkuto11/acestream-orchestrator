@@ -649,21 +649,7 @@ func (s *ProxyServer) mgHandleGetVPNConfig(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *ProxyServer) mgHandleSetVPNConfig(w http.ResponseWriter, r *http.Request) {
-	if s.settings == nil {
-		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings not available"})
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
-	var payload map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		mgWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
-		return
-	}
-	if err := s.settings.Save("vpn_settings", payload); err != nil {
-		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	mgWriteJSON(w, http.StatusOK, s.settings.Get("vpn_settings"))
+	s.mgHandleSetSettingsCategory("vpn_settings")(w, r)
 }
 
 func (s *ProxyServer) mgHandleParseWireGuard(w http.ResponseWriter, r *http.Request) {
