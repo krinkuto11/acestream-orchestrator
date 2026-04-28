@@ -645,6 +645,23 @@ func (s *Store) UpdateStreamActivity(contentID string) {
 	}
 }
 
+// UpdateStreamClients syncs the active client count and client list from the proxy plane.
+func (s *Store) UpdateStreamClients(contentID string, activeClients int, clients []map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st, ok := s.streams[contentID]; ok {
+		st.ActiveClients = activeClients
+		if clients != nil {
+			st.Clients = clients
+		} else {
+			st.Clients = []map[string]any{}
+		}
+		if activeClients > 0 {
+			st.LastActivity = time.Now().UTC()
+		}
+	}
+}
+
 // ─── Stats ring-buffer ────────────────────────────────────────────────────────
 
 // AppendStat adds a snapshot to the per-stream ring buffer and updates the

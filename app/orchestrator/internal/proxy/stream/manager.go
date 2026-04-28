@@ -17,6 +17,7 @@ import (
 	"github.com/acestream/acestream/internal/proxy/buffer"
 	"github.com/acestream/acestream/internal/config"
 	"github.com/acestream/acestream/internal/rediskeys"
+	"github.com/acestream/acestream/internal/state"
 	"github.com/acestream/acestream/internal/proxy/upstream"
 )
 
@@ -420,18 +421,72 @@ func (m *Manager) measureBitrate(ctx context.Context) {
 	}
 }
 
-// statsPusher drains pushStatsCh to prevent backpressure.
-// In the unified binary we don't push stats over HTTP — the state store
-// is updated directly via the EventSink on start/end.
+// statsPusher writes live stream statistics into the unified state store.
+// It receives *aceapi.FullStatus (API mode, from runAPIKeepalive) or nil
+// (HTTP mode bitrate signal, from measureBitrate).
 func (m *Manager) statsPusher(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-m.pushStatsCh:
-			// Stats are available in-process via state.Store; HTTP push removed.
+		case fs := <-m.pushStatsCh:
+			m.buildAndAppendStat(fs)
 		}
 	}
+}
+
+func (m *Manager) buildAndAppendStat(fs *aceapi.FullStatus) {
+	snap := &state.StatSnapshot{
+		Ts: time.Now().UTC(),
+	}
+
+	m.mu.Lock()
+	bitrateBps := m.bitrate
+	m.mu.Unlock()
+
+	if bitrateBps > 0 {
+		snap.Bitrate = &bitrateBps
+	}
+
+	if fs != nil && fs.Status != nil {
+		// API mode: full engine stats from PingWithStatus.
+		st := fs.Status
+		snap.Peers = &st.Peers
+		snap.SpeedDown = &st.SpeedDown
+		snap.SpeedUp = &st.SpeedUp
+		snap.Downloaded = &st.Downloaded
+		snap.Uploaded = &st.Uploaded
+		snap.Status = st.Status
+	} else {
+		// HTTP mode: carry forward the latest peer/speed values so the ring
+		// buffer history doesn't lose data between bitrate measurements.
+		existing := state.Global.GetStats(m.params.ContentID)
+		if len(existing) == 0 {
+			return // nothing to carry forward yet; skip empty snapshot
+		}
+		latest := existing[len(existing)-1]
+		snap.Peers = latest.Peers
+		snap.SpeedDown = latest.SpeedDown
+		snap.SpeedUp = latest.SpeedUp
+		snap.Downloaded = latest.Downloaded
+		snap.Uploaded = latest.Uploaded
+		snap.Livepos = latest.Livepos
+		snap.Status = latest.Status
+	}
+
+	if fs != nil && fs.LivePos != nil {
+		lp := fs.LivePos
+		snap.Livepos = &state.LivePosData{
+			Pos:          lp.Pos,
+			LiveFirst:    lp.FirstTS,
+			LiveLast:     lp.LastTS,
+			FirstTs:      lp.FirstTS,
+			LastTs:       lp.LastTS,
+			BufferPieces: lp.BufferPieces,
+		}
+	}
+
+	state.Global.AppendStat(m.params.ContentID, snap)
 }
 
 func (m *Manager) HotSwap(ep EngineParams) {

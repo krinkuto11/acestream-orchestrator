@@ -14,6 +14,7 @@ import (
 	"github.com/acestream/acestream/internal/config"
 	"github.com/acestream/acestream/internal/proxy/hls"
 	"github.com/acestream/acestream/internal/rediskeys"
+	"github.com/acestream/acestream/internal/state"
 )
 
 // Hub is the global registry of active streams.
@@ -294,10 +295,17 @@ func (h *Hub) runCleanup() {
 	now := time.Now()
 	var toStop []string
 	var toRefresh []string
+	type clientSync struct {
+		id      string
+		count   int
+		clients []map[string]any
+	}
+	var syncs []clientSync
 	for id, e := range h.streams {
 		toRefresh = append(toRefresh, id)
 
 		localCount := e.clients.LocalCount()
+		syncs = append(syncs, clientSync{id: id, count: localCount, clients: e.clients.GetClientList()})
 
 		if !e.shutdownAt.IsZero() && now.After(e.shutdownAt) && localCount == 0 {
 			toStop = append(toStop, id)
@@ -309,6 +317,10 @@ func (h *Hub) runCleanup() {
 		}
 	}
 	h.mu.Unlock()
+
+	for _, s := range syncs {
+		state.Global.UpdateStreamClients(s.id, s.count, s.clients)
+	}
 
 	ctx := context.Background()
 	for _, id := range toRefresh {

@@ -173,6 +173,27 @@ func (cm *ClientManager) LocalCount() int {
 	return n
 }
 
+// GetClientList returns a snapshot of connected clients suitable for API responses.
+func (cm *ClientManager) GetClientList() []map[string]any {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	out := make([]map[string]any, 0, len(cm.clients))
+	for _, rec := range cm.clients {
+		out = append(out, map[string]any{
+			"client_id":             rec.ID,
+			"ip_address":            rec.IP,
+			"user_agent":            rec.UserAgent,
+			"connected_at":          rec.ConnectedAt,
+			"last_active":           rec.LastActive,
+			"bytes_sent":            rec.BytesSent,
+			"bps":                   rec.BPS,
+			"buffer_seconds_behind": rec.BufferSecondsBehind,
+			"protocol":              rec.LastRequestKind,
+		})
+	}
+	return out
+}
+
 func (cm *ClientManager) TotalCount() int {
 	n, err := cm.rdb.SCard(context.Background(), rediskeys.Clients(cm.contentID)).Result()
 	if err != nil {
