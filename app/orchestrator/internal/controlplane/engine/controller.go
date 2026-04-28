@@ -276,43 +276,49 @@ func (c *Controller) doReconcile() {
 		createCount := min(deficit, canCreate)
 		if createCount > 0 {
 			slog.Info("scaling UP", "deficit", deficit, "creating", createCount)
-			reserved := make([]string, 0)
-			for range createCount {
-				if !c.cb.CanProvision("general") {
-					slog.Warn("circuit breaker OPEN - provisioning blocked")
-					break
-				}
-				spec, err := Scheduler.ScheduleNewEngine(reserved)
-				if err != nil {
-					if isTransientVPNError(err) {
-						slog.Info("create intent blocked awaiting VPN readiness", "err", err)
-						if c.vpnNudge != nil {
-							c.vpnNudge("engine_blocked_by_vpn")
-						}
-					} else {
-						slog.Error("unexpected scheduling error", "err", err)
+			var wg sync.WaitGroup
+			for i := 0; i < createCount; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if !c.cb.CanProvision("general") {
+						slog.Warn("circuit breaker OPEN - provisioning blocked")
+						return
 					}
-					break
-				}
-				reserved = append(reserved, spec.ContainerName)
-				id := c.nextIntentID()
-				st.AddIntent(&state.ScalingIntent{
-					ID:     id,
-					Action: "create",
-					Status: "pending",
-					Details: map[string]any{
-						"container_name": spec.ContainerName,
-					},
-				})
-				select {
-				case c.intents <- intent{id: id, action: intentCreate, spec: spec}:
-					metrics.CPIntentQueueDepth.Inc()
-				default:
-					slog.Warn("intent queue full, dropping create intent")
-					st.RemoveIntent(id)
-					ReleaseSpec(spec)
-				}
+
+					spec, err := Scheduler.ScheduleNewEngine(nil)
+					if err != nil {
+						if isTransientVPNError(err) {
+							slog.Info("create intent blocked awaiting VPN readiness", "err", err)
+							if c.vpnNudge != nil {
+								c.vpnNudge("engine_blocked_by_vpn")
+							}
+						} else {
+							slog.Error("unexpected scheduling error", "err", err)
+						}
+						return
+					}
+
+					id := c.nextIntentID()
+					st.AddIntent(&state.ScalingIntent{
+						ID:     id,
+						Action: "create",
+						Status: "pending",
+						Details: map[string]any{
+							"container_name": spec.ContainerName,
+						},
+					})
+					select {
+					case c.intents <- intent{id: id, action: intentCreate, spec: spec}:
+						metrics.CPIntentQueueDepth.Inc()
+					default:
+						slog.Warn("intent queue full, dropping create intent")
+						st.RemoveIntent(id)
+						ReleaseSpec(spec)
+					}
+				}()
 			}
+			wg.Wait()
 		}
 	}
 

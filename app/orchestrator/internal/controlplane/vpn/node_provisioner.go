@@ -332,6 +332,7 @@ func buildGluetunEnv(
 		"HTTP_CONTROL_SERVER_ADDRESS":    fmt.Sprintf(":%d", cfg.GluetunAPIPort),
 		"GLUETUN_SERVERS_JSON_PATH":      "/gluetun/servers.json",
 		"HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE": `{"auth":"none"}`,
+		"HTTP_CONTROL_SERVER_LOG":        "off",
 	}
 
 	// TZ

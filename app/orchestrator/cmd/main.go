@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -25,6 +26,8 @@ import (
 	proxystream "github.com/acestream/acestream/internal/proxy/stream"
 	"github.com/acestream/acestream/internal/state"
 )
+
+var ready atomic.Bool
 
 func main() {
 	setupLogger()
@@ -142,6 +145,10 @@ func main() {
 	ctrl.SetVPNNudger(vpnManager.Nudge)
 	go vpnManager.Run(appCtx)
 
+	// Trigger initial resource check immediately to start VPN provisioning
+	// in parallel with Docker reindexing and cleanup.
+	ctrl.EnsureMinimum()
+
 	// ── Controlplane: Docker monitor + event watcher ───────────────────────────
 	dockerMon := cpdocker.NewMonitor(pub, ctrl)
 	eventWatcher := cpdocker.NewEventWatcher(pub, ctrl, dockerMon)
@@ -165,7 +172,6 @@ func main() {
 	cleanupCancel()
 
 	ctrl.Start(appCtx)
-	ctrl.EnsureMinimum()
 
 	go dockerMon.Run(appCtx)
 	go eventWatcher.Run(appCtx)
@@ -186,6 +192,10 @@ func main() {
 
 	// ── Orchestrator plane ─────────────────────────────────────────────────────
 	orchSrv := api.NewOrchestratorServer(st, settingsStore)
+
+	// Set ready flag.
+	ready.Store(true)
+	slog.Info("AceStream unified binary ready")
 
 	// ── Start HTTP servers ─────────────────────────────────────────────────────
 	go func() {
