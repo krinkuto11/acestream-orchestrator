@@ -138,6 +138,7 @@ func main() {
 	go svcRefresh.Run(appCtx, cfg.VPNServersAutoRefresh, cfg.VPNServersRefreshPeriod)
 
 	vpnManager := vpnpkg.NewLifecycleManager(pub, prov)
+	vpnManager.SetNudger(ctrl.Nudge)
 	go vpnManager.Run(appCtx)
 
 	// ── Controlplane: Docker monitor + event watcher ───────────────────────────

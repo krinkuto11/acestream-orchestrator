@@ -26,6 +26,7 @@ type LifecycleManager struct {
 	activeDrains  sync.Map // containerName -> struct{}
 	activeHealings sync.Map
 	nudge          chan struct{}
+	nudger         func(string)
 }
 
 func NewLifecycleManager(pub *state.RedisPublisher, prov *Provisioner) *LifecycleManager {
@@ -34,6 +35,10 @@ func NewLifecycleManager(pub *state.RedisPublisher, prov *Provisioner) *Lifecycl
 		prov:  prov,
 		nudge: make(chan struct{}, 1),
 	}
+}
+
+func (lm *LifecycleManager) SetNudger(f func(string)) {
+	lm.nudger = f
 }
 
 func (lm *LifecycleManager) Nudge(reason string) {
@@ -302,6 +307,9 @@ func (lm *LifecycleManager) monitorHealth(ctx context.Context) {
 			// Publish update so proxy event stream reflects health.
 			if updated, ok := st.GetVPNNode(node.ContainerName); ok {
 				lm.pub.PublishVPNNode(ctx, updated)
+			}
+			if healthy && lm.nudger != nil {
+				lm.nudger("vpn_node_healthy")
 			}
 		}
 	}
