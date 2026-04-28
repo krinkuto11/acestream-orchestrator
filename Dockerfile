@@ -98,6 +98,11 @@ def _stop_all(signum=None, frame=None):
             p.terminate()
         except Exception:
             pass
+    for p in _procs:
+        try:
+            p.wait(timeout=40)
+        except Exception:
+            pass
     sys.exit(0)
 
 signal.signal(signal.SIGTERM, _stop_all)
