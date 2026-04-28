@@ -201,6 +201,40 @@ func (s *Store) HasAnyForwardedEngine() bool {
 
 // ─── VPN Pending ─────────────────────────────────────────────────────────────
 
+// SelectAndClaimVPN atomically picks the least-loaded node from candidates that
+// is below effectiveLimit (current engines + pending) and increments its pending
+// counter. Returns the selected node name and its load before the increment, or
+// ("", -1) if all candidates are at or above the limit.
+// Holding a single lock for read + write eliminates the TOCTOU race that arises
+// when selectVPNContainer and IncrVPNPending are called as separate operations.
+func (s *Store) SelectAndClaimVPN(candidates []string, effectiveLimit int) (string, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	best := ""
+	bestLoad := -1
+	for _, name := range candidates {
+		engineCount := 0
+		for _, e := range s.engines {
+			if e.VPNContainer == name {
+				engineCount++
+			}
+		}
+		total := engineCount + s.vpnPending[name]
+		if effectiveLimit > 0 && total >= effectiveLimit {
+			continue
+		}
+		if best == "" || total < bestLoad {
+			best = name
+			bestLoad = total
+		}
+	}
+	if best != "" {
+		s.vpnPending[best]++
+	}
+	return best, bestLoad
+}
+
 func (s *Store) IncrVPNPending(vpn string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -282,10 +316,14 @@ func (s *Store) GetVPNNode(name string) (*VPNNode, bool) {
 	return n, ok
 }
 
-func (s *Store) RemoveVPNNode(name string) {
+func (s *Store) RemoveVPNNode(name string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.vpnNodes[name]; !ok {
+		return false
+	}
 	delete(s.vpnNodes, name)
+	return true
 }
 
 func (s *Store) ListVPNNodes() []*VPNNode {

@@ -230,9 +230,10 @@ func (w *EventWatcher) handleVPNStart(ctx context.Context, containerID, containe
 }
 
 func (w *EventWatcher) handleVPNStop(ctx context.Context, containerName string) {
-	state.Global.RemoveVPNNode(containerName)
-	w.pub.RemoveVPNNode(ctx, containerName)
-	slog.Info("VPN node deregistered", "name", containerName)
+	if state.Global.RemoveVPNNode(containerName) {
+		w.pub.RemoveVPNNode(ctx, containerName)
+		slog.Info("VPN node deregistered", "name", containerName)
+	}
 }
 
 func (w *EventWatcher) handleHealthStatus(ctx context.Context, containerID, containerName, status string, attrs map[string]string, isVPN bool) {

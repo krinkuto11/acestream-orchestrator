@@ -270,9 +270,10 @@ func Reindex(ctx context.Context) bool {
 	// Remove stale VPN nodes.
 	for _, n := range st.ListVPNNodes() {
 		if !runningVPNs[n.ContainerName] {
-			st.RemoveVPNNode(n.ContainerName)
-			slog.Info("Reindex: removed stale VPN node", "name", n.ContainerName)
-			changed = true
+			if st.RemoveVPNNode(n.ContainerName) {
+				slog.Info("Reindex: removed stale VPN node", "name", n.ContainerName)
+				changed = true
+			}
 		}
 	}
 

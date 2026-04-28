@@ -210,8 +210,10 @@ func (rm *ReputationManager) ProviderServers(provider, catalogFile string) []map
 
 // ── Hostname selection ────────────────────────────────────────────────────────
 
-// GetSafeHostname selects a low-load, non-blacklisted hostname for the given
-// provider/protocol/regions combination. Returns "" if none available.
+// GetSafeHostname selects a low-load, non-blacklisted, non-active hostname for
+// the given provider/protocol/regions combination. Returns "" if none available.
+// excludeHostnames lists hostnames already in use by active VPN nodes so that
+// multiple nodes never share the same physical server.
 func (rm *ReputationManager) GetSafeHostname(
 	ctx context.Context,
 	provider string,
@@ -219,6 +221,7 @@ func (rm *ReputationManager) GetSafeHostname(
 	protocol string,
 	requirePortForwarding bool,
 	catalogFile string,
+	excludeHostnames []string,
 ) string {
 	candidates := rm.candidateServers(provider, regions, protocol, requirePortForwarding, catalogFile)
 	if len(candidates) == 0 {
@@ -229,11 +232,16 @@ func (rm *ReputationManager) GetSafeHostname(
 		return ""
 	}
 
-	// Filter blacklisted.
+	excluded := make(map[string]bool, len(excludeHostnames))
+	for _, h := range excludeHostnames {
+		excluded[strings.ToLower(strings.TrimSpace(h))] = true
+	}
+
+	// Filter blacklisted and already-active hostnames.
 	var safe []map[string]interface{}
 	for _, s := range candidates {
 		hn := strings.ToLower(strings.TrimSpace(strVal(s["hostname"])))
-		if !rm.IsBlacklisted(ctx, hn) {
+		if !rm.IsBlacklisted(ctx, hn) && !excluded[hn] {
 			safe = append(safe, s)
 		}
 	}

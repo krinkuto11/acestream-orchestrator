@@ -91,7 +91,14 @@ func (p *Provisioner) ProvisionNode(ctx context.Context) (*ProvisionResult, erro
 	catalogFile := effectiveCatalogFile(map[string]interface{}{})
 
 	if !hasExplicitPin {
-		hn := p.rep.GetSafeHostname(ctx, provider, regions, protocol, requirePF, catalogFile)
+		// Collect hostnames already in use so each VPN node lands on a distinct server.
+		var activeHostnames []string
+		for _, n := range state.Global.ListVPNNodes() {
+			if n.AssignedHostname != "" {
+				activeHostnames = append(activeHostnames, n.AssignedHostname)
+			}
+		}
+		hn := p.rep.GetSafeHostname(ctx, provider, regions, protocol, requirePF, catalogFile, activeHostnames)
 		if hn != "" {
 			env["SERVER_HOSTNAMES"] = hn
 		}
@@ -185,7 +192,6 @@ func (p *Provisioner) DestroyNode(ctx context.Context, containerName string) err
 
 	p.creds.ReleaseLease(containerName)
 	state.Global.RemoveVPNNode(containerName)
-	slog.Info("Dynamic VPN node destroyed", "name", containerName)
 	return nil
 }
 

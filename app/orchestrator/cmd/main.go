@@ -193,10 +193,6 @@ func main() {
 	// ── Orchestrator plane ─────────────────────────────────────────────────────
 	orchSrv := api.NewOrchestratorServer(st, settingsStore)
 
-	// Set ready flag.
-	ready.Store(true)
-	slog.Info("AceStream unified binary ready")
-
 	// ── Start HTTP servers ─────────────────────────────────────────────────────
 	go func() {
 		slog.Info("proxy listening", "addr", cfg.ProxyListenAddr)
@@ -214,6 +210,7 @@ func main() {
 		}
 	}()
 
+	ready.Store(true)
 	slog.Info("AceStream unified binary ready")
 	<-appCtx.Done()
 	slog.Info("shutdown signal received")

@@ -44,18 +44,11 @@ func (rs *ResourceScheduler) ScheduleNewEngine(extraReservedNames []string) (*st
 	memLimit := cfg.EngineMemoryLimit
 	variantName := fmt.Sprintf("global-%s", detectPlatform())
 
-	// Schedule resources under a lock-free approach: we use atomic state reads
-	// combined with per-VPN pending counters to prevent double-allocation.
+	// Select a VPN node and atomically increment its pending counter in one
+	// locked operation to prevent TOCTOU over-assignment under burst creation.
 	vpnContainer, err := rs.selectVPNContainer()
 	if err != nil {
 		return nil, err
-	}
-
-	if vpnContainer != "" {
-		if !isVPNHealthy(vpnContainer) {
-			return nil, fmt.Errorf("VPN '%s' is not healthy - cannot schedule", vpnContainer)
-		}
-		st.IncrVPNPending(vpnContainer)
 	}
 
 	ports, err := Alloc.AllocateEnginePorts(
@@ -388,8 +381,8 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 		return "", nil // VPN not enabled — no VPN needed
 	}
 
-	// Filter to ready, managed, non-draining dynamic nodes
-	var readyNodes []*state.VPNNode
+	// Filter to ready, managed, non-draining dynamic nodes.
+	var readyNames []string
 	var rejectReasons []string
 	for _, n := range dynamicNodes {
 		if !n.ManagedDynamic {
@@ -404,10 +397,10 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 			rejectReasons = append(rejectReasons, fmt.Sprintf("%s: draining", n.ContainerName))
 			continue
 		}
-		readyNodes = append(readyNodes, n)
+		readyNames = append(readyNames, n.ContainerName)
 	}
 
-	if len(readyNodes) == 0 {
+	if len(readyNames) == 0 {
 		diag := strings.Join(rejectReasons, "; ")
 		if diag == "" {
 			diag = "none found"
@@ -415,7 +408,7 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 		return "", fmt.Errorf("no healthy active dynamic VPN nodes available (%s) - cannot schedule AceStream engine", diag)
 	}
 
-	// Balanced density: calculate effective per-node limit
+	// Balanced density: calculate effective per-node limit.
 	maxPerVPN := cfg.PreferredEnginesPerVPN
 	desired := st.GetDesiredReplicas()
 	effectiveLimit := maxPerVPN
@@ -430,37 +423,17 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 		}
 	}
 
-	type candidate struct {
-		node *state.VPNNode
-		load int
-	}
-	var candidates []candidate
-	for _, n := range readyNodes {
-		current := len(st.GetEnginesByVPN(n.ContainerName))
-		pending := st.GetVPNPending(n.ContainerName)
-		total := current + pending
-		if effectiveLimit <= 0 || total < effectiveLimit {
-			candidates = append(candidates, candidate{n, total})
-		} else {
-			rejectReasons = append(rejectReasons, fmt.Sprintf("%s: at balanced capacity (%d/%d)", n.ContainerName, total, effectiveLimit))
-		}
-	}
-
-	if len(candidates) == 0 {
+	// Atomically select the least-loaded node and claim a pending slot.
+	// A single lock prevents concurrent goroutines from all reading load=0
+	// and over-assigning to the same node.
+	chosen, load := st.SelectAndClaimVPN(readyNames, effectiveLimit)
+	if chosen == "" {
 		diag := strings.Join(rejectReasons, "; ")
 		return "", fmt.Errorf("resource restriction: %s - cannot schedule AceStream engine", diag)
 	}
 
-	// Pick the least-loaded node
-	best := candidates[0]
-	for _, c := range candidates[1:] {
-		if c.load < best.load {
-			best = c
-		}
-	}
-
-	slog.Info("scheduling new engine on VPN node", "vpn", best.node.ContainerName, "load", best.load, "limit", effectiveLimit)
-	return best.node.ContainerName, nil
+	slog.Info("scheduling new engine on VPN node", "vpn", chosen, "load", load, "limit", effectiveLimit)
+	return chosen, nil
 }
 
 func isNodeReady(n *state.VPNNode) (bool, string) {
