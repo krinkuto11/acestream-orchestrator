@@ -183,10 +183,19 @@ func GetForwardedPort(vpnContainer string) int {
 		return p
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	url := controlAPIURL(vpnContainer) + "/v1/openvpn/portforwarded"
+	// Try universal portforward endpoint first
+	port := fetchPort(ctx, vpnContainer, "/v1/portforward")
+	if port > 0 {
+		setPortCache(vpnContainer, port)
+	}
+	return port
+}
+
+func fetchPort(ctx context.Context, vpnContainer, path string) int {
+	url := controlAPIURL(vpnContainer) + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0
@@ -209,10 +218,6 @@ func GetForwardedPort(vpnContainer string) int {
 	if err := json.Unmarshal(body, &portResp); err != nil {
 		return 0
 	}
-
-	if portResp.Port > 0 {
-		setPortCache(vpnContainer, portResp.Port)
-	}
 	return portResp.Port
 }
 
@@ -232,7 +237,7 @@ func WaitForForwardedPort(ctx context.Context, vpnContainer string) int {
 		select {
 		case <-ctx.Done():
 			return 0
-		case <-time.After(2 * time.Second):
+		case <-time.After(500 * time.Millisecond):
 		}
 	}
 	slog.Warn("timed out waiting for forwarded port", "vpn", vpnContainer)

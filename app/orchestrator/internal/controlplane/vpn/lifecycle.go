@@ -62,6 +62,9 @@ func (lm *LifecycleManager) Run(ctx context.Context) {
 		"vpn_enabled", cfg.VPNEnabled,
 	)
 
+	// Immediate sync on startup.
+	lm.reconcile(ctx)
+
 	for {
 		select {
 		case <-ctx.Done():
