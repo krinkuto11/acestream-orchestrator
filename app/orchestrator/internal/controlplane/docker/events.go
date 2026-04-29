@@ -200,7 +200,7 @@ func (w *EventWatcher) handleEngineStart(ctx context.Context, containerID, conta
 	slog.Info("engine registered", "id", containerID[:min12(len(containerID))], "name", containerName, "host", host, "port", httpPort)
 
 	cid := containerID
-	engine.StartupProbe(host, httpPort, func() {
+	engine.StartupProbe(host, httpPort, apiPort, func() {
 		st.UpdateEngineHealth(cid, state.HealthHealthy)
 		st.NotifyEngineReady()
 		slog.Info("engine ready", "id", cid[:min12(len(cid))], "name", containerName)

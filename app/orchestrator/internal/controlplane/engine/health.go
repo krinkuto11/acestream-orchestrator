@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -183,23 +184,34 @@ func (hm *HealthManager) checkAndManage(ctx context.Context) {
 	}
 }
 
-// StartupProbe polls the engine HTTP API in a background goroutine until it
-// responds successfully or the timeout elapses, then calls onReady. Call this
-// immediately after registering a new engine so it only enters the selector
-// pool once its internal process is actually listening.
-func StartupProbe(host string, port int, onReady func()) {
+// StartupProbe polls both the HTTP health endpoint and the TCP API socket in a
+// background goroutine until both respond, then calls onReady. When apiPort
+// equals httpPort there is only one socket to probe. Call this immediately
+// after registering a new engine so it only enters the selector pool once its
+// internal process is actually listening.
+func StartupProbe(host string, httpPort, apiPort int, onReady func()) {
 	go func() {
 		const pollInterval = 500 * time.Millisecond
 		const probeTimeout = 60 * time.Second
 		deadline := time.Now().Add(probeTimeout)
 		for time.Now().Before(deadline) {
-			if probeHealth(host, port) {
+			if probeHealth(host, httpPort) && probeTCP(host, apiPort) {
 				onReady()
 				return
 			}
 			time.Sleep(pollInterval)
 		}
 	}()
+}
+
+// probeTCP attempts a TCP dial to verify a port is accepting connections.
+func probeTCP(host string, port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // probeHealth checks the AceStream engine's get_status API endpoint.
