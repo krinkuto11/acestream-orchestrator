@@ -350,7 +350,7 @@ func defaultProxySettings() map[string]any {
 		"channel_shutdown_delay":     5,
 		"proxy_prebuffer_seconds":    3,
 		"pacing_bitrate_multiplier":  1.5,
-		"max_streams_per_engine":     3,
+		"max_streams_per_engine":     2,
 		"stream_mode":                "TS",
 		"control_mode":               "api",
 		"legacy_api_preflight_tier":  "light",
@@ -493,6 +493,7 @@ func normalizeProxySettings(m map[string]any) map[string]any {
 		"hls_max_segments":           20,
 		"hls_initial_segments":       3,
 		"hls_window_size":            6,
+		"max_streams_per_engine":     2,
 	}
 	for k, floor := range timeoutFloors {
 		if v, ok := out[k]; ok && toIntNorm(v) == 0 {

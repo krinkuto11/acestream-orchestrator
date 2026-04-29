@@ -36,10 +36,15 @@ func Select(st *state.Store, settings *persistence.SettingsStore) (*Selection, e
 	pacing := cfg.PacingBitrateMultiplier
 
 	if settings != nil {
-		ps := settings.Get("proxy_settings")
-		if v, ok := ps["max_streams_per_engine"].(float64); ok && v > 0 {
-			maxStreams = int(v)
+		// Check both categories for robustness; UI might send it in either.
+		for _, cat := range []string{"engine_settings", "proxy_settings"} {
+			m := settings.Get(cat)
+			if v, ok := m["max_streams_per_engine"].(float64); ok && v > 0 {
+				maxStreams = int(v)
+				break
+			}
 		}
+		ps := settings.Get("proxy_settings")
 		if v, ok := ps["stream_mode"].(string); ok && v != "" {
 			streamMode = strings.ToUpper(v)
 		}
@@ -54,7 +59,7 @@ func Select(st *state.Store, settings *persistence.SettingsStore) (*Selection, e
 		}
 	}
 	if maxStreams <= 0 {
-		maxStreams = 3
+		maxStreams = 2
 	}
 
 	sel, err := st.SelectAndClaimEngine(maxStreams)

@@ -265,6 +265,8 @@ func ApplyEngineSettings(m map[string]any) {
 			if b, ok := v.(bool); ok {
 				n.ManualMode = b
 			}
+		case "max_streams_per_engine":
+			n.MaxStreamsPerEngine = toInt(v)
 		}
 	}
 	C.Store(&n)
@@ -491,7 +493,7 @@ func load() *Config {
 		MinReplicas:        envInt("MIN_REPLICAS", 2),
 		MinFreeReplicas:    envInt("MIN_FREE_REPLICAS", 1),
 		MaxReplicas:        envInt("MAX_REPLICAS", 6),
-		MaxStreamsPerEngine: envInt("MAX_STREAMS_PER_ENGINE", 3),
+		MaxStreamsPerEngine: envInt("MAX_STREAMS_PER_ENGINE", 2),
 
 		AutoscaleInterval: envDur("AUTOSCALE_INTERVAL_S", 30*time.Second),
 		MonitorInterval:   envDur("MONITOR_INTERVAL_S", 10*time.Second),

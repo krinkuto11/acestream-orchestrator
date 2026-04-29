@@ -247,8 +247,17 @@ func (s *OrchestratorServer) handleUpdateSettings(w http.ResponseWriter, r *http
 			applied[cat] = false
 		} else {
 			applied[cat] = true
-			if cat == "proxy_settings" {
+			switch cat {
+			case "proxy_settings":
 				config.ApplySettings(payload)
+			case "engine_settings":
+				config.ApplyEngineSettings(payload)
+			case "orchestrator_settings":
+				config.ApplyOrchestratorSettings(payload)
+			case "vpn_settings":
+				config.ApplyVPNSettings(payload)
+			case "engine_config":
+				config.ApplyEngineConfig(payload)
 			}
 		}
 	}
@@ -291,8 +300,17 @@ func (s *OrchestratorServer) handleUpdateSettingsCategory(w http.ResponseWriter,
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if cat == "proxy_settings" {
+	switch cat {
+	case "proxy_settings":
 		config.ApplySettings(payload)
+	case "engine_settings":
+		config.ApplyEngineSettings(payload)
+	case "orchestrator_settings":
+		config.ApplyOrchestratorSettings(payload)
+	case "vpn_settings":
+		config.ApplyVPNSettings(payload)
+	case "engine_config":
+		config.ApplyEngineConfig(payload)
 	}
 	writeJSON(w, http.StatusOK, s.settings.Get(cat))
 }
