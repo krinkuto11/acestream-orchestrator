@@ -190,6 +190,21 @@ func maxInt(a, b int) int {
 	return b
 }
 
+// NudgeDemand is called by the proxy when a request finds no eligible engine.
+// It increments desiredReplicas by n (clamped to MaxReplicas) and triggers an
+// immediate reconciliation pass so a new engine is provisioned without waiting
+// for the next autoscaler tick.
+func (c *Controller) NudgeDemand(n int) {
+	cfg := config.C.Load()
+	if cfg.ManualMode {
+		return
+	}
+	newDesired := state.Global.BumpDesiredReplicas(n, cfg.MaxReplicas)
+	metrics.CPDesiredReplicas.Set(float64(newDesired))
+	slog.Debug("demand nudge", "n", n, "desired", newDesired)
+	c.Nudge("demand_spike")
+}
+
 // ScaleTo explicitly sets the desired replica count and triggers reconciliation.
 func (c *Controller) ScaleTo(n int) {
 	cfg := config.C.Load()

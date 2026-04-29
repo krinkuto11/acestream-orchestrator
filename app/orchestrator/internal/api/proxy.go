@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/json"
@@ -145,7 +146,7 @@ func (s *ProxyServer) handleGetStream(w http.ResponseWriter, r *http.Request) {
 	var prebufferSeconds int
 
 	if mgr == nil {
-		ep, err := s.selectEngine()
+		ep, err := s.selectEngineWithWait(r.Context())
 		if err != nil {
 			http.Error(w, "no engine available: "+err.Error(), http.StatusServiceUnavailable)
 			return
@@ -258,7 +259,7 @@ func (s *ProxyServer) handleHLSManifest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ep, err := s.selectEngine()
+	ep, err := s.selectEngineWithWait(r.Context())
 	if err != nil {
 		http.Error(w, "no engine available: "+err.Error(), http.StatusServiceUnavailable)
 		return
@@ -290,7 +291,7 @@ func (s *ProxyServer) handleHLSManifestAPIMode(
 	streamKey string, mgr *stream.Manager, buf *buffer.RingBuffer,
 ) {
 	if mgr == nil {
-		ep, err := s.selectEngine()
+		ep, err := s.selectEngineWithWait(r.Context())
 		if err != nil {
 			http.Error(w, "no engine available: "+err.Error(), http.StatusServiceUnavailable)
 			return
@@ -606,6 +607,45 @@ type engineSelection struct {
 	PacingMultiplier float64
 	StreamMode       string
 	ControlMode      string
+}
+
+// selectEngineWithWait is like selectEngine but blocks until an engine slot
+// becomes available or the request context is cancelled. On the first miss it
+// bumps desiredReplicas via NudgeDemand so the autoscaler starts provisioning
+// immediately rather than waiting for its next tick. Waiters unblock the instant
+// a new engine calls AddEngine (zero-poll, channel-based broadcast).
+func (s *ProxyServer) selectEngineWithWait(ctx context.Context) (engineSelection, error) {
+	const waitTimeout = 90 * time.Second
+	deadline := time.Now().Add(waitTimeout)
+	nudged := false
+
+	for {
+		// Capture the channel BEFORE attempting the select so we cannot miss a
+		// NotifyEngineReady that fires between the failed select and the Wait.
+		ch := s.st.EngineReadyCh()
+		ep, err := s.selectEngine()
+		if err == nil {
+			return ep, nil
+		}
+
+		if !nudged && s.ctrl != nil {
+			s.ctrl.NudgeDemand(1)
+			nudged = true
+		}
+
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return engineSelection{}, fmt.Errorf("no engine available: timed out waiting for capacity")
+		}
+		select {
+		case <-ctx.Done():
+			return engineSelection{}, ctx.Err()
+		case <-time.After(remaining):
+			return engineSelection{}, fmt.Errorf("no engine available: timed out waiting for capacity")
+		case <-ch:
+			// a new engine registered; retry immediately
+		}
+	}
 }
 
 func (s *ProxyServer) selectEngine() (engineSelection, error) {

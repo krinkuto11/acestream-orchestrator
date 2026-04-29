@@ -15,6 +15,12 @@ const maxStatHistory = 720 // matches Python's default stats_history_max
 type Store struct {
 	mu sync.RWMutex
 
+	// engineReadyCh is replaced (old closed) every time a new engine registers.
+	// Proxy goroutines waiting for capacity block on this channel and wake
+	// instantly when any engine becomes available — no polling required.
+	engineReadyCh chan struct{}
+	engineReadyMu sync.Mutex
+
 	// ─── Control-plane state ───────────────────────────────────────────────────
 	engines         map[string]*Engine  // containerID -> Engine
 	vpnNodes        map[string]*VPNNode // containerName -> VPNNode
@@ -50,6 +56,7 @@ func newStore() *Store {
 		emptyAt:          make(map[string]time.Time),
 		streams:          make(map[string]*StreamState),
 		stats:            make(map[string][]*StatSnapshot),
+		engineReadyCh:    make(chan struct{}),
 	}
 	return s
 }
@@ -58,7 +65,6 @@ func newStore() *Store {
 
 func (s *Store) AddEngine(e *Engine) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if _, exists := s.engines[e.ContainerID]; !exists {
 		e.FirstSeen = time.Now().UTC()
 	}
@@ -67,6 +73,43 @@ func (s *Store) AddEngine(e *Engine) {
 	if e.Forwarded && e.VPNContainer != "" {
 		delete(s.forwardedPending, e.VPNContainer)
 	}
+	s.mu.Unlock()
+	// Wake any proxy goroutines blocked on SelectAndClaimEngine. Closing the
+	// current channel broadcasts to all waiters; a fresh channel is installed
+	// for the next round of waiters.
+	s.NotifyEngineReady()
+}
+
+// NotifyEngineReady wakes all goroutines waiting in EngineReadyCh by closing
+// the current channel and installing a new one for future waiters.
+func (s *Store) NotifyEngineReady() {
+	s.engineReadyMu.Lock()
+	old := s.engineReadyCh
+	s.engineReadyCh = make(chan struct{})
+	s.engineReadyMu.Unlock()
+	close(old)
+}
+
+// EngineReadyCh returns the current broadcast channel. Callers should capture
+// it before calling SelectAndClaimEngine so they cannot miss a notification
+// that fires between the failed select and the wait.
+func (s *Store) EngineReadyCh() <-chan struct{} {
+	s.engineReadyMu.Lock()
+	defer s.engineReadyMu.Unlock()
+	return s.engineReadyCh
+}
+
+// BumpDesiredReplicas atomically increments desiredReplicas by n, clamped to
+// maxVal, and returns the new value.
+func (s *Store) BumpDesiredReplicas(n, maxVal int) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	target := s.desiredReplicas + n
+	if target > maxVal {
+		target = maxVal
+	}
+	s.desiredReplicas = target
+	return target
 }
 
 func (s *Store) GetEngine(id string) (*Engine, bool) {
