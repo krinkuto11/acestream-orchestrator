@@ -137,6 +137,18 @@ func (s *Store) BumpDesiredReplicas(n, maxVal int) int {
 	return target
 }
 
+// DecreaseDesiredReplicas atomically decrements desiredReplicas by n, clamped to
+// minVal.
+func (s *Store) DecreaseDesiredReplicas(n, minVal int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	target := s.desiredReplicas - n
+	if target < minVal {
+		target = minVal
+	}
+	s.desiredReplicas = target
+}
+
 func (s *Store) GetEngine(id string) (*Engine, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -588,6 +600,14 @@ func (s *Store) GetStreamCount(containerID string) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.streamCounts[containerID]
+}
+
+// GetEngineTotalLoad returns the total active load on the engine, including active streams,
+// pending streams that are still initializing, and monitor sessions.
+func (s *Store) GetEngineTotalLoad(containerID string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.streamCounts[containerID] + s.enginePending[containerID] + s.monitorCounts[containerID]
 }
 
 func (s *Store) GetAllStreamCounts() map[string]int {

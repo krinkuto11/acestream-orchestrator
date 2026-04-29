@@ -384,8 +384,8 @@ func (c *Controller) doReconcile() {
 		if !e.Draining {
 			continue
 		}
-		streamCnt := st.GetStreamCount(e.ContainerID)
-		if streamCnt == 0 && canStopEngine(e.ContainerID, false) {
+		load := st.GetEngineTotalLoad(e.ContainerID)
+		if load == 0 && canStopEngine(e.ContainerID, false) {
 			id := c.nextIntentID()
 			select {
 			case c.intents <- intent{id: id, action: intentTerminate, contID: e.ContainerID}:
@@ -477,8 +477,16 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 		}
 	}
 
+	// Skip density rebalancing entirely if the VPN cluster is scaling up.
+	// This prevents the rebalancer from killing soft-overflow engines that
+	// were successfully placed while waiting for new nodes to provision.
+	skipDensityRebalancing := requiredNodes > 0 && readyCount < requiredNodes
+
 	for vpnName, vpnEngines := range activeByVPN {
 		if len(vpnEngines) > effectiveLimit {
+			if skipDensityRebalancing {
+				continue
+			}
 			// Check if rebalance already in progress
 			allOnNode := st.GetEnginesByVPN(vpnName)
 			alreadyDraining := false
@@ -504,7 +512,7 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 				continue
 			}
 			sort.Slice(followers, func(i, j int) bool {
-				return st.GetStreamCount(followers[i].ContainerID) < st.GetStreamCount(followers[j].ContainerID)
+				return st.GetEngineTotalLoad(followers[i].ContainerID) < st.GetEngineTotalLoad(followers[j].ContainerID)
 			})
 			toDrain := followers
 			if len(toDrain) > excess {
@@ -540,7 +548,7 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 				slog.Warn("VPN node is headless (PF-capable but no leader); marking follower for replacement", "vpn", vpnName)
 				// Drain the most idle follower to force a leader replacement
 				sort.Slice(vpnEngines, func(i, j int) bool {
-					return st.GetStreamCount(vpnEngines[i].ContainerID) < st.GetStreamCount(vpnEngines[j].ContainerID)
+					return st.GetEngineTotalLoad(vpnEngines[i].ContainerID) < st.GetEngineTotalLoad(vpnEngines[j].ContainerID)
 				})
 				st.MarkEngineDraining(vpnEngines[0].ContainerID, "headless_correction")
 			}
@@ -558,7 +566,7 @@ func (c *Controller) selectTerminationCandidates(engines []*state.Engine, count 
 	var ss []scored
 	for _, e := range engines {
 		if canStopEngine(e.ContainerID, false) {
-			ss = append(ss, scored{e, st.GetStreamCount(e.ContainerID)})
+			ss = append(ss, scored{e, st.GetEngineTotalLoad(e.ContainerID)})
 		}
 	}
 	sort.Slice(ss, func(i, j int) bool {
@@ -644,8 +652,8 @@ func canStopEngine(containerID string, bypassGrace bool) bool {
 	cfg := config.C.Load()
 	st := state.Global
 
-	streamCnt := st.GetStreamCount(containerID)
-	if streamCnt > 0 {
+	load := st.GetEngineTotalLoad(containerID)
+	if load > 0 {
 		st.ClearEmpty(containerID)
 		return false
 	}

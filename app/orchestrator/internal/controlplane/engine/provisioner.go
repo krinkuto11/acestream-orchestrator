@@ -468,14 +468,7 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 	// soft limit, but respect MaxEnginesPerVPN as a hard limit.
 	chosen, load := st.SelectAndClaimVPN(readyNames, effectiveLimit)
 	
-	// Only allow soft overflow if the VPN cluster is fully scaled up.
-	// If we allow soft overflow while VPN nodes are still provisioning,
-	// all engines will pack into the first ready node, causing massive
-	// thrashing when the density rebalancer kills them 5 seconds later.
 	if chosen == "" && cfg.MaxEnginesPerVPN > effectiveLimit {
-		if requiredNodes > 0 && len(readyNames) < requiredNodes {
-			return "", fmt.Errorf("VPN cluster is scaling up (%d/%d ready nodes); waiting for more nodes to prevent density thrashing", len(readyNames), requiredNodes)
-		}
 		chosen, load = st.SelectAndClaimVPN(readyNames, cfg.MaxEnginesPerVPN)
 		if chosen != "" {
 			slog.Info("scheduling engine above preferred limit (soft overflow)",

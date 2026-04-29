@@ -614,10 +614,21 @@ type engineSelection struct {
 // bumps desiredReplicas via NudgeDemand so the autoscaler starts provisioning
 // immediately rather than waiting for its next tick. Waiters unblock the instant
 // a new engine calls AddEngine (zero-poll, channel-based broadcast).
+//
+// If the caller eventually fails (client disconnect or timeout) after having
+// nudged demand, the bump is reversed so the reconciler does not provision
+// ghost engines for requests that are no longer active.
 func (s *ProxyServer) selectEngineWithWait(ctx context.Context) (engineSelection, error) {
 	const waitTimeout = 90 * time.Second
 	deadline := time.Now().Add(waitTimeout)
 	nudged := false
+
+	undoNudge := func() {
+		if nudged && s.ctrl != nil {
+			cfg := config.C.Load()
+			s.st.DecreaseDesiredReplicas(1, cfg.MinReplicas)
+		}
+	}
 
 	for {
 		// Capture the channel BEFORE attempting the select so we cannot miss a
@@ -635,12 +646,15 @@ func (s *ProxyServer) selectEngineWithWait(ctx context.Context) (engineSelection
 
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
+			undoNudge()
 			return engineSelection{}, fmt.Errorf("no engine available: timed out waiting for capacity")
 		}
 		select {
 		case <-ctx.Done():
+			undoNudge()
 			return engineSelection{}, ctx.Err()
 		case <-time.After(remaining):
+			undoNudge()
 			return engineSelection{}, fmt.Errorf("no engine available: timed out waiting for capacity")
 		case <-ch:
 			// a new engine registered; retry immediately
