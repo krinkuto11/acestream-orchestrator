@@ -482,6 +482,23 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 	// were successfully placed while waiting for new nodes to provision.
 	skipDensityRebalancing := requiredNodes > 0 && readyCount < requiredNodes
 
+	// Stabilization window: if ANY ready node has been healthy for less than
+	// rebalanceStabilizeFor, skip rebalancing entirely. This prevents a burst
+	// of engine kills right after cold-boot when nodes come up within seconds
+	// of each other.
+	const rebalanceStabilizeFor = 20 * time.Second
+	if !skipDensityRebalancing {
+		for _, n := range allVPNNodes {
+			if st.IsVPNNodeDraining(n.ContainerName) {
+				continue
+			}
+			if n.HealthySince != nil && time.Since(*n.HealthySince) < rebalanceStabilizeFor {
+				skipDensityRebalancing = true
+				break
+			}
+		}
+	}
+
 	for vpnName, vpnEngines := range activeByVPN {
 		if len(vpnEngines) > effectiveLimit {
 			if skipDensityRebalancing {

@@ -268,8 +268,17 @@ func Reindex(ctx context.Context) bool {
 
 
 	// Remove stale engines (tracked but no longer running).
+	// Grace period: skip engines registered in the last 30s — they may be
+	// mid-start and their container hasn't reached "running" status yet in
+	// the Docker ContainerList snapshot. Without this guard the reindex would
+	// remove them and then the event-watcher would re-discover them 10s later,
+	// producing the "removed stale → discovered untracked" flapping pattern.
+	const engineStartupGrace = 30 * time.Second
 	for _, e := range st.ListEngines() {
 		if !runningEngines[e.ContainerID] {
+			if time.Since(e.FirstSeen) < engineStartupGrace {
+				continue // give it time to reach running state
+			}
 			if st.RemoveEngine(e.ContainerID) {
 				engine.Alloc.ReleaseFromLabels(e.Labels)
 				slog.Info("Reindex: removed stale engine", "name", e.ContainerName)

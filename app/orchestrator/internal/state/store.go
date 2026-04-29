@@ -458,8 +458,11 @@ func (s *Store) SetVPNNodeHealthy(name string, healthy bool) {
 	if !healthy && prev {
 		now := time.Now().UTC()
 		n.UnhealthySince = &now
-	} else if healthy {
+		n.HealthySince = nil // reset so next healthy transition is tracked fresh
+	} else if healthy && !prev {
+		now := time.Now().UTC()
 		n.UnhealthySince = nil
+		n.HealthySince = &now
 	}
 }
 

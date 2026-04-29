@@ -65,6 +65,10 @@ type VPNNode struct {
 	LastSeen                time.Time  `json:"last_seen"`
 	DrainingSince           *time.Time `json:"draining_since,omitempty"`
 	UnhealthySince          *time.Time `json:"unhealthy_since,omitempty"`
+	// HealthySince records the moment this node first became healthy in its
+	// current lifecycle. Used to enforce a rebalance stabilization window so
+	// density correction doesn't fire immediately after cold-boot.
+	HealthySince *time.Time `json:"healthy_since,omitempty"`
 	// ControlHost is the resolved IP address of the container's Gluetun API.
 	// It is preferred over ContainerName for cross-Docker-network connectivity.
 	ControlHost string `json:"control_host,omitempty"`
