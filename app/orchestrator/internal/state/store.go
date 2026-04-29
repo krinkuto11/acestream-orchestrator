@@ -1,6 +1,7 @@
 package state
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ type Store struct {
 	desiredReplicas int
 
 	vpnPending       map[string]int  // per-VPN pending engine counter
+	enginePending    map[string]int  // containerID -> in-flight stream reservations (claimed but not yet started)
 	streamCounts     map[string]int  // containerID -> active stream count
 	monitorCounts    map[string]int  // containerID -> monitor session count
 	forwardedPending map[string]bool // vpnContainer -> pending flag
@@ -41,6 +43,7 @@ func newStore() *Store {
 		engines:          make(map[string]*Engine),
 		vpnNodes:         make(map[string]*VPNNode),
 		vpnPending:       make(map[string]int),
+		enginePending:    make(map[string]int),
 		streamCounts:     make(map[string]int),
 		monitorCounts:    make(map[string]int),
 		forwardedPending: make(map[string]bool),
@@ -532,6 +535,58 @@ func (s *Store) GetAllStreamCounts() map[string]int {
 // GetStreamCounts is an alias for GetAllStreamCounts for proxy-plane compatibility.
 func (s *Store) GetStreamCounts() map[string]int { return s.GetAllStreamCounts() }
 
+// SelectAndClaimEngine atomically picks the least-loaded eligible engine and
+// increments its pending counter so that concurrent callers see the reservation
+// immediately — before OnStreamStarted is called. This eliminates the TOCTOU
+// race where all concurrent requests see the same engine load of 0.
+func (s *Store) SelectAndClaimEngine(maxStreams int) (*Engine, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	type candidate struct {
+		e    Engine
+		load int
+	}
+	var candidates []candidate
+	for _, e := range s.engines {
+		if e.Draining || e.HealthStatus == HealthUnhealthy {
+			continue
+		}
+		load := s.streamCounts[e.ContainerID] + s.enginePending[e.ContainerID] + s.monitorCounts[e.ContainerID]
+		if load >= maxStreams {
+			continue
+		}
+		candidates = append(candidates, candidate{*e, load})
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no eligible engine (total=%d)", len(s.engines))
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].load != candidates[j].load {
+			return candidates[i].load < candidates[j].load
+		}
+		return candidates[i].e.Forwarded && !candidates[j].e.Forwarded
+	})
+
+	sel := candidates[0].e
+	s.enginePending[sel.ContainerID]++
+	cp := sel
+	return &cp, nil
+}
+
+// ReleaseEnginePending decrements the pending reservation for an engine.
+// Call this when a reservation cannot be converted to an active stream
+// (StartStream rejected, hub at capacity, or non-tracking HLS path).
+func (s *Store) ReleaseEnginePending(containerID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.enginePending[containerID] > 0 {
+		s.enginePending[containerID]--
+	}
+}
+
 func (s *Store) SetMonitorCount(containerID string, count int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -701,6 +756,9 @@ func (s *Store) OnStreamStarted(ev StreamStartedEvent) *StreamState {
 	s.streams[st.ID] = st
 	if st.EngineID != "" {
 		s.streamCounts[st.EngineID]++
+		if s.enginePending[st.EngineID] > 0 {
+			s.enginePending[st.EngineID]-- // transfer from pending to committed
+		}
 	}
 	return st
 }

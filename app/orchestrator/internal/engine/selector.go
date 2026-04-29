@@ -2,8 +2,6 @@
 package engine
 
 import (
-	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/acestream/acestream/internal/config"
@@ -26,19 +24,10 @@ type Selection struct {
 	MaxStreams        int
 }
 
-// Select picks the least-loaded eligible engine from the unified state store.
+// Select picks the least-loaded eligible engine from the unified state store
+// and atomically reserves a slot, preventing the TOCTOU race where concurrent
+// requests all see the same engine load of zero before any stream is registered.
 func Select(st *state.Store, settings *persistence.SettingsStore) (*Selection, error) {
-	engines := st.ListEngines()
-	streams := st.ListStreams()
-	monCounts := st.GetMonitorCounts()
-
-	streamLoad := make(map[string]int, len(streams))
-	for _, s := range streams {
-		if s.EngineID != "" {
-			streamLoad[s.EngineID]++
-		}
-	}
-
 	cfg := config.C.Load()
 	maxStreams := cfg.MaxStreamsPerEngine
 	streamMode := cfg.StreamMode
@@ -68,34 +57,11 @@ func Select(st *state.Store, settings *persistence.SettingsStore) (*Selection, e
 		maxStreams = 3
 	}
 
-	type candidate struct {
-		e    state.Engine
-		load int
-	}
-	candidates := make([]candidate, 0, len(engines))
-	for _, e := range engines {
-		if e.Draining || e.HealthStatus == state.HealthUnhealthy {
-			continue
-		}
-		load := streamLoad[e.ContainerID] + monCounts[e.ContainerID]
-		if load >= maxStreams {
-			continue
-		}
-		candidates = append(candidates, candidate{*e, load})
+	sel, err := st.SelectAndClaimEngine(maxStreams)
+	if err != nil {
+		return nil, err
 	}
 
-	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no eligible engine (total=%d)", len(engines))
-	}
-
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].load != candidates[j].load {
-			return candidates[i].load < candidates[j].load
-		}
-		return candidates[i].e.Forwarded && !candidates[j].e.Forwarded
-	})
-
-	sel := candidates[0].e
 	apiPort := sel.APIPort
 	if apiPort == 0 {
 		apiPort = 62062

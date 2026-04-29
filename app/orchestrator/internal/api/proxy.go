@@ -169,12 +169,17 @@ func (s *ProxyServer) handleGetStream(w http.ResponseWriter, r *http.Request) {
 		started := s.hub.StartStream(r.Context(), p)
 		mgr, buf, cm = s.hub.GetEntry(streamKey)
 		if mgr == nil {
+			s.st.ReleaseEnginePending(ep.ContainerID)
 			if !started {
 				http.Error(w, "stream at capacity: resource limit reached", http.StatusServiceUnavailable)
 			} else {
 				http.Error(w, "stream start failed", http.StatusInternalServerError)
 			}
 			return
+		}
+		if !started {
+			// Another goroutine started the same stream before us; release our reservation.
+			s.st.ReleaseEnginePending(ep.ContainerID)
 		}
 	} else {
 		s.hub.CancelShutdown(streamKey)
@@ -260,11 +265,15 @@ func (s *ProxyServer) handleHLSManifest(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if ep.ControlMode == "api" {
+		// Release our reservation; handleHLSManifestAPIMode will select and claim its own.
+		s.st.ReleaseEnginePending(ep.ContainerID)
 		s.handleHLSManifestAPIMode(w, r, inputType, inputVal, fileIndexes, seekback, streamKey, nil, nil)
 		s.recordHLSClient(streamKey, 0, r)
 		return
 	}
 
+	// Non-API HLS: stream is not tracked via StartStream/OnStreamStarted, so release now.
+	s.st.ReleaseEnginePending(ep.ContainerID)
 	engineURL := fmt.Sprintf("http://%s:%d/ace/manifest.m3u8?id=%s&file_indexes=%s",
 		ep.EngineParams.Host, ep.EngineParams.Port, urlQueryEscape(inputVal), urlQueryEscape(fileIndexes))
 	sess := hls.NewSession(streamKey, engineURL, fmt.Sprintf("http://%s", r.Host))
@@ -301,12 +310,16 @@ func (s *ProxyServer) handleHLSManifestAPIMode(
 		started := s.hub.StartStream(r.Context(), p)
 		_, buf, _ = s.hub.GetEntry(streamKey)
 		if buf == nil {
+			s.st.ReleaseEnginePending(ep.ContainerID)
 			if !started {
 				http.Error(w, "stream at capacity: resource limit reached", http.StatusServiceUnavailable)
 			} else {
 				http.Error(w, "stream start failed", http.StatusInternalServerError)
 			}
 			return
+		}
+		if !started {
+			s.st.ReleaseEnginePending(ep.ContainerID)
 		}
 	} else {
 		s.hub.CancelShutdown(streamKey)
