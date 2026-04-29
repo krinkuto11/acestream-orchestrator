@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -60,19 +62,11 @@ func (s *SettingsStore) GetValue(category, key string, def any) any {
 	return def
 }
 
-// Save replaces one category atomically (DB + cache).
+// Save merges the incoming payload into the existing category settings,
+// normalizes the result, and persists it atomically to DB + cache.
+// Merging (rather than replacing) ensures that fields not present in the
+// payload — e.g. fields the GUI doesn't expose — are not silently dropped.
 func (s *SettingsStore) Save(category string, payload map[string]any) error {
-	// Normalize before persisting so values in the DB are always clean.
-	switch category {
-	case "proxy_settings":
-		payload = normalizeProxySettings(payload)
-	case "vpn_settings":
-		payload = normalizeVPNSettings(payload)
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal %s: %w", category, err)
-	}
 	col := categoryColumn(category)
 	if col == "" {
 		return fmt.Errorf("unknown settings category: %s", category)
@@ -80,6 +74,25 @@ func (s *SettingsStore) Save(category string, payload map[string]any) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Start from the current cached state so unrelated fields are preserved.
+	merged := deepCopyMap(s.cache[category])
+	for k, v := range payload {
+		merged[k] = v
+	}
+
+	// Normalize the fully-merged map before persisting.
+	switch category {
+	case "proxy_settings":
+		merged = normalizeProxySettings(merged)
+	case "vpn_settings":
+		merged = normalizeVPNSettings(merged)
+	}
+
+	data, err := json.Marshal(merged)
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", category, err)
+	}
 
 	query := fmt.Sprintf(
 		`UPDATE runtime_settings SET %s = ?, updated_at = ? WHERE id = ?`,
@@ -90,16 +103,15 @@ func (s *SettingsStore) Save(category string, payload map[string]any) error {
 	}
 	// Special case: vpn_settings saves credentials separately.
 	if category == "vpn_settings" {
-		if creds, ok := payload["credentials"]; ok {
+		if creds, ok := merged["credentials"]; ok {
 			if list, ok := creds.([]any); ok {
-				if err := s.saveCredentials(list, payload); err != nil {
+				if err := s.saveCredentials(list, merged); err != nil {
 					slog.Warn("Failed to persist VPN credentials", "err", err)
 				}
 			}
 		}
 	}
-	cp := deepCopyMap(payload)
-	s.cache[category] = cp
+	s.cache[category] = merged
 	return nil
 }
 
@@ -613,7 +625,9 @@ func normalizeVPNSettings(m map[string]any) map[string]any {
 	return out
 }
 
-// toIntNorm coerces a JSON-decoded numeric value to int.
+// toIntNorm coerces a numeric value (or numeric string) to int.
+// Handles strings so that query-param payloads ("4", "30") are treated
+// identically to JSON-decoded numbers.
 func toIntNorm(v any) int {
 	switch n := v.(type) {
 	case int:
@@ -624,11 +638,19 @@ func toIntNorm(v any) int {
 		return int(n)
 	case float32:
 		return int(n)
+	case string:
+		s := strings.TrimSpace(n)
+		if i, err := strconv.Atoi(s); err == nil {
+			return i
+		}
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return int(f)
+		}
 	}
 	return 0
 }
 
-// toFloatNorm coerces a JSON-decoded numeric value to float64.
+// toFloatNorm coerces a numeric value (or numeric string) to float64.
 func toFloatNorm(v any) float64 {
 	switch n := v.(type) {
 	case float64:
@@ -639,6 +661,10 @@ func toFloatNorm(v any) float64 {
 		return float64(n)
 	case int64:
 		return float64(n)
+	case string:
+		if f, err := strconv.ParseFloat(strings.TrimSpace(n), 64); err == nil {
+			return f
+		}
 	}
 	return 0
 }
