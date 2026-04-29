@@ -125,6 +125,12 @@ func (c *Controller) EnsureMinimum() {
 
 	desired, _ := computeDesiredReplicas(totalRunning, freeCount, streamCounts, monitorCounts, engines)
 	prev := st.GetDesiredReplicas()
+	// Never silently undo a NudgeDemand bump: the proxy may have raised
+	// desiredReplicas above what the autoscaler computed. Take the higher value
+	// so demand-triggered provisioning isn't cancelled by the next ticker tick.
+	if prev > desired {
+		desired = prev
+	}
 	st.SetDesiredReplicas(desired)
 
 	if desired != prev {
@@ -243,11 +249,11 @@ func (c *Controller) reconcilerLoop(ctx context.Context) {
 		}
 		lastReconcileAt = time.Now()
 		metrics.CPReconcileTotal.Inc()
-		c.doReconcile()
+		c.doReconcile(ctx)
 	}
 }
 
-func (c *Controller) doReconcile() {
+func (c *Controller) doReconcile(ctx context.Context) {
 	cfg := config.C.Load()
 	if cfg.ManualMode {
 		return
@@ -307,44 +313,48 @@ func (c *Controller) doReconcile() {
 				}
 			} else {
 				slog.Info("scaling UP", "deficit", deficit, "creating", createCount)
-				var wg sync.WaitGroup
+				// Pre-register placeholder intents so the next reconcile cycle
+				// counts them as in-flight and doesn't over-provision. The
+				// container_name is filled in once ScheduleNewEngine returns.
+				// Goroutines are fire-and-forget; no wg.Wait() so the reconciler
+				// is never blocked by a slow WaitForForwardedPort call.
 				for i := 0; i < createCount; i++ {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
+					id := c.nextIntentID()
+					st.AddIntent(&state.ScalingIntent{
+						ID:     id,
+						Action: "create",
+						Status: "scheduling",
+						Details: map[string]any{},
+					})
+					go func(intentID string) {
 						if !c.cb.CanProvision("general") {
 							slog.Warn("circuit breaker OPEN - provisioning blocked")
+							st.RemoveIntent(intentID)
 							return
 						}
-						spec, err := Scheduler.ScheduleNewEngine()
+						spec, err := Scheduler.ScheduleNewEngine(ctx)
 						if err != nil {
 							if isTransientVPNError(err) {
 								slog.Debug("create intent blocked", "err", err)
 							} else {
 								slog.Error("unexpected scheduling error", "err", err)
 							}
+							st.RemoveIntent(intentID)
 							return
 						}
-						id := c.nextIntentID()
-						st.AddIntent(&state.ScalingIntent{
-							ID:     id,
-							Action: "create",
-							Status: "pending",
-							Details: map[string]any{
-								"container_name": spec.ContainerName,
-							},
+						st.UpdateIntentDetails(intentID, map[string]any{
+							"container_name": spec.ContainerName,
 						})
 						select {
-						case c.intents <- intent{id: id, action: intentCreate, spec: spec}:
+						case c.intents <- intent{id: intentID, action: intentCreate, spec: spec}:
 							metrics.CPIntentQueueDepth.Inc()
 						default:
 							slog.Warn("intent queue full, dropping create intent")
-							st.RemoveIntent(id)
+							st.RemoveIntent(intentID)
 							ReleaseSpec(spec)
 						}
-					}()
+					}(id)
 				}
-				wg.Wait()
 			}
 		}
 	}
@@ -481,6 +491,18 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 	// This prevents the rebalancer from killing soft-overflow engines that
 	// were successfully placed while waiting for new nodes to provision.
 	skipDensityRebalancing := requiredNodes > 0 && readyCount < requiredNodes
+
+	// Also skip while any VPN node is draining. A drain compacts engines off
+	// that node; starting a parallel density rebalance on another node would
+	// double the disruption and can trigger a cascade.
+	if !skipDensityRebalancing {
+		for _, n := range allVPNNodes {
+			if st.IsVPNNodeDraining(n.ContainerName) {
+				skipDensityRebalancing = true
+				break
+			}
+		}
+	}
 
 	// Stabilization window: if ANY ready node has been healthy for less than
 	// rebalanceStabilizeFor, skip rebalancing entirely. This prevents a burst

@@ -90,13 +90,21 @@ func (s *Store) InitNextEngineIndex(val int64) {
 
 func (s *Store) AddEngine(e *Engine) {
 	s.mu.Lock()
+	isNew := false
 	if _, exists := s.engines[e.ContainerID]; !exists {
 		e.FirstSeen = time.Now().UTC()
+		isNew = true
 	}
 	e.LastSeen = time.Now().UTC()
 	s.engines[e.ContainerID] = e
 	if e.Forwarded && e.VPNContainer != "" {
 		delete(s.forwardedPending, e.VPNContainer)
+	}
+	// Release the VPN pending reservation once the engine is actually registered.
+	// This closes the window between ContainerStart and store registration where
+	// neither engineCount nor vpnPending reflects the starting container.
+	if isNew && e.VPNContainer != "" && s.vpnPending[e.VPNContainer] > 0 {
+		s.vpnPending[e.VPNContainer]--
 	}
 	s.mu.Unlock()
 	// Wake any proxy goroutines blocked on SelectAndClaimEngine. Closing the
@@ -578,6 +586,20 @@ func (s *Store) RemoveIntent(id string) {
 	for i, it := range s.intents {
 		if it.ID == id {
 			s.intents = append(s.intents[:i], s.intents[i+1:]...)
+			return
+		}
+	}
+}
+
+// UpdateIntentDetails sets the Details map on an existing intent. Used to
+// populate the container_name once ScheduleNewEngine returns, without
+// blocking the reconciler on the scheduling goroutine.
+func (s *Store) UpdateIntentDetails(id string, details map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, it := range s.intents {
+		if it.ID == id {
+			it.Details = details
 			return
 		}
 	}

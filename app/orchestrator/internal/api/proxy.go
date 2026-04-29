@@ -273,8 +273,10 @@ func (s *ProxyServer) handleHLSManifest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Non-API HLS: stream is not tracked via StartStream/OnStreamStarted, so release now.
-	s.st.ReleaseEnginePending(ep.ContainerID)
+	// Non-API HLS: stream is not tracked via StartStream/OnStreamStarted.
+	// Hold the pending reservation through ServeManifest so the engine is not
+	// eligible for canStopEngine while it is actively handling this request.
+	defer s.st.ReleaseEnginePending(ep.ContainerID)
 	engineURL := fmt.Sprintf("http://%s:%d/ace/manifest.m3u8?id=%s&file_indexes=%s",
 		ep.EngineParams.Host, ep.EngineParams.Port, urlQueryEscape(inputVal), urlQueryEscape(fileIndexes))
 	sess := hls.NewSession(streamKey, engineURL, fmt.Sprintf("http://%s", r.Host))

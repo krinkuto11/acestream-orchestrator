@@ -35,7 +35,7 @@ type ResourceScheduler struct{}
 var Scheduler = &ResourceScheduler{}
 
 // ScheduleNewEngine resolves all resources and returns an immutable EngineSpec.
-func (rs *ResourceScheduler) ScheduleNewEngine() (*state.EngineSpec, error) {
+func (rs *ResourceScheduler) ScheduleNewEngine(ctx context.Context) (*state.EngineSpec, error) {
 	cfg := config.C.Load()
 	st := state.Global
 
@@ -63,7 +63,7 @@ func (rs *ResourceScheduler) ScheduleNewEngine() (*state.EngineSpec, error) {
 		return nil, fmt.Errorf("port allocation failed: %w", err)
 	}
 
-	forwarded, p2pPort := rs.electForwardedEngine(context.Background(), vpnContainer)
+	forwarded, p2pPort := rs.electForwardedEngine(ctx, vpnContainer)
 
 	containerName := generateContainerName("acestream")
 
@@ -143,6 +143,12 @@ func ReleaseSpec(spec *state.EngineSpec) {
 	Alloc.ReleaseFromLabels(spec.Labels)
 	if spec.VPNContainerID != "" {
 		state.Global.DecrVPNPending(spec.VPNContainerID)
+		if spec.Forwarded {
+			// Clear the forwarded-slot claim so a future engine can be elected
+			// leader for this VPN. Without this, the slot leaks permanently if
+			// the container failed to start.
+			state.Global.SetForwardedPending(spec.VPNContainerID, false)
+		}
 	}
 }
 
@@ -206,10 +212,10 @@ func ExecuteSpec(ctx context.Context, spec *state.EngineSpec) (string, error) {
 		return "", fmt.Errorf("container start: %w", err)
 	}
 
-	// Release pending counter now that Docker accepted the request
-	if spec.VPNContainerID != "" {
-		state.Global.DecrVPNPending(spec.VPNContainerID)
-	}
+	// vpnPending is decremented by AddEngine once the container is registered,
+	// not here. Keeping the counter live until registration prevents a window
+	// where neither engineCount nor pending reflects the starting container,
+	// which would allow over-assignment to the same VPN node.
 
 	slog.Info("engine container started", "name", spec.ContainerName, "id", resp.ID[:12], "vpn", spec.VPNContainerID)
 	return resp.ID, nil

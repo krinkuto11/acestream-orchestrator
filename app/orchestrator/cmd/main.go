@@ -288,6 +288,10 @@ func (s *stateSink) OnStreamEnded(contentID string) {
 	s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: contentID})
 }
 
+func (s *stateSink) OnStreamFailed(engineID string) {
+	s.st.ReleaseEnginePending(engineID)
+}
+
 func setupLogger() {
 	level := slog.LevelInfo
 	if os.Getenv("LOG_LEVEL") == "debug" {

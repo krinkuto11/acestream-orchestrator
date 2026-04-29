@@ -27,12 +27,16 @@ const apiKeepaliveInterval = 2 * time.Second
 type EventSink interface {
 	OnStreamStarted(contentID, engineID string)
 	OnStreamEnded(contentID string)
+	// OnStreamFailed is called when a stream request fails before OnStreamStarted
+	// fires, so the engine's pending reservation can be released.
+	OnStreamFailed(engineID string)
 }
 
 type noopSink struct{}
 
 func (noopSink) OnStreamStarted(_, _ string) {}
 func (noopSink) OnStreamEnded(_ string)       {}
+func (noopSink) OnStreamFailed(_ string)      {}
 
 // EngineParams describes an AceStream engine to connect to.
 type EngineParams struct {
@@ -134,6 +138,7 @@ func (m *Manager) Run(ctx context.Context) {
 
 	if err := m.requestStream(ctx); err != nil {
 		slog.Error("stream request failed", "stream", m.params.ContentID, "err", err)
+		m.sink.OnStreamFailed(m.params.Engine.ContainerID)
 		return
 	}
 
@@ -175,7 +180,9 @@ func isTransientStreamError(err error) bool {
 	return strings.Contains(msg, "connection refused") ||
 		strings.Contains(msg, "connection reset") ||
 		strings.Contains(msg, "eof") ||
-		strings.Contains(msg, "i/o timeout")
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "no route to host")
 }
 
 func (m *Manager) requestViaHTTP(ctx context.Context) error {
