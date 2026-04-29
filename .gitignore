@@ -102,3 +102,4 @@ test-compose.yml
 slow-engine-startup.txt
 .gitignore
 test-compose.yml
+test-tools
