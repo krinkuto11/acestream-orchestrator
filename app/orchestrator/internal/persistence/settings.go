@@ -234,6 +234,11 @@ func (s *SettingsStore) loadCache() error {
 			var loaded map[string]any
 			if err := json.Unmarshal([]byte(blob), &loaded); err == nil {
 				for k, v := range loaded {
+					// Don't override a positive numeric default with zero —
+					// a stored 0 for a timeout/interval means "unset/corrupted".
+					if defV, hasDefault := m[k]; hasDefault && isPositiveNumeric(defV) && isZeroNumeric(v) {
+						continue
+					}
 					m[k] = v
 				}
 			}
@@ -470,6 +475,40 @@ func normalizeProxySettings(m map[string]any) map[string]any {
 		}
 	}
 
+	// Enforce positive minimums for timeout/interval fields so a UI save
+	// of 0 (field not rendered) can't override the working default.
+	timeoutFloors := map[string]int{
+		"upstream_read_timeout":      90,
+		"upstream_connect_timeout":   3,
+		"connection_timeout":         30,
+		"stream_timeout":             60,
+		"channel_shutdown_delay":     5,
+		"initial_data_wait_timeout":  10,
+		"no_data_timeout_checks":     60,
+		"hls_buffer_ready_timeout":   30,
+		"hls_first_segment_timeout":  30,
+		"hls_initial_buffer_seconds": 10,
+		"hls_max_initial_segments":   10,
+		"hls_max_segments":           20,
+		"hls_initial_segments":       3,
+		"hls_window_size":            6,
+	}
+	for k, floor := range timeoutFloors {
+		if v, ok := out[k]; ok && toIntNorm(v) == 0 {
+			out[k] = floor
+		}
+	}
+	floatFloors := map[string]float64{
+		"no_data_check_interval":      1.0,
+		"initial_data_check_interval": 0.2,
+		"hls_segment_fetch_interval":  0.5,
+	}
+	for k, floor := range floatFloors {
+		if v, ok := out[k]; ok && toFloatNorm(v) == 0 {
+			out[k] = floor
+		}
+	}
+
 	// Clamp max_streams_per_engine to [1, 20]
 	if v, ok := out["max_streams_per_engine"]; ok {
 		n := toIntNorm(v)
@@ -599,6 +638,34 @@ func toFloatNorm(v any) float64 {
 		return float64(n)
 	}
 	return 0
+}
+
+func isZeroNumeric(v any) bool {
+	switch n := v.(type) {
+	case float64:
+		return n == 0
+	case float32:
+		return n == 0
+	case int:
+		return n == 0
+	case int64:
+		return n == 0
+	}
+	return false
+}
+
+func isPositiveNumeric(v any) bool {
+	switch n := v.(type) {
+	case float64:
+		return n > 0
+	case float32:
+		return n > 0
+	case int:
+		return n > 0
+	case int64:
+		return n > 0
+	}
+	return false
 }
 
 // toBoolNorm coerces common truthy representations to bool.
