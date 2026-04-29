@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"bufio"
 
 	"github.com/acestream/acestream/internal/config"
 	"github.com/acestream/acestream/internal/metrics"
@@ -192,26 +193,39 @@ func (hm *HealthManager) checkAndManage(ctx context.Context) {
 func StartupProbe(host string, httpPort, apiPort int, onReady func()) {
 	go func() {
 		const pollInterval = 500 * time.Millisecond
-		const probeTimeout = 60 * time.Second
-		deadline := time.Now().Add(probeTimeout)
+		deadline := time.Now().Add(config.C.Load().StartupTimeout)
 		for time.Now().Before(deadline) {
-			if probeHealth(host, httpPort) && probeTCP(host, apiPort) {
+			if probeHealth(host, httpPort) && probeAPIHandshake(host, apiPort) {
 				onReady()
 				return
 			}
 			time.Sleep(pollInterval)
 		}
+		slog.Warn("startup probe timed out", "host", host, "httpPort", httpPort, "apiPort", apiPort)
 	}()
 }
 
-// probeTCP attempts a TCP dial to verify a port is accepting connections.
-func probeTCP(host string, port int) bool {
+// probeAPIHandshake dials the AceStream TCP API port and sends a minimal
+// HELLOBG probe. The engine responds HELLOTS when ready and NOTREADY while
+// still initialising — we use that as the authoritative readiness signal.
+func probeAPIHandshake(host string, port int) bool {
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 2*time.Second)
 	if err != nil {
 		return false
 	}
-	conn.Close()
-	return true
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+
+	if _, err := fmt.Fprintf(conn, "HELLOBG version=4\n"); err != nil {
+		return false
+	}
+
+	rd := bufio.NewReader(conn)
+	line, err := rd.ReadString('\n')
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(line), "HELLOTS")
 }
 
 // probeHealth checks the AceStream engine's get_status API endpoint.
