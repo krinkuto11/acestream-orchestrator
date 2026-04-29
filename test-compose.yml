@@ -9,21 +9,36 @@
 # and automatic cleanup on engine deletion.
 
 services:
-  orchestrator:
-    container_name: orchestrator
-    build: .
-    # Configuration is now handled via the Web UI Settings panel
-    # environment:
-    #   - API_KEY=optional_api_key
-    stop_grace_period: 45s
+  acestream-test:
+    container_name: acestream-test
+    image: ghcr.io/krinkuto11/acestream:latest-arm64
+    network_mode: service:gluetun
+    command: python main.py --http-port 6878 --api-port 62062 --bind-all --live-buffer 1 --live-mem-cache-size 100000000
+  
+  gluetun:
+    image: qmcgaw/gluetun
+    cap_add:
+      - NET_ADMIN
+    dns:
+      - 9.9.9.9
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=
+      - SERVER_COUNTRIES=Spain
+      - WIREGUARD_MTU=1400
+      - HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE='{"auth":"none"}' 
+      - HTTP_CONTROL_SERVER_ADDRESS=':8001'
+      - HEALTH_SERVER_ADDRESS='0.0.0.0:9999'
     ports:
-    - "8000:8000"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    restart: on-failure
+      - "6878:6878"
+      - "62062:62062"
+      - "8001:8001"
+      - "9999:9999"
     networks:
       - aceserver
-
 networks:
   aceserver:
     name: aceserver

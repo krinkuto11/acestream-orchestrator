@@ -95,3 +95,10 @@ dispatcharr_proxy
 old-python
 streams.txt
 logs.txt
+test-compose.yml
+test-latency.go
+test-compose.yml
+.gitignore
+slow-engine-startup.txt
+.gitignore
+test-compose.yml

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -515,6 +516,16 @@ func isNodeReady(n *state.VPNNode) (bool, string) {
 			if e.HealthStatus == state.HealthHealthy {
 				return true, "ready_via_heuristic"
 			}
+		}
+		// Early-start: allow engine scheduling while the VPN tunnel is still
+		// establishing (~500ms for WireGuard). The engine's init (~5.76s) is
+		// entirely local — HELLOTS doesn't need outbound access — so we can
+		// overlap the two startups and shave ~500ms off cold-start latency.
+		// Guarded to recently-registered nodes so durably-unhealthy VPNs never
+		// accumulate engines after the 30s window expires.
+		const earlyStartWindow = 30 * time.Second
+		if status == "running" && !n.FirstSeen.IsZero() && time.Since(n.FirstSeen) < earlyStartWindow {
+			return true, "running_early_start"
 		}
 		return false, "not_healthy"
 	}

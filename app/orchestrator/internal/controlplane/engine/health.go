@@ -192,7 +192,7 @@ func (hm *HealthManager) checkAndManage(ctx context.Context) {
 // internal process is actually listening.
 func StartupProbe(containerID, host string, httpPort, apiPort int, onReady func()) {
 	go func() {
-		const pollInterval = 500 * time.Millisecond
+		const pollInterval = 250 * time.Millisecond
 		deadline := time.Now().Add(config.C.Load().StartupTimeout)
 		for time.Now().Before(deadline) {
 			// Check if the engine is still tracked in state.

@@ -428,7 +428,7 @@ func (lm *LifecycleManager) syncManagedNodesToState(ctx context.Context) error {
 func countVPNEngines() int {
 	n := 0
 	for _, e := range state.Global.ListEngines() {
-		if e.VPNContainer != "" {
+		if e.VPNContainer != "" && !e.Draining {
 			n++
 		}
 	}
