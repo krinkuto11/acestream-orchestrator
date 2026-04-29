@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -157,6 +159,22 @@ func main() {
 	// Reindex logs its own errors internally; the bool only indicates whether any
 	// containers were found, so we discard it here.
 	cpdocker.Reindex(appCtx)
+
+	// Initialize the atomic engine name counter to avoid naming conflicts
+	// with existing engines loaded during Reindex.
+	var maxIndex int64 = 0
+	for _, name := range st.ListEngineNames() {
+		// Expects format like "acestream-<host>-15"
+		parts := strings.Split(name, "-")
+		if len(parts) >= 3 {
+			if idx, err := strconv.ParseInt(parts[len(parts)-1], 10, 64); err == nil {
+				if idx > maxIndex {
+					maxIndex = idx
+				}
+			}
+		}
+	}
+	st.InitNextEngineIndex(maxIndex)
 
 	// Restore VPN leases from discovered Docker state.
 	if creds != nil && prov != nil {

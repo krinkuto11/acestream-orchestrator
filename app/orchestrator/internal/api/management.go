@@ -250,10 +250,12 @@ func (s *ProxyServer) mgHandleDeleteEngine(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.st.MarkEngineDraining(id, "manual deletion")
-	if err := cpengine.StopContainer(r.Context(), id, true); err != nil {
-		slog.Warn("stop container error during manual delete", "id", id, "err", err)
-	}
-	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	go func() {
+		if err := cpengine.StopContainer(context.Background(), id, true); err != nil {
+			slog.Warn("stop container error during manual delete", "id", id, "err", err)
+		}
+	}()
+	mgWriteJSON(w, http.StatusAccepted, map[string]string{"status": "deleting"})
 }
 
 func (s *ProxyServer) mgHandleAllEngineStats(w http.ResponseWriter, r *http.Request) {
@@ -319,10 +321,12 @@ func (s *ProxyServer) mgHandleContainerInspect(w http.ResponseWriter, r *http.Re
 func (s *ProxyServer) mgHandleDeleteContainer(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.st.MarkEngineDraining(id, "manual container deletion")
-	if err := cpengine.StopContainer(r.Context(), id, true); err != nil {
-		slog.Warn("stop container error during manual container delete", "id", id, "err", err)
-	}
-	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	go func() {
+		if err := cpengine.StopContainer(context.Background(), id, true); err != nil {
+			slog.Warn("stop container error during manual container delete", "id", id, "err", err)
+		}
+	}()
+	mgWriteJSON(w, http.StatusAccepted, map[string]string{"status": "deleting"})
 }
 
 func (s *ProxyServer) mgHandleContainerLogs(w http.ResponseWriter, r *http.Request) {
@@ -600,11 +604,13 @@ func (s *ProxyServer) mgHandleDestroyVPNNode(w http.ResponseWriter, r *http.Requ
 		mgWriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "VPN provisioner not available"})
 		return
 	}
-	if err := s.prov.DestroyNode(r.Context(), name); err != nil {
-		mgWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "destroyed"})
+	s.st.SetVPNNodeDraining(name)
+	go func() {
+		if err := s.prov.DestroyNode(context.Background(), name); err != nil {
+			slog.Warn("failed to destroy VPN node asynchronously", "name", name, "err", err)
+		}
+	}()
+	mgWriteJSON(w, http.StatusAccepted, map[string]string{"status": "destroying"})
 }
 
 func (s *ProxyServer) mgHandleVPNCredentials(w http.ResponseWriter, r *http.Request) {

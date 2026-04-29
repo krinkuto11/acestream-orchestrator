@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -36,8 +35,7 @@ type ResourceScheduler struct{}
 var Scheduler = &ResourceScheduler{}
 
 // ScheduleNewEngine resolves all resources and returns an immutable EngineSpec.
-// extraReservedNames prevents name collisions during burst provisioning.
-func (rs *ResourceScheduler) ScheduleNewEngine(extraReservedNames []string) (*state.EngineSpec, error) {
+func (rs *ResourceScheduler) ScheduleNewEngine() (*state.EngineSpec, error) {
 	cfg := config.C.Load()
 	st := state.Global
 
@@ -67,9 +65,7 @@ func (rs *ResourceScheduler) ScheduleNewEngine(extraReservedNames []string) (*st
 
 	forwarded, p2pPort := rs.electForwardedEngine(context.Background(), vpnContainer)
 
-	existingNames := st.ListEngineNames()
-	allExcluded := append(existingNames, extraReservedNames...)
-	containerName := generateContainerName("acestream", allExcluded)
+	containerName := generateContainerName("acestream")
 
 	labelKey := cfg.ContainerLabelKey
 	labelVal := cfg.ContainerLabelVal
@@ -660,28 +656,11 @@ func ComputeConfigHash() string {
 	return fmt.Sprintf("%x", h[:8])
 }
 
-func generateContainerName(prefix string, excluded []string) string {
-	excSet := make(map[string]struct{}, len(excluded))
-	for _, n := range excluded {
-		excSet[n] = struct{}{}
-	}
+func generateContainerName(prefix string) string {
 	hostname, _ := os.Hostname()
-	// Use a short random suffix to prevent name conflicts with recently removed containers
-	// that Docker hasn't fully cleaned up yet.
-	suffix := ""
-	b := make([]byte, 2)
-	if _, err := rand.Read(b); err == nil {
-		suffix = fmt.Sprintf("-%x", b)
-	}
-
+	index := state.Global.GetNextEngineIndex()
 	base := fmt.Sprintf("%s-%s", prefix, hostname[:min8(len(hostname))])
-	for i := 1; i < 1000; i++ {
-		candidate := fmt.Sprintf("%s-%d%s", base, i, suffix)
-		if _, taken := excSet[candidate]; !taken {
-			return candidate
-		}
-	}
-	return fmt.Sprintf("%s-%d%s", base, 999, suffix)
+	return fmt.Sprintf("%s-%d", base, index)
 }
 
 func min8(n int) int {

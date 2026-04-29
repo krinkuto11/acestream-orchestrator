@@ -48,7 +48,7 @@ type Controller struct {
 func NewController(cb *circuitbreaker.Manager) *Controller {
 	return &Controller{
 		cb:      cb,
-		intents: make(chan intent, 128),
+		intents: make(chan intent, 1024), // Increased buffer for bursts
 		nudge:   make(chan struct{}, 1),
 	}
 }
@@ -58,9 +58,13 @@ func (c *Controller) Start(ctx context.Context) {
 		return
 	}
 	slog.Info("EngineController started")
-	c.wg.Add(2)
+	
+	numWorkers := 10 // Worker pool size
+	c.wg.Add(1 + numWorkers)
 	go c.reconcilerLoop(ctx)
-	go c.intentWorker(ctx)
+	for i := 0; i < numWorkers; i++ {
+		go c.intentWorker(ctx)
+	}
 }
 
 func (c *Controller) Stop() {
@@ -312,7 +316,7 @@ func (c *Controller) doReconcile() {
 							slog.Warn("circuit breaker OPEN - provisioning blocked")
 							return
 						}
-						spec, err := Scheduler.ScheduleNewEngine(nil)
+						spec, err := Scheduler.ScheduleNewEngine()
 						if err != nil {
 							if isTransientVPNError(err) {
 								slog.Debug("create intent blocked", "err", err)
@@ -577,7 +581,6 @@ func (c *Controller) selectTerminationCandidates(engines []*state.Engine, count 
 
 func (c *Controller) intentWorker(ctx context.Context) {
 	defer c.wg.Done()
-	consecutiveFailures := 0
 
 	for c.running.Load() {
 		select {
@@ -588,21 +591,12 @@ func (c *Controller) intentWorker(ctx context.Context) {
 				return
 			}
 			metrics.CPIntentQueueDepth.Dec()
-			err := c.executeIntent(ctx, it, &consecutiveFailures)
-			if err != nil && it.action == intentCreate {
-				backoff := min(60, 1<<consecutiveFailures)
-				slog.Warn("provisioning intent failed; backing off", "failures", consecutiveFailures, "backoff_s", backoff)
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(time.Duration(backoff) * time.Second):
-				}
-			}
+			c.executeIntent(ctx, it)
 		}
 	}
 }
 
-func (c *Controller) executeIntent(ctx context.Context, it intent, consecutiveFailures *int) error {
+func (c *Controller) executeIntent(ctx context.Context, it intent) error {
 	switch it.action {
 	case intentCreate:
 		if !c.cb.CanProvision("general") {
@@ -616,21 +610,18 @@ func (c *Controller) executeIntent(ctx context.Context, it intent, consecutiveFa
 		state.Global.RemoveIntent(it.id)
 		if err != nil {
 			errMsg := strings.ToLower(err.Error())
-			// Detect host-level seccomp/BPF ceiling — fast-open the circuit breaker.
+			// Detect host-level seccomp/BPF ceiling.
 			if strings.Contains(errMsg, "seccomp") || strings.Contains(errMsg, "errno 524") ||
 				strings.Contains(errMsg, "failed to create shim task") {
 				slog.Error("CRITICAL: host OS seccomp limit reached; new containers cannot start",
 					"err", err)
-				*consecutiveFailures = max(*consecutiveFailures, 5)
 			}
 			c.cb.RecordFailure("general")
-			*consecutiveFailures++
 			metrics.CPProvisioningTotal.WithLabelValues("failed").Inc()
 			slog.Error("failed to execute create intent", "name", it.spec.ContainerName, "err", err)
 			return err
 		}
 		c.cb.RecordSuccess("general")
-		*consecutiveFailures = 0
 		metrics.CPProvisioningTotal.WithLabelValues("success").Inc()
 
 	case intentTerminate:

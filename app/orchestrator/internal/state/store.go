@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,6 +41,9 @@ type Store struct {
 	// ─── Proxy-plane state ────────────────────────────────────────────────────
 	streams map[string]*StreamState   // contentID -> StreamState
 	stats   map[string][]*StatSnapshot // contentID -> ring-buffer of snapshots
+
+	// ─── Atomic counters ──────────────────────────────────────────────────────
+	nextEngineIndex int64
 }
 
 var Global = newStore()
@@ -59,6 +63,27 @@ func newStore() *Store {
 		engineReadyCh:    make(chan struct{}),
 	}
 	return s
+}
+
+// ─── Engine Naming ───────────────────────────────────────────────────────────
+
+// GetNextEngineIndex atomically increments and returns the next engine index.
+// Used to guarantee unique sequential names during burst provisioning.
+func (s *Store) GetNextEngineIndex() int64 {
+	return atomic.AddInt64(&s.nextEngineIndex, 1)
+}
+
+// InitNextEngineIndex sets the atomic counter to the specified value if it is higher than the current value.
+func (s *Store) InitNextEngineIndex(val int64) {
+	for {
+		current := atomic.LoadInt64(&s.nextEngineIndex)
+		if val <= current {
+			return
+		}
+		if atomic.CompareAndSwapInt64(&s.nextEngineIndex, current, val) {
+			return
+		}
+	}
 }
 
 // ─── Engines ─────────────────────────────────────────────────────────────────
