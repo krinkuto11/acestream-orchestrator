@@ -592,7 +592,7 @@ func (s *Store) SelectAndClaimEngine(maxStreams int) (*Engine, error) {
 	}
 	var candidates []candidate
 	for _, e := range s.engines {
-		if e.Draining || e.HealthStatus == HealthUnhealthy {
+		if e.Draining || e.HealthStatus != HealthHealthy {
 			continue
 		}
 		load := s.streamCounts[e.ContainerID] + s.enginePending[e.ContainerID] + s.monitorCounts[e.ContainerID]

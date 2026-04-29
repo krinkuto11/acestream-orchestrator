@@ -182,6 +182,16 @@ func Reindex(ctx context.Context) bool {
 				engine.Alloc.ReserveFromLabels(attrs)
 				st.AddEngine(eng)
 				slog.Info("Reindex: discovered untracked engine", "name", containerName)
+
+				cid := c.ID
+				h := host
+				p := httpPort
+				cname := containerName
+				engine.StartupProbe(h, p, func() {
+					st.UpdateEngineHealth(cid, state.HealthHealthy)
+					st.NotifyEngineReady()
+					slog.Info("engine ready", "name", cname)
+				})
 				changed = true
 			} else {
 				st.UpdateEngineLastSeen(c.ID)

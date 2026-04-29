@@ -94,3 +94,4 @@ load_tests
 dispatcharr_proxy
 old-python
 streams.txt
+logs.txt

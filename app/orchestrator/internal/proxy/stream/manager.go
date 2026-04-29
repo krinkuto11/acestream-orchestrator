@@ -145,10 +145,37 @@ func (m *Manager) Run(ctx context.Context) {
 }
 
 func (m *Manager) requestStream(ctx context.Context) error {
-	if strings.ToLower(m.params.ControlMode) == "api" {
-		return m.requestViaAPI(ctx)
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Second):
+			}
+		}
+		if strings.ToLower(m.params.ControlMode) == "api" {
+			err = m.requestViaAPI(ctx)
+		} else {
+			err = m.requestViaHTTP(ctx)
+		}
+		if err == nil || !isTransientStreamError(err) {
+			return err
+		}
+		slog.Warn("stream request transient error, retrying", "stream", m.params.ContentID, "attempt", attempt+1, "err", err)
 	}
-	return m.requestViaHTTP(ctx)
+	return err
+}
+
+func isTransientStreamError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "eof") ||
+		strings.Contains(msg, "i/o timeout")
 }
 
 func (m *Manager) requestViaHTTP(ctx context.Context) error {

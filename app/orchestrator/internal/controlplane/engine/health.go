@@ -183,6 +183,25 @@ func (hm *HealthManager) checkAndManage(ctx context.Context) {
 	}
 }
 
+// StartupProbe polls the engine HTTP API in a background goroutine until it
+// responds successfully or the timeout elapses, then calls onReady. Call this
+// immediately after registering a new engine so it only enters the selector
+// pool once its internal process is actually listening.
+func StartupProbe(host string, port int, onReady func()) {
+	go func() {
+		const pollInterval = 500 * time.Millisecond
+		const probeTimeout = 60 * time.Second
+		deadline := time.Now().Add(probeTimeout)
+		for time.Now().Before(deadline) {
+			if probeHealth(host, port) {
+				onReady()
+				return
+			}
+			time.Sleep(pollInterval)
+		}
+	}()
+}
+
 // probeHealth checks the AceStream engine's get_status API endpoint.
 func probeHealth(host string, port int) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

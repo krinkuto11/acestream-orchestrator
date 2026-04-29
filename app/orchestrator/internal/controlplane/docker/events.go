@@ -198,6 +198,13 @@ func (w *EventWatcher) handleEngineStart(ctx context.Context, containerID, conta
 	st.AddEngine(eng)
 	w.pub.PublishEngine(ctx, eng)
 	slog.Info("engine registered", "id", containerID[:min12(len(containerID))], "name", containerName, "host", host, "port", httpPort)
+
+	cid := containerID
+	engine.StartupProbe(host, httpPort, func() {
+		st.UpdateEngineHealth(cid, state.HealthHealthy)
+		st.NotifyEngineReady()
+		slog.Info("engine ready", "id", cid[:min12(len(cid))], "name", containerName)
+	})
 }
 
 func (w *EventWatcher) handleEngineStop(ctx context.Context, containerID, containerName string, attrs map[string]string) {
