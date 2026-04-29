@@ -620,6 +620,7 @@ func buildCommand(httpPort, apiPort, p2pPort int, cfg *config.Config) []string {
 		"python", "main.py",
 		"--http-port", strconv.Itoa(httpPort),
 		"--api-port", strconv.Itoa(apiPort),
+		"--bind-all",
 	}
 	if p2pPort > 0 {
 		cmd = append(cmd, "--port", strconv.Itoa(p2pPort))
