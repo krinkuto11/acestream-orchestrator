@@ -447,7 +447,22 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 	}
 
 	requiredNodes := int(math.Ceil(float64(desired) / float64(maxPerVPN)))
-	effectiveLimit := min(maxPerVPN, int(math.Ceil(float64(desired)/float64(max(1, requiredNodes)))))
+	
+	// The ideal limit if all required nodes were present.
+	idealLimit := int(math.Ceil(float64(desired) / float64(max(1, requiredNodes))))
+	if idealLimit > maxPerVPN {
+		idealLimit = maxPerVPN
+	}
+
+	// The actual fair share given the currently ready nodes.
+	actualFairShare := int(math.Ceil(float64(desired) / float64(max(1, readyCount))))
+
+	// We use the higher of the two to prevent thrashing when nodes are still provisioning.
+	// However, we never want to exceed the hard limit.
+	effectiveLimit := max(idealLimit, actualFairShare)
+	if cfg.MaxEnginesPerVPN > 0 && effectiveLimit > cfg.MaxEnginesPerVPN {
+		effectiveLimit = cfg.MaxEnginesPerVPN
+	}
 
 	// Group active engines by VPN. Only count Healthy engines for density
 	// rebalancing to avoid killing starting engines during burst scaling.
