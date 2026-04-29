@@ -452,8 +452,9 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 	maxPerVPN := cfg.PreferredEnginesPerVPN
 	desired := st.GetDesiredReplicas()
 	effectiveLimit := maxPerVPN
+	var requiredNodes int
 	if maxPerVPN > 0 && desired > 0 {
-		requiredNodes := int(math.Ceil(float64(desired) / float64(maxPerVPN)))
+		requiredNodes = int(math.Ceil(float64(desired) / float64(maxPerVPN)))
 		if requiredNodes < 1 {
 			requiredNodes = 1
 		}
@@ -466,7 +467,15 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 	// Prefer under-limit nodes; fall back to least-loaded if all are at the
 	// soft limit, but respect MaxEnginesPerVPN as a hard limit.
 	chosen, load := st.SelectAndClaimVPN(readyNames, effectiveLimit)
+	
+	// Only allow soft overflow if the VPN cluster is fully scaled up.
+	// If we allow soft overflow while VPN nodes are still provisioning,
+	// all engines will pack into the first ready node, causing massive
+	// thrashing when the density rebalancer kills them 5 seconds later.
 	if chosen == "" && cfg.MaxEnginesPerVPN > effectiveLimit {
+		if requiredNodes > 0 && len(readyNames) < requiredNodes {
+			return "", fmt.Errorf("VPN cluster is scaling up (%d/%d ready nodes); waiting for more nodes to prevent density thrashing", len(readyNames), requiredNodes)
+		}
 		chosen, load = st.SelectAndClaimVPN(readyNames, cfg.MaxEnginesPerVPN)
 		if chosen != "" {
 			slog.Info("scheduling engine above preferred limit (soft overflow)",
@@ -475,8 +484,12 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 	}
 	if chosen == "" {
 		diag := strings.Join(rejectReasons, "; ")
+		if len(readyNames) > 0 {
+			diag = fmt.Sprintf("%d ready nodes are all at maximum density limit", len(readyNames))
+		}
 		return "", fmt.Errorf("resource restriction: %s - cannot schedule AceStream engine", diag)
 	}
+
 
 	slog.Info("scheduling new engine on VPN node", "vpn", chosen, "load", load, "limit", effectiveLimit)
 	return chosen, nil
