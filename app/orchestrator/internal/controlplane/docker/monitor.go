@@ -188,7 +188,7 @@ func Reindex(ctx context.Context) bool {
 				p := httpPort
 				ap := apiPort
 				cname := containerName
-				engine.StartupProbe(h, p, ap, func() {
+				engine.StartupProbe(cid, h, p, ap, func() {
 					st.UpdateEngineHealth(cid, state.HealthHealthy)
 					st.NotifyEngineReady()
 					slog.Info("engine ready", "name", cname)

@@ -190,18 +190,27 @@ func (hm *HealthManager) checkAndManage(ctx context.Context) {
 // equals httpPort there is only one socket to probe. Call this immediately
 // after registering a new engine so it only enters the selector pool once its
 // internal process is actually listening.
-func StartupProbe(host string, httpPort, apiPort int, onReady func()) {
+func StartupProbe(containerID, host string, httpPort, apiPort int, onReady func()) {
 	go func() {
 		const pollInterval = 500 * time.Millisecond
 		deadline := time.Now().Add(config.C.Load().StartupTimeout)
 		for time.Now().Before(deadline) {
+			// Check if the engine is still tracked in state.
+			if _, exists := state.Global.GetEngine(containerID); !exists {
+				return // engine was deregistered, abort probe silently
+			}
+
 			if probeHealth(host, httpPort) && probeAPIHandshake(host, apiPort) {
 				onReady()
 				return
 			}
 			time.Sleep(pollInterval)
 		}
-		slog.Warn("startup probe timed out", "host", host, "httpPort", httpPort, "apiPort", apiPort)
+
+		// Final check: only log the timeout warning if the engine still exists.
+		if _, exists := state.Global.GetEngine(containerID); exists {
+			slog.Warn("startup probe timed out", "id", containerID[:min12(len(containerID))], "host", host, "httpPort", httpPort, "apiPort", apiPort)
+		}
 	}()
 }
 
