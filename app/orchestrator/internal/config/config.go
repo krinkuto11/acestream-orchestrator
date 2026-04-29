@@ -491,7 +491,7 @@ func load() *Config {
 		AutoscaleInterval: envDur("AUTOSCALE_INTERVAL_S", 30*time.Second),
 		MonitorInterval:   envDur("MONITOR_INTERVAL_S", 10*time.Second),
 		GracePeriod:       envDur("ENGINE_GRACE_PERIOD_S", 30*time.Second),
-		StartupTimeout:    envDur("STARTUP_TIMEOUT_S", 25*time.Second),
+		StartupTimeout:    envDur("STARTUP_TIMEOUT_S", 60*time.Second),
 
 		HealthCheckInterval:        envDur("HEALTH_CHECK_INTERVAL_S", 20*time.Second),
 		HealthFailureThreshold:     envInt("HEALTH_FAILURE_THRESHOLD", 3),

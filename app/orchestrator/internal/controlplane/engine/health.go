@@ -214,9 +214,9 @@ func probeAPIHandshake(host string, port int) bool {
 		return false
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
 
-	if _, err := fmt.Fprintf(conn, "HELLOBG version=4\n"); err != nil {
+	if _, err := fmt.Fprintf(conn, "HELLOBG version=4\r\n"); err != nil {
 		return false
 	}
 

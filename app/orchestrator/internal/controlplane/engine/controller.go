@@ -381,7 +381,7 @@ func (c *Controller) doReconcile() {
 			continue
 		}
 		streamCnt := st.GetStreamCount(e.ContainerID)
-		if streamCnt == 0 && canStopEngine(e.ContainerID, true) {
+		if streamCnt == 0 && canStopEngine(e.ContainerID, false) {
 			id := c.nextIntentID()
 			select {
 			case c.intents <- intent{id: id, action: intentTerminate, contID: e.ContainerID}:
@@ -449,10 +449,11 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 	requiredNodes := int(math.Ceil(float64(desired) / float64(maxPerVPN)))
 	effectiveLimit := min(maxPerVPN, int(math.Ceil(float64(desired)/float64(max(1, requiredNodes)))))
 
-	// Group active engines by VPN
+	// Group active engines by VPN. Only count Healthy engines for density
+	// rebalancing to avoid killing starting engines during burst scaling.
 	activeByVPN := make(map[string][]*state.Engine)
 	for _, e := range active {
-		if e.VPNContainer != "" {
+		if e.VPNContainer != "" && e.HealthStatus == state.HealthHealthy {
 			activeByVPN[e.VPNContainer] = append(activeByVPN[e.VPNContainer], e)
 		}
 	}
