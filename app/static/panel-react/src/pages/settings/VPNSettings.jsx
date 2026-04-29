@@ -65,6 +65,7 @@ const DEFAULTS = {
   restart_engines_on_reconnect: true,
   unhealthy_restart_timeout_s: 60,
   preferred_engines_per_vpn: 10,
+  max_engines_per_vpn: 15,
   protocol: 'wireguard',
   provider: 'protonvpn',
   regionsText: '',
@@ -209,6 +210,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         restart_engines_on_reconnect: Boolean(payload?.restart_engines_on_reconnect),
         unhealthy_restart_timeout_s: toNumber(payload?.unhealthy_restart_timeout_s, DEFAULTS.unhealthy_restart_timeout_s),
         preferred_engines_per_vpn: toNumber(payload?.preferred_engines_per_vpn, DEFAULTS.preferred_engines_per_vpn),
+        max_engines_per_vpn: toNumber(payload?.max_engines_per_vpn, DEFAULTS.max_engines_per_vpn),
         protocol: String(payload?.protocol || DEFAULTS.protocol).toLowerCase(),
         provider: normalizeProvider(payload?.provider || DEFAULTS.provider),
         regionsText: Array.isArray(payload?.regions) ? payload.regions.join(', ') : '',
@@ -273,6 +275,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           restart_engines_on_reconnect: Boolean(draft.restart_engines_on_reconnect),
           unhealthy_restart_timeout_s: toNumber(draft.unhealthy_restart_timeout_s, DEFAULTS.unhealthy_restart_timeout_s),
           preferred_engines_per_vpn: Math.max(1, toNumber(draft.preferred_engines_per_vpn, DEFAULTS.preferred_engines_per_vpn)),
+          max_engines_per_vpn: Math.max(1, toNumber(draft.max_engines_per_vpn, DEFAULTS.max_engines_per_vpn)),
           protocol: draft.protocol, // preserving backend schema
           provider: draft.provider, // preserving backend schema
           regions: parseRegionsInput(draft.regionsText), // preserving backend schema
@@ -552,6 +555,10 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
 
           <SettingRow label="Preferred Engines per VPN Node" description="Scheduler hint for desired VPN node count.">
             <Input type="number" min={1} max={100} value={draft.preferred_engines_per_vpn} onChange={(e) => update('preferred_engines_per_vpn', toNumber(e.target.value, DEFAULTS.preferred_engines_per_vpn))} className="max-w-xs" />
+          </SettingRow>
+          
+          <SettingRow label="Max Engines per VPN Node" description="Hard limit to prevent resource saturation per node.">
+            <Input type="number" min={1} max={100} value={draft.max_engines_per_vpn} onChange={(e) => update('max_engines_per_vpn', toNumber(e.target.value, DEFAULTS.max_engines_per_vpn))} className="max-w-xs" />
           </SettingRow>
 
           <Collapsible open={expertOpen} onOpenChange={setExpertOpen} className="w-full">

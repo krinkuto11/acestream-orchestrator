@@ -137,6 +137,7 @@ type Config struct {
 	GluetunHealthCheckInterval time.Duration
 	GluetunPortCacheTTL        time.Duration
 	PreferredEnginesPerVPN     int
+	MaxEnginesPerVPN           int
 	GluetunPortRange1          string
 	GluetunPortRange2          string
 
@@ -388,6 +389,10 @@ func ApplyVPNSettings(m map[string]any) {
 			if p := toInt(v); p > 0 {
 				n.PreferredEnginesPerVPN = p
 			}
+		case "max_engines_per_vpn":
+			if p := toInt(v); p > 0 {
+				n.MaxEnginesPerVPN = p
+			}
 		case "dynamic_vpn_management":
 			// informational only; not a config field
 		case "vpn_servers_auto_refresh":
@@ -512,6 +517,7 @@ func load() *Config {
 		GluetunHealthCheckInterval: envDur("GLUETUN_HEALTH_CHECK_INTERVAL_S", 250*time.Millisecond),
 		GluetunPortCacheTTL:        envDur("GLUETUN_PORT_CACHE_TTL_S", 60*time.Second),
 		PreferredEnginesPerVPN:     envInt("PREFERRED_ENGINES_PER_VPN", 10),
+		MaxEnginesPerVPN:           envInt("MAX_ENGINES_PER_VPN", 15),
 		GluetunPortRange1:          envStr("GLUETUN_PORT_RANGE_1", ""),
 		GluetunPortRange2:          envStr("GLUETUN_PORT_RANGE_2", ""),
 

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -467,13 +468,13 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 	}
 
 	// Prefer under-limit nodes; fall back to least-loaded if all are at the
-	// soft limit so that PreferredEnginesPerVPN stays a preference, not a gate.
+	// soft limit, but respect MaxEnginesPerVPN as a hard limit.
 	chosen, load := st.SelectAndClaimVPN(readyNames, effectiveLimit)
-	if chosen == "" {
-		chosen, load = st.SelectAndClaimVPN(readyNames, 0)
+	if chosen == "" && cfg.MaxEnginesPerVPN > effectiveLimit {
+		chosen, load = st.SelectAndClaimVPN(readyNames, cfg.MaxEnginesPerVPN)
 		if chosen != "" {
 			slog.Info("scheduling engine above preferred limit (soft overflow)",
-				"vpn", chosen, "load", load, "preferred_limit", effectiveLimit)
+				"vpn", chosen, "load", load, "preferred_limit", effectiveLimit, "hard_limit", cfg.MaxEnginesPerVPN)
 		}
 	}
 	if chosen == "" {
@@ -665,14 +666,22 @@ func generateContainerName(prefix string, excluded []string) string {
 		excSet[n] = struct{}{}
 	}
 	hostname, _ := os.Hostname()
+	// Use a short random suffix to prevent name conflicts with recently removed containers
+	// that Docker hasn't fully cleaned up yet.
+	suffix := ""
+	b := make([]byte, 2)
+	if _, err := rand.Read(b); err == nil {
+		suffix = fmt.Sprintf("-%x", b)
+	}
+
 	base := fmt.Sprintf("%s-%s", prefix, hostname[:min8(len(hostname))])
 	for i := 1; i < 1000; i++ {
-		candidate := fmt.Sprintf("%s-%d", base, i)
+		candidate := fmt.Sprintf("%s-%d%s", base, i, suffix)
 		if _, taken := excSet[candidate]; !taken {
 			return candidate
 		}
 	}
-	return fmt.Sprintf("%s-%d", base, 999)
+	return fmt.Sprintf("%s-%d%s", base, 999, suffix)
 }
 
 func min8(n int) int {
