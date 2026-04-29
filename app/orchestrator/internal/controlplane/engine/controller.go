@@ -504,13 +504,19 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 			if !nodeSupportsPortForwarding(node.ContainerName) {
 				continue
 			}
+
+			// We must check ALL active engines on the node for a leader,
+			// not just the healthy ones, otherwise we might trigger a headless
+			// correction while the leader is still starting up.
+			allOnNode := st.GetEnginesByVPN(vpnName)
 			hasLeader := false
-			for _, e := range vpnEngines {
-				if e.Forwarded {
+			for _, e := range allOnNode {
+				if e.Forwarded && !e.Draining && (e.HealthStatus == state.HealthHealthy || e.HealthStatus == state.HealthUnknown) {
 					hasLeader = true
 					break
 				}
 			}
+
 			if !hasLeader && !st.IsForwardedPending(vpnName) && len(vpnEngines) > 0 {
 				slog.Warn("VPN node is headless (PF-capable but no leader); marking follower for replacement", "vpn", vpnName)
 				// Drain the most idle follower to force a leader replacement
