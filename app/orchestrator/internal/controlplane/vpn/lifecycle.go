@@ -4,11 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
-	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/api/types/container"
+	dockerclient "github.com/docker/docker/client"
 
 	"github.com/acestream/acestream/internal/config"
 	"github.com/acestream/acestream/internal/state"
@@ -202,19 +203,53 @@ func (lm *LifecycleManager) scaleDownIdle(ctx context.Context, desiredVPNs int) 
 		return
 	}
 
-	// Prefer removing nodes with no attached engines.
-	excess := len(active) - desiredVPNs
-	removed := 0
-	for _, node := range active {
-		if removed >= excess {
-			break
+	// Proactive compaction: sort nodes by their "disruption score".
+	// We prioritize nodes with zero active streams, then nodes with the fewest engines.
+	type scored struct {
+		node        *state.VPNNode
+		streamCount int
+		engineCount int
+	}
+	var ss []scored
+	streamCounts := st.GetAllStreamCounts()
+	monitorCounts := st.GetAllMonitorCounts()
+
+	for _, n := range active {
+		engines := st.GetEnginesByVPN(n.ContainerName)
+		totalStreams := 0
+		for _, e := range engines {
+			totalStreams += streamCounts[e.ContainerID] + monitorCounts[e.ContainerID]
 		}
-		if len(st.GetEnginesByVPN(node.ContainerName)) == 0 {
-			slog.Info("Scaling down idle VPN node", "name", node.ContainerName)
-			if st.SetVPNNodeDraining(node.ContainerName) {
-				lm.pub.PublishVPNNode(ctx, node)
-			}
-			removed++
+		ss = append(ss, scored{
+			node:        n,
+			streamCount: totalStreams,
+			engineCount: len(engines),
+		})
+	}
+
+	sort.Slice(ss, func(i, j int) bool {
+		if ss[i].streamCount != ss[j].streamCount {
+			return ss[i].streamCount < ss[j].streamCount
+		}
+		return ss[i].engineCount < ss[j].engineCount
+	})
+
+	excess := len(active) - desiredVPNs
+	slog.Info("VPN cluster over-balanced; initiating compaction",
+		"active", len(active),
+		"desired", desiredVPNs,
+		"excess", excess,
+	)
+
+	for i := 0; i < excess; i++ {
+		node := ss[i].node
+		slog.Info("Scaling down VPN node (compaction)",
+			"name", node.ContainerName,
+			"active_streams", ss[i].streamCount,
+			"engines", ss[i].engineCount,
+		)
+		if st.SetVPNNodeDraining(node.ContainerName) {
+			lm.pub.PublishVPNNode(ctx, node)
 		}
 	}
 }
