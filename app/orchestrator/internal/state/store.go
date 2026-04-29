@@ -1,6 +1,7 @@
 package state
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -91,6 +92,22 @@ func (s *Store) ListEngines() []*Engine {
 	for _, e := range s.engines {
 		out = append(out, e)
 	}
+	return out
+}
+
+func (s *Store) ListEnginesWithCounts() []*Engine {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*Engine, 0, len(s.engines))
+	for _, e := range s.engines {
+		cp := *e
+		cp.StreamCount = s.streamCounts[e.ContainerID]
+		cp.MonitorStreamCount = s.monitorCounts[e.ContainerID]
+		out = append(out, &cp)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ContainerName < out[j].ContainerName
+	})
 	return out
 }
 

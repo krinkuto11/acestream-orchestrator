@@ -373,6 +373,24 @@ func buildGluetunEnv(
 	// Optional credential env.
 	applyOptionalCredentialEnv(env, protocol, cred)
 
+	// Global MTU override (only for WireGuard; skip if credential already set it).
+	if protocol == "wireguard" {
+		if _, alreadySet := env["WIREGUARD_MTU"]; !alreadySet {
+			var mtu int
+			switch n := settings["wireguard_mtu"].(type) {
+			case float64:
+				mtu = int(n)
+			case int:
+				mtu = n
+			case int64:
+				mtu = int(n)
+			}
+			if mtu > 0 {
+				env["WIREGUARD_MTU"] = fmt.Sprintf("%d", mtu)
+			}
+		}
+	}
+
 	// Extra env from settings and credential.
 	for _, source := range []map[string]interface{}{settings, cred} {
 		if extra, ok := source["extra_env"].(map[string]interface{}); ok {

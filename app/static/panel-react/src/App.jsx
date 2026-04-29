@@ -76,10 +76,19 @@ function AppContent() {
       })
       const streamsData = Array.from(streamsById.values())
 
-      const mergedEngines = (Array.isArray(enginesData) ? enginesData : []).map((engine) => ({
-        ...engine,
-        docker_stats: engineStatsData?.[engine.container_id] || null,
-      }))
+      const mergedEngines = (Array.isArray(enginesData) ? enginesData : []).map((engine) => {
+        const fromMap = engineStatsData?.[engine.container_id] || null
+        const docker_stats = fromMap || (
+          engine.cpu_percent != null || engine.memory_usage != null
+            ? {
+                cpu_percent: engine.cpu_percent ?? 0,
+                memory_usage: engine.memory_usage ?? 0,
+                memory_percent: engine.memory_percent ?? 0,
+              }
+            : null
+        )
+        return { ...engine, docker_stats }
+      })
       
       let vpnDataWithIp = vpnData
       if (vpnData.enabled && vpnData.connected) {
@@ -116,10 +125,19 @@ function AppContent() {
       const nextStreams = Array.isArray(payload.streams) ? payload.streams : []
       const nextEngineStats = payload.engine_docker_stats || {}
 
-      const mergedEngines = nextEngines.map((engine) => ({
-        ...engine,
-        docker_stats: nextEngineStats?.[engine.container_id] || null,
-      }))
+      const mergedEngines = nextEngines.map((engine) => {
+        const fromMap = nextEngineStats?.[engine.container_id] || null
+        const docker_stats = fromMap || (
+          engine.cpu_percent != null || engine.memory_usage != null
+            ? {
+                cpu_percent: engine.cpu_percent ?? 0,
+                memory_usage: engine.memory_usage ?? 0,
+                memory_percent: engine.memory_percent ?? 0,
+              }
+            : null
+        )
+        return { ...engine, docker_stats }
+      })
 
       setEngines(mergedEngines)
       setStreams(nextStreams)

@@ -83,6 +83,7 @@ const DEFAULTS = {
   vpn_servers_proton_password: '',
   vpn_servers_proton_totp_code: '',
   vpn_servers_proton_totp_secret: '',
+  wireguard_mtu: 0,
 }
 
 const toNumber = (value, fallback = 0) => {
@@ -226,6 +227,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
         vpn_servers_proton_password: String(payload?.vpn_servers_proton_password || ''),
         vpn_servers_proton_totp_code: String(payload?.vpn_servers_proton_totp_code || ''),
         vpn_servers_proton_totp_secret: String(payload?.vpn_servers_proton_totp_secret || ''),
+        wireguard_mtu: toNumber(payload?.wireguard_mtu, DEFAULTS.wireguard_mtu),
       }
 
       setInitialState(normalized)
@@ -291,6 +293,7 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
           vpn_servers_proton_password: String(draft.vpn_servers_proton_password || '').trim() || null,
           vpn_servers_proton_totp_code: String(draft.vpn_servers_proton_totp_code || '').trim() || null,
           vpn_servers_proton_totp_secret: String(draft.vpn_servers_proton_totp_secret || '').trim() || null,
+          wireguard_mtu: Math.max(0, toNumber(draft.wireguard_mtu, DEFAULTS.wireguard_mtu)),
         }
 
         const response = await fetch(`${orchUrl}/api/v1/settings/vpn`, {
@@ -566,6 +569,10 @@ export function VPNSettings({ apiKey, orchUrl, authRequired }) {
             <CollapsibleContent className="space-y-3 pt-2">
               <SettingRow label="Gluetun API Port" description="Must match Gluetun HTTP control server port.">
                 <Input type="number" min={1} max={65535} value={draft.api_port} onChange={(e) => update('api_port', toNumber(e.target.value, DEFAULTS.api_port))} className="max-w-xs" />
+              </SettingRow>
+
+              <SettingRow label="WireGuard MTU" description="Force a specific MTU for the WireGuard tunnel. Set to 0 to let Gluetun auto-detect.">
+                <Input type="number" min={0} max={9000} value={draft.wireguard_mtu} onChange={(e) => update('wireguard_mtu', toNumber(e.target.value, DEFAULTS.wireguard_mtu))} className="max-w-xs" placeholder="0 = auto-detect" />
               </SettingRow>
 
               <SettingRow label="Health Check Interval (s)" description="VPN health polling cadence.">

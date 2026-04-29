@@ -399,6 +399,7 @@ func defaultVPNSettings() map[string]any {
 		"vpn_servers_filter_tor":         "include",
 		"vpn_servers_filter_free_tier":   "include",
 		"credentials":                    []any{},
+		"wireguard_mtu":                  0,
 	}
 }
 
@@ -560,6 +561,7 @@ func normalizeVPNSettings(m map[string]any) map[string]any {
 		"preferred_engines_per_vpn", "api_port",
 		"unhealthy_restart_timeout_s", "port_cache_ttl_s",
 		"health_check_interval_s", "vpn_servers_refresh_period_s",
+		"wireguard_mtu",
 	} {
 		if v, ok := out[k]; ok {
 			out[k] = toIntNorm(v)

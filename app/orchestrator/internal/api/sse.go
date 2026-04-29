@@ -469,7 +469,7 @@ func (s *ProxyServer) handleSSEReprovisionStatus(w http.ResponseWriter, r *http.
 
 func (s *ProxyServer) buildStatePayload() map[string]any {
 	cfg := config.C.Load()
-	engines := s.st.ListEngines()
+	engines := s.st.ListEnginesWithCounts()
 	streams := s.st.ListStreams()
 	vpns := s.st.ListVPNNodes()
 
