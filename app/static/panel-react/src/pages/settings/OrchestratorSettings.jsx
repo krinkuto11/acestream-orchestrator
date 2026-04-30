@@ -10,9 +10,6 @@ const DEFAULTS = {
   engine_grace_period_s: 30,
   autoscale_interval_s: 30,
   startup_timeout_s: 25,
-  idle_ttl_s: 600,
-  collect_interval_s: 1,
-  stats_history_max: 720,
   health_check_interval_s: 20,
   health_failure_threshold: 3,
   health_unhealthy_grace_period_s: 60,
@@ -21,12 +18,10 @@ const DEFAULTS = {
   circuit_breaker_recovery_timeout_s: 300,
   circuit_breaker_replacement_threshold: 3,
   circuit_breaker_replacement_timeout_s: 180,
-  max_concurrent_provisions: 5,
-  min_provision_interval_s: 0.5,
   port_range_host: '19000-19999',
   ace_http_range: '40000-44999',
   ace_https_range: '45000-49999',
-  debug_mode: false,
+  docker_network: '',
 }
 
 const toNumber = (value, fallback = 0) => {
@@ -77,7 +72,7 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
       const normalized = {
         ...DEFAULTS,
         ...payload,
-        debug_mode: Boolean(payload?.debug_mode),
+        docker_network: String(payload?.docker_network || ''),
       }
       setInitialState(normalized)
       setDraft(normalized)
@@ -117,9 +112,6 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
             engine_grace_period_s: toNumber(draft.engine_grace_period_s, DEFAULTS.engine_grace_period_s),
             autoscale_interval_s: toNumber(draft.autoscale_interval_s, DEFAULTS.autoscale_interval_s),
             startup_timeout_s: toNumber(draft.startup_timeout_s, DEFAULTS.startup_timeout_s),
-            idle_ttl_s: toNumber(draft.idle_ttl_s, DEFAULTS.idle_ttl_s),
-            collect_interval_s: 1,
-            stats_history_max: toNumber(draft.stats_history_max, DEFAULTS.stats_history_max),
             health_check_interval_s: toNumber(draft.health_check_interval_s, DEFAULTS.health_check_interval_s),
             health_failure_threshold: toNumber(draft.health_failure_threshold, DEFAULTS.health_failure_threshold),
             health_unhealthy_grace_period_s: toNumber(draft.health_unhealthy_grace_period_s, DEFAULTS.health_unhealthy_grace_period_s),
@@ -128,9 +120,7 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
             circuit_breaker_recovery_timeout_s: toNumber(draft.circuit_breaker_recovery_timeout_s, DEFAULTS.circuit_breaker_recovery_timeout_s),
             circuit_breaker_replacement_threshold: toNumber(draft.circuit_breaker_replacement_threshold, DEFAULTS.circuit_breaker_replacement_threshold),
             circuit_breaker_replacement_timeout_s: toNumber(draft.circuit_breaker_replacement_timeout_s, DEFAULTS.circuit_breaker_replacement_timeout_s),
-            max_concurrent_provisions: toNumber(draft.max_concurrent_provisions, DEFAULTS.max_concurrent_provisions),
-            min_provision_interval_s: toNumber(draft.min_provision_interval_s, DEFAULTS.min_provision_interval_s),
-            debug_mode: Boolean(draft.debug_mode),
+            docker_network: String(draft.docker_network || ''),
           }),
         })
 
@@ -143,7 +133,7 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
         const normalized = {
           ...DEFAULTS,
           ...payload,
-          debug_mode: Boolean(payload?.debug_mode),
+          docker_network: String(payload?.docker_network || ''),
         }
 
         setInitialState(normalized)
@@ -208,20 +198,20 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
       <Card>
         <CardHeader>
           <CardTitle>Timeouts</CardTitle>
-          <CardDescription>Core lifecycle timing controls for startup, idle cleanup, and autoscaling loops.</CardDescription>
+          <CardDescription>Core lifecycle timing controls for startup and autoscaling loops.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <SettingRow label="Startup Timeout (s)" description="Max wait for an engine to become ready.">
             <Input value={draft.startup_timeout_s} type="number" min={5} max={180} onChange={(e) => update('startup_timeout_s', toNumber(e.target.value, DEFAULTS.startup_timeout_s))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Idle TTL (s)" description="How long an idle engine remains before cleanup.">
-            <Input value={draft.idle_ttl_s} type="number" min={30} max={7200} onChange={(e) => update('idle_ttl_s', toNumber(e.target.value, DEFAULTS.idle_ttl_s))} className="max-w-xs" />
           </SettingRow>
           <SettingRow label="Engine Grace Period (s)" description="Delay before stopping engine after last stream ends.">
             <Input value={draft.engine_grace_period_s} type="number" min={1} max={600} onChange={(e) => update('engine_grace_period_s', toNumber(e.target.value, DEFAULTS.engine_grace_period_s))} className="max-w-xs" />
           </SettingRow>
           <SettingRow label="Autoscale Interval (s)" description="Frequency of autoscale decision cycles.">
             <Input value={draft.autoscale_interval_s} type="number" min={5} max={300} onChange={(e) => update('autoscale_interval_s', toNumber(e.target.value, DEFAULTS.autoscale_interval_s))} className="max-w-xs" />
+          </SettingRow>
+          <SettingRow label="Monitor Interval (s)" description="Docker monitor sweep interval.">
+            <Input value={draft.monitor_interval_s} type="number" min={1} max={60} onChange={(e) => update('monitor_interval_s', toNumber(e.target.value, DEFAULTS.monitor_interval_s))} className="max-w-xs" />
           </SettingRow>
         </CardContent>
       </Card>
@@ -270,29 +260,8 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Provisioning Controls</CardTitle>
-          <CardDescription>Concurrency and scheduling limits for engine provisioning.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <SettingRow label="Max Concurrent Provisions" description="Upper bound for parallel container provisions.">
-            <Input value={draft.max_concurrent_provisions} type="number" min={1} max={20} onChange={(e) => update('max_concurrent_provisions', toNumber(e.target.value, DEFAULTS.max_concurrent_provisions))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Min Provision Interval (s)" description="Minimum interval between provision requests.">
-            <Input value={draft.min_provision_interval_s} type="number" min={0} max={10} step={0.1} onChange={(e) => update('min_provision_interval_s', toNumber(e.target.value, DEFAULTS.min_provision_interval_s))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Monitor Interval (s)" description="Docker monitor sweep interval.">
-            <Input value={draft.monitor_interval_s} type="number" min={1} max={60} onChange={(e) => update('monitor_interval_s', toNumber(e.target.value, DEFAULTS.monitor_interval_s))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Stats History Size" description="Maximum snapshots stored per stream.">
-            <Input value={draft.stats_history_max} type="number" min={10} max={10000} onChange={(e) => update('stats_history_max', toNumber(e.target.value, DEFAULTS.stats_history_max))} className="max-w-xs" />
-          </SettingRow>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Network Port Ranges</CardTitle>
-          <CardDescription>Port ranges must match Docker publish mappings for new engines.</CardDescription>
+          <CardTitle>Network Settings</CardTitle>
+          <CardDescription>Port ranges and network configuration for new engines.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <SettingRow label="Host Port Range" description="Engine host-side exposed ports." warning="Requires matching docker-compose publish range.">
@@ -304,8 +273,8 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
           <SettingRow label="Ace HTTPS Range" description="Internal Ace HTTPS port range." warning="Applies to newly provisioned engines.">
             <Input value={draft.ace_https_range} onChange={(e) => update('ace_https_range', e.target.value)} className="max-w-sm" />
           </SettingRow>
-          <SettingRow label="Debug Mode" description="Enables verbose orchestration logs for diagnostics.">
-            <Switch checked={Boolean(draft.debug_mode)} onCheckedChange={(value) => update('debug_mode', Boolean(value))} />
+          <SettingRow label="Docker Network" description="Override the auto-detected Docker network for engine provisioning.">
+            <Input value={draft.docker_network} placeholder="e.g. acestream-net" onChange={(e) => update('docker_network', e.target.value)} className="max-w-sm" />
           </SettingRow>
         </CardContent>
       </Card>

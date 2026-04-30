@@ -87,6 +87,8 @@ func (s *SettingsStore) Save(category string, payload map[string]any) error {
 		merged = normalizeProxySettings(merged)
 	case "vpn_settings":
 		merged = normalizeVPNSettings(merged)
+	case "orchestrator_settings":
+		merged = normalizeOrchestratorSettings(merged)
 	}
 
 	data, err := json.Marshal(merged)
@@ -329,9 +331,6 @@ func defaultOrchestratorSettings() map[string]any {
 		"engine_grace_period_s":                 30,
 		"autoscale_interval_s":                  30,
 		"startup_timeout_s":                     25,
-		"idle_ttl_s":                            600,
-		"collect_interval_s":                    1,
-		"stats_history_max":                     720,
 		"health_check_interval_s":               20,
 		"health_failure_threshold":              3,
 		"health_unhealthy_grace_period_s":       60,
@@ -340,12 +339,10 @@ func defaultOrchestratorSettings() map[string]any {
 		"circuit_breaker_recovery_timeout_s":    300,
 		"circuit_breaker_replacement_threshold": 3,
 		"circuit_breaker_replacement_timeout_s": 180,
-		"max_concurrent_provisions":             5,
-		"min_provision_interval_s":              0.5,
 		"port_range_host":                       "19000-19999",
 		"ace_http_range":                        "40000-44999",
 		"ace_https_range":                       "45000-49999",
-		"debug_mode":                            false,
+		"docker_network":                        "",
 	}
 }
 
@@ -543,6 +540,43 @@ func normalizeProxySettings(m map[string]any) map[string]any {
 			f = 30
 		}
 		out["proxy_prebuffer_seconds"] = f
+	}
+
+	return out
+}
+
+func normalizeOrchestratorSettings(m map[string]any) map[string]any {
+	out := deepCopyMap(m)
+
+	// Integer fields
+	for _, k := range []string{
+		"monitor_interval_s", "engine_grace_period_s", "autoscale_interval_s",
+		"startup_timeout_s", "health_check_interval_s", "health_failure_threshold",
+		"health_unhealthy_grace_period_s", "health_replacement_cooldown_s",
+		"circuit_breaker_failure_threshold", "circuit_breaker_recovery_timeout_s",
+		"circuit_breaker_replacement_threshold", "circuit_breaker_replacement_timeout_s",
+	} {
+		if v, ok := out[k]; ok {
+			out[k] = toIntNorm(v)
+		}
+	}
+
+	// String fields
+	for _, k := range []string{
+		"port_range_host", "ace_http_range", "ace_https_range", "docker_network",
+	} {
+		if v, ok := out[k].(string); ok {
+			out[k] = strings.TrimSpace(v)
+		}
+	}
+
+	// Remove legacy/redundant keys if they exist in the map
+	redundant := []string{
+		"idle_ttl_s", "collect_interval_s", "stats_history_max",
+		"max_concurrent_provisions", "min_provision_interval_s", "debug_mode",
+	}
+	for _, k := range redundant {
+		delete(out, k)
 	}
 
 	return out
