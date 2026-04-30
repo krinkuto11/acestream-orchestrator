@@ -1,59 +1,270 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import EngineList from '@/components/EngineList'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
-import { Button } from '@/components/ui/button'
-import { AlertCircle, Save, Settings2 } from 'lucide-react'
 import { useNotifications } from '@/context/NotificationContext'
 import { EngineConfiguration } from '@/components/CustomEngineBlocks'
 import { ManualEngineList } from '@/components/ManualEngineList'
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
+
+function AsciiBar({ value, max = 100, width = 10, color = 'var(--acc-green)' }) {
+  const filled = Math.round((Math.min(value, max) / max) * width)
+  const empty = width - filled
+  return (
+    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--fg-3)', fontSize: 11 }}>
+      [<span style={{ color }}>{'█'.repeat(filled)}</span>{'░'.repeat(empty)}]
+    </span>
+  )
+}
+
+function StatusTag({ status }) {
+  const map = {
+    healthy: 'green', active: 'green',
+    unhealthy: 'red', failed: 'red',
+    unknown: 'amber', pending: 'amber',
+    draining: 'amber',
+  }
+  const color = map[status?.toLowerCase()] || 'amber'
+  return <span className={`tag tag-${color}`}><span className="dot"/>{(status || 'unknown').toUpperCase()}</span>
+}
+
+// ── Rack Row ──────────────────────────────────────────────────────────────────
+function EngineRackRow({ engine, idx, onDelete }) {
+  const status = engine.health_status || 'unknown'
+  const accent = {
+    healthy: 'var(--acc-green)',
+    unhealthy: 'var(--acc-red)',
+    unknown: 'var(--acc-amber)',
+    pending: 'var(--acc-cyan)',
+  }[status] || 'var(--fg-2)'
+
+  const cpu = Number(engine.docker_stats?.cpu_percent || 0)
+  const memMb = Math.round(Number(engine.docker_stats?.memory_usage || 0) / 1024 / 1024)
+  const streamCount = engine.stream_count ?? 0
+  const name = engine.container_name || engine.container_id?.slice(0, 12) || '–'
+
+  // Session blocks
+  const sessionBlocks = Array.from({ length: Math.min(streamCount, 8) }).map((_, i) => (
+    <div key={i} style={{
+      flex: 1, height: 14,
+      background: accent,
+      opacity: 0.85 - i * 0.08,
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'repeating-linear-gradient(90deg, transparent 0 4px, rgba(0,0,0,0.18) 4px 5px)',
+        animation: status === 'healthy' ? 'flow 1.2s linear infinite' : 'none',
+      }}/>
+    </div>
+  ))
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center',
+      borderBottom: '1px solid var(--line-soft)',
+      background: idx % 2 === 0 ? 'var(--bg-1)' : 'var(--bg-0)',
+      height: 40,
+      minWidth: 0,
+    }}>
+      {/* Slot */}
+      <div style={{ width: 32, padding: '0 6px', borderRight: '1px solid var(--line-soft)', fontSize: 10, color: 'var(--fg-3)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+        U{String(idx + 1).padStart(2, '0')}
+      </div>
+      {/* Status bar */}
+      <div style={{ width: 4, background: accent, alignSelf: 'stretch', flexShrink: 0 }}/>
+      {/* Name */}
+      <div style={{ width: 140, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', flexShrink: 0 }}>
+        <span style={{ fontSize: 11, color: 'var(--fg-0)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {name}
+        </span>
+      </div>
+      {/* Port */}
+      <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', fontSize: 10, color: 'var(--fg-2)', flexShrink: 0 }}>
+        :{engine.port || '–'}
+      </div>
+      {/* VPN */}
+      <div style={{ width: 120, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', fontSize: 10, color: 'var(--acc-cyan)', overflow: 'hidden', flexShrink: 0 }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {engine.vpn_container ? `⌬ ${engine.vpn_container}` : '— none'}
+        </span>
+      </div>
+      {/* Status */}
+      <div style={{ width: 96, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+        <StatusTag status={status}/>
+      </div>
+      {/* CPU */}
+      <div style={{ width: 136, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        <span style={{ fontSize: 10, color: 'var(--fg-2)' }}>cpu</span>
+        <AsciiBar value={cpu} width={10} color={cpu > 80 ? 'var(--acc-red)' : cpu > 50 ? 'var(--acc-amber)' : 'var(--acc-green)'}/>
+        <span style={{ fontSize: 10, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', width: 36, flexShrink: 0 }}>{cpu.toFixed(1)}%</span>
+      </div>
+      {/* Mem */}
+      <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', fontSize: 10, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+        {memMb}M
+      </div>
+      {/* Sessions */}
+      <div style={{ flex: 1, borderLeft: '1px solid var(--line-soft)', padding: 8, display: 'flex', alignItems: 'center', gap: 2, minWidth: 80 }}>
+        {sessionBlocks.length > 0
+          ? sessionBlocks
+          : <span style={{ fontSize: 10, color: 'var(--fg-3)', fontStyle: 'italic' }}>— idle —</span>
+        }
+      </div>
+      {/* Count */}
+      <div style={{ width: 56, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontSize: 11, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+        {streamCount}<span style={{ color: 'var(--fg-3)' }}>/8</span>
+      </div>
+      {/* Actions */}
+      <div style={{ width: 40, borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <button
+          onClick={() => onDelete(engine.container_id)}
+          style={{
+            background: 'transparent', border: 0,
+            color: 'var(--fg-3)', cursor: 'pointer', fontSize: 12,
+            padding: '4px 8px',
+            fontFamily: 'var(--font-mono)',
+          }}
+          title="Delete engine"
+        >✕</button>
+      </div>
+    </div>
+  )
+}
+
+// ── Column header ─────────────────────────────────────────────────────────────
+function RackHeader() {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center',
+      height: 24,
+      background: 'var(--bg-2)',
+      borderBottom: '1px solid var(--line)',
+      fontSize: 9, letterSpacing: '0.1em', color: 'var(--fg-3)',
+      fontFamily: 'var(--font-mono)',
+    }}>
+      <div style={{ width: 32, padding: '0 6px', borderRight: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0 }}>SLOT</div>
+      <div style={{ width: 4, flexShrink: 0 }}/>
+      <div style={{ width: 140, padding: '0 10px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>ID</div>
+      <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>PORT</div>
+      <div style={{ width: 120, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>VPN</div>
+      <div style={{ width: 96, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>STATUS</div>
+      <div style={{ width: 136, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>CPU</div>
+      <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>MEM</div>
+      <div style={{ flex: 1, borderLeft: '1px solid var(--line-soft)', padding: '0 10px', display: 'flex', alignItems: 'center' }}>SESSIONS</div>
+      <div style={{ width: 56, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0 }}>USED</div>
+      <div style={{ width: 40, borderLeft: '1px solid var(--line-soft)', flexShrink: 0 }}/>
+    </div>
+  )
+}
+
+// ── Settings panel ────────────────────────────────────────────────────────────
+function CfgRow({ k, v }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '8px 14px', borderBottom: '1px dashed var(--line-soft)' }}>
+      <span style={{ color: 'var(--fg-3)', flex: 1 }}>{k}</span>
+      <span style={{ color: 'var(--fg-0)' }}>{v}</span>
+    </div>
+  )
+}
+
+function Toggle({ checked, onChange, disabled }) {
+  return (
+    <button
+      onClick={() => !disabled && onChange(!checked)}
+      style={{
+        width: 36, height: 18,
+        background: checked ? 'var(--acc-green-bg)' : 'var(--bg-2)',
+        border: `1px solid ${checked ? 'var(--acc-green-dim)' : 'var(--line)'}`,
+        borderRadius: 2,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        display: 'flex', alignItems: 'center',
+        padding: '0 2px',
+        transition: 'background 0.15s',
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      <div style={{
+        width: 12, height: 12,
+        background: checked ? 'var(--acc-green)' : 'var(--fg-3)',
+        borderRadius: 1,
+        transform: checked ? 'translateX(18px)' : 'translateX(0)',
+        transition: 'transform 0.15s, background 0.15s',
+      }}/>
+    </button>
+  )
+}
+
+function SettingField({ label, desc, value, onChange, type = 'text', disabled }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--line-soft)' }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 11, color: 'var(--fg-1)' }}>{label}</div>
+        {desc && <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>{desc}</div>}
+      </div>
+      {type === 'toggle' ? (
+        <Toggle checked={Boolean(value)} onChange={onChange} disabled={disabled}/>
+      ) : (
+        <input
+          type={type === 'number' ? 'number' : 'text'}
+          value={value}
+          onChange={e => onChange(type === 'number' ? (parseInt(e.target.value) || 0) : e.target.value)}
+          disabled={disabled}
+          style={{
+            background: 'var(--bg-0)',
+            border: '1px solid var(--line)',
+            color: 'var(--fg-0)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            padding: '4px 8px',
+            width: 120,
+            outline: 'none',
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
 export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKey, fetchJSON }) {
   const { addNotification } = useNotifications()
+  const [activeTab, setActiveTab] = useState('rack')
 
   const [engineSettings, setEngineSettings] = useState({
-    min_replicas: 2,
-    max_replicas: 6,
-    auto_delete: true,
-    live_cache_type: 'memory',
-    total_max_download_rate: 0,
-    total_max_upload_rate: 0,
-    buffer_time: 10,
-    max_peers: 50,
-    memory_limit: null,
-    manual_mode: false,
-    manual_engines: []
+    min_replicas: 2, max_replicas: 6, auto_delete: true,
+    live_cache_type: 'memory', total_max_download_rate: 0,
+    total_max_upload_rate: 0, buffer_time: 10, max_peers: 50,
+    memory_limit: null, manual_mode: false, manual_engines: [],
   })
   const [loadingSettings, setLoadingSettings] = useState(true)
   const [savingSettings, setSavingSettings] = useState(false)
   const [settingsChanged, setSettingsChanged] = useState(false)
-
   const [cacheStats, setCacheStats] = useState({ total_bytes: 0, volume_count: 0 })
 
   const loadEngineSettings = useCallback(async () => {
     try {
       setLoadingSettings(true)
-      const settings = await fetchJSON(`${orchUrl}/api/v1/settings/engine`)
-      setEngineSettings(settings)
+      const s = await fetchJSON(`${orchUrl}/api/v1/settings/engine`)
+      setEngineSettings(s)
       setSettingsChanged(false)
     } catch (err) {
-      console.error('Failed to load engine settings:', err)
       addNotification(`Failed to load engine settings: ${err.message}`, 'error')
     } finally {
       setLoadingSettings(false)
     }
-  }, [orchUrl, fetchJSON])
+  }, [orchUrl, fetchJSON, addNotification])
 
   const loadCacheStats = useCallback(async () => {
     try {
-      const stats = await fetchJSON(`${orchUrl}/api/v1/engine-cache/stats`)
-      setCacheStats(stats)
-    } catch (err) {
-      console.error('Failed to load cache stats:', err)
-    }
+      const s = await fetchJSON(`${orchUrl}/api/v1/engine-cache/stats`)
+      setCacheStats(s)
+    } catch { /* best-effort */ }
   }, [orchUrl, fetchJSON])
 
   useEffect(() => {
@@ -62,14 +273,6 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     const interval = setInterval(loadCacheStats, 30000)
     return () => clearInterval(interval)
   }, [loadEngineSettings, loadCacheStats])
-
-  const formatBytes = (bytes) => {
-    if (bytes === 0) return '0 Bytes'
-    const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
 
   const handleSettingChange = (key, value) => {
     setEngineSettings(prev => ({ ...prev, [key]: value }))
@@ -81,11 +284,8 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
       setSavingSettings(true)
       await fetchJSON(`${orchUrl}/api/v1/settings/engine`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify(engineSettings)
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify(engineSettings),
       })
       addNotification('Engine settings saved successfully', 'success')
       setSettingsChanged(false)
@@ -94,176 +294,196 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     } finally {
       setSavingSettings(false)
     }
-  }, [orchUrl, fetchJSON, engineSettings, apiKey])
+  }, [orchUrl, fetchJSON, engineSettings, apiKey, addNotification])
+
+  const healthy = engines.filter(e => e.health_status === 'healthy').length
+  const unhealthy = engines.filter(e => e.health_status === 'unhealthy').length
+  const unknown = engines.filter(e => !e.health_status || e.health_status === 'unknown').length
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Page header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Engines</h1>
-          <p className="text-muted-foreground mt-1">Manage and monitor AceStream engine containers</p>
-        </div>
-        {cacheStats.volume_count > 0 && (
-          <div className="text-right">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground justify-end">
-              <span>Engine Cache Size:</span>
-              <span className="font-semibold text-foreground">{formatBytes(cacheStats.total_bytes)}</span>
-            </div>
-            <p className="text-[10px] opacity-60">across {cacheStats.volume_count} volumes</p>
+          <h1 style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 18, fontWeight: 600,
+            color: 'var(--fg-0)', margin: 0,
+          }}>Engines</h1>
+          <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 2 }}>
+            {engines.length} containers · {healthy} healthy · {unhealthy} unhealthy · {unknown} unknown
+            {cacheStats.volume_count > 0 && ` · cache ${formatBytes(cacheStats.total_bytes)}`}
           </div>
+        </div>
+        <div style={{ flex: 1 }}/>
+        <span className={`tag tag-green`} style={{ cursor: 'pointer' }}>
+          <span className="dot"/> HEALTHY {healthy}
+        </span>
+        {unhealthy > 0 && (
+          <span className="tag tag-red">
+            <span className="dot"/> UNHEALTHY {unhealthy}
+          </span>
         )}
       </div>
 
-      <Tabs defaultValue="status" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 border-slate-700 bg-slate-900/90 text-slate-300">
-          <TabsTrigger
-            value="status"
-            className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50"
-          >
-            Engine Status
-          </TabsTrigger>
-          <TabsTrigger
-            value="configuration"
-            className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50"
-          >
-            Engine Settings
-          </TabsTrigger>
-        </TabsList>
+      {/* Tab bar */}
+      <div style={{
+        display: 'flex', gap: 1,
+        background: 'var(--bg-1)',
+        border: '1px solid var(--line-soft)',
+        padding: 1,
+        width: 'fit-content',
+      }}>
+        {[['rack', 'RACK · ENGINE STATUS'], ['settings', 'ENGINE SETTINGS']].map(([id, label]) => (
+          <button key={id} onClick={() => setActiveTab(id)} style={{
+            padding: '6px 14px',
+            background: activeTab === id ? 'var(--bg-3)' : 'transparent',
+            border: 0,
+            color: activeTab === id ? 'var(--fg-0)' : 'var(--fg-2)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10,
+            letterSpacing: '0.08em',
+            cursor: 'pointer',
+            borderLeft: activeTab === id ? '2px solid var(--acc-green)' : '2px solid transparent',
+          }}>{label}</button>
+        ))}
+      </div>
 
-        <TabsContent value="status" className="space-y-6 mt-6">
-          <EngineList
-            engines={engines}
-            onDeleteEngine={onDeleteEngine}
-            vpnStatus={vpnStatus}
-          />
-        </TabsContent>
-
-        <TabsContent value="configuration" className="space-y-6 mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Settings2 className="h-5 w-5" />
-                  Engine Settings
-              </CardTitle>
-              <CardDescription>
-                Configure global engine customization, replica counts, and automatic cleanup settings
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Manual Mode Toggle */}
-              <div className="flex items-center justify-between pb-4 border-b">
-                <div className="space-y-0.5">
-                  <Label className="text-base">Engine Pool Management</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {engineSettings.manual_mode
-                      ? "Manual Mode: Directly specify external AceStream engines"
-                      : "Auto-Provisioned: Automatically manage Docker engine lifecycle"}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs font-medium ${!engineSettings.manual_mode ? 'text-primary' : 'text-muted-foreground'}`}>Auto</span>
-                  <Switch
-                    checked={engineSettings.manual_mode}
-                    onCheckedChange={(checked) => handleSettingChange('manual_mode', checked)}
-                    disabled={loadingSettings}
-                  />
-                  <span className={`text-xs font-medium ${engineSettings.manual_mode ? 'text-primary' : 'text-muted-foreground'}`}>Manual</span>
-                </div>
+      {/* Rack view */}
+      {activeTab === 'rack' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{
+            background: 'var(--bg-1)',
+            border: '1px solid var(--line-soft)',
+            overflow: 'hidden',
+          }}>
+            {/* Rack header row */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '10px 14px',
+              borderBottom: '1px solid var(--line)',
+            }}>
+              <span className="label">RACK · ENGINES</span>
+              <span style={{ fontSize: 10, color: 'var(--fg-2)' }}>
+                {engines.length} units
+              </span>
+              <div style={{ flex: 1 }}/>
+            </div>
+            <RackHeader/>
+            {engines.length === 0 ? (
+              <div style={{ padding: 24, fontSize: 11, color: 'var(--fg-3)', textAlign: 'center', fontStyle: 'italic' }}>
+                No engines provisioned
               </div>
+            ) : (
+              engines.map((e, i) => (
+                <EngineRackRow key={e.container_id} engine={e} idx={i} onDelete={onDeleteEngine}/>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
-              {!engineSettings.manual_mode ? (
-                <>
-                  <EngineConfiguration
-                    engineSettings={engineSettings}
-                    onSettingChange={handleSettingChange}
-                    disabled={loadingSettings}
-                  />
+      {/* Settings */}
+      {activeTab === 'settings' && (
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <div style={{
+            flex: 1,
+            background: 'var(--bg-1)',
+            border: '1px solid var(--line-soft)',
+          }}>
+            {/* Panel header */}
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
+              <span className="label">ENGINE POOL MANAGEMENT</span>
+            </div>
 
-                  {/* MIN_REPLICAS */}
-                  <div className="space-y-2">
-                    <Label htmlFor="min-replicas">Minimum Replicas</Label>
-                    <Input
-                      id="min-replicas"
-                      type="number"
-                      min="0"
-                      max="50"
-                      value={engineSettings.min_replicas}
-                      onChange={(e) => handleSettingChange('min_replicas', parseInt(e.target.value) || 0)}
-                      disabled={loadingSettings}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Minimum number of engine replicas to maintain (0-50, default: 2)
-                    </p>
-                  </div>
+            <SettingField
+              label="Pool Management Mode"
+              desc={engineSettings.manual_mode ? 'Manual: specify external engines' : 'Auto: manage Docker lifecycle'}
+              value={engineSettings.manual_mode}
+              onChange={v => handleSettingChange('manual_mode', v)}
+              type="toggle"
+              disabled={loadingSettings}
+            />
 
-                  {/* MAX_REPLICAS */}
-                  <div className="space-y-2">
-                    <Label htmlFor="max-replicas">Maximum Replicas</Label>
-                    <Input
-                      id="max-replicas"
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={engineSettings.max_replicas}
-                      onChange={(e) => handleSettingChange('max_replicas', parseInt(e.target.value) || 6)}
-                      disabled={loadingSettings}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Maximum number of engine replicas allowed (1-100, default: 6)
-                    </p>
-                  </div>
-
-                  {/* AUTO_DELETE */}
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <Label htmlFor="auto-delete">Automatic Engine Cleanup</Label>
-                      <p className="text-xs text-muted-foreground">
-                        Automatically delete engines when they are stopped (default: true)
-                      </p>
-                    </div>
-                    <Switch
-                      id="auto-delete"
-                      checked={engineSettings.auto_delete}
-                      onCheckedChange={(checked) => handleSettingChange('auto_delete', checked)}
-                      disabled={loadingSettings}
-                    />
-                  </div>
-                </>
-              ) : (
-                <div className="space-y-4">
-                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:bg-blue-950/30 dark:border-blue-900">
-                    <div className="flex items-start gap-3 text-blue-800 dark:text-blue-300">
-                      <AlertCircle className="h-5 w-5 mt-0.5" />
-                      <div>
-                        <p className="font-semibold text-sm italic">Manual Mode Active</p>
-                        <p className="text-xs mt-1">Docker provisioning is disabled. The orchestrator will only use the engines specified below. High availability and automated scaling are disabled.</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <ManualEngineList
-                    engines={engineSettings.manual_engines || []}
-                    onChange={(newList) => handleSettingChange('manual_engines', newList)}
-                    disabled={loadingSettings}
-                  />
+            {!engineSettings.manual_mode ? (
+              <>
+                <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)', marginTop: 8 }}>
+                  <span className="label">SCALING</span>
                 </div>
-              )}
-
-              {/* Save Settings Button */}
-              <div className="flex justify-end pt-4 border-t">
-                <Button
-                  onClick={handleSaveSettings}
-                  disabled={savingSettings || loadingSettings || !settingsChanged}
-                  className="flex items-center gap-2"
-                >
-                  <Save className="h-4 w-4" />
-                  {savingSettings ? 'Saving...' : 'Save Settings'}
-                </Button>
+                <SettingField
+                  label="Min Replicas"
+                  desc="Minimum engines to keep running (0–50)"
+                  value={engineSettings.min_replicas}
+                  onChange={v => handleSettingChange('min_replicas', v)}
+                  type="number"
+                  disabled={loadingSettings}
+                />
+                <SettingField
+                  label="Max Replicas"
+                  desc="Maximum allowed engines (1–100)"
+                  value={engineSettings.max_replicas}
+                  onChange={v => handleSettingChange('max_replicas', v)}
+                  type="number"
+                  disabled={loadingSettings}
+                />
+                <SettingField
+                  label="Auto Cleanup"
+                  desc="Delete engines automatically when stopped"
+                  value={engineSettings.auto_delete}
+                  onChange={v => handleSettingChange('auto_delete', v)}
+                  type="toggle"
+                  disabled={loadingSettings}
+                />
+                <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)', marginTop: 8 }}>
+                  <span className="label">ADVANCED</span>
+                </div>
+                <EngineConfiguration
+                  engineSettings={engineSettings}
+                  onSettingChange={handleSettingChange}
+                  disabled={loadingSettings}
+                />
+              </>
+            ) : (
+              <div style={{ padding: 14 }}>
+                <div style={{
+                  background: 'var(--acc-cyan-bg)',
+                  border: '1px solid var(--acc-cyan-dim)',
+                  padding: '10px 14px',
+                  marginBottom: 12,
+                }}>
+                  <div className="label" style={{ color: 'var(--acc-cyan)', marginBottom: 4 }}>MANUAL MODE ACTIVE</div>
+                  <div style={{ fontSize: 11, color: 'var(--fg-1)' }}>
+                    Docker provisioning is disabled. Only specified engines below are used.
+                  </div>
+                </div>
+                <ManualEngineList
+                  engines={engineSettings.manual_engines || []}
+                  onChange={newList => handleSettingChange('manual_engines', newList)}
+                  disabled={loadingSettings}
+                />
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+            )}
+
+            {/* Save button */}
+            <div style={{ padding: '12px 14px', borderTop: '1px solid var(--line)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                onClick={handleSaveSettings}
+                disabled={savingSettings || loadingSettings || !settingsChanged}
+                className="tag tag-green"
+                style={{
+                  cursor: savingSettings || loadingSettings || !settingsChanged ? 'not-allowed' : 'pointer',
+                  opacity: savingSettings || loadingSettings || !settingsChanged ? 0.5 : 1,
+                  padding: '4px 12px',
+                }}
+              >
+                {savingSettings ? '⟳ SAVING...' : '✓ SAVE SETTINGS'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`@keyframes flow { from { background-position: 0 0; } to { background-position: 12px 0; } }`}</style>
     </div>
   )
 }

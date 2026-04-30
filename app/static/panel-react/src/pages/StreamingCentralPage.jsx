@@ -1,158 +1,495 @@
-import React, { useEffect, useMemo } from 'react'
-import ReactECharts from 'echarts-for-react'
-import { AlertTriangle, GaugeCircle, KeyRound, Network, Server, ShieldAlert, Tv, Waves, Workflow } from 'lucide-react'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { RoutingTopologyPage } from '@/pages/RoutingTopologyPage'
-import { cn } from '@/lib/utils'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useStreamingCentralStore } from '@/stores/streamingCentralStore'
 import { useTheme } from '@/components/ThemeProvider'
-import { CHART_SERIES, getChartTheme } from '@/lib/chartTheme'
+import { CHART_SERIES } from '@/lib/chartTheme'
 
-const sparklineOption = (points, color) => ({
-  animation: false,
-  grid: { left: 2, right: 2, top: 4, bottom: 2 },
-  xAxis: {
-    type: 'category',
-    data: points.map((_, idx) => idx),
-    show: false,
-  },
-  yAxis: {
-    type: 'value',
-    show: false,
-    scale: true,
-  },
-  tooltip: { show: false },
-  series: [
-    {
-      type: 'line',
-      data: points,
-      smooth: 0.2,
-      symbol: 'none',
-      lineStyle: {
-        width: 2,
-        color,
-      },
-      areaStyle: {
-        color,
-        opacity: 0.18,
-      },
-    },
-  ],
-})
-
-// Status-color palette for KPI tiles: subdued bg + vibrant border
-const TONE_CARD = {
-  default: 'bg-card border-border',
-  sky: 'bg-sky-500/10 border-sky-500/20',
-  emerald: 'bg-emerald-500/10 border-emerald-500/20',
-  amber: 'bg-amber-500/10 border-amber-500/20',
-  rose: 'bg-rose-500/10 border-rose-500/20',
-}
-
-const TONE_ICON = {
-  default: 'text-muted-foreground',
-  sky: 'text-sky-500',
-  emerald: 'text-emerald-500',
-  amber: 'text-amber-500',
-  rose: 'text-rose-500',
-}
-
-const TONE_SPARKLINE = {
-  default: CHART_SERIES.blue,
-  sky: CHART_SERIES.sky,
-  emerald: CHART_SERIES.emerald,
-  amber: CHART_SERIES.amber,
-  rose: CHART_SERIES.rose,
-}
-
-function KpiTile({ title, value, tone = 'default', points = [], suffix = '', icon: Icon }) {
-  return (
-    <Card className={cn('h-full shadow-sm border', TONE_CARD[tone])}>
-      <CardHeader className="p-4 pb-2">
-        <CardTitle className={cn('flex items-center justify-between text-xs font-semibold uppercase tracking-wider', TONE_ICON[tone])}>
-          <span>{title}</span>
-          <Icon className="h-4 w-4" />
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-4 pt-0 space-y-2">
-        <p className="text-4xl font-black leading-none tracking-tight text-foreground">
-          {value}
-          {suffix ? <span className="ml-1 text-lg font-semibold text-muted-foreground">{suffix}</span> : null}
-        </p>
-        <div className="h-10 w-full rounded bg-muted/40 px-1 py-1">
-          <ReactECharts option={sparklineOption(points, TONE_SPARKLINE[tone])} style={{ height: 28 }} />
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-const formatPercent = (value) => `${Number(value || 0).toFixed(2)}`
+// ── Helpers ──────────────────────────────────────────────────────────────────
 const formatTime = (iso) => {
-  if (!iso) return '-'
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return '-'
-  return date.toLocaleTimeString([], { hour12: false })
+  if (!iso) return '–'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '–' : d.toLocaleTimeString([], { hour12: false })
 }
 
 const formatEgress = (egressGbps) => {
-  const normalized = Number(egressGbps || 0)
-  if (!Number.isFinite(normalized) || normalized <= 0) {
-    return { value: '0.0', suffix: 'Mbps' }
+  const n = Number(egressGbps || 0)
+  if (!Number.isFinite(n) || n <= 0) return { value: '0.0', suffix: 'Mbps' }
+  if (n >= 1) return { value: n.toFixed(3), suffix: 'Gbps' }
+  return { value: (n * 1000).toFixed(1), suffix: 'Mbps' }
+}
+
+// ── BigCounter ────────────────────────────────────────────────────────────────
+function BigCounter({ label, value, sub, accent = 'green' }) {
+  return (
+    <div className="bracketed" style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line)',
+      padding: '12px 14px',
+      position: 'relative',
+      flexShrink: 0,
+    }}>
+      <div className="label" style={{ color: 'var(--fg-3)' }}>{label}</div>
+      <div style={{
+        fontFamily: 'var(--font-display)',
+        fontSize: 36, fontWeight: 700, lineHeight: 1.05,
+        color: `var(--acc-${accent})`,
+        fontVariantNumeric: 'tabular-nums',
+        letterSpacing: '-0.04em',
+        marginTop: 2,
+        textShadow: `0 0 24px var(--acc-${accent}-bg)`,
+      }}>{value}</div>
+      {sub && <div style={{ fontSize: 10, color: 'var(--fg-2)', marginTop: 2 }}>{sub}</div>}
+      <div style={{ position: 'absolute', right: 6, top: 6, fontSize: 8, color: 'var(--fg-3)', letterSpacing: 1 }}>◇ LIVE</div>
+    </div>
+  )
+}
+
+// ── PolicyBlock ───────────────────────────────────────────────────────────────
+function PolicyBlock({ orchestratorStatus }) {
+  const minR = orchestratorStatus?.config?.min_replicas ?? orchestratorStatus?.engines?.min_replicas ?? '–'
+  const maxR = orchestratorStatus?.capacity?.max_replicas ?? orchestratorStatus?.engines?.max_replicas ?? '–'
+  const breaker = orchestratorStatus?.provisioning?.circuit_breaker_state || 'closed'
+  const breakerColor = breaker === 'closed' ? 'var(--acc-green)' : 'var(--acc-amber)'
+
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-soft)',
+      padding: '10px 12px',
+    }}>
+      <div className="label" style={{ marginBottom: 6 }}>POLICY</div>
+      {[
+        ['MIN_REPLICAS', String(minR)],
+        ['MAX_REPLICAS', String(maxR)],
+        ['BREAKER', breaker],
+        ['PROTOCOL', 'sse/1s'],
+      ].map(([k, v]) => (
+        <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, padding: '3px 0' }}>
+          <span style={{ color: 'var(--fg-3)', width: 90, flexShrink: 0 }}>{k}</span>
+          <span style={{ color: k === 'BREAKER' ? breakerColor : 'var(--fg-0)' }}>{v}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Marquee ───────────────────────────────────────────────────────────────────
+function Marquee({ engines, streams, vpnStatus, isConnected }) {
+  const activeEngines = engines.filter(e => e.health_status === 'healthy').length
+  const drainingEngines = engines.filter(e => e.health_status === 'unhealthy').length
+  const vpnMode = vpnStatus?.mode || 'disabled'
+  const vpnConnected = vpnStatus?.connected || (vpnStatus?.vpn1?.connected && vpnStatus?.vpn2?.connected)
+  const migrations = streams.filter(s => String(s.status || '').includes('failover')).length
+
+  const items = [
+    { text: isConnected ? '● ONLINE' : '● OFFLINE', color: isConnected ? 'var(--acc-green)' : 'var(--acc-red)' },
+    { text: `${streams.length}.STREAMS`, color: 'var(--fg-2)' },
+    { text: `${engines.length}.ENGINES`, color: 'var(--fg-2)' },
+    { text: `${activeEngines}.HEALTHY`, color: 'var(--acc-green)' },
+    drainingEngines > 0 && { text: `${drainingEngines}.UNHEALTHY`, color: 'var(--acc-red)' },
+    migrations > 0 && { text: `${migrations}.MIGRATION`, color: 'var(--acc-magenta)' },
+    { text: `VPN.${vpnMode.toUpperCase()}`, color: vpnConnected ? 'var(--acc-cyan)' : 'var(--fg-3)' },
+    { text: `SSE.LIVE`, color: isConnected ? 'var(--acc-green)' : 'var(--acc-red)' },
+  ].filter(Boolean)
+
+  const content = items.map((item, i) => (
+    <React.Fragment key={i}>
+      <span style={{ color: item.color }}>{item.text}</span>
+      <span style={{ color: 'var(--fg-3)', padding: '0 10px' }}>│</span>
+    </React.Fragment>
+  ))
+
+  return (
+    <div style={{
+      height: 24,
+      borderBottom: '1px solid var(--line)',
+      background: 'var(--bg-1)',
+      overflow: 'hidden',
+      fontSize: 10,
+      color: 'var(--fg-2)',
+      fontFamily: 'var(--font-mono)',
+      letterSpacing: '0.1em',
+      display: 'flex',
+      alignItems: 'center',
+      flexShrink: 0,
+    }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        whiteSpace: 'nowrap',
+        animation: 'marquee 30s linear infinite',
+        paddingLeft: '100%',
+      }}>
+        {content}{content}
+      </div>
+    </div>
+  )
+}
+
+// ── SignalRow ─────────────────────────────────────────────────────────────────
+function SignalRow({ e, idx }) {
+  const sevColor = {
+    info: 'var(--fg-1)',
+    warn: 'var(--acc-amber)',
+    error: 'var(--acc-red)',
+    warning: 'var(--acc-amber)',
+  }[e.severity?.toLowerCase() || e.level?.toLowerCase() || 'info'] || 'var(--fg-1)'
+
+  const sevGlyph = {
+    info: '·', warn: '!', warning: '!', error: '✗',
+  }[e.severity?.toLowerCase() || e.level?.toLowerCase() || 'info'] || '·'
+
+  const eventType = String(e.event_type || e.type || e.src || '').toLowerCase()
+  const message = e.message || e.msg || ''
+  const ts = formatTime(e.timestamp || e.t)
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: 6,
+      padding: '6px 14px',
+      borderBottom: '1px solid var(--line-soft)',
+      fontSize: 10,
+      fontFamily: 'var(--font-mono)',
+      opacity: Math.max(0.35, 1 - idx * 0.035),
+    }}>
+      <span style={{ color: 'var(--fg-3)', width: 54, flexShrink: 0 }}>{ts}</span>
+      <span style={{ color: sevColor, width: 8, flexShrink: 0 }}>{sevGlyph}</span>
+      <span style={{ color: 'var(--acc-cyan)', width: 72, flexShrink: 0, fontSize: 9, overflow: 'hidden', textOverflow: 'ellipsis' }}>{eventType}</span>
+      <span style={{ color: 'var(--fg-0)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{message}</span>
+    </div>
+  )
+}
+
+// ── Session Waveform ──────────────────────────────────────────────────────────
+function SessionWaveform({ kpiHistory }) {
+  const data = kpiHistory?.activeStreams || []
+  const W = 720, H = 52
+
+  if (data.length < 2) {
+    return (
+      <div style={{
+        borderTop: '1px solid var(--line)',
+        padding: '8px 14px 12px',
+        fontSize: 10, color: 'var(--fg-3)',
+        flexShrink: 0,
+      }}>
+        <div className="label" style={{ marginBottom: 4 }}>SESSION.WAVEFORM · LAST 15M</div>
+        <div style={{ color: 'var(--fg-3)', fontStyle: 'italic' }}>awaiting data...</div>
+      </div>
+    )
   }
 
-  if (normalized >= 1) {
-    return {
-      value: normalized.toFixed(3),
-      suffix: 'Gbps',
+  const max = Math.max(...data, 1)
+  const linePts = data.map((v, i) =>
+    `${i === 0 ? 'M' : 'L'} ${(i / (data.length - 1)) * W} ${H - (v / max) * H}`
+  ).join(' ')
+  const fillPts = `M 0 ${H} ` + data.map((v, i) =>
+    `L ${(i / (data.length - 1)) * W} ${H - (v / max) * H}`
+  ).join(' ') + ` L ${W} ${H} Z`
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--line)',
+      padding: '8px 14px 12px',
+      flexShrink: 0,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
+        <span className="label">SESSION.WAVEFORM · LAST 15M</span>
+        <div style={{ flex: 1 }}/>
+        <span style={{ fontSize: 9, color: 'var(--fg-3)' }}>0 ─────── 15m</span>
+      </div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: 'block', height: H }}>
+        {[0, 1, 2, 3, 4, 5].map(i => (
+          <line key={i} x1={i * (W / 5)} y1="0" x2={i * (W / 5)} y2={H} stroke="var(--line-soft)"/>
+        ))}
+        <path d={fillPts} fill="var(--acc-green-bg)" opacity="0.5"/>
+        <path d={linePts} fill="none" stroke="var(--acc-green)" strokeWidth="1.5"/>
+      </svg>
+    </div>
+  )
+}
+
+// ── Constellation Graph ───────────────────────────────────────────────────────
+function buildVpnNodes(vpnStatus) {
+  if (!vpnStatus || !vpnStatus.enabled || vpnStatus.mode === 'disabled') return []
+
+  if (vpnStatus.mode === 'redundant') {
+    return [vpnStatus.vpn1, vpnStatus.vpn2]
+      .filter(Boolean)
+      .map((t, i) => ({
+        id: t.container_name || t.container || `vpn-${i + 1}`,
+        label: t.container_name || `VPN ${i + 1}`,
+        state: t.connected ? 'healthy' : 'failed',
+        ip: t.public_ip || '–',
+        provider: t.provider || '–',
+      }))
+  }
+
+  const tunnel = vpnStatus.vpn1 || vpnStatus
+  return [{
+    id: tunnel.container_name || tunnel.container || 'vpn-1',
+    label: tunnel.container_name || 'VPN',
+    state: tunnel.connected ? 'healthy' : 'failed',
+    ip: tunnel.public_ip || vpnStatus.public_ip || '–',
+    provider: tunnel.provider || '–',
+  }]
+}
+
+function colorFor(state) {
+  const map = {
+    healthy: 'var(--acc-green)',
+    active: 'var(--acc-green)',
+    healthy_unhealthy: 'var(--acc-green)',
+    draining: 'var(--acc-amber)',
+    warming: 'var(--acc-magenta)',
+    pending: 'var(--acc-cyan)',
+    failed: 'var(--acc-red)',
+    unhealthy: 'var(--acc-red)',
+  }
+  return map[state] || 'var(--fg-2)'
+}
+
+function ConstellationGraph({ engines, vpnStatus }) {
+  const W = 760, H = 360
+  const cx = W / 2, cy = H / 2
+
+  const vpnNodes = useMemo(() => buildVpnNodes(vpnStatus), [vpnStatus])
+
+  // Group engines by VPN container
+  const engsByVpn = useMemo(() => {
+    const map = new Map()
+    engines.forEach(e => {
+      const key = e.vpn_container || '__none__'
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push(e)
+    })
+    return map
+  }, [engines])
+
+  // If no VPN nodes, show engines around center
+  const noVpn = vpnNodes.length === 0
+
+  // Sun positions
+  const vpnCount = noVpn ? 1 : vpnNodes.length
+  const sunRadius = Math.min(W, H) * (vpnCount > 4 ? 0.30 : 0.38)
+  const sunR = 14
+
+  const vpnPos = {}
+  if (noVpn) {
+    vpnPos['__center__'] = { x: cx, y: cy, angle: 0 }
+  } else {
+    vpnNodes.forEach((v, i) => {
+      const a = (i / vpnCount) * Math.PI * 2 - Math.PI / 2
+      vpnPos[v.id] = { x: cx + Math.cos(a) * sunRadius, y: cy + Math.sin(a) * sunRadius, angle: a }
+    })
+  }
+
+  // Engine positions
+  const engPos = {}
+  const allEngineGroups = noVpn
+    ? [{ vpnId: '__center__', engs: engines }]
+    : vpnNodes.map(v => ({
+        vpnId: v.id,
+        engs: engsByVpn.get(v.label) || engsByVpn.get(v.id) || [],
+      }))
+
+  // Also handle engines with no VPN match in redundant mode
+  if (!noVpn) {
+    const unassigned = engines.filter(e => !vpnNodes.some(v => v.label === e.vpn_container || v.id === e.vpn_container))
+    if (unassigned.length > 0) allEngineGroups.push({ vpnId: '__none__', engs: unassigned })
+  }
+
+  allEngineGroups.forEach(({ vpnId, engs: myEngs }) => {
+    const sun = vpnPos[vpnId] || { x: cx, y: cy, angle: 0 }
+    const n = myEngs.length
+    if (n === 0) return
+
+    const ringCap = [6, 10, 14]
+    const rings = []
+    let remaining = n
+    let r = 0
+    while (remaining > 0 && r < ringCap.length) {
+      const c = Math.min(remaining, ringCap[r])
+      rings.push(c)
+      remaining -= c
+      r++
     }
-  }
 
-  return {
-    value: (normalized * 1000).toFixed(1),
-    suffix: 'Mbps',
-  }
+    const baseR = 38
+    const ringStep = 22
+    let placed = 0
+    rings.forEach((cnt, ri) => {
+      const radius = baseR + ri * ringStep
+      const arcCenter = sun.angle
+      const span = Math.PI * 1.4
+      for (let i = 0; i < cnt; i++) {
+        const a = cnt === 1
+          ? arcCenter
+          : arcCenter + (i / (cnt - 1) - 0.5) * span
+        engPos[myEngs[placed + i].container_id] = {
+          x: sun.x + Math.cos(a) * radius,
+          y: sun.y + Math.sin(a) * radius,
+        }
+      }
+      placed += cnt
+    })
+  })
+
+  const showLabel = engines.length <= 14
+  const engSize = engines.length > 30 ? 6 : engines.length > 14 ? 8 : 10
+
+  return (
+    <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block' }} preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <pattern id="cgrid" width="20" height="20" patternUnits="userSpaceOnUse">
+          <path d="M 20 0 L 0 0 0 20" fill="none" stroke="var(--line-soft)" strokeWidth="0.5"/>
+        </pattern>
+        <radialGradient id="glowG"><stop offset="0%" stopColor="var(--acc-green)" stopOpacity="0.35"/><stop offset="100%" stopColor="var(--acc-green)" stopOpacity="0"/></radialGradient>
+        <radialGradient id="glowA"><stop offset="0%" stopColor="var(--acc-amber)" stopOpacity="0.35"/><stop offset="100%" stopColor="var(--acc-amber)" stopOpacity="0"/></radialGradient>
+        <radialGradient id="glowR"><stop offset="0%" stopColor="var(--acc-red)" stopOpacity="0.45"/><stop offset="100%" stopColor="var(--acc-red)" stopOpacity="0"/></radialGradient>
+        <radialGradient id="glowM"><stop offset="0%" stopColor="var(--acc-magenta)" stopOpacity="0.35"/><stop offset="100%" stopColor="var(--acc-magenta)" stopOpacity="0"/></radialGradient>
+      </defs>
+
+      <rect x="0" y="0" width={W} height={H} fill="url(#cgrid)"/>
+
+      {/* Spokes from center to suns */}
+      {!noVpn && vpnNodes.map(v => {
+        const p = vpnPos[v.id]
+        if (!p) return null
+        return <line key={'spoke-' + v.id} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="var(--line-soft)" strokeWidth="0.5" strokeDasharray="1 4"/>
+      })}
+
+      {/* Center ctrl node */}
+      <circle cx={cx} cy={cy} r="4" fill="var(--acc-green)" opacity="0.8"/>
+      <text x={cx} y={cy + 14} textAnchor="middle" fontSize="7" fill="var(--fg-3)" fontFamily="var(--font-mono)" letterSpacing="1">CTRL</text>
+
+      {/* Engine → VPN edges */}
+      {engines.map(e => {
+        const vpnKey = noVpn ? '__center__'
+          : vpnNodes.find(v => v.label === e.vpn_container || v.id === e.vpn_container)?.id || '__none__'
+        const sun = vpnPos[vpnKey] || vpnPos[Object.keys(vpnPos)[0]]
+        const p = engPos[e.container_id]
+        if (!sun || !p) return null
+        const c = colorFor(e.health_status === 'healthy' ? 'healthy' : e.health_status === 'unhealthy' ? 'unhealthy' : 'pending')
+        return <line key={'ve-' + e.container_id} x1={sun.x} y1={sun.y} x2={p.x} y2={p.y} stroke={c} strokeOpacity="0.4" strokeWidth="0.75"/>
+      })}
+
+      {/* Migration arc (pending_failover) */}
+      {(() => {
+        const src = engines.find(e => e.health_status === 'unhealthy')
+        const dst = engines.find(e => e.health_status === 'healthy' && e.container_id !== src?.container_id)
+        if (!src || !dst) return null
+        const a = engPos[src.container_id], b = engPos[dst.container_id]
+        if (!a || !b) return null
+        const mx = (a.x + b.x) / 2 + (b.y - a.y) * 0.2
+        const my = (a.y + b.y) / 2 - (b.x - a.x) * 0.2
+        const path = `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`
+        return (
+          <g>
+            <path d={path} fill="none" stroke="var(--acc-magenta)" strokeWidth="1.4" strokeDasharray="4 3">
+              <animate attributeName="stroke-dashoffset" from="0" to="-14" dur="0.8s" repeatCount="indefinite"/>
+            </path>
+            <circle r="3" fill="var(--acc-magenta)">
+              <animateMotion dur="2.5s" repeatCount="indefinite" path={path}/>
+            </circle>
+          </g>
+        )
+      })()}
+
+      {/* VPN suns */}
+      {!noVpn && vpnNodes.map(v => {
+        const p = vpnPos[v.id]
+        if (!p) return null
+        const glow = v.state === 'failed' ? 'glowR' : v.state === 'draining' ? 'glowA' : v.state === 'warming' ? 'glowM' : 'glowG'
+        const ringSpan = 38 + 2 * 22 + 14
+        const lx = p.x + Math.cos(p.angle) * ringSpan
+        const ly = p.y + Math.sin(p.angle) * ringSpan
+        const anchor = Math.cos(p.angle) > 0.3 ? 'start' : Math.cos(p.angle) < -0.3 ? 'end' : 'middle'
+        return (
+          <g key={v.id}>
+            <circle cx={p.x} cy={p.y} r={sunR * 2.2} fill={`url(#${glow})`}/>
+            <circle cx={p.x} cy={p.y} r={sunR} fill="var(--bg-0)" stroke={colorFor(v.state)} strokeWidth="1.5"/>
+            <text x={p.x} y={p.y + 4} textAnchor="middle" fontSize="10" fill={colorFor(v.state)} fontFamily="var(--font-mono)" fontWeight="600">⌬</text>
+            <rect
+              x={anchor === 'start' ? lx - 2 : anchor === 'end' ? lx - 68 : lx - 35}
+              y={ly - 14} width="70" height="22"
+              fill="var(--bg-1)" stroke="var(--line)" opacity="0.92"
+            />
+            <text x={lx} y={ly - 3} textAnchor={anchor} fontSize="9" fill="var(--fg-0)" fontFamily="var(--font-mono)" fontWeight="600">
+              {v.label.length > 10 ? v.label.slice(0, 10) + '…' : v.label}
+            </text>
+            <text x={lx} y={ly + 6} textAnchor={anchor} fontSize="7" fill={colorFor(v.state)} fontFamily="var(--font-mono)" letterSpacing="1">
+              {v.state.toUpperCase()}
+            </text>
+          </g>
+        )
+      })}
+
+      {/* Engine nodes */}
+      {engines.map(e => {
+        const p = engPos[e.container_id]
+        if (!p) return null
+        const c = colorFor(e.health_status === 'healthy' ? 'active' : e.health_status === 'unhealthy' ? 'failed' : 'pending')
+        if (showLabel) {
+          const name = (e.container_name || e.container_id).slice(-8)
+          return (
+            <g key={e.container_id}>
+              <rect x={p.x - 24} y={p.y - 8} width="48" height="16" fill="var(--bg-0)" stroke={c} strokeWidth="1"/>
+              <text x={p.x} y={p.y + 4} textAnchor="middle" fontSize="8" fill="var(--fg-0)" fontFamily="var(--font-mono)" fontWeight="600">{name}</text>
+            </g>
+          )
+        }
+        return (
+          <rect
+            key={e.container_id}
+            x={p.x - engSize / 2} y={p.y - engSize / 2}
+            width={engSize} height={engSize}
+            fill={c} stroke="var(--bg-0)" strokeWidth="0.5"
+            opacity={e.health_status === 'healthy' ? 1 : 0.6}
+          />
+        )
+      })}
+
+      {/* Legend */}
+      <g transform={`translate(${W - 130}, ${H - 52})`}>
+        <rect width="120" height="42" fill="var(--bg-0)" stroke="var(--line)" opacity="0.88"/>
+        <text x="6" y="11" fontSize="7" fill="var(--fg-3)" fontFamily="var(--font-mono)" letterSpacing="1">LEGEND</text>
+        <rect x="6" y="17" width="6" height="6" fill="var(--acc-green)"/>
+        <text x="16" y="23" fontSize="7" fill="var(--fg-1)" fontFamily="var(--font-mono)">healthy</text>
+        <rect x="52" y="17" width="6" height="6" fill="var(--acc-red)"/>
+        <text x="62" y="23" fontSize="7" fill="var(--fg-1)" fontFamily="var(--font-mono)">failed</text>
+        <rect x="96" y="17" width="6" height="6" fill="var(--acc-cyan)" opacity="0.5"/>
+        <text x="6" y="36" fontSize="7" fill="var(--fg-3)" fontFamily="var(--font-mono)">⌬ vpn sun · □ engine</text>
+      </g>
+    </svg>
+  )
 }
 
-// Status-gradient palette for engine saturation tiles (fleet matrix).
-// White text is intentional: these tiles have saturated colored backgrounds.
-const engineToneClass = (score) => {
-  if (score >= 88) return 'from-rose-600/70 to-rose-800/70 border-rose-500/70'
-  if (score >= 70) return 'from-amber-500/60 to-amber-700/60 border-amber-400/70'
-  if (score >= 45) return 'from-sky-500/60 to-sky-700/60 border-sky-400/70'
-  return 'from-emerald-500/60 to-emerald-700/60 border-emerald-400/70'
+// ── Alert Banner ──────────────────────────────────────────────────────────────
+function AlertBanner({ title, message, accent = 'red' }) {
+  return (
+    <div style={{
+      background: `var(--acc-${accent}-bg)`,
+      border: `1px solid var(--acc-${accent}-dim)`,
+      padding: '10px 14px',
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+      flexShrink: 0,
+    }}>
+      <span className="dot pulse" style={{ color: `var(--acc-${accent})`, marginTop: 3, flexShrink: 0 }}/>
+      <div>
+        <div className="label" style={{ color: `var(--acc-${accent})`, marginBottom: 2 }}>{title}</div>
+        <div style={{ fontSize: 11, color: 'var(--fg-1)' }}>{message}</div>
+      </div>
+    </div>
+  )
 }
 
-export function StreamingCentralPage({
-  engines,
-  streams,
-  vpnStatus,
-  orchestratorStatus,
-  orchUrl,
-  apiKey,
-}) {
-  const { resolvedTheme } = useTheme()
+// ── Main Page ─────────────────────────────────────────────────────────────────
+export function StreamingCentralPage({ engines, streams, vpnStatus, orchestratorStatus, orchUrl, apiKey }) {
   const {
     kpiHistory,
     vpnLeaseSummary,
     dashboardSnapshot,
     engineStatsById,
-    engineInspectById,
-    engineStartEvents,
-    bufferBuckets,
     selectedEngineId,
     logsByContainerId,
     logsLoadingByContainerId,
@@ -168,933 +505,343 @@ export function StreamingCentralPage({
     setContainerLogsLoading,
     setContainerLogsError,
     fetchContainerLogs,
-  } = useStreamingCentralStore((state) => state)
+  } = useStreamingCentralStore(s => s)
+
+  const [events, setEvents] = useState([])
 
   useEffect(() => {
-    ingestLiveSnapshot({
-      engines,
-      streams,
-      vpnStatus,
-      orchestratorStatus,
-    })
+    ingestLiveSnapshot({ engines, streams, vpnStatus, orchestratorStatus })
   }, [engines, streams, vpnStatus, orchestratorStatus, ingestLiveSnapshot])
 
   useEffect(() => {
     refreshBackendTelemetry({ orchUrl, apiKey })
-    const interval = window.setInterval(() => {
-      refreshBackendTelemetry({ orchUrl, apiKey })
-    }, 30000)
-
-    return () => {
-      window.clearInterval(interval)
-    }
+    const interval = window.setInterval(() => refreshBackendTelemetry({ orchUrl, apiKey }), 30000)
+    return () => window.clearInterval(interval)
   }, [orchUrl, apiKey, refreshBackendTelemetry])
 
+  // Metrics SSE
   useEffect(() => {
-    let eventSource = null
-    let reconnectTimer = null
-    let fallbackInterval = null
-    let closed = false
-
-    const fetchMetricsFallback = async () => {
-      try {
-        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
-        const response = await fetch(`${orchUrl}/api/v1/metrics/dashboard?window_seconds=900&max_points=240`, {
-          headers,
-        })
-        if (!response.ok) return
-        const payload = await response.json()
-        setDashboardSnapshot(payload)
-      } catch {
-        // Best-effort telemetry update.
-      }
-    }
+    let eventSource = null, reconnectTimer = null, closed = false
 
     const connect = () => {
       if (closed) return
+      if (typeof window === 'undefined' || !window.EventSource) return
 
-      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
-        fetchMetricsFallback()
-        fallbackInterval = window.setInterval(fetchMetricsFallback, 10000)
-        return
+      const url = new URL(`${orchUrl}/api/v1/metrics/stream`)
+      url.searchParams.set('window_seconds', '900')
+      url.searchParams.set('max_points', '240')
+      if (apiKey) url.searchParams.set('api_key', apiKey)
+
+      eventSource = new EventSource(url.toString())
+      const handle = (ev) => {
+        try { setDashboardSnapshot(JSON.parse(ev.data)?.payload || null) } catch {}
       }
-
-      const streamUrl = new URL(`${orchUrl}/api/v1/metrics/stream`)
-      streamUrl.searchParams.set('window_seconds', '900')
-      streamUrl.searchParams.set('max_points', '240')
-      if (apiKey) {
-        streamUrl.searchParams.set('api_key', apiKey)
-      }
-
-      eventSource = new EventSource(streamUrl.toString())
-
-      const handleMetricsSnapshot = (event) => {
-        try {
-          const parsed = JSON.parse(event.data)
-          setDashboardSnapshot(parsed?.payload || null)
-        } catch {
-          // Ignore malformed frames and keep existing snapshot.
-        }
-      }
-
-      eventSource.addEventListener('metrics_snapshot', handleMetricsSnapshot)
-      eventSource.onmessage = handleMetricsSnapshot
-
+      eventSource.addEventListener('metrics_snapshot', handle)
+      eventSource.onmessage = handle
       eventSource.onerror = () => {
-        if (eventSource) {
-          eventSource.close()
-          eventSource = null
-        }
-        if (!closed) {
-          reconnectTimer = window.setTimeout(connect, 2000)
-        }
+        if (eventSource) { eventSource.close(); eventSource = null }
+        if (!closed) reconnectTimer = window.setTimeout(connect, 2000)
       }
     }
 
     connect()
-
     return () => {
       closed = true
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer)
-      }
-      if (fallbackInterval) {
-        window.clearInterval(fallbackInterval)
-      }
-      if (eventSource) {
-        eventSource.close()
-      }
+      if (reconnectTimer) window.clearTimeout(reconnectTimer)
+      if (eventSource) eventSource.close()
     }
   }, [orchUrl, apiKey, setDashboardSnapshot])
 
+  // VPN leases SSE
   useEffect(() => {
-    let eventSource = null
-    let reconnectTimer = null
-    let fallbackInterval = null
-    let closed = false
-
-    const applyEngineEvents = (events) => {
-      const filtered = (Array.isArray(events) ? events : []).filter((event) => {
-        const category = String(event?.category || '').toLowerCase()
-        return category === 'created'
-      })
-      setEngineStartEvents(filtered)
-    }
-
-    const fetchEventsFallback = async () => {
-      try {
-        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
-        const response = await fetch(`${orchUrl}/api/v1/events?event_type=engine&category=created&limit=100`, {
-          headers,
-        })
-        if (!response.ok) return
-        const payload = await response.json()
-        applyEngineEvents(payload)
-      } catch {
-        // Best-effort telemetry update.
-      }
-    }
+    let eventSource = null, reconnectTimer = null, closed = false
 
     const connect = () => {
       if (closed) return
+      if (typeof window === 'undefined' || !window.EventSource) return
 
-      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
-        fetchEventsFallback()
-        fallbackInterval = window.setInterval(fetchEventsFallback, 10000)
-        return
+      const url = new URL(`${orchUrl}/api/v1/vpn/leases/stream`)
+      if (apiKey) url.searchParams.set('api_key', apiKey)
+
+      eventSource = new EventSource(url.toString())
+      const handle = (ev) => {
+        try { setVpnLeaseSummary(JSON.parse(ev.data)?.payload || null) } catch {}
       }
-
-      const streamUrl = new URL(`${orchUrl}/api/v1/events/live`)
-      streamUrl.searchParams.set('event_type', 'engine')
-      streamUrl.searchParams.set('limit', '100')
-      if (apiKey) {
-        streamUrl.searchParams.set('api_key', apiKey)
-      }
-
-      eventSource = new EventSource(streamUrl.toString())
-
-      const handleEventsSnapshot = (event) => {
-        try {
-          const parsed = JSON.parse(event.data)
-          const events = parsed?.payload?.events || []
-          applyEngineEvents(events)
-        } catch {
-          // Ignore malformed frames and keep existing events.
-        }
-      }
-
-      eventSource.addEventListener('events_snapshot', handleEventsSnapshot)
-      eventSource.onmessage = handleEventsSnapshot
-
+      eventSource.addEventListener('vpn_leases_snapshot', handle)
+      eventSource.onmessage = handle
       eventSource.onerror = () => {
-        if (eventSource) {
-          eventSource.close()
-          eventSource = null
-        }
-        if (!closed) {
-          reconnectTimer = window.setTimeout(connect, 2000)
-        }
+        if (eventSource) { eventSource.close(); eventSource = null }
+        if (!closed) reconnectTimer = window.setTimeout(connect, 2000)
       }
     }
 
     connect()
-
     return () => {
       closed = true
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer)
-      }
-      if (fallbackInterval) {
-        window.clearInterval(fallbackInterval)
-      }
-      if (eventSource) {
-        eventSource.close()
-      }
+      if (reconnectTimer) window.clearTimeout(reconnectTimer)
+      if (eventSource) eventSource.close()
     }
-  }, [orchUrl, apiKey, setEngineStartEvents])
+  }, [orchUrl, apiKey, setVpnLeaseSummary])
 
+  // Events SSE for signal log
   useEffect(() => {
-    let eventSource = null
-    let reconnectTimer = null
-    let fallbackInterval = null
-    let closed = false
-
-    const fetchVpnLeases = async () => {
-      try {
-        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
-        const response = await fetch(`${orchUrl}/api/v1/vpn/leases`, { headers })
-        if (!response.ok) return
-        const payload = await response.json()
-        setVpnLeaseSummary(payload)
-      } catch {
-        // Best-effort telemetry update.
-      }
-    }
+    let eventSource = null, reconnectTimer = null, closed = false
 
     const connect = () => {
-      if (closed) {
-        return
-      }
+      if (closed) return
+      if (typeof window === 'undefined' || !window.EventSource) return
 
-      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
-        fetchVpnLeases()
-        fallbackInterval = window.setInterval(fetchVpnLeases, 10000)
-        return
-      }
+      const url = new URL(`${orchUrl}/api/v1/events/live`)
+      url.searchParams.set('limit', '30')
+      if (apiKey) url.searchParams.set('api_key', apiKey)
 
-      const streamUrl = new URL(`${orchUrl}/api/v1/vpn/leases/stream`)
-      if (apiKey) {
-        streamUrl.searchParams.set('api_key', apiKey)
-      }
-
-      eventSource = new EventSource(streamUrl.toString())
-
-      const handleLeaseSnapshot = (event) => {
+      eventSource = new EventSource(url.toString())
+      const handle = (ev) => {
         try {
-          const parsed = JSON.parse(event.data)
-          setVpnLeaseSummary(parsed?.payload || null)
-        } catch {
-          // Ignore malformed frame and keep latest summary.
-        }
+          const parsed = JSON.parse(ev.data)
+          const evts = parsed?.payload?.events || []
+          if (evts.length > 0) setEvents(prev => [...evts, ...prev].slice(0, 50))
+        } catch {}
       }
-
-      eventSource.addEventListener('vpn_leases_snapshot', handleLeaseSnapshot)
-      eventSource.onmessage = handleLeaseSnapshot
-
+      eventSource.addEventListener('events_snapshot', handle)
+      eventSource.onmessage = handle
       eventSource.onerror = () => {
-        if (eventSource) {
-          eventSource.close()
-          eventSource = null
-        }
-
-        if (!closed) {
-          reconnectTimer = window.setTimeout(connect, 2000)
-        }
+        if (eventSource) { eventSource.close(); eventSource = null }
+        if (!closed) reconnectTimer = window.setTimeout(connect, 3000)
       }
     }
 
     connect()
-
     return () => {
       closed = true
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer)
-      }
-      if (fallbackInterval) {
-        window.clearInterval(fallbackInterval)
-      }
-      if (eventSource) {
-        eventSource.close()
-      }
+      if (reconnectTimer) window.clearTimeout(reconnectTimer)
+      if (eventSource) eventSource.close()
     }
   }, [orchUrl, apiKey])
 
+  // Container logs SSE
   useEffect(() => {
-    if (!selectedEngineId) return undefined
-
-    let eventSource = null
-    let reconnectTimer = null
-    let fallbackInterval = null
-    let closed = false
-
-    const fetchLogsFallback = () => {
-      fetchContainerLogs({ orchUrl, apiKey, containerId: selectedEngineId })
-    }
+    if (!selectedEngineId) return
+    let eventSource = null, reconnectTimer = null, closed = false
 
     const connect = () => {
-      if (closed) {
-        return
-      }
-
+      if (closed) return
       setContainerLogsLoading({ containerId: selectedEngineId, loading: true })
-
-      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
-        fetchLogsFallback()
-        fallbackInterval = window.setInterval(fetchLogsFallback, 2500)
+      if (typeof window === 'undefined' || !window.EventSource) {
+        fetchContainerLogs({ orchUrl, apiKey, containerId: selectedEngineId })
         return
       }
 
-      const streamUrl = new URL(`${orchUrl}/api/v1/containers/${encodeURIComponent(selectedEngineId)}/logs/stream`)
-      streamUrl.searchParams.set('tail', '300')
-      streamUrl.searchParams.set('since_seconds', '1200')
-      streamUrl.searchParams.set('interval_seconds', '2.5')
-      if (apiKey) {
-        streamUrl.searchParams.set('api_key', apiKey)
-      }
+      const url = new URL(`${orchUrl}/api/v1/containers/${encodeURIComponent(selectedEngineId)}/logs/stream`)
+      url.searchParams.set('tail', '300')
+      url.searchParams.set('since_seconds', '1200')
+      url.searchParams.set('interval_seconds', '2.5')
+      if (apiKey) url.searchParams.set('api_key', apiKey)
 
-      eventSource = new EventSource(streamUrl.toString())
-
-      const handleLogsSnapshot = (event) => {
-        try {
-          const parsed = JSON.parse(event.data)
-          setContainerLogsSnapshot({
-            containerId: selectedEngineId,
-            payload: parsed?.payload || {},
-          })
-        } catch {
-          setContainerLogsError({
-            containerId: selectedEngineId,
-            error: 'Failed to parse logs stream payload',
-          })
-        }
-      }
-
-      const handleLogsErrorEvent = (event) => {
-        try {
-          const parsed = JSON.parse(event.data)
-          setContainerLogsError({
-            containerId: selectedEngineId,
-            error: parsed?.payload?.detail || 'logs_stream_error',
-          })
-        } catch {
-          setContainerLogsError({
-            containerId: selectedEngineId,
-            error: 'logs_stream_error',
-          })
-        }
-      }
-
-      eventSource.addEventListener('container_logs_snapshot', handleLogsSnapshot)
-      eventSource.addEventListener('container_logs_error', handleLogsErrorEvent)
-
-      eventSource.onmessage = (event) => {
-        try {
-          const parsed = JSON.parse(event.data)
-          const eventType = String(parsed?.type || '')
-          if (eventType === 'container_logs_snapshot') {
-            setContainerLogsSnapshot({
-              containerId: selectedEngineId,
-              payload: parsed?.payload || {},
-            })
-          } else if (eventType === 'container_logs_error') {
-            setContainerLogsError({
-              containerId: selectedEngineId,
-              error: parsed?.payload?.detail || 'logs_stream_error',
-            })
-          }
-        } catch {
-          setContainerLogsError({
-            containerId: selectedEngineId,
-            error: 'Failed to parse logs stream payload',
-          })
-        }
-      }
-
+      eventSource = new EventSource(url.toString())
+      eventSource.addEventListener('container_logs_snapshot', (ev) => {
+        try { setContainerLogsSnapshot({ containerId: selectedEngineId, payload: JSON.parse(ev.data)?.payload || {} }) }
+        catch { setContainerLogsError({ containerId: selectedEngineId, error: 'parse error' }) }
+      })
       eventSource.onerror = () => {
         setContainerLogsLoading({ containerId: selectedEngineId, loading: false })
-
-        if (eventSource) {
-          eventSource.close()
-          eventSource = null
-        }
-
-        if (!closed) {
-          reconnectTimer = window.setTimeout(connect, 2000)
-        }
+        if (eventSource) { eventSource.close(); eventSource = null }
+        if (!closed) reconnectTimer = window.setTimeout(connect, 2000)
       }
     }
 
     connect()
-
     return () => {
       closed = true
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer)
-      }
-      if (fallbackInterval) {
-        window.clearInterval(fallbackInterval)
-      }
-      if (eventSource) {
-        eventSource.close()
-      }
+      if (reconnectTimer) window.clearTimeout(reconnectTimer)
+      if (eventSource) eventSource.close()
     }
-  }, [
-    selectedEngineId,
-    orchUrl,
-    apiKey,
-    fetchContainerLogs,
-    setContainerLogsSnapshot,
-    setContainerLogsLoading,
-    setContainerLogsError,
-  ])
+  }, [selectedEngineId, orchUrl, apiKey, fetchContainerLogs, setContainerLogsSnapshot, setContainerLogsLoading, setContainerLogsError])
+
+  // ── Derived values ──────────────────────────────────────────────────────────
+  const activeStreamsValue = Number(orchestratorStatus?.streams?.active ?? streams?.length ?? 0)
+  const runningEnginesValue = Number(orchestratorStatus?.engines?.running ?? engines?.length ?? 0)
+  const healthyEnginesValue = Number(
+    orchestratorStatus?.engines?.healthy ?? engines.filter(e => e.health_status === 'healthy').length
+  )
+  const successRate = Number(
+    dashboardSnapshot?.proxy?.request_window_1m?.success_rate_percent ??
+    (orchestratorStatus?.status === 'healthy' ? 99.5 : 95)
+  )
+  const egressGbps = Number(dashboardSnapshot?.proxy?.throughput?.egress_mbps || 0) / 1000
+  const egressDisplay = formatEgress(egressGbps)
 
   const vpnIncident =
     (vpnStatus?.mode === 'redundant' && (!vpnStatus?.vpn1?.connected || !vpnStatus?.vpn2?.connected)) ||
     (vpnStatus?.mode === 'single' && !vpnStatus?.connected)
-
   const breakerIncident =
     orchestratorStatus?.provisioning?.circuit_breaker_state &&
     orchestratorStatus.provisioning.circuit_breaker_state !== 'closed'
-
-  const activeEmergency = Boolean(vpnIncident || breakerIncident)
-
-  const sortedEngineEvents = useMemo(() => {
-    return [...(engineStartEvents || [])]
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-      .slice(-16)
-  }, [engineStartEvents])
-
-  const latencyOverlayOption = useMemo(() => {
-    const ct = getChartTheme(resolvedTheme === 'dark')
-    const timestamps = dashboardSnapshot?.history?.timestamps || []
-    const labels = timestamps.map((ts) => formatTime(ts))
-    const ttfb = dashboardSnapshot?.history?.ttfbP95Ms || []
-    const activeStreamsSeries = dashboardSnapshot?.history?.activeStreams || []
-
-    const markLineData = sortedEngineEvents
-      .map((event) => ({
-        xAxis: formatTime(event.timestamp),
-        name: event.message?.slice(0, 18) || 'Engine start',
-      }))
-      .filter((entry) => labels.includes(entry.xAxis))
-
-    return {
-      animation: false,
-      grid: { left: 42, right: 56, top: 25, bottom: 65 },
-      tooltip: { trigger: 'axis', backgroundColor: ct.tooltipBg, borderColor: ct.tooltipBorder, textStyle: { color: ct.tooltipText } },
-      legend: {
-        bottom: 0,
-        left: 'center',
-        data: ['TTFB p95 (ms)', 'Active Streams'],
-        textStyle: { color: ct.legendText },
-      },
-      xAxis: {
-        type: 'category',
-        boundaryGap: false,
-        data: labels,
-        axisLabel: { color: ct.axisLabel },
-      },
-      yAxis: [
-        {
-          type: 'value',
-          name: 'ms',
-          axisLabel: { color: ct.axisLabel },
-          splitLine: { lineStyle: { color: ct.splitLine } },
-        },
-        {
-          type: 'value',
-          name: 'streams',
-          axisLabel: { color: ct.axisLabel },
-          splitLine: { show: false },
-        },
-      ],
-      series: [
-        {
-          name: 'TTFB p95 (ms)',
-          type: 'line',
-          smooth: 0.2,
-          yAxisIndex: 0,
-          symbol: 'none',
-          data: ttfb,
-          lineStyle: { color: CHART_SERIES.rose, width: 2 },
-          areaStyle: { color: CHART_SERIES.rose, opacity: 0.12 },
-          markLine: {
-            symbol: ['none', 'none'],
-            data: markLineData,
-            lineStyle: { color: CHART_SERIES.amber, width: 1.3, type: 'dashed' },
-            label: {
-              color: CHART_SERIES.amber,
-              formatter: 'Engine Start',
-              position: 'end',
-              verticalAlign: 'top',
-              padding: [0, 0, 0, 0],
-            },
-          },
-        },
-        {
-          name: 'Active Streams',
-          type: 'line',
-          smooth: 0.2,
-          yAxisIndex: 1,
-          symbol: 'none',
-          data: activeStreamsSeries,
-          lineStyle: { color: CHART_SERIES.blue, width: 2 },
-          areaStyle: { color: CHART_SERIES.blue, opacity: 0.12 },
-        },
-      ],
-    }
-  }, [dashboardSnapshot, sortedEngineEvents, resolvedTheme])
-
-  const heatmapOption = useMemo(() => {
-    const ct = getChartTheme(resolvedTheme === 'dark')
-    const xBuckets = bufferBuckets || []
-    const xLabels = xBuckets.map((bucket) => formatTime(bucket.ts))
-
-    const streamRows = (streams || []).slice(0, 24)
-    const streamLabels = streamRows.map((stream) => stream.container_name || stream.id.slice(0, 10))
-
-    const data = []
-    xBuckets.forEach((bucket, xIndex) => {
-      streamRows.forEach((stream, yIndex) => {
-        const value = Number(bucket.values?.[stream.id] || 0)
-        data.push([xIndex, yIndex, value])
-      })
-    })
-
-    return {
-      animation: false,
-      grid: { left: 90, right: 20, top: 16, bottom: 65 },
-      tooltip: { position: 'top', backgroundColor: ct.tooltipBg, borderColor: ct.tooltipBorder, textStyle: { color: ct.tooltipText } },
-      xAxis: {
-        type: 'category',
-        data: xLabels,
-        axisLabel: { color: ct.axisLabel, showMaxLabel: true, hideOverlap: true },
-        splitArea: { show: false },
-      },
-      yAxis: {
-        type: 'category',
-        data: streamLabels,
-        axisLabel: { color: ct.axisLabel },
-        splitArea: { show: false },
-      },
-      visualMap: {
-        min: 0,
-        max: 40,
-        orient: 'horizontal',
-        left: 'center',
-        bottom: 0,
-        text: ['Healthy buffer', 'Stutter risk'],
-        textStyle: { color: ct.legendText },
-        inRange: {
-          color: [CHART_SERIES.rose, CHART_SERIES.amber, '#facc15', CHART_SERIES.emerald],
-        },
-      },
-      series: [
-        {
-          name: 'Proxy Buffer Pieces',
-          type: 'heatmap',
-          data,
-          emphasis: {
-            itemStyle: {
-              shadowBlur: 10,
-              shadowColor: 'rgba(0, 0, 0, 0.6)',
-            },
-          },
-        },
-      ],
-    }
-  }, [bufferBuckets, streams, resolvedTheme])
-
-  const activeStreamsValue = Number(orchestratorStatus?.streams?.active ?? streams?.length ?? 0)
-  const healthyEnginesValue = Number(
-    orchestratorStatus?.engines?.healthy ?? (engines || []).filter((engine) => engine.health_status === 'healthy').length,
-  )
-  const unhealthyEnginesValue = Number(
-    orchestratorStatus?.engines?.unhealthy ?? (engines || []).filter((engine) => engine.health_status === 'unhealthy').length,
-  )
-  const runningEnginesValue = Number(orchestratorStatus?.engines?.running ?? (engines || []).length)
-  const breakerState = orchestratorStatus?.provisioning?.circuit_breaker_state || 'unknown'
-  const capacityUsed = Number(orchestratorStatus?.capacity?.used ?? 0)
-  const capacityTotal = Number(orchestratorStatus?.capacity?.total ?? 0)
-  const capacityMax = Number(orchestratorStatus?.capacity?.max_replicas ?? capacityTotal)
-
-  const credentialSummary = useMemo(() => {
-    const statusSummary = vpnStatus?.lease_summary || vpnStatus?.credentials_summary || null
-    const merged = vpnLeaseSummary || statusSummary || {}
-    const leased = Number(merged?.leased ?? merged?.active_leases ?? 0)
-    const total = Number(
-      merged?.max_vpn_capacity
-      ?? merged?.total
-      ?? merged?.pool_size
-      ?? merged?.credentials_total
-      ?? ((Number(merged?.available ?? 0) + leased) || 0),
-    )
-    return {
-      leased,
-      total: Math.max(total, leased),
-    }
-  }, [vpnLeaseSummary, vpnStatus])
-
-  const provisioningBlocked = orchestratorStatus?.provisioning?.can_provision === false
-  const provisioningBlockedReason = orchestratorStatus?.provisioning?.blocked_reason
-  const provisioningRecoveryEta =
-    orchestratorStatus?.provisioning?.blocked_reason_details?.recovery_eta_seconds ?? null
-
-  const vpnCredentialPoints = useMemo(() => {
-    const pointCount = Math.max(4, kpiHistory.timestamps?.length || 0)
-    return Array.from({ length: pointCount }).map(() => credentialSummary.leased)
-  }, [credentialSummary.leased, kpiHistory.timestamps])
-
-  const vpnEssentials = useMemo(() => {
-    if (!vpnStatus || vpnStatus.mode === 'disabled') {
-      return []
-    }
-
-    if (vpnStatus.mode === 'single') {
-      const tunnel = vpnStatus.vpn1 || vpnStatus
-      return [{
-        label: 'VPN',
-        connected: Boolean(tunnel?.connected),
-        container: tunnel?.container_name || tunnel?.container || 'N/A',
-        publicIp: tunnel?.public_ip || 'N/A',
-        provider: tunnel?.provider || null,
-      }]
-    }
-
-    return [vpnStatus.vpn1, vpnStatus.vpn2]
-      .filter(Boolean)
-      .map((tunnel, index) => ({
-        label: `VPN ${index + 1}`,
-        connected: Boolean(tunnel.connected),
-        container: tunnel.container_name || tunnel.container || 'N/A',
-        publicIp: tunnel.public_ip || 'N/A',
-        provider: tunnel.provider || null,
-      }))
-  }, [vpnStatus])
-
-  const successRate = Number(
-    dashboardSnapshot?.proxy?.request_window_1m?.success_rate_percent ??
-    (orchestratorStatus?.status === 'healthy' ? 99.5 : 95),
-  )
-
-  const egressGbps = Number(dashboardSnapshot?.proxy?.throughput?.egress_mbps || 0) / 1000
-  const egressDisplay = formatEgress(egressGbps)
-
-  const selectedEngine = (engines || []).find((engine) => engine.container_id === selectedEngineId)
-  const selectedEngineLogs = selectedEngineId ? logsByContainerId[selectedEngineId] : null
-  const logsLoading = selectedEngineId ? Boolean(logsLoadingByContainerId[selectedEngineId]) : false
-  const logsError = selectedEngineId ? logsErrorByContainerId[selectedEngineId] : null
+  const migrations = streams.filter(s => String(s.status || '').includes('failover')).length
+  const isConnected = true // derived from parent SSE, we get data if we're here
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Streaming Central</h1>
-          <p className="text-sm text-muted-foreground">
-            High-frequency NOC surface for routing stability, QoE telemetry, and container saturation.
-          </p>
+    <div style={{
+      display: 'flex', flexDirection: 'column',
+      gap: 0,
+      background: 'var(--bg-0)',
+      backgroundImage: `radial-gradient(circle at 50% 40%, oklch(0.22 0.04 145 / 0.12), transparent 50%)`,
+      minHeight: '100%',
+    }}>
+      <Marquee engines={engines} streams={streams} vpnStatus={vpnStatus} isConnected={true}/>
+
+      {/* Alert banners */}
+      {vpnIncident && (
+        <AlertBanner
+          title="VPN TUNNEL DEGRADATION"
+          message="One or more VPN tunnels are disconnected. Monitor failover edges and check VPN settings."
+          accent="red"
+        />
+      )}
+      {breakerIncident && (
+        <AlertBanner
+          title={`CIRCUIT BREAKER · ${orchestratorStatus?.provisioning?.circuit_breaker_state?.toUpperCase()}`}
+          message={orchestratorStatus?.provisioning?.blocked_reason || 'Provisioning is blocked. Circuit breaker is not closed.'}
+          accent="amber"
+        />
+      )}
+
+      {/* 3-column layout */}
+      <div style={{ display: 'flex', gap: 12, padding: 16, flex: 1, alignItems: 'stretch', minHeight: 0 }}>
+
+        {/* Left rail */}
+        <div style={{ width: 220, display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0 }}>
+          <BigCounter label="ACTIVE.STREAMS" value={String(activeStreamsValue)} accent="green"/>
+          <BigCounter label="ACTIVE.ENGINES" value={String(healthyEnginesValue).padStart(2, '0')} accent="green"/>
+          <BigCounter
+            label="SUCCESS.RATE"
+            value={`${Number(successRate).toFixed(1)}`}
+            sub="%"
+            accent={successRate < 97 ? 'red' : 'green'}
+          />
+          <BigCounter
+            label="EGRESS"
+            value={egressDisplay.value}
+            sub={egressDisplay.suffix}
+            accent="cyan"
+          />
+          <PolicyBlock orchestratorStatus={orchestratorStatus}/>
         </div>
-        <div className="flex items-center gap-2 text-xs">
-          <Badge variant={activeEmergency ? 'destructive' : 'success'}>
-            {activeEmergency ? 'Incident mode' : 'Nominal'}
-          </Badge>
-          <Badge variant="outline">1s cadence</Badge>
-          <Badge variant="outline">15m trend window</Badge>
+
+        {/* Constellation canvas */}
+        <div style={{
+          flex: 1,
+          display: 'flex', flexDirection: 'column',
+          background: 'var(--bg-1)',
+          border: '1px solid var(--acc-green-dim)',
+          boxShadow: '0 0 0 1px var(--acc-green-bg) inset',
+          minWidth: 0,
+          minHeight: 480,
+        }}>
+          {/* Canvas header */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '10px 14px',
+            borderBottom: '1px solid var(--line)',
+            flexShrink: 0,
+          }}>
+            <span className="dot pulse" style={{ color: 'var(--acc-green)' }}/>
+            <span className="label">CONTROL.MESH /// EU</span>
+            <span style={{ fontSize: 10, color: 'var(--fg-2)' }}>
+              engines {engines.length} · streams {activeStreamsValue}
+              {vpnStatus?.mode !== 'disabled' && ` · vpn ${vpnStatus?.mode || 'disabled'}`}
+            </span>
+            <div style={{ flex: 1 }}/>
+            {migrations > 0 && (
+              <span className="tag tag-magenta"><span className="dot pulse"/>MIG-{migrations}</span>
+            )}
+            {vpnIncident && (
+              <span className="tag tag-red"><span className="dot pulse"/>VPN FAIL</span>
+            )}
+          </div>
+
+          {/* SVG constellation */}
+          <div style={{ flex: 1, padding: 12, position: 'relative', minHeight: 340 }}>
+            <ConstellationGraph engines={engines} vpnStatus={vpnStatus}/>
+          </div>
+
+          {/* Waveform */}
+          <SessionWaveform kpiHistory={kpiHistory}/>
+        </div>
+
+        {/* Signal log */}
+        <div style={{
+          width: 320,
+          display: 'flex', flexDirection: 'column',
+          background: 'var(--bg-1)',
+          border: '1px solid var(--line-soft)',
+          flexShrink: 0,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '10px 14px',
+            borderBottom: '1px solid var(--line-soft)',
+            flexShrink: 0,
+          }}>
+            <span className="label">SIGNAL.LOG</span>
+            <div style={{ flex: 1 }}/>
+            <span style={{ fontSize: 10, color: 'var(--acc-green)' }}>● rec</span>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+            {events.length === 0 ? (
+              <div style={{ padding: 14, fontSize: 10, color: 'var(--fg-3)', fontStyle: 'italic' }}>
+                awaiting events...
+              </div>
+            ) : (
+              events.slice(0, 40).map((e, i) => <SignalRow key={i} e={e} idx={i}/>)
+            )}
+          </div>
         </div>
       </div>
 
-      {activeEmergency && (
-        <Alert variant="destructive">
-          <ShieldAlert className="h-4 w-4" />
-          <AlertTitle>Active Emergencies</AlertTitle>
-          <AlertDescription>
-            {vpnIncident ? 'VPN tunnel degradation detected. ' : ''}
-            {breakerIncident ? 'Provisioning circuit breaker is not closed. ' : ''}
-            Operators should watch failover edges and TTFB spikes.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {provisioningBlocked && provisioningBlockedReason && (
-        <Alert variant="warning" className="border-amber-500/60 bg-amber-500/10">
-          <AlertTriangle className="h-4 w-4 text-amber-300" />
-          <AlertTitle>Provisioning Blocked</AlertTitle>
-          <AlertDescription>
-            {provisioningBlockedReason}
-            {typeof provisioningRecoveryEta === 'number' ? ` Recovery ETA: ${provisioningRecoveryEta}s.` : ''}
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <Tabs defaultValue="pulse" className="space-y-3">
-        <TabsList className="grid w-full grid-cols-4 border-slate-700 bg-slate-900/90 text-slate-300">
-          <TabsTrigger value="pulse" className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50">Global Pulse</TabsTrigger>
-          <TabsTrigger value="topology" className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50">Routing Topology</TabsTrigger>
-          <TabsTrigger value="microscope" className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50">Stream Microscope</TabsTrigger>
-          <TabsTrigger value="fleet" className="text-slate-300 hover:bg-slate-800/80 hover:text-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-slate-50">Fleet Matrix</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="pulse" className="space-y-3">
-          <div className="grid grid-cols-12 gap-4">
-            <div className="col-span-12 sm:col-span-6 xl:col-span-2">
-              <KpiTile
-                title="Active Streams"
-                value={activeStreamsValue}
-                points={kpiHistory.activeStreams}
-                tone="sky"
-                icon={Tv}
-              />
-            </div>
-            <div className="col-span-12 sm:col-span-6 xl:col-span-2">
-              <KpiTile
-                title="Global Egress"
-                value={egressDisplay.value}
-                suffix={egressDisplay.suffix}
-                points={kpiHistory.egressGbps}
-                tone="emerald"
-                icon={Network}
-              />
-            </div>
-            <div className="col-span-12 sm:col-span-6 xl:col-span-3">
-              <KpiTile
-                title="Engine Capacity"
-                value={`${runningEnginesValue} / ${capacityUsed}`}
-                suffix={capacityMax > 0 ? `(max ${capacityMax})` : ''}
-                points={kpiHistory.healthyEngines}
-                tone={runningEnginesValue >= capacityMax && capacityMax > 0 ? 'rose' : 'amber'}
-                icon={Server}
-              />
-            </div>
-            <div className="col-span-12 sm:col-span-6 xl:col-span-2">
-              <KpiTile
-                title="VPN Credentials"
-                value={`${credentialSummary.leased} / ${credentialSummary.total}`}
-                points={vpnCredentialPoints}
-                tone={credentialSummary.leased > 0 ? 'amber' : 'default'}
-                icon={KeyRound}
-              />
-            </div>
-            <div className="col-span-12 sm:col-span-6 xl:col-span-3">
-              <KpiTile
-                title="Success Rate"
-                value={formatPercent(successRate)}
-                suffix="%"
-                points={kpiHistory.successRate}
-                tone={successRate < 97 ? 'rose' : 'default'}
-                icon={GaugeCircle}
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2">
-            <Card className="shadow-sm">
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Health Essentials
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-2 p-4 pt-0 text-sm md:grid-cols-3">
-                <div className="rounded-md border border-border bg-muted/40 p-3">
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground">Engine health</p>
-                  <p className="mt-0.5 font-semibold text-foreground">
-                    {healthyEnginesValue} healthy / {unhealthyEnginesValue} unhealthy
-                  </p>
-                </div>
-                <div className="rounded-md border border-border bg-muted/40 p-3">
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground">Capacity</p>
-                  <p className="mt-0.5 font-semibold text-foreground">{runningEnginesValue} / {capacityUsed} (max {capacityMax || capacityTotal})</p>
-                </div>
-                <div className="rounded-md border border-border bg-muted/40 p-3">
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground">Circuit breaker</p>
-                  <div className="mt-0.5">
-                    <Badge variant={breakerState === 'closed' ? 'success' : 'warning'}>{breakerState}</Badge>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="shadow-sm">
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  VPN Essentials
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 p-4 pt-0 text-sm">
-                <div className="rounded-md border border-border bg-muted/40 p-3">
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground">Mode</p>
-                  <p className="mt-0.5 font-semibold text-foreground">{vpnStatus?.mode || 'disabled'}</p>
-                </div>
-                {vpnEssentials.length ? (
-                  vpnEssentials.map((vpn) => (
-                    <div key={vpn.label} className="rounded-md border border-border bg-muted/40 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold text-foreground">{vpn.label}</p>
-                        <Badge variant={vpn.connected ? 'success' : 'destructive'}>
-                          {vpn.connected ? 'Connected' : 'Disconnected'}
-                        </Badge>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">{vpn.container}</p>
-                      <p className="mt-0.5 font-mono text-xs text-foreground">{vpn.publicIp}</p>
-                      {vpn.provider ? <p className="mt-0.5 text-xs text-muted-foreground">{vpn.provider}</p> : null}
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-md border border-border bg-muted/40 p-3">
-                    <p className="text-sm text-muted-foreground">VPN is disabled.</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="topology" className="space-y-3">
-          <RoutingTopologyPage
-            engines={engines}
-            streams={streams}
-            vpnStatus={vpnStatus}
-            orchestratorStatus={orchestratorStatus}
-            embedded
-          />
-        </TabsContent>
-
-        <TabsContent value="microscope" className="space-y-3">
-          <Card className="shadow-sm">
-            <CardHeader className="p-4 pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Proxy Buffer Heatmap (rolling 5m)
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <ReactECharts option={heatmapOption} style={{ height: 430 }} />
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-sm">
-            <CardHeader className="p-4 pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Latency overlay + engine starts
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <ReactECharts option={latencyOverlayOption} style={{ height: 340 }} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="fleet" className="space-y-3">
-          <Card className="shadow-sm">
-            <CardHeader className="p-4 pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Container saturation map
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-                {(engines || []).map((engine) => {
-                  const stats = engineStatsById?.[engine.container_id] || {}
-                  const inspect = engineInspectById?.[engine.container_id] || {}
-                  const cpu = Number(stats.cpu_percent || 0)
-                  const memoryPercent = Number(stats.memory_percent || 0)
-                  const utilization = Math.max(cpu, memoryPercent)
-
-                  return (
-                    <HoverCard key={engine.container_id} openDelay={100} closeDelay={120}>
-                      <HoverCardTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={() => openEngineLogs(engine.container_id)}
-                          className={cn(
-                            'group h-24 rounded-lg border bg-gradient-to-br p-2 text-left text-white shadow-sm transition hover:scale-[1.01] hover:shadow-md',
-                            engineToneClass(utilization),
-                          )}
-                        >
-                          <p className="truncate text-[11px] font-semibold uppercase tracking-wider">
-                            {engine.container_name || engine.container_id.slice(0, 12)}
-                          </p>
-                          <div className="mt-2 flex items-end justify-between text-xs">
-                            <span>CPU {cpu.toFixed(1)}%</span>
-                            <span>RAM {memoryPercent.toFixed(1)}%</span>
-                          </div>
-                          <div className="mt-1 h-1.5 rounded bg-black/25">
-                            <div
-                              className="h-full rounded bg-white/85"
-                              style={{ width: `${Math.min(100, utilization)}%` }}
-                            />
-                          </div>
-                        </button>
-                      </HoverCardTrigger>
-                      <HoverCardContent className="w-80">
-                        <div className="space-y-1 text-xs">
-                          <p className="text-sm font-semibold text-foreground">{engine.container_name || engine.container_id}</p>
-                          <p className="text-muted-foreground">Host Port: {engine.port}</p>
-                          <p className="text-muted-foreground">VPN Tunnel: {engine.vpn_container || 'unassigned'}</p>
-                          <p className="text-muted-foreground">Uptime anchor: {formatTime(engine.first_seen || inspect.created)}</p>
-                          <p className="text-muted-foreground">Restart count: {inspect.restart_count ?? engine.restart_count ?? 0}</p>
-                          <p className="text-muted-foreground">Streams: {engine.stream_count ?? 0}</p>
-                        </div>
-                      </HoverCardContent>
-                    </HoverCard>
-                  )
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      <Sheet open={Boolean(selectedEngineId)} onOpenChange={(open) => (!open ? closeEngineLogs() : undefined)}>
-        <SheetContent side="right" className="w-[92vw] max-w-[720px]">
-          <SheetHeader>
-            <SheetTitle>{selectedEngine?.container_name || selectedEngineId || 'Engine logs'}</SheetTitle>
-            <SheetDescription>
-              Live trailing Docker logs. Refreshes every 2.5s while the panel is open.
-            </SheetDescription>
-          </SheetHeader>
-
-          <div className="mt-4 flex items-center justify-between gap-2">
-            <div className="text-xs text-muted-foreground">
-              Last fetch: {selectedEngineLogs?.fetchedAt ? formatTime(selectedEngineLogs.fetchedAt) : '-'}
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                if (!selectedEngineId) return
-                fetchContainerLogs({ orchUrl, apiKey, containerId: selectedEngineId })
+      {/* Container logs drawer */}
+      {selectedEngineId && (
+        <div style={{
+          position: 'fixed', top: 0, right: 0, bottom: 0,
+          width: 640,
+          background: 'var(--bg-1)',
+          borderLeft: '1px solid var(--line-soft)',
+          display: 'flex', flexDirection: 'column',
+          zIndex: 200,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '12px 16px',
+            borderBottom: '1px solid var(--line-soft)',
+            flexShrink: 0,
+          }}>
+            <span className="label">CONTAINER LOGS · {selectedEngineId.slice(0, 12)}</span>
+            <div style={{ flex: 1 }}/>
+            <button
+              onClick={() => closeEngineLogs()}
+              style={{
+                background: 'transparent', border: '1px solid var(--line)',
+                color: 'var(--fg-1)', cursor: 'pointer', padding: '2px 8px', fontSize: 10,
+                fontFamily: 'var(--font-mono)',
               }}
-            >
-              Refresh
-            </Button>
+            >✕ CLOSE</button>
           </div>
-
-          {logsError ? (
-            <Alert variant="destructive" className="mt-3">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Log retrieval failed</AlertTitle>
-              <AlertDescription>{logsError}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          <div className="mt-3 rounded-md border border-border bg-muted/20">
-            <ScrollArea className="h-[70vh]">
-              <pre className="px-4 py-3 font-mono text-[11px] leading-relaxed text-foreground">
-                {logsLoading ? 'Loading logs...' : (selectedEngineLogs?.lines || []).join('\n') || 'No logs available.'}
-              </pre>
-            </ScrollArea>
+          <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+            <pre style={{
+              padding: '12px 16px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              lineHeight: 1.6,
+              color: 'var(--fg-0)',
+              margin: 0,
+            }}>
+              {logsLoadingByContainerId?.[selectedEngineId]
+                ? 'Loading logs...'
+                : (logsByContainerId?.[selectedEngineId]?.lines || []).join('\n') || 'No logs available.'}
+            </pre>
           </div>
-        </SheetContent>
-      </Sheet>
+        </div>
+      )}
     </div>
   )
 }

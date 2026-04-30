@@ -155,18 +155,33 @@ function SettingsPageInner({
   }, [globalDirty])
 
   return (
-    <div className="space-y-6 pb-28">
-      <div className="flex items-center justify-between">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 112 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-          <p className="text-muted-foreground mt-1">Configure orchestrator behavior, networking, proxy pipelines, and diagnostics</p>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--fg-0)', margin: 0 }}>
+            Settings
+          </h1>
+          <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 2 }}>
+            runtime · persisted to app/config/*.json
+          </div>
           {authChecked && (
-            <p className="mt-2 inline-flex items-center gap-2 rounded-full border border-slate-300/80 bg-slate-100/70 px-3 py-1 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-300">
-              <AlertCircle className="h-3.5 w-3.5" />
+            <div style={{
+              marginTop: 6,
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '3px 8px',
+              background: 'var(--bg-2)',
+              border: '1px solid var(--line)',
+              fontSize: 10,
+              color: 'var(--fg-2)',
+              fontFamily: 'var(--font-mono)',
+            }}>
+              <span style={{ color: authRequired ? 'var(--acc-amber)' : 'var(--acc-green)' }}>
+                {authRequired ? '⚠' : '✓'}
+              </span>
               {authRequired
-                ? 'Server authentication is enforced for protected settings operations.'
-                : 'Server authentication is not enforced. Settings save is available without an API key.'}
-            </p>
+                ? 'Auth enforced · API key required for protected settings'
+                : 'Auth not enforced · settings save available without API key'}
+            </div>
           )}
         </div>
       </div>
@@ -228,38 +243,51 @@ function SettingsPageInner({
         </TabsContent>
       </Tabs>
 
-      <div
-        className={`fixed bottom-4 left-1/2 z-50 w-[min(960px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-slate-300 bg-white/95 p-3 shadow-xl backdrop-blur dark:border-slate-700 dark:bg-slate-950/95 transition-all ${globalDirty ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm text-slate-700 dark:text-slate-200">
-            <p className="font-semibold">Unsaved changes</p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+      {globalDirty && (
+        <div style={{
+          position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 50,
+          width: 'min(900px, calc(100vw - 2rem))',
+          background: 'var(--bg-1)',
+          border: '1px solid var(--acc-amber-dim)',
+          padding: '10px 14px',
+          display: 'flex', alignItems: 'center', gap: 12,
+          boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
+        }}>
+          <span className="dot pulse" style={{ color: 'var(--acc-amber)' }}/>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, color: 'var(--fg-0)', fontWeight: 600 }}>UNSAVED CHANGES</div>
+            <div style={{ fontSize: 10, color: 'var(--fg-3)' }}>
               {dirtySections.length} section{dirtySections.length === 1 ? '' : 's'} pending
-            </p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              className="text-slate-700 hover:text-slate-900 dark:text-slate-100 dark:hover:text-slate-50"
-              onClick={discardAll}
-              disabled={globalSaving || savingAll}
-            >
-              <Undo2 className="mr-2 h-4 w-4" />
-              Discard
-            </Button>
-            <Button onClick={saveAll} disabled={globalSaving || savingAll || authBlockedSections.length > 0}>
-              <Save className="mr-2 h-4 w-4" />
-              {savingAll ? 'Saving...' : 'Save Changes'}
-            </Button>
-          </div>
+          {authBlockedSections.length > 0 && (
+            <div style={{ fontSize: 10, color: 'var(--acc-red)' }}>
+              API key required: {authBlockedSections.map(s => s.title).join(', ')}
+            </div>
+          )}
+          <button
+            onClick={discardAll}
+            disabled={globalSaving || savingAll}
+            className="tag"
+            style={{ cursor: 'pointer', padding: '4px 12px', opacity: globalSaving || savingAll ? 0.5 : 1 }}
+          >
+            ↩ DISCARD
+          </button>
+          <button
+            onClick={saveAll}
+            disabled={globalSaving || savingAll || authBlockedSections.length > 0}
+            className="tag tag-green"
+            style={{
+              cursor: globalSaving || savingAll || authBlockedSections.length > 0 ? 'not-allowed' : 'pointer',
+              padding: '4px 12px',
+              opacity: globalSaving || savingAll || authBlockedSections.length > 0 ? 0.5 : 1,
+            }}
+          >
+            {savingAll ? '⟳ SAVING...' : '✓ SAVE ALL'}
+          </button>
         </div>
-        {authBlockedSections.length > 0 && (
-          <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-            API key required to save protected sections: {authBlockedSections.map((section) => section.title).join(', ')}
-          </p>
-        )}
-      </div>
+      )}
 
       <Dialog open={tabWarningOpen} onOpenChange={setTabWarningOpen}>
         <DialogContent>

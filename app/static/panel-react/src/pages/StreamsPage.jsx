@@ -1,31 +1,127 @@
-import React from 'react'
+import React, { useState } from 'react'
 import StreamsTable from '@/components/StreamsTable'
 
-export function StreamsPage({
-  streams,
-  orchUrl,
-  apiKey,
-  onStopStream,
-  onDeleteEngine,
-  debugMode
-}) {
+function StatusTag({ status }) {
+  const map = {
+    started: 'green', active: 'green',
+    pending_failover: 'magenta', migrating: 'magenta',
+    ended: 'amber', stopping: 'amber',
+    failed: 'red', error: 'red',
+  }
+  const normalized = String(status || '').toLowerCase().replace(/ /g, '_')
+  const color = map[normalized] || 'amber'
+  const label = normalized.toUpperCase().replace(/_/g, '.')
+  return <span className={`tag tag-${color}`}><span className="dot pulse"/>{label}</span>
+}
+
+export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode }) {
+  const active = streams.filter(s => String(s.status || '').toLowerCase() === 'started').length
+  const migrations = streams.filter(s => String(s.status || '').toLowerCase().includes('failover')).length
+  const totalBitrate = streams.reduce((sum, s) => {
+    const b = Number(s.bitrate_mbps || s.bitrate || 0)
+    return sum + (Number.isFinite(b) ? b : 0)
+  }, 0)
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Streams</h1>
-          <p className="text-muted-foreground mt-1">Monitor active and historical streams</p>
+          <h1 style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 18, fontWeight: 600,
+            color: 'var(--fg-0)', margin: 0,
+          }}>Streams</h1>
+          <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 2 }}>
+            {streams.length} active
+            {migrations > 0 && ` · ${migrations} migrating`}
+            {totalBitrate > 0 && ` · ${totalBitrate.toFixed(1)} Mb/s aggregate`}
+          </div>
         </div>
+        <div style={{ flex: 1 }}/>
+        <span className="tag tag-green">
+          <span className="dot pulse"/> ACTIVE {active}
+        </span>
+        {migrations > 0 && (
+          <span className="tag tag-magenta">
+            <span className="dot pulse"/> HOT-SWAP {migrations}
+          </span>
+        )}
       </div>
 
-      <StreamsTable
-        streams={streams}
-        orchUrl={orchUrl}
-        apiKey={apiKey}
-        onStopStream={onStopStream}
-        onDeleteEngine={onDeleteEngine}
-        debugMode={debugMode}
-      />
+      {/* Migration banner */}
+      {migrations > 0 && (
+        <div style={{
+          background: 'var(--acc-magenta-bg)',
+          border: '1px solid var(--acc-magenta-dim)',
+          padding: '10px 14px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <span className="label" style={{ color: 'var(--acc-magenta)' }}>STATEFUL MIGRATION · {migrations} stream{migrations > 1 ? 's' : ''}</span>
+            <div style={{ flex: 1 }}/>
+            <span style={{ fontSize: 10, color: 'var(--fg-2)' }}>HLS · session continuity preserved</span>
+          </div>
+          <MigrationViz streams={streams}/>
+        </div>
+      )}
+
+      {/* Streams table (existing component, wrapped) */}
+      <div style={{
+        background: 'var(--bg-1)',
+        border: '1px solid var(--line-soft)',
+        overflow: 'hidden',
+      }}>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
+          <span className="label">ACTIVE SESSIONS</span>
+        </div>
+        <StreamsTable
+          streams={streams}
+          orchUrl={orchUrl}
+          apiKey={apiKey}
+          onStopStream={onStopStream}
+          onDeleteEngine={onDeleteEngine}
+          debugMode={debugMode}
+        />
+      </div>
     </div>
+  )
+}
+
+function MigrationViz({ streams }) {
+  const migrating = streams.filter(s => String(s.status || '').toLowerCase().includes('failover'))
+  if (migrating.length === 0) return null
+
+  const W = 700, H = 80
+  const stream = migrating[0]
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }}>
+      <text x="60" y="14" fontSize="9" fill="var(--fg-3)" fontFamily="var(--font-mono)" letterSpacing="1">SOURCE</text>
+      <text x="640" y="14" textAnchor="end" fontSize="9" fill="var(--fg-3)" fontFamily="var(--font-mono)" letterSpacing="1">TARGET</text>
+
+      <rect x="20" y="22" width="120" height="40" fill="var(--bg-0)" stroke="var(--acc-amber)"/>
+      <text x="80" y="40" textAnchor="middle" fontSize="11" fill="var(--fg-0)" fontFamily="var(--font-mono)" fontWeight="600">
+        {(stream.container_name || stream.container_id || 'source').slice(0, 10)}
+      </text>
+      <text x="80" y="54" textAnchor="middle" fontSize="9" fill="var(--acc-amber)" fontFamily="var(--font-mono)" letterSpacing="1">DRAINING</text>
+
+      <rect x="560" y="22" width="120" height="40" fill="var(--bg-0)" stroke="var(--acc-green)"/>
+      <text x="620" y="40" textAnchor="middle" fontSize="11" fill="var(--fg-0)" fontFamily="var(--font-mono)" fontWeight="600">target</text>
+      <text x="620" y="54" textAnchor="middle" fontSize="9" fill="var(--acc-green)" fontFamily="var(--font-mono)" letterSpacing="1">RECEIVING</text>
+
+      <line x1="140" y1="42" x2="560" y2="42" stroke="var(--acc-magenta)" strokeWidth="1" strokeDasharray="3 3"/>
+      {[0, 1, 2, 3, 4].map(i => (
+        <circle key={i} r="4" fill="var(--acc-magenta)">
+          <animateMotion dur="2.4s" begin={`${i * 0.3}s`} repeatCount="indefinite" path="M 140 42 L 560 42"/>
+        </circle>
+      ))}
+
+      <text x="350" y="32" textAnchor="middle" fontSize="9" fill="var(--acc-magenta)" fontFamily="var(--font-mono)" letterSpacing="1">
+        PROXY HOT-SWAP · CLIENT HTTP SOCKET PRESERVED
+      </text>
+      <text x="350" y="62" textAnchor="middle" fontSize="9" fill="var(--fg-2)" fontFamily="var(--font-mono)">
+        stream {stream.id?.slice(0, 8) || '–'} · {String(stream.status || '').toUpperCase().replace(/_/g, '·')}
+      </text>
+    </svg>
   )
 }

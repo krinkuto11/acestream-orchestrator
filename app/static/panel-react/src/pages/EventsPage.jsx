@@ -192,18 +192,24 @@ export function EventsPage({ orchUrl, apiKey, maxEventsDisplay = 100 }) {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Event Log</h1>
-          <p className="text-muted-foreground mt-1">
-            Track significant application events and operations
-          </p>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--fg-0)', margin: 0 }}>
+            Events
+          </h1>
+          <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 2 }}>
+            audit log · significant application events
+          </div>
         </div>
-        <Button onClick={fetchEvents} variant="default" size="sm">
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
-        </Button>
+        <div style={{ flex: 1 }}/>
+        <button
+          onClick={fetchEvents}
+          className="tag"
+          style={{ cursor: 'pointer', padding: '4px 12px' }}
+        >
+          ⟳ REFRESH
+        </button>
       </div>
 
       {/* Statistics Cards */}
