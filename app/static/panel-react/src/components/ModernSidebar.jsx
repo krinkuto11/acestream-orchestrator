@@ -8,9 +8,8 @@ const NAV_ITEMS = [
   { id: 'streams',    label: 'Streams',    glyph: '↯', kbd: '3', href: '/streams' },
   { id: 'monitoring', label: 'Monitor',    glyph: '▧', kbd: '4', href: '/stream-monitoring' },
   { id: 'topology',   label: 'Topology',   glyph: '⌬', kbd: '5', href: '/routing-topology' },
-  { id: 'events',     label: 'Events',     glyph: '≡', kbd: '6', href: '/events' },
-  { id: 'metrics',    label: 'Dashboard',  glyph: '▲', kbd: '7', href: '/metrics' },
-  { id: 'settings',   label: 'Settings',   glyph: '⌗', kbd: '8', href: '/settings' },
+  { id: 'metrics',    label: 'Dashboard',  glyph: '▲', kbd: '6', href: '/metrics' },
+  { id: 'settings',   label: 'Settings',   glyph: '⌗', kbd: '7', href: '/settings' },
 ]
 
 function BrandMark({ size = 18 }) {

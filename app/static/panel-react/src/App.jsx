@@ -29,6 +29,7 @@ const PAGE_TITLES = {
 
 // ── Topbar ──────────────────────────────────────────────────────────────────
 function Topbar({ pathname, isConnected, lastUpdate }) {
+  const { resolvedTheme, setTheme } = useTheme()
   const [title, breadcrumb] = PAGE_TITLES[pathname] || ['–', '']
 
   const tick = lastUpdate
@@ -68,6 +69,21 @@ function Topbar({ pathname, isConnected, lastUpdate }) {
           </span>
         </span>
         <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>{tick}</span>
+        <button
+          onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+          style={{
+            background: 'none',
+            border: '1px solid var(--line)',
+            color: 'var(--fg-2)',
+            cursor: 'pointer',
+            fontSize: 10,
+            fontFamily: 'var(--font-mono)',
+            padding: '2px 8px',
+            lineHeight: 1.4,
+          }}
+        >
+          {resolvedTheme === 'dark' ? '◑ LIGHT' : '◐ DARK'}
+        </button>
       </div>
     </div>
   )

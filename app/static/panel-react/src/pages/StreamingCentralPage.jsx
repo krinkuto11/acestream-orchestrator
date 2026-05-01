@@ -270,15 +270,18 @@ function ConstellationGraph({ engines, vpnStatus }) {
 
   // Sun positions
   const vpnCount = noVpn ? 1 : vpnNodes.length
-  const sunRadius = Math.min(W, H) * (vpnCount > 4 ? 0.30 : 0.38)
+  const sunRadius = Math.min(W, H) * (vpnCount > 4 ? 0.27 : vpnCount > 1 ? 0.27 : 0.34)
   const sunR = 14
 
   const vpnPos = {}
   if (noVpn) {
     vpnPos['__center__'] = { x: cx, y: cy, angle: 0 }
   } else {
+    // Single VPN: place at left-center (angle=π) so engines arc inward to the right.
+    // Multiple VPNs: distribute around the ring starting from the top.
+    const baseAngle = vpnCount === 1 ? Math.PI : -Math.PI / 2
     vpnNodes.forEach((v, i) => {
-      const a = (i / vpnCount) * Math.PI * 2 - Math.PI / 2
+      const a = baseAngle + (i / vpnCount) * Math.PI * 2
       vpnPos[v.id] = { x: cx + Math.cos(a) * sunRadius, y: cy + Math.sin(a) * sunRadius, angle: a }
     })
   }
@@ -319,7 +322,8 @@ function ConstellationGraph({ engines, vpnStatus }) {
     let placed = 0
     rings.forEach((cnt, ri) => {
       const radius = baseR + ri * ringStep
-      const arcCenter = sun.angle
+      // Face arcs INWARD toward CTRL so engine nodes stay within the SVG viewport.
+    const arcCenter = sun.angle + Math.PI
       const span = Math.PI * 1.4
       for (let i = 0; i < cnt; i++) {
         const a = cnt === 1
@@ -400,10 +404,10 @@ function ConstellationGraph({ engines, vpnStatus }) {
         const p = vpnPos[v.id]
         if (!p) return null
         const glow = v.state === 'failed' ? 'glowR' : v.state === 'draining' ? 'glowA' : v.state === 'warming' ? 'glowM' : 'glowG'
-        const ringSpan = 38 + 2 * 22 + 14
-        const lx = p.x + Math.cos(p.angle) * ringSpan
-        const ly = p.y + Math.sin(p.angle) * ringSpan
-        const anchor = Math.cos(p.angle) > 0.3 ? 'start' : Math.cos(p.angle) < -0.3 ? 'end' : 'middle'
+        // Label on the outward side of the sun, clamped to SVG bounds.
+        const lx = Math.max(36, Math.min(W - 36, p.x + Math.cos(p.angle) * (sunR + 22)))
+        const ly = Math.max(22, Math.min(H - 14, p.y + Math.sin(p.angle) * (sunR + 22)))
+        const anchor = p.x < W * 0.33 ? 'start' : p.x > W * 0.67 ? 'end' : 'middle'
         return (
           <g key={v.id}>
             <circle cx={p.x} cy={p.y} r={sunR * 2.2} fill={`url(#${glow})`}/>
