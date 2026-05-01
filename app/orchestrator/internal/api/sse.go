@@ -227,9 +227,17 @@ func (s *ProxyServer) handleSSEEventsLive(w http.ResponseWriter, r *http.Request
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
+			limit := 100
+			if raw := r.URL.Query().Get("limit"); raw != "" {
+				if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+					limit = parsed
+				}
+			}
+			filter := r.URL.Query().Get("event_type")
+			events, stats := s.getEventsSnapshot(limit, filter)
 			snapshot := map[string]any{
-				"events":    []any{},
-				"stats":     map[string]any{"total": 0},
+				"events":    events,
+				"stats":     stats,
 				"timestamp": time.Now().UTC(),
 			}
 			if !writeSSEEvent(w, "events_snapshot", map[string]any{"payload": snapshot}) {

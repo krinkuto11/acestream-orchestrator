@@ -24,7 +24,7 @@ import (
 const maxJSONBodyBytes = 10 << 20 // 10 MiB
 
 func (s *ProxyServer) registerManagementRoutes() {
-		// ── Events (proxy-plane POST) ─────────────────────────────────────────────
+	// ── Events (proxy-plane POST) ─────────────────────────────────────────────
 	s.mux.HandleFunc("POST /api/v1/events/stream_started", s.mgHandleEventStreamStarted)
 	s.mux.HandleFunc("POST /api/v1/events/stream_ended", s.mgHandleEventStreamEnded)
 
@@ -1159,10 +1159,10 @@ func (s *ProxyServer) mgHandleOrchestratorStatus(w http.ResponseWriter, r *http.
 	mgWriteJSON(w, http.StatusOK, map[string]any{
 		"status": overallStatus,
 		"engines": map[string]any{
-			"total":    len(engines),
-			"healthy":  healthy,
+			"total":     len(engines),
+			"healthy":   healthy,
 			"unhealthy": unhealthy,
-			"draining": draining,
+			"draining":  draining,
 		},
 		"streams": map[string]any{
 			"active": activeStreams,
@@ -1176,19 +1176,19 @@ func (s *ProxyServer) mgHandleOrchestratorStatus(w http.ResponseWriter, r *http.
 			"min_replicas": cfg.MinReplicas,
 		},
 		"vpn": map[string]any{
-			"enabled":   vpnEnabled,
+			"enabled":     vpnEnabled,
 			"nodes_total": len(vpns),
-			"healthy":   vpnHealthy,
+			"healthy":     vpnHealthy,
 		},
 		"provisioning": map[string]any{
-			"can_provision":        canProvision,
+			"can_provision":         canProvision,
 			"circuit_breaker_state": cbState,
-			"last_failure":         lastFailure,
-			"blocked_reason":       blockedReason,
+			"last_failure":          lastFailure,
+			"blocked_reason":        blockedReason,
 		},
 		"config": map[string]any{
-			"proxy_listen":  cfg.ProxyListenAddr,
-			"orchestrator":  cfg.OrchestratorListenAddr,
+			"proxy_listen":   cfg.ProxyListenAddr,
+			"orchestrator":   cfg.OrchestratorListenAddr,
 			"auto_delete":    cfg.AutoDelete,
 			"grace_period_s": cfg.GracePeriod.Seconds(),
 		},
@@ -1205,14 +1205,24 @@ func (s *ProxyServer) mgHandleMetricsPerformance(w http.ResponseWriter, r *http.
 }
 
 func (s *ProxyServer) mgHandleEvents(w http.ResponseWriter, r *http.Request) {
-	mgWriteJSON(w, http.StatusOK, map[string]any{"events": []any{}, "total": 0})
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	filter := r.URL.Query().Get("event_type")
+	events, _ := s.getEventsSnapshot(limit, filter)
+	mgWriteJSON(w, http.StatusOK, events)
 }
 
 func (s *ProxyServer) mgHandleEventsStats(w http.ResponseWriter, r *http.Request) {
-	mgWriteJSON(w, http.StatusOK, map[string]any{"total": 0})
+	_, stats := s.getEventsSnapshot(1, "")
+	mgWriteJSON(w, http.StatusOK, stats)
 }
 
 func (s *ProxyServer) mgHandleEventsCleanup(w http.ResponseWriter, r *http.Request) {
+	s.clearEvents()
 	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -1466,6 +1476,17 @@ func (s *ProxyServer) mgHandleEventStreamStarted(w http.ResponseWriter, r *http.
 		return
 	}
 	st := s.st.OnStreamStarted(ev)
+	s.recordEvent(EventEntry{
+		EventType:   "stream",
+		Category:    "started",
+		Message:     "Stream started",
+		ContainerID: ev.ContainerID,
+		StreamID:    contentID,
+		Details: map[string]any{
+			"engine_id":   ev.EngineID,
+			"engine_name": ev.EngineName,
+		},
+	})
 	mgWriteJSON(w, http.StatusOK, st)
 }
 
@@ -1480,6 +1501,16 @@ func (s *ProxyServer) mgHandleEventStreamEnded(w http.ResponseWriter, r *http.Re
 		return
 	}
 	s.st.OnStreamEnded(ev)
+	s.recordEvent(EventEntry{
+		EventType:   "stream",
+		Category:    "ended",
+		Message:     "Stream ended",
+		ContainerID: ev.ContainerID,
+		StreamID:    ev.ContentID,
+		Details: map[string]any{
+			"reason": ev.Reason,
+		},
+	})
 	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "ended"})
 }
 

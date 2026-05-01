@@ -17,22 +17,47 @@ const formatEgress = (egressGbps) => {
   return { value: (n * 1000).toFixed(1), suffix: 'Mbps' }
 }
 
+const extractVpnNodes = (vpnStatus) => {
+  if (!vpnStatus) return []
+  if (Array.isArray(vpnStatus.vpn_nodes)) return vpnStatus.vpn_nodes
+  if (Array.isArray(vpnStatus.nodes)) return vpnStatus.nodes
+  return []
+}
+
 const normalizeVpnMode = (vpnStatus) => {
   const rawMode = String(vpnStatus?.mode || '').toLowerCase()
   if (rawMode === 'multi') return 'redundant'
   if (rawMode) return rawMode
 
-  const nodes = Array.isArray(vpnStatus?.vpn_nodes)
-    ? vpnStatus.vpn_nodes
-    : Array.isArray(vpnStatus?.nodes)
-      ? vpnStatus.nodes
-      : []
+  const nodes = extractVpnNodes(vpnStatus)
 
   if (nodes.length > 1) return 'redundant'
   if (nodes.length === 1) return 'single'
 
   const enabled = Boolean(vpnStatus?.enabled ?? vpnStatus?.vpn_enabled)
   return enabled ? 'single' : 'disabled'
+}
+
+const computeVpnConnected = (vpnStatus, vpnMode) => {
+  const mode = vpnMode || normalizeVpnMode(vpnStatus)
+  const enabled = Boolean(vpnStatus?.enabled ?? vpnStatus?.vpn_enabled)
+  if (!enabled) return false
+
+  const nodes = extractVpnNodes(vpnStatus)
+  if (nodes.length) {
+    const healthyCount = nodes.filter((node) => {
+      if (node?.healthy === true) return true
+      const status = String(node?.health || node?.status || '').toLowerCase()
+      return status === 'healthy' || status === 'running'
+    }).length
+    return mode === 'redundant' ? healthyCount >= 2 : healthyCount >= 1
+  }
+
+  if (mode === 'redundant') {
+    return Boolean(vpnStatus?.vpn1?.connected && vpnStatus?.vpn2?.connected)
+  }
+
+  return Boolean(vpnStatus?.connected || vpnStatus?.vpn1?.connected || vpnStatus?.vpn2?.connected)
 }
 
 // ── BigCounter ────────────────────────────────────────────────────────────────
@@ -95,14 +120,7 @@ function Marquee({ engines, streams, vpnStatus, isConnected }) {
   const activeEngines = engines.filter(e => e.health_status === 'healthy').length
   const drainingEngines = engines.filter(e => e.health_status === 'unhealthy').length
   const vpnMode = normalizeVpnMode(vpnStatus)
-  const vpnEnabled = Boolean(vpnStatus?.enabled ?? vpnStatus?.vpn_enabled)
-  const vpnConnected = vpnEnabled && Boolean(
-    vpnStatus?.connected ?? (
-      vpnMode === 'redundant'
-        ? (vpnStatus?.vpn1?.connected && vpnStatus?.vpn2?.connected)
-        : (vpnStatus?.vpn1?.connected || vpnStatus?.vpn2?.connected)
-    )
-  )
+  const vpnConnected = computeVpnConnected(vpnStatus, vpnMode)
   const migrations = streams.filter(s => String(s.status || '').includes('failover')).length
 
   const items = [
@@ -240,14 +258,14 @@ function buildVpnNodes(vpnStatus) {
   const enabled = Boolean(vpnStatus?.vpn_enabled ?? vpnStatus?.enabled)
   if (!vpnStatus || !enabled) return []
 
-  const nodes = Array.isArray(vpnStatus?.vpn_nodes)
-    ? vpnStatus.vpn_nodes
-    : Array.isArray(vpnStatus?.nodes)
-      ? vpnStatus.nodes
-      : []
+  const nodes = extractVpnNodes(vpnStatus)
   if (nodes.length === 0) return []
 
-  return nodes.map(n => {
+  return [...nodes].sort((a, b) => {
+    const aKey = String(a?.container_name || a?.container_id || '')
+    const bKey = String(b?.container_name || b?.container_id || '')
+    return aKey.localeCompare(bKey)
+  }).map(n => {
     let state = 'failed'
     if (n.healthy) state = 'healthy'
     else if (n.lifecycle === 'draining' || n.condition === 'draining') state = 'draining'
@@ -358,7 +376,12 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
 
   allEngineGroups.forEach(({ vpnId, engs: myEngs }) => {
     const sun = vpnPos[vpnId] || { x: cx, y: cy, angle: 0 }
-    const n = myEngs.length
+    const sortedEngs = [...myEngs].sort((a, b) => {
+      const aKey = String(a?.container_name || a?.container_id || '')
+      const bKey = String(b?.container_name || b?.container_id || '')
+      return aKey.localeCompare(bKey)
+    })
+    const n = sortedEngs.length
     if (n === 0) return
 
     const ringCap = [6, 10, 14]
@@ -392,7 +415,7 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
           const span = Math.PI * 1.4
           a = cnt === 1 ? arcCenter : arcCenter + (i / (cnt - 1) - 0.5) * span
         }
-        engPos[myEngs[placed + i].container_id] = {
+        engPos[sortedEngs[placed + i].container_id] = {
           x: sun.x + Math.cos(a) * radius,
           y: sun.y + Math.sin(a) * radius,
         }
@@ -465,8 +488,9 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
         if (!p) return null
         const glow = v.state === 'failed' ? 'glowR' : v.state === 'draining' ? 'glowA' : v.state === 'warming' ? 'glowM' : 'glowG'
         // Label on the outward side of the sun, clamped to SVG bounds.
-        const lx = Math.max(36, Math.min(W - 36, p.x + Math.cos(p.angle) * (sunR + 22)))
-        const ly = Math.max(22, Math.min(H - 14, p.y + Math.sin(p.angle) * (sunR + 22)))
+        const labelOffset = sunR + 36
+        const lx = Math.max(36, Math.min(W - 36, p.x + Math.cos(p.angle) * labelOffset))
+        const ly = Math.max(22, Math.min(H - 14, p.y + Math.sin(p.angle) * labelOffset))
         const anchor = p.x < W * 0.33 ? 'start' : p.x > W * 0.67 ? 'end' : 'middle'
         return (
           <g key={v.id}>
@@ -474,8 +498,8 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
             <circle cx={p.x} cy={p.y} r={sunR} fill="var(--bg-0)" stroke={colorFor(v.state)} strokeWidth="1.5"/>
             <text x={p.x} y={p.y + 4} textAnchor="middle" fontSize="10" fill={colorFor(v.state)} fontFamily="var(--font-mono)" fontWeight="600">⌬</text>
             <rect
-              x={anchor === 'start' ? lx - 2 : anchor === 'end' ? lx - 68 : lx - 35}
-              y={ly - 14} width="70" height="22"
+              x={anchor === 'start' ? lx - 2 : anchor === 'end' ? lx - 64 : lx - 32}
+              y={ly - 14} width="64" height="22"
               fill="var(--bg-1)" stroke="var(--line)" opacity="0.92"
             />
             <text x={lx} y={ly - 3} textAnchor={anchor} fontSize="9" fill="var(--fg-0)" fontFamily="var(--font-mono)" fontWeight="600">
@@ -618,6 +642,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
   } = useStreamingCentralStore(s => s)
 
   const [events, setEvents] = useState([])
+  const [eventsReady, setEventsReady] = useState(false)
 
   useEffect(() => {
     ingestLiveSnapshot({ engines, streams, vpnStatus, orchestratorStatus })
@@ -726,8 +751,9 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
           const parsed = JSON.parse(ev.data)
           const payload = parsed?.payload ?? parsed
           const evts = payload?.events || []
-          if (Array.isArray(evts) && evts.length > 0) {
+          if (Array.isArray(evts)) {
             setEvents(evts.slice(0, 50))
+            setEventsReady(true)
           }
         } catch {}
       }
@@ -739,7 +765,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
       }
     }
 
-    fetchEventsSnapshot()
+    fetchEventsSnapshot().finally(() => setEventsReady(true))
     connect()
     return () => {
       closed = true
@@ -801,9 +827,8 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
   const egressDisplay = formatEgress(egressGbps)
 
   const normalizedVpnMode = normalizeVpnMode(vpnStatus)
-  const vpnIncident =
-    (normalizedVpnMode === 'redundant' && (!vpnStatus?.vpn1?.connected || !vpnStatus?.vpn2?.connected)) ||
-    (normalizedVpnMode === 'single' && !vpnStatus?.connected)
+  const vpnConnected = computeVpnConnected(vpnStatus, normalizedVpnMode)
+  const vpnIncident = normalizedVpnMode !== 'disabled' && !vpnConnected
   const breakerIncident =
     orchestratorStatus?.provisioning?.circuit_breaker_state &&
     orchestratorStatus.provisioning.circuit_breaker_state !== 'closed'
@@ -918,9 +943,13 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
             <span style={{ fontSize: 10, color: 'var(--acc-green)' }}>● rec</span>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-            {events.length === 0 ? (
+            {!eventsReady ? (
               <div style={{ padding: 14, fontSize: 10, color: 'var(--fg-3)', fontStyle: 'italic' }}>
                 awaiting events...
+              </div>
+            ) : events.length === 0 ? (
+              <div style={{ padding: 14, fontSize: 10, color: 'var(--fg-3)', fontStyle: 'italic' }}>
+                no events yet.
               </div>
             ) : (
               events.slice(0, 40).map((e, i) => <SignalRow key={i} e={e} idx={i}/>)

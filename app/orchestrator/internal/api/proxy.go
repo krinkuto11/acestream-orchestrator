@@ -13,11 +13,13 @@ import (
 	"net/http/pprof"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/acestream/acestream/internal/config"
 	"github.com/acestream/acestream/internal/controlplane/circuitbreaker"
 	cpengine "github.com/acestream/acestream/internal/controlplane/engine"
 	vpnpkg "github.com/acestream/acestream/internal/controlplane/vpn"
@@ -28,7 +30,6 @@ import (
 	"github.com/acestream/acestream/internal/proxy/monitor"
 	"github.com/acestream/acestream/internal/proxy/stream"
 	"github.com/acestream/acestream/internal/proxy/telemetry"
-	"github.com/acestream/acestream/internal/config"
 	"github.com/acestream/acestream/internal/state"
 )
 
@@ -50,6 +51,10 @@ type ProxyServer struct {
 	creds      *vpnpkg.CredentialManager
 	svcRefresh *vpnpkg.ServersRefreshService
 	vpnMgr     *vpnpkg.LifecycleManager
+
+	eventMu  sync.RWMutex
+	events   []EventEntry
+	eventSeq uint64
 }
 
 // NewProxyServer wires up all proxy routes.
@@ -79,6 +84,7 @@ func NewProxyServer(
 		svcRefresh: svcRefresh,
 		vpnMgr:     vpnMgr,
 		mux:        http.NewServeMux(),
+		events:     []EventEntry{},
 	}
 	s.registerRoutes()
 	return s
