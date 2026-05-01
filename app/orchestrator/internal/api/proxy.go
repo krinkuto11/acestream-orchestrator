@@ -13,7 +13,6 @@ import (
 	"net/http/pprof"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -52,9 +51,6 @@ type ProxyServer struct {
 	svcRefresh *vpnpkg.ServersRefreshService
 	vpnMgr     *vpnpkg.LifecycleManager
 
-	eventMu  sync.RWMutex
-	events   []EventEntry
-	eventSeq uint64
 }
 
 // NewProxyServer wires up all proxy routes.
@@ -84,7 +80,6 @@ func NewProxyServer(
 		svcRefresh: svcRefresh,
 		vpnMgr:     vpnMgr,
 		mux:        http.NewServeMux(),
-		events:     []EventEntry{},
 	}
 	s.registerRoutes()
 	return s

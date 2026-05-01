@@ -3,10 +3,19 @@ package api
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
 const maxEventLogSize = 500
+
+type eventLog struct {
+	mu     sync.RWMutex
+	seq    uint64
+	events []EventEntry
+}
+
+var globalEventLog = &eventLog{events: []EventEntry{}}
 
 // EventEntry is a minimal event record for UI consumption.
 type EventEntry struct {
@@ -20,7 +29,7 @@ type EventEntry struct {
 	StreamID    string         `json:"stream_id,omitempty"`
 }
 
-func (s *ProxyServer) recordEvent(entry EventEntry) {
+func (l *eventLog) record(entry EventEntry) {
 	if entry.EventType == "" {
 		entry.EventType = "system"
 	}
@@ -31,23 +40,23 @@ func (s *ProxyServer) recordEvent(entry EventEntry) {
 		entry.Timestamp = time.Now().UTC()
 	}
 
-	s.eventMu.Lock()
-	s.eventSeq++
-	entry.ID = fmt.Sprintf("ev_%d", s.eventSeq)
-	s.events = append(s.events, entry)
-	if len(s.events) > maxEventLogSize {
-		s.events = s.events[len(s.events)-maxEventLogSize:]
+	l.mu.Lock()
+	l.seq++
+	entry.ID = fmt.Sprintf("ev_%d", l.seq)
+	l.events = append(l.events, entry)
+	if len(l.events) > maxEventLogSize {
+		l.events = l.events[len(l.events)-maxEventLogSize:]
 	}
-	s.eventMu.Unlock()
+	l.mu.Unlock()
 }
 
-func (s *ProxyServer) clearEvents() {
-	s.eventMu.Lock()
-	s.events = nil
-	s.eventMu.Unlock()
+func (l *eventLog) clear() {
+	l.mu.Lock()
+	l.events = nil
+	l.mu.Unlock()
 }
 
-func (s *ProxyServer) getEventsSnapshot(limit int, eventType string) (events []EventEntry, stats map[string]any) {
+func (l *eventLog) snapshot(limit int, eventType string) (events []EventEntry, stats map[string]any) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -56,9 +65,9 @@ func (s *ProxyServer) getEventsSnapshot(limit int, eventType string) (events []E
 		filter = ""
 	}
 
-	s.eventMu.RLock()
-	cached := append([]EventEntry(nil), s.events...)
-	s.eventMu.RUnlock()
+	l.mu.RLock()
+	cached := append([]EventEntry(nil), l.events...)
+	l.mu.RUnlock()
 
 	byType := map[string]int{}
 	for _, entry := range cached {
@@ -82,4 +91,19 @@ func (s *ProxyServer) getEventsSnapshot(limit int, eventType string) (events []E
 	}
 
 	return events, stats
+}
+
+// RecordEvent appends a new event to the shared log.
+func RecordEvent(entry EventEntry) {
+	globalEventLog.record(entry)
+}
+
+// GetEventsSnapshot returns filtered events and derived stats.
+func GetEventsSnapshot(limit int, eventType string) (events []EventEntry, stats map[string]any) {
+	return globalEventLog.snapshot(limit, eventType)
+}
+
+// ClearEvents purges the in-memory event log.
+func ClearEvents() {
+	globalEventLog.clear()
 }

@@ -1212,17 +1212,17 @@ func (s *ProxyServer) mgHandleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	filter := r.URL.Query().Get("event_type")
-	events, _ := s.getEventsSnapshot(limit, filter)
+	events, _ := GetEventsSnapshot(limit, filter)
 	mgWriteJSON(w, http.StatusOK, events)
 }
 
 func (s *ProxyServer) mgHandleEventsStats(w http.ResponseWriter, r *http.Request) {
-	_, stats := s.getEventsSnapshot(1, "")
+	_, stats := GetEventsSnapshot(1, "")
 	mgWriteJSON(w, http.StatusOK, stats)
 }
 
 func (s *ProxyServer) mgHandleEventsCleanup(w http.ResponseWriter, r *http.Request) {
-	s.clearEvents()
+	ClearEvents()
 	mgWriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -1476,7 +1476,7 @@ func (s *ProxyServer) mgHandleEventStreamStarted(w http.ResponseWriter, r *http.
 		return
 	}
 	st := s.st.OnStreamStarted(ev)
-	s.recordEvent(EventEntry{
+	RecordEvent(EventEntry{
 		EventType:   "stream",
 		Category:    "started",
 		Message:     "Stream started",
@@ -1501,7 +1501,7 @@ func (s *ProxyServer) mgHandleEventStreamEnded(w http.ResponseWriter, r *http.Re
 		return
 	}
 	s.st.OnStreamEnded(ev)
-	s.recordEvent(EventEntry{
+	RecordEvent(EventEntry{
 		EventType:   "stream",
 		Category:    "ended",
 		Message:     "Stream ended",

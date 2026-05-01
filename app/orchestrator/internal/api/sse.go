@@ -234,7 +234,7 @@ func (s *ProxyServer) handleSSEEventsLive(w http.ResponseWriter, r *http.Request
 				}
 			}
 			filter := r.URL.Query().Get("event_type")
-			events, stats := s.getEventsSnapshot(limit, filter)
+			events, stats := GetEventsSnapshot(limit, filter)
 			snapshot := map[string]any{
 				"events":    events,
 				"stats":     stats,
