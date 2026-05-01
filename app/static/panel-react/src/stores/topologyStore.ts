@@ -263,18 +263,19 @@ const extractVpnNodes = (
   }
 
   const upsert = (rawNode: Record<string, unknown>, indexHint: number) => {
-    const name = String(rawNode.container_name || rawNode.container || rawNode.name || rawNode.id || '').trim()
-    if (!name || seen.has(name)) return
+    const rawName = String(rawNode.container_name || rawNode.container || rawNode.name || rawNode.id || '').trim()
+    if (!rawName || seen.has(rawName)) return
 
-    seen.add(name)
+    seen.add(rawName)
+    const name = rawName.replace(/^gluetun-/, '')
     const connected = isTruthyConnection(rawNode.connected ?? rawNode.healthy ?? rawNode.condition ?? rawNode.status)
     const provider = rawNode.provider == null ? null : String(rawNode.provider)
     const country = rawNode.country == null ? null : String(rawNode.country)
 
     nodes.push({
-      id: name,
-      title: `VPN ${indexHint + 1}`,
-      subtitle: name,
+      id: rawName,
+      title: name.charAt(0).toUpperCase() + name.slice(1),
+      subtitle: rawName,
       connected,
       lifecycle: normalizeLifecycle(rawNode.lifecycle),
       publicIp: rawNode.public_ip == null ? null : String(rawNode.public_ip),
@@ -547,14 +548,14 @@ const buildSnapshot = (
   })
 
   const NUM_COLUMNS = isVpnClusterMode
-    ? Math.max(1, Math.min(2, Math.ceil(engineStats.length / 8)))
-    : Math.max(1, Math.min(3, Math.ceil(engineStats.length / 6)))
-  const COLUMN_SPACING_X = 340
-  const STAGGERED_ROW_SPACING_Y = 140
-  const CLUSTER_GAP_Y = 220
+    ? Math.max(1, Math.min(3, Math.ceil(engineStats.length / 6)))
+    : Math.max(1, Math.min(4, Math.ceil(engineStats.length / 5)))
+  const COLUMN_SPACING_X = 280
+  const STAGGERED_ROW_SPACING_Y = 120
+  const CLUSTER_GAP_Y = 180
 
-  const engineStartX = 350
-  const engineStartY = 80
+  const engineStartX = 280
+  const engineStartY = 60
 
   const enginesPerTunnel = normalizedEngineStats.reduce(
     (acc, item) => {

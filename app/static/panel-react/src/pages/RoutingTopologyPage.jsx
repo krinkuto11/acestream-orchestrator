@@ -53,7 +53,7 @@ function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus,
   const debouncedFitView = useCallback(() => {
     if (fitDebounceRef.current) clearTimeout(fitDebounceRef.current)
     fitDebounceRef.current = setTimeout(() => {
-      fitView({ padding: 0.12, duration: 400 })
+      fitView({ padding: 0.05, duration: 400 })
     }, 50)
   }, [fitView])
 
@@ -91,8 +91,8 @@ function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus,
   // Automatically fit view when nodes are first populated or change significantly
   useEffect(() => {
     if (nodes.length > 0) {
-      const timer1 = setTimeout(() => fitView({ padding: 0.12, duration: 800 }), 150)
-      const timer2 = setTimeout(() => fitView({ padding: 0.12, duration: 800 }), 1000)
+      const timer1 = setTimeout(() => fitView({ padding: 0.05, duration: 800 }), 150)
+      const timer2 = setTimeout(() => fitView({ padding: 0.05, duration: 800 }), 1000)
       return () => {
         clearTimeout(timer1)
         clearTimeout(timer2)
@@ -133,7 +133,7 @@ function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus,
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
-          fitViewOptions={{ padding: 0.2 }}
+          fitViewOptions={{ padding: 0.05 }}
           minZoom={0.2}
           maxZoom={1.5}
           onNodeClick={(_, node) => setSelectedNode(node.id)}

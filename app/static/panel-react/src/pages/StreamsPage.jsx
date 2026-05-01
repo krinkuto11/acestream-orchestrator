@@ -17,12 +17,7 @@ function BufferBar({ value }) {
   const pct = Math.max(0, Math.min(100, Number(value) || 0))
   const color = pct > 70 ? 'var(--acc-green)' : pct > 40 ? 'var(--acc-amber)' : 'var(--acc-red)'
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <div style={{ flex: 1, height: 6, background: 'var(--bg-2)', minWidth: 60 }}>
-        <div style={{ height: '100%', width: pct + '%', background: color }}/>
-      </div>
-      <span style={{ fontSize: 10, color: 'var(--fg-2)', width: 28, textAlign: 'right' }}>{pct}%</span>
-    </div>
+    <span style={{ fontSize: 11, color: color, fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{pct}%</span>
   )
 }
 
@@ -44,8 +39,24 @@ function getStreamMode(s) {
 }
 
 function getStreamBitrate(s) {
-  const b = Number(s?.bitrate_mbps || (s?.bitrate ? s.bitrate / 1e6 : 0))
+  // Use nominal bitrate from labels if available, fallback to measured bitrate
+  const nominal = Number(s?.labels?.['stream.nominal_bitrate'] || 0)
+  const b = nominal > 0 ? nominal / 1e6 : Number(s?.bitrate_mbps || (s?.bitrate ? s.bitrate / 1e6 : 0))
   return Number.isFinite(b) && b > 0 ? b.toFixed(1) + ' Mb/s' : '—'
+}
+
+function formatSpeed(kbps) {
+  if (!kbps || kbps <= 0) return '0 KB/s'
+  if (kbps >= 1024) return (kbps / 1024).toFixed(1) + ' MB/s'
+  return Math.round(kbps) + ' KB/s'
+}
+
+function getStreamSpeedDown(s) {
+  return formatSpeed(s?.speed_down)
+}
+
+function getStreamSpeedUp(s) {
+  return formatSpeed(s?.speed_up)
 }
 
 function getStreamBuffer(s) {
@@ -128,7 +139,9 @@ export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEn
                 <th>MODE</th>
                 <th>CLIENTS</th>
                 <th>BITRATE</th>
-                <th style={{ minWidth: 120 }}>BUFFER</th>
+                <th>DOWN</th>
+                <th>UP</th>
+                <th style={{ minWidth: 60 }}>BUFFER</th>
                 <th>STARTED</th>
                 <th>STATUS</th>
                 <th/>
@@ -144,8 +157,10 @@ export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEn
                     <td style={{ color: isMigrating ? 'var(--acc-magenta)' : 'var(--fg-1)' }}>{getStreamEngine(s)}</td>
                     <td style={{ color: 'var(--fg-2)' }}>{getStreamMode(s)}</td>
                     <td>{getStreamClients(s)}</td>
-                    <td style={{ color: 'var(--fg-1)' }}>{getStreamBitrate(s)}</td>
-                    <td><BufferBar value={getStreamBuffer(s)}/></td>
+                    <td style={{ color: 'var(--fg-1)', whiteSpace: 'nowrap' }}>{getStreamBitrate(s)}</td>
+                    <td style={{ color: 'var(--acc-green)', fontFamily: 'var(--font-mono)', fontSize: 10, whiteSpace: 'nowrap' }}>{getStreamSpeedDown(s)}</td>
+                    <td style={{ color: 'var(--acc-amber)', fontFamily: 'var(--font-mono)', fontSize: 10, whiteSpace: 'nowrap' }}>{getStreamSpeedUp(s)}</td>
+                    <td style={{ textAlign: 'center' }}><BufferBar value={getStreamBuffer(s)}/></td>
                     <td style={{ color: 'var(--fg-2)' }}>{getStreamStarted(s)}</td>
                     <td><StatusTag status={s.status}/></td>
                     <td style={{ textAlign: 'right' }}>
