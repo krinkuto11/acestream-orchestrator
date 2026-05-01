@@ -210,28 +210,26 @@ function SessionWaveform({ kpiHistory }) {
 
 // ── Constellation Graph ───────────────────────────────────────────────────────
 function buildVpnNodes(vpnStatus) {
-  if (!vpnStatus || !vpnStatus.enabled || vpnStatus.mode === 'disabled') return []
+  // API shape: { vpn_enabled, nodes_total, nodes_healthy, vpn_nodes: VPNNode[] }
+  // VPNNode: { container_name, container_id, healthy, condition, lifecycle, provider, ... }
+  if (!vpnStatus || !vpnStatus.vpn_enabled) return []
 
-  if (vpnStatus.mode === 'redundant') {
-    return [vpnStatus.vpn1, vpnStatus.vpn2]
-      .filter(Boolean)
-      .map((t, i) => ({
-        id: t.container_name || t.container || `vpn-${i + 1}`,
-        label: t.container_name || `VPN ${i + 1}`,
-        state: t.connected ? 'healthy' : 'failed',
-        ip: t.public_ip || '–',
-        provider: t.provider || '–',
-      }))
-  }
+  const nodes = Array.isArray(vpnStatus.vpn_nodes) ? vpnStatus.vpn_nodes : []
+  if (nodes.length === 0) return []
 
-  const tunnel = vpnStatus.vpn1 || vpnStatus
-  return [{
-    id: tunnel.container_name || tunnel.container || 'vpn-1',
-    label: tunnel.container_name || 'VPN',
-    state: tunnel.connected ? 'healthy' : 'failed',
-    ip: tunnel.public_ip || vpnStatus.public_ip || '–',
-    provider: tunnel.provider || '–',
-  }]
+  return nodes.map(n => {
+    let state = 'failed'
+    if (n.healthy) state = 'healthy'
+    else if (n.lifecycle === 'draining' || n.condition === 'draining') state = 'draining'
+    else if (n.condition === 'warming' || n.lifecycle === 'warming') state = 'warming'
+    return {
+      id: n.container_name || n.container_id || 'vpn',
+      label: n.container_name || 'VPN',
+      state,
+      ip: n.assigned_hostname || '–',
+      provider: n.provider || '–',
+    }
+  })
 }
 
 function colorFor(state) {
@@ -287,6 +285,9 @@ function ConstellationGraph({ engines, vpnStatus }) {
   }
 
   // Engine positions
+  const showLabel = engines.length <= 14
+  const engSize = engines.length > 30 ? 6 : engines.length > 14 ? 8 : 10
+
   const engPos = {}
   const allEngineGroups = noVpn
     ? [{ vpnId: '__center__', engs: engines }]
@@ -317,18 +318,26 @@ function ConstellationGraph({ engines, vpnStatus }) {
       r++
     }
 
-    const baseR = 38
-    const ringStep = 22
+    // No-VPN mode: full circle around center with generous spacing.
+    // VPN mode: inward-facing arc so nodes stay inside the viewport.
+    const isCenter = vpnId === '__center__'
+    const baseR = isCenter ? (showLabel ? 90 : 56) : 38
+    const ringStep = isCenter ? (showLabel ? 60 : 36) : 22
+
     let placed = 0
     rings.forEach((cnt, ri) => {
       const radius = baseR + ri * ringStep
-      // Face arcs INWARD toward CTRL so engine nodes stay within the SVG viewport.
-    const arcCenter = sun.angle + Math.PI
-      const span = Math.PI * 1.4
       for (let i = 0; i < cnt; i++) {
-        const a = cnt === 1
-          ? arcCenter
-          : arcCenter + (i / (cnt - 1) - 0.5) * span
+        let a
+        if (isCenter) {
+          // Full circle — distribute evenly, start from top (-π/2)
+          a = (i / cnt) * Math.PI * 2 - Math.PI / 2
+        } else {
+          // Inward arc toward CTRL
+          const arcCenter = sun.angle + Math.PI
+          const span = Math.PI * 1.4
+          a = cnt === 1 ? arcCenter : arcCenter + (i / (cnt - 1) - 0.5) * span
+        }
         engPos[myEngs[placed + i].container_id] = {
           x: sun.x + Math.cos(a) * radius,
           y: sun.y + Math.sin(a) * radius,
@@ -337,9 +346,6 @@ function ConstellationGraph({ engines, vpnStatus }) {
       placed += cnt
     })
   })
-
-  const showLabel = engines.length <= 14
-  const engSize = engines.length > 30 ? 6 : engines.length > 14 ? 8 : 10
 
   return (
     <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block' }} preserveAspectRatio="xMidYMid meet">
