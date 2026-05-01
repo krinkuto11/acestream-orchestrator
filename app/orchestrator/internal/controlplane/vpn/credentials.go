@@ -222,10 +222,19 @@ func (cm *CredentialManager) TotalCount() int {
 func (cm *CredentialManager) Summary() map[string]interface{} {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
+	leases := make([]map[string]interface{}, 0, len(cm.leases))
+	for containerID, credID := range cm.leases {
+		leases = append(leases, map[string]interface{}{
+			"container_id":  containerID,
+			"credential_id": credID,
+			"leased_at":     cm.leaseTimes[containerID],
+		})
+	}
 	return map[string]interface{}{
 		"total":     len(cm.byID),
 		"available": len(cm.available),
 		"leased":    len(cm.leases),
+		"leases":    leases,
 	}
 }
 

@@ -34,7 +34,7 @@ function StatusTag({ status }) {
 }
 
 // ── Rack Row ──────────────────────────────────────────────────────────────────
-function EngineRackRow({ engine, idx, onDelete }) {
+function EngineRackRow({ engine, idx, onDelete, maxStreamsPerEngine }) {
   const status = engine.health_status || 'unknown'
   const accent = {
     healthy: 'var(--acc-green)',
@@ -118,7 +118,9 @@ function EngineRackRow({ engine, idx, onDelete }) {
       </div>
       {/* Count */}
       <div style={{ width: 56, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontSize: 11, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-        {streamCount}<span style={{ color: 'var(--fg-3)' }}>/8</span>
+        {streamCount}<span style={{ color: 'var(--fg-3)' }}>/
+          {Number.isFinite(maxStreamsPerEngine) ? maxStreamsPerEngine : 0}
+        </span>
       </div>
       {/* Actions */}
       <div style={{ width: 40, borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -246,6 +248,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const [savingSettings, setSavingSettings] = useState(false)
   const [settingsChanged, setSettingsChanged] = useState(false)
   const [cacheStats, setCacheStats] = useState({ total_bytes: 0, volume_count: 0 })
+  const [maxStreamsPerEngine, setMaxStreamsPerEngine] = useState(0)
 
   const loadEngineSettings = useCallback(async () => {
     try {
@@ -260,6 +263,16 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
     }
   }, [orchUrl, fetchJSON, addNotification])
 
+  const loadProxySettings = useCallback(async () => {
+    try {
+      const response = await fetchJSON(`${orchUrl}/api/v1/proxy/config`)
+      const maxStreams = Number(response?.max_streams_per_engine)
+      setMaxStreamsPerEngine(Number.isFinite(maxStreams) ? maxStreams : 0)
+    } catch {
+      setMaxStreamsPerEngine(0)
+    }
+  }, [orchUrl, fetchJSON])
+
   const loadCacheStats = useCallback(async () => {
     try {
       const s = await fetchJSON(`${orchUrl}/api/v1/engine-cache/stats`)
@@ -269,10 +282,11 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
 
   useEffect(() => {
     loadEngineSettings()
+    loadProxySettings()
     loadCacheStats()
     const interval = setInterval(loadCacheStats, 30000)
     return () => clearInterval(interval)
-  }, [loadEngineSettings, loadCacheStats])
+  }, [loadEngineSettings, loadProxySettings, loadCacheStats])
 
   const handleSettingChange = (key, value) => {
     setEngineSettings(prev => ({ ...prev, [key]: value }))
@@ -375,8 +389,14 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                 No engines provisioned
               </div>
             ) : (
-              engines.map((e, i) => (
-                <EngineRackRow key={e.container_id} engine={e} idx={i} onDelete={onDeleteEngine}/>
+                {engines.map((e, i) => (
+                  <EngineRackRow
+                    key={e.container_id}
+                    engine={e}
+                    idx={i}
+                    onDelete={onDeleteEngine}
+                    maxStreamsPerEngine={maxStreamsPerEngine}
+                  />
               ))
             )}
           </div>

@@ -1191,13 +1191,22 @@ func (s *ProxyServer) mgHandleOrchestratorStatus(w http.ResponseWriter, r *http.
 			"orchestrator":   cfg.OrchestratorListenAddr,
 			"auto_delete":    cfg.AutoDelete,
 			"grace_period_s": cfg.GracePeriod.Seconds(),
+			"min_replicas":   cfg.MinReplicas,
+			"max_replicas":   cfg.MaxReplicas,
 		},
 		"timestamp": time.Now().UTC(),
 	})
 }
 
 func (s *ProxyServer) mgHandleMetricsDashboard(w http.ResponseWriter, r *http.Request) {
-	s.mgHandleOrchestratorStatus(w, r)
+	windowSeconds := 900
+	if raw := r.URL.Query().Get("window_seconds"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			windowSeconds = parsed
+		}
+	}
+	snapshot := buildDashboardSnapshot(s.st, windowSeconds)
+	mgWriteJSON(w, http.StatusOK, snapshot)
 }
 
 func (s *ProxyServer) mgHandleMetricsPerformance(w http.ResponseWriter, r *http.Request) {

@@ -398,8 +398,8 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
     // No-VPN mode: full circle around center with generous spacing.
     // VPN mode: inward-facing arc so nodes stay inside the viewport.
     const isCenter = vpnId === '__center__'
-    const baseR = isCenter ? (showLabel ? 90 : 56) : 62
-    const ringStep = isCenter ? (showLabel ? 60 : 36) : 30
+    const baseR = isCenter ? (showLabel ? 90 : 56) : 78
+    const ringStep = isCenter ? (showLabel ? 60 : 36) : 38
 
     let placed = 0
     rings.forEach((cnt, ri) => {
@@ -488,7 +488,7 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
         if (!p) return null
         const glow = v.state === 'failed' ? 'glowR' : v.state === 'draining' ? 'glowA' : v.state === 'warming' ? 'glowM' : 'glowG'
         // Label on the outward side of the sun, clamped to SVG bounds.
-        const labelOffset = sunR + 36
+        const labelOffset = sunR + 54
         const lx = Math.max(36, Math.min(W - 36, p.x + Math.cos(p.angle) * labelOffset))
         const ly = Math.max(22, Math.min(H - 14, p.y + Math.sin(p.angle) * labelOffset))
         const anchor = p.x < W * 0.33 ? 'start' : p.x > W * 0.67 ? 'end' : 'middle'
@@ -496,7 +496,7 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
           <g key={v.id}>
             <circle cx={p.x} cy={p.y} r={sunR * 2.2} fill={`url(#${glow})`}/>
             <circle cx={p.x} cy={p.y} r={sunR} fill="var(--bg-0)" stroke={colorFor(v.state)} strokeWidth="1.5"/>
-            <text x={p.x} y={p.y + 4} textAnchor="middle" fontSize="10" fill={colorFor(v.state)} fontFamily="var(--font-mono)" fontWeight="600">⌬</text>
+            <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fontSize="10" fill={colorFor(v.state)} fontFamily="var(--font-mono)" fontWeight="600">⌬</text>
             <rect
               x={anchor === 'start' ? lx - 2 : anchor === 'end' ? lx - 64 : lx - 32}
               y={ly - 14} width="64" height="22"

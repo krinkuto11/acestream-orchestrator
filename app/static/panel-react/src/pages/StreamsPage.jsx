@@ -58,7 +58,10 @@ function getStreamStarted(s) {
 }
 
 function getStreamClients(s) {
-  return s?.client_count ?? s?.clients ?? 0
+  if (typeof s?.client_count === 'number') return s.client_count
+  if (typeof s?.active_clients === 'number') return s.active_clients
+  if (Array.isArray(s?.clients)) return s.clients.length
+  return 0
 }
 
 export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode }) {

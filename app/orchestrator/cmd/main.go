@@ -282,10 +282,25 @@ func (s *stateSink) OnStreamStarted(contentID, engineID string) {
 		ContentID: contentID,
 		EngineID:  engineID,
 	})
+	api.RecordEvent(api.EventEntry{
+		EventType: "stream",
+		Category:  "started",
+		Message:   "Stream started",
+		StreamID:  contentID,
+		Details: map[string]any{
+			"engine_id": engineID,
+		},
+	})
 }
 
 func (s *stateSink) OnStreamEnded(contentID string) {
 	s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: contentID})
+	api.RecordEvent(api.EventEntry{
+		EventType: "stream",
+		Category:  "ended",
+		Message:   "Stream ended",
+		StreamID:  contentID,
+	})
 }
 
 func (s *stateSink) OnStreamFailed(engineID string) {

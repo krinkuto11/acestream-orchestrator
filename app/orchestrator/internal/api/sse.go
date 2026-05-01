@@ -266,12 +266,19 @@ func (s *ProxyServer) handleSSEMetricsStream(w http.ResponseWriter, r *http.Requ
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
 
+	windowSeconds := 900
+	if raw := r.URL.Query().Get("window_seconds"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			windowSeconds = parsed
+		}
+	}
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			snapshot := s.buildMetricsSnapshot()
+			snapshot := buildDashboardSnapshot(s.st, windowSeconds)
 			if !writeSSEEvent(w, "metrics_snapshot", snapshot) {
 				return
 			}
@@ -594,10 +601,6 @@ func (s *ProxyServer) buildStatePayload() map[string]any {
 		},
 		"timestamp": time.Now().UTC(),
 	}
-}
-
-func (s *ProxyServer) buildMetricsSnapshot() map[string]any {
-	return s.buildStatePayload()
 }
 
 // RunSSEPublisher polls for state changes and notifies the SSE broker.
