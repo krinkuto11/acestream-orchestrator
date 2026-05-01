@@ -267,7 +267,7 @@ const extractVpnNodes = (
     if (!rawName || seen.has(rawName)) return
 
     seen.add(rawName)
-    const name = rawName.replace(/^gluetun-/, '')
+    const name = rawName.replace(/^dyn-/, '').replace(/^gluetun-/, '')
     const connected = isTruthyConnection(rawNode.connected ?? rawNode.healthy ?? rawNode.condition ?? rawNode.status)
     const provider = rawNode.provider == null ? null : String(rawNode.provider)
     const country = rawNode.country == null ? null : String(rawNode.country)

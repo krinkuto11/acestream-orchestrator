@@ -103,7 +103,7 @@ function EngineRackRow({ engine, idx, onDelete, maxStreamsPerEngine }) {
       {/* VPN */}
       <div style={{ width: 120, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', fontSize: 10, color: 'var(--acc-cyan)', overflow: 'hidden', flexShrink: 0 }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {engine.vpn_container ? `⌬ ${engine.vpn_container}` : '— none'}
+          {engine.vpn_container ? `⌬ ${engine.vpn_container.replace(/^dyn-/, '').replace(/^gluetun-/, '')}` : '— none'}
         </span>
       </div>
       {/* Status */}

@@ -272,7 +272,7 @@ function buildVpnNodes(vpnStatus) {
     else if (n.condition === 'warming' || n.lifecycle === 'warming') state = 'warming'
     
     const rawName = n.container_name || n.container_id || 'vpn'
-    const cleanName = rawName.replace(/^gluetun-/, '')
+    const cleanName = rawName.replace(/^dyn-/, '').replace(/^gluetun-/, '')
     const label = cleanName.charAt(0).toUpperCase() + cleanName.slice(1)
     
     return {
@@ -345,7 +345,7 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
 
   // Sun positions
   const vpnCount = noVpn ? 1 : vpnNodes.length
-  const sunRadius = Math.min(W, H) * (vpnCount > 4 ? 0.35 : vpnCount > 1 ? 0.38 : 0.42)
+  const sunRadius = Math.min(W, H) * (vpnCount > 4 ? 0.40 : vpnCount > 1 ? 0.44 : 0.48)
   const sunR = 14
 
   const vpnPos = {}
