@@ -25,7 +25,7 @@ const apiKeepaliveInterval = 2 * time.Second
 
 // EventSink receives stream lifecycle events in-process, replacing HTTP notify calls.
 type EventSink interface {
-	OnStreamStarted(contentID, engineID string)
+	OnStreamStarted(contentID, engineID, controlMode, streamMode string)
 	OnStreamEnded(contentID string)
 	// OnStreamFailed is called when a stream request fails before OnStreamStarted
 	// fires, so the engine's pending reservation can be released.
@@ -128,7 +128,7 @@ func (m *Manager) Run(ctx context.Context) {
 		m.bitrate = m.params.Bitrate
 		m.isLive = m.params.IsLive
 		m.mu.Unlock()
-		m.sink.OnStreamStarted(m.params.ContentID, m.params.Engine.ContainerID)
+		m.sink.OnStreamStarted(m.params.ContentID, m.params.Engine.ContainerID, m.params.ControlMode, m.params.StreamMode)
 		go m.measureBitrate(ctx)
 		m.startReadLoop(ctx)
 		m.sink.OnStreamEnded(m.params.ContentID)
@@ -142,7 +142,7 @@ func (m *Manager) Run(ctx context.Context) {
 		return
 	}
 
-	m.sink.OnStreamStarted(m.params.ContentID, m.params.Engine.ContainerID)
+	m.sink.OnStreamStarted(m.params.ContentID, m.params.Engine.ContainerID, m.params.ControlMode, m.params.StreamMode)
 	go m.measureBitrate(ctx)
 	m.startReadLoop(ctx)
 	m.sink.OnStreamEnded(m.params.ContentID)

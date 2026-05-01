@@ -254,6 +254,16 @@ func (s *Store) UpdateEngineStats(id string, cpu float64, memUsage int64, memPer
 	}
 }
 
+func (s *Store) UpdateEngineTrafficStats(id string, speedDown, speedUp, peers int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e, ok := s.engines[id]; ok {
+		e.TotalSpeedDown = speedDown
+		e.TotalSpeedUp = speedUp
+		e.TotalPeers = peers
+	}
+}
+
 func (s *Store) MarkEngineDraining(id, reason string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

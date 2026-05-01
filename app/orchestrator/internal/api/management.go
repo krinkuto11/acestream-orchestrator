@@ -18,6 +18,7 @@ import (
 	"github.com/acestream/acestream/internal/config"
 	cpdocker "github.com/acestream/acestream/internal/controlplane/docker"
 	cpengine "github.com/acestream/acestream/internal/controlplane/engine"
+	"github.com/acestream/acestream/internal/proxy/telemetry"
 	"github.com/acestream/acestream/internal/state"
 )
 
@@ -1167,6 +1168,9 @@ func (s *ProxyServer) mgHandleOrchestratorStatus(w http.ResponseWriter, r *http.
 		"streams": map[string]any{
 			"active": activeStreams,
 			"total":  len(streams),
+		},
+		"telemetry": map[string]any{
+			"bytes_egress_total": telemetry.DefaultTelemetry.GetTotalEgress(),
 		},
 		"capacity": map[string]any{
 			"total":        totalCapacity,

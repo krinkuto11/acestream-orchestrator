@@ -88,7 +88,8 @@ function BigCounter({ label, value, sub, accent = 'green' }) {
 
 // ── PolicyBlock ───────────────────────────────────────────────────────────────
 function PolicyBlock({ orchestratorStatus }) {
-  const minR = orchestratorStatus?.config?.min_replicas ?? orchestratorStatus?.engines?.min_replicas ?? '–'
+
+  const minR = orchestratorStatus?.config?.min_replicas ?? orchestratorStatus?.capacity?.min_replicas ?? orchestratorStatus?.engines?.min_replicas ?? '–'
   const maxR = orchestratorStatus?.capacity?.max_replicas ?? orchestratorStatus?.engines?.max_replicas ?? '–'
   const breaker = orchestratorStatus?.provisioning?.circuit_breaker_state || 'closed'
   const breakerColor = breaker === 'closed' ? 'var(--acc-green)' : 'var(--acc-amber)'
@@ -846,7 +847,8 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
       gap: 0,
       background: 'var(--bg-0)',
       backgroundImage: `radial-gradient(circle at 50% 40%, oklch(0.22 0.04 145 / 0.12), transparent 50%)`,
-      minHeight: '100%',
+      height: '100vh',
+      overflow: 'hidden',
     }}>
       <Marquee engines={engines} streams={streams} vpnStatus={vpnStatus} isConnected={true}/>
 
@@ -896,7 +898,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
           border: '1px solid var(--acc-green-dim)',
           boxShadow: '0 0 0 1px var(--acc-green-bg) inset',
           minWidth: 0,
-          minHeight: 480,
+          minHeight: 0,
         }}>
           {/* Canvas header */}
           <div style={{

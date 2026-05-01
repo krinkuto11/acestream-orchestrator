@@ -125,7 +125,7 @@ func (hm *HealthManager) checkAndManage(ctx context.Context) {
 		probeWG.Add(1)
 		go func(eng *state.Engine) {
 			defer probeWG.Done()
-			ok := probeHealth(eng.Host, eng.Port)
+			ok := probeHealth(eng.ContainerID, eng.Host, eng.Port)
 			results <- probeResult{eng, ok}
 		}(e)
 	}
@@ -200,7 +200,7 @@ func StartupProbe(containerID, host string, httpPort, apiPort int, onReady func(
 				return // engine was deregistered, abort probe silently
 			}
 
-			if probeHealth(host, httpPort) && probeAPIHandshake(host, apiPort) {
+			if probeHealth(containerID, host, httpPort) && probeAPIHandshake(host, apiPort) {
 				onReady()
 				return
 			}
@@ -238,7 +238,7 @@ func probeAPIHandshake(host string, port int) bool {
 }
 
 // probeHealth checks the AceStream engine's get_status API endpoint.
-func probeHealth(host string, port int) bool {
+func probeHealth(id, host string, port int) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -259,8 +259,19 @@ func probeHealth(host string, port int) bool {
 	}
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	var v any
-	return json.Unmarshal(body, &v) == nil
+	var res struct {
+		Result struct {
+			SpeedDown int `json:"speed_down"`
+			SpeedUp   int `json:"speed_up"`
+			Peers     int `json:"peers"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		return false
+	}
+
+	state.Global.UpdateEngineTrafficStats(id, res.Result.SpeedDown, res.Result.SpeedUp, res.Result.Peers)
+	return true
 }
 
 const starvationMinAge = 3 * time.Minute

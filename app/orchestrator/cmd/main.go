@@ -277,10 +277,14 @@ type stateSink struct {
 	st *state.Store
 }
 
-func (s *stateSink) OnStreamStarted(contentID, engineID string) {
+func (s *stateSink) OnStreamStarted(contentID, engineID, controlMode, streamMode string) {
 	s.st.OnStreamStarted(state.StreamStartedEvent{
 		ContentID: contentID,
 		EngineID:  engineID,
+		Stream: &state.StreamKeyPayload{
+			ControlMode: controlMode,
+			StreamMode:  streamMode,
+		},
 	})
 	state.RecordEvent(state.EventEntry{
 		EventType: "stream",

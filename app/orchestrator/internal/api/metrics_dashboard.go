@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/acestream/acestream/internal/proxy/telemetry"
 	"github.com/acestream/acestream/internal/state"
 )
 
@@ -87,6 +88,9 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 
 	ingressMbps := toMbps(ingressSum)
 	egressMbps := toMbps(egressSum)
+	if egressMbps <= 0 {
+		egressMbps = telemetry.DefaultTelemetry.GetEgressMbps()
+	}
 
 	cpuPercent, memBytes := summarizeEngineResources(engines)
 

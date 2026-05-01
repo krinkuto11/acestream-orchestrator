@@ -3,6 +3,7 @@ package telemetry
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/acestream/acestream/internal/metrics"
@@ -23,6 +24,7 @@ type TelemetryBatch struct {
 	Requests    []RequestEvent `json:"requests"`
 	Connects    []string       `json:"connects"`    // modes, e.g. "TS", "HLS"
 	Disconnects []string       `json:"disconnects"` // modes
+	TotalEgress int64          `json:"total_egress"`
 }
 
 // TelemetryTracker aggregates RED metrics and periodically pushes to the Orchestrator.
@@ -30,6 +32,10 @@ type TelemetryTracker struct {
 	mu     sync.Mutex
 	batch  TelemetryBatch
 	stopCh chan struct{}
+	totalEgress int64
+	egressRate  float64 // Mbps
+	lastEgress  int64
+	lastTime    time.Time
 }
 
 // Global instance. In a full refactor we might pass this around, but
@@ -44,6 +50,7 @@ func NewTelemetryTracker() *TelemetryTracker {
 			Disconnects: make([]string, 0, 10),
 		},
 		stopCh: make(chan struct{}),
+		lastTime: time.Now(),
 	}
 	go t.worker()
 	return t
@@ -91,6 +98,47 @@ func (t *TelemetryTracker) ObserveIngress(mode string, bytes int64) {
 
 func (t *TelemetryTracker) ObserveEgress(mode string, bytes int64) {
 	metrics.BytesEgressTotal.WithLabelValues(mode).Add(float64(bytes))
+	atomic.AddInt64(&t.totalEgress, bytes)
+}
+
+func (t *TelemetryTracker) GetTotalEgress() int64 {
+	return atomic.LoadInt64(&t.totalEgress)
+}
+
+func (t *TelemetryTracker) GetEgressMbps() float64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.egressRate
+}
+
+func (t *TelemetryTracker) updateRate() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	now := time.Now()
+	elapsed := now.Sub(t.lastTime).Seconds()
+	if elapsed <= 0 {
+		return
+	}
+
+	current := atomic.LoadInt64(&t.totalEgress)
+	delta := current - t.lastEgress
+	if delta < 0 {
+		delta = 0
+	}
+
+	// Calculate Mbps: (bytes * 8) / (seconds * 1024 * 1024)
+	instant := (float64(delta) * 8.0) / (elapsed * 1024.0 * 1024.0)
+
+	// EMA filter
+	if t.egressRate == 0 {
+		t.egressRate = instant
+	} else {
+		t.egressRate = 0.3*instant + 0.7*t.egressRate
+	}
+
+	t.lastEgress = current
+	t.lastTime = now
 }
 
 func (t *TelemetryTracker) worker() {
@@ -102,6 +150,7 @@ func (t *TelemetryTracker) worker() {
 		case <-t.stopCh:
 			return
 		case <-ticker.C:
+			t.updateRate()
 			t.push()
 		}
 	}
