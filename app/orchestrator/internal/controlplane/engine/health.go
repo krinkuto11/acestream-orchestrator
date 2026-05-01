@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,7 +13,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"bufio"
 
 	"github.com/acestream/acestream/internal/config"
 	"github.com/acestream/acestream/internal/metrics"
@@ -21,11 +21,11 @@ import (
 
 // engineHealthTracker tracks consecutive failure state for one engine.
 type engineHealthTracker struct {
-	consecutiveFailures int
-	firstFailureTime    time.Time
-	lastHealthyTime     time.Time
+	consecutiveFailures  int
+	firstFailureTime     time.Time
+	lastHealthyTime      time.Time
 	markedForReplacement bool
-	replacementStarted  bool
+	replacementStarted   bool
 }
 
 func (t *engineHealthTracker) isConsidered(threshold int) bool {
@@ -42,12 +42,12 @@ func (t *engineHealthTracker) shouldBeReplaced(threshold int, gracePeriod time.D
 // HealthManager is the Go equivalent of Python's HealthManager.
 // It probes all engines concurrently and evicts durably unhealthy ones.
 type HealthManager struct {
-	controller         *Controller
-	trackers           map[string]*engineHealthTracker
-	mu                 sync.Mutex
-	lastReplacementAt  time.Time
-	running            atomic.Bool
-	wg                 sync.WaitGroup
+	controller        *Controller
+	trackers          map[string]*engineHealthTracker
+	mu                sync.Mutex
+	lastReplacementAt time.Time
+	running           atomic.Bool
+	wg                sync.WaitGroup
 }
 
 // NewHealthManager creates a HealthManager wired to the given controller.
@@ -448,6 +448,15 @@ func (hm *HealthManager) evictUnhealthy(ctx context.Context, unhealthy []*state.
 		hm.mu.Unlock()
 
 		slog.Info("unhealthy engine evicted; controller will replace it", "id", e.ContainerID[:min12(len(e.ContainerID))])
+		state.RecordEvent(state.EventEntry{
+			EventType:   "engine",
+			Category:    "evicted",
+			Message:     "Unhealthy engine evicted",
+			ContainerID: e.ContainerID,
+			Details: map[string]any{
+				"name": e.ContainerName,
+			},
+		})
 		// Nudge the controller so it immediately fills the deficit
 		if hm.controller != nil {
 			hm.controller.Nudge("unhealthy_eviction")
@@ -477,11 +486,11 @@ func (hm *HealthManager) GetSummary() map[string]any {
 	hm.mu.Unlock()
 
 	return map[string]any{
-		"total_engines":         len(engines),
-		"healthy_engines":       healthy,
-		"unhealthy_engines":     unhealthy,
+		"total_engines":          len(engines),
+		"healthy_engines":        healthy,
+		"unhealthy_engines":      unhealthy,
 		"marked_for_replacement": markedCount,
-		"minimum_required":      cfg.MinReplicas,
-		"health_check_interval": cfg.HealthCheckInterval.Seconds(),
+		"minimum_required":       cfg.MinReplicas,
+		"health_check_interval":  cfg.HealthCheckInterval.Seconds(),
 	}
 }

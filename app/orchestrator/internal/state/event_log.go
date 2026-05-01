@@ -1,4 +1,4 @@
-package api
+package state
 
 import (
 	"fmt"
@@ -8,14 +8,6 @@ import (
 )
 
 const maxEventLogSize = 500
-
-type eventLog struct {
-	mu     sync.RWMutex
-	seq    uint64
-	events []EventEntry
-}
-
-var globalEventLog = &eventLog{events: []EventEntry{}}
 
 // EventEntry is a minimal event record for UI consumption.
 type EventEntry struct {
@@ -27,6 +19,29 @@ type EventEntry struct {
 	Details     map[string]any `json:"details,omitempty"`
 	ContainerID string         `json:"container_id,omitempty"`
 	StreamID    string         `json:"stream_id,omitempty"`
+}
+
+type eventLog struct {
+	mu     sync.RWMutex
+	seq    uint64
+	events []EventEntry
+}
+
+var globalEventLog = &eventLog{events: []EventEntry{}}
+
+// RecordEvent appends a new event to the shared log.
+func RecordEvent(entry EventEntry) {
+	globalEventLog.record(entry)
+}
+
+// GetEventsSnapshot returns filtered events and derived stats.
+func GetEventsSnapshot(limit int, eventType string) (events []EventEntry, stats map[string]any) {
+	return globalEventLog.snapshot(limit, eventType)
+}
+
+// ClearEvents purges the in-memory event log.
+func ClearEvents() {
+	globalEventLog.clear()
 }
 
 func (l *eventLog) record(entry EventEntry) {
@@ -91,19 +106,4 @@ func (l *eventLog) snapshot(limit int, eventType string) (events []EventEntry, s
 	}
 
 	return events, stats
-}
-
-// RecordEvent appends a new event to the shared log.
-func RecordEvent(entry EventEntry) {
-	globalEventLog.record(entry)
-}
-
-// GetEventsSnapshot returns filtered events and derived stats.
-func GetEventsSnapshot(limit int, eventType string) (events []EventEntry, stats map[string]any) {
-	return globalEventLog.snapshot(limit, eventType)
-}
-
-// ClearEvents purges the in-memory event log.
-func ClearEvents() {
-	globalEventLog.clear()
 }

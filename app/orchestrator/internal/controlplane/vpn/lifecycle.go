@@ -115,6 +115,14 @@ func (lm *LifecycleManager) reconcile(ctx context.Context) {
 					"name", node.ContainerName,
 					"since", node.UnhealthySince,
 				)
+				state.RecordEvent(state.EventEntry{
+					EventType: "vpn",
+					Category:  "draining",
+					Message:   "VPN node unhealthy past grace; auto-draining",
+					Details: map[string]any{
+						"name": node.ContainerName,
+					},
+				})
 				if state.Global.SetVPNNodeDraining(node.ContainerName) {
 					lm.pub.PublishVPNNode(ctx, node)
 				}
@@ -185,7 +193,21 @@ func (lm *LifecycleManager) provisionOne(ctx context.Context) {
 	slog.Info("Provisioning dynamic VPN node")
 	if _, err := lm.prov.ProvisionNode(ctx); err != nil {
 		slog.Error("Failed to provision dynamic VPN node", "err", err)
+		state.RecordEvent(state.EventEntry{
+			EventType: "vpn",
+			Category:  "provision_failed",
+			Message:   "VPN node provisioning failed",
+			Details: map[string]any{
+				"error": err.Error(),
+			},
+		})
+		return
 	}
+	state.RecordEvent(state.EventEntry{
+		EventType: "vpn",
+		Category:  "provisioned",
+		Message:   "VPN node provisioned",
+	})
 }
 
 func (lm *LifecycleManager) scaleDownIdle(ctx context.Context, desiredVPNs int) {
@@ -240,6 +262,16 @@ func (lm *LifecycleManager) scaleDownIdle(ctx context.Context, desiredVPNs int) 
 		"desired", desiredVPNs,
 		"excess", excess,
 	)
+	state.RecordEvent(state.EventEntry{
+		EventType: "vpn",
+		Category:  "compaction",
+		Message:   "VPN cluster over-balanced; initiating compaction",
+		Details: map[string]any{
+			"active":  len(active),
+			"desired": desiredVPNs,
+			"excess":  excess,
+		},
+	})
 
 	for i := 0; i < excess; i++ {
 		node := ss[i].node
@@ -248,6 +280,16 @@ func (lm *LifecycleManager) scaleDownIdle(ctx context.Context, desiredVPNs int) 
 			"active_streams", ss[i].streamCount,
 			"engines", ss[i].engineCount,
 		)
+		state.RecordEvent(state.EventEntry{
+			EventType: "vpn",
+			Category:  "draining",
+			Message:   "Scaling down VPN node (compaction)",
+			Details: map[string]any{
+				"name":           node.ContainerName,
+				"active_streams": ss[i].streamCount,
+				"engines":        ss[i].engineCount,
+			},
+		})
 		if st.SetVPNNodeDraining(node.ContainerName) {
 			lm.pub.PublishVPNNode(ctx, node)
 		}
@@ -269,6 +311,14 @@ func (lm *LifecycleManager) healNotReady(ctx context.Context) {
 		}
 		lm.activeHealings.Store(name, struct{}{})
 		slog.Info("VPN node notready past grace period; draining", "name", name)
+		state.RecordEvent(state.EventEntry{
+			EventType: "vpn",
+			Category:  "draining",
+			Message:   "VPN node notready past grace period; draining",
+			Details: map[string]any{
+				"name": name,
+			},
+		})
 		if state.Global.SetVPNNodeDraining(name) {
 			lm.pub.PublishVPNNode(ctx, node)
 		}
@@ -313,6 +363,14 @@ func (lm *LifecycleManager) gcDraining(ctx context.Context, node *state.VPNNode)
 		slog.Warn("VPN drain hard timeout; force-stopping",
 			"name", node.ContainerName,
 		)
+		state.RecordEvent(state.EventEntry{
+			EventType: "vpn",
+			Category:  "force_stop",
+			Message:   "VPN drain hard timeout; force-stopping",
+			Details: map[string]any{
+				"name": node.ContainerName,
+			},
+		})
 	}
 
 	lm.destroyVPN(ctx, node)
@@ -320,22 +378,56 @@ func (lm *LifecycleManager) gcDraining(ctx context.Context, node *state.VPNNode)
 
 func (lm *LifecycleManager) destroyVPN(ctx context.Context, node *state.VPNNode) {
 	slog.Info("Destroying draining VPN node", "name", node.ContainerName)
+	state.RecordEvent(state.EventEntry{
+		EventType: "vpn",
+		Category:  "destroying",
+		Message:   "Destroying draining VPN node",
+		Details: map[string]any{
+			"name": node.ContainerName,
+		},
+	})
 
 	if lm.prov != nil {
 		if err := lm.prov.DestroyNode(ctx, node.ContainerName); err != nil {
 			slog.Error("Failed to destroy VPN node", "name", node.ContainerName, "err", err)
+			state.RecordEvent(state.EventEntry{
+				EventType: "vpn",
+				Category:  "destroy_failed",
+				Message:   "Failed to destroy VPN node",
+				Details: map[string]any{
+					"name":  node.ContainerName,
+					"error": err.Error(),
+				},
+			})
 			// Remove from state anyway to avoid retry loops on already-gone containers.
 		}
 	} else {
 		// Fallback: direct Docker stop (no credential management).
 		if err := stopVPNContainer(ctx, node.ContainerID); err != nil {
 			slog.Error("Failed to stop VPN container", "name", node.ContainerName, "err", err)
+			state.RecordEvent(state.EventEntry{
+				EventType: "vpn",
+				Category:  "destroy_failed",
+				Message:   "Failed to stop VPN container",
+				Details: map[string]any{
+					"name":  node.ContainerName,
+					"error": err.Error(),
+				},
+			})
 		}
 		state.Global.RemoveVPNNode(node.ContainerName)
 	}
 
 	lm.pub.RemoveVPNNode(ctx, node.ContainerName)
 	slog.Info("VPN node destroyed", "name", node.ContainerName)
+	state.RecordEvent(state.EventEntry{
+		EventType: "vpn",
+		Category:  "destroyed",
+		Message:   "VPN node destroyed",
+		Details: map[string]any{
+			"name": node.ContainerName,
+		},
+	})
 }
 
 // monitorHealth probes all active dynamic VPN nodes and updates their health in state.
@@ -350,6 +442,15 @@ func (lm *LifecycleManager) monitorHealth(ctx context.Context) {
 		if node.Healthy != healthy {
 			slog.Info("VPN node health changed", "name", node.ContainerName, "healthy", healthy)
 			st.SetVPNNodeHealthy(node.ContainerName, healthy)
+			state.RecordEvent(state.EventEntry{
+				EventType: "vpn",
+				Category:  "health",
+				Message:   "VPN node health changed",
+				Details: map[string]any{
+					"name":    node.ContainerName,
+					"healthy": healthy,
+				},
+			})
 			// Publish update so proxy event stream reflects health.
 			if updated, ok := st.GetVPNNode(node.ContainerName); ok {
 				lm.pub.PublishVPNNode(ctx, updated)

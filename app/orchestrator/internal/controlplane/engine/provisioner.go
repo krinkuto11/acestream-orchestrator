@@ -24,8 +24,8 @@ import (
 	"github.com/docker/go-connections/nat"
 
 	"github.com/acestream/acestream/internal/config"
-	"github.com/acestream/acestream/internal/state"
 	"github.com/acestream/acestream/internal/controlplane/vpn"
+	"github.com/acestream/acestream/internal/state"
 )
 
 // ResourceScheduler atomically resolves VPN node, port assignments, and
@@ -73,15 +73,15 @@ func (rs *ResourceScheduler) ScheduleNewEngine(ctx context.Context) (*state.Engi
 	configHash := ComputeConfigHash()
 
 	labels := map[string]string{
-		labelKey:                             labelVal,
-		"acestream.http_port":                strconv.Itoa(ports.ContainerHTTPPort),
-		"acestream.https_port":               strconv.Itoa(ports.ContainerHTTPSPort),
-		"acestream.api_port":                 strconv.Itoa(ports.ContainerAPIPort),
-		"host.http_port":                     strconv.Itoa(ports.HostHTTPPort),
-		"host.api_port":                      strconv.Itoa(ports.HostAPIPort),
-		"acestream.engine_variant":           variantName,
-		"acestream.config_hash":              configHash,
-		"acestream.config_generation":        "1",
+		labelKey:                      labelVal,
+		"acestream.http_port":         strconv.Itoa(ports.ContainerHTTPPort),
+		"acestream.https_port":        strconv.Itoa(ports.ContainerHTTPSPort),
+		"acestream.api_port":          strconv.Itoa(ports.ContainerAPIPort),
+		"host.http_port":              strconv.Itoa(ports.HostHTTPPort),
+		"host.api_port":               strconv.Itoa(ports.HostAPIPort),
+		"acestream.engine_variant":    variantName,
+		"acestream.config_hash":       configHash,
+		"acestream.config_generation": "1",
 	}
 	if vpnContainer != "" {
 		labels["acestream.vpn_container"] = vpnContainer
@@ -111,7 +111,7 @@ func (rs *ResourceScheduler) ScheduleNewEngine(ctx context.Context) (*state.Engi
 	} else if cfg.DockerNetwork != "" {
 		networkMode = cfg.DockerNetwork
 	}
- 
+
 	cmd := buildCommand(ports.ContainerHTTPPort, ports.ContainerAPIPort, p2pPort, cfg)
 
 	spec := &state.EngineSpec{
@@ -219,6 +219,16 @@ func ExecuteSpec(ctx context.Context, spec *state.EngineSpec) (string, error) {
 	// which would allow over-assignment to the same VPN node.
 
 	slog.Info("engine container started", "name", spec.ContainerName, "id", resp.ID[:12], "vpn", spec.VPNContainerID)
+	state.RecordEvent(state.EventEntry{
+		EventType: "engine",
+		Category:  "created",
+		Message:   "Engine container started",
+		Details: map[string]any{
+			"name": spec.ContainerName,
+			"id":   resp.ID[:12],
+			"vpn":  spec.VPNContainerID,
+		},
+	})
 	return resp.ID, nil
 }
 
@@ -474,7 +484,7 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 	// Prefer under-limit nodes; fall back to least-loaded if all are at the
 	// soft limit, but respect MaxEnginesPerVPN as a hard limit.
 	chosen, load := st.SelectAndClaimVPN(readyNames, effectiveLimit)
-	
+
 	if chosen == "" && cfg.MaxEnginesPerVPN > effectiveLimit {
 		chosen, load = st.SelectAndClaimVPN(readyNames, cfg.MaxEnginesPerVPN)
 		if chosen != "" {
@@ -489,7 +499,6 @@ func (rs *ResourceScheduler) selectVPNContainer() (string, error) {
 		}
 		return "", fmt.Errorf("resource restriction: %s - cannot schedule AceStream engine", diag)
 	}
-
 
 	slog.Info("scheduling new engine on VPN node", "vpn", chosen, "load", load, "limit", effectiveLimit)
 	return chosen, nil

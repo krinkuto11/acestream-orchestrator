@@ -198,12 +198,33 @@ func (w *EventWatcher) handleEngineStart(ctx context.Context, containerID, conta
 	st.AddEngine(eng)
 	w.pub.PublishEngine(ctx, eng)
 	slog.Info("engine registered", "id", containerID[:min12(len(containerID))], "name", containerName, "host", host, "port", httpPort)
+	state.RecordEvent(state.EventEntry{
+		EventType:   "engine",
+		Category:    "registered",
+		Message:     "Engine registered",
+		ContainerID: containerID,
+		Details: map[string]any{
+			"name": containerName,
+			"host": host,
+			"port": httpPort,
+			"vpn":  vpnContainer,
+		},
+	})
 
 	cid := containerID
 	engine.StartupProbe(cid, host, httpPort, apiPort, func() {
 		st.UpdateEngineHealth(cid, state.HealthHealthy)
 		st.NotifyEngineReady()
 		slog.Info("engine ready", "id", cid[:min12(len(cid))], "name", containerName)
+		state.RecordEvent(state.EventEntry{
+			EventType:   "engine",
+			Category:    "ready",
+			Message:     "Engine ready",
+			ContainerID: cid,
+			Details: map[string]any{
+				"name": containerName,
+			},
+		})
 	})
 }
 
@@ -212,6 +233,15 @@ func (w *EventWatcher) handleEngineStop(ctx context.Context, containerID, contai
 		engine.Alloc.ReleaseFromLabels(attrs)
 		w.pub.RemoveEngine(ctx, containerID)
 		slog.Info("engine deregistered", "id", containerID[:min12(len(containerID))], "name", containerName)
+		state.RecordEvent(state.EventEntry{
+			EventType:   "engine",
+			Category:    "deregistered",
+			Message:     "Engine deregistered",
+			ContainerID: containerID,
+			Details: map[string]any{
+				"name": containerName,
+			},
+		})
 	}
 }
 
@@ -234,12 +264,30 @@ func (w *EventWatcher) handleVPNStart(ctx context.Context, containerID, containe
 	st.UpsertVPNNode(node)
 	w.pub.PublishVPNNode(ctx, node)
 	slog.Info("VPN node registered", "name", containerName)
+	state.RecordEvent(state.EventEntry{
+		EventType:   "vpn",
+		Category:    "registered",
+		Message:     "VPN node registered",
+		ContainerID: containerID,
+		Details: map[string]any{
+			"name":     containerName,
+			"provider": provider,
+		},
+	})
 }
 
 func (w *EventWatcher) handleVPNStop(ctx context.Context, containerName string) {
 	if state.Global.RemoveVPNNode(containerName) {
 		w.pub.RemoveVPNNode(ctx, containerName)
 		slog.Info("VPN node deregistered", "name", containerName)
+		state.RecordEvent(state.EventEntry{
+			EventType: "vpn",
+			Category:  "deregistered",
+			Message:   "VPN node deregistered",
+			Details: map[string]any{
+				"name": containerName,
+			},
+		})
 	}
 }
 
@@ -254,6 +302,15 @@ func (w *EventWatcher) handleHealthStatus(ctx context.Context, containerID, cont
 			w.pub.PublishVPNNode(ctx, n)
 		}
 		slog.Debug("VPN node health updated", "name", containerName, "healthy", healthy)
+		state.RecordEvent(state.EventEntry{
+			EventType: "vpn",
+			Category:  "health",
+			Message:   "VPN node health changed",
+			Details: map[string]any{
+				"name":    containerName,
+				"healthy": healthy,
+			},
+		})
 		return
 	}
 
