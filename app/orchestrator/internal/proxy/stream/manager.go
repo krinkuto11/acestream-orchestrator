@@ -34,7 +34,7 @@ type EventSink interface {
 
 type noopSink struct{}
 
-func (noopSink) OnStreamStarted(_, _ string) {}
+func (noopSink) OnStreamStarted(_, _, _, _ string) {}
 func (noopSink) OnStreamEnded(_ string)       {}
 func (noopSink) OnStreamFailed(_ string)      {}
 
