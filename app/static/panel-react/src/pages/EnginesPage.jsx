@@ -389,14 +389,14 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                 No engines provisioned
               </div>
             ) : (
-                {engines.map((e, i) => (
-                  <EngineRackRow
-                    key={e.container_id}
-                    engine={e}
-                    idx={i}
-                    onDelete={onDeleteEngine}
-                    maxStreamsPerEngine={maxStreamsPerEngine}
-                  />
+              engines.map((e, i) => (
+                <EngineRackRow
+                  key={e.container_id}
+                  engine={e}
+                  idx={i}
+                  onDelete={onDeleteEngine}
+                  maxStreamsPerEngine={maxStreamsPerEngine}
+                />
               ))
             )}
           </div>
