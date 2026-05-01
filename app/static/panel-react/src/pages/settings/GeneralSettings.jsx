@@ -1,17 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SettingRow } from '@/components/settings/SettingRow'
 import { useSettingsForm } from '@/context/SettingsFormContext'
 
+const inputStyle = {
+  background: 'var(--bg-0)', border: '1px solid var(--line)', color: 'var(--fg-0)',
+  padding: '4px 8px', fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none',
+}
+const selectStyle = { ...inputStyle, cursor: 'pointer', minWidth: 140 }
+
 export function GeneralSettings({
-  apiKey,
-  setApiKey,
-  refreshInterval,
-  setRefreshInterval,
-  maxEventsDisplay,
-  setMaxEventsDisplay,
+  apiKey, setApiKey,
+  refreshInterval, setRefreshInterval,
+  maxEventsDisplay, setMaxEventsDisplay,
   authRequired,
 }) {
   const sectionId = 'general'
@@ -58,110 +58,78 @@ export function GeneralSettings({
       setSectionDirty(sectionId, false)
     }
 
-    registerSection(sectionId, {
-      title: 'General',
-      requiresAuth: false,
-      save,
-      discard,
-    })
-
+    registerSection(sectionId, { title: 'General', requiresAuth: false, save, discard })
     return () => unregisterSection(sectionId)
-  }, [
-    draft,
-    initialState,
-    registerSection,
-    setApiKey,
-    setMaxEventsDisplay,
-    setRefreshInterval,
-    setSectionDirty,
-    unregisterSection,
-  ])
+  }, [draft, initialState, registerSection, setApiKey, setMaxEventsDisplay, setRefreshInterval, setSectionDirty, unregisterSection])
 
   useEffect(() => {
     setSectionDirty(sectionId, dirty)
   }, [dirty, setSectionDirty])
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Connection Settings</CardTitle>
-          <CardDescription>Configure API access and authentication</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <SettingRow
-            label="API Key"
-            description="Used for protected operations when server authentication is enabled."
-            htmlFor="api-key"
-          >
-            <Input
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-soft)' }}>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
+          <span className="label">CONNECTION SETTINGS</span>
+          <div style={{ fontSize: 10, color: 'var(--fg-2)', marginTop: 2 }}>Configure API access and authentication</div>
+        </div>
+        <div style={{ padding: '12px 14px' }}>
+          <SettingRow label="API Key" description="Used for protected operations when server authentication is enabled." htmlFor="api-key">
+            <input
               id="api-key"
               type="password"
               value={draft.apiKey}
               onChange={(e) => setDraft((prev) => ({ ...prev, apiKey: e.target.value }))}
               placeholder="Enter your API key"
-              className="max-w-md"
+              style={{ ...inputStyle, minWidth: 240 }}
             />
           </SettingRow>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            {authRequired
-              ? 'Server status: authentication is required for protected endpoints.'
-              : 'Server status: authentication is currently disabled and API key is optional.'}
-          </p>
-        </CardContent>
-      </Card>
+          <SettingRow label=" " description="">
+            <div style={{ fontSize: 10, color: authRequired ? 'var(--acc-amber)' : 'var(--fg-3)' }}>
+              {authRequired
+                ? '⚠ Auth enforced · API key required for protected endpoints'
+                : '✓ Auth not enforced · API key is optional'}
+            </div>
+          </SettingRow>
+        </div>
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Display Settings</CardTitle>
-          <CardDescription>Customize dashboard refresh and display options</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <SettingRow
-            label="Auto Refresh Interval"
-            description="How often dashboard data refreshes from the server."
-            htmlFor="refresh-interval"
-          >
-            <Select
+      <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-soft)' }}>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
+          <span className="label">DISPLAY SETTINGS</span>
+          <div style={{ fontSize: 10, color: 'var(--fg-2)', marginTop: 2 }}>Customize dashboard refresh and display options</div>
+        </div>
+        <div style={{ padding: '12px 14px' }}>
+          <SettingRow label="Auto Refresh Interval" description="How often dashboard data refreshes from the server." htmlFor="refresh-interval">
+            <select
+              id="refresh-interval"
               value={String(draft.refreshInterval)}
-              onValueChange={(val) => setDraft((prev) => ({ ...prev, refreshInterval: Number(val) }))}
+              onChange={(e) => setDraft((prev) => ({ ...prev, refreshInterval: Number(e.target.value) }))}
+              style={selectStyle}
             >
-              <SelectTrigger id="refresh-interval">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1000">1 second</SelectItem>
-                <SelectItem value="2000">2 seconds</SelectItem>
-                <SelectItem value="5000">5 seconds</SelectItem>
-                <SelectItem value="10000">10 seconds</SelectItem>
-                <SelectItem value="30000">30 seconds</SelectItem>
-                <SelectItem value="60000">1 minute</SelectItem>
-              </SelectContent>
-            </Select>
+              <option value="1000">1 second</option>
+              <option value="2000">2 seconds</option>
+              <option value="5000">5 seconds</option>
+              <option value="10000">10 seconds</option>
+              <option value="30000">30 seconds</option>
+              <option value="60000">1 minute</option>
+            </select>
           </SettingRow>
-
-          <SettingRow
-            label="Event Log Display Limit"
-            description="Maximum number of events shown in the Events page list."
-            htmlFor="max-events"
-          >
-            <Select
+          <SettingRow label="Event Log Display Limit" description="Maximum number of events shown in the Events page list." htmlFor="max-events">
+            <select
+              id="max-events"
               value={String(draft.maxEventsDisplay)}
-              onValueChange={(val) => setDraft((prev) => ({ ...prev, maxEventsDisplay: Number(val) }))}
+              onChange={(e) => setDraft((prev) => ({ ...prev, maxEventsDisplay: Number(e.target.value) }))}
+              style={selectStyle}
             >
-              <SelectTrigger id="max-events">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="50">50 events</SelectItem>
-                <SelectItem value="100">100 events</SelectItem>
-                <SelectItem value="200">200 events</SelectItem>
-                <SelectItem value="500">500 events</SelectItem>
-              </SelectContent>
-            </Select>
+              <option value="50">50 events</option>
+              <option value="100">100 events</option>
+              <option value="200">200 events</option>
+              <option value="500">500 events</option>
+            </select>
           </SettingRow>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   )
 }

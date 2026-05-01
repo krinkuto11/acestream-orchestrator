@@ -233,7 +233,17 @@ function AppContent() {
 
       setEngines(mergedEngines)
       setStreams(nextStreams)
-      setVpnStatus(payload.vpn_status || { enabled: false })
+      if (Array.isArray(payload.vpn_nodes)) {
+        const nodes = payload.vpn_nodes
+        setVpnStatus({
+          vpn_enabled: nodes.length > 0,
+          vpn_nodes: nodes,
+          nodes_total: nodes.length,
+          nodes_healthy: nodes.filter(n => n.healthy).length,
+        })
+      } else if (payload.vpn_status) {
+        setVpnStatus(payload.vpn_status)
+      }
       setOrchestratorStatus(payload.orchestrator_status || null)
       setLastUpdate(new Date())
       setIsConnected(true)

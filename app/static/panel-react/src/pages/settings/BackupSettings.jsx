@@ -1,11 +1,4 @@
 import React, { useState } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Label } from '@/components/ui/label'
-import { Download, Upload, FileArchive, CheckCircle, AlertTriangle, Info } from 'lucide-react'
 import { useNotifications } from '@/context/NotificationContext'
 
 export function BackupSettings({ apiKey, orchUrl }) {
@@ -22,47 +15,30 @@ export function BackupSettings({ apiKey, orchUrl }) {
   const handleExport = async () => {
     try {
       setExporting(true)
-      
       const headers = {}
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-      
-      const response = await fetch(`${orchUrl}/api/v1/settings/export`, {
-        method: 'GET',
-        headers
-      })
-      
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+      const response = await fetch(`${orchUrl}/api/v1/settings/export`, { method: 'GET', headers })
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ detail: response.statusText }))
         throw new Error(errorData.detail || `Export failed: ${response.status}`)
       }
-      
-      // Download the ZIP file
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      
-      // Extract filename from Content-Disposition header if available
       const contentDisposition = response.headers.get('Content-Disposition')
       let filename = 'orchestrator_settings.zip'
       if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="(.+)"/)
-        if (filenameMatch) {
-          filename = filenameMatch[1]
-        }
+        const m = contentDisposition.match(/filename="(.+)"/)
+        if (m) filename = m[1]
       }
-      
       a.download = filename
       document.body.appendChild(a)
       a.click()
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
-      
       addNotification('Settings exported successfully', 'success')
     } catch (err) {
-      console.error('Export error:', err)
       addNotification(`Failed to export settings: ${err.message}`, 'error')
     } finally {
       setExporting(false)
@@ -72,56 +48,31 @@ export function BackupSettings({ apiKey, orchUrl }) {
   const handleImport = async (event) => {
     const file = event.target.files[0]
     if (!file) return
-    
     try {
       setImporting(true)
       setImportResult(null)
-      
       const headers = {}
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-      
-      // Build query params for import options
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
       const params = new URLSearchParams({
         import_engine_config: importOptions.engine_config,
         import_proxy: importOptions.proxy,
         import_engine: importOptions.engine,
       })
-      
       const response = await fetch(`${orchUrl}/api/v1/settings/import?${params}`, {
-        method: 'POST',
-        headers,
-        body: file
+        method: 'POST', headers, body: file,
       })
-      
       const result = await response.json()
-      
-      if (!response.ok) {
-        throw new Error(result.detail || `Import failed: ${response.status}`)
-      }
-      
+      if (!response.ok) throw new Error(result.detail || `Import failed: ${response.status}`)
       setImportResult(result)
-      
-      // Show summary of what was imported
       const imported = result.imported
       const messages = []
       if (imported.engine_config) messages.push('Global engine config')
       if (imported.proxy) messages.push('Proxy settings')
       if (imported.engine) messages.push('Engine settings')
-      
-      if (messages.length > 0) {
-        addNotification(`Imported: ${messages.join(', ')}`, 'success')
-      }
-      
-      if (imported.errors && imported.errors.length > 0) {
-        addNotification(`Import completed with ${imported.errors.length} error(s)`, 'warning')
-      }
-      
-      // Clear the file input
+      if (messages.length > 0) addNotification(`Imported: ${messages.join(', ')}`, 'success')
+      if (imported.errors && imported.errors.length > 0) addNotification(`Import completed with ${imported.errors.length} error(s)`, 'warning')
       event.target.value = ''
     } catch (err) {
-      console.error('Import error:', err)
       addNotification(`Failed to import settings: ${err.message}`, 'error')
       setImportResult(null)
     } finally {
@@ -130,200 +81,114 @@ export function BackupSettings({ apiKey, orchUrl }) {
   }
 
   const toggleImportOption = (key) => {
-    setImportOptions(prev => ({
-      ...prev,
-      [key]: !prev[key]
-    }))
+    setImportOptions(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  const btnStyle = {
+    background: 'none', border: '1px solid var(--line)', color: 'var(--fg-1)',
+    padding: '6px 14px', fontFamily: 'var(--font-mono)', fontSize: 11,
+    cursor: 'pointer',
   }
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileArchive className="h-5 w-5" />
-            Backup & Restore
-          </CardTitle>
-          <CardDescription>
-            Export and import your orchestrator settings including global engine configuration,
-            engine runtime settings, and proxy settings.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <Alert>
-            <Info className="h-4 w-4" />
-            <AlertTitle>Immediate Actions</AlertTitle>
-            <AlertDescription className="text-sm">
-              Export and import operations are operational tools. They execute immediately and do not participate in the global unsaved changes workflow.
-            </AlertDescription>
-          </Alert>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-soft)' }}>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
+          <span className="label">BACKUP &amp; RESTORE</span>
+          <div style={{ fontSize: 10, color: 'var(--fg-2)', marginTop: 2 }}>
+            Export and import orchestrator settings including engine configuration, runtime settings, and proxy settings.
+          </div>
+        </div>
+        <div style={{ padding: '14px' }}>
 
-          {/* Export Section */}
-          <div className="space-y-4">
-            <div>
-              <h3 className="text-lg font-semibold mb-2">Export Settings</h3>
-              <p className="text-sm text-muted-foreground mb-4">
-                Download all your current settings as a ZIP file. This includes:
-              </p>
-              <ul className="text-sm text-muted-foreground space-y-1 ml-4 mb-4">
-                <li className="flex items-center gap-2">
-                  <CheckCircle className="h-3 w-3" />
-                  Global engine configuration
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle className="h-3 w-3" />
-                  Engine settings (min/max replicas, auto-delete)
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle className="h-3 w-3" />
-                  Proxy configuration
-                </li>
-              </ul>
-            </div>
-            
-            <Button
-              onClick={handleExport}
-              disabled={exporting}
-              className="w-full sm:w-auto"
-            >
-              <Download className="h-4 w-4 mr-2" />
-              {exporting ? 'Exporting...' : 'Export Settings'}
-            </Button>
+          {/* Info banner */}
+          <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', padding: '10px 14px', marginBottom: 20, fontSize: 10, color: 'var(--fg-2)' }}>
+            ⓘ Export and import operations execute immediately and do not participate in the global unsaved changes workflow.
           </div>
 
-          <div className="border-t pt-6">
-            {/* Import Section */}
-            <div className="space-y-4">
-              <div>
-                <h3 className="text-lg font-semibold mb-2">Import Settings</h3>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Restore settings from a previously exported ZIP file. Choose which settings to import:
-                </p>
-              </div>
-              
-              {/* Import Options */}
-              <div className="space-y-3 p-4 border rounded-lg bg-muted/50">
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="import-engine-config"
-                    checked={importOptions.engine_config}
-                    onCheckedChange={() => toggleImportOption('engine_config')}
-                  />
-                  <Label
-                    htmlFor="import-engine-config"
-                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                  >
-                    Global Engine Configuration
-                  </Label>
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="import-engine"
-                    checked={importOptions.engine}
-                    onCheckedChange={() => toggleImportOption('engine')}
-                  />
-                  <Label
-                    htmlFor="import-engine"
-                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                  >
-                    Engine Settings (Min/Max Replicas, Auto-Delete)
-                  </Label>
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="import-proxy"
-                    checked={importOptions.proxy}
-                    onCheckedChange={() => toggleImportOption('proxy')}
-                  />
-                  <Label
-                    htmlFor="import-proxy"
-                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                  >
-                    Proxy Settings
-                  </Label>
-                </div>
-                
-
-              </div>
-              
-              {/* File Upload */}
-              <div className="flex items-center gap-3">
-                <Button
-                  onClick={() => document.getElementById('import-file-input').click()}
-                  disabled={importing}
-                  className="w-full sm:w-auto"
-                >
-                  <Upload className="h-4 w-4 mr-2" />
-                  {importing ? 'Importing...' : 'Import Settings'}
-                </Button>
-                <input
-                  id="import-file-input"
-                  type="file"
-                  accept=".zip"
-                  onChange={handleImport}
-                  className="hidden"
-                />
-              </div>
-              
-              {/* Import Result */}
-              {importResult && (
-                <Alert variant={importResult.imported.errors?.length > 0 ? "warning" : "default"}>
-                  {importResult.imported.errors?.length > 0 ? (
-                    <AlertTriangle className="h-4 w-4" />
-                  ) : (
-                    <CheckCircle className="h-4 w-4" />
-                  )}
-                  <AlertTitle>
-                    {importResult.imported.errors?.length > 0 
-                      ? 'Import Completed with Warnings' 
-                      : 'Import Successful'}
-                  </AlertTitle>
-                  <AlertDescription className="space-y-2">
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {importResult.imported.engine_config && (
-                        <Badge variant="success">Engine Config</Badge>
-                      )}
-                      {importResult.imported.engine && (
-                        <Badge variant="success">Engine Settings</Badge>
-                      )}
-                      {importResult.imported.proxy && (
-                        <Badge variant="success">Proxy Settings</Badge>
-                      )}
-                    </div>
-                    {importResult.imported.errors?.length > 0 && (
-                      <div className="mt-3 space-y-1">
-                        <p className="text-sm font-medium">Errors:</p>
-                        {importResult.imported.errors.map((error, index) => (
-                          <p key={index} className="text-sm text-muted-foreground">• {error}</p>
-                        ))}
-                      </div>
-                    )}
-                  </AlertDescription>
-                </Alert>
-              )}
+          {/* Export */}
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 12, color: 'var(--fg-0)', fontWeight: 600, fontFamily: 'var(--font-mono)', marginBottom: 6 }}>Export Settings</div>
+            <div style={{ fontSize: 10, color: 'var(--fg-2)', marginBottom: 10 }}>Download all current settings as a ZIP file. Includes:</div>
+            <div style={{ fontSize: 10, color: 'var(--fg-3)', display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 14, paddingLeft: 8 }}>
+              <span>✓ Global engine configuration</span>
+              <span>✓ Engine settings (min/max replicas, auto-delete)</span>
+              <span>✓ Proxy configuration</span>
             </div>
+            <button onClick={handleExport} disabled={exporting} style={{ ...btnStyle, opacity: exporting ? 0.5 : 1 }}>
+              {exporting ? '⟳ EXPORTING...' : '↓ EXPORT SETTINGS'}
+            </button>
           </div>
 
-          {/* Warning Note */}
-          <Alert>
-            <Info className="h-4 w-4" />
-            <AlertTitle>Important Notes</AlertTitle>
-            <AlertDescription className="text-sm space-y-2">
-              <p>
-                • Importing settings will overwrite your current configuration
-              </p>
-              <p>
-                • After importing engine settings/configuration, you may need to reprovision engines for changes to take effect
-              </p>
-              <p>
-                • It's recommended to export your current settings before importing
-              </p>
-            </AlertDescription>
-          </Alert>
-        </CardContent>
-      </Card>
+          <div style={{ borderTop: '1px solid var(--line-soft)', paddingTop: 20 }}>
+            <div style={{ fontSize: 12, color: 'var(--fg-0)', fontWeight: 600, fontFamily: 'var(--font-mono)', marginBottom: 6 }}>Import Settings</div>
+            <div style={{ fontSize: 10, color: 'var(--fg-2)', marginBottom: 12 }}>Restore settings from a previously exported ZIP file. Choose which settings to import:</div>
+
+            {/* Import options */}
+            <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', padding: '12px 14px', marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {[
+                { key: 'engine_config', label: 'Global Engine Configuration' },
+                { key: 'engine', label: 'Engine Settings (Min/Max Replicas, Auto-Delete)' },
+                { key: 'proxy', label: 'Proxy Settings' },
+              ].map(({ key, label }) => (
+                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 11, color: 'var(--fg-1)', fontFamily: 'var(--font-mono)' }}>
+                  <input
+                    type="checkbox"
+                    checked={importOptions[key]}
+                    onChange={() => toggleImportOption(key)}
+                    style={{ accentColor: 'var(--acc-green)', cursor: 'pointer' }}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button
+                onClick={() => document.getElementById('import-file-input').click()}
+                disabled={importing}
+                style={{ ...btnStyle, opacity: importing ? 0.5 : 1 }}
+              >
+                {importing ? '⟳ IMPORTING...' : '↑ IMPORT SETTINGS'}
+              </button>
+              <input id="import-file-input" type="file" accept=".zip" onChange={handleImport} style={{ display: 'none' }}/>
+            </div>
+
+            {/* Import result */}
+            {importResult && (
+              <div style={{
+                marginTop: 14,
+                background: importResult.imported.errors?.length > 0 ? 'var(--acc-amber-bg)' : 'var(--bg-2)',
+                border: `1px solid ${importResult.imported.errors?.length > 0 ? 'var(--acc-amber-dim)' : 'var(--acc-green-dim)'}`,
+                padding: '10px 14px',
+                fontSize: 10,
+                color: 'var(--fg-1)',
+              }}>
+                <div style={{ fontWeight: 600, marginBottom: 6, color: importResult.imported.errors?.length > 0 ? 'var(--acc-amber)' : 'var(--acc-green)' }}>
+                  {importResult.imported.errors?.length > 0 ? '⚠ Import Completed with Warnings' : '✓ Import Successful'}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {importResult.imported.engine_config && <span className="tag tag-green" style={{ fontSize: 9 }}>Engine Config</span>}
+                  {importResult.imported.engine && <span className="tag tag-green" style={{ fontSize: 9 }}>Engine Settings</span>}
+                  {importResult.imported.proxy && <span className="tag tag-green" style={{ fontSize: 9 }}>Proxy Settings</span>}
+                </div>
+                {importResult.imported.errors?.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    {importResult.imported.errors.map((err, i) => (
+                      <div key={i} style={{ color: 'var(--fg-2)' }}>• {err}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Warning */}
+          <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', padding: '10px 14px', marginTop: 20, fontSize: 10, color: 'var(--fg-2)' }}>
+            ⓘ Importing settings will overwrite your current configuration. After importing engine settings/configuration, you may need to reprovision engines. Export your current settings before importing.
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

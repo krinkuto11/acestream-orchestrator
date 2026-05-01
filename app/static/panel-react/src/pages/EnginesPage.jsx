@@ -74,7 +74,7 @@ function EngineRackRow({ engine, idx, onDelete }) {
       minWidth: 0,
     }}>
       {/* Slot */}
-      <div style={{ width: 32, padding: '0 6px', borderRight: '1px solid var(--line-soft)', fontSize: 10, color: 'var(--fg-3)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+      <div style={{ width: 32, padding: '0 6px', borderRight: '1px solid var(--line-soft)', fontSize: 10, color: 'var(--fg-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
         U{String(idx + 1).padStart(2, '0')}
       </div>
       {/* Status bar */}
@@ -148,7 +148,7 @@ function RackHeader() {
       fontSize: 9, letterSpacing: '0.1em', color: 'var(--fg-3)',
       fontFamily: 'var(--font-mono)',
     }}>
-      <div style={{ width: 32, padding: '0 6px', borderRight: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0 }}>SLOT</div>
+      <div style={{ width: 32, padding: '0 6px', borderRight: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>SLOT</div>
       <div style={{ width: 4, flexShrink: 0 }}/>
       <div style={{ width: 140, padding: '0 10px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>ID</div>
       <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>PORT</div>

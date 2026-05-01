@@ -1,7 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 import { SettingRow } from '@/components/settings/SettingRow'
 import { useSettingsForm } from '@/context/SettingsFormContext'
 
@@ -29,14 +26,26 @@ const toNumber = (value, fallback = 0) => {
   return Number.isFinite(next) ? next : fallback
 }
 
+const inputStyle = {
+  background: 'var(--bg-0)', border: '1px solid var(--line)', color: 'var(--fg-0)',
+  padding: '4px 8px', fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none', width: 120,
+}
+
+function Pane({ title, description, children }) {
+  return (
+    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-soft)' }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
+        <span className="label">{title}</span>
+        {description && <div style={{ fontSize: 10, color: 'var(--fg-2)', marginTop: 2 }}>{description}</div>}
+      </div>
+      <div style={{ padding: '12px 14px' }}>{children}</div>
+    </div>
+  )
+}
+
 export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
   const sectionId = 'orchestrator'
-  const {
-    registerSection,
-    unregisterSection,
-    setSectionDirty,
-    setSectionSaving,
-  } = useSettingsForm()
+  const { registerSection, unregisterSection, setSectionDirty, setSectionSaving } = useSettingsForm()
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -54,26 +63,17 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
     setError('')
     try {
       let payload = null
-
       const consolidated = await fetch(`${orchUrl}/api/v1/settings`)
       if (consolidated.ok) {
         const settingsBundle = await consolidated.json().catch(() => ({}))
         payload = settingsBundle?.orchestrator_settings || null
       }
-
       if (!payload) {
         const response = await fetch(`${orchUrl}/api/v1/settings/orchestrator`)
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`)
-        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
         payload = await response.json()
       }
-
-      const normalized = {
-        ...DEFAULTS,
-        ...payload,
-        docker_network: String(payload?.docker_network || ''),
-      }
+      const normalized = { ...DEFAULTS, ...payload, docker_network: String(payload?.docker_network || '') }
       setInitialState(normalized)
       setDraft(normalized)
       setSectionDirty(sectionId, false)
@@ -84,25 +84,19 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
     }
   }
 
-  useEffect(() => {
-    fetchConfig()
-  }, [orchUrl])
+  useEffect(() => { fetchConfig() }, [orchUrl])
 
   useEffect(() => {
     const save = async () => {
       if (authRequired && !String(apiKey || '').trim()) {
         throw new Error('API key required by server for orchestrator settings updates')
       }
-
       setSectionSaving(sectionId, true)
       setMessage('')
       setError('')
       try {
         const headers = { 'Content-Type': 'application/json' }
-        if (String(apiKey || '').trim()) {
-          headers.Authorization = `Bearer ${String(apiKey).trim()}`
-        }
-
+        if (String(apiKey || '').trim()) headers.Authorization = `Bearer ${String(apiKey).trim()}`
         const response = await fetch(`${orchUrl}/api/v1/settings/orchestrator`, {
           method: 'POST',
           headers,
@@ -123,19 +117,12 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
             docker_network: String(draft.docker_network || ''),
           }),
         })
-
         if (!response.ok) {
           const failure = await response.json().catch(() => ({}))
           throw new Error(failure?.detail || `HTTP ${response.status}`)
         }
-
         const payload = await response.json()
-        const normalized = {
-          ...DEFAULTS,
-          ...payload,
-          docker_network: String(payload?.docker_network || ''),
-        }
-
+        const normalized = { ...DEFAULTS, ...payload, docker_network: String(payload?.docker_network || '') }
         setInitialState(normalized)
         setDraft(normalized)
         setSectionDirty(sectionId, false)
@@ -152,29 +139,11 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
       setError('')
     }
 
-    registerSection(sectionId, {
-      title: 'Orchestrator',
-      requiresAuth: true,
-      save,
-      discard,
-    })
-
+    registerSection(sectionId, { title: 'Orchestrator', requiresAuth: true, save, discard })
     return () => unregisterSection(sectionId)
-  }, [
-    apiKey,
-    authRequired,
-    draft,
-    initialState,
-    orchUrl,
-    registerSection,
-    setSectionDirty,
-    setSectionSaving,
-    unregisterSection,
-  ])
+  }, [apiKey, authRequired, draft, initialState, orchUrl, registerSection, setSectionDirty, setSectionSaving, unregisterSection])
 
-  useEffect(() => {
-    setSectionDirty(sectionId, dirty)
-  }, [dirty, setSectionDirty])
+  useEffect(() => { setSectionDirty(sectionId, dirty) }, [dirty, setSectionDirty])
 
   const update = (field, value) => {
     setDraft((prev) => ({ ...prev, [field]: value }))
@@ -184,100 +153,76 @@ export function OrchestratorSettings({ apiKey, orchUrl, authRequired }) {
 
   if (loading) {
     return (
-      <Card>
-        <CardContent className="py-10 text-sm text-muted-foreground">Loading orchestrator settings...</CardContent>
-      </Card>
+      <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-soft)', padding: '32px 14px', textAlign: 'center', fontSize: 11, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
+        loading orchestrator settings...
+      </div>
     )
   }
 
   return (
-    <div className="space-y-5">
-      {message && <p className="text-sm text-emerald-600 dark:text-emerald-400">{message}</p>}
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {message && <div style={{ fontSize: 11, color: 'var(--acc-green)', fontFamily: 'var(--font-mono)', padding: '4px 0' }}>{message}</div>}
+      {error && <div style={{ fontSize: 11, color: 'var(--acc-red)', fontFamily: 'var(--font-mono)', padding: '4px 0' }}>{error}</div>}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Timeouts</CardTitle>
-          <CardDescription>Core lifecycle timing controls for startup and autoscaling loops.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <SettingRow label="Startup Timeout (s)" description="Max wait for an engine to become ready.">
-            <Input value={draft.startup_timeout_s} type="number" min={5} max={180} onChange={(e) => update('startup_timeout_s', toNumber(e.target.value, DEFAULTS.startup_timeout_s))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Engine Grace Period (s)" description="Delay before stopping engine after last stream ends.">
-            <Input value={draft.engine_grace_period_s} type="number" min={1} max={600} onChange={(e) => update('engine_grace_period_s', toNumber(e.target.value, DEFAULTS.engine_grace_period_s))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Autoscale Interval (s)" description="Frequency of autoscale decision cycles.">
-            <Input value={draft.autoscale_interval_s} type="number" min={5} max={300} onChange={(e) => update('autoscale_interval_s', toNumber(e.target.value, DEFAULTS.autoscale_interval_s))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Monitor Interval (s)" description="Docker monitor sweep interval.">
-            <Input value={draft.monitor_interval_s} type="number" min={1} max={60} onChange={(e) => update('monitor_interval_s', toNumber(e.target.value, DEFAULTS.monitor_interval_s))} className="max-w-xs" />
-          </SettingRow>
-        </CardContent>
-      </Card>
+      <Pane title="TIMEOUTS" description="Core lifecycle timing controls for startup and autoscaling loops.">
+        <SettingRow label="Startup Timeout (s)" description="Max wait for an engine to become ready.">
+          <input type="number" value={draft.startup_timeout_s} min={5} max={180} style={inputStyle} onChange={(e) => update('startup_timeout_s', toNumber(e.target.value, DEFAULTS.startup_timeout_s))}/>
+        </SettingRow>
+        <SettingRow label="Engine Grace Period (s)" description="Delay before stopping engine after last stream ends.">
+          <input type="number" value={draft.engine_grace_period_s} min={1} max={600} style={inputStyle} onChange={(e) => update('engine_grace_period_s', toNumber(e.target.value, DEFAULTS.engine_grace_period_s))}/>
+        </SettingRow>
+        <SettingRow label="Autoscale Interval (s)" description="Frequency of autoscale decision cycles.">
+          <input type="number" value={draft.autoscale_interval_s} min={5} max={300} style={inputStyle} onChange={(e) => update('autoscale_interval_s', toNumber(e.target.value, DEFAULTS.autoscale_interval_s))}/>
+        </SettingRow>
+        <SettingRow label="Monitor Interval (s)" description="Docker monitor sweep interval.">
+          <input type="number" value={draft.monitor_interval_s} min={1} max={60} style={inputStyle} onChange={(e) => update('monitor_interval_s', toNumber(e.target.value, DEFAULTS.monitor_interval_s))}/>
+        </SettingRow>
+      </Pane>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Health Checks</CardTitle>
-          <CardDescription>Controls for unhealthy detection and engine replacement behavior.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <SettingRow label="Health Check Interval (s)" description="How often engine health checks run.">
-            <Input value={draft.health_check_interval_s} type="number" min={1} max={120} onChange={(e) => update('health_check_interval_s', toNumber(e.target.value, DEFAULTS.health_check_interval_s))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Failure Threshold" description="Consecutive failures before unhealthy state.">
-            <Input value={draft.health_failure_threshold} type="number" min={1} max={20} onChange={(e) => update('health_failure_threshold', toNumber(e.target.value, DEFAULTS.health_failure_threshold))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Unhealthy Grace Period (s)" description="Delay before unhealthy engine replacement.">
-            <Input value={draft.health_unhealthy_grace_period_s} type="number" min={10} max={600} onChange={(e) => update('health_unhealthy_grace_period_s', toNumber(e.target.value, DEFAULTS.health_unhealthy_grace_period_s))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Replacement Cooldown (s)" description="Minimum time between replacement operations.">
-            <Input value={draft.health_replacement_cooldown_s} type="number" min={10} max={600} onChange={(e) => update('health_replacement_cooldown_s', toNumber(e.target.value, DEFAULTS.health_replacement_cooldown_s))} className="max-w-xs" />
-          </SettingRow>
-        </CardContent>
-      </Card>
+      <Pane title="HEALTH CHECKS" description="Controls for unhealthy detection and engine replacement behavior.">
+        <SettingRow label="Health Check Interval (s)" description="How often engine health checks run.">
+          <input type="number" value={draft.health_check_interval_s} min={1} max={120} style={inputStyle} onChange={(e) => update('health_check_interval_s', toNumber(e.target.value, DEFAULTS.health_check_interval_s))}/>
+        </SettingRow>
+        <SettingRow label="Failure Threshold" description="Consecutive failures before unhealthy state.">
+          <input type="number" value={draft.health_failure_threshold} min={1} max={20} style={inputStyle} onChange={(e) => update('health_failure_threshold', toNumber(e.target.value, DEFAULTS.health_failure_threshold))}/>
+        </SettingRow>
+        <SettingRow label="Unhealthy Grace Period (s)" description="Delay before unhealthy engine replacement.">
+          <input type="number" value={draft.health_unhealthy_grace_period_s} min={10} max={600} style={inputStyle} onChange={(e) => update('health_unhealthy_grace_period_s', toNumber(e.target.value, DEFAULTS.health_unhealthy_grace_period_s))}/>
+        </SettingRow>
+        <SettingRow label="Replacement Cooldown (s)" description="Minimum time between replacement operations.">
+          <input type="number" value={draft.health_replacement_cooldown_s} min={10} max={600} style={inputStyle} onChange={(e) => update('health_replacement_cooldown_s', toNumber(e.target.value, DEFAULTS.health_replacement_cooldown_s))}/>
+        </SettingRow>
+      </Pane>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Circuit Breakers</CardTitle>
-          <CardDescription>Failure isolation and recovery windows for provisioning and replacement paths.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <SettingRow label="Provision Failure Threshold" description="Failures before opening provisioning breaker.">
-            <Input value={draft.circuit_breaker_failure_threshold} type="number" min={1} max={20} onChange={(e) => update('circuit_breaker_failure_threshold', toNumber(e.target.value, DEFAULTS.circuit_breaker_failure_threshold))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Provision Recovery Timeout (s)" description="Breaker timeout before retry window opens.">
-            <Input value={draft.circuit_breaker_recovery_timeout_s} type="number" min={30} max={1800} onChange={(e) => update('circuit_breaker_recovery_timeout_s', toNumber(e.target.value, DEFAULTS.circuit_breaker_recovery_timeout_s))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Replacement Failure Threshold" description="Failures before replacement breaker opens.">
-            <Input value={draft.circuit_breaker_replacement_threshold} type="number" min={1} max={20} onChange={(e) => update('circuit_breaker_replacement_threshold', toNumber(e.target.value, DEFAULTS.circuit_breaker_replacement_threshold))} className="max-w-xs" />
-          </SettingRow>
-          <SettingRow label="Replacement Recovery Timeout (s)" description="Replacement breaker cooldown.">
-            <Input value={draft.circuit_breaker_replacement_timeout_s} type="number" min={30} max={1800} onChange={(e) => update('circuit_breaker_replacement_timeout_s', toNumber(e.target.value, DEFAULTS.circuit_breaker_replacement_timeout_s))} className="max-w-xs" />
-          </SettingRow>
-        </CardContent>
-      </Card>
+      <Pane title="CIRCUIT BREAKERS" description="Failure isolation and recovery windows for provisioning and replacement paths.">
+        <SettingRow label="Provision Failure Threshold" description="Failures before opening provisioning breaker.">
+          <input type="number" value={draft.circuit_breaker_failure_threshold} min={1} max={20} style={inputStyle} onChange={(e) => update('circuit_breaker_failure_threshold', toNumber(e.target.value, DEFAULTS.circuit_breaker_failure_threshold))}/>
+        </SettingRow>
+        <SettingRow label="Provision Recovery Timeout (s)" description="Breaker timeout before retry window opens.">
+          <input type="number" value={draft.circuit_breaker_recovery_timeout_s} min={30} max={1800} style={inputStyle} onChange={(e) => update('circuit_breaker_recovery_timeout_s', toNumber(e.target.value, DEFAULTS.circuit_breaker_recovery_timeout_s))}/>
+        </SettingRow>
+        <SettingRow label="Replacement Failure Threshold" description="Failures before replacement breaker opens.">
+          <input type="number" value={draft.circuit_breaker_replacement_threshold} min={1} max={20} style={inputStyle} onChange={(e) => update('circuit_breaker_replacement_threshold', toNumber(e.target.value, DEFAULTS.circuit_breaker_replacement_threshold))}/>
+        </SettingRow>
+        <SettingRow label="Replacement Recovery Timeout (s)" description="Replacement breaker cooldown.">
+          <input type="number" value={draft.circuit_breaker_replacement_timeout_s} min={30} max={1800} style={inputStyle} onChange={(e) => update('circuit_breaker_replacement_timeout_s', toNumber(e.target.value, DEFAULTS.circuit_breaker_replacement_timeout_s))}/>
+        </SettingRow>
+      </Pane>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Network Settings</CardTitle>
-          <CardDescription>Port ranges and network configuration for new engines.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <SettingRow label="Host Port Range" description="Engine host-side exposed ports." warning="Requires matching docker-compose publish range.">
-            <Input value={draft.port_range_host} onChange={(e) => update('port_range_host', e.target.value)} className="max-w-sm" />
-          </SettingRow>
-          <SettingRow label="Ace HTTP Range" description="Internal Ace HTTP port range." warning="Applies to newly provisioned engines.">
-            <Input value={draft.ace_http_range} onChange={(e) => update('ace_http_range', e.target.value)} className="max-w-sm" />
-          </SettingRow>
-          <SettingRow label="Ace HTTPS Range" description="Internal Ace HTTPS port range." warning="Applies to newly provisioned engines.">
-            <Input value={draft.ace_https_range} onChange={(e) => update('ace_https_range', e.target.value)} className="max-w-sm" />
-          </SettingRow>
-          <SettingRow label="Docker Network" description="Override the auto-detected Docker network for engine provisioning.">
-            <Input value={draft.docker_network} placeholder="e.g. acestream-net" onChange={(e) => update('docker_network', e.target.value)} className="max-w-sm" />
-          </SettingRow>
-        </CardContent>
-      </Card>
+      <Pane title="NETWORK SETTINGS" description="Port ranges and network configuration for new engines.">
+        <SettingRow label="Host Port Range" description="Engine host-side exposed ports." warning="Requires matching docker-compose publish range.">
+          <input value={draft.port_range_host} style={{ ...inputStyle, width: 160 }} onChange={(e) => update('port_range_host', e.target.value)}/>
+        </SettingRow>
+        <SettingRow label="Ace HTTP Range" description="Internal Ace HTTP port range." warning="Applies to newly provisioned engines.">
+          <input value={draft.ace_http_range} style={{ ...inputStyle, width: 160 }} onChange={(e) => update('ace_http_range', e.target.value)}/>
+        </SettingRow>
+        <SettingRow label="Ace HTTPS Range" description="Internal Ace HTTPS port range." warning="Applies to newly provisioned engines.">
+          <input value={draft.ace_https_range} style={{ ...inputStyle, width: 160 }} onChange={(e) => update('ace_https_range', e.target.value)}/>
+        </SettingRow>
+        <SettingRow label="Docker Network" description="Override the auto-detected Docker network for engine provisioning.">
+          <input value={draft.docker_network} placeholder="e.g. acestream-net" style={{ ...inputStyle, width: 200 }} onChange={(e) => update('docker_network', e.target.value)}/>
+        </SettingRow>
+      </Pane>
     </div>
   )
 }

@@ -246,7 +246,7 @@ function colorFor(state) {
   return map[state] || 'var(--fg-2)'
 }
 
-function ConstellationGraph({ engines, vpnStatus }) {
+function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
   const W = 760, H = 360
   const cx = W / 2, cy = H / 2
 
@@ -262,6 +262,20 @@ function ConstellationGraph({ engines, vpnStatus }) {
     })
     return map
   }, [engines])
+
+  // Per-engine stream data
+  const engineStreamMap = useMemo(() => {
+    const map = new Map()
+    ;(Array.isArray(streams) ? streams : []).forEach(s => {
+      const key = s.container_name || ''
+      if (!key) return
+      const cur = map.get(key) || { count: 0, hasMigration: false }
+      cur.count++
+      if (String(s.status || '').toLowerCase().includes('failover')) cur.hasMigration = true
+      map.set(key, cur)
+    })
+    return map
+  }, [streams])
 
   // If no VPN nodes, show engines around center
   const noVpn = vpnNodes.length === 0
@@ -439,23 +453,44 @@ function ConstellationGraph({ engines, vpnStatus }) {
         const p = engPos[e.container_id]
         if (!p) return null
         const c = colorFor(e.health_status === 'healthy' ? 'active' : e.health_status === 'unhealthy' ? 'failed' : 'pending')
+        const engData = engineStreamMap.get(e.container_name || '') || { count: 0, hasMigration: false }
+        const streamCount = e.stream_count ?? engData.count
+        const hasMigration = engData.hasMigration
+
         if (showLabel) {
           const name = (e.container_name || e.container_id).slice(-8)
           return (
             <g key={e.container_id}>
-              <rect x={p.x - 24} y={p.y - 8} width="48" height="16" fill="var(--bg-0)" stroke={c} strokeWidth="1"/>
+              <rect x={p.x - 24} y={p.y - 8} width="48" height="16" fill="var(--bg-0)" stroke={hasMigration ? 'var(--acc-magenta)' : c} strokeWidth="1"/>
               <text x={p.x} y={p.y + 4} textAnchor="middle" fontSize="8" fill="var(--fg-0)" fontFamily="var(--font-mono)" fontWeight="600">{name}</text>
+              {streamCount > 0 && (
+                <g>
+                  {Array.from({ length: Math.min(streamCount, 4) }).map((_, i) => (
+                    <rect key={i} x={p.x - 21 + i * 6} y={p.y + 11} width="4" height="4"
+                      fill={hasMigration ? 'var(--acc-magenta)' : 'var(--acc-green)'} opacity="0.9"/>
+                  ))}
+                  {streamCount > 4 && (
+                    <text x={p.x + 14} y={p.y + 17} fontSize="7" fill="var(--fg-3)" fontFamily="var(--font-mono)">+{streamCount - 4}</text>
+                  )}
+                </g>
+              )}
             </g>
           )
         }
         return (
-          <rect
-            key={e.container_id}
-            x={p.x - engSize / 2} y={p.y - engSize / 2}
-            width={engSize} height={engSize}
-            fill={c} stroke="var(--bg-0)" strokeWidth="0.5"
-            opacity={e.health_status === 'healthy' ? 1 : 0.6}
-          />
+          <g key={e.container_id}>
+            <rect
+              x={p.x - engSize / 2} y={p.y - engSize / 2}
+              width={engSize} height={engSize}
+              fill={c} stroke={hasMigration ? 'var(--acc-magenta)' : 'var(--bg-0)'}
+              strokeWidth={hasMigration ? 1.5 : 0.5}
+              opacity={e.health_status === 'healthy' ? 1 : 0.6}
+            />
+            {streamCount > 0 && (
+              <circle cx={p.x + engSize / 2} cy={p.y - engSize / 2} r="2.5"
+                fill={hasMigration ? 'var(--acc-magenta)' : 'var(--acc-cyan)'}/>
+            )}
+          </g>
         )
       })}
 
@@ -468,7 +503,7 @@ function ConstellationGraph({ engines, vpnStatus }) {
         <rect x="52" y="17" width="6" height="6" fill="var(--acc-red)"/>
         <text x="62" y="23" fontSize="7" fill="var(--fg-1)" fontFamily="var(--font-mono)">failed</text>
         <rect x="96" y="17" width="6" height="6" fill="var(--acc-cyan)" opacity="0.5"/>
-        <text x="6" y="36" fontSize="7" fill="var(--fg-3)" fontFamily="var(--font-mono)">⌬ vpn sun · □ engine</text>
+        <text x="6" y="36" fontSize="7" fill="var(--fg-3)" fontFamily="var(--font-mono)">⌬ vpn · □ engine</text>
       </g>
     </svg>
   )
@@ -772,7 +807,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
 
           {/* SVG constellation */}
           <div style={{ flex: 1, padding: 12, position: 'relative', minHeight: 340 }}>
-            <ConstellationGraph engines={engines} vpnStatus={vpnStatus}/>
+            <ConstellationGraph engines={engines} vpnStatus={vpnStatus} streams={streams}/>
           </div>
 
           {/* Waveform */}
