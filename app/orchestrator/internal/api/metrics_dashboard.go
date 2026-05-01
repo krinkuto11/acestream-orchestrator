@@ -58,7 +58,7 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 	sort.Strings(activeKeys)
 
 	bufferAvg, bufferMin := summarizeBuffers(bufferPieces)
-	
+
 	usedEngines := 0
 	var healthy, unhealthy, draining, unknown int
 	for _, e := range engines {
@@ -91,8 +91,8 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 	cpuPercent, memBytes := summarizeEngineResources(engines)
 
 	return map[string]any{
-		"timestamp":                   time.Now().UTC().Unix(),
-		"observation_window_seconds":  windowSeconds,
+		"timestamp":                  time.Now().UTC().Unix(),
+		"observation_window_seconds": windowSeconds,
 		"north_star": map[string]any{
 			"global_active_streams":        len(streams),
 			"global_egress_bandwidth_mbps": round3(egressMbps),
@@ -105,8 +105,8 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 				"egress_mbps":  egressMbps,
 			},
 			"request_window_1m": map[string]any{
-				"success_rate_percent": 100,
-				"total_requests_1m":     0,
+				"success_rate_percent":   100,
+				"total_requests_1m":      0,
 				"error_4xx_rate_per_min": 0,
 				"error_5xx_rate_per_min": 0,
 				"ttfb_p95_ms":            0,
@@ -122,12 +122,12 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 			},
 		},
 		"engines": map[string]any{
-			"total":         len(engines),
-			"healthy":       healthy,
-			"unhealthy":     unhealthy,
-			"unknown":       unknown,
-			"used":          usedEngines,
-			"state_counts":  engineStateCounts,
+			"total":              len(engines),
+			"healthy":            healthy,
+			"unhealthy":          unhealthy,
+			"unknown":            unknown,
+			"used":               usedEngines,
+			"state_counts":       engineStateCounts,
 			"uptime_avg_seconds": 0,
 		},
 		"streams": map[string]any{
@@ -141,9 +141,9 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 			},
 		},
 		"docker": map[string]any{
-			"cpu_percent":   round3(cpuPercent),
-			"memory_usage":  int64(memBytes),
-			"restart_total": 0,
+			"cpu_percent":      round3(cpuPercent),
+			"memory_usage":     int64(memBytes),
+			"restart_total":    0,
 			"oom_killed_total": 0,
 		},
 	}
