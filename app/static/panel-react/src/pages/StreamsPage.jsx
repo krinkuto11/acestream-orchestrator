@@ -42,7 +42,7 @@ function getStreamBitrate(s) {
   // Use nominal bitrate from labels if available, fallback to measured bitrate
   const nominal = Number(s?.labels?.['stream.nominal_bitrate'] || 0)
   const b = nominal > 0 ? nominal / 1e6 : Number(s?.bitrate_mbps || (s?.bitrate ? s.bitrate / 1e6 : 0))
-  return Number.isFinite(b) && b > 0 ? b.toFixed(1) + ' Mb/s' : '—'
+  return Number.isFinite(b) && b > 0 ? b.toFixed(1) + ' Mbps' : '—'
 }
 
 function formatSpeed(kbps) {

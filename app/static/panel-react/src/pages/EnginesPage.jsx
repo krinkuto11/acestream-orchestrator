@@ -84,6 +84,17 @@ function EngineRackRow({ engine, idx, onDelete, maxStreamsPerEngine }) {
         <span style={{ fontSize: 11, color: 'var(--fg-0)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {name}
         </span>
+        {engine.forwarded && (
+          <span style={{
+            fontSize: 7, color: 'var(--acc-cyan)',
+            border: '1px solid var(--acc-cyan-dim)',
+            padding: '0 3px', borderRadius: 2,
+            fontFamily: 'var(--font-mono)', fontWeight: 700,
+            flexShrink: 0,
+            background: 'var(--acc-cyan-bg)',
+            lineHeight: 1.2,
+          }}>FWD</span>
+        )}
       </div>
       {/* Port */}
       <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', fontSize: 10, color: 'var(--fg-2)', flexShrink: 0 }}>
