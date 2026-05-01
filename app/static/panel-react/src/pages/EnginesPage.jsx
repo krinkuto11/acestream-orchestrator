@@ -80,7 +80,7 @@ function EngineRackRow({ engine, idx, onDelete, maxStreamsPerEngine }) {
       {/* Status bar */}
       <div style={{ width: 4, background: accent, alignSelf: 'stretch', flexShrink: 0 }}/>
       {/* Name */}
-      <div style={{ width: 140, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', flexShrink: 0 }}>
+      <div style={{ flex: 1, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
         <span style={{ fontSize: 12.5, color: 'var(--fg-0)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {name}
         </span>
@@ -121,7 +121,7 @@ function EngineRackRow({ engine, idx, onDelete, maxStreamsPerEngine }) {
         {memMb}M
       </div>
       {/* Sessions */}
-      <div style={{ flex: 1, borderLeft: '1px solid var(--line-soft)', padding: 8, display: 'flex', alignItems: 'center', gap: 2, minWidth: 80 }}>
+      <div style={{ width: 200, borderLeft: '1px solid var(--line-soft)', padding: 8, display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
         {sessionBlocks.length > 0
           ? sessionBlocks
           : <span style={{ fontSize: 11, color: 'var(--fg-3)', fontStyle: 'italic' }}>— idle —</span>
@@ -163,13 +163,13 @@ function RackHeader() {
     }}>
       <div style={{ width: 32, padding: '0 6px', borderRight: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>SLOT</div>
       <div style={{ width: 4, flexShrink: 0 }}/>
-      <div style={{ width: 140, padding: '0 10px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>ID</div>
+      <div style={{ flex: 1, padding: '0 10px', display: 'flex', alignItems: 'center' }}>ID</div>
       <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>PORT</div>
       <div style={{ width: 120, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>VPN</div>
       <div style={{ width: 96, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>STATUS</div>
       <div style={{ width: 136, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>CPU</div>
       <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>MEM</div>
-      <div style={{ flex: 1, borderLeft: '1px solid var(--line-soft)', padding: '0 10px', display: 'flex', alignItems: 'center' }}>SESSIONS</div>
+      <div style={{ width: 200, borderLeft: '1px solid var(--line-soft)', padding: '0 10px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>SESSIONS</div>
       <div style={{ width: 56, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0 }}>USED</div>
       <div style={{ width: 40, borderLeft: '1px solid var(--line-soft)', flexShrink: 0 }}/>
     </div>
