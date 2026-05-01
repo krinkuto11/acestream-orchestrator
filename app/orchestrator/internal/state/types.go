@@ -144,6 +144,7 @@ type StreamState struct {
 	Seekback    int    `json:"seekback"`
 	LiveDelay   int    `json:"live_delay"`
 	ControlMode string `json:"control_mode,omitempty"`
+	StreamMode  string `json:"stream_mode,omitempty"`
 
 	// Engine reference (Python names)
 	ContainerID   string `json:"container_id"`
@@ -199,6 +200,7 @@ type StreamKeyPayload struct {
 	Seekback    int    `json:"seekback"`
 	LiveDelay   int    `json:"live_delay"`
 	ControlMode string `json:"control_mode,omitempty"`
+	StreamMode  string `json:"stream_mode,omitempty"`
 }
 
 // SessionInfo carries playback session metadata posted by the proxy.

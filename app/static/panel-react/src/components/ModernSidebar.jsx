@@ -78,7 +78,7 @@ export function ModernSidebar({ orchestratorStatus, isConnected }) {
             color: 'var(--fg-0)',
           }}>ACE//ORCH</div>
           <div style={{
-            fontSize: 9, color: 'var(--fg-3)',
+            fontSize: 10.5, color: 'var(--fg-3)',
             letterSpacing: '0.1em',
           }}>v{version}</div>
         </div>
@@ -102,7 +102,7 @@ export function ModernSidebar({ orchestratorStatus, isConnected }) {
                   color: isActive ? 'var(--fg-0)' : 'var(--fg-1)',
                   textDecoration: 'none',
                   fontFamily: 'var(--font-mono)',
-                  fontSize: 11,
+                  fontSize: 12.5,
                   transition: 'background 0.1s',
                 }}
               >
@@ -127,14 +127,14 @@ export function ModernSidebar({ orchestratorStatus, isConnected }) {
         flexShrink: 0,
       }}>
         <div className="label">CTRL PLANE</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 10, color: 'var(--fg-1)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--fg-1)' }}>
           <StatusRow label="api" value={isConnected ? 'online' : 'down'} ok={isConnected}/>
           <StatusRow label="scheduler" value="ok" ok={true}/>
           <StatusRow label="breaker" value={circuitBreaker} ok={circuitBreaker === 'closed'}/>
           <StatusRow label="sse" value="live" ok={isConnected}/>
         </div>
         <div className="hr" style={{ margin: '2px 0' }}/>
-        <div style={{ fontSize: 10, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
+        <div style={{ fontSize: 11.5, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
           1s · eu-central
         </div>
       </div>

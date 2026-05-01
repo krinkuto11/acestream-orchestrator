@@ -823,6 +823,7 @@ func (s *Store) OnStreamStarted(ev StreamStartedEvent) *StreamState {
 		st.Seekback = ev.Stream.Seekback
 		st.LiveDelay = ev.Stream.LiveDelay
 		st.ControlMode = ev.Stream.ControlMode
+		st.StreamMode = ev.Stream.StreamMode
 		if contentID == "" {
 			st.ID = ev.Stream.Key
 			st.ContentID = ev.Stream.Key

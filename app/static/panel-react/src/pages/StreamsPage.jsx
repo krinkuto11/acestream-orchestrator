@@ -17,7 +17,7 @@ function BufferBar({ value }) {
   const pct = Math.max(0, Math.min(100, Number(value) || 0))
   const color = pct > 70 ? 'var(--acc-green)' : pct > 40 ? 'var(--acc-amber)' : 'var(--acc-red)'
   return (
-    <span style={{ fontSize: 11, color: color, fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{pct}%</span>
+    <span style={{ fontSize: 12.5, color: color, fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{pct}%</span>
   )
 }
 
@@ -35,13 +35,18 @@ function getStreamEngine(s) {
 }
 
 function getStreamMode(s) {
+  const ctrl = (s?.control_mode || '').trim().toUpperCase()
+  const mode = (s?.stream_mode || '').trim().toUpperCase()
+  if (ctrl && mode) return `${ctrl}/${mode}`
+  if (ctrl) return ctrl
+  if (mode) return mode
   return String(s?.labels?.['stream_mode'] || s?.labels?.['stream.mode'] || '').trim().toUpperCase() || '—'
 }
 
 function getStreamBitrate(s) {
   // Use nominal bitrate from labels if available, fallback to measured bitrate
   const nominal = Number(s?.labels?.['stream.nominal_bitrate'] || 0)
-  const b = nominal > 0 ? nominal / 1e6 : Number(s?.bitrate_mbps || (s?.bitrate ? s.bitrate / 1e6 : 0))
+  const b = nominal > 0 ? nominal / 1e6 : Number(s?.bitrate_mbps || (s?.bitrate ? (s.bitrate * 8) / 1e6 : 0))
   return Number.isFinite(b) && b > 0 ? b.toFixed(1) + ' Mbps' : '—'
 }
 
@@ -97,7 +102,7 @@ export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEn
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--fg-0)', margin: 0 }}>Streams</h1>
-          <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 2 }}>
+          <div style={{ fontSize: 12.5, color: 'var(--fg-2)', marginTop: 2 }}>
             {streams.length} active
             {migrations > 0 && ` · ${migrations} migrating`}
             {totalBitrate > 0 && ` · ${totalBitrate.toFixed(1)} Mb/s aggregate`}
@@ -114,7 +119,7 @@ export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEn
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
             <span className="label" style={{ color: 'var(--acc-magenta)' }}>STATEFUL MIGRATION · {migrations} stream{migrations > 1 ? 's' : ''}</span>
             <div style={{ flex: 1 }}/>
-            <span style={{ fontSize: 10, color: 'var(--fg-2)' }}>HLS · session continuity preserved</span>
+            <span style={{ fontSize: 11, color: 'var(--fg-2)' }}>HLS · session continuity preserved</span>
           </div>
           <MigrationViz streams={streams}/>
         </div>
@@ -126,7 +131,7 @@ export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEn
           <span className="label">ACTIVE SESSIONS</span>
         </div>
         {streams.length === 0 ? (
-          <div style={{ padding: '32px 0', textAlign: 'center', fontSize: 11, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
+          <div style={{ padding: '32px 0', textAlign: 'center', fontSize: 12.5, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
             — no active streams —
           </div>
         ) : (
@@ -153,13 +158,13 @@ export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEn
                 return (
                   <tr key={s.id} style={{ background: isMigrating ? 'var(--acc-magenta-bg)' : undefined }}>
                     <td style={{ fontWeight: 600, color: 'var(--fg-0)' }}>{String(s.id || '').slice(0, 8) || '—'}</td>
-                    <td style={{ color: 'var(--acc-cyan)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>{getStreamInfohash(s)}</td>
+                    <td style={{ color: 'var(--acc-cyan)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{getStreamInfohash(s)}</td>
                     <td style={{ color: isMigrating ? 'var(--acc-magenta)' : 'var(--fg-1)' }}>{getStreamEngine(s)}</td>
                     <td style={{ color: 'var(--fg-2)' }}>{getStreamMode(s)}</td>
                     <td>{getStreamClients(s)}</td>
                     <td style={{ color: 'var(--fg-1)', whiteSpace: 'nowrap' }}>{getStreamBitrate(s)}</td>
-                    <td style={{ color: 'var(--acc-green)', fontFamily: 'var(--font-mono)', fontSize: 10, whiteSpace: 'nowrap' }}>{getStreamSpeedDown(s)}</td>
-                    <td style={{ color: 'var(--acc-amber)', fontFamily: 'var(--font-mono)', fontSize: 10, whiteSpace: 'nowrap' }}>{getStreamSpeedUp(s)}</td>
+                    <td style={{ color: 'var(--acc-green)', fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap' }}>{getStreamSpeedDown(s)}</td>
+                    <td style={{ color: 'var(--acc-amber)', fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap' }}>{getStreamSpeedUp(s)}</td>
                     <td style={{ textAlign: 'center' }}><BufferBar value={getStreamBuffer(s)}/></td>
                     <td style={{ color: 'var(--fg-2)' }}>{getStreamStarted(s)}</td>
                     <td><StatusTag status={s.status}/></td>

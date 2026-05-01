@@ -48,13 +48,13 @@ function Topbar({ pathname, isConnected, lastUpdate }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{
           fontFamily: 'var(--font-display)',
-          fontSize: 13, fontWeight: 600,
+          fontSize: 14.5, fontWeight: 600,
           color: 'var(--fg-0)',
         }}>{title}</span>
         {breadcrumb && (
           <>
             <span style={{ color: 'var(--fg-3)' }}>/</span>
-            <span style={{ fontSize: 11, color: 'var(--fg-2)' }}>{breadcrumb}</span>
+            <span style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>{breadcrumb}</span>
           </>
         )}
       </div>
@@ -62,13 +62,13 @@ function Topbar({ pathname, isConnected, lastUpdate }) {
       <div style={{ flex: 1 }}/>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--fg-2)' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-2)' }}>
           <span className="dot pulse" style={{ color: isConnected ? 'var(--acc-green)' : 'var(--acc-red)' }}/>
           <span style={{ color: isConnected ? 'var(--fg-2)' : 'var(--acc-red)' }}>
             {isConnected ? 'SSE LIVE' : 'DISCONNECTED'}
           </span>
         </span>
-        <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>{tick}</span>
+        <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{tick}</span>
         <button
           onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
           style={{
@@ -76,7 +76,7 @@ function Topbar({ pathname, isConnected, lastUpdate }) {
             border: '1px solid var(--line)',
             color: 'var(--fg-2)',
             cursor: 'pointer',
-            fontSize: 10,
+            fontSize: 11.5,
             fontFamily: 'var(--font-mono)',
             padding: '2px 8px',
             lineHeight: 1.4,
@@ -109,7 +109,7 @@ function Footer({ orchestratorStatus, isConnected }) {
       padding: '0 12px',
       borderTop: '1px solid var(--line-soft)',
       background: 'var(--bg-1)',
-      fontSize: 10,
+      fontSize: 11.5,
       color: 'var(--fg-2)',
       flexShrink: 0,
       fontFamily: 'var(--font-mono)',

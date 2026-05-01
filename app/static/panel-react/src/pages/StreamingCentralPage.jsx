@@ -80,7 +80,7 @@ function BigCounter({ label, value, sub, accent = 'green' }) {
         marginTop: 2,
         textShadow: `0 0 24px var(--acc-${accent}-bg)`,
       }}>{value}</div>
-      {sub && <div style={{ fontSize: 10, color: 'var(--fg-2)', marginTop: 2 }}>{sub}</div>}
+      {sub && <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 2 }}>{sub}</div>}
       <div style={{ position: 'absolute', right: 6, top: 6, fontSize: 8, color: 'var(--fg-3)', letterSpacing: 1 }}>◇ LIVE</div>
     </div>
   )
@@ -106,7 +106,7 @@ function PolicyBlock({ orchestratorStatus }) {
         ['BREAKER', breaker],
         ['PROTOCOL', 'sse/1s'],
       ].map(([k, v]) => (
-        <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, padding: '3px 0' }}>
+        <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0' }}>
           <span style={{ color: 'var(--fg-3)', width: 90, flexShrink: 0 }}>{k}</span>
           <span style={{ color: k === 'BREAKER' ? breakerColor : 'var(--fg-0)' }}>{v}</span>
         </div>
@@ -147,7 +147,7 @@ function Marquee({ engines, streams, vpnStatus, isConnected }) {
       borderBottom: '1px solid var(--line)',
       background: 'var(--bg-1)',
       overflow: 'hidden',
-      fontSize: 10,
+      fontSize: 11,
       color: 'var(--fg-2)',
       fontFamily: 'var(--font-mono)',
       letterSpacing: '0.1em',
@@ -190,7 +190,7 @@ function SignalRow({ e, idx }) {
       display: 'flex', alignItems: 'flex-start', gap: 6,
       padding: '6px 14px',
       borderBottom: '1px solid var(--line-soft)',
-      fontSize: 10,
+      fontSize: 11,
       fontFamily: 'var(--font-mono)',
       opacity: Math.max(0.35, 1 - idx * 0.035),
     }}>
@@ -212,7 +212,7 @@ function SessionWaveform({ kpiHistory }) {
       <div style={{
         borderTop: '1px solid var(--line)',
         padding: '8px 14px 12px',
-        fontSize: 10, color: 'var(--fg-3)',
+        fontSize: 11, color: 'var(--fg-3)',
         flexShrink: 0,
       }}>
         <div className="label" style={{ marginBottom: 4 }}>SESSION.WAVEFORM · LAST 15M</div>
@@ -616,7 +616,7 @@ function AlertBanner({ title, message, accent = 'red' }) {
       <span className="dot pulse" style={{ color: `var(--acc-${accent})`, marginTop: 3, flexShrink: 0 }}/>
       <div>
         <div className="label" style={{ color: `var(--acc-${accent})`, marginBottom: 2 }}>{title}</div>
-        <div style={{ fontSize: 11, color: 'var(--fg-1)' }}>{message}</div>
+        <div style={{ fontSize: 12.5, color: 'var(--fg-1)' }}>{message}</div>
       </div>
     </div>
   )
@@ -907,7 +907,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
           }}>
             <span className="dot pulse" style={{ color: 'var(--acc-green)' }}/>
             <span className="label">CONTROL.MESH /// EU</span>
-            <span style={{ fontSize: 10, color: 'var(--fg-2)' }}>
+            <span style={{ fontSize: 11, color: 'var(--fg-2)' }}>
               engines {engines.length} · streams {activeStreamsValue}
               {normalizedVpnMode !== 'disabled' && ` · vpn ${normalizedVpnMode}`}
             </span>
@@ -945,15 +945,15 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
           }}>
             <span className="label">SIGNAL.LOG</span>
             <div style={{ flex: 1 }}/>
-            <span style={{ fontSize: 10, color: 'var(--acc-green)' }}>● rec</span>
+            <span style={{ fontSize: 11, color: 'var(--acc-green)' }}>● rec</span>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
             {!eventsReady ? (
-              <div style={{ padding: 14, fontSize: 10, color: 'var(--fg-3)', fontStyle: 'italic' }}>
+              <div style={{ padding: 14, fontSize: 11, color: 'var(--fg-3)', fontStyle: 'italic' }}>
                 awaiting events...
               </div>
             ) : events.length === 0 ? (
-              <div style={{ padding: 14, fontSize: 10, color: 'var(--fg-3)', fontStyle: 'italic' }}>
+              <div style={{ padding: 14, fontSize: 11, color: 'var(--fg-3)', fontStyle: 'italic' }}>
                 no events yet.
               </div>
             ) : (
@@ -985,7 +985,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
               onClick={() => closeEngineLogs()}
               style={{
                 background: 'transparent', border: '1px solid var(--line)',
-                color: 'var(--fg-1)', cursor: 'pointer', padding: '2px 8px', fontSize: 10,
+                color: 'var(--fg-1)', cursor: 'pointer', padding: '2px 8px', fontSize: 11,
                 fontFamily: 'var(--font-mono)',
               }}
             >✕ CLOSE</button>
@@ -994,7 +994,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
             <pre style={{
               padding: '12px 16px',
               fontFamily: 'var(--font-mono)',
-              fontSize: 11,
+              fontSize: 12.5,
               lineHeight: 1.6,
               color: 'var(--fg-0)',
               margin: 0,

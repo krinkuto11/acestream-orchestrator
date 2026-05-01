@@ -16,7 +16,7 @@ function AsciiBar({ value, max = 100, width = 10, color = 'var(--acc-green)' }) 
   const filled = Math.round((Math.min(value, max) / max) * width)
   const empty = width - filled
   return (
-    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--fg-3)', fontSize: 11 }}>
+    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--fg-3)', fontSize: 12.5 }}>
       [<span style={{ color }}>{'█'.repeat(filled)}</span>{'░'.repeat(empty)}]
     </span>
   )
@@ -74,14 +74,14 @@ function EngineRackRow({ engine, idx, onDelete, maxStreamsPerEngine }) {
       minWidth: 0,
     }}>
       {/* Slot */}
-      <div style={{ width: 32, padding: '0 6px', borderRight: '1px solid var(--line-soft)', fontSize: 10, color: 'var(--fg-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+      <div style={{ width: 32, padding: '0 6px', borderRight: '1px solid var(--line-soft)', fontSize: 11, color: 'var(--fg-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
         U{String(idx + 1).padStart(2, '0')}
       </div>
       {/* Status bar */}
       <div style={{ width: 4, background: accent, alignSelf: 'stretch', flexShrink: 0 }}/>
       {/* Name */}
       <div style={{ width: 140, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', flexShrink: 0 }}>
-        <span style={{ fontSize: 11, color: 'var(--fg-0)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 12.5, color: 'var(--fg-0)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {name}
         </span>
         {engine.forwarded && (
@@ -97,11 +97,11 @@ function EngineRackRow({ engine, idx, onDelete, maxStreamsPerEngine }) {
         )}
       </div>
       {/* Port */}
-      <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', fontSize: 10, color: 'var(--fg-2)', flexShrink: 0 }}>
+      <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--fg-2)', flexShrink: 0 }}>
         :{engine.port || '–'}
       </div>
       {/* VPN */}
-      <div style={{ width: 120, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', fontSize: 10, color: 'var(--acc-cyan)', overflow: 'hidden', flexShrink: 0 }}>
+      <div style={{ width: 120, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--acc-cyan)', overflow: 'hidden', flexShrink: 0 }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {engine.vpn_container ? `⌬ ${engine.vpn_container.replace(/^dyn-/, '').replace(/^gluetun-/, '')}` : '— none'}
         </span>
@@ -112,23 +112,23 @@ function EngineRackRow({ engine, idx, onDelete, maxStreamsPerEngine }) {
       </div>
       {/* CPU */}
       <div style={{ width: 136, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        <span style={{ fontSize: 10, color: 'var(--fg-2)' }}>cpu</span>
+        <span style={{ fontSize: 11, color: 'var(--fg-2)' }}>cpu</span>
         <AsciiBar value={cpu} width={10} color={cpu > 80 ? 'var(--acc-red)' : cpu > 50 ? 'var(--acc-amber)' : 'var(--acc-green)'}/>
-        <span style={{ fontSize: 10, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', width: 36, flexShrink: 0 }}>{cpu.toFixed(1)}%</span>
+        <span style={{ fontSize: 11, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', width: 36, flexShrink: 0 }}>{cpu.toFixed(1)}%</span>
       </div>
       {/* Mem */}
-      <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', fontSize: 10, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+      <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line)', display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
         {memMb}M
       </div>
       {/* Sessions */}
       <div style={{ flex: 1, borderLeft: '1px solid var(--line-soft)', padding: 8, display: 'flex', alignItems: 'center', gap: 2, minWidth: 80 }}>
         {sessionBlocks.length > 0
           ? sessionBlocks
-          : <span style={{ fontSize: 10, color: 'var(--fg-3)', fontStyle: 'italic' }}>— idle —</span>
+          : <span style={{ fontSize: 11, color: 'var(--fg-3)', fontStyle: 'italic' }}>— idle —</span>
         }
       </div>
       {/* Count */}
-      <div style={{ width: 56, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontSize: 11, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+      <div style={{ width: 56, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontSize: 12.5, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
         {streamCount}<span style={{ color: 'var(--fg-3)' }}>/
           {Number.isFinite(maxStreamsPerEngine) ? maxStreamsPerEngine : 0}
         </span>
@@ -168,7 +168,7 @@ function RackHeader() {
       <div style={{ width: 120, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>VPN</div>
       <div style={{ width: 96, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>STATUS</div>
       <div style={{ width: 136, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>CPU</div>
-      <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>MEM</div>
+      <div style={{ width: 72, padding: '0 8px', borderLeft: '1px solid var(--line)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>MEM</div>
       <div style={{ flex: 1, borderLeft: '1px solid var(--line-soft)', padding: '0 10px', display: 'flex', alignItems: 'center' }}>SESSIONS</div>
       <div style={{ width: 56, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0 }}>USED</div>
       <div style={{ width: 40, borderLeft: '1px solid var(--line-soft)', flexShrink: 0 }}/>
@@ -179,7 +179,7 @@ function RackHeader() {
 // ── Settings panel ────────────────────────────────────────────────────────────
 function CfgRow({ k, v }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '8px 14px', borderBottom: '1px dashed var(--line-soft)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, padding: '8px 14px', borderBottom: '1px dashed var(--line-soft)' }}>
       <span style={{ color: 'var(--fg-3)', flex: 1 }}>{k}</span>
       <span style={{ color: 'var(--fg-0)' }}>{v}</span>
     </div>
@@ -217,8 +217,8 @@ function SettingField({ label, desc, value, onChange, type = 'text', disabled })
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--line-soft)' }}>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 11, color: 'var(--fg-1)' }}>{label}</div>
-        {desc && <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>{desc}</div>}
+        <div style={{ fontSize: 12.5, color: 'var(--fg-1)' }}>{label}</div>
+        {desc && <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 2 }}>{desc}</div>}
       </div>
       {type === 'toggle' ? (
         <Toggle checked={Boolean(value)} onChange={onChange} disabled={disabled}/>
@@ -233,7 +233,7 @@ function SettingField({ label, desc, value, onChange, type = 'text', disabled })
             border: '1px solid var(--line)',
             color: 'var(--fg-0)',
             fontFamily: 'var(--font-mono)',
-            fontSize: 11,
+            fontSize: 12.5,
             padding: '4px 8px',
             width: 120,
             outline: 'none',
@@ -335,7 +335,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
             fontSize: 18, fontWeight: 600,
             color: 'var(--fg-0)', margin: 0,
           }}>Engines</h1>
-          <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 2 }}>
+          <div style={{ fontSize: 12.5, color: 'var(--fg-2)', marginTop: 2 }}>
             {engines.length} containers · {healthy} healthy · {unhealthy} unhealthy · {unknown} unknown
             {cacheStats.volume_count > 0 && ` · cache ${formatBytes(cacheStats.total_bytes)}`}
           </div>
@@ -366,7 +366,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
             border: 0,
             color: activeTab === id ? 'var(--fg-0)' : 'var(--fg-2)',
             fontFamily: 'var(--font-mono)',
-            fontSize: 10,
+            fontSize: 11,
             letterSpacing: '0.08em',
             cursor: 'pointer',
             borderLeft: activeTab === id ? '2px solid var(--acc-green)' : '2px solid transparent',
@@ -389,14 +389,14 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
               borderBottom: '1px solid var(--line)',
             }}>
               <span className="label">RACK · ENGINES</span>
-              <span style={{ fontSize: 10, color: 'var(--fg-2)' }}>
+              <span style={{ fontSize: 11, color: 'var(--fg-2)' }}>
                 {engines.length} units
               </span>
               <div style={{ flex: 1 }}/>
             </div>
             <RackHeader/>
             {engines.length === 0 ? (
-              <div style={{ padding: 24, fontSize: 11, color: 'var(--fg-3)', textAlign: 'center', fontStyle: 'italic' }}>
+              <div style={{ padding: 24, fontSize: 12.5, color: 'var(--fg-3)', textAlign: 'center', fontStyle: 'italic' }}>
                 No engines provisioned
               </div>
             ) : (
@@ -483,7 +483,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
                   marginBottom: 12,
                 }}>
                   <div className="label" style={{ color: 'var(--acc-cyan)', marginBottom: 4 }}>MANUAL MODE ACTIVE</div>
-                  <div style={{ fontSize: 11, color: 'var(--fg-1)' }}>
+                  <div style={{ fontSize: 12.5, color: 'var(--fg-1)' }}>
                     Docker provisioning is disabled. Only specified engines below are used.
                   </div>
                 </div>
