@@ -70,6 +70,18 @@ function formatWindowLabel(seconds) {
   return `${Math.round(value / 60)}m`
 }
 
+const MAX_HISTORY_POINTS = 360
+
+const resolveTimestamp = (value) => {
+  if (!value) return new Date()
+  const numeric = Number(value)
+  if (Number.isFinite(numeric)) {
+    return new Date(numeric < 1_000_000_000_000 ? numeric * 1000 : numeric)
+  }
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed
+}
+
 export function MetricsPage({ apiKey, orchUrl }) {
   const WINDOW_OPTIONS = [
     { label: '5m', value: 300 },
@@ -97,6 +109,7 @@ export function MetricsPage({ apiKey, orchUrl }) {
   })
 
   const applySnapshot = useCallback((data) => {
+    if (!data) return
     setSnapshot(data)
     setError(null)
 
@@ -113,7 +126,63 @@ export function MetricsPage({ apiKey, orchUrl }) {
         cpuPercent: persistedHistory.cpuPercent || [],
         memoryBytes: persistedHistory.memoryBytes || [],
       })
+      return
     }
+
+    const safeNumber = (value, fallback) => {
+      const num = Number(value)
+      return Number.isFinite(num) ? num : fallback
+    }
+
+    setHistory((prev) => {
+      const timestamps = [...prev.timestamps, resolveTimestamp(data?.timestamp)]
+      const activeStreams = [...prev.activeStreams, safeNumber(
+        data?.streams_active ?? data?.orchestrator_status?.streams?.active ?? data?.streams?.active,
+        prev.activeStreams[prev.activeStreams.length - 1] ?? 0,
+      )]
+      const activeClients = [...prev.activeClients, safeNumber(
+        data?.proxy?.active_clients?.total ?? data?.north_star?.proxy_active_clients,
+        prev.activeClients[prev.activeClients.length - 1] ?? 0,
+      )]
+      const successRate = [...prev.successRate, safeNumber(
+        data?.proxy?.request_window_1m?.success_rate_percent ?? data?.north_star?.system_success_rate_percent,
+        prev.successRate[prev.successRate.length - 1] ?? 0,
+      )]
+      const egressMbps = [...prev.egressMbps, safeNumber(
+        data?.proxy?.throughput?.egress_mbps ?? data?.north_star?.global_egress_bandwidth_mbps,
+        prev.egressMbps[prev.egressMbps.length - 1] ?? 0,
+      )]
+      const ingressMbps = [...prev.ingressMbps, safeNumber(
+        data?.proxy?.throughput?.ingress_mbps,
+        prev.ingressMbps[prev.ingressMbps.length - 1] ?? 0,
+      )]
+      const ttfbP95Ms = [...prev.ttfbP95Ms, safeNumber(
+        data?.proxy?.request_window_1m?.ttfb_p95_ms ?? data?.proxy?.ttfb?.p95_ms,
+        prev.ttfbP95Ms[prev.ttfbP95Ms.length - 1] ?? 0,
+      )]
+      const cpuPercent = [...prev.cpuPercent, safeNumber(
+        data?.docker?.cpu_percent ?? data?.docker?.cpu,
+        prev.cpuPercent[prev.cpuPercent.length - 1] ?? 0,
+      )]
+      const memoryBytes = [...prev.memoryBytes, safeNumber(
+        data?.docker?.memory_usage,
+        prev.memoryBytes[prev.memoryBytes.length - 1] ?? 0,
+      )]
+
+      const trim = (arr) => arr.length <= MAX_HISTORY_POINTS ? arr : arr.slice(arr.length - MAX_HISTORY_POINTS)
+
+      return {
+        timestamps: trim(timestamps),
+        egressMbps: trim(egressMbps),
+        ingressMbps: trim(ingressMbps),
+        activeStreams: trim(activeStreams),
+        activeClients: trim(activeClients),
+        successRate: trim(successRate),
+        ttfbP95Ms: trim(ttfbP95Ms),
+        cpuPercent: trim(cpuPercent),
+        memoryBytes: trim(memoryBytes),
+      }
+    })
   }, [])
 
   const fetchSnapshot = useCallback(async () => {
@@ -164,7 +233,8 @@ export function MetricsPage({ apiKey, orchUrl }) {
       const handleMetricsSnapshot = (event) => {
         try {
           const parsed = JSON.parse(event.data)
-          applySnapshot(parsed?.payload || null)
+          const payload = parsed?.payload ?? parsed
+          applySnapshot(payload)
           setLoading(false)
         } catch (err) {
           console.error('Failed to parse metrics SSE payload:', err)

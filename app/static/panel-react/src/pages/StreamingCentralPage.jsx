@@ -17,6 +17,24 @@ const formatEgress = (egressGbps) => {
   return { value: (n * 1000).toFixed(1), suffix: 'Mbps' }
 }
 
+const normalizeVpnMode = (vpnStatus) => {
+  const rawMode = String(vpnStatus?.mode || '').toLowerCase()
+  if (rawMode === 'multi') return 'redundant'
+  if (rawMode) return rawMode
+
+  const nodes = Array.isArray(vpnStatus?.vpn_nodes)
+    ? vpnStatus.vpn_nodes
+    : Array.isArray(vpnStatus?.nodes)
+      ? vpnStatus.nodes
+      : []
+
+  if (nodes.length > 1) return 'redundant'
+  if (nodes.length === 1) return 'single'
+
+  const enabled = Boolean(vpnStatus?.enabled ?? vpnStatus?.vpn_enabled)
+  return enabled ? 'single' : 'disabled'
+}
+
 // ── BigCounter ────────────────────────────────────────────────────────────────
 function BigCounter({ label, value, sub, accent = 'green' }) {
   return (
@@ -76,8 +94,15 @@ function PolicyBlock({ orchestratorStatus }) {
 function Marquee({ engines, streams, vpnStatus, isConnected }) {
   const activeEngines = engines.filter(e => e.health_status === 'healthy').length
   const drainingEngines = engines.filter(e => e.health_status === 'unhealthy').length
-  const vpnMode = vpnStatus?.mode || 'disabled'
-  const vpnConnected = vpnStatus?.connected || (vpnStatus?.vpn1?.connected && vpnStatus?.vpn2?.connected)
+  const vpnMode = normalizeVpnMode(vpnStatus)
+  const vpnEnabled = Boolean(vpnStatus?.enabled ?? vpnStatus?.vpn_enabled)
+  const vpnConnected = vpnEnabled && Boolean(
+    vpnStatus?.connected ?? (
+      vpnMode === 'redundant'
+        ? (vpnStatus?.vpn1?.connected && vpnStatus?.vpn2?.connected)
+        : (vpnStatus?.vpn1?.connected || vpnStatus?.vpn2?.connected)
+    )
+  )
   const migrations = streams.filter(s => String(s.status || '').includes('failover')).length
 
   const items = [
@@ -119,7 +144,7 @@ function Marquee({ engines, streams, vpnStatus, isConnected }) {
         animation: 'marquee 30s linear infinite',
         paddingLeft: '100%',
       }}>
-        {content}{content}
+        {content}
       </div>
     </div>
   )
@@ -212,9 +237,14 @@ function SessionWaveform({ kpiHistory }) {
 function buildVpnNodes(vpnStatus) {
   // API shape: { vpn_enabled, nodes_total, nodes_healthy, vpn_nodes: VPNNode[] }
   // VPNNode: { container_name, container_id, healthy, condition, lifecycle, provider, ... }
-  if (!vpnStatus || !vpnStatus.vpn_enabled) return []
+  const enabled = Boolean(vpnStatus?.vpn_enabled ?? vpnStatus?.enabled)
+  if (!vpnStatus || !enabled) return []
 
-  const nodes = Array.isArray(vpnStatus.vpn_nodes) ? vpnStatus.vpn_nodes : []
+  const nodes = Array.isArray(vpnStatus?.vpn_nodes)
+    ? vpnStatus.vpn_nodes
+    : Array.isArray(vpnStatus?.nodes)
+      ? vpnStatus.nodes
+      : []
   if (nodes.length === 0) return []
 
   return nodes.map(n => {
@@ -250,29 +280,39 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
   const W = 760, H = 360
   const cx = W / 2, cy = H / 2
 
+  const stableEngines = useMemo(() => {
+    const list = Array.isArray(engines) ? [...engines] : []
+    list.sort((a, b) => {
+      const aKey = String(a?.container_name || a?.container_id || '')
+      const bKey = String(b?.container_name || b?.container_id || '')
+      return aKey.localeCompare(bKey)
+    })
+    return list
+  }, [engines])
+
   const vpnNodes = useMemo(() => buildVpnNodes(vpnStatus), [vpnStatus])
 
   // Group engines by VPN container
   const engsByVpn = useMemo(() => {
     const map = new Map()
-    engines.forEach(e => {
+    stableEngines.forEach(e => {
       const key = e.vpn_container || '__none__'
       if (!map.has(key)) map.set(key, [])
       map.get(key).push(e)
     })
     return map
-  }, [engines])
+  }, [stableEngines])
 
   // Per-engine stream data
   const engineStreamMap = useMemo(() => {
     const map = new Map()
     ;(Array.isArray(streams) ? streams : []).forEach(s => {
-      const key = s.container_name || ''
-      if (!key) return
-      const cur = map.get(key) || { count: 0, hasMigration: false }
+      const keys = [s.container_id, s.container_name].filter(Boolean)
+      if (keys.length === 0) return
+      const cur = map.get(keys[0]) || { count: 0, hasMigration: false }
       cur.count++
       if (String(s.status || '').toLowerCase().includes('failover')) cur.hasMigration = true
-      map.set(key, cur)
+      keys.forEach((key) => map.set(key, cur))
     })
     return map
   }, [streams])
@@ -299,12 +339,12 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
   }
 
   // Engine positions
-  const showLabel = engines.length <= 14
-  const engSize = engines.length > 30 ? 6 : engines.length > 14 ? 8 : 10
+  const showLabel = stableEngines.length <= 14
+  const engSize = stableEngines.length > 30 ? 6 : stableEngines.length > 14 ? 8 : 10
 
   const engPos = {}
   const allEngineGroups = noVpn
-    ? [{ vpnId: '__center__', engs: engines }]
+    ? [{ vpnId: '__center__', engs: stableEngines }]
     : vpnNodes.map(v => ({
         vpnId: v.id,
         engs: engsByVpn.get(v.label) || engsByVpn.get(v.id) || [],
@@ -312,7 +352,7 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
 
   // Also handle engines with no VPN match in redundant mode
   if (!noVpn) {
-    const unassigned = engines.filter(e => !vpnNodes.some(v => v.label === e.vpn_container || v.id === e.vpn_container))
+    const unassigned = stableEngines.filter(e => !vpnNodes.some(v => v.label === e.vpn_container || v.id === e.vpn_container))
     if (unassigned.length > 0) allEngineGroups.push({ vpnId: '__none__', engs: unassigned })
   }
 
@@ -335,8 +375,8 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
     // No-VPN mode: full circle around center with generous spacing.
     // VPN mode: inward-facing arc so nodes stay inside the viewport.
     const isCenter = vpnId === '__center__'
-    const baseR = isCenter ? (showLabel ? 90 : 56) : 38
-    const ringStep = isCenter ? (showLabel ? 60 : 36) : 22
+    const baseR = isCenter ? (showLabel ? 90 : 56) : 62
+    const ringStep = isCenter ? (showLabel ? 60 : 36) : 30
 
     let placed = 0
     rings.forEach((cnt, ri) => {
@@ -387,7 +427,7 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
       <text x={cx} y={cy + 14} textAnchor="middle" fontSize="7" fill="var(--fg-3)" fontFamily="var(--font-mono)" letterSpacing="1">CTRL</text>
 
       {/* Engine → VPN edges */}
-      {engines.map(e => {
+      {stableEngines.map(e => {
         const vpnKey = noVpn ? '__center__'
           : vpnNodes.find(v => v.label === e.vpn_container || v.id === e.vpn_container)?.id || '__none__'
         const sun = vpnPos[vpnKey] || vpnPos[Object.keys(vpnPos)[0]]
@@ -399,8 +439,8 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
 
       {/* Migration arc (pending_failover) */}
       {(() => {
-        const src = engines.find(e => e.health_status === 'unhealthy')
-        const dst = engines.find(e => e.health_status === 'healthy' && e.container_id !== src?.container_id)
+        const src = stableEngines.find(e => e.health_status === 'unhealthy')
+        const dst = stableEngines.find(e => e.health_status === 'healthy' && e.container_id !== src?.container_id)
         if (!src || !dst) return null
         const a = engPos[src.container_id], b = engPos[dst.container_id]
         if (!a || !b) return null
@@ -449,11 +489,11 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
       })}
 
       {/* Engine nodes */}
-      {engines.map(e => {
+      {stableEngines.map(e => {
         const p = engPos[e.container_id]
         if (!p) return null
         const c = colorFor(e.health_status === 'healthy' ? 'active' : e.health_status === 'unhealthy' ? 'failed' : 'pending')
-        const engData = engineStreamMap.get(e.container_name || '') || { count: 0, hasMigration: false }
+        const engData = engineStreamMap.get(e.container_id) || engineStreamMap.get(e.container_name || '') || { count: 0, hasMigration: false }
         const streamCount = e.stream_count ?? engData.count
         const hasMigration = engData.hasMigration
 
@@ -461,7 +501,22 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
           const name = (e.container_name || e.container_id).slice(-8)
           return (
             <g key={e.container_id}>
-              <rect x={p.x - 24} y={p.y - 8} width="48" height="16" fill="var(--bg-0)" stroke={hasMigration ? 'var(--acc-magenta)' : c} strokeWidth="1"/>
+              {streamCount > 0 && (
+                <rect x={p.x - 26} y={p.y - 10} width="52" height="20" fill="none" stroke="var(--acc-cyan)" strokeWidth="1" opacity="0.6">
+                  <animate attributeName="opacity" values="0.15;0.6;0.15" dur="1.6s" repeatCount="indefinite"/>
+                </rect>
+              )}
+              <rect
+                x={p.x - 24} y={p.y - 8} width="48" height="16"
+                fill="var(--bg-0)"
+                stroke={hasMigration ? 'var(--acc-magenta)' : c}
+                strokeWidth="1"
+                strokeDasharray={hasMigration ? '4 3' : undefined}
+              >
+                {hasMigration && (
+                  <animate attributeName="stroke-dashoffset" from="0" to="-14" dur="0.9s" repeatCount="indefinite"/>
+                )}
+              </rect>
               <text x={p.x} y={p.y + 4} textAnchor="middle" fontSize="8" fill="var(--fg-0)" fontFamily="var(--font-mono)" fontWeight="600">{name}</text>
               {streamCount > 0 && (
                 <g>
@@ -479,13 +534,23 @@ function ConstellationGraph({ engines, vpnStatus, streams = [] }) {
         }
         return (
           <g key={e.container_id}>
+            {streamCount > 0 && (
+              <circle cx={p.x} cy={p.y} r={engSize * 1.6} fill="none" stroke="var(--acc-cyan)" strokeWidth="0.8" opacity="0.45">
+                <animate attributeName="opacity" values="0.15;0.6;0.15" dur="1.6s" repeatCount="indefinite"/>
+              </circle>
+            )}
             <rect
               x={p.x - engSize / 2} y={p.y - engSize / 2}
               width={engSize} height={engSize}
               fill={c} stroke={hasMigration ? 'var(--acc-magenta)' : 'var(--bg-0)'}
               strokeWidth={hasMigration ? 1.5 : 0.5}
               opacity={e.health_status === 'healthy' ? 1 : 0.6}
-            />
+              strokeDasharray={hasMigration ? '4 3' : undefined}
+            >
+              {hasMigration && (
+                <animate attributeName="stroke-dashoffset" from="0" to="-12" dur="0.9s" repeatCount="indefinite"/>
+              )}
+            </rect>
             {streamCount > 0 && (
               <circle cx={p.x + engSize / 2} cy={p.y - engSize / 2} r="2.5"
                 fill={hasMigration ? 'var(--acc-magenta)' : 'var(--acc-cyan)'}/>
@@ -579,7 +644,10 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
 
       eventSource = new EventSource(url.toString())
       const handle = (ev) => {
-        try { setDashboardSnapshot(JSON.parse(ev.data)?.payload || null) } catch {}
+        try {
+          const parsed = JSON.parse(ev.data)
+          setDashboardSnapshot(parsed?.payload ?? parsed ?? null)
+        } catch {}
       }
       eventSource.addEventListener('metrics_snapshot', handle)
       eventSource.onmessage = handle
@@ -632,6 +700,18 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
   useEffect(() => {
     let eventSource = null, reconnectTimer = null, closed = false
 
+    const fetchEventsSnapshot = async () => {
+      try {
+        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+        const response = await fetch(`${orchUrl}/api/v1/events?limit=30`, { headers })
+        if (!response.ok) return
+        const payload = await response.json()
+        if (Array.isArray(payload)) setEvents(payload)
+      } catch {
+        // Best-effort snapshot.
+      }
+    }
+
     const connect = () => {
       if (closed) return
       if (typeof window === 'undefined' || !window.EventSource) return
@@ -644,8 +724,11 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
       const handle = (ev) => {
         try {
           const parsed = JSON.parse(ev.data)
-          const evts = parsed?.payload?.events || []
-          if (evts.length > 0) setEvents(prev => [...evts, ...prev].slice(0, 50))
+          const payload = parsed?.payload ?? parsed
+          const evts = payload?.events || []
+          if (Array.isArray(evts) && evts.length > 0) {
+            setEvents(evts.slice(0, 50))
+          }
         } catch {}
       }
       eventSource.addEventListener('events_snapshot', handle)
@@ -656,6 +739,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
       }
     }
 
+    fetchEventsSnapshot()
     connect()
     return () => {
       closed = true
@@ -716,9 +800,10 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
   const egressGbps = Number(dashboardSnapshot?.proxy?.throughput?.egress_mbps || 0) / 1000
   const egressDisplay = formatEgress(egressGbps)
 
+  const normalizedVpnMode = normalizeVpnMode(vpnStatus)
   const vpnIncident =
-    (vpnStatus?.mode === 'redundant' && (!vpnStatus?.vpn1?.connected || !vpnStatus?.vpn2?.connected)) ||
-    (vpnStatus?.mode === 'single' && !vpnStatus?.connected)
+    (normalizedVpnMode === 'redundant' && (!vpnStatus?.vpn1?.connected || !vpnStatus?.vpn2?.connected)) ||
+    (normalizedVpnMode === 'single' && !vpnStatus?.connected)
   const breakerIncident =
     orchestratorStatus?.provisioning?.circuit_breaker_state &&
     orchestratorStatus.provisioning.circuit_breaker_state !== 'closed'
@@ -794,7 +879,7 @@ export function StreamingCentralPage({ engines, streams, vpnStatus, orchestrator
             <span className="label">CONTROL.MESH /// EU</span>
             <span style={{ fontSize: 10, color: 'var(--fg-2)' }}>
               engines {engines.length} · streams {activeStreamsValue}
-              {vpnStatus?.mode !== 'disabled' && ` · vpn ${vpnStatus?.mode || 'disabled'}`}
+              {normalizedVpnMode !== 'disabled' && ` · vpn ${normalizedVpnMode}`}
             </span>
             <div style={{ flex: 1 }}/>
             {migrations > 0 && (
