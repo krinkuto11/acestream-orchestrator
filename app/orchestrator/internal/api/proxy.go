@@ -50,7 +50,6 @@ type ProxyServer struct {
 	creds      *vpnpkg.CredentialManager
 	svcRefresh *vpnpkg.ServersRefreshService
 	vpnMgr     *vpnpkg.LifecycleManager
-
 }
 
 // NewProxyServer wires up all proxy routes.
