@@ -1,5 +1,7 @@
 package ts
 
+import "bytes"
+
 // PCRResult contains the results of a TS packet scan.
 type PCRResult struct {
 	Value         float64

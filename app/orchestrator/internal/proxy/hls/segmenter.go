@@ -1,6 +1,7 @@
 package hls
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"

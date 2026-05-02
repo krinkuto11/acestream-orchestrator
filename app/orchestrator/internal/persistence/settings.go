@@ -83,6 +83,8 @@ func (s *SettingsStore) Save(category string, payload map[string]any) error {
 
 	// Normalize the fully-merged map before persisting.
 	switch category {
+	case "engine_config":
+		merged = normalizeEngineConfig(merged)
 	case "proxy_settings":
 		merged = normalizeProxySettings(merged)
 	case "vpn_settings":
@@ -303,7 +305,7 @@ func defaultEngineConfig() map[string]any {
 		"total_max_download_rate":        0,
 		"total_max_upload_rate":          0,
 		"live_cache_type":                "memory",
-		"buffer_time":                    10,
+		"buffer_time":                    30,
 		"memory_limit":                   nil,
 		"parameters":                     []any{},
 		"torrent_folder_mount_enabled":   false,
@@ -433,6 +435,25 @@ func deepCopyCategories(cats map[string]map[string]any) map[string]map[string]an
 }
 
 // ── Normalization ─────────────────────────────────────────────────────────────
+
+func normalizeEngineConfig(m map[string]any) map[string]any {
+	out := deepCopyMap(m)
+	for _, k := range []string{"total_max_download_rate", "total_max_upload_rate", "buffer_time"} {
+		if v, ok := out[k]; ok {
+			out[k] = toIntNorm(v)
+		}
+	}
+	if v, ok := out["live_cache_type"].(string); ok {
+		if v != "memory" && v != "disk" {
+			out["live_cache_type"] = "memory"
+		}
+	}
+	// Enforce floor for buffer_time
+	if v, ok := out["buffer_time"]; ok && toIntNorm(v) < 10 {
+		out["buffer_time"] = 30
+	}
+	return out
+}
 
 func normalizeProxySettings(m map[string]any) map[string]any {
 	out := deepCopyMap(m)

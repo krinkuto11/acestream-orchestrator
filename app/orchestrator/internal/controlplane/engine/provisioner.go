@@ -650,6 +650,9 @@ func buildCommand(httpPort, apiPort, p2pPort int, cfg *config.Config) []string {
 		"--http-port", strconv.Itoa(httpPort),
 		"--api-port", strconv.Itoa(apiPort),
 		"--bind-all",
+		"--disable-sentry",
+		"--log-stdout",
+		"--disable-upnp",
 	}
 	if p2pPort > 0 {
 		cmd = append(cmd, "--port", strconv.Itoa(p2pPort))
@@ -662,6 +665,9 @@ func buildCommand(httpPort, apiPort, p2pPort int, cfg *config.Config) []string {
 	}
 	if cfg.EngineLiveCacheType != "" {
 		cmd = append(cmd, "--live-cache-type", cfg.EngineLiveCacheType)
+		if cfg.EngineLiveCacheType == "memory" {
+			cmd = append(cmd, "--live-mem-cache-size", "104857600")
+		}
 	}
 	if cfg.EngineBufferTime > 0 {
 		cmd = append(cmd, "--live-buffer", strconv.Itoa(cfg.EngineBufferTime))

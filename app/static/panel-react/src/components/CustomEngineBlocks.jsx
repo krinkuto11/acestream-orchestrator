@@ -72,8 +72,8 @@ export function EngineConfiguration({ engineSettings, onSettingChange, disabled 
           <Input
             type="number"
             min="0"
-            value={engineSettings.buffer_time ?? 10}
-            onChange={(e) => updateNumber('buffer_time', e.target.value, 10)}
+            value={engineSettings.buffer_time ?? 30}
+            onChange={(e) => updateNumber('buffer_time', e.target.value, 30)}
             disabled={disabled}
           />
         </div>

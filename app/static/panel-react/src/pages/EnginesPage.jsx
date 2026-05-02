@@ -252,7 +252,7 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const [engineSettings, setEngineSettings] = useState({
     min_replicas: 2, max_replicas: 6, auto_delete: true,
     live_cache_type: 'memory', total_max_download_rate: 0,
-    total_max_upload_rate: 0, buffer_time: 10, max_peers: 50,
+    total_max_upload_rate: 0, buffer_time: 30, max_peers: 50,
     memory_limit: null, manual_mode: false, manual_engines: [],
   })
   const [loadingSettings, setLoadingSettings] = useState(true)

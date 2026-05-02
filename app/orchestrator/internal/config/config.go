@@ -545,6 +545,11 @@ func load() *Config {
 		EngineARM32Version: envStr("ENGINE_ARM32_VERSION", "arm32-v3.2.13"),
 		EngineARM64Version: envStr("ENGINE_ARM64_VERSION", "arm64-v3.2.13"),
 
+		EngineMaxDownloadRate: envInt("ENGINE_MAX_DOWNLOAD_RATE", 0),
+		EngineMaxUploadRate:   envInt("ENGINE_MAX_UPLOAD_RATE", 0),
+		EngineLiveCacheType:   envStr("ENGINE_LIVE_CACHE_TYPE", "memory"),
+		EngineBufferTime:      envInt("ENGINE_LIVE_BUFFER", 30),
+
 		AutoDelete: envBool("AUTO_DELETE", true),
 	}
 }
