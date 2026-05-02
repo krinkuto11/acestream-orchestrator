@@ -26,8 +26,19 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 	var egressSum int
 
 	activeKeysMap := map[string]struct{}{}
+	var allClients []map[string]any
 	for _, s := range streams {
 		activeClients += s.ActiveClients
+		for _, c := range s.Clients {
+			// Deep copy or at least add stream context
+			cc := make(map[string]any)
+			for k, v := range c {
+				cc[k] = v
+			}
+			cc["stream_id"] = s.ID
+			cc["content_id"] = s.ContentID
+			allClients = append(allClients, cc)
+		}
 		if s.Peers != nil {
 			peersTotal += *s.Peers
 		}
@@ -121,6 +132,7 @@ func buildDashboardSnapshot(st *state.Store, windowSeconds int) map[string]any {
 			},
 			"active_clients": map[string]any{
 				"total": activeClients,
+				"list":  allClients,
 				"ts":    0,
 				"hls":   0,
 			},

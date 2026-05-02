@@ -1097,9 +1097,21 @@ func (s *ProxyServer) mgHandleOrchestratorStatus(w http.ResponseWriter, r *http.
 	}
 
 	activeStreams := 0
+	var allClients []map[string]any
+	totalClients := 0
 	for _, st := range streams {
 		if st.Status == "started" {
 			activeStreams++
+			totalClients += st.ActiveClients
+			for _, c := range st.Clients {
+				cc := make(map[string]any)
+				for k, v := range c {
+					cc[k] = v
+				}
+				cc["stream_id"] = st.ID
+				cc["content_id"] = st.ContentID
+				allClients = append(allClients, cc)
+			}
 		}
 	}
 
@@ -1171,6 +1183,15 @@ func (s *ProxyServer) mgHandleOrchestratorStatus(w http.ResponseWriter, r *http.
 		},
 		"telemetry": map[string]any{
 			"bytes_egress_total": telemetry.DefaultTelemetry.GetTotalEgress(),
+		},
+		"proxy": map[string]any{
+			"active_clients": map[string]any{
+				"total": totalClients,
+				"list":  allClients,
+			},
+			"throughput": map[string]any{
+				"egress_mbps": telemetry.DefaultTelemetry.GetEgressMbps(),
+			},
 		},
 		"capacity": map[string]any{
 			"total":        totalCapacity,
