@@ -38,6 +38,7 @@ export interface TopologySummary {
   activeClients: number
   failoverEngines: number
   vpnDown: string[]
+  vpnHealthy: string[]
 }
 
 export interface TopologyInputSnapshot {
@@ -66,6 +67,7 @@ const BASE_SUMMARY: TopologySummary = {
   activeClients: 0,
   failoverEngines: 0,
   vpnDown: [],
+  vpnHealthy: [],
 }
 
 const clamp = (value: number, min: number, max: number): number => {
@@ -980,6 +982,10 @@ const buildSnapshot = (
     edge.zIndex = bw > 0.1 ? 50 : 5
   })
 
+  const vpnHealthy = vpnNodes
+    .filter(n => n.connected)
+    .map(n => n.id)
+
   const summary: TopologySummary = {
     totalBandwidthMbps,
     activeEngines: workingEngines.length,
@@ -987,6 +993,7 @@ const buildSnapshot = (
     activeClients,
     failoverEngines: failoverEngines.length,
     vpnDown,
+    vpnHealthy,
   }
 
   return {

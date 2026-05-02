@@ -111,9 +111,9 @@ function EngineRackRow({ engine, idx, onDelete, maxStreamsPerEngine }) {
         <StatusTag status={status}/>
       </div>
       {/* CPU */}
-      <div style={{ width: 170, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+      <div style={{ width: 200, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         <span style={{ fontSize: 11, color: 'var(--fg-3)', width: 24 }}>cpu</span>
-        <AsciiBar value={cpu} width={12} color={cpu > 80 ? 'var(--acc-red)' : cpu > 50 ? 'var(--acc-amber)' : 'var(--acc-green)'}/>
+        <AsciiBar value={cpu} width={10} color={cpu > 80 ? 'var(--acc-red)' : cpu > 50 ? 'var(--acc-amber)' : 'var(--acc-green)'}/>
         <span style={{ fontSize: 11.5, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', width: 44, textAlign: 'right' }}>{cpu.toFixed(1)}%</span>
       </div>
       {/* Mem */}
@@ -167,7 +167,7 @@ function RackHeader() {
       <div style={{ width: 64, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>PORT</div>
       <div style={{ flex: 2, minWidth: 140, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center' }}>VPN</div>
       <div style={{ width: 96, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>STATUS</div>
-      <div style={{ width: 170, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>CPU</div>
+      <div style={{ width: 200, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>CPU</div>
       <div style={{ width: 90, padding: '0 10px', borderLeft: '1px solid var(--line)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>MEM</div>
       <div style={{ flex: 4, minWidth: 200, borderLeft: '1px solid var(--line-soft)', padding: '0 10px', display: 'flex', alignItems: 'center' }}>SESSIONS</div>
       <div style={{ width: 56, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0 }}>USED</div>
