@@ -646,7 +646,7 @@ func resolveEngineImage() string {
 
 func buildCommand(httpPort, apiPort, p2pPort int, cfg *config.Config) []string {
 	cmd := []string{
-		"main.py",
+		"python", "main.py",
 		"--http-port", strconv.Itoa(httpPort),
 		"--api-port", strconv.Itoa(apiPort),
 		"--bind-all",
