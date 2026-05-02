@@ -135,7 +135,7 @@ export function ModernSidebar({ orchestratorStatus, isConnected }) {
         </div>
         <div className="hr" style={{ margin: '2px 0' }}/>
         <div style={{ fontSize: 11.5, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
-          1s · eu-central
+          1s · region-local
         </div>
       </div>
     </aside>

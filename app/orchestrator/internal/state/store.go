@@ -1010,6 +1010,9 @@ func (s *Store) AppendStat(contentID string, snap *StatSnapshot) {
 		if snap.ProxyBufferPieces != nil {
 			st.ProxyBufferPieces = snap.ProxyBufferPieces
 		}
+		if snap.Status != "" {
+			st.Status = snap.Status
+		}
 	}
 }
 

@@ -137,6 +137,8 @@ func (s *ProxyServer) registerManagementRoutes() {
 	s.registerSSERoutes()
 
 	// ── Static files (React panel + favicons) ─────────────────────────────────
+	s.mux.HandleFunc("GET /api/v1/docs", s.mgHandleDocs)
+	s.mux.HandleFunc("GET /api/v1/spec", s.mgHandleSpec)
 	s.registerStaticRoutes()
 }
 
@@ -1100,7 +1102,7 @@ func (s *ProxyServer) mgHandleOrchestratorStatus(w http.ResponseWriter, r *http.
 	var allClients []map[string]any
 	totalClients := 0
 	for _, st := range streams {
-		if st.Status == "started" {
+		if st.Status == "started" || st.Status == "playing" || st.Status == "prebuf" {
 			activeStreams++
 			totalClients += st.ActiveClients
 			for _, c := range st.Clients {
@@ -1173,6 +1175,7 @@ func (s *ProxyServer) mgHandleOrchestratorStatus(w http.ResponseWriter, r *http.
 		"status": overallStatus,
 		"engines": map[string]any{
 			"total":     len(engines),
+			"running":   healthy + unhealthy,
 			"healthy":   healthy,
 			"unhealthy": unhealthy,
 			"draining":  draining,
@@ -1411,6 +1414,86 @@ func (s *ProxyServer) registerStaticRoutes() {
 		r.URL.Path = trimmedPath
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+func (s *ProxyServer) mgHandleDocs(w http.ResponseWriter, r *http.Request) {
+	// Minimal Swagger UI HTML that points to /api/v1/spec
+	html := `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AceStream Orchestrator API Docs</title>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" >
+    <style>
+      html { box-sizing: border-box; overflow: -moz-scrollbars-vertical; overflow-y: scroll; }
+      *, *:before, *:after { box-sizing: inherit; }
+      body { margin:0; background: #fafafa; }
+    </style>
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"> </script>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"> </script>
+    <script>
+    window.onload = function() {
+      const ui = SwaggerUIBundle({
+        url: "/api/v1/spec",
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset
+        ],
+        plugins: [
+          SwaggerUIBundle.plugins.DownloadUrl
+        ],
+        layout: "StandaloneLayout"
+      })
+      window.ui = ui
+    }
+  </script>
+</body>
+</html>`
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte(html))
+}
+
+func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
+	// Minimal OpenAPI 3.0 spec
+	spec := map[string]any{
+		"openapi": "3.0.0",
+		"info": map[string]any{
+			"title":   "AceStream Orchestrator API",
+			"version": "1.0.0",
+		},
+		"paths": map[string]any{
+			"/api/v1/orchestrator/status": map[string]any{
+				"get": map[string]any{
+					"summary": "Get overall orchestrator status",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Success"},
+					},
+				},
+			},
+			"/api/v1/engines": map[string]any{
+				"get": map[string]any{
+					"summary": "List all engines",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Success"},
+					},
+				},
+			},
+			"/api/v1/streams": map[string]any{
+				"get": map[string]any{
+					"summary": "List all active streams",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Success"},
+					},
+				},
+			},
+		},
+	}
+	mgWriteJSON(w, http.StatusOK, spec)
 }
 
 // ─── WireGuard parser ─────────────────────────────────────────────────────────

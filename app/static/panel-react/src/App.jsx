@@ -115,7 +115,7 @@ function Footer({ orchestratorStatus, isConnected }) {
       fontFamily: 'var(--font-mono)',
     }}>
       <Sep/><span>{window.location.hostname}:{window.location.port || '80'}</span>
-      <Sep/><span>API v1</span>
+      <Sep/><a href="/api/v1/docs" target="_blank" style={{ color: 'inherit', textDecoration: 'none' }}>API v1</a>
       <Sep/><span>engines {running}</span>
       <Sep/><span>capacity {capacity}</span>
       <div style={{ flex: 1 }}/>

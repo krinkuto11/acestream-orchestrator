@@ -2,8 +2,9 @@ import React from 'react'
 
 function StatusTag({ status }) {
   const map = {
-    started: 'green', active: 'green',
+    started: 'green', active: 'green', playing: 'green',
     pending_failover: 'magenta', migrating: 'magenta',
+    prebuf: 'cyan',
     ended: 'amber', stopping: 'amber',
     failed: 'red', error: 'red',
   }
@@ -85,7 +86,10 @@ function getStreamPeers(s) {
 }
 
 export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode }) {
-  const active = streams.filter(s => String(s.status || '').toLowerCase() === 'started').length
+  const active = streams.filter(s => {
+    const st = String(s.status || '').toLowerCase()
+    return st === 'started' || st === 'playing' || st === 'prebuf'
+  }).length
   const migrations = streams.filter(s => String(s.status || '').toLowerCase().includes('failover')).length
   const totalBitrate = streams.reduce((sum, s) => {
     const b = Number(s.bitrate_mbps || (s.bitrate ? s.bitrate / 1e6 : 0))

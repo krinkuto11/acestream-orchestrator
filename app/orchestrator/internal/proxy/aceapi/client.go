@@ -382,7 +382,14 @@ func parseStatusLine(line string) *StatusInfo {
 		clean := strings.TrimPrefix(val, "main:")
 		switch keys[i] {
 		case "status":
-			info.Status = clean
+			switch clean {
+			case "dl":
+				info.Status = "playing"
+			case "buf", "prebuf", "wait", "seekprebuf":
+				info.Status = "prebuf"
+			default:
+				info.Status = clean
+			}
 		case "total_progress":
 			info.TotalProgress = int(parseInt64(clean))
 		case "immediate_progress":
