@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { BaseEdge, EdgeLabelRenderer, EdgeProps, getSmoothStepPath } from 'reactflow'
-import { cn } from '@/lib/utils'
 
 export function TopologyEdge({
   id,
@@ -24,17 +23,14 @@ export function TopologyEdge({
     borderRadius: 16,
   })
 
-  // Position label cleanly in the horizontal corridors
   let finalLabelX = labelX
   let finalLabelY = labelY
   const deltaX = targetX - sourceX
 
   if (data?.labelPosition === 'near-target') {
-    // Keep closer to target side but detached from node body/handle.
     finalLabelX = sourceX + deltaX * 0.68
     finalLabelY = targetY
   } else if (data?.labelPosition === 'near-source') {
-    // Keep closer to source side while still inside the edge corridor.
     finalLabelX = sourceX + deltaX * 0.32
     finalLabelY = sourceY
   }
@@ -45,68 +41,58 @@ export function TopologyEdge({
   const isPrebuffering = data?.isPrebuffering === true
 
   const rawBandwidth = (data?.bandwidthMbps || 0) + (data?.uploadMbps || 0)
-  const flowActive = data?.flowActive === undefined ? rawBandwidth > 0.2 : data.flowActive === true
+  const flowActive = data?.flowActive === undefined ? rawBandwidth > 0.05 : data.flowActive === true
   const [isMounted, setIsMounted] = useState(false)
   const [shouldAnimateFlowChange, setShouldAnimateFlowChange] = useState(false)
   const previousFlowActiveRef = useRef(flowActive)
 
-  // Set mounted state exclusively to suppress CSS animations on first render
   useEffect(() => {
     setIsMounted(true)
   }, [])
 
-  // Only animate mask sweeps when flow flips on/off; ignore regular throughput/layout updates.
   useEffect(() => {
     if (!isMounted) {
       previousFlowActiveRef.current = flowActive
       return
     }
-
-    if (previousFlowActiveRef.current === flowActive) {
-      return
-    }
-
+    if (previousFlowActiveRef.current === flowActive) return
     previousFlowActiveRef.current = flowActive
     setShouldAnimateFlowChange(true)
     const timer = setTimeout(() => setShouldAnimateFlowChange(false), 520)
     return () => clearTimeout(timer)
   }, [flowActive, isMounted])
   
-  // Estimate length of the step path for drawing animation
   const pathLength = useMemo(() => {
     return Math.abs(targetX - sourceX) + Math.abs(targetY - sourceY) + 100
   }, [targetX, sourceX, targetY, sourceY])
 
-  const baseStrokeWidth = (style.strokeWidth as number || 2.2) * 1.2
+  const baseStrokeWidth = (style.strokeWidth as number || 2) * 1.2
   const safeMaskId = `mask-sweep-${id.replace(/[^a-zA-Z0-9_-]/g, '')}`
 
-  // Memoize mask style so React avoids mutating the SVG <defs> 60x a second during bandwidth updates, 
-  // which crashes the WebKit/Blink transition engines and forces spammy re-animations.
   const maskStyle = useMemo(() => ({
     strokeDasharray: pathLength,
     strokeDashoffset: flowActive ? 0 : pathLength,
-    animation: 'none',
     transition: (isMounted && shouldAnimateFlowChange) ? 'stroke-dashoffset 0.5s ease-in-out' : 'none',
   }), [flowActive, isMounted, pathLength, shouldAnimateFlowChange])
 
-  // Background empty pipe
+  // Track style (background pipe)
   const trackStyle = {
     ...style,
-    stroke: '#64748b',
+    stroke: 'var(--line)',
     strokeWidth: baseStrokeWidth,
     strokeOpacity: 0.3,
-    strokeDasharray: (isDrainingRoute || isFailover) ? '8 5' : style.strokeDasharray,
+    strokeDasharray: (isDrainingRoute || isFailover) ? '6 4' : style.strokeDasharray,
   }
 
-  // Foreground colored dashed pipe, revealed by the sweeping mask
+  // Fill style (active traffic)
   const fillStyle = {
     ...style,
     stroke: isPrebuffering 
-      ? '#f59e0b' 
-      : (isFailover || isMonitoringRoute || isDrainingRoute) ? '#f59e0b' : '#22c55e',
+      ? 'var(--acc-amber)' 
+      : (isFailover || isMonitoringRoute || isDrainingRoute) ? 'var(--acc-amber)' : 'var(--acc-green)',
     strokeWidth: baseStrokeWidth,
     strokeOpacity: 1,
-    strokeDasharray: '8 6', // Always dashed
+    strokeDasharray: '6 4',
     mask: `url(#${safeMaskId})`,
   }
 
@@ -118,7 +104,7 @@ export function TopologyEdge({
             d={edgePath}
             fill="none"
             stroke="white"
-            strokeWidth={baseStrokeWidth * 3} // Ensure the mask fully envelopes the path
+            strokeWidth={baseStrokeWidth * 3}
             strokeLinecap="round"
             strokeLinejoin="round"
             style={maskStyle}
@@ -137,44 +123,31 @@ export function TopologyEdge({
           }}
           className="nodrag nopan"
         >
-          {/* Professional, clean label styling. No neon glow, just solid readable UI. */}
           <div 
-            className={cn(
-              "px-2 py-0.5 rounded-md border text-[11px] font-semibold transition-colors duration-300 shadow-md flex items-center gap-2",
-              isPrebuffering
-                ? "border-amber-500 bg-amber-500/10 text-amber-500 animate-pulse"
-                : (isFailover || isMonitoringRoute || isDrainingRoute)
-                  ? "border-amber-400 bg-[#020617] text-amber-400" 
-                  : flowActive 
-                    ? "border-emerald-400 bg-[#020617] text-emerald-400" 
-                    : "border-slate-600 bg-[#020617] text-slate-400"
-            )}
+            style={{
+              padding: '2px 6px',
+              borderRadius: 2,
+              border: `1px solid ${isPrebuffering ? 'var(--acc-amber)' : (isFailover || isMonitoringRoute || isDrainingRoute) ? 'var(--acc-amber)' : flowActive ? 'var(--acc-green)' : 'var(--line)'}`,
+              background: 'var(--bg-1)',
+              color: isPrebuffering ? 'var(--acc-amber)' : (isFailover || isMonitoringRoute || isDrainingRoute) ? 'var(--acc-amber)' : flowActive ? 'var(--fg-1)' : 'var(--fg-3)',
+              fontSize: 10,
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+              fontFamily: 'var(--font-mono)',
+            }}
           >
             {data?.uploadMbps !== undefined ? (
-              <div className="flex gap-2">
-                <div className="flex items-center gap-1">
-                  <span className="text-[10px] text-slate-500">↓</span>
-                  <span className="tabular-nums font-bold">{data.bandwidthMbps.toFixed(1)}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-[10px] text-slate-500">↑</span>
-                  <span className="tabular-nums font-bold">{data.uploadMbps.toFixed(1)}</span>
-                </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <span>↓{data.bandwidthMbps.toFixed(1)}</span>
+                <span>↑{data.uploadMbps.toFixed(1)}</span>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5">
-                {isPrebuffering && (
-                  <span className="relative flex h-1.5 w-1.5 mr-0.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
-                  </span>
-                )}
-                <span className="tabular-nums font-bold">
-                  {isPrebuffering ? 'PREBUFFERING' : data.bandwidthMbps.toFixed(1)}
-                </span>
-              </div>
+              <span>{isPrebuffering ? 'PREBUFFER' : data.bandwidthMbps.toFixed(1)}</span>
             )}
-            {!isPrebuffering && <span className="text-[10px] text-slate-500 font-medium ml-0.5 uppercase">Mbps</span>}
+            {!isPrebuffering && <span style={{ fontSize: 8, opacity: 0.6 }}>Mb/s</span>}
           </div>
         </div>
       </EdgeLabelRenderer>

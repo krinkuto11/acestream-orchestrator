@@ -1,26 +1,17 @@
-import { AlertTriangle, GitBranch, Server, ShieldCheck, Timer, Users, Zap } from 'lucide-react'
+import React from 'react'
 import { Handle, Position, type NodeProps } from 'reactflow'
-import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { formatThroughputDual, type TopologyNodeData } from '@/stores/topologyStore'
 
 const formatBytes = (bytes: number, decimals = 2) => {
-  if (bytes === 0) return '0 Bytes'
+  if (bytes === 0) return '0 B'
   const k = 1024
   const dm = decimals < 0 ? 0 : decimals
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i]
 }
 
-const iconByKind = {
-  vpn: ShieldCheck,
-  engine: Server,
-  proxy: GitBranch,
-  client: Users,
-}
-
-// Map country name/code to emoji flag
 const countryToFlag = (country: string | null | undefined): string | null => {
   if (!country) return null
   const c = country.trim().toLowerCase()
@@ -71,245 +62,124 @@ const countryToFlag = (country: string | null | undefined): string | null => {
 
 const themeByKind = {
   vpn: {
-    wrapper: 'border-indigo-500 bg-[#1e1b4b]', // solid indigo-950
-    title: 'text-indigo-50',
-    subtitle: 'text-indigo-200',
-    iconBg: 'bg-indigo-600 text-indigo-100',
-    box: 'border-indigo-600 bg-[#312e81] text-indigo-100', // solid indigo-900
-    label: 'text-indigo-300'
+    accent: 'var(--acc-cyan)',
+    bg: 'var(--acc-cyan-bg)',
+    dim: 'var(--acc-cyan-dim)',
   },
   engine: {
-    wrapper: 'border-blue-500 bg-[#172554]', // solid blue-950
-    title: 'text-blue-50',
-    subtitle: 'text-blue-200',
-    iconBg: 'bg-blue-600 text-blue-100',
-    box: 'border-blue-600 bg-[#1e3a8a] text-blue-100', // solid blue-900
-    label: 'text-blue-300'
+    accent: 'var(--acc-green)',
+    bg: 'var(--acc-green-bg)',
+    dim: 'var(--acc-green-dim)',
   },
   proxy: {
-    wrapper: 'border-fuchsia-500 bg-[#4a044e]', // solid fuchsia-950
-    title: 'text-fuchsia-50',
-    subtitle: 'text-fuchsia-200',
-    iconBg: 'bg-fuchsia-600 text-fuchsia-100',
-    box: 'border-fuchsia-600 bg-[#701a75] text-fuchsia-100', // solid fuchsia-900
-    label: 'text-fuchsia-300'
+    accent: 'var(--acc-magenta)',
+    bg: 'var(--acc-magenta-bg)',
+    dim: 'var(--acc-magenta-dim)',
   },
   client: {
-    wrapper: 'border-teal-500 bg-[#042f2e]', // solid teal-950
-    title: 'text-teal-50',
-    subtitle: 'text-teal-200',
-    iconBg: 'bg-teal-600 text-teal-100',
-    box: 'border-teal-600 bg-[#134e4a] text-teal-100', // solid teal-900
-    label: 'text-teal-300'
+    accent: 'var(--fg-1)',
+    bg: 'var(--bg-2)',
+    dim: 'var(--line)',
   },
-}
-
-const healthClassByState = {
-  healthy: '',
-  degraded: 'ring-1 ring-amber-400',
-  down: 'brightness-90 grayscale-[30%] ring-1 ring-rose-500',
-}
-
-const healthLabelByState = {
-  healthy: 'Healthy',
-  degraded: 'Degraded',
-  down: 'Down',
 }
 
 export function TopologyNode({ data, selected }: NodeProps<TopologyNodeData>) {
-  const Icon = iconByKind[data.kind] || Server
   const theme = themeByKind[data.kind] || themeByKind.engine
   const isDraining = data.lifecycle === 'draining'
-
-  const vpnIp = data.kind === 'vpn' ? String(data.metadata?.publicIp || '') : null
-  const vpnCountry = data.kind === 'vpn' ? String(data.metadata?.country || '') : null
-  const vpnProvider = data.kind === 'vpn' ? String(data.metadata?.provider || '') : null
-  const vpnHostname = data.kind === 'vpn' ? String(data.metadata?.assignedHostname || '') : null
-  const flag = countryToFlag(vpnCountry)
+  const flag = countryToFlag(data.metadata?.country as string)
 
   return (
     <div
-      className={cn(
-        'relative min-w-[210px] rounded-xl border p-3 shadow-2xl transition-all',
-        theme.wrapper,
-        healthClassByState[data.health],
-        isDraining && 'border-amber-400 border-dashed opacity-85',
-        selected && 'ring-2 ring-sky-400 shadow-sky-500/20',
-      )}
+      style={{
+        minWidth: 220,
+        background: 'var(--bg-1)',
+        border: `1px solid ${selected ? theme.accent : 'var(--line)'}`,
+        padding: '12px',
+        boxShadow: selected ? `0 0 20px ${theme.bg}` : '0 4px 12px rgba(0,0,0,0.3)',
+        position: 'relative',
+        opacity: isDraining ? 0.7 : 1,
+        transition: 'all 0.2s ease',
+      }}
+      className="bracketed"
     >
       <Handle
         type="target"
         position={Position.Left}
-        className="!h-2.5 !w-2.5 !border-2 !border-slate-800 !bg-slate-300"
+        style={{ background: theme.accent, border: '2px solid var(--bg-1)', width: 8, height: 8 }}
       />
 
       {/* Node Header */}
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <div className={cn("rounded-md p-1.5 shadow-sm", theme.iconBg)}>
-            <Icon className="h-4 w-4" />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 9, color: 'var(--fg-3)', letterSpacing: 1, marginBottom: 2 }}>{data.kind.toUpperCase()}</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg-0)', fontFamily: 'var(--font-display)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 }}>
+            {data.title}
           </div>
-          <div className="max-w-[130px]">
-            <p className={cn("text-sm font-semibold leading-tight truncate", theme.title)} title={data.title}>
-              {data.title}
-            </p>
-            <p className={cn("text-[10px] font-medium truncate", theme.subtitle)} title={data.subtitle}>
-              {data.subtitle}
-            </p>
+          <div style={{ fontSize: 10, color: theme.accent, fontFamily: 'var(--font-mono)', opacity: 0.8 }}>
+            {data.subtitle}
           </div>
         </div>
-
-        <div className="flex flex-col items-end gap-1">
-          <Badge
-            variant={data.health === 'down' ? 'destructive' : data.health === 'degraded' ? 'warning' : 'outline'}
-            className={cn(
-              "text-[10px] font-semibold uppercase",
-              data.health === 'healthy' && `border-emerald-500/40 text-emerald-400 bg-emerald-500/10`
-            )}
-          >
-            {healthLabelByState[data.health]}
-          </Badge>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+          <span className={`tag tag-${data.health === 'healthy' ? 'green' : data.health === 'down' ? 'red' : 'amber'}`} style={{ fontSize: 9 }}>
+            {data.health.toUpperCase()}
+          </span>
           {data.kind === 'engine' && data.forwarded && (
-            <Badge variant="outline" className="h-5 gap-1 border-amber-400/60 bg-amber-500/10 px-1.5 text-[9px] font-semibold text-amber-200">
-              <Zap className="h-2.5 w-2.5" />
-              Forwarded
-            </Badge>
-          )}
-          {isDraining && (
-            <Badge variant="warning" className="gap-1 border-amber-400/60 bg-amber-500/15 text-[10px] font-semibold uppercase text-amber-200">
-              <Zap className="h-3 w-3" />
-              Draining
-            </Badge>
+            <span className="tag tag-cyan" style={{ fontSize: 8 }}>FWD</span>
           )}
         </div>
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        {/* VPN Specific Details Restored */}
+      {/* Content Area */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {data.kind === 'vpn' && (
-          <div className="rounded-lg border border-indigo-600 bg-[#312e81] p-2 space-y-1.5 mb-1.5">
-            <div className="flex items-center justify-between">
-              {vpnIp && (
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-[11px] font-semibold text-indigo-100">{vpnIp}</span>
-                  {flag && <span className="text-sm shadow-sm">{flag}</span>}
-                </div>
-              )}
-              {data.load !== undefined && data.load !== null && !isNaN(data.load) && (
-                <div className="flex items-center gap-2 px-1.5 py-0.5 rounded-md bg-black/30 border border-white/10" title={`Server Load: ${data.load}%`}>
-                  <div className="relative h-4 w-4">
-                    {/* Background Ring (Secondary track) */}
-                    <svg className="h-full w-full" viewBox="0 0 16 16">
-                      <circle
-                        cx="8"
-                        cy="8"
-                        r="7"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        className="text-white/10"
-                      />
-                      {/* Progress Ring (Battery indicator) */}
-                      <circle
-                        cx="8"
-                        cy="8"
-                        r="7"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeDasharray={44}
-                        strokeDashoffset={44 - (44 * Math.min(100, Math.max(0, data.load))) / 100}
-                        strokeLinecap="round"
-                        className={cn(
-                          "transition-all duration-500 ease-out",
-                          data.load < 40 ? "text-emerald-400 drop-shadow-[0_0_3px_rgba(52,211,153,0.8)]" :
-                          data.load < 80 ? "text-amber-400 drop-shadow-[0_0_3px_rgba(251,191,36,0.8)]" :
-                          "text-rose-500 drop-shadow-[0_0_3px_rgba(244,63,94,0.8)]"
-                        )}
-                        transform="rotate(-90 8 8)"
-                      />
-                    </svg>
-                  </div>
-                  <span className="text-[10px] font-bold text-white/90 tabular-nums">
-                    {Math.round(data.load)}%
-                  </span>
-                </div>
+          <div style={{ background: 'var(--bg-0)', border: '1px solid var(--line-soft)', padding: '6px 8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--fg-1)' }}>
+                {data.metadata?.publicIp as string || '—'} {flag}
+              </span>
+              {typeof data.load === 'number' && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: data.load > 80 ? 'var(--acc-red)' : data.load > 50 ? 'var(--acc-amber)' : 'var(--acc-green)' }}>
+                  {Math.round(data.load)}%
+                </span>
               )}
             </div>
-            {(vpnProvider || vpnHostname) && (
-              <div className="space-y-1">
-                {vpnHostname && (
-                  <p className="text-[9px] font-mono text-indigo-200 truncate" title={vpnHostname}>
-                    {vpnHostname}
-                  </p>
-                )}
-                {vpnProvider && (
-                  <p className="text-[10px] font-medium text-indigo-300 leading-none">
-                    {vpnProvider}{vpnCountry ? ` · ${vpnCountry}` : ''}
-                  </p>
-                )}
+            {data.metadata?.provider && (
+              <div style={{ fontSize: 9, color: 'var(--fg-3)', marginTop: 2 }}>
+                {data.metadata.provider as string}
               </div>
             )}
           </div>
         )}
 
-        {data.kind === 'engine' && (
-          <div className={cn("flex items-center justify-between rounded-md border p-1.5 px-2 shadow-sm", theme.box)}>
-            <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>Streams</span>
-            <span className="text-xs font-semibold">{data.streamCount}</span>
-          </div>
-        )}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-0)', padding: '6px 8px', border: '1px solid var(--line-soft)' }}>
+          <span style={{ fontSize: 9, color: 'var(--fg-3)' }}>
+            {data.kind === 'engine' ? 'STREAMS' : data.kind === 'client' ? 'SENT' : 'THROUGHPUT'}
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums' }}>
+            {data.kind === 'engine' 
+              ? data.streamCount 
+              : data.kind === 'client' 
+                ? formatBytes(Number(data.metadata?.totalBytes || 0))
+                : formatThroughputDual(data.bandwidthKbps)
+            }
+          </span>
+        </div>
 
-        {/* Standard Bandwidth Block - Restored Upload/Download for VPN */}
-        {data.kind === 'vpn' ? (
-          <div className={cn("grid grid-cols-2 gap-1.5", theme.box)}>
-            <div className="flex flex-col p-1 px-1.5 rounded bg-[#1e1b4b] border border-indigo-800">
-              <span className="text-[8px] text-emerald-400 font-bold uppercase leading-none mb-1">Down</span>
-              <div className="flex items-baseline gap-1">
-                <span className="text-[10px] font-bold leading-none tracking-tight">
-                  {formatThroughputDual(data.bandwidthKbps)}
-                </span>
-              </div>
-            </div>
-            <div className="flex flex-col p-1 px-1.5 rounded bg-[#1e1b4b] border border-indigo-800">
-              <span className="text-[8px] text-rose-400 font-bold uppercase leading-none mb-1">Up</span>
-              <div className="flex items-baseline gap-1">
-                <span className="text-[10px] font-bold leading-none tracking-tight">
-                  {formatThroughputDual(data.uploadKbps)}
-                </span>
-              </div>
-            </div>
-          </div>
-        ) : data.kind === 'proxy' ? (
-          <div className={cn("flex items-center justify-between rounded-md border p-1.5 px-2 shadow-sm", theme.box)}>
-            <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>
-              {data.kind === 'proxy' ? 'Throughput' : 'Egress (to Proxy)'}
-            </span>
-            <span className="text-[10px] font-bold">
-              {formatThroughputDual(data.kind === 'proxy' ? data.bandwidthKbps : data.proxyIngressKbps)}
-            </span>
-          </div>
-        ) : data.kind === 'client' && (
-          <div className={cn("flex items-center justify-between rounded-md border p-1.5 px-2 shadow-sm", theme.box)}>
-            <span className={cn("text-[10px] uppercase font-semibold", theme.label)}>Total Sent</span>
-            <span className="text-xs font-semibold truncate max-w-[100px] text-right">
-              {formatBytes(Number(data.metadata?.totalBytes || 0))}
+        {data.kind === 'vpn' && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-0)', padding: '6px 8px', border: '1px solid var(--line-soft)' }}>
+            <span style={{ fontSize: 9, color: 'var(--fg-3)' }}>UPLOAD</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--acc-amber)', fontVariantNumeric: 'tabular-nums' }}>
+              {formatThroughputDual(data.uploadKbps)}
             </span>
           </div>
         )}
       </div>
-
-      {data.failoverActive && (
-        <div className="mt-2 flex items-center gap-1.5 rounded-md border border-amber-400/40 bg-amber-500/20 px-2 py-1.5 text-[11px] font-semibold text-amber-300 shadow-md">
-          <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
-          <span>Failover Active</span>
-        </div>
-      )}
 
       <Handle
         type="source"
         position={Position.Right}
-        className="!h-2.5 !w-2.5 !border-2 !border-slate-800 !bg-slate-300"
+        style={{ background: theme.accent, border: '2px solid var(--bg-1)', width: 8, height: 8 }}
       />
     </div>
   )

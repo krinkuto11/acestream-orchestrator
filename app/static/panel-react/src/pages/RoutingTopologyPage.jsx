@@ -1,15 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import ReactFlow, { Background, Controls, MarkerType, ReactFlowProvider, useReactFlow } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { Activity, AlertTriangle, Network, ShieldAlert, Users, X } from 'lucide-react'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
 import { TopologyNode } from '@/components/topology/TopologyNode'
 import { TopologyEdge } from '@/components/topology/TopologyEdge'
 import { useTopologyStore, formatThroughputDual } from '@/stores/topologyStore'
-import { cn } from '@/lib/utils'
 
 const nodeTypes = {
   topologyNode: TopologyNode,
@@ -17,13 +11,6 @@ const nodeTypes = {
 
 const edgeTypes = {
   topologyEdge: TopologyEdge,
-}
-
-const formatLastUpdate = (iso) => {
-  if (!iso) return 'sync pending'
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return 'sync pending'
-  return date.toLocaleTimeString([], { hour12: false })
 }
 
 export function RoutingTopologyPage(props) {
@@ -49,7 +36,6 @@ function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus,
   const containerRef = useRef(null)
   const fitDebounceRef = useRef(null)
 
-  // Debounced fitView — called after the sidebar CSS transition finishes
   const debouncedFitView = useCallback(() => {
     if (fitDebounceRef.current) clearTimeout(fitDebounceRef.current)
     fitDebounceRef.current = setTimeout(() => {
@@ -57,7 +43,6 @@ function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus,
     }, 50)
   }, [fitView])
 
-  // Watch container size changes (triggered by sidebar expand/collapse)
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -82,21 +67,13 @@ function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus,
     const interval = window.setInterval(() => {
       simulateTick()
     }, 500)
-
-    return () => {
-      window.clearInterval(interval)
-    }
+    return () => window.clearInterval(interval)
   }, [simulateTick])
 
-  // Automatically fit view when nodes are first populated or change significantly
   useEffect(() => {
     if (nodes.length > 0) {
-      const timer1 = setTimeout(() => fitView({ padding: 0.05, duration: 800 }), 150)
-      const timer2 = setTimeout(() => fitView({ padding: 0.05, duration: 800 }), 1000)
-      return () => {
-        clearTimeout(timer1)
-        clearTimeout(timer2)
-      }
+      const timer1 = setTimeout(() => fitView({ padding: 0.1, duration: 800 }), 150)
+      return () => clearTimeout(timer1)
     }
   }, [nodes.length, fitView])
 
@@ -105,141 +82,176 @@ function RoutingTopologyInner({ engines, streams, vpnStatus, orchestratorStatus,
     [nodes, selectedNodeId],
   )
 
-  const hasEmergency =
-    summary.vpnDown.length > 0 ||
-    Boolean(
-      orchestratorStatus?.provisioning?.circuit_breaker_state &&
-        orchestratorStatus.provisioning.circuit_breaker_state !== 'closed',
-    )
-
   return (
-    <div ref={containerRef} className={cn(
-      "relative w-full overflow-hidden rounded-xl border border-slate-800 bg-[#0f172a] shadow-inner flex flex-col",
-      embedded ? "h-[740px]" : "h-screen"
-    )}>
-      {/* Title Header */}
-      <div className="absolute left-6 top-6 z-20 pointer-events-none">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-100 flex items-center gap-2">
-          <Network className="h-6 w-6 text-slate-400" />
-          Routing Topology
-        </h1>
-        <p className="text-sm font-medium text-slate-500 mt-1">Live streaming pipelines and proxy activity</p>
+    <div ref={containerRef} style={{
+      position: 'relative',
+      width: '100%',
+      height: embedded ? '740px' : '100%',
+      background: 'var(--bg-0)',
+      border: '1px solid var(--line)',
+      overflow: 'hidden',
+      display: 'flex',
+      flexDirection: 'column',
+    }}>
+      {/* Topology Header */}
+      <div style={{
+        position: 'absolute',
+        left: 20,
+        top: 20,
+        zIndex: 20,
+        pointerEvents: 'none',
+      }}>
+        <div className="label" style={{ color: 'var(--fg-3)', marginBottom: 4 }}>NETWORK · TOPOLOGY</div>
+        <h1 style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: 24,
+          fontWeight: 700,
+          color: 'var(--fg-0)',
+          margin: 0,
+          letterSpacing: '-0.02em',
+        }}>Routing Mesh</h1>
+        <div style={{ fontSize: 12, color: 'var(--fg-2)', marginTop: 4 }}>
+          {nodes.length} nodes · {summary.activeStreams} streams · {summary.vpnHealthy.length} VPNs
+        </div>
       </div>
 
-      <div className="h-full w-full">
+      {/* React Flow Canvas */}
+      <div style={{ flex: 1, width: '100%' }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
-          fitViewOptions={{ padding: 0.05 }}
-          minZoom={0.2}
-          maxZoom={1.5}
+          fitViewOptions={{ padding: 0.1 }}
+          minZoom={0.1}
+          maxZoom={2}
           onNodeClick={(_, node) => setSelectedNode(node.id)}
           onPaneClick={() => setSelectedNode(null)}
           proOptions={{ hideAttribution: true }}
           defaultEdgeOptions={{
-            markerEnd: { type: MarkerType.ArrowClosed },
+            markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--line)' },
           }}
           nodesDraggable={false}
           elementsSelectable
         >
           <Controls 
-            className="!bg-slate-900 !border-slate-700 !shadow-lg" 
-            style={{ fill: '#94a3b8' }} 
+            showInteractive={false}
+            style={{ 
+              background: 'var(--bg-1)', 
+              border: '1px solid var(--line)',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+              borderRadius: 0,
+            }}
           />
-          <Background gap={22} size={1} color="rgba(148,163,184,0.1)" />
+          <Background gap={32} size={1} color="var(--line-soft)" />
         </ReactFlow>
       </div>
 
-      {/* Professional Node Inspector Panel */}
+      {/* Inspector Panel */}
       {selectedNode && (
-        <Card className="absolute right-6 top-6 bottom-6 z-20 w-80 overflow-hidden border-slate-700/50 bg-[#0f172a]/95 shadow-2xl backdrop-blur-md animate-in slide-in-from-right duration-300">
-          <CardHeader className="border-b border-slate-800 bg-slate-900/50 pb-4">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-semibold tracking-tight text-slate-100">
-                Resource Details
-              </CardTitle>
-              <button 
-                onClick={() => setSelectedNode(null)} 
-                className="rounded-full p-1 hover:bg-slate-800 text-slate-400 transition-colors"
-                aria-label="Close"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          </CardHeader>
+        <div className="bracketed" style={{
+          position: 'absolute',
+          right: 20,
+          top: 20,
+          bottom: 20,
+          width: 320,
+          zIndex: 30,
+          background: 'var(--bg-1)',
+          border: '1px solid var(--line)',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '0 0 40px rgba(0,0,0,0.4)',
+        }}>
+          {/* Panel Header */}
+          <div style={{
+            padding: '12px 14px',
+            borderBottom: '1px solid var(--line)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: 'var(--bg-2)',
+          }}>
+            <span className="label">NODE · INSPECTOR</span>
+            <button 
+              onClick={() => setSelectedNode(null)}
+              style={{
+                background: 'transparent', border: 0, color: 'var(--fg-3)', cursor: 'pointer', fontSize: 16,
+              }}
+            >✕</button>
+          </div>
 
-          <CardContent className="space-y-4 p-5">
-            <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Resource Identifier</p>
-              <p className="mt-1 text-base font-semibold text-slate-100 leading-tight">{selectedNode.data?.title}</p>
-              <p className="mt-0.5 font-mono text-[11px] text-slate-400 line-clamp-1">{selectedNode.data?.subtitle}</p>
+          <div style={{ padding: 14, flex: 1, overflowY: 'auto' }}>
+            {/* Main Info */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 10, color: 'var(--fg-3)', letterSpacing: 1, marginBottom: 4 }}>IDENTIFIER</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg-0)', fontFamily: 'var(--font-display)' }}>
+                {selectedNode.data?.title}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--acc-cyan)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+                {selectedNode.data?.subtitle}
+              </div>
               
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Badge 
-                  variant={selectedNode.data?.health === 'down' ? 'destructive' : selectedNode.data?.health === 'degraded' ? 'warning' : 'outline'}
-                  className={cn(
-                    "font-semibold uppercase text-[9px] px-1.5 py-0",
-                    selectedNode.data?.health === 'healthy' && "border-emerald-500/30 text-emerald-400 bg-emerald-500/5"
-                  )}
-                >
-                  {selectedNode.data?.health}
-                </Badge>
+              <div style={{ marginTop: 12, display: 'flex', gap: 6 }}>
+                <span className={`tag tag-${selectedNode.data?.health === 'healthy' ? 'green' : selectedNode.data?.health === 'down' ? 'red' : 'amber'}`}>
+                  <span className="dot" /> {selectedNode.data?.health?.toUpperCase()}
+                </span>
                 {selectedNode.data?.failoverActive && (
-                  <Badge variant="warning" className="uppercase font-semibold text-[9px] border-amber-500/40 bg-amber-500/10 text-amber-200">
-                    Active Failover
-                  </Badge>
+                  <span className="tag tag-magenta">FAILOVER ACTIVE</span>
+                )}
+                {selectedNode.data?.lifecycle === 'draining' && (
+                  <span className="tag tag-amber">DRAINING</span>
                 )}
               </div>
             </div>
 
-            <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-4">
-              <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-3">
-                <Activity className="h-3.5 w-3.5 text-blue-400" />
-                Live Telemetry
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-[10px] text-slate-500 uppercase font-medium">Throughput</p>
-                  <p className="text-sm font-semibold text-emerald-400 tabular-nums leading-tight mt-1">
-                    {formatThroughputDual(selectedNode.data?.bandwidthKbps)}
-                  </p>
+            {/* Metrics */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 20 }}>
+              <div style={{ background: 'var(--bg-0)', border: '1px solid var(--line-soft)', padding: 10 }}>
+                <div style={{ fontSize: 9, color: 'var(--fg-3)', marginBottom: 4 }}>THROUGHPUT</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--acc-green)', fontVariantNumeric: 'tabular-nums' }}>
+                  {formatThroughputDual(selectedNode.data?.bandwidthKbps)}
                 </div>
-                <div>
-                  <p className="text-[10px] text-slate-500 uppercase font-medium">Active Streams</p>
-                  <p className="text-xl font-semibold text-slate-100 tabular-nums">
-                    {selectedNode.data?.streamCount}
-                  </p>
+              </div>
+              <div style={{ background: 'var(--bg-0)', border: '1px solid var(--line-soft)', padding: 10 }}>
+                <div style={{ fontSize: 9, color: 'var(--fg-3)', marginBottom: 4 }}>STREAMS</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--fg-0)', fontVariantNumeric: 'tabular-nums' }}>
+                  {selectedNode.data?.streamCount}
                 </div>
               </div>
             </div>
 
-            <div className="rounded-lg border border-slate-800 bg-slate-900/30 overflow-hidden">
-              <div className="bg-slate-900/60 px-4 py-2 border-b border-slate-800">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Metadata Properties</p>
-              </div>
-              <div className="p-4 space-y-2 font-mono text-[11px] text-slate-300">
+            {/* Metadata Table */}
+            <div>
+              <div className="label" style={{ marginBottom: 8 }}>METADATA</div>
+              <div style={{ 
+                background: 'var(--bg-0)', 
+                border: '1px solid var(--line-soft)',
+                fontSize: 11,
+                fontFamily: 'var(--font-mono)',
+              }}>
                 {Object.entries(selectedNode.data?.metadata || {}).map(([key, value]) => {
                   if (value === null || value === undefined) return null;
-                  
                   let displayValue = String(value);
                   if (key === 'targetBitrate' && typeof value === 'number' && value > 0) {
-                    displayValue = `${(value / 1000000).toFixed(1)} Mbps (${value.toLocaleString()} bps)`;
+                    displayValue = `${(value / 1e6).toFixed(1)} Mbps`;
                   }
-
                   return (
-                    <div key={key} className="flex items-center justify-between gap-4 border-b border-white/5 pb-1.5 last:border-b-0 last:pb-0">
-                      <span className="text-slate-500">{key === 'targetBitrate' ? 'Target Bitrate' : key}</span>
-                      <span className="font-semibold text-right text-slate-300 truncate">{displayValue}</span>
+                    <div key={key} style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      padding: '6px 8px',
+                      borderBottom: '1px solid var(--line-soft)',
+                    }}>
+                      <span style={{ color: 'var(--fg-3)' }}>{key}</span>
+                      <span style={{ color: 'var(--fg-1)', textAlign: 'right' }}>{displayValue}</span>
                     </div>
                   );
                 })}
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
     </div>
   )
