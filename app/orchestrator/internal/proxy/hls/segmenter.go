@@ -172,10 +172,19 @@ func (s *Segmenter) run() {
 			resetFlush()
 
 			for _, chunk := range chunks {
-				// Iterate packet-by-packet so we can read PCR timestamps.
-				for off := 0; off+ts.PacketSize <= len(chunk); off += ts.PacketSize {
+				// Search for the first sync byte in the chunk if we're not aligned.
+				for off := 0; off+ts.PacketSize <= len(chunk); {
+					if chunk[off] != ts.SyncByte {
+						next := bytes.IndexByte(chunk[off+1:], ts.SyncByte)
+						if next < 0 {
+							break
+						}
+						off += next + 1
+						continue
+					}
 					pkt := chunk[off : off+ts.PacketSize]
 					acc = append(acc, pkt...)
+					off += ts.PacketSize
 
 					res := ts.FindPCR(pkt)
 					if res.Discontinuity {

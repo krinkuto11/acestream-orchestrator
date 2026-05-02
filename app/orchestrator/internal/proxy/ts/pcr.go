@@ -54,31 +54,35 @@ func FindPCR(pkt []byte) PCRResult {
 //
 // No allocations. Safe to call from any goroutine.
 func ScanForLastPCR(data []byte) (ticks int64, pid uint16, found bool) {
-	for i := 0; i+PacketSize <= len(data); i += PacketSize {
-		pkt := data[i : i+PacketSize]
-		if pkt[0] != SyncByte {
+	for i := 0; i+PacketSize <= len(data); {
+		if data[i] != SyncByte {
+			next := bytes.IndexByte(data[i+1:], SyncByte)
+			if next < 0 {
+				break
+			}
+			i += next + 1
 			continue
 		}
+
+		pkt := data[i : i+PacketSize]
 		// adaptation_field_control is bits [5:4] of byte 3.
 		// Value 0x2 (adaptation only) or 0x3 (adaptation+payload) → has adaptation.
-		if (pkt[3]>>4)&0x3 < 2 {
-			continue
+		if (pkt[3]>>4)&0x3 >= 2 {
+			aflLen := int(pkt[4])
+			if aflLen >= 7 && 5+aflLen <= PacketSize {
+				if pkt[5]&0x10 != 0 { // PCR_flag set
+					p := uint16(pkt[1]&0x1F)<<8 | uint16(pkt[2])
+					base := int64(pkt[6])<<25 | int64(pkt[7])<<17 | int64(pkt[8])<<9 |
+						int64(pkt[9])<<1 | int64(pkt[10]>>7)
+					ext := int64(pkt[10]&0x01)<<8 | int64(pkt[11])
+					ticks = base*300 + ext
+					pid = p
+					found = true
+				}
+			}
 		}
-		aflLen := int(pkt[4])
-		if aflLen < 7 || 5+aflLen > PacketSize {
-			continue
-		}
-		if pkt[5]&0x10 == 0 { // PCR_flag not set
-			continue
-		}
-		p := uint16(pkt[1]&0x1F)<<8 | uint16(pkt[2])
-		base := int64(pkt[6])<<25 | int64(pkt[7])<<17 | int64(pkt[8])<<9 |
-			int64(pkt[9])<<1 | int64(pkt[10]>>7)
-		ext := int64(pkt[10]&0x01)<<8 | int64(pkt[11])
-		ticks = base*300 + ext
-		pid = p
-		found = true
-		// Do not break — keep scanning to return the last (most recent) PCR.
+		i += PacketSize
 	}
 	return
 }
+
