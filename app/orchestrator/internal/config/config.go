@@ -267,6 +267,16 @@ func ApplyEngineSettings(m map[string]any) {
 			}
 		case "max_streams_per_engine":
 			n.MaxStreamsPerEngine = toInt(v)
+		case "total_max_download_rate":
+			n.EngineMaxDownloadRate = toInt(v)
+		case "total_max_upload_rate":
+			n.EngineMaxUploadRate = toInt(v)
+		case "live_cache_type":
+			if s, ok := v.(string); ok {
+				n.EngineLiveCacheType = s
+			}
+		case "buffer_time":
+			n.EngineBufferTime = toInt(v)
 		}
 	}
 	C.Store(&n)

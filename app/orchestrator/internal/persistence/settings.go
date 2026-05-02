@@ -85,6 +85,8 @@ func (s *SettingsStore) Save(category string, payload map[string]any) error {
 	switch category {
 	case "engine_config":
 		merged = normalizeEngineConfig(merged)
+	case "engine_settings":
+		merged = normalizeEngineSettings(merged)
 	case "proxy_settings":
 		merged = normalizeProxySettings(merged)
 	case "vpn_settings":
@@ -600,6 +602,20 @@ func normalizeOrchestratorSettings(m map[string]any) map[string]any {
 		delete(out, k)
 	}
 
+	return out
+}
+
+func normalizeEngineSettings(m map[string]any) map[string]any {
+	out := deepCopyMap(m)
+	// Remove fields that belong to engine_config category to avoid split-brain
+	configFields := []string{
+		"total_max_download_rate", "total_max_upload_rate",
+		"live_cache_type", "buffer_time", "max_peers",
+		"memory_limit", "parameters",
+	}
+	for _, f := range configFields {
+		delete(out, f)
+	}
 	return out
 }
 

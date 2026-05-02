@@ -264,8 +264,18 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const loadEngineSettings = useCallback(async () => {
     try {
       setLoadingSettings(true)
-      const s = await fetchJSON(`${orchUrl}/api/v1/settings/engine`)
-      setEngineSettings(s)
+      // Fetch both scaling settings and engine config
+      const [settings, config] = await Promise.all([
+        fetchJSON(`${orchUrl}/api/v1/settings/engine`),
+        fetchJSON(`${orchUrl}/api/v1/engine/config`)
+      ])
+      
+      setEngineSettings({
+        ...settings,
+        ...config,
+        // Ensure manual_engines is always an array
+        manual_engines: settings.manual_engines || [],
+      })
       setSettingsChanged(false)
     } catch (err) {
       addNotification(`Failed to load engine settings: ${err.message}`, 'error')
@@ -307,11 +317,38 @@ export function EnginesPage({ engines, onDeleteEngine, vpnStatus, orchUrl, apiKe
   const handleSaveSettings = useCallback(async () => {
     try {
       setSavingSettings(true)
-      await fetchJSON(`${orchUrl}/api/v1/settings/engine`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify(engineSettings),
-      })
+      
+      // Split settings into the two backend categories
+      const settingsPayload = {
+        min_replicas: engineSettings.min_replicas,
+        max_replicas: engineSettings.max_replicas,
+        auto_delete: engineSettings.auto_delete,
+        manual_mode: engineSettings.manual_mode,
+        manual_engines: engineSettings.manual_engines,
+      }
+      
+      const configPayload = {
+        live_cache_type: engineSettings.live_cache_type,
+        total_max_download_rate: engineSettings.total_max_download_rate,
+        total_max_upload_rate: engineSettings.total_max_upload_rate,
+        buffer_time: engineSettings.buffer_time,
+        max_peers: engineSettings.max_peers,
+        memory_limit: engineSettings.memory_limit,
+      }
+
+      await Promise.all([
+        fetchJSON(`${orchUrl}/api/v1/settings/engine`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(settingsPayload),
+        }),
+        fetchJSON(`${orchUrl}/api/v1/engine/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(configPayload),
+        })
+      ])
+
       addNotification('Engine settings saved successfully', 'success')
       setSettingsChanged(false)
     } catch (err) {
