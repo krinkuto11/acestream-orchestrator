@@ -7,17 +7,17 @@ import (
 )
 
 const (
-	PacketSize      = 188
-	SyncByte        = 0x47
-	SyncByteIndex   = 0
-	CCIndex         = 3 // Continuity counter location: byte 3
-	CCMask          = 0x0F
-	PUSIBit         = 0x40 // Payload unit start indicator (byte 1)
-	
+	PacketSize    = 188
+	SyncByte      = 0x47
+	SyncByteIndex = 0
+	CCIndex       = 3 // Continuity counter location: byte 3
+	CCMask        = 0x0F
+	PUSIBit       = 0x40 // Payload unit start indicator (byte 1)
+
 	maxInvalidSync     = 5
 	defaultConfirms    = 3
-	huntBackoffMs      = 10  // Backoff between hunt mode scans
-	ccValidationWindow = 10  // Only validate CC after N consecutive locked packets
+	huntBackoffMs      = 10 // Backoff between hunt mode scans
+	ccValidationWindow = 10 // Only validate CC after N consecutive locked packets
 )
 
 // LockState represents the SyncHunter's synchronization state.
@@ -50,17 +50,18 @@ func CreateNullChunk(n int, startCC uint8) []byte {
 
 // SyncHunter finds 188-byte TS packet boundaries from a raw byte stream
 // with robust state management and continuity counter validation.
-// 
+//
 // State machine:
-//   Hunting -> TentativeLock (3 valid packets + correct CC)
-//   TentativeLock -> Locked (10 consecutive valid packets + CC)
-//   Locked -> TentativeLock (3 bad packets: sync or CC error)
-//   TentativeLock -> Hunting (5 bad packets total)
+//
+//	Hunting -> TentativeLock (3 valid packets + correct CC)
+//	TentativeLock -> Locked (10 consecutive valid packets + CC)
+//	Locked -> TentativeLock (3 bad packets: sync or CC error)
+//	TentativeLock -> Hunting (5 bad packets total)
 //
 // This reduces false lock-ups and adds hysteresis to prevent thrashing.
 type SyncHunter struct {
 	buf                   []byte
-	slideWindow           []byte           // Last few packets for context on loss
+	slideWindow           []byte // Last few packets for context on loss
 	state                 LockState
 	invalidSyncCount      int
 	invalidCCCount        int
@@ -73,7 +74,6 @@ type SyncHunter struct {
 	consecutiveValidCC    int
 }
 
-
 // NewSyncHunter creates a SyncHunter ready for use.
 func NewSyncHunter() *SyncHunter {
 	return &SyncHunter{
@@ -83,6 +83,20 @@ func NewSyncHunter() *SyncHunter {
 		slideWindow:           make([]byte, 0, PacketSize*3),
 		lastCC:                0xFF, // Invalid initial value
 	}
+}
+
+// Reset clears the internal state so a new upstream connection starts cleanly.
+func (h *SyncHunter) Reset() {
+	h.buf = h.buf[:0]
+	h.slideWindow = h.slideWindow[:0]
+	h.state = StateHunting
+	h.invalidSyncCount = 0
+	h.invalidCCCount = 0
+	h.goodPacketsSinceSync = 0
+	h.lastCC = 0xFF
+	h.lastCCCheckTime = time.Time{}
+	h.huntBackoffTime = time.Time{}
+	h.consecutiveValidCC = 0
 }
 
 // Feed accepts raw bytes and returns perfectly 188-byte-aligned TS packets.
@@ -116,13 +130,13 @@ func (h *SyncHunter) lockedPath() []byte {
 	out := make([]byte, 0, validLen)
 	for i := 0; i < validLen; i += PacketSize {
 		pkt := h.buf[i : i+PacketSize]
-		
+
 		// Check sync byte
 		if pkt[SyncByteIndex] != SyncByte {
 			h.invalidSyncCount++
 			if h.invalidSyncCount >= 3 {
-				slog.Warn("ts sync lost (Locked->Tentative)", 
-					"invalid_sync", h.invalidSyncCount, 
+				slog.Warn("ts sync lost (Locked->Tentative)",
+					"invalid_sync", h.invalidSyncCount,
 					"position", len(out))
 				h.state = StateTentativeLock
 				h.invalidSyncCount = 0
@@ -134,7 +148,7 @@ func (h *SyncHunter) lockedPath() []byte {
 			}
 			continue
 		}
-		
+
 		// Validate continuity counter after warm-up
 		if h.goodPacketsSinceSync >= ccValidationWindow && !h.validateCC(pkt) {
 			h.invalidCCCount++
@@ -153,7 +167,7 @@ func (h *SyncHunter) lockedPath() []byte {
 			}
 			continue
 		}
-		
+
 		// Valid packet
 		out = append(out, pkt...)
 		h.lastCC = pkt[CCIndex] & CCMask
@@ -176,7 +190,7 @@ func (h *SyncHunter) tentativePath() []byte {
 	out := make([]byte, 0, validLen)
 	for i := 0; i < validLen; i += PacketSize {
 		pkt := h.buf[i : i+PacketSize]
-		
+
 		// Check sync byte
 		if pkt[SyncByteIndex] != SyncByte {
 			h.invalidSyncCount++
@@ -196,7 +210,7 @@ func (h *SyncHunter) tentativePath() []byte {
 			}
 			continue
 		}
-		
+
 		// Validate CC
 		if !h.validateCC(pkt) {
 			h.invalidCCCount++
@@ -215,7 +229,7 @@ func (h *SyncHunter) tentativePath() []byte {
 			}
 			continue
 		}
-		
+
 		// Valid packet
 		out = append(out, pkt...)
 		h.lastCC = pkt[CCIndex] & CCMask
@@ -223,7 +237,7 @@ func (h *SyncHunter) tentativePath() []byte {
 		h.invalidCCCount = 0
 		h.goodPacketsSinceSync++
 		h.consecutiveValidCC++
-		
+
 		// Promote to full lock after 10 consecutive valid packets
 		if h.consecutiveValidCC >= 10 {
 			slog.Info("ts sync fully locked (Tentative->Locked)",
@@ -240,6 +254,10 @@ func (h *SyncHunter) tentativePath() []byte {
 func (h *SyncHunter) huntPath() []byte {
 	// Rate limit hunt mode to prevent thrashing
 	if time.Now().Before(h.huntBackoffTime) {
+		maxWindow := PacketSize * 3
+		if len(h.buf) > maxWindow {
+			h.buf = h.buf[len(h.buf)-maxWindow:]
+		}
 		return nil
 	}
 
@@ -247,6 +265,10 @@ func (h *SyncHunter) huntPath() []byte {
 	for len(h.buf) >= need {
 		idx := bytes.IndexByte(h.buf, SyncByte)
 		if idx < 0 {
+			maxWindow := PacketSize * 3
+			if len(h.buf) > maxWindow {
+				h.buf = h.buf[len(h.buf)-maxWindow:]
+			}
 			h.buf = h.buf[len(h.buf)-1:]
 			return nil
 		}
@@ -271,7 +293,7 @@ func (h *SyncHunter) huntPath() []byte {
 				break
 			}
 		}
-		
+
 		if verified {
 			// Check CC validity for first packet
 			firstCC := h.buf[CCIndex] & CCMask
@@ -281,16 +303,17 @@ func (h *SyncHunter) huntPath() []byte {
 			h.invalidCCCount = 0
 			h.goodPacketsSinceSync = h.requiredConfirmations
 			h.consecutiveValidCC = h.requiredConfirmations
-			
+
 			slog.Info("ts sync hunter locked (Hunting->Tentative)",
 				"confirmations", h.requiredConfirmations,
 				"first_cc", firstCC)
 			return h.tentativePath()
 		}
-		
+
 		// False sync — skip one byte and continue
 		h.buf = h.buf[1:]
 	}
+	h.updateSlideWindow(h.buf)
 	return nil
 }
 
@@ -300,14 +323,14 @@ func (h *SyncHunter) validateCC(pkt []byte) bool {
 	if len(pkt) < CCIndex+1 {
 		return false
 	}
-	
+
 	cc := pkt[CCIndex] & CCMask
-	
+
 	// First packet after sync lock
 	if h.lastCC == 0xFF {
 		return true
 	}
-	
+
 	// Check for expected next CC (with wrap-around)
 	expectedCC := (h.lastCC + 1) & CCMask
 	return cc == expectedCC
@@ -322,4 +345,3 @@ func (h *SyncHunter) updateSlideWindow(data []byte) {
 	}
 	h.slideWindow = append(h.slideWindow[:0], data...)
 }
-

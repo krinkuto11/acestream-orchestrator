@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/acestream/acestream/internal/proxy/buffer"
 	"github.com/acestream/acestream/internal/config"
+	"github.com/acestream/acestream/internal/proxy/buffer"
 	"github.com/acestream/acestream/internal/proxy/telemetry"
 	"github.com/acestream/acestream/internal/proxy/ts"
 )
@@ -33,6 +33,7 @@ type Reader struct {
 
 	client *http.Client
 	stopCh chan struct{}
+	hunter *ts.SyncHunter
 }
 
 // New creates a Reader for the given URL/buffer pair.
@@ -54,7 +55,17 @@ func New(contentID, url string, buf *buffer.RingBuffer, mode string) *Reader {
 				DialContext:         (&net.Dialer{Timeout: config.C.Load().UpstreamConnectTimeout}).DialContext,
 			},
 		},
+		hunter: ts.NewSyncHunter(),
 	}
+}
+
+func (r *Reader) resetSyncHunter(reason string) {
+	if r.hunter == nil {
+		r.hunter = ts.NewSyncHunter()
+		return
+	}
+	slog.Info("resetting ts sync hunter", "stream", r.contentID, "reason", reason)
+	r.hunter.Reset()
 }
 
 func (r *Reader) Start(ctx context.Context) error {
@@ -91,6 +102,8 @@ func (r *Reader) Start(ctx context.Context) error {
 			case <-time.After(backoff):
 			}
 		}
+
+		r.resetSyncHunter("reconnect")
 
 		// Only enforce the init deadline before the first byte has arrived.
 
@@ -165,7 +178,6 @@ func (r *Reader) readOnce(ctx context.Context, tag string) (int, error) {
 
 	slog.Info("upstream connected", "stream", r.contentID, "status", resp.StatusCode)
 
-	hunter := ts.NewSyncHunter()
 	rawBuf := make([]byte, ts.PacketSize*44) // 8272 bytes
 	chunkCount := 0
 
@@ -182,7 +194,7 @@ func (r *Reader) readOnce(ctx context.Context, tag string) (int, error) {
 		n, readErr := resp.Body.Read(rawBuf)
 		if n > 0 {
 			idleTimer.Reset(config.C.Load().UpstreamReadTimeout)
-			aligned := hunter.Feed(rawBuf[:n])
+			aligned := r.hunter.Feed(rawBuf[:n])
 			if len(aligned) > 0 {
 				written := r.buf.Write(aligned)
 				chunkCount += written
