@@ -1499,6 +1499,7 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						"stream_count":   map[string]string{"type": "integer"},
 						"cpu_percent":    map[string]string{"type": "number"},
 						"memory_usage":   map[string]string{"type": "integer"},
+						"vpn_container":  map[string]string{"type": "string"},
 					},
 				},
 				"Stream": map[string]any{
@@ -1508,6 +1509,7 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 						"content_id":     map[string]string{"type": "string"},
 						"status":         map[string]string{"type": "string", "enum": "playing,prebuf,ended"},
 						"container_id":   map[string]string{"type": "string"},
+						"container_name": map[string]string{"type": "string"},
 						"active_clients": map[string]string{"type": "integer"},
 						"bitrate":        map[string]string{"type": "integer"},
 						"peers":          map[string]string{"type": "integer"},
@@ -1520,6 +1522,7 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"type": "object",
 					"properties": map[string]any{
 						"container_name": map[string]string{"type": "string"},
+						"container_id":   map[string]string{"type": "string"},
 						"status":         map[string]string{"type": "string"},
 						"healthy":        map[string]string{"type": "boolean"},
 						"provider":       map[string]string{"type": "string"},
@@ -1533,6 +1536,15 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 				"get": map[string]any{
 					"tags":    []string{"Orchestrator"},
 					"summary": "Full system status",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/health/status": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Orchestrator"},
+					"summary": "Simplified health check",
 					"responses": map[string]any{
 						"200": map[string]any{"description": "OK"},
 					},
@@ -1557,6 +1569,15 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			},
+			"/api/v1/engines/stats/all": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Engines"},
+					"summary": "Aggregated stats for all engines",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
 			"/api/v1/engines/{id}": map[string]any{
 				"get": map[string]any{
 					"tags":    []string{"Engines"},
@@ -1575,6 +1596,18 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
 					"responses": map[string]any{
 						"202": map[string]any{"description": "Accepted"},
+					},
+				},
+			},
+			"/api/v1/engines/stats/{id}": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Engines"},
+					"summary": "Specific engine resource stats",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
 					},
 				},
 			},
@@ -1610,11 +1643,33 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			},
+			"/api/v1/streams/batch-stop": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"Streams"},
+					"summary":  "Stop multiple streams at once",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
 			"/api/v1/streams/{id}": map[string]any{
 				"delete": map[string]any{
 					"tags":     []string{"Streams"},
 					"summary":  "Force stop a stream",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/streams/{id}/stats": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Streams"},
+					"summary": "Recent telemetry history for a stream",
 					"parameters": []map[string]any{
 						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
 					},
@@ -1642,6 +1697,24 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			},
+			"/api/v1/vpn/status": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"VPN"},
+					"summary": "VPN connectivity status",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/vpn/publicip": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"VPN"},
+					"summary": "Detected public IP of the orchestrator/VPN",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
 			"/api/v1/settings": map[string]any{
 				"get": map[string]any{
 					"tags":     []string{"Settings"},
@@ -1655,6 +1728,29 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"tags":     []string{"Settings"},
 					"summary":  "Update multiple settings categories",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/settings/{category}": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Settings"},
+					"summary": "Get settings for a specific category",
+					"parameters": []map[string]any{
+						{"name": "category", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+				"post": map[string]any{
+					"tags":     []string{"Settings"},
+					"summary":  "Update a specific settings category",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "category", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
 					"responses": map[string]any{
 						"200": map[string]any{"description": "OK"},
 					},
@@ -1676,6 +1772,24 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					"parameters": []map[string]any{
 						{"name": "limit", "in": "query", "schema": map[string]string{"type": "integer", "default": "50"}},
 					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/events/stats": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Observability"},
+					"summary": "Aggregated event statistics",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/cache/stats": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Observability"},
+					"summary": "Internal cache hit/miss statistics",
 					"responses": map[string]any{
 						"200": map[string]any{"description": "OK"},
 					},
@@ -1710,13 +1824,116 @@ func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			},
-			"/api/v1/circuit-breaker/reset": map[string]any{
+			"/api/v1/version": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Orchestrator"},
+					"summary": "Orchestrator version and build info",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/gc": map[string]any{
 				"post": map[string]any{
 					"tags":     []string{"Orchestrator"},
-					"summary":  "Force reset circuit breakers",
+					"summary":  "Trigger garbage collection of idle engines",
 					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
 					"responses": map[string]any{
 						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/scale/{demand}": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"Orchestrator"},
+					"summary":  "Manually scale engine capacity",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "demand", "in": "path", "required": true, "schema": map[string]string{"type": "integer"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/by-label": map[string]any{
+				"get": map[string]any{
+					"tags":     []string{"Engines"},
+					"summary":  "Filter engines by Docker label",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "label", "in": "query", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/vpn-nodes/provision": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"VPN"},
+					"summary":  "Provision a new VPN node",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/vpn-nodes/{name}/drain": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"VPN"},
+					"summary":  "Mark a VPN node as draining",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "name", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/vpn-nodes/{name}": map[string]any{
+				"delete": map[string]any{
+					"tags":     []string{"VPN"},
+					"summary":  "Destroy a VPN node",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "name", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/settings/export": map[string]any{
+				"get": map[string]any{
+					"tags":     []string{"Settings"},
+					"summary":  "Export all settings as a JSON bundle",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "JSON bundle"},
+					},
+				},
+			},
+			"/api/v1/settings/import": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"Settings"},
+					"summary":  "Import a settings bundle",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/modify_m3u": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Streams"},
+					"summary": "Helper to proxy and modify M3U playlists",
+					"parameters": []map[string]any{
+						{"name": "url", "in": "query", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "M3U Content"},
 					},
 				},
 			},
