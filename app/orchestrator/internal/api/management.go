@@ -1459,35 +1459,264 @@ func (s *ProxyServer) mgHandleDocs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *ProxyServer) mgHandleSpec(w http.ResponseWriter, r *http.Request) {
-	// Minimal OpenAPI 3.0 spec
 	spec := map[string]any{
 		"openapi": "3.0.0",
 		"info": map[string]any{
-			"title":   "AceStream Orchestrator API",
-			"version": "1.0.0",
+			"title":       "AceStream Orchestrator API",
+			"description": "Comprehensive management API for AceStream engine orchestration, VPN node lifecycle, and stream proxying.",
+			"version":     "1.0.0",
+			"contact": map[string]string{
+				"name": "AceStream Developer",
+			},
+		},
+		"tags": []map[string]string{
+			{"name": "Orchestrator", "description": "Global status and circuit breaker control"},
+			{"name": "Engines", "description": "AceStream engine lifecycle and metrics"},
+			{"name": "Streams", "description": "Active playback sessions and telemetry"},
+			{"name": "VPN", "description": "VPN node management and credentials"},
+			{"name": "Settings", "description": "Persistent configuration"},
+			{"name": "Observability", "description": "Metrics, events, and logs"},
+		},
+		"components": map[string]any{
+			"securitySchemes": map[string]any{
+				"ApiKeyAuth": map[string]string{
+					"type": "apiKey",
+					"in":   "header",
+					"name": "X-API-Key",
+				},
+			},
+			"schemas": map[string]any{
+				"Engine": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"container_id":   map[string]string{"type": "string"},
+						"container_name": map[string]string{"type": "string"},
+						"host":           map[string]string{"type": "string"},
+						"port":           map[string]string{"type": "integer"},
+						"api_port":       map[string]string{"type": "integer"},
+						"health_status":  map[string]string{"type": "string", "enum": "healthy,unhealthy,unknown"},
+						"draining":       map[string]string{"type": "boolean"},
+						"stream_count":   map[string]string{"type": "integer"},
+						"cpu_percent":    map[string]string{"type": "number"},
+						"memory_usage":   map[string]string{"type": "integer"},
+					},
+				},
+				"Stream": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":             map[string]string{"type": "string"},
+						"content_id":     map[string]string{"type": "string"},
+						"status":         map[string]string{"type": "string", "enum": "playing,prebuf,ended"},
+						"container_id":   map[string]string{"type": "string"},
+						"active_clients": map[string]string{"type": "integer"},
+						"bitrate":        map[string]string{"type": "integer"},
+						"peers":          map[string]string{"type": "integer"},
+						"speed_down":     map[string]string{"type": "integer"},
+						"speed_up":       map[string]string{"type": "integer"},
+						"started_at":     map[string]string{"type": "string", "format": "date-time"},
+					},
+				},
+				"VPNNode": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"container_name": map[string]string{"type": "string"},
+						"status":         map[string]string{"type": "string"},
+						"healthy":        map[string]string{"type": "boolean"},
+						"provider":       map[string]string{"type": "string"},
+						"control_host":   map[string]string{"type": "string"},
+					},
+				},
+			},
 		},
 		"paths": map[string]any{
 			"/api/v1/orchestrator/status": map[string]any{
 				"get": map[string]any{
-					"summary": "Get overall orchestrator status",
+					"tags":    []string{"Orchestrator"},
+					"summary": "Full system status",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "Success"},
+						"200": map[string]any{"description": "OK"},
 					},
 				},
 			},
 			"/api/v1/engines": map[string]any{
 				"get": map[string]any{
-					"summary": "List all engines",
+					"tags":    []string{"Engines"},
+					"summary": "List all provisioned AceStream engines",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "Success"},
+						"200": map[string]any{
+							"description": "List of engines",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":  "array",
+										"items": map[string]string{"$ref": "#/components/schemas/Engine"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/engines/{id}": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Engines"},
+					"summary": "Get engine details",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+						"404": map[string]any{"description": "Not Found"},
+					},
+				},
+				"delete": map[string]any{
+					"tags":     []string{"Engines"},
+					"summary":  "Dismantle an engine",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"202": map[string]any{"description": "Accepted"},
+					},
+				},
+			},
+			"/api/v1/containers/{id}/logs": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Observability"},
+					"summary": "Fetch container logs",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+						{"name": "tail", "in": "query", "schema": map[string]string{"type": "string", "default": "100"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
 					},
 				},
 			},
 			"/api/v1/streams": map[string]any{
 				"get": map[string]any{
-					"summary": "List all active streams",
+					"tags":    []string{"Streams"},
+					"summary": "List active playback sessions",
 					"responses": map[string]any{
-						"200": map[string]any{"description": "Success"},
+						"200": map[string]any{
+							"description": "List of streams",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":  "array",
+										"items": map[string]string{"$ref": "#/components/schemas/Stream"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/streams/{id}": map[string]any{
+				"delete": map[string]any{
+					"tags":     []string{"Streams"},
+					"summary":  "Force stop a stream",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/vpn-nodes": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"VPN"},
+					"summary": "List all VPN nodes (Gluetun containers)",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "List of VPN nodes",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":  "array",
+										"items": map[string]string{"$ref": "#/components/schemas/VPNNode"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/v1/settings": map[string]any{
+				"get": map[string]any{
+					"tags":     []string{"Settings"},
+					"summary":  "Fetch all persistent settings",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+				"post": map[string]any{
+					"tags":     []string{"Settings"},
+					"summary":  "Update multiple settings categories",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/metrics/dashboard": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Observability"},
+					"summary": "High-level dashboard metrics snapshot",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/events": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Observability"},
+					"summary": "Fetch system events history",
+					"parameters": []map[string]any{
+						{"name": "limit", "in": "query", "schema": map[string]string{"type": "integer", "default": "50"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/provision": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"Orchestrator"},
+					"summary":  "Manually trigger engine provisioning",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/reconcile": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"Orchestrator"},
+					"summary":  "Force a state reconciliation loop",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/circuit-breaker": map[string]any{
+				"get": map[string]any{
+					"tags":    []string{"Orchestrator"},
+					"summary": "Get circuit breaker state",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
+					},
+				},
+			},
+			"/api/v1/circuit-breaker/reset": map[string]any{
+				"post": map[string]any{
+					"tags":     []string{"Orchestrator"},
+					"summary":  "Force reset circuit breakers",
+					"security": []map[string]any{{"ApiKeyAuth": []string{}}},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "OK"},
 					},
 				},
 			},
