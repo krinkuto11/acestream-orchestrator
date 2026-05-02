@@ -65,7 +65,7 @@ func TestNormalizeProxySettings_MaxStreamsClamp(t *testing.T) {
 		want int
 	}{
 		{5, 5},
-		{0, 1},   // clamp min
+		{0, 2},   // floor replaces 0 with default 2
 		{-3, 1},  // clamp min
 		{99, 20}, // clamp max
 		{float64(7), 7},

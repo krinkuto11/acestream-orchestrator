@@ -677,7 +677,7 @@ func buildCommand(httpPort, apiPort, p2pPort int, cfg *config.Config) []string {
 
 func ComputeConfigHash() string {
 	cfg := config.C.Load()
-	s := fmt.Sprintf("%s|%s|%s|%t|%t|%s|%s|%d|%d|%s|%d",
+	s := fmt.Sprintf("%s|%s|%s|%t|%t|%s|%s",
 		cfg.EngineMemoryLimit,
 		cfg.DockerNetwork,
 		cfg.EngineVariant,
@@ -685,10 +685,6 @@ func ComputeConfigHash() string {
 		cfg.VPNEnabled,
 		cfg.VPNProvider,
 		cfg.VPNProtocol,
-		cfg.EngineMaxDownloadRate,
-		cfg.EngineMaxUploadRate,
-		cfg.EngineLiveCacheType,
-		cfg.EngineBufferTime,
 	)
 	h := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("%x", h[:8])
