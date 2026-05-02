@@ -80,6 +80,10 @@ function getStreamClients(s) {
   return 0
 }
 
+function getStreamPeers(s) {
+  return typeof s?.peers === 'number' ? s.peers : '—'
+}
+
 export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode }) {
   const active = streams.filter(s => String(s.status || '').toLowerCase() === 'started').length
   const migrations = streams.filter(s => String(s.status || '').toLowerCase().includes('failover')).length
@@ -143,6 +147,7 @@ export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEn
                 <th>ENGINE</th>
                 <th>MODE</th>
                 <th>CLIENTS</th>
+                <th>PEERS</th>
                 <th>BITRATE</th>
                 <th>DOWN</th>
                 <th>UP</th>
@@ -162,6 +167,7 @@ export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEn
                     <td style={{ color: isMigrating ? 'var(--acc-magenta)' : 'var(--fg-1)' }}>{getStreamEngine(s)}</td>
                     <td style={{ color: 'var(--fg-2)' }}>{getStreamMode(s)}</td>
                     <td>{getStreamClients(s)}</td>
+                    <td style={{ color: 'var(--fg-1)', fontWeight: 600 }}>{getStreamPeers(s)}</td>
                     <td style={{ color: 'var(--fg-1)', whiteSpace: 'nowrap' }}>{getStreamBitrate(s)}</td>
                     <td style={{ color: 'var(--acc-green)', fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap' }}>{getStreamSpeedDown(s)}</td>
                     <td style={{ color: 'var(--acc-amber)', fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap' }}>{getStreamSpeedUp(s)}</td>
