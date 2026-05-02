@@ -33,7 +33,6 @@ type Reader struct {
 
 	client *http.Client
 	stopCh chan struct{}
-	hunter *ts.SyncHunter
 }
 
 // New creates a Reader for the given URL/buffer pair.
@@ -55,18 +54,10 @@ func New(contentID, url string, buf *buffer.RingBuffer, mode string) *Reader {
 				DialContext:         (&net.Dialer{Timeout: config.C.Load().UpstreamConnectTimeout}).DialContext,
 			},
 		},
-		hunter: ts.NewSyncHunter(),
 	}
 }
 
-func (r *Reader) resetSyncHunter(reason string) {
-	if r.hunter == nil {
-		r.hunter = ts.NewSyncHunter()
-		return
-	}
-	slog.Info("resetting ts sync hunter", "stream", r.contentID, "reason", reason)
-	r.hunter.Reset()
-}
+
 
 func (r *Reader) Start(ctx context.Context) error {
 	tag := fmt.Sprintf("[upstream:%s]", r.contentID)
@@ -103,7 +94,7 @@ func (r *Reader) Start(ctx context.Context) error {
 			}
 		}
 
-		r.resetSyncHunter("reconnect")
+
 
 		// Only enforce the init deadline before the first byte has arrived.
 
@@ -194,12 +185,9 @@ func (r *Reader) readOnce(ctx context.Context, tag string) (int, error) {
 		n, readErr := resp.Body.Read(rawBuf)
 		if n > 0 {
 			idleTimer.Reset(config.C.Load().UpstreamReadTimeout)
-			aligned := r.hunter.Feed(rawBuf[:n])
-			if len(aligned) > 0 {
-				written := r.buf.Write(aligned)
-				chunkCount += written
-				telemetry.DefaultTelemetry.ObserveIngress(r.mode, int64(len(aligned)))
-			}
+			written := r.buf.Write(rawBuf[:n])
+			chunkCount += written
+			telemetry.DefaultTelemetry.ObserveIngress(r.mode, int64(n))
 		}
 		if readErr != nil {
 			if readErr == io.EOF {

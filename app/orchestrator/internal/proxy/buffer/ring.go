@@ -107,8 +107,7 @@ func New(targetChunkSize, slots int) *RingBuffer {
 	}
 	slots = nextPow2(slots)
 
-	// Align to TS packet size
-	targetChunkSize = (targetChunkSize / ts.PacketSize) * ts.PacketSize
+	// Target size for each chunk; usually ~1MB.
 	if targetChunkSize == 0 {
 		targetChunkSize = ts.PacketSize * 5644
 	}
@@ -144,14 +143,13 @@ func (rb *RingBuffer) Write(data []byte) int {
 	rb.lastWriteTime = time.Now()
 
 	combined := append(rb.partial, data...)
-	alignedLen := (len(combined) / ts.PacketSize) * ts.PacketSize
-	if alignedLen == 0 {
+	if len(combined) < rb.targetSize {
 		rb.partial = combined
 		rb.mu.Unlock()
 		return 0
 	}
-	subTS := combined[alignedLen:]
-	aligned := combined[:alignedLen]
+	
+	aligned := combined
 
 	// Track the last stored chunk for PCR scanning (done outside the lock).
 	var lastChunk []byte
@@ -168,7 +166,7 @@ func (rb *RingBuffer) Write(data []byte) int {
 		written++
 	}
 
-	rb.partial = append(aligned, subTS...)
+	rb.partial = aligned
 	rb.mu.Unlock()
 
 	if written > 0 {
