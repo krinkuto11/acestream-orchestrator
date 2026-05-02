@@ -80,13 +80,13 @@ function EngineRackRow({ engine, idx, onDelete, maxStreamsPerEngine }) {
       {/* Status bar */}
       <div style={{ width: 4, background: accent, alignSelf: 'stretch', flexShrink: 0 }}/>
       {/* Name */}
-      <div style={{ width: 160, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', flexShrink: 0 }}>
-        <span style={{ fontSize: 12.5, color: 'var(--fg-0)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div style={{ flex: 3, minWidth: 180, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+        <span style={{ fontSize: 13, color: 'var(--fg-0)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {name}
         </span>
         {engine.forwarded && (
           <span style={{
-            fontSize: 7, color: 'var(--acc-cyan)',
+            fontSize: 7.5, color: 'var(--acc-cyan)',
             border: '1px solid var(--acc-cyan-dim)',
             padding: '0 3px', borderRadius: 2,
             fontFamily: 'var(--font-mono)', fontWeight: 700,
@@ -101,34 +101,34 @@ function EngineRackRow({ engine, idx, onDelete, maxStreamsPerEngine }) {
         :{engine.port || '–'}
       </div>
       {/* VPN */}
-      <div style={{ width: 110, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--acc-cyan)', overflow: 'hidden', flexShrink: 0 }}>
+      <div style={{ flex: 2, minWidth: 140, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--acc-cyan)', overflow: 'hidden' }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {engine.vpn_container ? `⌬ ${engine.vpn_container.replace(/^dyn-/, '').replace(/^gluetun-/, '')}` : '— none'}
         </span>
       </div>
       {/* Status */}
-      <div style={{ width: 90, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+      <div style={{ width: 96, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
         <StatusTag status={status}/>
       </div>
       {/* CPU */}
-      <div style={{ width: 130, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        <span style={{ fontSize: 11, color: 'var(--fg-2)' }}>cpu</span>
-        <AsciiBar value={cpu} width={10} color={cpu > 80 ? 'var(--acc-red)' : cpu > 50 ? 'var(--acc-amber)' : 'var(--acc-green)'}/>
-        <span style={{ fontSize: 11, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', width: 34, flexShrink: 0 }}>{cpu.toFixed(1)}%</span>
+      <div style={{ width: 170, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <span style={{ fontSize: 11, color: 'var(--fg-3)', width: 24 }}>cpu</span>
+        <AsciiBar value={cpu} width={12} color={cpu > 80 ? 'var(--acc-red)' : cpu > 50 ? 'var(--acc-amber)' : 'var(--acc-green)'}/>
+        <span style={{ fontSize: 11.5, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', width: 44, textAlign: 'right' }}>{cpu.toFixed(1)}%</span>
       </div>
       {/* Mem */}
-      <div style={{ width: 64, padding: '0 8px', borderLeft: '1px solid var(--line)', display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-        {memMb}M
+      <div style={{ width: 90, padding: '0 10px', borderLeft: '1px solid var(--line)', display: 'flex', alignItems: 'center', fontSize: 11.5, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+        {memMb} MB
       </div>
       {/* Sessions */}
-      <div style={{ flex: 1, borderLeft: '1px solid var(--line-soft)', padding: '0 8px', display: 'flex', alignItems: 'center', gap: 2, minWidth: 100 }}>
+      <div style={{ flex: 4, minWidth: 200, borderLeft: '1px solid var(--line-soft)', padding: '0 10px', display: 'flex', alignItems: 'center', gap: 3 }}>
         {sessionBlocks.length > 0
           ? sessionBlocks
           : <span style={{ fontSize: 11, color: 'var(--fg-3)', fontStyle: 'italic' }}>— idle —</span>
         }
       </div>
       {/* Count */}
-      <div style={{ width: 50, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontSize: 12.5, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+      <div style={{ width: 56, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', fontSize: 12.5, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
         {streamCount}<span style={{ color: 'var(--fg-3)' }}>/
           {Number.isFinite(maxStreamsPerEngine) ? maxStreamsPerEngine : 0}
         </span>
@@ -163,14 +163,14 @@ function RackHeader() {
     }}>
       <div style={{ width: 32, padding: '0 6px', borderRight: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>SLOT</div>
       <div style={{ width: 4, flexShrink: 0 }}/>
-      <div style={{ width: 160, padding: '0 10px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>ID</div>
+      <div style={{ flex: 3, minWidth: 180, padding: '0 10px', display: 'flex', alignItems: 'center' }}>ID</div>
       <div style={{ width: 64, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>PORT</div>
-      <div style={{ width: 110, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>VPN</div>
-      <div style={{ width: 90, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>STATUS</div>
-      <div style={{ width: 130, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>CPU</div>
-      <div style={{ width: 64, padding: '0 8px', borderLeft: '1px solid var(--line)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>MEM</div>
-      <div style={{ flex: 1, borderLeft: '1px solid var(--line-soft)', padding: '0 8px', display: 'flex', alignItems: 'center', minWidth: 100 }}>SESSIONS</div>
-      <div style={{ width: 50, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0 }}>USED</div>
+      <div style={{ flex: 2, minWidth: 140, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center' }}>VPN</div>
+      <div style={{ width: 96, padding: '0 8px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>STATUS</div>
+      <div style={{ width: 170, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>CPU</div>
+      <div style={{ width: 90, padding: '0 10px', borderLeft: '1px solid var(--line)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>MEM</div>
+      <div style={{ flex: 4, minWidth: 200, borderLeft: '1px solid var(--line-soft)', padding: '0 10px', display: 'flex', alignItems: 'center' }}>SESSIONS</div>
+      <div style={{ width: 56, padding: '0 10px', borderLeft: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0 }}>USED</div>
       <div style={{ width: 40, borderLeft: '1px solid var(--line-soft)', flexShrink: 0 }}/>
     </div>
   )
