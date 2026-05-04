@@ -138,6 +138,22 @@ func (s *ServersRefreshService) RefreshOfficial(ctx context.Context) error {
 		return err
 	}
 
+	// Filter protonvpn servers to only include those with port_forward: true.
+	if pData, ok := payload["protonvpn"].(map[string]interface{}); ok {
+		if servers, ok := pData["servers"].([]interface{}); ok {
+			var filtered []interface{}
+			for _, s := range servers {
+				if server, ok := s.(map[string]interface{}); ok {
+					if pf, ok := server["port_forward"].(bool); ok && pf {
+						filtered = append(filtered, s)
+					}
+				}
+			}
+			pData["servers"] = filtered
+			slog.Info("Filtered ProtonVPN official servers", "total", len(servers), "remaining", len(filtered))
+		}
+	}
+
 	// Update mode: merge into existing servers.json.
 	existing := loadExistingJSON(mergedPath)
 	if ver, ok := payload["version"]; ok {
