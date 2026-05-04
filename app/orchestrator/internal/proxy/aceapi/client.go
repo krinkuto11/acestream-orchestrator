@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/acestream/acestream/internal/config"
 )
 
 const (
@@ -61,11 +63,12 @@ type Client struct {
 
 // New creates a Client. Call Connect before any other method.
 func New(host string, port int) *Client {
+	cfg := config.C.Load()
 	return &Client{
 		host:           host,
 		port:           port,
-		connectTimeout: 10 * time.Second,
-		readTimeout:    10 * time.Second,
+		connectTimeout: cfg.UpstreamConnectTimeout + 5*time.Second,
+		readTimeout:    cfg.UpstreamReadTimeout,
 		productKey:     defaultProductKey,
 	}
 }
