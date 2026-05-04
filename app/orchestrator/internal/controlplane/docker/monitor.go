@@ -288,8 +288,14 @@ func Reindex(ctx context.Context) bool {
 	}
 
 	// Remove stale VPN nodes.
+	const vpnStartupGrace = 30 * time.Second
 	for _, n := range st.ListVPNNodes() {
 		if !runningVPNs[n.ContainerName] {
+			// Skip nodes registered very recently — they may be mid-provisioning
+			// and not yet appear in the ContainerList snapshot.
+			if time.Since(n.FirstSeen) < vpnStartupGrace {
+				continue
+			}
 			if st.RemoveVPNNode(n.ContainerName) {
 				slog.Info("Reindex: removed stale VPN node", "name", n.ContainerName)
 				changed = true

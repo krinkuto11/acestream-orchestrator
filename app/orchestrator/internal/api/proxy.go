@@ -639,6 +639,7 @@ func (s *ProxyServer) selectEngineWithWait(ctx context.Context) (engineSelection
 		ch := s.st.EngineReadyCh()
 		ep, err := s.selectEngine()
 		if err == nil {
+			defer undoNudge() // release any demand we bumped once we've successfully selected an engine
 			return ep, nil
 		}
 
