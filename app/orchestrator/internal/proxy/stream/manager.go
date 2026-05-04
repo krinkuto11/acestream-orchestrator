@@ -26,7 +26,7 @@ const apiKeepaliveInterval = 2 * time.Second
 // EventSink receives stream lifecycle events in-process, replacing HTTP notify calls.
 type EventSink interface {
 	OnStreamStarted(contentID, engineID, controlMode, streamMode string)
-	OnStreamPrebuffering(contentID, engineID, engineName string)
+	OnStreamPrebuffering(contentID, engineID, engineName, streamMode string)
 	OnStreamEnded(contentID string)
 	// OnStreamFailed is called when a stream request fails before OnStreamStarted
 	// fires, so the engine's pending reservation can be released.
@@ -35,17 +35,18 @@ type EventSink interface {
 
 type noopSink struct{}
 
-func (noopSink) OnStreamStarted(_, _, _, _ string)    {}
-func (noopSink) OnStreamPrebuffering(_, _, _ string) {}
-func (noopSink) OnStreamEnded(_ string)              {}
-func (noopSink) OnStreamFailed(_ string)      {}
+func (noopSink) OnStreamStarted(_, _, _, _ string)       {}
+func (noopSink) OnStreamPrebuffering(_, _, _, _ string) {}
+func (noopSink) OnStreamEnded(_ string)                 {}
+func (noopSink) OnStreamFailed(_ string)         {}
 
 // EngineParams describes an AceStream engine to connect to.
 type EngineParams struct {
 	Host        string
 	Port        int
-	APIPort     int
-	ContainerID string
+	APIPort       int
+	ContainerID   string
+	ContainerName string
 }
 
 // StreamParams is the full set of arguments for starting a stream.
@@ -121,7 +122,7 @@ func (m *Manager) Run(ctx context.Context) {
 
 	m.touchRedisTimestamp(rediskeys.ConnectionAttempt(m.params.ContentID), time.Hour)
 
-	m.sink.OnStreamPrebuffering(m.params.ContentID, m.params.Engine.ContainerID, "")
+	m.sink.OnStreamPrebuffering(m.params.ContentID, m.params.Engine.ContainerID, m.params.Engine.ContainerName, m.params.StreamMode)
 
 	if m.params.PlaybackURL != "" {
 		m.mu.Lock()

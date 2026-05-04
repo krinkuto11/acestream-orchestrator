@@ -11,11 +11,12 @@ import (
 
 // Selection is the result of engine selection plus proxy settings.
 type Selection struct {
-	ContainerID string
-	Host        string
-	Port        int
-	APIPort     int
-	Forwarded   bool
+	ContainerID   string
+	ContainerName string
+	Host          string
+	Port          int
+	APIPort       int
+	Forwarded     bool
 
 	StreamMode       string
 	ControlMode      string
@@ -74,6 +75,7 @@ func Select(st *state.Store, settings *persistence.SettingsStore) (*Selection, e
 
 	return &Selection{
 		ContainerID:      sel.ContainerID,
+		ContainerName:    sel.ContainerName,
 		Host:             sel.Host,
 		Port:             sel.Port,
 		APIPort:          apiPort,

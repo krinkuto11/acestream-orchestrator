@@ -147,7 +147,7 @@ func (s *ProxyServer) handleGetStream(w http.ResponseWriter, r *http.Request) {
 	var prebufferSeconds int
 
 	if mgr == nil {
-		s.st.OnStreamAllocating(streamKey)
+		s.st.OnStreamAllocating(streamKey, "TS")
 		ep, err := s.selectEngineWithWait(r.Context())
 		if err != nil {
 			s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: streamKey})
@@ -268,6 +268,7 @@ func (s *ProxyServer) handleHLSManifest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	s.st.OnStreamAllocating(streamKey, "HLS")
 	ep, err := s.selectEngineWithWait(r.Context())
 	if err != nil {
 		s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: streamKey})
@@ -303,7 +304,7 @@ func (s *ProxyServer) handleHLSManifestAPIMode(
 	streamKey string, mgr *stream.Manager, buf *buffer.RingBuffer,
 ) {
 	if mgr == nil {
-		s.st.OnStreamAllocating(streamKey)
+		s.st.OnStreamAllocating(streamKey, "HLS")
 		ep, err := s.selectEngineWithWait(r.Context())
 		if err != nil {
 			s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: streamKey})
@@ -695,10 +696,11 @@ func (s *ProxyServer) selectEngine() (engineSelection, error) {
 	}
 	return engineSelection{
 		EngineParams: stream.EngineParams{
-			Host:        sel.Host,
-			Port:        sel.Port,
-			APIPort:     sel.APIPort,
-			ContainerID: sel.ContainerID,
+			Host:          sel.Host,
+			Port:          sel.Port,
+			APIPort:       sel.APIPort,
+			ContainerID:   sel.ContainerID,
+			ContainerName: sel.ContainerName,
 		},
 		PrebufferSeconds: sel.PrebufferSeconds,
 		PacingMultiplier: sel.PacingMultiplier,

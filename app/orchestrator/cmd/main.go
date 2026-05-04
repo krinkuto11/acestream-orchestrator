@@ -298,8 +298,8 @@ func (s *stateSink) OnStreamStarted(contentID, engineID, controlMode, streamMode
 	})
 }
 
-func (s *stateSink) OnStreamPrebuffering(contentID, engineID, engineName string) {
-	s.st.OnStreamPrebuffering(contentID, engineID, engineName)
+func (s *stateSink) OnStreamPrebuffering(contentID, engineID, engineName, streamMode string) {
+	s.st.OnStreamPrebuffering(contentID, engineID, engineName, streamMode)
 }
 
 func (s *stateSink) OnStreamEnded(contentID string) {
