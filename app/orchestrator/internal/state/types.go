@@ -27,6 +27,7 @@ type Engine struct {
 	LastSeen      time.Time         `json:"last_seen"`
 	Draining      bool              `json:"draining"`
 	DrainReason   string            `json:"drain_reason,omitempty"`
+	LastAssignedAt time.Time         `json:"last_assigned_at,omitempty"`
 
 	// Runtime aggregates — populated by the management API, not persisted.
 	TotalPeers         int        `json:"total_peers"`

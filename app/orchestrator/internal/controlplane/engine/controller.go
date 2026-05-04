@@ -176,11 +176,17 @@ func computeDesiredReplicas(totalRunning, freeCount int, streamCounts, monitorCo
 		if anyNear {
 			// Scale out if no lookahead layer is set yet, or we've climbed past the last threshold.
 			if lookahead == nil || minLoad >= *lookahead {
-				lookaheadDesired := totalRunning + 1
+				numNear := 0
+				for _, s := range loadList {
+					if s >= threshold {
+						numNear++
+					}
+				}
+				lookaheadDesired := totalRunning + numNear
 				if lookaheadDesired > desired {
 					desired = lookaheadDesired
 				}
-				desc = fmt.Sprintf("lookahead triggered (engine near capacity at threshold %d)", threshold)
+				desc = fmt.Sprintf("lookahead triggered (%d engines near capacity at threshold %d)", numNear, threshold)
 				st.SetLookaheadLayer(minLoad)
 			}
 		} else if lookahead != nil && minLoad < *lookahead {

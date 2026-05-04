@@ -667,10 +667,12 @@ func (s *Store) SelectAndClaimEngine(maxStreams int) (*Engine, error) {
 	defer s.mu.Unlock()
 
 	type candidate struct {
-		e    Engine
+		e    *Engine
 		load int
 	}
 	var candidates []candidate
+	now := time.Now().UTC()
+
 	for _, e := range s.engines {
 		if e.Draining || e.HealthStatus != HealthHealthy {
 			continue
@@ -679,23 +681,37 @@ func (s *Store) SelectAndClaimEngine(maxStreams int) (*Engine, error) {
 		if load >= maxStreams {
 			continue
 		}
-		candidates = append(candidates, candidate{*e, load})
+
+		// Warm-up logic: if an engine is very fresh, limit its initial concurrency
+		// to 1 until it has had a few seconds to settle. This prevents a thundering
+		// herd from overwhelming the AceStream API before the first stream is active.
+		if time.Since(e.FirstSeen) < 5*time.Second && load >= 1 {
+			continue
+		}
+
+		candidates = append(candidates, candidate{e, load})
 	}
 
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no eligible engine (total=%d)", len(s.engines))
 	}
 
+	// Sort by load, then by LastAssignedAt (to spread load across engines),
+	// then by forwarded status.
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].load != candidates[j].load {
 			return candidates[i].load < candidates[j].load
+		}
+		if !candidates[i].e.LastAssignedAt.Equal(candidates[j].e.LastAssignedAt) {
+			return candidates[i].e.LastAssignedAt.Before(candidates[j].e.LastAssignedAt)
 		}
 		return candidates[i].e.Forwarded && !candidates[j].e.Forwarded
 	})
 
 	sel := candidates[0].e
 	s.enginePending[sel.ContainerID]++
-	cp := sel
+	sel.LastAssignedAt = now
+	cp := *sel
 	return &cp, nil
 }
 

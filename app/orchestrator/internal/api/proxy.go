@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -659,7 +660,17 @@ func (s *ProxyServer) selectEngineWithWait(ctx context.Context) (engineSelection
 			undoNudge()
 			return engineSelection{}, fmt.Errorf("no engine available: timed out waiting for capacity")
 		case <-ch:
-			// a new engine registered; retry immediately
+			// a new engine registered; add a small randomized jitter before
+			// retrying to prevent a thundering herd where all waiters slam
+			// the same new engine API in the same millisecond.
+			jitter := time.Duration(rand.Intn(200)+50) * time.Millisecond
+			select {
+			case <-ctx.Done():
+				undoNudge()
+				return engineSelection{}, ctx.Err()
+			case <-time.After(jitter):
+				// continue retry loop
+			}
 		}
 	}
 }
