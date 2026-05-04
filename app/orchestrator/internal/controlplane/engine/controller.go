@@ -232,7 +232,8 @@ func (c *Controller) NudgeDemand(n int) {
 	}
 	newDesired := state.Global.BumpDesiredReplicas(n, cfg.MaxReplicas)
 	metrics.CPDesiredReplicas.Set(float64(newDesired))
-	slog.Debug("demand nudge", "n", n, "desired", newDesired)
+	slog.Info("demand nudge; scaling UP", "n", n, "desired", newDesired)
+	c.lastScaleUp = time.Now()
 	c.Nudge("demand_spike")
 }
 
@@ -240,8 +241,14 @@ func (c *Controller) NudgeDemand(n int) {
 func (c *Controller) ScaleTo(n int) {
 	cfg := config.C.Load()
 	desired := max(cfg.MinReplicas, min(n, cfg.MaxReplicas))
-	state.Global.SetDesiredReplicas(desired)
+	st := state.Global
+	prev := st.GetDesiredReplicas()
+	st.SetDesiredReplicas(desired)
 	metrics.CPDesiredReplicas.Set(float64(desired))
+	slog.Info("manual scale request", "count", desired)
+	if desired > prev {
+		c.lastScaleUp = time.Now()
+	}
 	c.Nudge("scale_to")
 }
 
