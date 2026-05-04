@@ -144,6 +144,7 @@ func main() {
 
 	vpnManager := vpnpkg.NewLifecycleManager(pub, prov)
 	vpnManager.SetNudger(ctrl.Nudge)
+	vpnManager.SetEngineStopper(cpengine.StopEnginesByVPN)
 	ctrl.SetVPNNudger(vpnManager.Nudge)
 	go vpnManager.Run(appCtx)
 

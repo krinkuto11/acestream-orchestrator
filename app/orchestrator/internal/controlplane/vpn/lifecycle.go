@@ -12,7 +12,6 @@ import (
 	dockerclient "github.com/docker/docker/client"
 
 	"github.com/acestream/acestream/internal/config"
-	"github.com/acestream/acestream/internal/controlplane/engine"
 	"github.com/acestream/acestream/internal/state"
 )
 
@@ -29,6 +28,7 @@ type LifecycleManager struct {
 	activeHealings sync.Map
 	nudge          chan struct{}
 	nudger         func(string)
+	engineStopper  func(context.Context, string)
 	wg             sync.WaitGroup
 }
 
@@ -49,6 +49,10 @@ func NewLifecycleManager(pub *state.RedisPublisher, prov *Provisioner) *Lifecycl
 
 func (lm *LifecycleManager) SetNudger(f func(string)) {
 	lm.nudger = f
+}
+ 
+func (lm *LifecycleManager) SetEngineStopper(f func(context.Context, string)) {
+	lm.engineStopper = f
 }
 
 func (lm *LifecycleManager) Nudge(reason string) {
@@ -444,7 +448,9 @@ func (lm *LifecycleManager) destroyVPN(ctx context.Context, node *state.VPNNode)
 		}
 	}
 
-	engine.StopEnginesByVPN(ctx, node.ContainerName)
+	if lm.engineStopper != nil {
+		lm.engineStopper(ctx, node.ContainerName)
+	}
 	state.Global.RemoveEnginesByVPN(node.ContainerName)
 	state.Global.RemoveVPNNode(node.ContainerName)
 	lm.pub.RemoveVPNNode(ctx, node.ContainerName)
