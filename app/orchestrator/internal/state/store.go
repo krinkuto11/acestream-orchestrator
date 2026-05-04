@@ -960,6 +960,45 @@ func (s *Store) OnStreamStarted(ev StreamStartedEvent) *StreamState {
 	return st
 }
 
+func (s *Store) OnStreamAllocating(contentID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.streams[contentID]; exists {
+		return
+	}
+	now := time.Now().UTC()
+	s.streams[contentID] = &StreamState{
+		ID:           contentID,
+		ContentID:    contentID,
+		Status:       "allocating",
+		StartedAt:    now,
+		LastActivity: now,
+		Clients:      []map[string]any{},
+	}
+}
+
+func (s *Store) OnStreamPrebuffering(contentID, engineID, engineName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.streams[contentID]
+	if !ok {
+		now := time.Now().UTC()
+		st = &StreamState{
+			ID:           contentID,
+			ContentID:    contentID,
+			StartedAt:    now,
+			LastActivity: now,
+			Clients:      []map[string]any{},
+		}
+		s.streams[contentID] = st
+	}
+	st.Status = "prebuf"
+	st.EngineID = engineID
+	st.EngineName = engineName
+	st.ContainerID = engineID
+	st.ContainerName = engineName
+}
+
 func (s *Store) OnStreamEnded(ev StreamEndedEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

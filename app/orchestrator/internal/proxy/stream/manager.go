@@ -26,6 +26,7 @@ const apiKeepaliveInterval = 2 * time.Second
 // EventSink receives stream lifecycle events in-process, replacing HTTP notify calls.
 type EventSink interface {
 	OnStreamStarted(contentID, engineID, controlMode, streamMode string)
+	OnStreamPrebuffering(contentID, engineID, engineName string)
 	OnStreamEnded(contentID string)
 	// OnStreamFailed is called when a stream request fails before OnStreamStarted
 	// fires, so the engine's pending reservation can be released.
@@ -34,8 +35,9 @@ type EventSink interface {
 
 type noopSink struct{}
 
-func (noopSink) OnStreamStarted(_, _, _, _ string) {}
-func (noopSink) OnStreamEnded(_ string)       {}
+func (noopSink) OnStreamStarted(_, _, _, _ string)    {}
+func (noopSink) OnStreamPrebuffering(_, _, _ string) {}
+func (noopSink) OnStreamEnded(_ string)              {}
 func (noopSink) OnStreamFailed(_ string)      {}
 
 // EngineParams describes an AceStream engine to connect to.
@@ -118,6 +120,8 @@ func (m *Manager) Run(ctx context.Context) {
 	slog.Info("stream manager starting", "stream", m.params.ContentID)
 
 	m.touchRedisTimestamp(rediskeys.ConnectionAttempt(m.params.ContentID), time.Hour)
+
+	m.sink.OnStreamPrebuffering(m.params.ContentID, m.params.Engine.ContainerID, "")
 
 	if m.params.PlaybackURL != "" {
 		m.mu.Lock()

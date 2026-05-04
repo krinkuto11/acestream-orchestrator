@@ -147,8 +147,10 @@ func (s *ProxyServer) handleGetStream(w http.ResponseWriter, r *http.Request) {
 	var prebufferSeconds int
 
 	if mgr == nil {
+		s.st.OnStreamAllocating(streamKey)
 		ep, err := s.selectEngineWithWait(r.Context())
 		if err != nil {
+			s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: streamKey})
 			http.Error(w, "no engine available: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
@@ -172,6 +174,7 @@ func (s *ProxyServer) handleGetStream(w http.ResponseWriter, r *http.Request) {
 		mgr, buf, cm = s.hub.GetEntry(streamKey)
 		if mgr == nil {
 			s.st.ReleaseEnginePending(ep.ContainerID)
+			s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: streamKey})
 			if !started {
 				http.Error(w, "stream at capacity: resource limit reached", http.StatusServiceUnavailable)
 			} else {
@@ -262,6 +265,7 @@ func (s *ProxyServer) handleHLSManifest(w http.ResponseWriter, r *http.Request) 
 
 	ep, err := s.selectEngineWithWait(r.Context())
 	if err != nil {
+		s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: streamKey})
 		http.Error(w, "no engine available: "+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
@@ -294,8 +298,10 @@ func (s *ProxyServer) handleHLSManifestAPIMode(
 	streamKey string, mgr *stream.Manager, buf *buffer.RingBuffer,
 ) {
 	if mgr == nil {
+		s.st.OnStreamAllocating(streamKey)
 		ep, err := s.selectEngineWithWait(r.Context())
 		if err != nil {
+			s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: streamKey})
 			http.Error(w, "no engine available: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
@@ -315,6 +321,7 @@ func (s *ProxyServer) handleHLSManifestAPIMode(
 		_, buf, _ = s.hub.GetEntry(streamKey)
 		if buf == nil {
 			s.st.ReleaseEnginePending(ep.ContainerID)
+			s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: streamKey})
 			if !started {
 				http.Error(w, "stream at capacity: resource limit reached", http.StatusServiceUnavailable)
 			} else {

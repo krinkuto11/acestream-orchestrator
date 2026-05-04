@@ -4,7 +4,7 @@ function StatusTag({ status }) {
   const map = {
     started: 'green', active: 'green', playing: 'green',
     pending_failover: 'magenta', migrating: 'magenta',
-    prebuf: 'cyan',
+    allocating: 'cyan', prebuf: 'cyan',
     ended: 'amber', stopping: 'amber',
     failed: 'red', error: 'red',
   }
@@ -88,7 +88,7 @@ function getStreamPeers(s) {
 export function StreamsPage({ streams, orchUrl, apiKey, onStopStream, onDeleteEngine, debugMode }) {
   const active = streams.filter(s => {
     const st = String(s.status || '').toLowerCase()
-    return st === 'started' || st === 'playing' || st === 'prebuf'
+    return st === 'started' || st === 'playing' || st === 'prebuf' || st === 'allocating'
   }).length
   const migrations = streams.filter(s => String(s.status || '').toLowerCase().includes('failover')).length
   const totalBitrate = streams.reduce((sum, s) => {

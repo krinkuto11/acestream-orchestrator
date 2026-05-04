@@ -297,6 +297,10 @@ func (s *stateSink) OnStreamStarted(contentID, engineID, controlMode, streamMode
 	})
 }
 
+func (s *stateSink) OnStreamPrebuffering(contentID, engineID, engineName string) {
+	s.st.OnStreamPrebuffering(contentID, engineID, engineName)
+}
+
 func (s *stateSink) OnStreamEnded(contentID string) {
 	s.st.OnStreamEnded(state.StreamEndedEvent{ContentID: contentID})
 	state.RecordEvent(state.EventEntry{
