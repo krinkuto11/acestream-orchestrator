@@ -173,7 +173,21 @@ func (s *Store) RemoveEngine(id string) bool {
 	delete(s.engines, id)
 	delete(s.emptyAt, id)
 	delete(s.streamCounts, id)
+	delete(s.monitorCounts, id)
 	return true
+}
+
+func (s *Store) RemoveEnginesByVPN(vpnName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, e := range s.engines {
+		if e.VPNContainer == vpnName {
+			delete(s.engines, id)
+			delete(s.emptyAt, id)
+			delete(s.streamCounts, id)
+			delete(s.monitorCounts, id)
+		}
+	}
 }
 
 func (s *Store) ListEngines() []*Engine {

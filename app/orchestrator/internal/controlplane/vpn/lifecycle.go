@@ -426,7 +426,6 @@ func (lm *LifecycleManager) destroyVPN(ctx context.Context, node *state.VPNNode)
 					"error": err.Error(),
 				},
 			})
-			// Remove from state anyway to avoid retry loops on already-gone containers.
 		}
 	} else {
 		// Fallback: direct Docker stop (no credential management).
@@ -442,9 +441,10 @@ func (lm *LifecycleManager) destroyVPN(ctx context.Context, node *state.VPNNode)
 				},
 			})
 		}
-		state.Global.RemoveVPNNode(node.ContainerName)
 	}
 
+	state.Global.RemoveEnginesByVPN(node.ContainerName)
+	state.Global.RemoveVPNNode(node.ContainerName)
 	lm.pub.RemoveVPNNode(ctx, node.ContainerName)
 	slog.Info("VPN node destroyed", "name", node.ContainerName)
 	state.RecordEvent(state.EventEntry{
