@@ -247,6 +247,35 @@ func StopContainer(ctx context.Context, containerID string, force bool) error {
 	return cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
 }
 
+// StopEnginesByVPN stops all engines associated with the given VPN container.
+func StopEnginesByVPN(ctx context.Context, vpnName string) {
+	st := state.Global
+	engines := st.GetEnginesByVPN(vpnName)
+	if len(engines) == 0 {
+		return
+	}
+
+	slog.Info("stopping engines associated with VPN", "vpn", vpnName, "count", len(engines))
+	var wg sync.WaitGroup
+	for _, e := range engines {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if err := StopContainer(ctx, id, true); err != nil {
+				slog.Warn("failed to stop engine on VPN destruction", "id", id[:min12(len(id))], "err", err)
+			}
+		}(e.ContainerID)
+	}
+	wg.Wait()
+}
+
+func min12(n int) int {
+	if n < 12 {
+		return n
+	}
+	return 12
+}
+
 // ListManagedContainers returns all running containers with the managed label.
 func ListManagedContainers(ctx context.Context) ([]dockertypes.Container, error) {
 	cli, err := newDockerClient()

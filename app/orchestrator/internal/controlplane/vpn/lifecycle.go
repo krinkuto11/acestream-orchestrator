@@ -12,6 +12,7 @@ import (
 	dockerclient "github.com/docker/docker/client"
 
 	"github.com/acestream/acestream/internal/config"
+	"github.com/acestream/acestream/internal/controlplane/engine"
 	"github.com/acestream/acestream/internal/state"
 )
 
@@ -443,6 +444,7 @@ func (lm *LifecycleManager) destroyVPN(ctx context.Context, node *state.VPNNode)
 		}
 	}
 
+	engine.StopEnginesByVPN(ctx, node.ContainerName)
 	state.Global.RemoveEnginesByVPN(node.ContainerName)
 	state.Global.RemoveVPNNode(node.ContainerName)
 	lm.pub.RemoveVPNNode(ctx, node.ContainerName)
