@@ -682,10 +682,11 @@ func (s *Store) SelectAndClaimEngine(maxStreams int) (*Engine, error) {
 			continue
 		}
 
-		// Warm-up logic: if an engine is very fresh, limit its initial concurrency
-		// to 1 until it has had a few seconds to settle. This prevents a thundering
-		// herd from overwhelming the AceStream API before the first stream is active.
-		if time.Since(e.FirstSeen) < 5*time.Second && load >= 1 {
+		// Settle delay: if an engine was assigned a stream very recently, give it
+		// a few seconds to handle the intensive pre-buffering phase before
+		// assigning another one. This prevents API timeouts when multiple
+		// LoadAndStart operations overlap.
+		if load >= 1 && time.Since(e.LastAssignedAt) < 5*time.Second {
 			continue
 		}
 
