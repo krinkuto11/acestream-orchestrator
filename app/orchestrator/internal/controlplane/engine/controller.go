@@ -563,11 +563,15 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, _ int) {
 		}
 	}
 
-	// Cluster-level stabilization: do not rebalance for 60s after a scale-up.
-	// This ensures the cluster has time to provision and engines to settle
-	// before we start aggressive density optimization.
-	if !skipDensityRebalancing && !c.lastScaleUp.IsZero() && time.Since(c.lastScaleUp) < 60*time.Second {
-		skipDensityRebalancing = true
+	// Cluster-level stabilization: do not rebalance for 15s after a scale-up
+	// to prevent thrashing.
+	if !skipDensityRebalancing && !c.lastScaleUp.IsZero() && time.Since(c.lastScaleUp) < 15*time.Second {
+		// EXCEPTION: If we have all required infrastructure ready, we MUST
+		// rebalance to provide relief to over-saturated nodes, even if
+		// the stability shield is active.
+		if readyCount < requiredNodes {
+			skipDensityRebalancing = true
+		}
 	}
 
 	if skipDensityRebalancing {
