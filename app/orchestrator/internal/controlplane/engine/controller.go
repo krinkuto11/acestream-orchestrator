@@ -42,6 +42,8 @@ type Controller struct {
 	intentMu sync.Mutex
 	intSeq   atomic.Int64
 	vpnNudge func(string)
+
+	lastScaleUp time.Time
 }
 
 // NewController creates a new EngineController.
@@ -139,8 +141,11 @@ func (c *Controller) EnsureMinimum() {
 
 	if desired != prev {
 		slog.Info("desired replicas updated", "previous", prev, "new", desired, "total", totalRunning, "free", freeCount)
-		if desired > prev && c.vpnNudge != nil {
-			c.vpnNudge("engine_scale_up")
+		if desired > prev {
+			c.lastScaleUp = time.Now()
+			if c.vpnNudge != nil {
+				c.vpnNudge("engine_scale_up")
+			}
 		}
 	}
 	metrics.CPDesiredReplicas.Set(float64(desired))
@@ -543,6 +548,17 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, _ int) {
 				break
 			}
 		}
+	}
+
+	// Cluster-level stabilization: do not rebalance for 60s after a scale-up.
+	// This ensures the cluster has time to provision and engines to settle
+	// before we start aggressive density optimization.
+	if !skipDensityRebalancing && !c.lastScaleUp.IsZero() && time.Since(c.lastScaleUp) < 60*time.Second {
+		skipDensityRebalancing = true
+	}
+
+	if skipDensityRebalancing {
+		return
 	}
 
 	for vpnName, vpnEngines := range activeByVPN {
