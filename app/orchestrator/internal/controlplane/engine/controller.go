@@ -234,6 +234,9 @@ func (c *Controller) NudgeDemand(n int) {
 	metrics.CPDesiredReplicas.Set(float64(newDesired))
 	slog.Info("demand nudge; scaling UP", "n", n, "desired", newDesired)
 	c.lastScaleUp = time.Now()
+	if c.vpnNudge != nil {
+		c.vpnNudge("demand_spike")
+	}
 	c.Nudge("demand_spike")
 }
 
@@ -248,6 +251,9 @@ func (c *Controller) ScaleTo(n int) {
 	slog.Info("manual scale request", "count", desired)
 	if desired > prev {
 		c.lastScaleUp = time.Now()
+		if c.vpnNudge != nil {
+			c.vpnNudge("manual_scale")
+		}
 	}
 	c.Nudge("scale_to")
 }

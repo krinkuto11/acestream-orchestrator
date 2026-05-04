@@ -176,7 +176,9 @@ func (lm *LifecycleManager) reconcileScale(ctx context.Context) {
 	switch {
 	case actualVPNs < desiredVPNs:
 		deficit := desiredVPNs - actualVPNs
+		total := lm.prov.creds.TotalCount()
 		available := lm.prov.creds.AvailableCount()
+		slog.Debug("VPN scale-up required", "deficit", deficit, "available_creds", available, "total_creds", total)
 		budget := deficit
 		if available < budget {
 			budget = available
