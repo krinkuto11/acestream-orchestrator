@@ -453,12 +453,17 @@ func (c *Controller) doReconcile(ctx context.Context) {
 	metrics.CPVPNNodesTotal.WithLabelValues("unhealthy").Set(float64(vpnUnhealthy))
 }
 
-func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired int) {
+func (c *Controller) rebalanceDensity(active, managed []*state.Engine, _ int) {
 	cfg := config.C.Load()
 	st := state.Global
 
 	maxPerVPN := cfg.PreferredEnginesPerVPN
-	if maxPerVPN <= 0 || desired <= 0 {
+
+	// Use the latest desired replicas from state, not the one passed in,
+	// to ensure we aren't rebalancing based on a stale decision from the
+	// beginning of the reconcile loop.
+	desired := st.GetDesiredReplicas()
+	if desired <= 0 {
 		return
 	}
 
@@ -541,6 +546,12 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 	}
 
 	for vpnName, vpnEngines := range activeByVPN {
+		// Only rebalance if we have more than one engine on this node.
+		// A single engine node can never be "over-balanced" in a way we can fix.
+		if len(vpnEngines) <= 1 {
+			continue
+		}
+
 		if len(vpnEngines) > effectiveLimit {
 			if skipDensityRebalancing {
 				continue
@@ -586,9 +597,11 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 			if len(toDrain) > excess {
 				toDrain = toDrain[:excess]
 			}
-			slog.Info("VPN node over-balanced; rebalancing", "vpn", vpnName, "active", len(vpnEngines), "limit", effectiveLimit, "draining", len(toDrain))
-			for _, e := range toDrain {
-				st.MarkEngineDraining(e.ContainerID, "density_balanced")
+			if len(toDrain) > 0 {
+				slog.Info("VPN node over-balanced; rebalancing", "vpn", vpnName, "active", len(vpnEngines), "limit", effectiveLimit, "draining", len(toDrain))
+				for _, e := range toDrain {
+					st.MarkEngineDraining(e.ContainerID, "density_balanced")
+				}
 			}
 		} else {
 			// Check for headless state (PF-capable but no leader)
@@ -612,7 +625,9 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 				}
 			}
 
-			if !hasLeader && !st.IsForwardedPending(vpnName) && len(vpnEngines) > 1 {
+			// Headless correction: only if there are at least 2 engines on the node
+			// (one to replace, one to remain).
+			if !hasLeader && !st.IsForwardedPending(vpnName) && len(vpnEngines) >= 2 {
 				slog.Warn("VPN node is headless (PF-capable but no leader); marking follower for replacement", "vpn", vpnName)
 				// Drain the most idle follower to force a leader replacement
 				sort.Slice(vpnEngines, func(i, j int) bool {
