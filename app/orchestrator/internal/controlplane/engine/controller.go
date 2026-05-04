@@ -488,9 +488,12 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 	actualFairShare := int(math.Ceil(float64(desired) / float64(max(1, readyCount))))
 
 	// We use the higher of the two to prevent thrashing when nodes are still provisioning.
-	// However, we never want to exceed the hard limit.
 	effectiveLimit := max(idealLimit, actualFairShare)
-	if cfg.MaxEnginesPerVPN > 0 && effectiveLimit > cfg.MaxEnginesPerVPN {
+
+	// Only enforce the hard max limit if we actually have enough ready VPN nodes
+	// to satisfy the total desired engine count. Clamping below the fair-share
+	// while nodes are missing triggers a "tug-of-war" loop with the autoscaler.
+	if cfg.MaxEnginesPerVPN > 0 && effectiveLimit > cfg.MaxEnginesPerVPN && readyCount >= requiredNodes {
 		effectiveLimit = cfg.MaxEnginesPerVPN
 	}
 
@@ -609,7 +612,7 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 				}
 			}
 
-			if !hasLeader && !st.IsForwardedPending(vpnName) && len(vpnEngines) > 0 {
+			if !hasLeader && !st.IsForwardedPending(vpnName) && len(vpnEngines) > 1 {
 				slog.Warn("VPN node is headless (PF-capable but no leader); marking follower for replacement", "vpn", vpnName)
 				// Drain the most idle follower to force a leader replacement
 				sort.Slice(vpnEngines, func(i, j int) bool {
@@ -622,7 +625,10 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 }
 
 func (c *Controller) selectTerminationCandidates(engines []*state.Engine, count int) []string {
-	// Sort: idle (no streams) first, then oldest first
+	// Sort order:
+	// 1. Idle (no streams) first
+	// 2. Followers (non-forwarded) before Leaders
+	// 3. Oldest first
 	st := state.Global
 	type scored struct {
 		e       *state.Engine
@@ -635,9 +641,15 @@ func (c *Controller) selectTerminationCandidates(engines []*state.Engine, count 
 		}
 	}
 	sort.Slice(ss, func(i, j int) bool {
+		// Rule 1: Fewest streams first
 		if ss[i].streams != ss[j].streams {
 			return ss[i].streams < ss[j].streams
 		}
+		// Rule 2: Followers before Leaders
+		if ss[i].e.Forwarded != ss[j].e.Forwarded {
+			return !ss[i].e.Forwarded // true if i is follower, false if leader
+		}
+		// Rule 3: Oldest first
 		return ss[i].e.FirstSeen.Before(ss[j].e.FirstSeen)
 	})
 	var ids []string
