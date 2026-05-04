@@ -623,6 +623,21 @@ func (s *Store) ListIntents() []*ScalingIntent {
 	return out
 }
 
+func (s *Store) TotalPending() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	n := 0
+	for _, it := range s.intents {
+		if it.Action == "create" {
+			n++
+		}
+	}
+	for _, pending := range s.vpnPending {
+		n += pending
+	}
+	return n
+}
+
 // ─── Stream counts ────────────────────────────────────────────────────────────
 
 func (s *Store) SetStreamCount(containerID string, count int) {

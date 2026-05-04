@@ -113,25 +113,27 @@ func (c *Controller) EnsureMinimum() {
 	monitorCounts := st.GetAllMonitorCounts()
 	var freeCount, totalRunning int
 	for _, e := range engines {
-		if e.HealthStatus == state.HealthUnhealthy {
+		if e.HealthStatus == state.HealthUnhealthy || e.Draining {
 			continue
 		}
 		totalRunning++
 		load := streamCounts[e.ContainerID] + monitorCounts[e.ContainerID]
-		if load == 0 && !e.Draining {
+		if load == 0 {
 			freeCount++
 		}
 	}
 
 	desired, _ := computeDesiredReplicas(totalRunning, freeCount, streamCounts, monitorCounts, engines)
 	prev := st.GetDesiredReplicas()
+	pending := st.TotalPending()
 
 	// Never silently undo a NudgeDemand bump while provisioning is in flight.
-	// If current running count is less than the previous desired count, it means
-	// we are still waiting for engines to register. Keep the higher value.
-	// Once totalRunning catches up, we allow load-based scaling down.
-	if totalRunning < prev && prev > desired {
-		desired = prev
+	// We protect the target if we are still actively starting engines.
+	if pending > 0 {
+		minTarget := totalRunning + pending
+		if desired < minTarget && prev >= minTarget {
+			desired = minTarget
+		}
 	}
 	st.SetDesiredReplicas(desired)
 
