@@ -269,13 +269,6 @@ func StopEnginesByVPN(ctx context.Context, vpnName string) {
 	wg.Wait()
 }
 
-func min12(n int) int {
-	if n < 12 {
-		return n
-	}
-	return 12
-}
-
 // ListManagedContainers returns all running containers with the managed label.
 func ListManagedContainers(ctx context.Context) ([]dockertypes.Container, error) {
 	cli, err := newDockerClient()
