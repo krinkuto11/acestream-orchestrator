@@ -139,6 +139,9 @@ func (c *Controller) EnsureMinimum() {
 
 	if desired != prev {
 		slog.Info("desired replicas updated", "previous", prev, "new", desired, "total", totalRunning, "free", freeCount)
+		if desired > prev && c.vpnNudge != nil {
+			c.vpnNudge("engine_scale_up")
+		}
 	}
 	metrics.CPDesiredReplicas.Set(float64(desired))
 	c.Nudge("ensure_minimum")

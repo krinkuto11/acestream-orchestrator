@@ -63,13 +63,13 @@ func (lm *LifecycleManager) Run(ctx context.Context) {
 	defer lm.wg.Done()
 
 	cfg := config.C.Load()
-	ticker := time.NewTicker(cfg.VPNDrainingCheckInterval)
+	ticker := time.NewTicker(cfg.VPNControllerInterval)
 	defer ticker.Stop()
 	healthTicker := time.NewTicker(cfg.GluetunHealthCheckInterval)
 	defer healthTicker.Stop()
 
 	slog.Info("VPNLifecycleManager started",
-		"check_interval", cfg.VPNDrainingCheckInterval,
+		"check_interval", cfg.VPNControllerInterval,
 		"health_interval", cfg.GluetunHealthCheckInterval,
 		"vpn_enabled", cfg.VPNEnabled,
 	)
