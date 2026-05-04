@@ -669,10 +669,6 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, _ int) {
 }
 
 func (c *Controller) selectTerminationCandidates(engines []*state.Engine, count int) []string {
-	// Sort order:
-	// 1. Idle (no streams) first
-	// 2. Followers (non-forwarded) before Leaders
-	// 3. Oldest first
 	st := state.Global
 	type scored struct {
 		e       *state.Engine
@@ -680,22 +676,42 @@ func (c *Controller) selectTerminationCandidates(engines []*state.Engine, count 
 	}
 	var ss []scored
 	for _, e := range engines {
-		if canStopEngine(e.ContainerID, false) {
-			ss = append(ss, scored{e, st.GetEngineTotalLoad(e.ContainerID)})
+		if !canStopEngine(e.ContainerID, false) {
+			continue
 		}
+
+		// SAFETY: Never kill a Leader if there are other engines on the same VPN node.
+		// If we kill the leader while followers remain, the node becomes "headless"
+		// and P2P performance collapses for the remaining engines.
+		if e.Forwarded && e.VPNContainer != "" {
+			others := st.GetEnginesByVPN(e.VPNContainer)
+			activeOthers := 0
+			for _, o := range others {
+				if o.ContainerID != e.ContainerID && !o.Draining {
+					activeOthers++
+				}
+			}
+			if activeOthers > 0 {
+				continue // Skip this leader; it's still needed.
+			}
+		}
+
+		ss = append(ss, scored{e, st.GetEngineTotalLoad(e.ContainerID)})
 	}
+
 	sort.Slice(ss, func(i, j int) bool {
 		// Rule 1: Fewest streams first
 		if ss[i].streams != ss[j].streams {
 			return ss[i].streams < ss[j].streams
 		}
-		// Rule 2: Followers before Leaders
+		// Rule 2: Followers before Leaders (Safety second)
 		if ss[i].e.Forwarded != ss[j].e.Forwarded {
-			return !ss[i].e.Forwarded // true if i is follower, false if leader
+			return !ss[i].e.Forwarded
 		}
 		// Rule 3: Oldest first
 		return ss[i].e.FirstSeen.Before(ss[j].e.FirstSeen)
 	})
+
 	var ids []string
 	for _, s := range ss {
 		if len(ids) >= count {

@@ -230,14 +230,25 @@ func (lm *LifecycleManager) scaleDownIdle(ctx context.Context, desiredVPNs int) 
 	st := state.Global
 	nodes := st.ListDynamicVPNNodes()
 
-	// Collect non-draining nodes.
+	// Proactive compaction cooldown: do not scale down nodes that were
+	// recently provisioned. This prevents "tug-of-war" churn where a node
+	// is killed 10s after it was created during a burst.
+	const scaleDownCooldown = 120 * time.Second
 	var active []*state.VPNNode
 	for _, n := range nodes {
-		if n.Lifecycle != "draining" {
-			active = append(active, n)
+		if n.Lifecycle == "draining" {
+			continue
 		}
+		// If the node is very new, protect it from scale-down.
+		if n.HealthySince != nil && time.Since(*n.HealthySince) < scaleDownCooldown {
+			continue
+		}
+		active = append(active, n)
 	}
-	if len(active) <= desiredVPNs {
+
+	if len(active) == 0 || (len(nodes)-len(active)) >= desiredVPNs {
+		// All nodes that COULD be scaled down are already needed, or
+		// we are protecting everything from scale-down to let it settle.
 		return
 	}
 
