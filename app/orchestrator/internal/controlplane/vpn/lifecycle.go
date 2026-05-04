@@ -162,23 +162,29 @@ func (lm *LifecycleManager) reconcileScale(ctx context.Context) {
 		}
 	}
 
-	slog.Debug("VPN reconcile",
-		"vpn_engines", totalVPNEngines,
-		"desired_engines", desiredEngines,
-		"demand", engineDemand,
-		"preferred_per_vpn", preferred,
-		"desired_vpns", desiredVPNs,
-	)
-
 	// Count active (non-draining) dynamic nodes.
 	actualVPNs := st.CountActiveDynamicVPNNodes()
+
+	slog.Info("VPN scaling math",
+		"engine_demand", engineDemand,
+		"preferred_per_vpn", preferred,
+		"desired_vpns", desiredVPNs,
+		"actual_vpns", actualVPNs,
+	)
+
+	if lm.prov != nil {
+		total := lm.prov.creds.TotalCount()
+		if desiredVPNs > total && total > 0 {
+			slog.Warn("VPN scaling capped by credential limits", "desired", desiredVPNs, "total_creds", total)
+			desiredVPNs = total
+		}
+	}
 
 	switch {
 	case actualVPNs < desiredVPNs:
 		deficit := desiredVPNs - actualVPNs
-		total := lm.prov.creds.TotalCount()
 		available := lm.prov.creds.AvailableCount()
-		slog.Debug("VPN scale-up required", "deficit", deficit, "available_creds", available, "total_creds", total)
+		slog.Info("VPN scale-up required", "deficit", deficit, "available_creds", available)
 		budget := deficit
 		if available < budget {
 			budget = available
