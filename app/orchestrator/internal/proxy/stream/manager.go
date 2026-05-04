@@ -26,7 +26,7 @@ const apiKeepaliveInterval = 2 * time.Second
 // EventSink receives stream lifecycle events in-process, replacing HTTP notify calls.
 type EventSink interface {
 	OnStreamStarted(contentID, engineID, controlMode, streamMode string)
-	OnStreamPrebuffering(contentID, engineID, engineName, streamMode string)
+	OnStreamPrebuffering(contentID, engineID, engineName, streamMode, controlMode string)
 	OnStreamEnded(contentID string)
 	// OnStreamFailed is called when a stream request fails before OnStreamStarted
 	// fires, so the engine's pending reservation can be released.
@@ -35,10 +35,10 @@ type EventSink interface {
 
 type noopSink struct{}
 
-func (noopSink) OnStreamStarted(_, _, _, _ string)       {}
-func (noopSink) OnStreamPrebuffering(_, _, _, _ string) {}
-func (noopSink) OnStreamEnded(_ string)                 {}
-func (noopSink) OnStreamFailed(_ string)         {}
+func (noopSink) OnStreamStarted(_, _, _, _ string)          {}
+func (noopSink) OnStreamPrebuffering(_, _, _, _, _ string) {}
+func (noopSink) OnStreamEnded(_ string)                     {}
+func (noopSink) OnStreamFailed(_ string)            {}
 
 // EngineParams describes an AceStream engine to connect to.
 type EngineParams struct {
@@ -122,7 +122,7 @@ func (m *Manager) Run(ctx context.Context) {
 
 	m.touchRedisTimestamp(rediskeys.ConnectionAttempt(m.params.ContentID), time.Hour)
 
-	m.sink.OnStreamPrebuffering(m.params.ContentID, m.params.Engine.ContainerID, m.params.Engine.ContainerName, m.params.StreamMode)
+	m.sink.OnStreamPrebuffering(m.params.ContentID, m.params.Engine.ContainerID, m.params.Engine.ContainerName, m.params.StreamMode, m.params.ControlMode)
 
 	if m.params.PlaybackURL != "" {
 		m.mu.Lock()
@@ -144,6 +144,7 @@ func (m *Manager) Run(ctx context.Context) {
 	if err := m.requestStream(ctx); err != nil {
 		slog.Error("stream request failed", "stream", m.params.ContentID, "err", err)
 		m.sink.OnStreamFailed(m.params.Engine.ContainerID)
+		m.sink.OnStreamEnded(m.params.ContentID)
 		return
 	}
 
@@ -357,6 +358,7 @@ func (m *Manager) startReadLoop(ctx context.Context) {
 			m.touchRedisTimestamp(rediskeys.LastClientDisconnect(m.params.ContentID), 60*time.Second)
 			if err := m.requestStream(ctx); err != nil {
 				slog.Error("engine request failed after swap", "stream", m.params.ContentID, "err", err)
+				m.sink.OnStreamEnded(m.params.ContentID)
 				return
 			}
 

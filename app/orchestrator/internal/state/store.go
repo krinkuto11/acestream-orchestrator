@@ -960,7 +960,7 @@ func (s *Store) OnStreamStarted(ev StreamStartedEvent) *StreamState {
 	return st
 }
 
-func (s *Store) OnStreamAllocating(contentID, streamMode string) {
+func (s *Store) OnStreamAllocating(contentID, streamMode, controlMode string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.streams[contentID]; exists {
@@ -972,13 +972,14 @@ func (s *Store) OnStreamAllocating(contentID, streamMode string) {
 		ContentID:    contentID,
 		Status:       "allocating",
 		StreamMode:   streamMode,
+		ControlMode:  controlMode,
 		StartedAt:    now,
 		LastActivity: now,
 		Clients:      []map[string]any{},
 	}
 }
 
-func (s *Store) OnStreamPrebuffering(contentID, engineID, engineName, streamMode string) {
+func (s *Store) OnStreamPrebuffering(contentID, engineID, engineName, streamMode, controlMode string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st, ok := s.streams[contentID]
@@ -999,6 +1000,7 @@ func (s *Store) OnStreamPrebuffering(contentID, engineID, engineName, streamMode
 	st.ContainerID = engineID
 	st.ContainerName = engineName
 	st.StreamMode = streamMode
+	st.ControlMode = controlMode
 }
 
 func (s *Store) OnStreamEnded(ev StreamEndedEvent) {
