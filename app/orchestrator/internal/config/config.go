@@ -447,7 +447,7 @@ func load() *Config {
 
 		UpstreamConnectTimeout: envDur("UPSTREAM_CONNECT_TIMEOUT_S", 3*time.Second),
 		UpstreamReadTimeout:    envDur("UPSTREAM_READ_TIMEOUT_S", 90*time.Second),
-		ClientWaitTimeout:      envDur("CLIENT_WAIT_TIMEOUT_S", 30*time.Second),
+		ClientWaitTimeout:      envDur("CLIENT_WAIT_TIMEOUT_S", 60*time.Second),
 		StreamTimeout:          envDur("STREAM_TIMEOUT_S", 60*time.Second),
 		ChunkTimeout:           envDur("CHUNK_TIMEOUT_S", 5*time.Second),
 		ChannelShutdownDelay:   envDur("CHANNEL_SHUTDOWN_DELAY_S", 5*time.Second),

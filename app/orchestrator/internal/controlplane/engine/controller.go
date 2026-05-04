@@ -468,7 +468,7 @@ func (c *Controller) rebalanceDensity(active, managed []*state.Engine, desired i
 
 	readyCount := 0
 	for _, n := range allVPNNodes {
-		if !st.IsVPNNodeDraining(n.ContainerName) {
+		if n.Healthy && !st.IsVPNNodeDraining(n.ContainerName) {
 			readyCount++
 		}
 	}
