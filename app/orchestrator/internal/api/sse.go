@@ -459,7 +459,7 @@ func (s *ProxyServer) handleSSEReprovisionStatus(w http.ResponseWriter, r *http.
 
 	sseHeaders(w)
 
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(config.C.Load().SSEUpdateInterval)
 	defer ticker.Stop()
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
@@ -606,7 +606,7 @@ func (s *ProxyServer) buildStatePayload() map[string]any {
 // RunSSEPublisher polls for state changes and notifies the SSE broker.
 // Call this in a background goroutine.
 func (s *ProxyServer) RunSSEPublisher(ctx context.Context) {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(config.C.Load().SSEUpdateInterval)
 	defer ticker.Stop()
 
 	var lastHash string

@@ -215,8 +215,17 @@ function AppContent() {
     let eventSource = null
     let reconnectTimer = null
     let closed = false
+    let lastApply = 0
 
     const applyPayload = (payload = {}) => {
+      if (closed) return
+      
+      const now = Date.now()
+      if (now - lastApply < refreshInterval - 50) { // small buffer to avoid strict edge cases
+        return
+      }
+      lastApply = now
+
       const nextEngines = Array.isArray(payload.engines) ? payload.engines : []
       const nextStreams = Array.isArray(payload.streams) ? payload.streams : []
       const nextEngineStats = payload.engine_docker_stats || {}
@@ -254,6 +263,7 @@ function AppContent() {
       if (closed) return
       if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
         fetchData()
+        reconnectTimer = window.setInterval(fetchData, refreshInterval)
         return
       }
 
@@ -283,10 +293,13 @@ function AppContent() {
     connect()
     return () => {
       closed = true
-      if (reconnectTimer) window.clearTimeout(reconnectTimer)
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+        window.clearInterval(reconnectTimer)
+      }
       if (eventSource) eventSource.close()
     }
-  }, [orchUrl, apiKey, fetchData])
+  }, [orchUrl, apiKey, fetchData, refreshInterval])
 
   const handleDeleteEngine = useCallback(async (containerId) => {
     if (!window.confirm('Are you sure you want to delete this engine?')) return

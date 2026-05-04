@@ -34,6 +34,7 @@ type Config struct {
 	// ── Orchestrator intervals ────────────────────────────────────────────────
 	StreamRetentionPeriod time.Duration
 	CountsPublishInterval time.Duration
+	SSEUpdateInterval     time.Duration
 
 	// ── Proxy: timeouts ──────────────────────────────────────────────────────
 	UpstreamConnectTimeout  time.Duration
@@ -328,6 +329,8 @@ func ApplyOrchestratorSettings(m map[string]any) {
 			if s, ok := v.(string); ok {
 				n.DockerNetwork = s
 			}
+		case "sse_update_interval_s":
+			n.SSEUpdateInterval = toDur(v, time.Second)
 		}
 	}
 	C.Store(&n)
@@ -444,6 +447,7 @@ func load() *Config {
 
 		StreamRetentionPeriod: envDur("STREAM_RETENTION_S", 300*time.Second),
 		CountsPublishInterval: envDur("COUNTS_PUBLISH_INTERVAL_S", 5*time.Second),
+		SSEUpdateInterval:     envDur("SSE_UPDATE_INTERVAL_S", 1*time.Second),
 
 		UpstreamConnectTimeout: envDur("UPSTREAM_CONNECT_TIMEOUT_S", 3*time.Second),
 		UpstreamReadTimeout:    envDur("UPSTREAM_READ_TIMEOUT_S", 90*time.Second),
